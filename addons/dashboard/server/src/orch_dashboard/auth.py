@@ -35,6 +35,10 @@ LAUNCH_KINDS = frozenset({"local"})
 #: spec 0.8.6 10.3): 20 per minute per source, 600 per minute overall (a CPU guard only).
 REMOTE_PER_SOURCE = 20
 REMOTE_GLOBAL = 600
+#: Live remote sessions are capped (#1198 R1-5): at most 20 in all and 5 per source, the oldest evicted first, so
+#: logins from the internet cannot pile up state, and one source cannot push the owner's own session out alone.
+REMOTE_SESSIONS = 20
+REMOTE_SESSIONS_PER_SOURCE = 5
 #: Tracked sources are bounded; past this, new sources share one bucket (shared means stricter, never looser).
 REMOTE_MAX_SOURCES = 10_000
 _OVERFLOW = "overflow"
@@ -83,6 +87,7 @@ class Auth:
         self.kinds: dict[str, str] = {}
         # The listener each session was opened on; Security refuses the token on any other (see KIND_LISTENER).
         self.listeners: dict[str, str] = {}
+        self.session_sources: dict[str, str] = {}  # remote session -> the source bucket that opened it
         self.remote_sources: dict[str, deque] = {}
         self.remote_all = deque()
         self.remote_swept = 0.0
@@ -177,11 +182,49 @@ class Auth:
             self._forget(code)
             return self._mint(now, kind), 200
 
-    def open_remote(self):
+    def open_remote(self, source=None):
         """A session of the front, called only after a passkey login (R1-5) has been verified. Lives 12 h / 2 h idle and
-        works on the front listener only."""
+        works on the front listener only. ``source`` is the client address the front reported: at most
+        ``REMOTE_SESSIONS_PER_SOURCE`` live sessions per source (its /32 or /64) and ``REMOTE_SESSIONS`` in all, the
+        oldest evicted first."""
+        key = source_key(source) if source is not None else None
         with self.lock:
-            return self._mint(self.clock(), "remote")
+            now = self.clock()
+            self._drop_dead(now)
+            self._evict("remote", REMOTE_SESSIONS - 1)
+            if key is not None:
+                self._evict("remote", REMOTE_SESSIONS_PER_SOURCE - 1, key)
+            minted = self._mint(now, "remote")
+            if key is not None:
+                self.session_sources[minted["token"]] = key
+            return minted
+
+    def _evict(self, kind, keep, source=None):
+        """Hold ``self.lock``. Drop the oldest sessions of ``kind`` (of one ``source`` when given) until at most
+        ``keep`` remain."""
+        mine = sorted(
+            (self.sessions[t][0], t)
+            for t, k in self.kinds.items()
+            if k == kind and t in self.sessions and (source is None or self.session_sources.get(t) == source)
+        )
+        for _, token in mine[: max(0, len(mine) - keep)]:
+            self._drop(token)
+
+    def _drop(self, token):
+        """Hold ``self.lock``."""
+        for table in (self.sessions, self.kinds, self.listeners, self.session_sources):
+            table.pop(token, None)
+
+    def _drop_dead(self, now):
+        """Hold ``self.lock``. Forget sessions past their lifetime (bounded state even if tabs never return)."""
+        self.sessions = {
+            t: (born, last)
+            for t, (born, last) in self.sessions.items()
+            if self._alive(self.kinds.get(t), born, last, now)
+        }
+        for table in (self.kinds, self.listeners, self.session_sources):
+            for token in [t for t in table if t not in self.sessions]:
+                del table[token]
 
     def _mint(self, now, kind):
         """Hold ``self.lock``."""
@@ -234,13 +277,7 @@ class Auth:
         with self.lock:
             now = self.clock()
             # Bound retained state even if expired tabs never return.
-            self.sessions = {
-                t: (born, last)
-                for t, (born, last) in self.sessions.items()
-                if self._alive(self.kinds.get(t), born, last, now)
-            }
-            self.kinds = {t: k for t, k in self.kinds.items() if t in self.sessions}
-            self.listeners = {t: k for t, k in self.listeners.items() if t in self.sessions}
+            self._drop_dead(now)
             if token not in self.sessions:
                 return False
             born, _ = self.sessions[token]
@@ -266,17 +303,13 @@ class Auth:
 
     def logout(self, token):
         with self.lock:
-            self.sessions.pop(token, None)
-            self.kinds.pop(token, None)
-            self.listeners.pop(token, None)
+            self._drop(token)
 
     def logout_everywhere(self, kind="remote"):
         """End every session of ``kind`` ("Log out everywhere" in Settings, R1-8)."""
         with self.lock:
             for token in [t for t, k in self.kinds.items() if k == kind]:
-                self.sessions.pop(token, None)
-                self.kinds.pop(token, None)
-                self.listeners.pop(token, None)
+                self._drop(token)
 
     def bind_setup(self, token, setup_id):
         """Setup scope only. Core owns the 30 s single-use claim and 10 min idle/run-aware lifetime.

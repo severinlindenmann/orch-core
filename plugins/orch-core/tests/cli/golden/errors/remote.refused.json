@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "remote.refused",
+    "message": "this is not available over remote access",
+    "hint": "do it on the computer itself, or over the SSH tunnel",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

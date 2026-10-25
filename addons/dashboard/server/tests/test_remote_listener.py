@@ -2,6 +2,8 @@
 
 # ruff: noqa: F811
 
+import dataclasses
+
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
@@ -17,9 +19,11 @@ from remote_kit import (  # noqa: F401
     front,
     local,
     loop,
+    passkey_store,
     remote,
     socket_dir,
     terminals_app,
+    ungated,
 )
 from test_dashboard_click import (  # noqa: F401
     HASH,
@@ -33,9 +37,9 @@ from test_dashboard_click import (  # noqa: F401
     script,
 )
 
-from orch_dashboard.click import ROTATE_LOCAL_ONLY, RUNNER_LOCAL_ONLY, SEALED_LOCAL_ONLY
 from orch_dashboard.front import Front
 from orch_dashboard.policy import remote_policy
+from orch_dashboard.stepup import ROTATE_LOCAL_ONLY, RUNNER_LOCAL_ONLY, SEALED_LOCAL_ONLY
 
 GATES = [
     ("runner/review", {"on": True}, RUNNER_LOCAL_ONLY),
@@ -49,6 +53,7 @@ GATES = [
     ("rotate/seal", {}, ROTATE_LOCAL_ONLY),
     ("rotate", rotate_body(), ROTATE_LOCAL_ONLY),
     ("custody", {"on": True, "resume": True}, "needs a dashboard opened on this computer"),
+    ("custody", {"on": True, "passphrase": "correct horse"}, "needs a dashboard opened on this computer"),
     ("prepare", agent_access(), "needs a dashboard opened on this computer"),
     ("prepare", hub_join(), "needs a dashboard opened on this computer"),
     ("sign", {"request_id": REQ, "view_digest": HASH, "sealed": {"hub.backup_key": PASS_ENV}}, "needs a dashboard"),
@@ -109,8 +114,9 @@ def test_the_pre_login_surface_of_the_front_gets_the_address_for_the_login_bucke
     from orch_dashboard.policy import loopback_policy
     from orch_dashboard.security import Security
 
+    ungated_policy = dataclasses.replace(remote_policy(NAME), route_gate=False)  # the table has its own tests
     seen = []
-    stack = Front(Security(echo(seen), auth, loopback_policy(PORT), others=(remote_policy(NAME),)))
+    stack = Front(Security(echo(seen), auth, loopback_policy(PORT), others=(ungated_policy,)))
     front = TestClient(stack, base_url=HTTPS, headers={"X-Orch-Client": "2001:db8::7"})
     assert front.get("/auth/passkey/login").status_code == 200
     assert seen[-1]["state"]["client"] == "2001:db8::7" and auth.remote_attempt(seen[-1]["state"]["client"])
@@ -123,9 +129,10 @@ def test_the_pre_login_surface_of_the_front_gets_the_address_for_the_login_bucke
 
 
 @pytest.mark.parametrize(("path", "body", "message"), GATES)
-def test_a_remote_session_on_the_front_gets_each_local_only_refusal(front, remote, stub, script, path, body, message):
+def test_a_remote_session_on_the_front_gets_each_local_only_refusal(ungated, remote, stub, script, path, body, message):
+    """The handler's own refusal, with the route table off (the table answers first in production)."""
     script.features = FEATURES
-    res = step(front, stub, path, body, remote, HTTPS)
+    res = step(ungated, stub, path, body, remote, HTTPS)
     assert res.status_code == 409, res.text
     error = res.json()["error"]
     assert error.get("reason") == "check_failed" or error["code"] == "custody.terminal_needed"
@@ -174,7 +181,7 @@ def test_no_ticket_is_minted_on_a_listener_with_terminals_off(gateway, auth, tmp
     app = terminals_app(gateway, auth, tmp_path, on=False)
     front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
     res = front.post(f"/api/w/{stub.ws}/runs/{RUN}/attach", json={}, headers=bearer(remote, HTTPS))
-    assert res.status_code == 404 and "ticket" not in res.text
+    assert res.status_code == 403 and "ticket" not in res.text  # the route gate: terminals are off here
     assert app.state.term_tickets.items == {}
 
 
@@ -225,4 +232,4 @@ def test_terminals_open_is_refused_on_a_listener_with_terminals_off(gateway, aut
         json={"spec": "a" * 64, "idem": "a_" + "0" * 26},
         headers=bearer(remote, HTTPS),
     )
-    assert res.status_code == 404
+    assert res.status_code == 403

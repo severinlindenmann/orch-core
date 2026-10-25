@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from orch_dashboard.app import create_app
 from orch_dashboard.front import Front
+from orch_dashboard.passkey_store import PasskeyStore
 from orch_dashboard.policy import remote_policy
 
 NAME = "orch.example.com"
@@ -57,12 +58,32 @@ def socket_dir():
 
 
 @pytest.fixture
-def app(gateway, auth, tmp_path):
+def passkey_store(tmp_path):
+    """The person's passkey store in a private temporary directory (never the real state directory)."""
+    directory = tmp_path / "passkeys"
+    directory.mkdir(mode=0o700)
+    return PasskeyStore(directory / "passkeys.json")
+
+
+@pytest.fixture
+def app(gateway, auth, tmp_path, passkey_store):
     static = tmp_path / "static"
     (static / "assets").mkdir(parents=True)
     (static / "index.html").write_text('<html><head><script src="/assets/main-hash.js"></script></head></html>')
     (static / "assets/main-hash.js").write_text("x")
-    return create_app(PORT, gateway, auth, static, remote=remote_policy(NAME))
+    return create_app(PORT, gateway, auth, static, remote=remote_policy(NAME), passkeys=passkey_store)
+
+
+@pytest.fixture
+def ungated(gateway, auth, tmp_path, passkey_store):
+    """The front with the route table switched off: tests of the handlers' own refusals (defence in depth, R1-4), which
+    the gate would otherwise answer first."""
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html></html>")
+    policy = dataclasses.replace(remote_policy(NAME), route_gate=False)
+    app = create_app(PORT, gateway, auth, static, remote=policy, passkeys=passkey_store)
+    return TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
 
 
 @pytest.fixture
@@ -90,8 +111,9 @@ def bearer(token, origin=None):
 
 
 def terminals_app(gateway, auth, tmp_path, on):
+    store = PasskeyStore(tmp_path / "passkeys.json")
     static = tmp_path / "static"
     (static / "assets").mkdir(parents=True)
     (static / "index.html").write_text("<html></html>")
     policy = dataclasses.replace(remote_policy(NAME), terminals=on)
-    return create_app(PORT, gateway, auth, static, remote=policy)
+    return create_app(PORT, gateway, auth, static, remote=policy, passkeys=store)

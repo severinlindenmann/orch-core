@@ -276,18 +276,22 @@ def bind_front(path, front_uid):
     finally:
         os.umask(old)
     os.chmod(path, 0o666)
+    st = path.lstat()
+    sock.identity = (st.st_ino, st.st_ctime_ns)  # which file is ours: close_front removes nothing else (as ctl.sock)
     sock.listen(128)
     sock.setblocking(False)
     return sock
 
 
 def close_front(front, path):
-    """Close the front socket and remove its file (only a socket of ours), once."""
+    """Close the front socket and remove its file, once: only the socket this process bound (same inode and change
+    time, like ctl.sock), never a file or another process's socket that took the name since."""
     if front is not None:
         front.close()
         if path is not None:
             with suppress(OSError):
-                if stat.S_ISSOCK(path.lstat().st_mode):
+                st = path.lstat()
+                if stat.S_ISSOCK(st.st_mode) and getattr(front, "identity", None) == (st.st_ino, st.st_ctime_ns):
                     path.unlink()
 
 

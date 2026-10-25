@@ -63,6 +63,7 @@ class ListenerPolicy:
     widget_frames: bool  # the locked `/widget-frame/` route and its own CSP
     pre_login_only: bool  # True: before login only `pre_login` answers
     launch_codes: bool  # the local launch-code exchange (`/auth/session`) is a loopback credential
+    route_gate: bool  # every route needs an ALLOWED/PRE_LOGIN rule in `routegate.TABLE` (default refuse)
     session_kinds: frozenset | None  # None: every kind of session
     extra_headers: tuple = ()
     # Hosts that also answer on the setup page and the public assets (the first-run page may be opened by name).
@@ -134,6 +135,7 @@ def loopback_policy(port: int) -> ListenerPolicy:
         widget_frames=True,
         pre_login_only=False,
         launch_codes=True,
+        route_gate=False,
         session_kinds=None,  # any: the loopback behaviour is unchanged (click routes apply their own kind rule)
         asset_hosts=(f"localhost:{port}",),
     )
@@ -156,6 +158,7 @@ def remote_policy(name: str) -> ListenerPolicy:
         widget_frames=False,
         pre_login_only=True,
         launch_codes=False,
+        route_gate=True,
         session_kinds=frozenset({"remote"}),  # the session kind, not the listener
         extra_headers=(HSTS,),
     )

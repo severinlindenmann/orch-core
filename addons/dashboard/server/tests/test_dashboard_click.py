@@ -2555,7 +2555,7 @@ def test_the_page_key_fingerprint_matches_the_golden_vectors_shared_with_core_an
 
 def test_agent_access_is_refused_on_any_session_that_is_not_a_local_one(client, token, stub, reveals, auth):
     """Until the passkey step-up (R1-6) exists, a remote or unknown session kind never prepares agent_access."""
-    from orch_dashboard.click import REVEAL_SESSION_KINDS
+    from orch_dashboard.stepup import REVEAL_SESSION_KINDS
 
     assert REVEAL_SESSION_KINDS == {"local"}
     for kind in ("remote", "hub", "passkey", None):

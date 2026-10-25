@@ -102,14 +102,16 @@
  "questions": [
   {
    "blocking": true,
+   "hash": "sha256:Q1",
    "id": "Q1",
-   "text": "Which export is the source?",
+   "text": "",
    "to": "ticket_owner"
   },
   {
    "blocking": false,
+   "hash": "sha256:Q2",
    "id": "Q2",
-   "text": "Any naming rule?",
+   "text": "",
    "to": "ticket_owner"
   }
  ],
@@ -122,9 +124,10 @@
    "asked_at": "",
    "asked_by": "",
    "blocking": true,
+   "hash": "sha256:Q1",
    "id": "Q1",
    "state": "answered",
-   "text": "Which export is the source?",
+   "text": "",
    "to": "ticket_owner"
   },
   {
@@ -132,9 +135,10 @@
    "asked_at": "",
    "asked_by": "",
    "blocking": false,
+   "hash": "sha256:Q2",
    "id": "Q2",
    "state": "open",
-   "text": "Any naming rule?",
+   "text": "",
    "to": "ticket_owner"
   }
  ],

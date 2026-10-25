@@ -127,6 +127,7 @@
  "questions": [
   {
    "blocking": true,
+   "hash": "sha256:Q1",
    "id": "Q1",
    "options": [
     {
@@ -143,6 +144,7 @@
   },
   {
    "blocking": false,
+   "hash": "sha256:Q2",
    "id": "Q2",
    "options": [
     {
@@ -168,6 +170,7 @@
    "asked_at": "2026-09-21T14:13:26Z",
    "asked_by": "claude-code",
    "blocking": true,
+   "hash": "sha256:Q1",
    "id": "Q1",
    "options": [
     {
@@ -188,6 +191,7 @@
    "asked_at": "2026-09-21T14:13:28Z",
    "asked_by": "claude-code",
    "blocking": false,
+   "hash": "sha256:Q2",
    "id": "Q2",
    "options": [
     {
@@ -213,7 +217,7 @@
    "name": "code",
    "ref": "refs/heads/feat/one",
    "repo": "local:code",
-   "sha": "sha1"
+   "sha": "sha3"
   }
  ],
  "status": "open",

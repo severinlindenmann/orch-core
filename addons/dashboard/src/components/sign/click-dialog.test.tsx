@@ -206,6 +206,7 @@ describe('answering a question in one-click mode', () => {
   const ANSWER = { kind: 'answer', question: 'Q2', option: 'date' } as const
   const content = {
     headline: 'Answer Q2 on DEMO-0043 with option A (key date)',
+    fields_title: 'About this question',
     sections: [
       { id: 'selected', title: 'Your choice', text: 'A · key date\ntitle: DATE (local midnight)' },
       { id: 'question', title: 'Question Q2', text: 'Which date should the report use?' },

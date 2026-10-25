@@ -130,6 +130,7 @@ export function AnswerSend({
   // A click View that is not the frozen shape (no question hash row, no selected section): the dialog shows it in full.
   const unshown = shown && click.view!.view.confirm.kind === 'click' && !parts
   const [refusedFor, setRefusedFor] = useState<string | null>(null)
+  const [retries, setRetries] = useState(0)
   const mismatch = !!parts && !hashOk
   useEffect(() => {
     if (!mismatch) return
@@ -197,10 +198,15 @@ export function AnswerSend({
         <p role="alert" data-testid="strip-mismatch" className="text-[13px] text-text-muted">
           The question changed while the review was being prepared, so nothing was sent. The latest version is loading.
         </p>
-        <div className="flex justify-end">
-          <Button type="button" size="sm" variant="outline" onClick={() => setNonce((n) => n + 1)}>
+        <div className="flex justify-end gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={() => { setRetries((r) => r + 1); setNonce((n) => n + 1) }}>
             Review again
           </Button>
+          {retries >= 1 && (
+            <Button type="button" size="sm" onClick={() => void open()}>
+              Send answer
+            </Button>
+          )}
         </div>
       </div>
     )

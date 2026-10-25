@@ -160,9 +160,11 @@ const OPTION_HEAD = new RegExp(`^([A-F]) · key (${OPTION_KEY})$`)
 /** Whether the View's rows are exactly the frozen set, in order: `recommended`, the allow-other row, one `option <key>` row per
  * option (letters A, B, C by stored order) each followed only by its own `title` (always), `text`, `fact N`, `cost` rows in that
  * order, the two routing rows, and `question hash` last. Returns the option keys, or null for any unknown/missing/extra row. */
-function frozenRows(rows: NonNullable<Content['fields_changed']>): { keys: string[]; recommended: string | null } | null {
+function frozenRows(rows: NonNullable<Content['fields_changed']>): { keys: string[]; recommended: string | null; allowOther: boolean; lines: string[][] } | null {
   let i = 0
   const keys: string[] = []
+  const lines: string[][] = [] // per option: the `<name>: <value>` lines core puts under the head in `selected`
+  let allowOther = false
   let recommended: string | null = null
   const head = (v: unknown) => typeof v === 'string' ? OPTION_HEAD.exec(v) : null
   if (rows[i]?.field === 'recommended') {
@@ -171,23 +173,26 @@ function frozenRows(rows: NonNullable<Content['fields_changed']>): { keys: strin
     recommended = m[2]
     i++
   }
-  if (rows[i]?.field === 'an answer in your own words is allowed') { if (rows[i].after !== 'yes') return null; i++ }
+  if (rows[i]?.field === 'an answer in your own words is allowed') { if (rows[i].after !== 'yes') return null; allowOther = true; i++ }
   while (i < rows.length && rows[i].field.startsWith('option ')) {
     const m = new RegExp(`^option (${OPTION_KEY})$`).exec(rows[i].field)
     const h = head(rows[i].after)
     if (!m || !h || h[2] !== m[1] || h[1] !== String.fromCharCode(65 + keys.length) || keys.includes(m[1]) || keys.length >= 6) return null
     const key = m[1]
     keys.push(key)
+    lines.push([])
     i++
     const pre = `option ${key} `
     let stage = 0 // title(0) text(1) facts(2) cost(3): in this order, each at most once (facts: numbered 1, 2, ...)
     let facts = 0
-    if (rows[i]?.field !== `${pre}title`) return null
+    if (rows[i]?.field !== `${pre}title` || typeof rows[i].after !== 'string' || !rows[i].after) return null
+    lines[lines.length - 1].push(`title: ${rows[i].after}`)
     i++
     stage = 1
     while (i < rows.length && rows[i].field.startsWith(pre)) {
       const name = rows[i].field.slice(pre.length)
       if (typeof rows[i].after !== 'string') return null
+      lines[lines.length - 1].push(`${name}: ${rows[i].after}`)
       if (name === 'text' && stage <= 1) stage = 2
       else if (/^fact [1-9][0-9]*$/.test(name) && stage <= 2 && name === `fact ${facts + 1}`) { stage = 2; facts++ }
       else if (name === 'cost' && stage <= 2) stage = 4
@@ -201,7 +206,7 @@ function frozenRows(rows: NonNullable<Content['fields_changed']>): { keys: strin
   i++
   if (rows[i]?.field !== 'question hash' || i !== rows.length - 1) return null
   if (recommended !== null && !keys.includes(recommended)) return null
-  return { keys, recommended }
+  return { keys, recommended, allowOther, lines }
 }
 
 /**
@@ -215,6 +220,10 @@ function frozenRows(rows: NonNullable<Content['fields_changed']>): { keys: strin
 export function compactAnswer(content: Content | null | undefined) {
   if (!content || content.summary || !content.ticket || content.ticket.new === true) return null
   if (viewQuestionHash(content) === null) return null
+  // Top level: nothing a question answer does not have (images, acceptance, tasks, cancels, notes) and the one fields title.
+  const c = content as unknown as Record<string, unknown>
+  for (const k of ['images', 'acceptance', 'tasks', 'cancels', 'notes', 'note']) if (c[k] !== undefined && c[k] !== null) return null
+  if (content.fields_title !== 'About this question') return null
   const secs = content.sections ?? []
   const order = ['selected', 'answer', 'note', 'question', 'details', 'why']
   let last = -1
@@ -227,14 +236,22 @@ export function compactAnswer(content: Content | null | undefined) {
   const selected = sec('selected'), answer = sec('answer'), note = sec('note'), question = sec('question')
   if (!question || (!selected && !answer) || (answer && note)) return null
   if (note && !selected) return null
+  const titles: [typeof question | undefined, string | RegExp][] = [
+    [selected, 'Your choice'], [answer, 'Your answer'], [question, /^Question Q[1-9][0-9]*$/],
+    [sec('details'), 'Details from the agent'], [sec('why'), 'Why it was asked'],
+  ]
+  for (const [s, t] of titles) if (s && (typeof t === 'string' ? s.title !== t : !t.test(s.title))) return null
   const rows = frozenRows(content.fields_changed ?? [])
   if (!rows) return null
-  if (selected && answer) { // Other
-    if (selected.text !== 'Something else' || rows.keys.length < 2) return null
-  } else if (selected) { // a choice: the first line names an option row
+  if (selected && answer) { // Other: needs the allow-other row
+    if (selected.text !== 'Something else' || rows.keys.length < 2 || !rows.allowOther) return null
+  } else if (selected) { // a choice: ALL its lines are the option's head and sub-rows, in core's order
     const m = OPTION_HEAD.exec(selected.text.split('\n', 1)[0])
-    if (!m || rows.keys.indexOf(m[2]) !== m[1].charCodeAt(0) - 65) return null
-  } else if (rows.keys.length > 0 || rows.recommended !== null) return null // a text question
+    if (!m) return null
+    const at = rows.keys.indexOf(m[2])
+    if (at !== m[1].charCodeAt(0) - 65 || selected.text !== [m[0], ...rows.lines[at]].join('\n')) return null
+    if (note && note.title !== `Your note; the choice is ${m[2]}`) return null
+  } else if (rows.keys.length > 0 || rows.recommended !== null || rows.allowOther) return null // a text question
   return { ticket: content.ticket, selected, answer, note, question, details: sec('details') }
 }
 

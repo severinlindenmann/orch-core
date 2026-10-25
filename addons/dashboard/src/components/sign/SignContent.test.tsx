@@ -313,18 +313,20 @@ const HASH = 'sha256:' + 'a'.repeat(64)
 const ROW = (field: string, after: string) => ({ field, before: null, after })
 const ROUTING = [ROW('addressed to (per host)', 'the ticket owner'), ROW('blocks the ticket (per host)', 'yes')]
 const OPTIONS = [ROW('option csv', 'A · key csv'), ROW('option csv title', 'Monthly CSV'), ROW('option api', 'B · key api'), ROW('option api title', 'Tariff API')]
+const ALLOW = ROW('an answer in your own words is allowed', 'yes')
 const HASH_ROW = ROW('question hash', HASH)
 const Q = { id: 'question', title: 'Question Q1', text: 'Which export?' }
 const TICKET = { key: 'TST-0001', title: '', uid_tail: 'ab12cd34', key_note: 'key per host' }
 const SEL = { id: 'selected', title: 'Your choice', text: 'A · key csv\ntitle: Monthly CSV' }
 // The exact View core builds (host/signcontent._question): a choice, with the options, the routing rows, the hash last.
-const QUESTION = { headline: 'Answer Q1 on TST-0001 with option A (key csv)', ticket: TICKET, sections: [SEL, Q], fields_changed: [...OPTIONS, ...ROUTING, HASH_ROW] }
-const TEXT_Q = { headline: 'Answer Q1 on TST-0001 with your answer', ticket: TICKET, sections: [{ id: 'answer', title: 'Your answer', text: 'Acme Bank' }, Q], fields_changed: [...ROUTING, HASH_ROW] }
+const QUESTION = { headline: 'Answer Q1 on TST-0001 with option A (key csv)', ticket: TICKET, fields_title: 'About this question', sections: [SEL, Q], fields_changed: [...OPTIONS, ...ROUTING, HASH_ROW] }
+const TEXT_Q = { headline: 'Answer Q1 on TST-0001 with your answer', ticket: TICKET, fields_title: 'About this question', sections: [{ id: 'answer', title: 'Your answer', text: 'Acme Bank' }, Q], fields_changed: [...ROUTING, HASH_ROW] }
 
 it('compact answer: a choice shows the selected option unclamped, question and details clamped with Show all', () => {
-  const long = 'A · key csv\ntitle: Monthly CSV\n' + 'cost: one more line of what this costs\n'.repeat(12)
+  const costLine = 'one more line of what this costs\n'.repeat(12).trimEnd()
+  const long = `A · key csv\ntitle: Monthly CSV\ncost: ${costLine}`
   const details = 'background line\n'.repeat(20)
-  render(<SignContent compact content={{ ...QUESTION, sections: [
+  render(<SignContent compact content={{ ...QUESTION, fields_changed: [ROW('option csv', 'A · key csv'), ROW('option csv title', 'Monthly CSV'), ROW('option csv cost', costLine), OPTIONS[2], OPTIONS[3], ...ROUTING, HASH_ROW], sections: [
     { ...SEL, text: long }, { ...Q, text: 'Which export?\n'.repeat(12) },
     { id: 'details', title: 'Details from the agent', text: details },
   ] }} />)
@@ -346,7 +348,7 @@ it('compact answer: a choice with a note shows both, the note unclamped', () => 
 })
 
 it('compact answer: Other shows Something else and the typed text; a text question shows only the answer', () => {
-  const { unmount } = render(<SignContent compact content={{ ...QUESTION, sections: [
+  const { unmount } = render(<SignContent compact content={{ ...QUESTION, fields_changed: [ALLOW, ...OPTIONS, ...ROUTING, HASH_ROW], sections: [
     { id: 'selected', title: 'Your choice', text: 'Something else' },
     { id: 'answer', title: 'Your answer', text: 'Neither, keep the seeds' }, Q,
   ] }} />)
@@ -361,7 +363,7 @@ it('compact answer: Other shows Something else and the typed text; a text questi
 it('compact answer: the frozen View of each kind is compact, with recommended and the allow-other row too', () => {
   expect(compactAnswer(QUESTION as never)).not.toBeNull()
   expect(compactAnswer(TEXT_Q as never)).not.toBeNull()
-  const rich = { ...QUESTION, fields_changed: [ROW('recommended', 'B · key api'), ROW('an answer in your own words is allowed', 'yes'),
+  const rich = { ...QUESTION, sections: [{ ...SEL, text: 'A · key csv\ntitle: Monthly CSV\ntext: t\nfact 1: Effort: 1 day\nfact 2: Cost: 5\ncost: 5' }, Q], fields_changed: [ROW('recommended', 'B · key api'), ALLOW,
     ROW('option csv', 'A · key csv'), ROW('option csv title', 'Monthly CSV'), ROW('option csv text', 't'), ROW('option csv fact 1', 'Effort: 1 day'), ROW('option csv fact 2', 'Cost: 5'), ROW('option csv cost', '5'),
     ROW('option api', 'B · key api'), ROW('option api title', 'Tariff API'), ...ROUTING, HASH_ROW] }
   expect(compactAnswer(rich as never)).not.toBeNull()
@@ -412,6 +414,44 @@ it('compact answer refuses any unknown, missing, extra or misplaced id and shows
   none(rows(...OPTIONS, ...ROUTING, HASH_ROW, HASH_ROW))
   none(rows(ROW('recommended', 'A · key nope'), ...OPTIONS, ...ROUTING, HASH_ROW))
   none(rows(ROW('option csv fact 2', 'a: b'), ...OPTIONS, ...ROUTING, HASH_ROW))
+})
+
+it('compact answer pins the top-level keys, every selected line, the section titles and the allow-other row', () => {
+  const none = (c: unknown) => expect(compactAnswer(c as never)).toBeNull()
+  // keys a question answer never has, and a fields title other than the frozen one
+  none({ ...QUESTION, images: [] })
+  none({ ...QUESTION, acceptance: [{ id: 'AC1', text: 'x', checked: false }] })
+  none({ ...QUESTION, tasks: [{ n: 1, id: 'T1', title: 'x' }] })
+  none({ ...QUESTION, cancels: [] })
+  none({ ...QUESTION, notes: ['n'] })
+  none({ ...QUESTION, note: 'n' })
+  none({ ...QUESTION, fields_title: 'Changed fields' })
+  none({ ...QUESTION, fields_title: undefined })
+  // `selected` must be ALL of the option's lines, in core's order: a cut or padded text is refused
+  const withText = { ...QUESTION, fields_changed: [ROW('option csv', 'A · key csv'), ROW('option csv title', 'Monthly CSV'), ROW('option csv text', 'One file'), ...OPTIONS.slice(2), ...ROUTING, HASH_ROW] }
+  expect(compactAnswer({ ...withText, sections: [{ ...SEL, text: 'A · key csv\ntitle: Monthly CSV\ntext: One file' }, Q] } as never)).not.toBeNull()
+  none({ ...withText, sections: [SEL, Q] }) // the text line is missing
+  none({ ...withText, sections: [{ ...SEL, text: 'A · key csv\ntext: One file\ntitle: Monthly CSV' }, Q] }) // wrong order
+  none({ ...withText, sections: [{ ...SEL, text: 'A · key csv\ntitle: Monthly CSV\ntext: One file\nextra: x' }, Q] })
+  none({ ...QUESTION, sections: [{ ...SEL, text: 'A · key csv\ntitle: Something I wrote' }, Q] }) // differs from the title row
+  // titles are orch's words
+  none({ ...QUESTION, sections: [{ ...SEL, title: 'Your pick' }, Q] })
+  none({ ...QUESTION, sections: [SEL, { ...Q, title: 'Question' }] })
+  none({ ...QUESTION, sections: [SEL, { ...Q, title: 'Question Q1 (approved)' }] })
+  none({ ...QUESTION, sections: [SEL, { id: 'note', title: 'Your note; the choice is api', text: 'n' }, Q] })
+  none({ ...QUESTION, sections: [SEL, { id: 'note', title: 'Your note', text: 'n' }, Q] })
+  none({ ...TEXT_Q, sections: [{ id: 'answer', title: 'Answer', text: 'x' }, Q] })
+  none({ ...QUESTION, sections: [SEL, Q, { id: 'details', title: 'Details', text: 'd' }] })
+  none({ ...QUESTION, sections: [SEL, Q, { id: 'why', title: 'Why', text: 'd' }] })
+  // Other needs the allow-other row; a text question must not have it
+  const other = { ...QUESTION, sections: [{ id: 'selected', title: 'Your choice', text: 'Something else' }, { id: 'answer', title: 'Your answer', text: 'x' }, Q] }
+  none(other)
+  expect(compactAnswer({ ...other, fields_changed: [ALLOW, ...OPTIONS, ...ROUTING, HASH_ROW] } as never)).not.toBeNull()
+  none({ ...TEXT_Q, fields_changed: [ALLOW, ...ROUTING, HASH_ROW] })
+  // the value of an option's title row is a non-empty string
+  none({ ...QUESTION, fields_changed: [OPTIONS[0], { field: 'option csv title', before: null, after: null }, ...OPTIONS.slice(2), ...ROUTING, HASH_ROW] })
+  none({ ...QUESTION, fields_changed: [OPTIONS[0], ROW('option csv title', ''), ...OPTIONS.slice(2), ...ROUTING, HASH_ROW] })
+  none({ ...QUESTION, fields_changed: [OPTIONS[0], { field: 'option csv title', before: null, after: 5 }, ...OPTIONS.slice(2), ...ROUTING, HASH_ROW] })
 })
 
 it('viewQuestionHash is the one contract row: null for none or several', () => {

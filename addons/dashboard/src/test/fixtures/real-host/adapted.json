@@ -107,6 +107,7 @@
    "questions": [
     {
      "blocking": true,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000010",
      "id": "Q1",
      "options": [
       {
@@ -118,7 +119,6 @@
        "label": "redis"
       }
      ],
-     "recommended": "memory",
      "text": "Which cache backend should the board use?",
      "to": "ticket_owner"
     }
@@ -133,6 +133,7 @@
      "asked_at": "2026-01-01T09:01:45Z",
      "asked_by": "orch-cli",
      "blocking": true,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000010",
      "id": "Q1",
      "options": [
       {
@@ -144,7 +145,6 @@
        "label": "redis"
       }
      ],
-     "recommended": "memory",
      "state": "answered",
      "text": "Which cache backend should the board use?",
      "to": "ticket_owner"
@@ -670,6 +670,7 @@
    "questions": [
     {
      "blocking": true,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000022",
      "id": "Q1",
      "options": [
       {
@@ -681,10 +682,8 @@
        "label": "no"
       }
      ],
-     "recommended": "no",
      "text": "Should the dark theme also apply to the printed invoice?",
-     "to": "ticket_owner",
-     "why": "It changes the print stylesheet."
+     "to": "ticket_owner"
     }
    ],
    "questions_state": [
@@ -693,6 +692,7 @@
      "asked_at": "2026-01-01T09:01:31Z",
      "asked_by": "orch-cli",
      "blocking": true,
+     "hash": "sha256:0000000000000000000000000000000000000000000000000000000000000022",
      "id": "Q1",
      "options": [
       {
@@ -704,11 +704,9 @@
        "label": "no"
       }
      ],
-     "recommended": "no",
      "state": "open",
      "text": "Should the dark theme also apply to the printed invoice?",
-     "to": "ticket_owner",
-     "why": "It changes the print stylesheet."
+     "to": "ticket_owner"
     }
    ],
    "read_ext": true,

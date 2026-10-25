@@ -416,9 +416,13 @@ def document(
         entry = {
             "id": q["id"],
             "to": info.get("to_ref") or q["to"],
-            "text": info.get("text") or q["text"],
+            # The host's text only (the question hash binds it): the ticket document's copy is not bound, so an
+            # empty host text stays empty and the card cannot be answered or verified.
+            "text": info.get("text") or "",
             "blocking": q["blocking"],
         }
+        if isinstance(info.get("hash"), str) and info["hash"]:
+            entry["hash"] = info["hash"]  # what an answer binds: without it the card cannot be answered in one click
         # Options and spec are the host's, verbatim (the question hash binds them): no key whitelist.
         # The flat keys the page reads come out of the spec; a question the host did not describe has no kind.
         if "options" in info:

@@ -35,17 +35,18 @@ const view = (id: string, over: Partial<ClickViewAnswer['view']> = {}, choice = 
     artifacts: null,
     content: {
       headline: 'Answer Q2 on DEMO-0043 with option A (key a)',
+      fields_title: 'About this question',
       ticket: { key: 'DEMO-0043', uid_tail: 'abcd1234' },
       // The frozen signer View (design-question-options.md section 4, rev 5): `selected` first (orch-owned line names), the
       // question, one row per option (letter and key only) with its title sub-row, the routing rows, the question hash last.
       sections: [
-        { id: 'selected', title: 'Your choice', text: `${choice.startsWith('TIMESTAMP') ? 'B · key b' : 'A · key a'}\ntitle: ${choice}` },
+        { id: 'selected', title: 'Your choice', text: choice.startsWith('TIMESTAMP') ? 'B · key b\ntitle: TIMESTAMP' : `A · key a\ntitle: ${choice}` },
         { id: 'question', title: 'Question Q2', text: question },
         ...extra,
       ],
       fields_changed: [
         { field: 'option a', before: null, after: 'A · key a' },
-        { field: 'option a title', before: null, after: 'DATE' },
+        { field: 'option a title', before: null, after: choice.startsWith('TIMESTAMP') ? 'DATE' : choice },
         { field: 'option b', before: null, after: 'B · key b' },
         { field: 'option b title', before: null, after: 'TIMESTAMP' },
         { field: 'addressed to (per host)', before: null, after: 'the ticket owner' },
@@ -261,6 +262,34 @@ describe('Send answer in the card, one-click custody', () => {
     expect(onView).not.toHaveBeenCalledWith(expect.stringContaining('Question'))
     await new Promise((r) => setTimeout(r, ARM_MS + 300))
     expect(sign).not.toHaveBeenCalled()
+  })
+
+  it('a card without a hash (the old adapter dropped it) never arms; after one retry the full dialog is offered', async () => {
+    flag(true)
+    const saved = q.hash
+    delete (q as { hash?: string }).hash
+    try {
+      prepare.mockImplementation(async () => {
+        const id = 'reqh'.padEnd(32, '0')
+        views[id] = view('9', {}, 'DATE', q.text, [], 'sha256:' + 'c'.repeat(64)) // the host's real hash
+        return { request_id: id, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' }
+      })
+      const fb = vi.fn()
+      await mountHost(fb)
+      fireEvent.click(screen.getByText('pick a'))
+      await screen.findByTestId('strip-mismatch', {}, T)
+      expect(screen.queryByRole('button', { name: 'Send answer' })).toBeNull() // first time: only "Review again"
+      fireEvent.click(screen.getByRole('button', { name: 'Review again' }))
+      await waitFor(() => expect(prepare).toHaveBeenCalledTimes(2), T)
+      await waitFor(() => expect(screen.getByTestId('strip-mismatch')).toBeInTheDocument(), T)
+      const again = await screen.findByRole('button', { name: 'Send answer' }, T)
+      await waitFor(() => expect(again).toBeEnabled(), T)
+      fireEvent.click(again)
+      await waitFor(() => expect(fb).toHaveBeenCalled(), T)
+      expect(sign).not.toHaveBeenCalled()
+    } finally {
+      q.hash = saved
+    }
   })
 
   it('a View whose hash differs from the card only in the last character is a mismatch', async () => {

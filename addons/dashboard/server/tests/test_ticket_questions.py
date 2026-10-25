@@ -60,3 +60,27 @@ def test_a_question_the_host_did_not_describe_has_no_kind():
     out = document(data, "p_x", {}, False)
     q = out["questions_state"][0]
     assert "kind" not in q and "options" not in q and "spec" not in q
+
+
+def test_the_card_carries_the_hosts_question_hash():
+    for name in ("choice_full", "text_with_why_and_details"):
+        item = ITEMS[name]
+        assert item["hash"].startswith("sha256:")
+        q = question(name)
+        assert q["hash"] == item["hash"]  # what an answer binds; without it one click can never arm
+
+
+def test_no_hash_from_the_host_means_no_hash_on_the_card():
+    data = data_for(ITEMS["choice_full"])
+    del data["questions"][0]["hash"]
+    assert "hash" not in document(data, "p_x", {}, False)["questions_state"][0]
+
+
+def test_the_ticket_documents_text_is_never_used_for_the_question():
+    data = data_for(ITEMS["choice_full"])
+    data["doc"]["questions"][0]["text"] = "UNBOUND copy from the ticket document"
+    data["questions"][0]["text"] = ""
+    q = document(data, "p_x", {}, False)["questions_state"][0]
+    assert q["text"] == ""
+    data["questions"] = []
+    assert document(data, "p_x", {}, False)["questions_state"][0]["text"] == ""

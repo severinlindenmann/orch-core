@@ -145,3 +145,27 @@ def test_status_report_clean_on_the_empty_machine(tmp_path):
     state.mkdir()
     rep = status.report(state, {"HOME": str(tmp_path)}, state / "run", isolation_facts=_machine())
     assert not [p for p in rep["problems"] if "chmod" in p["fix"]]
+
+
+def test_malicious_remote_name_never_reaches_a_command():
+    f = _machine()
+    cfg = '[remote "x; rm -rf ~"]\n\turl = https://u:p@h/r.git\n'
+    found = di.check(f, HOME, repos=["/work/r"], read=lambda p: cfg if p.endswith(".git/config") else None)
+    assert len(found) == 1 and "rm -rf" not in found[0].fix and ";" not in found[0].fix
+
+
+def test_malicious_repo_path_and_home_are_quoted_in_fixes():
+    f = _machine()
+    evil = "/work/r; rm -rf ~ $(id)"
+    cfg = '[remote "origin"]\n\turl = https://u:p@h/r.git\n'
+    found = di.check(f, HOME, repos=[evil], read=lambda p: cfg if p.endswith(".git/config") else None)
+    assert found[0].fix.startswith("git -C '/work/r; rm -rf ~ $(id)' remote set-url origin ")
+    f.add_path("/home/pat/x y; reboot", kind="dir")
+    bad_home = "/home/pat/x y; reboot"
+    f.add_path(f"{bad_home}/.netrc", uid=1000, mode=0o644)
+    sec = di.check(f, bad_home, read=lambda p: None)
+    assert sec[0].fix == "chmod 600 '/home/pat/x y; reboot/.netrc'"
+
+
+def test_cmd_helper_quotes_every_part():
+    assert di._cmd("a", "b c", "$(x)") == "a 'b c' '$(x)'"

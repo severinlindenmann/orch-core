@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import stat
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -53,6 +54,19 @@ class Finding:
     path: str = ""
 
 
+_PLAIN_NAME = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _cmd(*argv: str) -> str:
+    """The one place a suggested command is built: every part is shell-quoted, because paths, remote names and user
+    names come from files an agent can write and the person may paste the line into a terminal."""
+    return " ".join(shlex.quote(a) for a in argv)
+
+
+def _plain(name: str) -> bool:
+    return _PLAIN_NAME.fullmatch(name) is not None
+
+
 def read_text(path: str) -> str | None:
     """The first 256 KiB of a regular file as text; None when absent, a link, or unreadable. Never raises."""
     try:
@@ -82,7 +96,7 @@ def _secret_files(facts: OsFacts, home: str) -> list[Finding]:
                 Finding(
                     "secret_file_readable",
                     f"{path} holds a password or token and {why}, so an agent could read it",
-                    f"chmod 600 {path}",
+                    _cmd("chmod", "600", path),
                     path,
                 )
             )
@@ -129,7 +143,12 @@ def _repo_tokens(roots: Iterable[str], read: Callable[[str], str | None]) -> lis
                     "token_in_remote_url",
                     f"{path}: the address of remote '{remote}' contains a password or token, which every program "
                     "that can read the repository sees",
-                    f"git -C {root} remote set-url {remote} <address without the token>, then use a credential helper",
+                    (
+                        _cmd("git", "-C", root, "remote", "set-url", remote) + " <address without the token>"
+                        if _plain(remote)
+                        else "change the address of that remote with git remote set-url, without the token"
+                    )
+                    + ", then use a credential helper",
                     path,
                 )
             )
@@ -159,7 +178,7 @@ def _safe_directory(home: str, read: Callable[[str], str | None]) -> list[Findin
                     "safe_directory_star",
                     f"{path} sets safe.directory to *, which turns off git's check that a folder belongs to you for "
                     "every folder, including ones an agent made",
-                    f"remove the safe.directory = * line from {path}",
+                    f"remove the safe.directory = * line from {_cmd(path)}",
                     path,
                 )
             )
@@ -187,7 +206,7 @@ def _groups(facts: OsFacts, person: str | None, agents: list[str]) -> list[Findi
                     "privileged_group",
                     f"{who} {'is' if is_agent else 'are'} in the group '{g}', which gives near-root power over this "
                     "machine" + ("; an agent in it is not isolated" if is_agent else ""),
-                    f"gpasswd -d {name} {g}",
+                    _cmd("gpasswd", "-d", name, g) if _plain(name) and _plain(g) else "remove that user from the group",
                     g,
                 )
             )

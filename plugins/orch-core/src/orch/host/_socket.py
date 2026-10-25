@@ -19,11 +19,12 @@ class Credentials:
     uid: int
     gid: int
     pid: int
-    #: Linux 6.5+ (SO_PEERPIDFD): the PID the kernel's pidfd of the peer names, ``-1`` when the kernel refused the pidfd
-    #: or the process is gone (a denial), ``None`` ONLY when the kernel has no such option. Set by :func:`with_pidfd`.
+    #: Linux 6.5+ (SO_PEERPIDFD), set by :func:`with_pidfd` only: ``None`` = the kernel has no such option (ENOPROTOOPT;
+    #: callers use the weaker start time check), ``-1`` = the kernel refused the pidfd or the process is gone (always a
+    #: denial), a pid = the PID the pidfd names.
     pidfd_pid: int | None = field(default=None, compare=False)
-    #: the open pidfd (``pidfd_pid`` > 0). The caller closes it after the decision, not before: the identity check
-    #: reads it again after it has asked the service manager.
+    #: the OPEN pidfd (only with a ``pidfd_pid`` pid). The accept loop owns it and closes it in a ``finally`` after the
+    #: identity check (:func:`close_pidfd`), not before: the check reads it again after asking the service manager.
     pidfd: int | None = field(default=None, compare=False)
 
 

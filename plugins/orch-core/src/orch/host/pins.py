@@ -153,14 +153,10 @@ class AgentPins:
         user = AGENT_PREFIX + person
         if not valid_person(person) or agent.pw_name != user or agent.pw_uid != uid or uid in (0, host_uid):
             raise UnsafePath(f"agent pins: user {uid} is not {user}")
-        if group.gr_name != user or agent.pw_gid in (0, pwd_gid(getpwuid, host_uid)):
+        if group.gr_name != user or agent.pw_gid in (0, getpwuid(host_uid).pw_gid):
             raise UnsafePath(f"agent pins: the group of {user} is not its own")
         if set(group.gr_mem) - {user} or any(p.pw_gid == agent.pw_gid and p.pw_uid != uid for p in everyone):
             raise UnsafePath(f"agent pins: someone besides {user} is in its group")
         return AgentShare(
             host_uid, uid, agent.pw_gid, user, person, Path(AGENT_RUN_ROOT) / user, f"orch-runner@{person}.service"
         )
-
-
-def pwd_gid(getpwuid: Any, uid: int) -> int:
-    return int(getpwuid(uid).pw_gid)

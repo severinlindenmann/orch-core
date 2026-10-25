@@ -216,6 +216,8 @@ class Host:
 
         self.runners = RunnerHub(self)
         self.runner_identity = runner_identity or default_identity
+        #: a caller-supplied identity check (tests, dev tools) is never replaced by the tier B system check in
+        #: :meth:`_find_share`; production passes none
         self._custom_identity = runner_identity is not None
         #: tier B (spec 13.3), found at start from the root-owned pin: the agent user the run directory is shared with
         self.share: AgentShare | None = None

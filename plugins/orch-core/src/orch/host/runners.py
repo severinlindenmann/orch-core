@@ -43,8 +43,10 @@ import contextlib
 import hashlib
 import logging
 import math
+import os
 import re
 import secrets
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -57,6 +59,7 @@ from jsonschema import Draft202012Validator
 from . import frames
 from ._socket import pidfd_alive, pidfd_pid_now
 from .custody import ensure_private_dir, read_json, write_private
+from .enable import _default_run
 from .errors import HostError
 from .transport import Credentials, Session
 
@@ -72,7 +75,6 @@ __all__ = [
     "RunStore",
     "RunnerHub",
     "main_pid",
-    "main_pid_system",
     "runner_identity",
     "unit_main_process",
     "system_runner_identity",
@@ -127,9 +129,8 @@ def _iso(t: float | None = None) -> str:
 def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platform: str | None = None) -> int | None:
     """The runner unit's main PID from the person's service manager, or ``None``. ``run`` defaults to the H7 command
     runner, which refuses under pytest and with ``ORCH_NO_SERVICE_MANAGER=1`` (so a test never reaches launchctl)."""
+    # lazy: orch.runner.service imports orch.host.enable, which imports back into the host package
     from orch.runner.service import LAUNCHD_LABEL, SYSTEMD_NAME
-
-    from .enable import _default_run
 
     run = run or _default_run
     platform = platform or sys.platform
@@ -159,9 +160,6 @@ SYSTEMCTL_SECONDS = 3
 
 
 def _system_query(argv: list[str]) -> Any:
-    import os
-    import subprocess
-
     if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ORCH_NO_SERVICE_MANAGER") == "1":
         raise OSError(f"{argv[0]} refused: the service manager is off (a test, or ORCH_NO_SERVICE_MANAGER=1)")
     return subprocess.run(  # noqa: S603 - fixed binary, fixed arguments, a validated unit name
@@ -174,9 +172,6 @@ def unit_main_process(unit: str, run: Callable[[list[str]], Any] | None = None) 
     ``orch-runner@<person>.service``), asked of systemd over its D-Bus interface, which any user may read
     (``systemctl show`` is that client; no privilege and no file of the agent's is involved). ``None``: not running,
     unreadable or ambiguous (a denial)."""
-    import os
-    import subprocess
-
     if not re.fullmatch(r"orch-runner@[A-Za-z0-9_-]{1,40}\.service", unit):
         return None
     binary = next((path for path in SYSTEMCTL if os.path.exists(path)), SYSTEMCTL[0])
@@ -195,15 +190,8 @@ def unit_main_process(unit: str, run: Callable[[list[str]], Any] | None = None) 
     return (pid, start) if pid > 1 and start > 0 else None
 
 
-def main_pid_system(unit: str, run: Callable[[list[str]], Any] | None = None) -> int | None:
-    main = unit_main_process(unit, run)
-    return None if main is None else main[0]
-
-
 def proc_start_seconds(pid: int) -> float | None:
     """When ``pid`` started, in seconds on the boot clock (``/proc/<pid>/stat`` field 22, in clock ticks)."""
-    import os
-
     try:
         with open(f"/proc/{int(pid)}/stat", "rb") as handle:
             raw = handle.read(4096).decode("ascii", "replace")
@@ -214,8 +202,6 @@ def proc_start_seconds(pid: int) -> float | None:
 
 
 def monotonic_to_boot_offset() -> float:
-    import time
-
     return time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
 
 

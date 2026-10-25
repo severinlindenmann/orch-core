@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.host.tier_b_helpers import made, pins_dir, tree  # noqa: F401 - fixtures of the tier B tests
+
 
 @pytest.fixture(autouse=True)
 def _fresh_snapshot_store(monkeypatch):

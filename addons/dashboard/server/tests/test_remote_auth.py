@@ -32,7 +32,7 @@ from orch_dashboard.auth import (
     client_address,
     source_key,
 )
-from orch_dashboard.click import REVEAL_SESSION_KINDS
+from orch_dashboard.stepup import REVEAL_SESSION_KINDS
 
 
 def test_exchange_takes_the_kind_and_a_launch_code_opens_a_local_session_only():

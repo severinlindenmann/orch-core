@@ -49,14 +49,7 @@ from .handoff import (
 )
 from .hubapprove import mode_of, refuse_if_hub_only
 from .reads import workspace
-from .stepup import (  # noqa: F401  (re-exported: tests and the page contract import them from here)
-    REVEAL_SESSION_KINDS,
-    ROTATE_LOCAL_ONLY,
-    RUNNER_LOCAL_ONLY,
-    SEALED_LOCAL_ONLY,
-    refusal_check,
-    refuse_step_up,
-)
+from .stepup import refusal_check, refuse_step_up
 
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."

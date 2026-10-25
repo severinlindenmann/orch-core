@@ -30,6 +30,7 @@ CUSTODY_ON_LOCAL_ONLY = (
 )
 REVEAL_LOCAL_ONLY = "Agent access with a shown secret needs a dashboard opened on this computer."
 HUB_LOCAL_ONLY = "A hub step with your backup key needs a dashboard opened on this computer."
+SIGN_LOCAL_ONLY = "This signing step needs a dashboard opened on this computer."
 
 
 def refusal_check(message: str):
@@ -51,12 +52,18 @@ class StepUp:
     code: str = "human.click_refused"
 
 
+def always(body) -> bool:
+    return True
+
+
 def _action(*names):
     return lambda body: getattr(body, "action", None) in names
 
 
-#: The list. Every entry is refused for a session outside REVEAL_SESSION_KINDS. Adding a passkey or a device has no
-#: route yet (an enrollment code is minted on the computer, R1-7/R1-6): `NO_ROUTE_YET` names them so R1-6 cannot forget.
+#: The list. Every entry is refused for a session outside REVEAL_SESSION_KINDS. The three wholly step-up routes
+#: (predicate `always`) are ALSO `step_up` in routegate.TABLE: refused at the gate and again in the handler, on purpose
+#: (defence in depth; a test keeps the two in step). Adding a passkey or a device has no route yet (an enrollment code
+#: is minted on the computer, R1-7/R1-6): `NO_ROUTE_YET` names them so R1-6 cannot forget.
 STEP_UP: tuple[StepUp, ...] = (
     StepUp(
         "One click on (current passphrase, or resume)",
@@ -71,9 +78,9 @@ STEP_UP: tuple[StepUp, ...] = (
         lambda b: not b.on and b.sealed is not None,
         SEALED_LOCAL_ONLY,
     ),
-    StepUp("seal a new passphrase (One click off)", "custody/seal", lambda b: True, SEALED_LOCAL_ONLY),
-    StepUp("device rotate, begin", "rotate/seal", lambda b: True, ROTATE_LOCAL_ONLY),
-    StepUp("device rotate", "rotate", lambda b: True, ROTATE_LOCAL_ONLY),
+    StepUp("seal a new passphrase (One click off)", "custody/seal", always, SEALED_LOCAL_ONLY),
+    StepUp("device rotate, begin", "rotate/seal", always, ROTATE_LOCAL_ONLY),
+    StepUp("device rotate", "rotate", always, ROTATE_LOCAL_ONLY),
     StepUp(
         "dashboard execution on (or terminals), review",
         "runner/review",
@@ -87,12 +94,18 @@ STEP_UP: tuple[StepUp, ...] = (
         "a sealed secret or a reveal key at sign",
         "sign",
         lambda b: b.sealed is not None or b.reveal_key is not None,
-        HUB_LOCAL_ONLY,
+        SIGN_LOCAL_ONLY,
     ),
 )
 #: Hub join / mode / connect: join and leave go through `prepare` and `sign` above, `hub/connect` is a STEP_UP route in
 #: routegate.TABLE (refused at the gate), hub mode is CLI-only.
-NO_ROUTE_YET = ("adding a passkey", "adding a device (enrollment link)", "removing a passkey")
+#: name -> path fragments that would be its route. R1-6: when one of these gets a route, add its STEP_UP entry and
+#: delete the name here; `test_no_route_adds_a_passkey_or_a_device_yet` fails if a route appears first.
+NO_ROUTE_YET = {
+    "adding a passkey": ("passkey/add", "passkey/new", "passkeys/add"),
+    "adding a device (enrollment link)": ("device/add", "enroll/link", "enroll/mint", "devices/link"),
+    "removing a passkey": ("passkey/remove", "passkeys/remove", "passkey/delete"),
+}
 
 #: The routes whose handlers must call `refuse_step_up` first (the test checks them).
 GUARDED_ROUTES = tuple(dict.fromkeys(s.route for s in STEP_UP))

@@ -37,9 +37,9 @@ from test_dashboard_click import (  # noqa: F401
     script,
 )
 
-from orch_dashboard.click import ROTATE_LOCAL_ONLY, RUNNER_LOCAL_ONLY, SEALED_LOCAL_ONLY
 from orch_dashboard.front import Front
 from orch_dashboard.policy import remote_policy
+from orch_dashboard.stepup import ROTATE_LOCAL_ONLY, RUNNER_LOCAL_ONLY, SEALED_LOCAL_ONLY
 
 GATES = [
     ("runner/review", {"on": True}, RUNNER_LOCAL_ONLY),

@@ -3744,8 +3744,10 @@ login.
 - **Passkey routes (R1-5).** `POST /auth/passkey/options` and `/login`, `POST /auth/enroll/options` and `/register`.
   Strict closed bodies (16 KiB), one rate-limit charge per request, a 120 s single-use challenge per ceremony held in
   memory, and one answer for every failure (`passkey.invalid` for login, `enroll.expired` for enrollment: a wrong,
-  used, expired or killed code, a bad registration). The enrollment code is `<id>-<secret>` (public id, 128-bit secret kept only as a digest); 5 wrong secrets burn that code only, an unknown id or malformed code costs its source a rate-limit charge and touches no code; the options step
-  checks it, the register step spends it (first browser wins), and the challenge is bound to the code that asked for it.
+  used, expired or killed code, a bad registration). The enrollment code is `<id>-<secret>` (public id, 128-bit secret kept only as a digest);
+  5 wrong secrets burn that code only, an unknown id or malformed code costs its source a rate-limit charge and
+  touches no code; the options step checks it, the register step spends it (first browser wins), and the
+  challenge is bound to the code that asked for it.
   A store that fails its checks means no login and no enrollment.
 - **Terminals are off remotely by default.** `/term` on the front needs the bearer ticket, Origin `https://<name>`
   (`wss://<name>` connection) and the Settings switch "Terminals over remote access", which is off after enable. A

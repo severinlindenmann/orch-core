@@ -113,9 +113,29 @@ def test_every_body_decides_handler_calls_the_helper_first(app, route):
 
 
 def test_no_route_adds_a_passkey_or_a_device_yet(app):
+    """R1-6: a route for one of `NO_ROUTE_YET` needs a STEP_UP entry first; then delete the name from that dict."""
     paths = [r.path for r in app.routes if isinstance(r, APIRoute)]
-    assert not [p for p in paths if any(w in p for w in ("passkey/add", "passkey/remove", "device/add", "enroll/mint"))]
-    assert stepup.NO_ROUTE_YET  # R1-6 must give these a step-up when they get routes
+    for name, fragments in stepup.NO_ROUTE_YET.items():
+        assert not [p for p in paths if any(f in p for f in fragments)], f"{name} has a route: give it a STEP_UP entry"
+    assert stepup.NO_ROUTE_YET
+
+
+def test_the_routes_refused_whole_in_the_table_are_exactly_the_always_step_up_routes():
+    """The duplication is defence in depth (gate and handler); this keeps the two lists from drifting."""
+    prefix = "/api/w/{ws}/click/"
+    in_table = {
+        path.removeprefix(prefix)
+        for (_, path), (rule, _) in routegate.TABLE.items()
+        if rule == routegate.STEP_UP and path.startswith(prefix)
+    }
+    always = {s.route for s in STEP_UP if s.applies is stepup.always}
+    assert in_table == always
+    assert routegate.TABLE[("POST", "/api/w/{ws}/hub/connect")][0] == routegate.STEP_UP  # the one outside click/
+
+
+def test_the_grant_reveal_and_sealed_sign_say_a_signing_step_not_a_hub_step():
+    sign = next(s for s in STEP_UP if s.route == "sign")
+    assert sign.message == stepup.SIGN_LOCAL_ONLY and "hub" not in sign.message
 
 
 def test_the_body_decides_routes_of_the_table_are_exactly_the_guarded_routes():

@@ -386,10 +386,18 @@ def _traverse(
 
 
 #: secrets that live in a home (the doctor's list, L13): the agent gets an explicit "no access" entry on each one
+_DOCKER = ".docker/" + "config" + ".json"  # in parts: not an orch store file (store-path lint)
 SECRET_PATHS = (
-    ".netrc", ".git-credentials", ".npmrc", ".pypirc", ".docker/" + "config" + ".json"  # not an orch store file: spelled in parts for the store-path lint, ".aws/credentials",
-    ".kube/config", ".config/gh/hosts.yml", ".ssh",
-)  # fmt: skip
+    ".netrc",
+    ".git-credentials",
+    ".npmrc",
+    ".pypirc",
+    _DOCKER,
+    ".aws/credentials",
+    ".kube/config",
+    ".config/gh/hosts.yml",
+    ".ssh",
+)
 _MAX_LISTED = 20
 
 

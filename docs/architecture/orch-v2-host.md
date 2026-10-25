@@ -13459,7 +13459,7 @@ imports anything of orch it checks that the interpreter, the standard library an
 them) are root's and not writable by group or other, and afterwards that every loaded orch module came from the copy. The
 installer runs it when it is root (most VPSs); otherwise setup shows one line to copy,
 `sudo /usr/lib/orch/os-setup/orch-os-setup --person <user> --release <release>`, with a "Check again" button (the installer
-has put the copy there; the release path is validated: absolute, plain characters, root-owned). It computes a plan from OS
+has put the copy there; the release path is validated: absolute, plain characters, a plain directory owned by root or by the person, and every ancestor owned by root or the person and not writable by group or other. Root never executes anything in it: its only root-run line is the recheck from the trusted copy, and setup never writes an ACL for an agent or add-on user, the person does, item 6. `--release` is the releases directory that holds `current`, the same path `orch runner enable` compares the installed unit against). It computes a plan from OS
 facts, prints it, applies it (`--dry-run` prints the exact actions), and may run again: it repairs, it never widens. It uses
 fixed absolute binaries. Directories below an agent-owned one are only ever opened file-descriptor-relative with
 `O_NOFOLLOW` (never by path), so a symlink planted by the agent is refused. The agent's runner is started only after root
@@ -13498,14 +13498,15 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
    `ExecStart` is the person's `<release>/current/bin/orch-runner` (the release build writes it next to `orch-host`).
    **Start check:** `ExecStartPre=+/usr/bin/python3 -I -S /usr/lib/orch/os-setup/orch-os-setup --recheck %i` runs as root
    (the `+` prefix) from the trusted copy, never from the release, before every start, including every `Restart=always`
-   restart (`RestartSec=2`; the start limit then holds a unit that keeps failing). It asks `sudo -l -U` and `sshd -T`
-   again (authoritative, so LDAP and sssd are covered), runs setup's user, group and pin checks, and exits non-zero if
+   restart (`RestartSec=2` throttles it; `StartLimitIntervalSec=0`, because the agent can kill its own runner and a start limit would then stop the unit for good). It asks `sudo -l -U` and `sshd -T`
+   again (authoritative, so LDAP and sssd are covered; the policy files' stat signatures are taken before the questions and compared again after them, and a change in between gives no verdict), runs setup's user, group and pin checks, and exits non-zero if
    any answer changed: it drops the verdict from the pin (the host answers broken) and systemd refuses the start. It
    never calls `systemctl` (stopping a unit from its own start job would wait on itself). When every answer still holds
    it refreshes the pin's stat signatures, so a harmless edit elsewhere in `/etc/ssh` does not leave the host saying
    "policy changed" until the next setup run. On a new release the host sends `runner.restart` (it notices at
    `runner.hello` that the runner loaded another release, once per release); the runner exits when it has no live runs
-   (`force`: at once) and `Restart=always` starts the new code, so updates need no root. The person's CLI only reads the
+   (`force`: at once); once the restart is armed the runner refuses new spawns, and the idle decision and a spawn's admission
+   share one lock, so no spawn is accepted and then killed and `Restart=always` starts the new code, so updates need no root. The person's CLI only reads the
    unit (`is-active`, `show`); it never installs, starts or stops it.
 8. **Report.** It prints what it did. A root login: the installer creates the person user `orch` first and the tunnel
    line uses it. Running the dashboard as root would still separate agents, but a dashboard takeover would then be a

@@ -223,7 +223,7 @@ class Plan:
         return out
 
     def admin_command(self) -> str:
-        """The one line setup shows. Always the root-owned copy at a fixed path, never the person's release."""
+        """The one line setup shows. Always the root-owned copy at a fixed path; root never executes the release."""
         return f"sudo {LAUNCHER_PATH} --person {shlex.quote(self.person)} --release {shlex.quote(self.release)}"
 
 
@@ -315,11 +315,12 @@ class PolicyVerdict:
     ssh: str  # "denied" | "allowed" | "unknown"
     ssh_dropin: bool  # sshd is not installed, or orch's own drop-in is present with the expected content
     files: dict[str, list[int] | None]  # path -> [size, mtime_ns, ctime_ns, inode], or None while absent
+    changed: bool = False  # a policy file changed while sudo and sshd were being asked: no verdict can be trusted
 
     @property
     def ok(self) -> bool:
         unreadable = any(v == list(UNREADABLE) for v in self.files.values())
-        return self.sudo == "none" and self.ssh == "denied" and self.ssh_dropin and not unreadable
+        return self.sudo == "none" and self.ssh == "denied" and self.ssh_dropin and not unreadable and not self.changed
 
     def document(self) -> dict[str, Any]:
         return {"sudo": self.sudo, "ssh": self.ssh, "ssh_dropin": self.ssh_dropin, "files": self.files}
@@ -334,6 +335,23 @@ def assess_policy(
     0750 root) is not recorded on its own: the host can never stat it, so recording it would make every later check
     fail. The folder's own signature stays recorded and catches an entry added, removed or renamed; an in-place edit of
     such a file is the documented limit (it needs root, §13.9)."""
+
+    def signatures() -> dict[str, list[int] | None]:
+        files: dict[str, list[int] | None] = {}
+        for path in POLICY_FILES:
+            sig = facts.file_sig(path)
+            files[path] = None if sig is None else list(sig)
+        for folder in _POLICY_DIRS:
+            for entry in facts.listdir(folder):
+                if host_uid is not None and not facts.can_stat(host_uid, f"{folder}/{entry}"):
+                    continue
+                sig = facts.file_sig(f"{folder}/{entry}")
+                files[f"{folder}/{entry}"] = None if sig is None else list(sig)
+        return files
+
+    # Signatures FIRST, then the authoritative answers, then the signatures again: a file replaced while sudo and sshd
+    # were being asked would otherwise be recorded as "unchanged" next to an answer that belongs to the old content.
+    before, dropin_before = signatures(), facts.file_sig(SSHD_DROPIN)
     sudo = facts.sudo_allows(user)
     ports = facts.sshd_ports()
     answers = (
@@ -342,23 +360,17 @@ def assess_policy(
         else [facts.sshd_denies(user, h, a, la, port) for h, a, la in SSH_CONTEXTS for port in (ports or [22])]
     )
     ssh = "unknown" if any(a is None for a in answers) else "denied" if all(answers) else "allowed"
-    files: dict[str, list[int] | None] = {}
-    for path in POLICY_FILES:
-        sig = facts.file_sig(path)
-        files[path] = None if sig is None else list(sig)
-    for folder in _POLICY_DIRS:
-        for entry in facts.listdir(folder):
-            if host_uid is not None and not facts.can_stat(host_uid, f"{folder}/{entry}"):
-                continue
-            sig = facts.file_sig(f"{folder}/{entry}")
-            files[f"{folder}/{entry}"] = None if sig is None else list(sig)
+    files = before
+    dropin_sig = facts.file_sig(SSHD_DROPIN)
+    changed = signatures() != before or dropin_sig != dropin_before
     doas = files.get("/etc/doas.conf") is not None  # doas rules are not checked with doas itself: refuse while present
     return PolicyVerdict(
         "unknown" if sudo is None or doas else "allowed" if sudo else "none",
         ssh,
         not facts.sshd_installed()
-        or (facts.file_sig(SSHD_DROPIN) is not None and (dropin_text is None or dropin_text == SSHD_DROPIN_TEXT)),
+        or (dropin_sig is not None and (dropin_text is None or dropin_text == SSHD_DROPIN_TEXT)),
         files,
+        changed,
     )
 
 
@@ -399,6 +411,8 @@ def unit_runner(release: str) -> UnitFile:
     content = f"""[Unit]
 Description=orch runner for %i (user orch-agent-%i)
 After=network.target
+# The agent can kill its own runner; a start limit would then stop the unit for good. RestartSec throttles instead.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

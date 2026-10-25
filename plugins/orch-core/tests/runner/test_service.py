@@ -301,3 +301,21 @@ def test_tier_b_release_build_has_the_runner_launcher_the_unit_runs(tmp_path) ->
     assert launcher.resolve() == (final / "bin" / "orch-runner").resolve()
     assert os.access(launcher, os.X_OK) and launcher.read_text().startswith("#!")
     assert "orch.runner.cli" in launcher.read_text()
+
+
+def test_tier_b_setup_and_the_cli_name_the_same_release_so_the_unit_compares_equal(tmp_path) -> None:
+    env = {"HOME": "/home/sev", "XDG_DATA_HOME": ""}
+    releases = service.tier_b_release(env)
+    assert releases == Path("/home/sev/.local/share/orch/releases")
+    facts = FakeOsFacts()
+    facts.add_user("sev", 1000, home="/home/sev")
+    installed = osusers.plan(facts, "sev", 1000, release=str(releases)).units[0]  # what `--release <it>` writes
+    plan = service.plan_tier_b("sev", releases, uid=1000, platform="linux")
+    here = svc.Plan(**{**plan.__dict__, "unit_path": tmp_path / "u"})
+    here.unit_path.write_text(installed.content)
+    assert svc.differences(here) == []
+
+
+def test_tier_b_plan_refuses_a_release_path_a_unit_cannot_hold() -> None:
+    with pytest.raises(svc.Unsupported):
+        service.plan_tier_b("sev", Path("/home/my user/releases"), platform="linux")

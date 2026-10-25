@@ -220,3 +220,59 @@ def test_the_launcher_shebang_is_one_argument_so_linux_can_execute_it_directly()
     interpreter, *rest = SHEBANG.strip().removeprefix("#!").split(" ")
     assert interpreter == "/usr/bin/python3" and len(rest) == 1  # Linux passes "-I -S" as ONE argument: an error
     assert set(rest[0].removeprefix("-")) == {"I", "S"}
+
+
+def test_unit_never_stops_for_a_start_limit_the_agent_can_provoke() -> None:
+    unit = _go()[1].files[UNIT]
+    head = unit[: unit.index("[Service]")]
+    assert "StartLimitIntervalSec=0\n" in head  # a [Unit] setting; the agent can kill its own runner
+    assert "RestartSec=2\n" in unit
+
+
+def test_a_policy_file_replaced_while_sudo_is_asked_gives_no_verdict() -> None:
+    from orch.setup.osusers import assess_policy
+
+    facts = FakeOsFacts()
+    facts.add_user("orch-agent-sev", 991)
+    facts.sigs["/etc/sudoers"] = (900, 2, 3, 4)
+    seen: list[tuple] = []
+    real = facts.sudo_allows
+
+    def sudo_and_swap(user):
+        seen.append(facts.sigs["/etc/sudoers"])
+        facts.sigs["/etc/sudoers"] = (901, 5, 6, 7)  # a rule appears after sudo answered for the old file
+        return real(user)
+
+    facts.sudo_allows = sudo_and_swap
+    v = assess_policy(facts, "orch-agent-sev")
+    assert seen == [(900, 2, 3, 4)] and v.changed and not v.ok
+    assert v.files["/etc/sudoers"] == [900, 2, 3, 4]  # the signature taken BEFORE the question
+    assert "changed while" in osapply.why_not_ok(v, "orch-agent-sev")
+
+
+def test_a_swap_during_the_recheck_refuses_the_start() -> None:
+    facts, ex = _fresh()
+    real = facts.sshd_denies  # only the policy assessment asks sshd (the plan's own checks ask sudo)
+
+    def swap(*a):
+        facts.sigs["/etc/sudoers"] = (777, 8, 8, 8)
+        return real(*a)
+
+    facts.sshd_denies = swap
+    res = recheck(facts, ex, PERSON, is_root=True)
+    assert not res.ok and "changed while" in " ".join(res.problems) and "policy" not in _pin(facts, ex)
+
+
+def test_a_dropin_replaced_while_asked_gives_no_verdict() -> None:
+    from orch.setup.osusers import assess_policy
+
+    facts = FakeOsFacts()
+    facts.sigs[osapply.SSHD_DROPIN] = (30, 1, 1, 1)
+    real = facts.sshd_denies
+
+    def deny_and_swap(*a):
+        facts.sigs[osapply.SSHD_DROPIN] = (30, 2, 2, 2)
+        return real(*a)
+
+    facts.sshd_denies = deny_and_swap
+    assert assess_policy(facts, "orch-agent-sev").changed

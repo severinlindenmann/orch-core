@@ -151,3 +151,42 @@ def test_a_refused_restart_is_logged_not_raised(monkeypatch) -> None:
 
     hub.restart_runner = refuse  # type: ignore[method-assign]
     asyncio.run(hub._ask_restart(False))
+
+
+def test_the_gate_is_armed_only_after_a_request() -> None:
+    stop = threading.Event()
+    gate = RestartGate(lambda: 1, stop, sleep=lambda s: stop.wait(5))
+    assert gate.armed is False
+    gate.request()
+    assert gate.armed is True
+    stop.set()
+
+
+def test_the_idle_decision_and_a_spawns_admission_are_one_step() -> None:
+    lock, stop, order = threading.RLock(), threading.Event(), []
+
+    def live() -> int:
+        order.append("locked" if lock._is_owned() else "unlocked")  # noqa: SLF001
+        return 0
+
+    gate = RestartGate(live, stop, lock=lock, sleep=lambda s: None)
+    gate.request()
+    gate._thread.join(5)
+    assert "locked" in order and stop.is_set()  # the waiter's own idle check ran under the spawn lock
+
+
+def test_an_armed_runner_refuses_new_spawns_and_starts_nothing(w, rstate, tmp_path) -> None:  # noqa: F811
+    from orch.host.runners import new_run_id
+    from tests.host.test_runner_socket import fields, payload
+
+    r = Runner(w, rstate)
+    try:
+        r.link._restart = lambda force: {"restarting": True, "live": 0, "force": force}
+        r.link._restarting = lambda: True
+        marker = tmp_path / "ran"
+        with pytest.raises(HostError):
+            argv = ["/bin/sh", "-c", f"touch {marker}; sleep 5"]
+            w.h.run(w.h.host.runners.spawn(w.wid, fields(w, run=new_run_id()), payload(tmp_path, argv)))
+        assert not marker.exists() and r.sup.table.live() == []
+    finally:
+        r.close()

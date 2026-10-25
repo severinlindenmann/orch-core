@@ -165,6 +165,14 @@ def agent_tier(state: Path, uid: int | None = None, *, facts: Any = None) -> Tie
     return Tier("broken", AGENT_PREFIX + user.name, user.name, found.summary)
 
 
+def tier_b_release(env: Mapping[str, str]) -> Path:
+    """The ONE release path of tier B: ``orch-os-setup --release`` is given this, and :func:`plan_tier_b` compares the
+    installed unit against it (the unit runs ``<this>/current/bin/orch-runner``)."""
+    from orch.host.release import releases_dir
+
+    return releases_dir(dict(env))
+
+
 def plan_tier_b(
     person: str, releases: Path, *, uid: int | None = None, platform: str | None = None
 ) -> host_enable.Plan:
@@ -178,6 +186,8 @@ def plan_tier_b(
     platform = platform or sys.platform
     if not platform.startswith("linux"):
         raise host_enable.Unsupported(f"agents run as their own user only on Linux, not on {platform}")
+    if not osusers._good_release(str(releases)):
+        raise host_enable.Unsupported(f"the release path {releases} cannot be written into a service unit")
     if not osusers.valid_person(person):
         raise host_enable.Unsupported(f"'{person}' cannot name an agent user")
     user = osusers.AGENT_PREFIX + person

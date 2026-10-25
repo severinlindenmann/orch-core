@@ -14,6 +14,15 @@ from tests.osfacts_fake import FakeOsFacts
 PERSON, UID = "sev", 1000
 
 
+def _rel(facts, path="/opt/orch/release", **kw) -> None:
+    """The release directory and its ancestors, root-owned 0755 unless ``kw`` says otherwise (for the release only)."""
+    node = path
+    facts.add_path("/", kind="dir", mode=0o755)
+    while node := node.rsplit("/", 1)[0]:
+        facts.add_path(node, kind="dir", mode=0o755)
+    facts.add_path(path, **{"kind": "dir", "mode": 0o755, **kw})
+
+
 class FakeExec:
     """Captures every command; simulates just enough of the machine for the next plan to see its own effects."""
 
@@ -127,10 +136,11 @@ def _go(facts=None, ex=None, **kw) -> tuple[ApplyResult, FakeExec, FakeOsFacts]:
     facts = facts or FakeOsFacts()
     if facts.user(PERSON) is None:
         facts.add_user(PERSON, UID, home="/home/sev")
-    if facts.stat("/opt/orch/release") is None:
-        facts.add_path("/opt/orch/release", kind="dir", mode=0o755)
+    release = kw.get("release", "/opt/orch/release")
+    if release == "/opt/orch/release" and facts.stat(release) is None and not kw.get("no_release"):
+        _rel(facts, kind="dir", mode=0o755)
     ex = ex or FakeExec(facts)
-    return apply(facts, ex, PERSON, UID, is_root=kw.get("is_root", True)), ex, facts
+    return apply(facts, ex, PERSON, UID, release=release, is_root=kw.get("is_root", True)), ex, facts
 
 
 def test_fresh_run_applies_everything_in_order_with_fixed_binaries() -> None:
@@ -326,7 +336,7 @@ def test_privileged_group_after_creation_stops_before_directories() -> None:
 
 def test_root_login_creates_orch_person_then_plans_again() -> None:
     f = FakeOsFacts()
-    f.add_path("/opt/orch/release", kind="dir", mode=0o755)
+    _rel(f, kind="dir", mode=0o755)
     ex = FakeExec(f)
     res = apply(f, ex, "root", 0, is_root=True)
     created = [c for c in ex.commands if c[0] == BIN["useradd"] and "--system" not in c]
@@ -337,7 +347,7 @@ def test_root_login_creates_orch_person_then_plans_again() -> None:
 def test_dry_run_prints_exact_actions_and_changes_nothing(monkeypatch) -> None:
     f = FakeOsFacts()
     f.add_user(PERSON, UID, home="/home/sev")
-    f.add_path("/opt/orch/release", kind="dir", mode=0o755)
+    _rel(f, kind="dir", mode=0o755)
     ex = DryRunExecutor()
     monkeypatch.setattr(ex, "query", lambda argv: RunResult(1))
     res = apply(f, ex, PERSON, UID, is_root=True)
@@ -390,12 +400,76 @@ def test_release_path_is_validated(bad) -> None:
     assert not p.ok and p.refusals[0].code == "bad_release"
 
 
-def test_release_must_be_root_owned() -> None:
+def _with_release(**kw):
     f = FakeOsFacts()
     f.add_user(PERSON, UID, home="/home/sev")
-    f.add_path("/opt/orch/release", uid=UID, kind="dir", mode=0o755)
+    _rel(f, **kw)
+    return f
+
+
+def test_a_release_owned_by_the_person_is_accepted_and_setup_writes_no_acl_on_it() -> None:
+    res, ex, _ = _go(facts=_with_release(uid=UID))
+    assert res.ok, res.report()
+    assert not [c for c in ex.commands if any("/opt/orch/release" in x for x in c) and c[0] != "write"]
+    assert all("/opt/orch/release" not in path for path, _ in ex.secures)  # no ACL for any agent or add-on user
+
+
+def test_a_release_in_the_persons_own_tree_is_accepted() -> None:
+    f = FakeOsFacts()
+    f.add_user(PERSON, UID, home="/home/sev")
+    _rel(f, "/home/sev/.local/share/orch/releases", uid=UID, mode=0o700)
+    for node in ("/home/sev", "/home/sev/.local", "/home/sev/.local/share", "/home/sev/.local/share/orch"):
+        f.add_path(node, uid=UID, kind="dir", mode=0o750)
+    res, _, _ = _go(facts=f, release="/home/sev/.local/share/orch/releases")
+    assert res.ok, res.report()
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda f: f.add_path("/opt/orch/release", uid=4242, kind="dir", mode=0o755),  # someone else's
+        lambda f: f.add_path("/opt/orch/release", kind="dir", mode=0o775),  # group-writable
+        lambda f: f.add_path("/opt/orch/release", kind="dir", mode=0o757),  # other-writable
+        lambda f: f.add_path("/opt/orch/release", kind="link"),
+        lambda f: f.add_path("/opt/orch/release", kind="file"),
+        lambda f: f.add_path("/opt/orch", uid=4242, kind="dir", mode=0o755),  # an ancestor of someone else's
+        lambda f: f.add_path("/opt", kind="dir", mode=0o777),  # an ancestor others can write
+        lambda f: f.add_path("/opt", kind="dir", mode=0o1777),  # sticky does not make it safe
+        lambda f: f.paths.pop("/opt"),  # an ancestor that cannot be examined
+    ],
+)
+def test_a_release_anyone_else_could_swap_is_refused(mutate) -> None:
+    f = _with_release()
+    mutate(f)
     res, ex, _ = _go(facts=f)
-    assert not res.ok and "release directory" in res.problems[0] and ex.commands == []
+    assert not res.ok and "release" in res.problems[0] and ex.commands == []
+
+
+def test_a_missing_release_is_refused() -> None:
+    res, ex, _ = _go(facts=_with_release(), release="/opt/orch/nothing")
+    assert not res.ok and "must exist" in res.problems[0] and ex.commands == []
+
+
+def test_no_root_exec_line_names_the_release() -> None:
+    """Root executes only the trusted copy; the person's release runs as the agent (ExecStart, User=)."""
+    from orch.setup.osusers import plan
+
+    p = plan(FakeOsFacts(), PERSON, UID, release="/home/sev/rel")
+    for unit in p.units:
+        for line in unit.content.splitlines():
+            key = line.split("=", 1)[0]
+            root_run = key in (
+                "ExecStartPre",
+                "ExecStartPost",
+                "ExecStop",
+                "ExecStopPost",
+                "ExecReload",
+                "ExecCondition",
+            )
+            if root_run or line.startswith(("ExecStart=+", "ExecStart=!", "ExecStart=!!")):
+                assert "/home/sev/rel" not in line, line
+    runner = p.units[0].content
+    assert "ExecStart=/home/sev/rel/current/bin/orch-runner" in runner and "User=orch-agent-%i" in runner
 
 
 def test_symlinked_repos_stops_before_any_tool_touches_it() -> None:
@@ -590,7 +664,7 @@ def test_every_fact_detect_reads_after_apply_is_reachable_by_the_person() -> Non
 
     facts = _Recording()
     facts.add_user(PERSON, UID, home="/home/sev")
-    facts.add_path("/opt/orch/release", kind="dir", mode=0o755)
+    _rel(facts, kind="dir", mode=0o755)
     ex = FakeExec(facts)
     assert apply(facts, ex, PERSON, UID, is_root=True).ok
     state = "/home/sev/.local/state/orch"
@@ -631,7 +705,7 @@ def _applied_world():
 
     facts = _TwoViews()
     facts.add_user(PERSON, UID, home="/home/sev")
-    facts.add_path("/opt/orch/release", kind="dir", mode=0o755)
+    _rel(facts, kind="dir", mode=0o755)
     facts.add_path("/etc/sudoers.d", mode=0o750, kind="dir")  # Ubuntu: 0750 root
     facts.add_path("/etc/sudoers.d/runner")
     facts.sigs["/etc/sudoers"] = (900, 2, 3, 4)
@@ -674,7 +748,7 @@ def test_a_real_change_still_shows_and_names_the_path() -> None:
 def test_a_readable_folder_entry_is_recorded_and_watched() -> None:
     facts = _TwoViews()
     facts.add_user(PERSON, UID, home="/home/sev")
-    facts.add_path("/opt/orch/release", kind="dir", mode=0o755)
+    _rel(facts, kind="dir", mode=0o755)
     facts.add_path("/etc/sudoers.d", mode=0o755, kind="dir")
     facts.add_path("/etc/sudoers.d/90-x")
     facts.sigs["/etc/sudoers.d/90-x"] = (30, 2, 3, 5)

@@ -178,7 +178,7 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
         )
     try:
         if tier.kind == "B":  # the system unit root installed: read-only here, never written by the person's CLI
-            unit = service.plan_tier_b(str(tier.person), releases_dir(dict(env)), uid=uid)
+            unit = service.plan_tier_b(str(tier.person), service.tier_b_release(env), uid=uid)
         else:
             unit = service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
     except svc.Unsupported as exc:
@@ -347,10 +347,10 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     stop = threading.Event()
     from .restart import RestartGate
 
-    gate = RestartGate(lambda: len(sup.table.live()), stop)
+    gate = RestartGate(lambda: len(sup.table.live()), stop, lock=sup._spawn_lock)
     link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term,
                     config=lambda: read_config(state, uid), grants=grants, release=release,
-                    restart=gate.request)  # fmt: skip
+                    restart=gate.request, restarting=lambda: gate.armed)  # fmt: skip
     link.start()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, lambda *_: stop.set())
@@ -447,7 +447,7 @@ def _status(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> in
     try:
         tier = service.agent_tier(state, uid)
         if tier.kind == "B":
-            unit = service.plan_tier_b(str(tier.person), releases_dir(dict(env)), uid=uid)
+            unit = service.plan_tier_b(str(tier.person), service.tier_b_release(env), uid=uid)
             doc["card"] = enablement.card_text(tier.agent_user)
             doc["agent_user"] = tier.agent_user
         else:

@@ -56,6 +56,7 @@ __all__ = [
     "RealExecutor",
     "apply",
     "main",
+    "release_problem",
     "recheck",
     "why_not_ok",
 ]
@@ -302,6 +303,8 @@ def why_not_ok(v: PolicyVerdict, agent: str) -> str:
             f"/etc/doas.conf exists. orch cannot check doas rules, so '{agent}' is not recorded as safe. "
             "Remove /etc/doas.conf (or the doas package) and run this again."
         )
+    if v.changed:
+        return "A sudo or SSH policy file changed while it was being checked, so nothing is recorded. Run this again."
     if v.sudo == "allowed":
         return f"'{agent}' has a sudo rule. Remove it and run this again."
     if v.sudo == "unknown":
@@ -315,6 +318,29 @@ def why_not_ok(v: PolicyVerdict, agent: str) -> str:
     if any(sig == list(UNREADABLE) for sig in v.files.values()):
         return "A sudo or SSH policy file could not be read, so the policy cannot be recorded."
     return "The sudo and SSH policy could not be confirmed."
+
+
+def release_problem(facts: OsFacts, release: str, person_uid: int | None) -> str | None:
+    """Why ``release`` cannot be what the units name (``None``: it can). The release lives in the person's tree, so it
+    need not be root's, but nobody else may be able to swap it: the directory and EVERY ancestor are owned by root or
+    by the person and are not writable by group or other (a sticky ``/tmp`` fails this too). Root never executes
+    anything in it (the units' root-run lines name the trusted copy only; the agent runs it as itself), and setup never
+    writes an ACL for an agent or add-on user on it (the person does, §13.2 item 6)."""
+    owners = {0} if person_uid is None else {0, person_uid}
+    node = release
+    while True:
+        info = facts.stat(node)
+        if info is None or (node == release and (info.is_symlink or not info.is_dir)):
+            return f"The release directory {release} must exist and be a plain directory."
+        if info.uid not in owners or info.mode & 0o022:
+            return (
+                f"{node} must be owned by root or by you and not be writable by others "
+                f"(it is on the path of the release directory {release})."
+            )
+        parent = os.path.dirname(node)
+        if parent == node:
+            return None
+        node = parent
 
 
 class _Apply:
@@ -636,9 +662,9 @@ def apply(
             res.fail(r.message)
         _Apply(facts, ex, res).quarantine(p)  # on ANY refusal a kept agent must not keep running or stay recorded
         return res
-    rel = facts.stat(release)
-    if rel is None or rel.is_symlink or not rel.is_dir or rel.uid != 0 or rel.mode & 0o022:
-        return res.fail(f"The release directory {release} must exist, be owned by root and not be writable by others.")
+    problem = release_problem(facts, release, p.person_uid)
+    if problem:
+        return res.fail(problem)
     st = _Apply(facts, ex, res)
     if p.create_person:
         st.run(

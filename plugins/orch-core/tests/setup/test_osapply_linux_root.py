@@ -40,7 +40,8 @@ def root_machine():
             _unmet(f"{binary} is missing")
     person = pwd.getpwuid(os.getuid()).pw_name
     release = f"/opt/orch-ci-release-{os.getpid()}"
-    # outside /tmp: the units use PrivateTmp. A stand-in program that just stays up.
+    # outside /tmp: the units use PrivateTmp. A stand-in program that just stays up. Root-owned here (a person-owned
+    # release needs the person's home to be traversable by the agent, which the person's ACL step does: L5).
     # every directory on its own, explicitly root-owned 0755 (install -d gives parents the umask's mode)
     for sub in ("", "/current", "/current/bin"):
         _sudo("install", "-d", "-o", "root", "-g", "root", "-m", "0755", f"{release}{sub}")

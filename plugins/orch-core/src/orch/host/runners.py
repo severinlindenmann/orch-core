@@ -73,6 +73,7 @@ __all__ = [
     "main_pid",
     "main_pid_system",
     "runner_identity",
+    "unit_main_process",
     "system_runner_identity",
 ]
 
@@ -151,31 +152,99 @@ def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platfor
 SYSTEMCTL = ("/usr/bin/systemctl", "/bin/systemctl")
 
 
-def main_pid_system(unit: str, run: Callable[[list[str]], Any] | None = None) -> int | None:
-    """The main PID of the SYSTEM unit ``unit`` (tier B: ``orch-runner@<person>.service``), asked of systemd over its
-    D-Bus interface, which any user may read (``systemctl show`` is that client; no privilege and no file of the
-    agent's is involved). ``None``: not running, unreadable or ambiguous (a denial)."""
-    import os
+#: the environment and time limit of the system manager query: it runs in the serialized accept loop
+SYSTEMCTL_ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
+SYSTEMCTL_SECONDS = 3
 
-    from .enable import _default_run
+
+def _system_query(argv: list[str]) -> Any:
+    import os
+    import subprocess
+
+    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ORCH_NO_SERVICE_MANAGER") == "1":
+        raise OSError(f"{argv[0]} refused: the service manager is off (a test, or ORCH_NO_SERVICE_MANAGER=1)")
+    return subprocess.run(  # noqa: S603 - fixed binary, fixed arguments, a validated unit name
+        argv, capture_output=True, text=True, timeout=SYSTEMCTL_SECONDS, check=False, env=SYSTEMCTL_ENV
+    )
+
+
+def unit_main_process(unit: str, run: Callable[[list[str]], Any] | None = None) -> tuple[int, int] | None:
+    """``(MainPID, ExecMainStartTimestampMonotonic in microseconds)`` of the SYSTEM unit ``unit`` (tier B:
+    ``orch-runner@<person>.service``), asked of systemd over its D-Bus interface, which any user may read
+    (``systemctl show`` is that client; no privilege and no file of the agent's is involved). ``None``: not running,
+    unreadable or ambiguous (a denial)."""
+    import os
+    import subprocess
 
     if not re.fullmatch(r"orch-runner@[A-Za-z0-9_-]{1,40}\.service", unit):
         return None
     binary = next((path for path in SYSTEMCTL if os.path.exists(path)), SYSTEMCTL[0])
+    argv = [binary, "show", "-p", "MainPID", "-p", "ExecMainStartTimestampMonotonic", "--", unit]
     try:
-        res = (run or _default_run)([binary, "show", "-p", "MainPID", "--value", "--", unit])
-    except OSError:
+        res = (run or _system_query)(argv)
+    except (OSError, subprocess.SubprocessError):
         return None
-    found = re.fullmatch(r"\s*([0-9]+)\s*", res.stdout or "") if res.returncode == 0 else None
-    pid = int(found.group(1)) if found else 0
-    return pid if pid > 1 else None
+    if res.returncode != 0:
+        return None
+    found = dict(line.split("=", 1) for line in (res.stdout or "").splitlines() if "=" in line)
+    try:
+        pid, start = int(found["MainPID"]), int(found["ExecMainStartTimestampMonotonic"])
+    except (KeyError, ValueError):
+        return None
+    return (pid, start) if pid > 1 and start > 0 else None
+
+
+def main_pid_system(unit: str, run: Callable[[list[str]], Any] | None = None) -> int | None:
+    main = unit_main_process(unit, run)
+    return None if main is None else main[0]
+
+
+def proc_start_seconds(pid: int) -> float | None:
+    """When ``pid`` started, in seconds on the boot clock (``/proc/<pid>/stat`` field 22, in clock ticks)."""
+    import os
+
+    try:
+        with open(f"/proc/{int(pid)}/stat", "rb") as handle:
+            raw = handle.read(4096).decode("ascii", "replace")
+        fields = raw[raw.rindex(")") + 2 :].split()  # the name (field 2) may hold spaces and parentheses
+        return int(fields[19]) / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def monotonic_to_boot_offset() -> float:
+    import time
+
+    return time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
+
+
+#: systemd's start stamp and the kernel's start tick are read at different moments and resolutions
+START_TOLERANCE = 1.0
+
+
+def started_when_systemd_says(pid: int, start_us: int) -> bool:
+    """The process ``pid`` started when the unit's main process did. A reused PID has another start time. The two
+    clocks differ by the time spent suspended; a suspend after the start therefore denies (fail closed), and the
+    runner is then restarted by its unit. ``False`` when either time cannot be read."""
+    began = proc_start_seconds(pid)
+    if began is None:
+        return False
+    try:
+        expected = start_us / 1_000_000 + monotonic_to_boot_offset()
+    except (OSError, AttributeError):
+        return False
+    return abs(began - expected) <= START_TOLERANCE
 
 
 def system_runner_identity(
     share: Any, pins: Any, credentials: Credentials, run: Callable[[list[str]], Any] | None = None
 ) -> bool:
     """Tier B: the connecting process is the main process of the agent's runner unit AND the root-owned pin still names
-    exactly this agent user for this host (read again at every connection: a replaced pin or user never matches)."""
+    exactly this agent user for this host (read again at every connection: a replaced pin or user never matches).
+
+    The PID alone could be reused (a descriptor passed on, the process gone, the PID taken by the restarted runner).
+    So the PID must be bound to the process: by the kernel's pidfd of the peer where there is one (Linux 6.5+), else by
+    its start time against the unit's. Neither possible: denied."""
     if credentials.uid != share.uid:
         return False
     try:
@@ -183,8 +252,12 @@ def system_runner_identity(
             return False
     except (OSError, ValueError):
         return False
-    pid = main_pid_system(share.unit, run)
-    return pid is not None and pid == credentials.pid
+    main = unit_main_process(share.unit, run)
+    if main is None or main[0] != credentials.pid:
+        return False
+    if credentials.pidfd_pid is not None:
+        return credentials.pidfd_pid == credentials.pid
+    return started_when_systemd_says(credentials.pid, main[1])
 
 
 def runner_identity(credentials: Credentials) -> bool:

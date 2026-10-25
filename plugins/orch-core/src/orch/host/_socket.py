@@ -7,7 +7,7 @@ import os
 import socket
 import struct
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import frames
 
@@ -17,6 +17,33 @@ class Credentials:
     uid: int
     gid: int
     pid: int
+    #: Linux 6.5+ (SO_PEERPIDFD): the PID the kernel's pidfd of the peer names now, ``-1`` when that process has exited,
+    #: ``None`` when the kernel cannot say. Only :func:`with_pidfd` sets it.
+    pidfd_pid: int | None = field(default=None, compare=False)
+
+
+SO_PEERPIDFD = 77
+
+
+def with_pidfd(sock: socket.socket, credentials: Credentials) -> Credentials:
+    """``credentials`` plus the peer's PID as its pidfd names it (a pidfd cannot be redirected to a reused PID)."""
+    if sys.platform != "linux":
+        return credentials
+    try:
+        fd = struct.unpack("i", sock.getsockopt(socket.SOL_SOCKET, SO_PEERPIDFD, 4))[0]
+    except OSError:
+        return credentials  # an older kernel: no pidfd, callers fall back to the start time
+    try:
+        pid = None
+        with open(f"/proc/self/fdinfo/{fd}", encoding="ascii") as handle:
+            for line in handle:
+                if line.startswith("Pid:"):
+                    pid = int(line.split()[1])
+    except (OSError, ValueError):
+        pid = None
+    finally:
+        os.close(fd)
+    return Credentials(credentials.uid, credentials.gid, credentials.pid, -1 if pid is None else pid)
 
 
 def peer_credentials(sock: socket.socket) -> Credentials:

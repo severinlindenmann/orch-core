@@ -243,15 +243,55 @@ class FixedPins:
         return self.found
 
 
+def show(pid="4242", start="5000000"):
+    return f"MainPID={pid}\nExecMainStartTimestampMonotonic={start}\n"
+
+
 def test_main_pid_system_asks_the_system_manager_for_the_instance():
     seen: list = []
-    assert main_pid_system("orch-runner@sev.service", fake_systemctl("4242\n", seen=seen)) == 4242
+    assert main_pid_system("orch-runner@sev.service", fake_systemctl(show(), seen=seen)) == 4242
     argv = seen[0]
     assert argv[0].endswith("/systemctl") and "--user" not in argv
     assert argv[-2:] == ["--", "orch-runner@sev.service"] and "MainPID" in argv
 
 
-@pytest.mark.parametrize("out,code", [("0\n", 0), ("1\n", 0), ("", 0), ("12 13\n", 0), ("abc", 0), ("4242\n", 1)])
+def test_the_system_manager_query_has_a_clean_environment_and_a_short_timeout(monkeypatch):
+    from orch.host import runners
+
+    seen = {}
+
+    def fake_run(argv, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(returncode=0, stdout=show(), stderr="")
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("ORCH_NO_SERVICE_MANAGER", raising=False)
+    monkeypatch.setattr("subprocess.run", fake_run)
+    assert runners.unit_main_process("orch-runner@sev.service") == (4242, 5000000)
+    assert seen["env"] == {"PATH": "/usr/bin:/bin", "LC_ALL": "C"} and seen["timeout"] <= 3
+
+
+def test_a_hung_system_manager_is_a_denial(monkeypatch):
+    def hang(argv):
+        raise subprocess.TimeoutExpired(argv, 3)
+
+    assert main_pid_system("orch-runner@sev.service", hang) is None
+
+
+@pytest.mark.parametrize(
+    "out,code",
+    [
+        (show("0"), 0),
+        (show("1"), 0),
+        (show("", ""), 0),
+        (show("12 13"), 0),
+        (show("abc"), 0),
+        (show(start="0"), 0),
+        ("MainPID=4242\n", 0),
+        ("", 0),
+        (show(), 1),
+    ],
+)
 def test_main_pid_system_denies_anything_unclear(out, code):
     assert main_pid_system("orch-runner@sev.service", fake_systemctl(out, code)) is None
 
@@ -261,7 +301,7 @@ def test_main_pid_system_denies_anything_unclear(out, code):
 )
 def test_main_pid_system_names_only_the_runner_template(unit):
     seen: list = []
-    assert main_pid_system(unit, fake_systemctl("4242", seen=seen)) is None
+    assert main_pid_system(unit, fake_systemctl(show(), seen=seen)) is None
     assert seen == []
 
 
@@ -272,9 +312,13 @@ def test_main_pid_system_is_denied_when_the_manager_is_unreachable():
     assert main_pid_system("orch-runner@sev.service", boom) is None
 
 
-def test_system_identity_needs_uid_pin_and_main_pid():
+def test_system_identity_needs_uid_pin_main_pid_and_the_start_time(monkeypatch):
+    from orch.host import runners
+
     mine = share()
-    run = fake_systemctl("777\n")
+    run = fake_systemctl(show("777", "5000000"))
+    monkeypatch.setattr(runners, "monotonic_to_boot_offset", lambda: 100.0)
+    monkeypatch.setattr(runners, "proc_start_seconds", lambda pid: 105.2)  # 5 s + 100 s offset, within a tick
     good = Credentials(AGENT_UID, GID, 777)
     assert system_runner_identity(mine, FixedPins(mine), good, run) is True
     assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 778), run) is False  # a child
@@ -283,6 +327,60 @@ def test_system_identity_needs_uid_pin_and_main_pid():
     assert system_runner_identity(mine, FixedPins(share(gid=GID + 1)), good, run) is False  # the pin names another
     assert system_runner_identity(mine, FixedPins(UnsafePath("broken")), good, run) is False
     assert system_runner_identity(mine, FixedPins(mine), good, fake_systemctl("", 3)) is False
+
+
+def test_a_reused_pid_with_another_start_time_is_denied(monkeypatch):
+    from orch.host import runners
+
+    mine = share()
+    run = fake_systemctl(show("777", "5000000"))
+    monkeypatch.setattr(runners, "monotonic_to_boot_offset", lambda: 100.0)
+    good = Credentials(AGENT_UID, GID, 777)
+    monkeypatch.setattr(runners, "proc_start_seconds", lambda pid: 60.0)  # the old process that took the connection
+    assert system_runner_identity(mine, FixedPins(mine), good, run) is False
+    monkeypatch.setattr(runners, "proc_start_seconds", lambda pid: None)  # the start time cannot be read
+    assert system_runner_identity(mine, FixedPins(mine), good, run) is False
+
+
+def test_the_kernels_pidfd_binds_the_pid_where_there_is_one(monkeypatch):
+    from orch.host import runners
+
+    mine = share()
+    run = fake_systemctl(show("777", "5000000"))
+    monkeypatch.setattr(runners, "proc_start_seconds", lambda pid: 1.0)  # never consulted with a pidfd
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 777), run) is True
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, 778), run) is False
+    assert system_runner_identity(mine, FixedPins(mine), Credentials(AGENT_UID, GID, 777, -1), run) is False
+
+
+def test_proc_start_seconds_reads_this_process_on_linux():
+    from orch.host.runners import proc_start_seconds
+
+    if sys.platform != "linux":
+        assert proc_start_seconds(os.getpid()) is None  # no /proc: the identity then denies
+        return
+    assert 0 < proc_start_seconds(os.getpid()) < proc_start_seconds(os.getpid()) + 1
+
+
+# -- no runner-class op reaches the person or control columns --------------------------------------------------------
+
+
+def test_a_runner_peer_is_never_a_person_agent_or_control_peer():
+    from orch.host.runners import RUNNER_OPS
+
+    runner = Peer(UID, "runner")
+    workspace = SimpleNamespace(kind="workspace", host_uid=UID, runner_uid=UID, workspace_id=WS)
+    server = Server(workspace, Registry({UID: runner}), HostLimits(), lambda *a: None, META)  # type: ignore[arg-type]
+    with pytest.raises(frames.FrameError):
+        server.classify(Credentials(UID, GID, 1))  # a registry entry cannot turn a UID into a runner peer
+    for kind in ("control", "workspace", "worker"):
+        listener = SimpleNamespace(kind=kind, host_uid=UID, runner_uid=AGENT_UID, workspace_id=WS)
+        server = Server(listener, Registry({}), HostLimits(), lambda *a: None, META)  # type: ignore[arg-type]
+        with pytest.raises(frames.FrameError):
+            server.classify(Credentials(AGENT_UID, GID, 1), runner_ok=True)  # the agent UID is not the person
+    from orch.host.control import CONTROL_OPS
+
+    assert not set(RUNNER_OPS) & set(CONTROL_OPS)  # runner ops are not control ops, and the gates are separate
 
 
 # -- the pin: who is the agent user ------------------------------------------------------------------------------------

@@ -16,7 +16,7 @@ from typing import Any, Protocol
 from . import frames
 from ._socket import Credentials as Credentials
 from ._socket import peer_credentials as peer_credentials
-from ._socket import receive
+from ._socket import receive, with_pidfd
 from .client import Pin as Pin
 from .client import connect_pinned as connect_pinned
 from .client import handshake_pinned as handshake_pinned
@@ -518,6 +518,7 @@ class Server:
                 self.limits.attempt(credentials.uid)
                 runner_ok = False
                 if self.listener.kind == "runner" and self.runner_identity is not None:
+                    credentials = with_pidfd(sock, credentials)
                     try:  # the service manager is asked off the event loop
                         runner_ok = bool(await asyncio.to_thread(self.runner_identity, credentials))
                     except Exception:  # noqa: BLE001 - an unanswerable check denies

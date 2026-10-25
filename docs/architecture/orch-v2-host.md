@@ -13558,6 +13558,15 @@ has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner
   host is the person (`host_uid`) at `/run/orch/<person uid>/runner/host.sock`, and refuses to start for any `--run` but
   its own `/run/orch/agents/<user>`. Until L9 moves the terminal socket, `runner.hello` names
   `/run/orch/agents/<user>/term/<runner uid>/term.sock` and the host accepts only that path.
+  The PID is bound to the process, not only compared: by the kernel's pidfd of the peer (`SO_PEERPIDFD`, Linux 6.5+),
+  else by its start time in `/proc/<pid>/stat` against the unit's `ExecMainStartTimestampMonotonic` (both converted to
+  the boot clock, within a second); where neither can be read the connection is denied. The query runs
+  `systemctl` with `env={PATH, LC_ALL=C}` and a 3 s limit. A suspend after the runner started makes the start times
+  disagree and denies it until the unit restarts (fail closed).
+  The agent and its runner share one UID, so they share one connection-attempt bucket and the 32-connection cap: an agent
+  can lock its own runner out and nobody else. In tier B `runner.json` (programs, `login_shell`, `pass_env`) is owned
+  by the agent and the agent can edit it: no person-side policy may live in that file; it stays in state the host
+  enforces.
 - The terminal socket moves to `/run/orch/agents/orch-agent-<user>/term.sock` (agent-owned directory with the person's ACL,
   socket 0660). §12.6.1's checks apply with that path: the directory owned by the runner UID, no write for others
   except the person's ACL entry, peer UID and PID equal the runner's.

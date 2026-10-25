@@ -136,6 +136,17 @@ only the garbage collector releases; in the browser, overwrite the `Uint8Array` 
   {"custody.passphrase": envelope}}`. The first open that succeeds uses the offer up (a refused passphrase needs a new
   `begin`); a refusal before that leaves it. A clear `passphrase` is `invalid.input`. The dashboard server offers
   `POST /api/w/{ws}/click/custody/seal` and relays the envelope in `POST .../click/custody`, local sessions only.
+- **GitHub token (C16, `in`, `github.token`).** Signer op and feature `github_token`, same shape as the passphrase:
+  `github_token {workspace_id, begin: true}` first checks (through `addon.list`) that the `github` add-on is active and
+  asks for a key, then answers `{request_id, view_digest, seal: {..., purposes: ["github.token"]}, expires_in}`
+  (digest of `{op: "github.token", workspace_id, request_id, seal}`; 5 minutes, one use, one offer per workspace). The
+  page calls `github_token {workspace_id, request_id, view_digest, sealed: {"github.token": envelope}}`; the signer
+  opens it, requires the shape of a GitHub token and stores it with `credential.person_store`, the path `orch addon
+  login github` uses too. `github_token {workspace_id, remove: true}` deletes it (`credential.person_remove`, the path
+  of `orch addon logout`). Tier A only (tier B: "store the token in the terminal: orch addon login github"). On a remote
+  session the sealed call needs the passkey step-up (op `github_token`, bound to the request id and review digest);
+  `begin` and `remove` do not. The dashboard server offers `GET /api/w/{ws}/click/github` (saved or not, from
+  `addon.list`), `POST .../click/github/seal`, `POST .../click/github` and `POST .../click/github/remove`, owners only.
 - **Grant reveal (C7, `out`).** The View carries `"seal": {"v": 1, "alg": ..., "purposes": ["grant.secret"], "for": <the full SHA-256 (64 hex) of
   the page key's base64url text>}` (no `pk`: the page brings its own key) plus a risk line (`REVEAL_RISK`) and
   `REVEAL_LINE` in `lines`. The page sends `reveal_key` at **`prepare`** (the key is part of the review the person

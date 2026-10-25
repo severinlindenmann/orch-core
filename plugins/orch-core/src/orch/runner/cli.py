@@ -168,8 +168,19 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
     state = _state(args.state, env)
     wid, prefix = _workspace(state, uid, args.workspace, env)
     run_dir = svc.run_dir_for(state, args.run, env)
+    tier = service.agent_tier(state, uid)
+    if tier.kind == "broken":
+        return _fail(
+            "runner.unavailable",
+            f"agents are set up to run as their own user ({tier.agent_user}), but that is not safe right now: "
+            f"{tier.why} Dashboard execution stays off.",
+            9,
+        )
     try:
-        unit = service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
+        if tier.kind == "B":  # the system unit root installed: read-only here, never written by the person's CLI
+            unit = service.plan_tier_b(str(tier.person), service.tier_b_release(env), uid=uid)
+        else:
+            unit = service.plan(env, state, run_dir, releases_dir(dict(env)) / "current")
     except svc.Unsupported as exc:
         return _fail("unsupported.platform", str(exc), 3)
     except ValueError as exc:
@@ -191,19 +202,35 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
                 5,
             )
     manager = host_cli.SERVICE_MANAGER(unit)
-    differs = svc.differences(unit)
-    if not args.replace and (differs or (differs is None and host_cli._loaded(manager))):
-        named = differs or ["unit"]  # no unit file here, but the label is loaded: from a unit file elsewhere
-        what = ", ".join(named) + " differ" if differs else "unit differs: the label is loaded from another file"
-        return _fail(
-            "host.busy",
-            f"a runner service ({unit.label}) is already installed for another setup ({what}); replacing it ends its "
-            "runs. To do that on purpose: orch runner enable --replace",
-            4,
-            differs=named,
-        )
+    agent_user = tier.agent_user if tier.kind == "B" else None
+    if agent_user is not None:
+        if svc.differences(unit) is None:
+            return _fail(
+                "runner.unavailable",
+                f"the agent runner service ({unit.label}) is not installed: run orch-os-setup again",
+                9,
+            )
+        if manager.active() is not True:
+            return _fail(
+                "runner.unavailable",
+                f"the agent runner service ({unit.label}) is not running. It checks the sudo and SSH rules at every "
+                "start and refuses while they are not safe: run orch-os-setup again to see why",
+                9,
+            )
+    else:  # tier A: an installed unit for another setup is never replaced silently
+        differs = svc.differences(unit)
+        if not args.replace and (differs or (differs is None and host_cli._loaded(manager))):
+            named = differs or ["unit"]  # no unit file here, but the label is loaded: from a unit file elsewhere
+            what = ", ".join(named) + " differ" if differs else "unit differs: the label is loaded from another file"
+            return _fail(
+                "host.busy",
+                f"a runner service ({unit.label}) is already installed for another setup ({what}); replacing it ends "
+                "its runs. To do that on purpose: orch runner enable --replace",
+                4,
+                differs=named,
+            )
     terminals = not args.no_terminals
-    text = enablement.risk_text(prefix or wid[:8], wid, terminals)
+    text = enablement.risk_text(prefix or wid[:8], wid, terminals, agent_user)
     if not confirmed:
         try:
             TERMINAL.show(text)
@@ -224,8 +251,10 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
         from orch.host.custody import write_private
 
         write_private(Path(state) / "runner" / "settings.json", {"v": 1, "umask": mask})  # runs start with it
-        changed = manager.install()
-        ran = manager.start(changed=changed)
+        changed, ran = False, []  # tier B: the service is root's, already running; nothing to install or start
+        if agent_user is None:
+            changed = manager.install()
+            ran = manager.start(changed=changed)
     except (OSError, HostError) as exc:
         return _fail("runner.unavailable", f"the {unit.kind} runner service did not start: {exc}", 9)
     enablement.set_enabled(state, wid, True, uid, terminals=terminals, text=text)
@@ -236,7 +265,10 @@ def enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, *, con
     except OSError:
         stale = None
     data = {"workspace_id": wid, "enabled": True, "terminals": terminals, "service": unit.kind,
-            "unit": str(unit.unit_path), "changed": changed, "ran": ran, "card": enablement.CARD_TEXT}  # fmt: skip
+            "unit": str(unit.unit_path), "changed": changed, "ran": ran,
+            "card": enablement.card_text(agent_user)}  # fmt: skip
+    if agent_user is not None:
+        data["agent_user"] = agent_user
     if stale is not None:
         data["runner_message"] = stale["message"]
         data["runner_restarted"] = stale["restarted"]
@@ -269,6 +301,42 @@ def terminals(args: argparse.Namespace, env: Mapping[str, str]) -> dict[str, Any
     return {"ok": True, "result": {"data": {"workspace_id": wid, "terminals": on}}}
 
 
+def _host_endpoint(uid: int, run_dir: Path, *, pins: Any = None) -> tuple[int, Path]:
+    """Where the host is and whose it is: ``(host UID, runner socket)``.
+
+    Tier A (no root-owned agent pin for this UID): the host is this UID and the socket is ``<--run>/runner/host.sock``.
+    Tier B (spec 13.3): this UID is the pinned agent user, so the host is the PERSON the root-owned pin names, at
+    ``/run/orch/<person uid>/runner/host.sock``; ``--run`` must be this agent's own run directory
+    (``/run/orch/agents/<user>``). A pin that cannot be trusted, or any other ``--run``, refuses to start: a runner
+    never falls back to tier A while a pin exists (it would look for a host that is the agent itself)."""
+    from orch.host.listener import default_run_directory
+    from orch.host.pins import AgentPins
+    from orch.setup.osusers import AGENT_RUN_ROOT
+
+    pins = pins if pins is not None else AgentPins()
+    doc = pins.get(uid)
+    if doc is None:
+        return uid, Path(run_dir) / "runner" / "host.sock"
+    host = doc.get("host_uid")
+    if doc.get("class") != "agent" or type(host) is not int or host in (0, uid):
+        raise SystemExit(f"orch-runner: the pin of UID {uid} is not a usable agent pin; not starting")
+    import pwd
+
+    try:
+        user = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        raise SystemExit(f"orch-runner: UID {uid} is not in the user database; not starting") from None
+    if Path(run_dir) != Path(AGENT_RUN_ROOT) / user:
+        raise SystemExit(f"orch-runner: an agent runner uses {AGENT_RUN_ROOT}/{user} as --run, not {run_dir}")
+    return host, default_run_directory(host) / "runner" / "host.sock"
+
+
+def term_peer_uid(uid: int, host_uid: int) -> int | None:
+    """Whose connections the term socket serves: ``None`` (the runner's own UID) in tier A,
+    the person's UID in tier B."""
+    return host_uid if host_uid != uid else None
+
+
 def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     from orch.host import enable as svc
 
@@ -280,13 +348,16 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     run_dir = svc.run_dir_for(state, args.run, env)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     uid = os.getuid()
+    host_uid, host_socket = _host_endpoint(uid, run_dir)
     sup = Supervisor(state)
     swept = sup.open()
     log = logging.getLogger("orch.runner")
     for item in swept:
         log.warning("run %s was lost (runner restart); swept %d", item["run"], item["swept"])
     gen = new_gen()
-    term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid, gen=gen, sup=sup)
+    # tier B (host_uid is the person): only the person's dashboard may connect, by ACL and by peer UID (spec 13.5)
+    term = TermListener(Path(run_dir) / "term" / str(uid) / "term.sock", uid, gen=gen, sup=sup,
+                        peer_uid=term_peer_uid(uid, host_uid))  # fmt: skip
     try:
         term.open()
     except OSError as exc:
@@ -308,15 +379,25 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
             log.warning("dev runner: announced in %s (only a host started with --dev-runner admits it)", announced)
         except OSError as exc:
             log.warning("dev runner: not announced: %s", exc)
-    # tier A: the host runs as this UID; the link refuses a socket whose peer is another UID
+    # the link refuses a socket whose peer is not the host UID: this UID in tier A, the person's in tier B
     from .service import current_release, write_loaded_release
 
     release = current_release()  # eager: the release this runner loaded, for the host's hello and for enable
     write_loaded_release(state, release)
-    link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term,
-                    config=lambda: read_config(state, uid), grants=grants, release=release)  # fmt: skip
-    link.start()
     stop = threading.Event()
+    from .restart import RestartGate
+
+    gate = RestartGate(lambda: len(sup.table.live()), stop, lock=sup._spawn_lock)
+    refused = threading.Event()
+
+    def give_up() -> None:  # refused again and again: exit non-zero, `Restart=always` starts a fresh process
+        refused.set()
+        stop.set()
+
+    link = HostLink(sup, host_socket, host_uid=host_uid, gen=gen, term=term,
+                    config=lambda: read_config(state, uid), grants=grants, release=release,
+                    restart=gate.request, restarting=lambda: gate.armed, on_denied=give_up)  # fmt: skip
+    link.start()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, lambda *_: stop.set())
     try:
@@ -333,7 +414,7 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
                 from . import devmode
 
                 devmode.withdraw(announced, os.getpid())
-    return 0
+    return 1 if refused.is_set() else 0
 
 
 def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO | None = None) -> int:
@@ -410,7 +491,15 @@ def _status(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> in
         "card": enablement.CARD_TEXT,
     }
     try:
-        unit = service.plan(env, state, svc.run_dir_for(state, args.run, env), releases_dir(dict(env)) / "current")
+        tier = service.agent_tier(state, uid)
+        if tier.kind == "B":
+            unit = service.plan_tier_b(str(tier.person), service.tier_b_release(env), uid=uid)
+            doc["card"] = enablement.card_text(tier.agent_user)
+            doc["agent_user"] = tier.agent_user
+        else:
+            unit = service.plan(env, state, svc.run_dir_for(state, args.run, env), releases_dir(dict(env)) / "current")
+            if tier.kind == "broken":
+                doc["problem"] = problem or tier.why
         try:
             doc["service"] = host_cli.SERVICE_MANAGER(unit).status()
         except OSError as exc:

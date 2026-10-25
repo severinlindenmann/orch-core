@@ -16,6 +16,8 @@ export interface AddOnRow {
   locked: string | null
   /** Why the switch cannot move now (needs something first, or work is running), or null. */
   blocked: string | null
+  /** #1198 C14: what blocks it is dashboard execution being off (or terminals not on): the page offers to turn it on. */
+  runner_switch?: boolean
   /** The add-on's version from its manifest (always-on parts: the install's own); null or absent when the host does not say. */
   version?: string | null
 }

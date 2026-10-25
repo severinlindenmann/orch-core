@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "enroll.expired",
+    "message": "this enrollment link is not valid any more",
+    "hint": "ask the administrator for a new link",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

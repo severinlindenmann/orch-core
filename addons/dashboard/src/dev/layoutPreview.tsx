@@ -37,7 +37,7 @@ import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { AgentAccess } from '@/app/shell/AgentAccess'
 import { ConfirmWords } from '@/setup/Setup'
 import { nowMs } from '@/lib/time'
-import { clickProblem, CLICK_RISK, type ClickCard, type ClickViewAnswer } from '@/api/click'
+import { clickProblem, CLICK_RISK, ROTATE_LINE, type ClickCard, type ClickViewAnswer } from '@/api/click'
 import { pastedIn } from '@/api/pasteImage'
 import { Section } from '@/app/pages/new-ticket/SectionsEditor'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
@@ -784,8 +784,15 @@ function install() {
   termTransport.connect = fixtureConnect
   // M7b: the Start agent dialog's routes answer from fixtures.
   const ag = agentsApi as unknown as Record<string, unknown>
-  for (const name of ['preview', 'runner', 'start', 'depositStatus', 'forget', 'riskNotices', 'acknowledge']) originals.set(`agents.${name}`, ag[name])
+  for (const name of ['runnerReview', 'runnerSwitch', 'preview', 'runner', 'start', 'depositStatus', 'forget', 'riskNotices', 'acknowledge']) originals.set(`agents.${name}`, ag[name])
   ag.preview = async () => agentPreview(current)
+  ag.runnerReview = async (_ws: string, b: { on: boolean; terminals?: boolean }) => ({
+    view: { op: b.on ? 'runner.on' : 'runner.off', on: b.on, terminals: b.on && !!b.terminals, lines: b.on
+      ? ['Turn on dashboard execution for Demo.', 'Agents may run commands on this computer as you when you start them.', 'Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys.', 'That includes reading your SSH keys and your orch keys. The dashboard can then start agents, create worktrees and open terminals for this workspace, as you.']
+      : ['Turn off dashboard execution for Demo.', 'Open terminals close within a second; agents already running keep running; the dashboard starts no new ones.'] },
+    view_digest: 'sha256:' + 'a'.repeat(64),
+  })
+  ag.runnerSwitch = async (_ws: string, b: { on: boolean; terminals?: boolean }) => ({ enabled: b.on, terminals: b.on && !!b.terminals })
   ag.riskNotices = async () => ({ acknowledged: current === 'agent-dialog-acked' ? { start_agent: true, login_shell: true } : {} })
   ag.acknowledge = async () => ({ acknowledged: { start_agent: true } })
   originals.set('shares.list', sharesApi.list)
@@ -825,6 +832,19 @@ function install() {
     if (!current.startsWith('signing-')) return (original.custodySeal as (...a: never[]) => Promise<object>)(...args)
     throw new ApiError(409, { code: 'human.click_refused', message: 'fixture', retryable: false })
   })
+  // #1198 C13: Settings → Devices shows "This computer's key"; the review answers from a fixture (the seal itself is
+  // covered by ReplaceKey.test.tsx: the fixture's workspace id is not a real one).
+  set('rotateSeal', async (ws: string) => ({
+    request_id: 'hr_01M5PVRB46WS3X8H5X2RQK04S9',
+    view_digest: `sha256:${'a'.repeat(64)}`,
+    expires_in: 300,
+    view: {
+      op: 'device.rotate', workspace: { id: ws, name: 'billing', prefix: 'DEMO' },
+      old: `d_${'1'.repeat(32)}`, new: `d_${'2'.repeat(32)}`, confirm: { kind: 'click' },
+      lines: ['Replace the signing key of this computer for billing.', 'The old key stops signing everywhere, also while a hub is down. The new key is signed by your recovery code for this workspace only; nothing is re-shared with a hub.', `old device: d_${'1'.repeat(32)}`, `new device: d_${'2'.repeat(32)}`, ROTATE_LINE],
+      rotate_line: ROTATE_LINE, seal: { v: 1, alg: 'P256-HKDF-SHA256-A256GCM', pk: `B${'Q'.repeat(86)}`, purposes: ['device.recovery_code', 'custody.passphrase'] },
+    },
+  }))
   set('switchClick', async (...args: never[]) => {
     if (!current.startsWith('signing-')) return original.switchClick(...args)
     if (current === 'signing-idle-off') {
@@ -843,7 +863,7 @@ function install() {
     add_ons: [
       { id: 'dashboard', title: 'Dashboard', desc: "This workspace's dashboard (locked on).", state: 'on', locked: 'The dashboard is always on: it is what shows this workspace.', blocked: null },
       { id: 'start-agent', title: 'Start agents', desc: 'Start an agent from the dashboard. It runs on this computer, as you.', state: 'on', locked: null, blocked: 'Stop first: an agent of yours is running right now.' },
-      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this computer from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' },
+      { id: 'terminals', title: 'Terminals', desc: 'Open a terminal on this computer from the dashboard. It runs as you.', state: 'off', locked: null, blocked: 'Needs dashboard execution first. Turn it on here, then switch this on.', runner_switch: true },
       { id: 'worktrees', title: 'Worktrees', desc: 'Each ticket gets its own copy of your project folder, so agents do not overwrite each other.', state: 'off', locked: null, blocked: null },
       { id: 'publish', title: 'Publish', desc: 'Share files of a ticket with a link.', state: current.startsWith('addons-publish') ? 'on' : 'off', locked: null, blocked: null },
       { id: 'quick', title: 'Quick tasks', desc: 'Small one-off tasks. Always available; there is nothing to switch on.', state: 'on', locked: 'Always available. There is nothing to switch.', blocked: null },

@@ -9,6 +9,7 @@ import pytest
 
 from orch.runner import procs
 from orch.runner.supervise import Supervisor
+from tests.host.tier_b_helpers import pins_dir, tree  # noqa: F401 - fixtures of the tier B tests
 from tests.runner.helpers import wait_for
 
 
@@ -45,3 +46,6 @@ def sleeper():
         if p.poll() is None:
             p.kill()
         p.wait()
+
+
+from tests.no_real_system import _no_real_system_facts  # noqa: E402,F401  (autouse)

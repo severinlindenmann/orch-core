@@ -29,6 +29,7 @@ class FakeKernel:
         self.store: dict[tuple[int, int, str], bytes] = {}
         self.real: set[tuple[int, int]] = set()  # inodes the test made: only those get their mode changed
         self.drop_sets, self.no_acl = drop_sets, no_acl
+        self.fail_inodes: set[int] = set()  # setxattr on these fails with EIO
         monkeypatch.setattr(shareacl, "_getx", self.get)
         monkeypatch.setattr(shareacl, "_setx", self.set)
         monkeypatch.setattr(shareacl, "_removex", self.remove)
@@ -50,6 +51,8 @@ class FakeKernel:
     def set(self, fd, name, value):
         if self.no_acl:
             raise OSError(errno.EOPNOTSUPP, "no acl")
+        if os.fstat(fd).st_ino in self.fail_inodes:
+            raise OSError(errno.EIO, "disk error")
         if self.drop_sets:
             return
         entries = shareacl._parse(value)
@@ -389,3 +392,55 @@ def test_secrets_and_working_tree_are_closed_and_exposure_is_reported(world):
     assert ".netrc" not in next(i.detail for i in rep.items if i.what == "exposed" and i.path == str(home))
     assert shareacl.unshare(str(repo), is_repo=True, agent=AGENT, home=str(home)).ok
     assert k.store == {}
+
+
+def test_secret_below_the_next_chain_folder_is_closed(world):
+    """A repo under ~/.config must not leave ~/.config/gh/hosts.yml reachable (its first part is on the chain)."""
+    home = world.home
+    (home / ".config" / "gh").mkdir(parents=True)
+    (home / ".config" / "gh" / "hosts.yml").write_text("token\n")
+    (home / ".config" / "gh" / "hosts.yml").chmod(0o644)
+    repo = home / ".config" / "proj"
+    (repo / ".git").mkdir(parents=True)
+    world.k.track(world.root)
+    rep = shareacl.share_repo(str(repo), agent=AGENT, home=str(home))
+    assert rep.ok, rep.text()
+    assert agent_entry(world.k.entries(home / ".config" / "gh" / "hosts.yml")) == 0
+
+
+def test_a_nested_closed_secret_does_not_hide_its_folder_from_the_exposure_report(world):
+    (world.home / ".aws").mkdir()
+    (world.home / ".aws" / "credentials").write_text("k\n")
+    (world.home / ".aws" / "other").write_text("o\n")
+    (world.home / ".aws" / "other").chmod(0o644)
+    (world.home / ".aws").chmod(0o755)
+    rep = share(world)
+    assert agent_entry(world.k.entries(world.home / ".aws" / "credentials")) == 0
+    detail = next(i.detail for i in rep.items if i.what == "exposed" and i.path == str(world.home))
+    assert ".aws" in detail  # the folder is still open to traverse: reported
+
+
+def test_a_failed_close_leaves_no_grant_anywhere(world):
+    (world.home / ".netrc").write_text("m\n")
+    world.k.fail_inodes.add((world.home / ".netrc").stat().st_ino)
+    rep = share(world)
+    assert not rep.ok and "could not be read or set" in rep.problem
+    for d in (world.home, world.repo, world.repo / ".git"):
+        assert agent_entry(world.k.entries(d)) is None
+
+
+def test_a_failed_tree_grant_takes_the_traverse_grants_back(world):
+    world.k.fail_inodes.add((world.repo / ".git" / "HEAD").stat().st_ino)
+    rep = share(world)
+    assert not rep.ok
+    for d in (world.home, world.home / "code", world.repo):
+        assert agent_entry(world.k.entries(d)) is None, d
+
+
+def test_a_repo_inside_a_secrets_folder_is_refused(world):
+    ssh = world.home / ".ssh" / "proj"
+    (ssh / ".git").mkdir(parents=True)
+    world.k.track(world.root)
+    rep = shareacl.share_repo(str(ssh), agent=AGENT, home=str(world.home))
+    assert not rep.ok and "holds secrets" in rep.problem
+    assert agent_entry(world.k.entries(world.home)) is None

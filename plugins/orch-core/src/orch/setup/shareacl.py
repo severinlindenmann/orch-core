@@ -356,9 +356,11 @@ def _traverse(
     remove: bool,
     keep: set[str],
     close_last: bool = False,
+    undo: list | None = None,
 ) -> None:
     """``--x`` for the agent on the components 0..upto of the chain that are ours; the others must already be
     traversable by everyone (we cannot and must not change them)."""
+    undo = [] if undo is None else undo
     for i in range(upto + 1):
         st, where = chain.stats[i], chain.at(i) or "/"
         if not stat.S_ISDIR(st.st_mode):
@@ -375,14 +377,48 @@ def _traverse(
         if remove and where in keep:
             report.items.append(Item(where, "traverse", "skipped", "still needed by another shared path"))
             continue
-        act = _set_entry(
-            chain.fds[i], "access", agent, None if remove else _TRAVERSE, _original_mode(chain.fds[i], st), where
-        )
+        _open_folder(chain, i, agent, euid, report, remove=remove, closed_all=(close_last and i == upto), undo=undo)
+
+
+def _open_folder(
+    chain: _Chain, i: int, agent: Agent, euid: int, report: Report, *, remove: bool, closed_all: bool, undo: list
+) -> None:
+    """THE INVARIANT: the agent never gains traverse on a folder until every secret below it that the agent could then
+    reach is closed. So: close first (a "no access" entry on each known secret, by its full path, and on every entry of
+    a repository's own folder except ``.git``); a close that fails or cannot be made stops here with no grant on this
+    folder; then grant ``--x``; a grant that fails is taken back. ``undo`` collects the grants of this run so the caller
+    can take them all back when a later step fails."""
+    fd, st, where = chain.fds[i], chain.stats[i], chain.at(i) or "/"
+    nxt = chain.names[i] if i < len(chain.names) else None
+    mode = _original_mode(fd, st)
+    if remove:
+        act = _set_entry(fd, "access", agent, None, mode, where)
         report.items.append(Item(where, "traverse", act))
-        nxt = chain.names[i] if i < len(chain.names) else None
-        _close_and_list(
-            chain.fds[i], where, nxt, agent, euid, report, remove=remove, closed_all=(close_last and i == upto)
-        )
+        _close(fd, where, nxt, chain.path, agent, euid, report, remove=True, closed_all=closed_all)
+        return
+    closed = _close(fd, where, nxt, chain.path, agent, euid, report, remove=False, closed_all=closed_all)
+    try:
+        act = _set_entry(fd, "access", agent, _TRAVERSE, mode, where)
+    except ShareError:
+        _set_entry_quiet(fd, None, mode, agent, where)
+        raise
+    if act == "granted":
+        undo.append((fd, mode, where))
+    report.items.append(Item(where, "traverse", act))
+    _list_exposed(fd, where, nxt, closed, closed_all, report)
+
+
+def _set_entry_quiet(fd: int, perm: int | None, mode: int, agent: Agent, where: str) -> None:
+    try:
+        _set_entry(fd, "access", agent, perm, mode, where)
+    except (ShareError, OSError):
+        pass  # the refusal that follows is the message
+
+
+def _rollback(undo: list, agent: Agent) -> None:
+    for fd, mode, where in reversed(undo):
+        _set_entry_quiet(fd, None, mode, agent, where)
+    undo.clear()
 
 
 #: secrets that live in a home (the doctor's list, L13): the agent gets an explicit "no access" entry on each one
@@ -439,7 +475,8 @@ def _deny(dfd: int, rel: str, where: str, agent: Agent, euid: int, report: Repor
         fd, st = got
         path = f"{where.rstrip('/')}/{rel}"
         if st.st_uid != euid:
-            report.items.append(Item(path, "exposed", "note", "belongs to someone else; orch cannot close it"))
+            if not remove and st.st_mode & (0o005 if stat.S_ISDIR(st.st_mode) else 0o004):
+                raise ShareError(f"{path} belongs to someone else and others can read it; orch cannot close it")
             return False
         act = _set_entry(fd, "access", agent, None if remove else 0, _original_mode(fd, st), path)
         report.items.append(Item(path, "closed", act))
@@ -449,15 +486,43 @@ def _deny(dfd: int, rel: str, where: str, agent: Agent, euid: int, report: Repor
             os.close(fd)
 
 
-def _close_and_list(
-    dfd: int, where: str, nxt: str | None, agent: Agent, euid: int, report: Report, *, remove: bool, closed_all: bool
-) -> None:
-    """In a folder the agent can now traverse: close the known secrets (and, in a repository's own
-    folder, every entry except ``.git``) with a "no access" entry, then list what other users can still read there."""
-    closed: set[str] = set()
+def _close(
+    dfd: int,
+    where: str,
+    nxt: str | None,
+    chain_path: str,
+    agent: Agent,
+    euid: int,
+    report: Report,
+    *,
+    remove: bool,
+    closed_all: bool,
+) -> set[str]:
+    """Close (or, ``remove``, reopen) the secrets of this folder by full path, and in a repository's own folder every
+    entry but ``.git``. Returns the top-level names closed. A secret that lies on the chain itself cannot be closed
+    without cutting the agent off from the shared path: refused."""
+    done: set[str] = set()
     for rel in SECRET_PATHS:
-        if rel.split("/")[0] != nxt and _deny(dfd, rel, where, agent, euid, report, remove):
-            closed.add(rel.split("/")[0])
+        full = f"{where.rstrip('/')}/{rel}"
+        if chain_path == full or chain_path.startswith(full + "/"):
+            if not remove:
+                raise ShareError(f"{chain_path} is inside {full}, which holds secrets; orch will not open that path")
+            continue
+        if _deny(dfd, rel, where, agent, euid, report, remove) and "/" not in rel:
+            done.add(rel)
+    if closed_all:
+        with os.scandir(dfd) as it:
+            kids = sorted((e.name, e.is_symlink()) for e in it)
+        for name, is_link in kids:
+            if is_link or name == ".git":
+                continue
+            if _deny(dfd, name, where, agent, euid, report, remove):
+                done.add(name)
+    return done
+
+
+def _list_exposed(dfd: int, where: str, nxt: str | None, closed: set[str], closed_all: bool, report: Report) -> None:
+    """What other users (the agent too) can still read in this folder, reported and not changed."""
     try:
         with os.scandir(dfd) as it:
             kids = sorted((e.name, e.is_symlink()) for e in it)
@@ -467,25 +532,16 @@ def _close_and_list(
     for name, is_link in kids:
         if is_link or name == nxt or name in closed or (closed_all and name == ".git"):
             continue
-        if closed_all:
-            if _deny(dfd, name, where, agent, euid, report, remove):
-                continue
         try:
             st = os.stat(name, dir_fd=dfd, follow_symlinks=False)
         except OSError:
             continue
-        if not remove and st.st_mode & (0o005 if stat.S_ISDIR(st.st_mode) else 0o004):
+        if st.st_mode & (0o005 if stat.S_ISDIR(st.st_mode) else 0o004):
             exposed.append(name)
     if exposed:
         more = f" and {len(exposed) - _MAX_LISTED} more" if len(exposed) > _MAX_LISTED else ""
-        report.items.append(
-            Item(
-                where,
-                "exposed",
-                "note",
-                "other users, the agent too, can read: " + ", ".join(exposed[:_MAX_LISTED]) + more,
-            )
-        )
+        names = ", ".join(exposed[:_MAX_LISTED]) + more
+        report.items.append(Item(where, "exposed", "note", "other users, the agent too, can read: " + names))
 
 
 # --- trees ------------------------------------------------------------------------------------------------------------
@@ -634,17 +690,20 @@ def _run(path, sub, agent, euid, home, *, remove, keep, roots) -> Report:
         return Report(problem=str(exc))
     report = Report()
     chain = None
+    undo: list = []
     try:
         chain = _Chain(path)
         last = len(chain.names)
         if sub is None:
-            _traverse(chain, resolved, euid, report, upto=last - 1, remove=remove, keep=keep_dirs)
+            _traverse(chain, resolved, euid, report, upto=last - 1, remove=remove, keep=keep_dirs, undo=undo)
             target_fd = chain.fds[last]
             if remove:
                 _check_owner(chain.stats[last], euid, path)
             _grant_tree(target_fd, path, resolved, euid, report, remove=remove)
         else:  # a repo: the folder itself gets traverse only, its .git the tree
-            _traverse(chain, resolved, euid, report, upto=last, remove=remove, keep=keep_dirs, close_last=True)
+            _traverse(
+                chain, resolved, euid, report, upto=last, remove=remove, keep=keep_dirs, close_last=True, undo=undo
+            )
             git_path = f"{path}/{sub}"
             gfd = _open_dir(sub, chain.fds[last], git_path)
             try:
@@ -653,8 +712,10 @@ def _run(path, sub, agent, euid, home, *, remove, keep, roots) -> Report:
                 os.close(gfd)
     except ShareError as exc:
         report.problem = str(exc)
+        _rollback(undo, resolved)
     except OSError as exc:
         report.problem = f"{path}: {exc.strerror or exc}; nothing further was changed"
+        _rollback(undo, resolved)
     finally:
         if chain is not None:
             chain.close()

@@ -41,6 +41,7 @@ def acls(monkeypatch):
     """Records the ACL grants instead of calling the kernel (macOS CI has no POSIX ACLs)."""
     seen: list[tuple[str, int, int]] = []
     monkeypatch.setattr(term_mod, "_grant_acl", lambda path, person, grant: seen.append((str(path), person, grant)))
+    monkeypatch.setattr(term_mod, "_drop_default_acl", lambda path: None)
     return seen
 
 
@@ -255,12 +256,14 @@ def test_tier_b_plan_says_the_agent_user_and_not_as_person(monkeypatch):
     from orch.host import agents, terms
     from tests.host.tier_b_helpers import AGENT_UID, share
 
-    monkeypatch.setattr(agents, "plan", lambda *a, **k: {"as_person": True, "notice": "acts as you, not as an agent"})
+    monkeypatch.setattr(
+        agents, "plan", lambda *a, **k: {"spec": "cd" * 32, "as_person": True, "notice": "acts as you, not as an agent"}
+    )
     out = terms._plan(None, {}, hub_of(share=share(), uid=AGENT_UID))
     assert out["as_person"] is False and out["runs_as"] == "orch-agent-sev"
     assert "not as you" in out["notice"] and "orch-agent-sev" in out["notice"]
     a = terms._plan(None, {}, hub_of(share=None, uid=UID))
-    assert a == {"as_person": True, "notice": "acts as you, not as an agent"}  # tier A: untouched
+    assert a == {"spec": "cd" * 32, "as_person": True, "notice": "acts as you, not as an agent"}  # tier A: untouched
 
 
 def test_tier_b_open_never_records_as_person():
@@ -300,3 +303,45 @@ def test_tier_b_real_acl_is_accepted_by_the_kernel_and_hides_the_socket_from_oth
             assert stat.S_IMODE(os.lstat(path).st_mode) & 0o007 == 0  # other: nothing
     finally:
         t.close()
+
+
+def test_tier_b_drops_the_default_acl_of_both_dirs(base, monkeypatch):
+    dropped = []
+    monkeypatch.setattr(term_mod, "_grant_acl", lambda *a: None)
+    monkeypatch.setattr(term_mod, "_drop_default_acl", lambda path: dropped.append(str(path)))
+    t = listener(base, peer_uid=PERSON + 1)
+    t.open()
+    t.close()
+    assert dropped == [str(base / "term"), str(base / "term" / str(os.getuid()))]
+
+
+def test_drop_default_acl_tolerates_none_and_fails_closed_otherwise(base, monkeypatch):
+    calls = []
+
+    def gone(path, name, follow_symlinks=True):
+        calls.append(name)
+        raise OSError(errno.ENODATA, "none")
+
+    monkeypatch.setattr(os, "removexattr", gone, raising=False)
+    term_mod._drop_default_acl(base)
+    assert calls == ["system.posix_acl_default"]
+
+    def denied(path, name, follow_symlinks=True):
+        raise OSError(errno.EPERM, "no")
+
+    monkeypatch.setattr(os, "removexattr", denied, raising=False)
+    with pytest.raises(OSError):
+        term_mod._drop_default_acl(base)
+
+
+def test_tier_b_spec_binds_what_is_shown_and_tier_a_is_byte_identical(monkeypatch):
+    from orch.host import agents, terms
+    from tests.host.tier_b_helpers import AGENT_UID, share
+
+    monkeypatch.setattr(agents, "plan", lambda *a, **k: {"spec": "ab" * 32, "as_person": True, "notice": "n"})
+    a = terms._plan(None, {}, hub_of(share=None, uid=UID))
+    b = terms._plan(None, {}, hub_of(share=share(), uid=AGENT_UID))
+    assert a["spec"] == "ab" * 32  # tier A: the base digest, untouched
+    assert b["spec"] != a["spec"] and len(b["spec"]) == 64
+    assert b == terms._plan(None, {}, hub_of(share=share(), uid=AGENT_UID))  # stable, so term.open compares equal
+    assert "Never type secrets into it" in b["notice"]

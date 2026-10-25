@@ -16,7 +16,7 @@ from data.
 
 **Who the terminal runs as.** In tier B (spec 13.5) terminals run as `orch-agent-<person>`, never as the person: the
 host's preview names that user (`runs_as`) and `execution_line` carries the card line "This terminal runs as
-orch-agent-<person>. It cannot read your keys." (`null` in tier A, where the page keeps its "run as you" line).
+orch-agent-<person>. It cannot read your keys. Never type secrets into it." (`null` in tier A, where the page keeps its "run as you" line).
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ from .policy import LOOPBACK
 
 #: Tier B (spec 13.5): the host names the agent user the terminal runs as (`runs_as`); only this shape is shown.
 AGENT_USER = re.compile(r"^orch-agent-[a-z_][a-z0-9_-]{0,31}$")
-TIER_B_LINE = "This terminal runs as {user}. It cannot read your keys."
+TIER_B_LINE = "This terminal runs as {user}. It cannot read your keys. Never type secrets into it."
 
 
 def execution_line(runs_as: Any) -> str | None:

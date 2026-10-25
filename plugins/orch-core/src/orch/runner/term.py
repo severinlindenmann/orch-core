@@ -238,6 +238,18 @@ def _grant_acl(path: Path, person: int, grant: int) -> None:
         raise OSError(errno.EPERM, f"{path}: the ACL read back differs")
 
 
+def _drop_default_acl(path: Path) -> None:
+    """No default ACL on the two directories (a leftover or inherited one would be handed to whatever is created in
+    them): remove it, so their ACL state is always exactly the access ACL of :func:`_grant_acl`."""
+    try:
+        os.removexattr(path, "system.posix_acl_default", follow_symlinks=False)
+    except OSError as exc:
+        if exc.errno != errno.ENODATA:
+            raise OSError(errno.EPERM, f"{path}: the default ACL cannot be removed ({exc})") from None
+    except AttributeError:
+        raise OSError(errno.EPERM, f"{path}: no ACL support") from None
+
+
 class TermListener:
     def __init__(
         self,
@@ -355,6 +367,7 @@ class TermListener:
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != self.uid:
                 raise OSError(errno.EPERM, f"{path}: expected a directory of UID {self.uid}")
             _grant_acl(path, self.peer_uid, 0o1)
+            _drop_default_acl(path)
 
     def close(self) -> None:
         self._closing = True

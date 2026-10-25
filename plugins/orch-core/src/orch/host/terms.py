@@ -28,6 +28,8 @@ names the workspace root, a declared repo's working copy or a ticket's registere
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -187,7 +189,17 @@ def _plan(call: Call, args: dict[str, Any], hub: RunnerHub | None) -> dict[str, 
     out = plan(call, args, hub, agent=False)
     user = tier_b_user(hub)
     if user is not None:  # spec 13.5: no "shell as me"; the terminal is the agent user's, and the card says so
-        out.update(as_person=False, runs_as=user, notice=f"runs as {user}, not as you; it cannot read your keys")
+        # TODO(after G6 B2): move this into the base digest in agents.plan (it is outside agents.py for now). Until then
+        # what is shown (not as you, this user) is bound into the spec here; `term.open` recomputes it the same way.
+        base = out["spec"]
+        out["spec"] = hashlib.sha256(
+            json.dumps({"base": base, "as_person": False, "runs_as": user}, sort_keys=True,
+                       separators=(",", ":")).encode()
+        ).hexdigest()  # fmt: skip
+        out.update(
+            as_person=False, runs_as=user,
+            notice=f"runs as {user}, not as you; it cannot read your keys. Never type secrets into it",
+        )  # fmt: skip
     return out
 
 

@@ -234,3 +234,23 @@ def test_host_status_rows_are_cleaned_dicts():
     f.add_path(f"{HOME}/.netrc", uid=1000, mode=0o644)
     rows = status.isolation_problems({"HOME": HOME}, [], f)
     assert rows and set(rows[0]) == {"what", "fix"}
+
+
+def test_old_dotted_section_header_is_checked():
+    f = _machine()
+    cfg = "[remote.origin]\n\turl = https://ghp_" + "D" * 36 + "@github.com/o/r.git\n[Safe]\n\tdirectory = *\n"
+    found = di.check(
+        f, HOME, repos=["/w"], read=lambda p: cfg if p.endswith(".git/config") or p.endswith(".gitconfig") else None
+    )
+    codes = _codes(found)
+    assert codes.count("token_in_remote_url") == 1 and "safe_directory_star" in codes
+    assert any("'origin'" in x.what for x in found) and not any("ghp_" in x.what + x.fix for x in found)
+
+
+def test_unparseable_header_is_could_not_check_not_silence():
+    f = _machine()
+    bad = '[remote "origin\n\turl = https://u:p@h/r.git\n'
+    found = di.check(f, HOME, repos=["/w"], read=lambda p: bad if p.endswith(".git/config") else None)
+    assert _codes(found) == ["could_not_check"] and "/w/.git/config" in found[0].what
+    g = di.check(f, HOME, read=lambda p: bad if p.endswith(".gitconfig") else None)
+    assert _codes(g) == ["could_not_check"]

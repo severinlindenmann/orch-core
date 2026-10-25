@@ -136,9 +136,11 @@ def _entries(config: str) -> list[tuple[str, str, str, str]]:
         if line.startswith("["):
             m = _HEADER.match(line)
             if not m:
-                section = sub = ""
-                continue
-            section, sub, line = m.group(1).lower(), m.group(2) or "", m.group(3).strip()
+                raise ValueError("unparseable section header")  # callers report it as could_not_check
+            section, sub, line = m.group(1), m.group(2) or "", m.group(3).strip()
+            if m.group(2) is None and "." in section:  # the old form [remote.origin]: split at the first dot
+                section, _, sub = section.partition(".")
+            section = section.lower()
         key, sep, value = line.partition("=")
         if sep and section:
             out.append((section, sub, key.strip().lower(), value.strip().strip('"')))
@@ -165,7 +167,12 @@ def _repo_tokens(roots: Iterable[str], read: Callable[[str], str | None]) -> lis
         text = read(path)
         if text is None:
             continue
-        for remote in sorted(set(_remote_tokens(text))):
+        try:
+            remotes = sorted(set(_remote_tokens(text)))
+        except ValueError:
+            out.append(_could_not(f"{path}, which git could not read as a config file"))
+            continue
+        for remote in remotes:
             if remote == "":
                 out.append(
                     Finding(
@@ -205,7 +212,14 @@ def _safe_directory(home: str, read: Callable[[str], str | None]) -> list[Findin
     out = []
     for path in (f"{home}/.gitconfig", f"{home}/.config/git/config", "/etc/gitconfig"):
         text = read(path)
-        if text is not None and _safe_directory_star(text):
+        if text is None:
+            continue
+        try:
+            star = _safe_directory_star(text)
+        except ValueError:
+            out.append(_could_not(f"{path}, which git could not read as a config file"))
+            continue
+        if star:
             out.append(
                 Finding(
                     "safe_directory_star",

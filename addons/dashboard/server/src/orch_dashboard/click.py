@@ -49,6 +49,7 @@ from .handoff import (
 )
 from .hubapprove import mode_of, refuse_if_hub_only
 from .reads import workspace
+from .stepup import refusal_check, refuse_step_up
 
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
@@ -159,12 +160,6 @@ def key_fingerprint(key: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()
 
 
-#: How a session was opened (`Auth.login_kind`) for which `agent_access` may be prepared. Until the passkey step-up for
-#: a grant secret exists (R1-6), only a session opened by `orch dashboard` on this computer may; an unknown kind and
-#: any remote or hub kind are refused (fail closed), so the remote dashboard cannot ship the reveal unprotected.
-REVEAL_SESSION_KINDS = frozenset({"local"})
-
-
 def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
     """A shown-secret grant's View: no deposit, the sealed field's `grant.secret` purpose bound to the page's own key
     (its fingerprint), core's risk and reveal lines, this workspace and a plain click."""
@@ -185,8 +180,8 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
     )
 
 
-SEALED_LOCAL_ONLY = "A new passphrase for your key needs a dashboard opened on this computer."
-ROTATE_LOCAL_ONLY = "Replacing this computer's key needs a dashboard opened on this computer."
+#: core's constant (orch.click.protocol RUNNER_LINE): the review of turning it on must carry it
+RUNNER_LINE = "Agents may run commands on this computer as you when you start them."
 #: core's constant (orch.click.protocol BACKUP_KEY_LINE): a hub step's View that lacks it is not shown
 BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
 HUB_STEPS = (HubJoin, HubLeave)
@@ -319,6 +314,32 @@ class RotateBody(BaseModel):
     sealed: RotateSealed
 
 
+class GithubSealed(BaseModel):
+    """The GitHub token, sealed (purpose `github.token`): relayed as ciphertext."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=False)
+    github_token: Envelope = Field(alias="github.token")
+
+
+class GithubBody(BaseModel):
+    """#1198 C16: `request_id`, `view_digest` and `sealed` come from `click/github/seal`; the signer does the rest."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    request_id: Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+    view_digest: ViewDigest
+    sealed: GithubSealed
+
+
+class RunnerBody(BaseModel):
+    """#1198 C14: dashboard execution on or off. `view_digest` is that of the review `click/runner/review` returned for
+    the same `on` and `terminals`; the signer acts only on that."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    on: bool
+    terminals: bool = False  # an extra the person asks for; never on by default
+    view_digest: ViewDigest | None = None
+
+
 class Sign(Step):
     view_digest: ViewDigest
     #: a shown-secret grant only: the key the review was made for (the signer refuses any other)
@@ -361,18 +382,19 @@ def verify(prepared: dict, ws: str, **expect) -> dict:
     return adapters.handoff.request(prepared, ws, **expect)
 
 
-def refusal_check(message: str):
-    return HostError(
-        {"code": "human.click_refused", "message": message, "retryable": False, "reason": "check_failed"}, 3
-    )
-
-
 def register(app: FastAPI, gateway: Gateway):
     clicks = app.state.clicks = Clicks()
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
     signer = gateway.click
     signer.unsettled = handoffs.any_unsettled  # a hung signer is not replaced while a signature may be mid-submit
     STATES = ("prepared", "bound", "submitted", "cancelled", "expired")
+
+    def ready(step: dict) -> dict:
+        """A remote session's call goes to a signer that checks the passkey itself (`remote`, `stepup`), or to none: an
+        older signer would ignore both arguments."""
+        if step and not signer.passkey_stepups():
+            raise fail("click.contract", "Update orch-core: its signing helper cannot check a passkey yet.", exit=9)
+        return step
 
     def human(ws: str, op: str, args: dict):
         return app.state.human(ws, op, args)
@@ -410,7 +432,7 @@ def register(app: FastAPI, gateway: Gateway):
         mode = mode_of(gateway, ws)  # V3 C11: advisory, so the page shows the hub panel; the host decides
         return {**card, "switchable": signer.switchable(), **({"mode": mode} if mode else {})}
 
-    def seal_view_ok(got: object) -> bool:
+    def seal_view_ok(got: object, purpose: str = "custody.passphrase") -> bool:
         """The signer offer for a sealed new passphrase: a request id, a review digest and exactly the one purpose with
         the signer's own key (a P-256 point, 87 base64url characters)."""
         if not isinstance(got, dict) or set(got) != {"request_id", "view_digest", "seal", "expires_in"}:
@@ -427,7 +449,7 @@ def register(app: FastAPI, gateway: Gateway):
             and seal["v"] == 1
             and type(seal["v"]) is int
             and seal["alg"] == "P256-HKDF-SHA256-A256GCM"
-            and seal["purposes"] == ["custody.passphrase"]
+            and seal["purposes"] == [purpose]
             and isinstance(seal["pk"], str)
             and re.fullmatch(rf"{B64URL}{{87}}", seal["pk"]) is not None
         )
@@ -437,12 +459,10 @@ def register(app: FastAPI, gateway: Gateway):
         return any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list")))
 
     @app.post("/api/w/{ws}/click/custody/seal")
-    def custody_seal(_: SealBegin, request: Request, ws: str = Depends(workspace)):
+    def custody_seal(_body: SealBegin, request: Request, ws: str = Depends(workspace)):
         """The signer's one-use key for the NEW passphrase of "One click off" (#1198 C12): request id, review digest
-        and the public key. Owners, on a dashboard opened on this computer only. Nothing secret passes here."""
+        and the public key. Owners. Nothing secret passes here."""
         gateway.enabled(ws)
-        if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-            raise refusal_check(SEALED_LOCAL_ONLY)
         if not owner(ws):
             raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
         if not signer.passphrase_seals():
@@ -494,17 +514,15 @@ def register(app: FastAPI, gateway: Gateway):
         )
 
     def rotate_gate(request: Request, ws: str) -> None:
-        """Local sessions only (until the passkey step-up), an owner, a signer that can (begin and sign alike)."""
+        """An owner, a signer that can (begin and sign alike)."""
         gateway.enabled(ws)
-        if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-            raise refusal_check(ROTATE_LOCAL_ONLY)
         if not owner(ws):
             raise fail("role.denied", "Only an owner replaces a device key in the dashboard.", exit=3)
         if not signer.rotations():
             raise fail("click.contract", "Update orch-core: its signing helper cannot replace a key yet.", exit=9)
 
     @app.post("/api/w/{ws}/click/rotate/seal")
-    def rotate_seal(_: SealBegin, request: Request, ws: str = Depends(workspace)):
+    def rotate_seal(_body: SealBegin, request: Request, ws: str = Depends(workspace)):
         """The review of "Replace this device's key" with the signer's one-use key for the recovery code and the new
         passphrase (#1198 C13). Nothing secret passes here; the signer refuses while One click is on."""
         rotate_gate(request, ws)
@@ -520,10 +538,13 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/rotate")
     def rotate(body: RotateBody, request: Request, ws: str = Depends(workspace)):
         """Replace this computer's device key: ciphertext only, relayed and never opened here (#1198 C13)."""
+        step = refuse_step_up(app.state.auth, request, "rotate", body, ws)
+        step = ready(step)
         rotate_gate(request, ws)
         row = signer.call(
             "rotate",
             {
+                **step,
                 "workspace_id": ws,
                 "request_id": body.request_id,
                 "view_digest": body.view_digest,
@@ -535,31 +556,86 @@ def register(app: FastAPI, gateway: Gateway):
         )
         return {"done": True, **(adapters.click_card(row) or {}), "switchable": True}
 
+    def github_gate(ws: str) -> None:
+        """An owner, a signer that can (begin, store and remove alike). The token is the owner's own key for GitHub."""
+        gateway.enabled(ws)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner saves the GitHub token in the dashboard.", exit=3)
+        if not signer.github_tokens():
+            raise fail("click.contract", "This dashboard needs an update before it can save a GitHub token.", exit=9)
+
+    @app.get("/api/w/{ws}/click/github")
+    def github_state(ws: str = Depends(workspace)):
+        """Is a GitHub token saved? `stored`, `missing`, or `null` when the GitHub add-on is off or asks for no key.
+        Read from `addon.list`; the token itself is never read here. Owners only, like the other GitHub routes."""
+        gateway.enabled(ws)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner sees the GitHub token.", exit=3)
+        rows = gateway.call(ws, "addon.list").get("addons", [])
+        row = next(
+            (r for r in rows if isinstance(r, dict) and r.get("name") == "github" and r.get("state") == "active"), None
+        )
+        state = None if row is None else row.get("credential")
+        return {"credential": state if state in ("stored", "missing") else None}
+
+    @app.post("/api/w/{ws}/click/github/seal")
+    def github_seal(_body: SealBegin, ws: str = Depends(workspace)):
+        """The signer's one-use key for the GitHub token (#1198 C16). Owners. Nothing secret passes here; the signer
+        refuses when the GitHub add-on is off."""
+        github_gate(ws)
+        got = signer.call("github_token", {"workspace_id": ws, "begin": True})
+        if not seal_view_ok(got, "github.token"):
+            raise refusal_check(
+                "The signing helper's offer for your GitHub token is not what it should be. Nothing changed."
+            )
+        return got
+
+    @app.post("/api/w/{ws}/click/github")
+    def github_token(body: GithubBody, request: Request, ws: str = Depends(workspace)):
+        """Save the GitHub token: ciphertext only, relayed and never opened here (#1198 C16). On a remote session
+        this needs the passkey step-up (`stepup.py`)."""
+        step = refuse_step_up(app.state.auth, request, "github", body, ws)
+        step = ready(step)
+        github_gate(ws)
+        got = signer.call(
+            "github_token",
+            {
+                **step,
+                "workspace_id": ws,
+                "request_id": body.request_id,
+                "view_digest": body.view_digest,
+                "sealed": {"github.token": body.sealed.github_token.model_dump()},
+            },
+        )
+        if got != {"workspace_id": ws, "credential": "stored"}:
+            raise fail("internal", "The signing helper answered something unexpected.", exit=9)
+        return {"credential": "stored"}
+
+    @app.post("/api/w/{ws}/click/github/remove")
+    def github_remove(_body: SealBegin, ws: str = Depends(workspace)):
+        """Delete the stored GitHub token. It only takes authority away, so it is a plain click everywhere."""
+        github_gate(ws)
+        got = signer.call("github_token", {"workspace_id": ws, "remove": True})
+        if got != {"workspace_id": ws, "credential": "missing"}:
+            raise fail("internal", "The signing helper answered something unexpected.", exit=9)
+        return {"credential": "missing"}
+
     @app.post("/api/w/{ws}/click/custody")
     def custody(body: CustodyBody, request: Request, ws: str = Depends(workspace)):
         """Switch signing in the dashboard on or off (section 0.8.6 item 3a): owners only; the signer does the work
         (this process never opens a key) and answers the workspace's card. No route here changes a credential."""
+        step = refuse_step_up(app.state.auth, request, "custody", body, ws)
+        step = ready(step)
         gateway.enabled(ws)
         if not owner(ws):
             raise fail("role.denied", "Only an owner switches signing in the dashboard.", exit=3)
         if not signer.switchable():
             raise fail("click.contract", "Update orch-core: its signing helper cannot switch signing yet.", exit=9)
         if body.resume:
-            # no passphrase to prove: only a dashboard opened on this computer (the same gate as a shown secret), until
-            # the passkey step-up exists; anything else keeps the terminal command on the card
-            if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-                raise fail(
-                    "custody.terminal_needed",
-                    "Turning One click on again needs a dashboard opened on this computer. Use the terminal: "
-                    "orch host convenience on --workspace " + ws,
-                    exit=3,
-                )
-            row = signer.call("custody_on", {"workspace_id": ws, "resume": True})
+            row = signer.call("custody_on", {**step, "workspace_id": ws, "resume": True})
         elif body.on:  # the proof goes to the signer only; nothing here reads, keeps or logs it
-            row = signer.call("custody_on", {"workspace_id": ws, "passphrase": body.passphrase})
+            row = signer.call("custody_on", {**step, "workspace_id": ws, "passphrase": body.passphrase})
         elif body.sealed is not None:  # off with a NEW passphrase (V3-D31): ciphertext only, relayed and never opened
-            if app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-                raise refusal_check(SEALED_LOCAL_ONLY)
             if not signer.passphrase_seals():
                 raise fail(
                     "click.contract",
@@ -569,6 +645,7 @@ def register(app: FastAPI, gateway: Gateway):
             row = signer.call(
                 "custody_off",
                 {
+                    **step,
                     "workspace_id": ws,
                     "request_id": body.request_id,
                     "view_digest": body.view_digest,
@@ -576,8 +653,67 @@ def register(app: FastAPI, gateway: Gateway):
                 },
             )
         else:  # off: the flag only
-            row = signer.call("custody_off", {"workspace_id": ws})
+            row = signer.call("custody_off", {**step, "workspace_id": ws})
         return {**(adapters.click_card(row) or {}), "switchable": True}
+
+    def runner_gate(request: Request, ws: str, body: RunnerBody) -> None:
+        """An owner, a signer that can. ON needs a passkey step-up on a remote session (`refuse_step_up`); OFF only
+        takes authority away and is a plain click everywhere."""
+        gateway.enabled(ws)
+        if not owner(ws):
+            raise fail("role.denied", "Only an owner switches dashboard execution.", exit=3)
+        if not signer.runner_switches():
+            raise fail(
+                "click.contract", "Update orch-core: its signing helper cannot switch dashboard execution yet.", exit=9
+            )
+
+    def runner_view_ok(got: object, ws: str, body: RunnerBody) -> bool:
+        if not isinstance(got, dict) or set(got) != {"view", "view_digest"}:
+            return False
+        view = got["view"]
+        if not isinstance(view, dict) or re.fullmatch(r"sha256:[0-9a-f]{64}", str(got["view_digest"])) is None:
+            return False
+        workspace, lines = view.get("workspace"), view.get("lines")
+        return (
+            view.get("op") == ("runner.on" if body.on else "runner.off")
+            and view.get("on") is body.on
+            and isinstance(workspace, dict)
+            and workspace.get("id") == ws
+            and view.get("confirm") == {"kind": "click"}
+            and isinstance(lines, list)
+            and all(isinstance(x, str) for x in lines)
+            and (RUNNER_LINE in lines) is body.on
+            and (view.get("terminals") is body.terminals if body.on else True)
+        )
+
+    @app.post("/api/w/{ws}/click/runner/review")
+    def runner_review(body: RunnerBody, request: Request, ws: str = Depends(workspace)):
+        """The review of turning dashboard execution on or off: core's own words, relayed after a check."""
+        runner_gate(request, ws, body)
+        got = signer.call("runner", {"workspace_id": ws, "review": True, "on": body.on, "terminals": body.terminals})
+        if not runner_view_ok(got, ws, body):
+            raise refusal_check(
+                "The signing helper's review of dashboard execution is not what it should be. Nothing changed."
+            )
+        return got
+
+    @app.post("/api/w/{ws}/click/runner")
+    def runner_switch(body: RunnerBody, request: Request, ws: str = Depends(workspace)):
+        """Turn dashboard execution on or off after the review (#1198 C14): the signer does what `orch runner enable` or
+        `disable` does. This process starts no service and writes no switch."""
+        step = refuse_step_up(app.state.auth, request, "runner", body, ws)
+        step = ready(step)
+        runner_gate(request, ws, body)
+        if body.view_digest is None:
+            raise fail("invalid.input", "Read the review first.", exit=5)
+        got = signer.call(
+            "runner",
+            {**step, "workspace_id": ws, "on": body.on, "terminals": body.terminals, "view_digest": body.view_digest},
+        )
+        enabled, terminals = got.get("enabled"), got.get("terminals")
+        if type(enabled) is not bool or type(terminals) is not bool:
+            raise fail("internal", "The signing helper answered something unexpected.", exit=9)
+        return {"enabled": enabled, "terminals": terminals}
 
     @app.post("/api/w/{ws}/click/images")
     def images(body: ImageChunk, ws: str = Depends(workspace)):
@@ -591,10 +727,6 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
-        if isinstance(body, AgentAccess) and app.state.auth.login_kind(token) not in REVEAL_SESSION_KINDS:
-            raise refusal_check("Agent access with a shown secret needs a dashboard opened on this computer.")
-        if isinstance(body, HUB_STEPS) and app.state.auth.login_kind(token) not in REVEAL_SESSION_KINDS:
-            raise refusal_check("A hub step with your backup key needs a dashboard opened on this computer.")
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
         with handoffs.lock:
@@ -828,9 +960,8 @@ def register(app: FastAPI, gateway: Gateway):
 
     @app.post("/api/w/{ws}/click/sign")
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
-        if body.sealed is not None and app.state.auth.login_kind(request.state.token) not in REVEAL_SESSION_KINDS:
-            # where the typed key arrives: the local-only gate of prepare, repeated (fail closed on any other kind)
-            raise refusal_check("A hub step with your backup key needs a dashboard opened on this computer.")
+        step = refuse_step_up(app.state.auth, request, "sign", body, ws)  # where a typed key arrives: fail closed
+        step = ready(step)
         mine(ws, body.request_id)
         rid = body.request_id
         wanted = clicks.get(rid)[2]
@@ -839,7 +970,7 @@ def register(app: FastAPI, gateway: Gateway):
         # the request is refused by the signer and the host, which are the ones that know.)
         handoffs.begin_sign(ws, rid, handoffs.clock() + TTL + 60)
         try:
-            sent = {"workspace_id": ws, "request_id": rid, "view_digest": body.view_digest}
+            sent = {**step, "workspace_id": ws, "request_id": rid, "view_digest": body.view_digest}
             if isinstance(wanted, AgentAccess):
                 if body.reveal_key != wanted.reveal_key:  # the key of the review, nothing else (the signer checks too)
                     raise fail("invalid.input", "reveal_key is not the key this review was made for", exit=1)

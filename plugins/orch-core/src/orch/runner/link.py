@@ -59,6 +59,8 @@ from .term import TermListener, TicketError
 __all__ = ["ENV_FIXED_NAMES", "ENV_FROM_RUNNER", "HostLink", "build_env", "new_gen", "spawn_spec"]
 
 LOG = logging.getLogger(__name__)
+#: ``peer.denied`` answers in a row after which the runner exits to be started afresh (its unit restarts it)
+DENIED_LIMIT = 3
 
 #: §2.4: what a run may get from the runner's own environment (values never reach the host)
 ENV_FROM_RUNNER = frozenset(
@@ -227,8 +229,19 @@ class HostLink:
         config: RunnerConfig | Callable[[], RunnerConfig] | None = None,
         grants: GrantStore | None = None,
         release: str | None = None,
+        restart: Callable[[bool], dict[str, Any]] | None = None,
+        restarting: Callable[[], bool] | None = None,
+        on_denied: Callable[[], None] | None = None,
     ) -> None:
         self.sup = sup
+        #: called once after :data:`DENIED_LIMIT` ``peer.denied`` refusals in a row (a stale view of who the runner
+        #: is): the runner exits non-zero and its unit starts it afresh
+        self._on_denied = on_denied
+        self._denied = 0
+        #: ``runner.restart`` (tier B, spec 13.2 item 7): arms the runner's own restart (:mod:`orch.runner.restart`)
+        self._restart = restart
+        #: true once a restart is armed: new spawns are refused, so none is accepted and then killed by the exit
+        self._restarting = restarting or (lambda: False)
         #: the release this process LOADED, taken now (never on the first hello): the host refuses spawns from a
         #: runner of another release than its own (``runner.stale``)
         self.release = release if release is not None else _loaded_release()
@@ -300,8 +313,10 @@ class HostLink:
                 self._session()
             except Exception as exc:  # noqa: BLE001 - any failure: reconnect later
                 LOG.info("runner link: %s", exc)
+                self._count_denial(exc)
             finally:
                 if self.ready.is_set():
+                    self._denied = 0
                     delay = self.backoff[0]  # it was connected: the next attempt starts from the short delay
                 self.ready.clear()
                 self.epoch = None
@@ -313,6 +328,15 @@ class HostLink:
                 self.disconnect()
             self._stop.wait(delay)
             delay = min(delay * 2, self.backoff[1])
+
+    def _count_denial(self, exc: Exception) -> None:
+        if getattr(exc, "code", None) != "peer.denied":
+            self._denied = 0
+            return
+        self._denied += 1
+        if self._denied >= DENIED_LIMIT and self._on_denied is not None:
+            LOG.error("the host refused this runner %d times in a row: exiting for a fresh start", self._denied)
+            self._on_denied()
 
     def _session(self) -> None:
         hello = {"t": "hello", "proto": [1], "client": "orch-runner", "caps": ["runner/1"], "ops": {}}
@@ -493,6 +517,8 @@ class HostLink:
             with self.sup._spawn_lock:  # the epoch check and the spawn are one step against a reconnect's snapshot
                 if not self._current(tag):
                     raise _Stale()
+                if self._restarting():
+                    raise SpawnError("runner.unavailable", "the agent runner is restarting on a new release; try again")
                 res = self.sup.spawn(spec)
             return {k: res.get(k) for k in ("pid", "state", "started_at", "duplicate")}
         if cmd == "stop":
@@ -519,6 +545,10 @@ class HostLink:
                 raise SpawnError(exc.code, exc.message) from None
         if cmd == "grant.drop":
             return {"dropped": self.grants.drop(args.get("grant"))}
+        if cmd == "restart":
+            if self._restart is None:
+                raise SpawnError("runner.unavailable", "this runner cannot restart itself")
+            return self._restart(args.get("force") is True)
         if cmd == "attach.end":
             if self.term is not None:
                 self.term.end(str(args.get("att")), str(args.get("reason") or "detached"))

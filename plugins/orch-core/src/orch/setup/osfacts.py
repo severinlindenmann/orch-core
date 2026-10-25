@@ -79,10 +79,12 @@ class OsFacts(Protocol):
     def user(self, name: str) -> UserInfo | None: ...
     def user_by_uid(self, uid: int) -> UserInfo | None: ...
     def group(self, name: str) -> GroupInfo | None: ...
+    def users_with_gid(self, gid: int) -> list[str]: ...  # names of users whose MAIN group is gid
     def stat(self, path: str) -> PathInfo | None: ...
     def listdir(self, path: str) -> list[str]: ...
     def can_read(self, uid: int, path: str) -> bool: ...  # True unless provably unreadable (dirs: r or x counts)
     def can_connect(self, uid: int, path: str) -> bool: ...  # write on the socket and search on every ancestor
+    def can_stat(self, uid: int, path: str) -> bool: ...  # search (x) on every folder above ``path``: uid can stat it
     # Root-written policy is never parsed here. A root process asks the authoritative tools (setup, L2); the host only
     # compares stat signatures with what the root-owned pin recorded.
     def sudo_allows(self, user: str) -> bool | None: ...  # ``sudo -l -U``: True = a rule, False = none
@@ -146,6 +148,9 @@ class RealOsFacts:
         except KeyError:
             return None
         return GroupInfo(g.gr_name, g.gr_gid, frozenset(g.gr_mem))
+
+    def users_with_gid(self, gid: int) -> list[str]:
+        return [e.pw_name for e in pwd.getpwall() if e.pw_gid == gid]
 
     def _has_acl(self, path: str) -> bool:
         try:
@@ -253,6 +258,24 @@ class RealOsFacts:
         """r or x on every ancestor (a 0711 directory still lets a known file name be opened), r on a file, r or x on
         a directory."""
         return uid == 0 or self._reach(uid, path, 0o5, 0o4, 0o5)
+
+    def can_stat(self, uid: int, path: str) -> bool:
+        """Whether ``uid`` can stat ``path``: x on every real ancestor (ACLs evaluated). Unprovable counts as yes, so
+        the caller keeps watching the entry (an entry the host then cannot stat reads as changed: fail closed)."""
+        if uid == 0:
+            return True
+        info = self.user_by_uid(uid)
+        gids = info.gids if info else frozenset()
+        try:
+            # the folders above the ENTRY (not what it points to): a symlinked drop-in is still stat-ed by its own name,
+            # and the host then fails on a root-only target, so it stays recorded and reads as changed (fail closed)
+            entry = os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+            for anc in self._ancestors(entry):
+                if not self._perm(os.stat(anc), str(anc), uid, gids) & 0o1:
+                    return False
+        except (OSError, _Unprovable):
+            return True
+        return True
 
     def can_connect(self, uid: int, path: str) -> bool:
         return uid == 0 or self._reach(uid, path, 0o1, 0o2, 0o2)

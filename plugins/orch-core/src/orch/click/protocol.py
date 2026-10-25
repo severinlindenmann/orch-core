@@ -23,6 +23,8 @@ __all__ = [
     "ROTATE_LINE",
     "ROTATE_OP",
     "ROTATE_PURPOSES",
+    "RUNNER_LINE",
+    "RUNNER_OFF_LINE",
     "SEALED_OPS",
     "BACKUP_KEY_LINE",
     "REVEAL_RISK",
@@ -82,7 +84,27 @@ ROTATE_LINE = (
 BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
 #: a deposit grant lasts at most this many hours (D-P2-27)
 DEPOSIT_MAX_HOURS = GRANT_MAX_HOURS
-OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off", "stash", "rotate")
+#: #1198 C14: dashboard execution (the agent runner) on or off by click. The switch is the host-local file of
+#: ``orch runner enable|disable``, not a signed event, so it goes through its own signer op (like the custody switches),
+#: after a review the signer builds: the page shows these words and the signer only acts on the digest of that review.
+RUNNER_LINE = "Agents may run commands on this computer as you when you start them."
+RUNNER_OFF_LINE = (
+    "Open terminals close within a second; agents already running keep running; the dashboard starts no new ones."
+)
+OPS = (
+    "prepare",
+    "view",
+    "sign",
+    "cancel",
+    "status",
+    "custody_on",
+    "custody_off",
+    "stash",
+    "rotate",
+    "runner",
+    "github_token",
+    "stepup",
+)
 #: what this signer can do beyond its contract, in ``status.features``: ``custody`` is ``custody_on``/``custody_off``,
 #: the dashboard's click-to-sign switch (§0.8.6 item 3a); ``sequence`` is ``prepare {sequence}``: one review, N
 #: signatures (batch 11); an older signer has no ``features`` and no switch, and ignores ``sequence`` (never asked)
@@ -94,7 +116,26 @@ OPS = ("prepare", "view", "sign", "cancel", "status", "custody_on", "custody_off
 #: the new passphrase of "One click off" arrives sealed; a clear ``passphrase`` is refused
 #: ``device_rotate`` (#1198 C13) is ``rotate {begin}`` (the review: old and new key, and the signer's key for the two
 #: sealed secrets), then ``rotate {request_id, view_digest, sealed}``: a new device key for this computer
-FEATURES = ("custody", "sequence", "images", "reveal", "backup_key", "sealed_passphrase", "device_rotate")
+#: ``runner_switch`` (#1198 C14) is ``runner {review}`` then ``runner {on, view_digest}``: dashboard execution on or off
+#: ``github_token`` (#1198 C16) is ``github_token {begin}`` (the signer's one-use key for the one purpose
+#: ``github.token``), then ``github_token {request_id, view_digest, sealed}``: the GitHub token typed in the page is
+#: opened here and stored as the add-on's key, in the person's custody; ``github_token {remove}`` deletes it
+#: ``passkey_stepup`` (#1198 R1-6) is ``stepup {workspace_id, view_digest}`` (a one-use nonce for a passkey
+#: assertion) and
+#: the ``remote``/``stepup`` arguments of the listed ops (custody_on, custody_off {sealed}, rotate {sealed}, runner on,
+#: sign with a sealed value or a reveal key): for a remote dashboard session the signer verifies the assertion itself
+FEATURES = (
+    "custody",
+    "sequence",
+    "images",
+    "reveal",
+    "backup_key",
+    "sealed_passphrase",
+    "device_rotate",
+    "runner_switch",
+    "github_token",
+    "passkey_stepup",
+)
 #: the host's ``sign.convenience_unavailable`` reasons (orch-v2-host §0.8.6 item 1), from the host's closed schema
 REASONS: tuple[str, ...] = tuple(_HOST_DETAIL["sign.convenience_unavailable"]["reason"])  # type: ignore[arg-type]
 #: ``human.click_refused`` reasons (§0.8.6 item 5)

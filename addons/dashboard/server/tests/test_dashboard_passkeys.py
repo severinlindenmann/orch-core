@@ -5,9 +5,8 @@ import json
 from pathlib import Path
 
 import pytest
-
-from orch_dashboard import passkeys
-from orch_dashboard.passkeys import PasskeyError, b64u_decode, b64u_encode
+from orch.click import passkeys
+from orch.click.passkeys import PasskeyError, b64u_decode, b64u_encode
 
 VECTORS = Path(__file__).parent / "vectors"
 
@@ -340,3 +339,20 @@ def test_user_handle_and_backup_eligibility_are_enforced_by_the_verifier():
     assert names["no userHandle in the response"] == "ok"
     assert names["BE set now, registered without"] == "backup_eligible"
     assert names["BE clear now, registered with"] == "backup_eligible"
+
+
+def test_the_action_digest_of_an_op_without_a_signer_review():
+    """#1198 R1-6: both sides compute it, so it is pinned here from its parts (label, JSON list of the three texts)."""
+    import hashlib
+
+    want = "sha256:" + hashlib.sha256(b'orch/v2/dash-stepup-action|["custody.on","ws1","x"]').hexdigest()
+    assert passkeys.action_digest("custody.on", "ws1", "x") == want
+    assert passkeys.action_digest("custody.on", "ws1") != want  # the extra part counts
+    assert len({passkeys.action_digest(a, "ws1") for a in ("custody.on", "hub.connect", "device.add")}) == 3
+    assert passkeys.action_digest("a", "b|c") != passkeys.action_digest("a|b", "c")  # no joining ambiguity
+    for bad in (1, None):
+        with pytest.raises(PasskeyError):
+            passkeys.action_digest(bad, "ws")
+    with pytest.raises(PasskeyError):
+        passkeys.action_digest("a" * 257, "ws")
+    passkeys.stepup_challenge(bytes(32), want)  # it is accepted wherever a view digest is

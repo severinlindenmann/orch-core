@@ -15,7 +15,7 @@ const data = (rows: AddOnRow[]): AddOnsData => ({ available: true, add_ons: rows
 const ROWS = [
   row({ id: 'dashboard', title: 'Dashboard', state: 'on', locked: 'The dashboard is always on: it is what shows this workspace.' }),
   row({ id: 'start-agent', title: 'Start agents', state: 'on' }),
-  row({ id: 'terminals', title: 'Terminals', state: 'off', blocked: 'Needs dashboard execution first. In your terminal run: orch runner enable' }),
+  row({ id: 'terminals', title: 'Terminals', state: 'off', blocked: 'Needs dashboard execution first. Turn it on here, then switch this on.', runner_switch: true }),
   row({ id: 'worktrees', title: 'Worktrees', state: 'off' }),
 ]
 const state = useFakeHost(() => [workspace({ id: ID, addOns: data(ROWS) })])
@@ -42,6 +42,14 @@ it('an add-on that needs something first is greyed with the reason beside it', a
   expect(sw).toHaveAccessibleDescription(/Needs dashboard execution first/)
   await userEvent.setup().click(sw)
   expect(state.host.posts()).toEqual([])
+})
+
+it('C14: what is missing is dashboard execution: a button turns it on here, no terminal command', async () => {
+  await open()
+  const row = screen.getByTestId('addon-terminals')
+  expect(within(row).getByTestId('addon-terminals-runner')).toHaveTextContent('Turn on dashboard execution')
+  expect(row).not.toHaveTextContent('orch runner')
+  expect(within(screen.getByTestId('addon-worktrees')).queryByTestId('addon-worktrees-runner')).toBeNull()
 })
 
 it('turning one on is a signed hand-off: the typed action opens the review, nothing is written by the page', async () => {

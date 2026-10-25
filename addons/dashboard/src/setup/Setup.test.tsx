@@ -89,6 +89,7 @@ function fake(
     failure?: boolean
     done?: boolean
     click?: boolean
+    clickOff?: string
     relayUnavailable?: boolean
     noGit?: boolean
     complete?: boolean
@@ -106,6 +107,7 @@ function fake(
       result = {
         ...state,
         ...(options.stateError ? {phase: 'failed', error: {code: 'demo.failure', message: 'Runner could not connect'}} : {}),
+        ...(options.clickOff !== undefined ? { click_available: false, click_reason: options.clickOff } : {}),
         ...(options.relayUnavailable ? { relay: { available: false, enabled: false } } : {}),
         ...(options.noGit ? { git: { repo: false } } : {}),
         mode: options.finish ? 'finish' : 'new',
@@ -259,6 +261,21 @@ test('one click disables relay with its named reason and never shows a passphras
   await screen.findByRole('heading', { name: 'Your secret words' })
   expect(screen.queryByRole('heading', { name: 'Your passphrase' })).not.toBeInTheDocument()
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ method: 'click', relay: false })
+})
+
+test('1236: a dev host greys out One click with a plain sentence, never the raw code', async () => {
+  render(<Setup api={fake({ clickOff: 'dev_host' }).api} />)
+  await approval()
+  expect(screen.getByLabelText(/One click on this computer/)).toBeDisabled()
+  expect(screen.getByText('One click is off on this test computer; you approve in your terminal.')).toBeInTheDocument()
+  expect(screen.queryByText(/dev_host/)).not.toBeInTheDocument()
+})
+
+test('1236: an unknown or empty One click reason gets a generic plain sentence, never the raw code', async () => {
+  render(<Setup api={fake({ clickOff: 'no_keychain' }).api} />)
+  await approval()
+  expect(screen.getByText('One click is not available on this computer; you approve in your terminal.')).toBeInTheDocument()
+  expect(screen.queryByText(/no_keychain/)).not.toBeInTheDocument()
 })
 
 test('run 8: One click is the default where core suggests it, with the risk sentence before Continue; Terminal stays selectable', async () => {

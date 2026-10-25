@@ -128,11 +128,11 @@ def test_the_redirect_file_is_gone_after_redemption_and_a_second_read_fails(tmp_
     page = redirect.read_text()  # the person's browser reads it once
     assert issued["code"] in page and "location.replace" in page and "Cache-Control" not in page
     assert [t.delay for t in timers] == [CODE_TTL] == [30]
-    assert auth.exchange(issued["code"])[1] == 200
+    assert auth.exchange(issued["code"], "local")[1] == 200
     assert not redirect.exists()
     with pytest.raises(FileNotFoundError):
         redirect.read_text()
-    assert auth.exchange(issued["code"])[1] == 401  # and the code itself is spent
+    assert auth.exchange(issued["code"], "local")[1] == 401  # and the code itself is spent
     assert not list((tmp_path / "dashboard").glob("launch-*.html"))
 
 
@@ -252,7 +252,7 @@ def test_cleanup_invalidates_the_code_and_unlinks_exactly_once(tmp_path, monkeyp
     monkeypatch.setattr(Path, "unlink", counting)
     _Timer.made[-1].fn()  # the expiry timer, even before the clock says expired
     assert not path.exists() and unlinked == [path]
-    assert auth.exchange(issued["code"])[1] == 401  # invalidated, not merely its file forgotten
+    assert auth.exchange(issued["code"], "local")[1] == 401  # invalidated, not merely its file forgotten
     _Timer.made[-1].fn()  # a second firing does nothing
     assert unlinked == [path]
 
@@ -265,7 +265,7 @@ def test_redemption_then_timer_unlinks_once(tmp_path, monkeypatch):
     unlinked = []
     real = Path.unlink
     monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: unlinked.append(self) or real(self, missing_ok))
-    assert auth.exchange(issued["code"])[1] == 200
+    assert auth.exchange(issued["code"], "local")[1] == 200
     _Timer.made[-1].fn()
     assert unlinked == [path] and not path.exists()
 
@@ -312,7 +312,7 @@ def test_a_launcher_paused_past_expiry_writes_no_file(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="expired"):
         launcher.open_dashboard()
     assert not list((tmp_path / "dashboard").glob("launch-*.html"))
-    assert auth.exchange(issued["code"])[1] == 401
+    assert auth.exchange(issued["code"], "local")[1] == 401
 
 
 def test_a_launcher_paused_during_the_write_removes_the_file(tmp_path, monkeypatch):
@@ -430,9 +430,9 @@ def test_print_url_tunnel_code_lives_5_minutes_and_stays_single_use():
     assert tunnel["expires_at"] == 1000 + TUNNEL_CODE_TTL == 1300
     assert desktop["expires_at"] == 1000 + CODE_TTL == 1030
     now[0] += 31
-    assert auth.exchange(desktop["code"])[1] == 401
-    assert auth.exchange(tunnel["code"])[1] == 200
-    assert auth.exchange(tunnel["code"])[1] == 401  # single use
+    assert auth.exchange(desktop["code"], "local")[1] == 401
+    assert auth.exchange(tunnel["code"], "local")[1] == 200
+    assert auth.exchange(tunnel["code"], "local")[1] == 401  # single use
 
 
 def _print_url_run(tmp_path, monkeypatch, capsys, environ, tunnel=False):

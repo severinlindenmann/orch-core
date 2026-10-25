@@ -18,6 +18,7 @@ class FakeOsFacts:
         self.units: dict[str, UnitState] = {}
         self.connectable: dict[tuple[int, str], bool] = {}
         self.sigs: dict[str, tuple[int, int, int]] = {}
+        self.unsearchable: set[str] = set()  # folders the host's user may not search (RHEL/Ubuntu sudoers.d)
         self.sudo_answer: bool | None = False  # sudo -l -U: no rule
         self.sshd_answer: bool | None = True  # sshd -T -C: denied
         self.sshd_present = True
@@ -46,6 +47,9 @@ class FakeOsFacts:
     def group(self, name):
         return self.groups.get(name)
 
+    def users_with_gid(self, gid):
+        return [u.name for u in self.users.values() if u.gid == gid]
+
     def stat(self, path):
         return self.paths.get(path)
 
@@ -61,6 +65,9 @@ class FakeOsFacts:
 
     def unit_state(self, unit):
         return self.units.get(unit, UnitState("unknown"))
+
+    def can_stat(self, uid, path):
+        return not any(path.startswith(d.rstrip("/") + "/") for d in self.unsearchable)
 
     def can_connect(self, uid, path):
         return self.connectable.get((uid, path), False)

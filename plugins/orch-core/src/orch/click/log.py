@@ -34,6 +34,9 @@ WHAT = frozenset(
         "deposit",  # v1.6: a deposit grant's hand-over to the runner (the outcome code only, never a secret)
         "custody_on",  # §0.8.6 item 3a: the dashboard switched click-to-sign on (the workspace id, never a passphrase)
         "custody_off",  # and off
+        "runner_on",  # #1198 C14: dashboard execution switched on / off by click (the workspace id only)
+        "runner_off",
+        "github_token",  # #1198 C16: the GitHub token was stored or removed by click (the workspace id only)
         "rotated",  # #1198 C13: this computer got a new device key (the workspace id, never a code or passphrase)
     }
 )

@@ -37,6 +37,15 @@ export type ClickSwitch =
   | { on: false }
   | { on: false; request_id: string; view_digest: string; sealed: { 'custody.passphrase': import('./sealed').Envelope } }
 
+/** The body of `POST click/github` (#1198 C16): the GitHub token, sealed to the signer's one-use key. */
+export interface GithubSave {
+  request_id: string
+  view_digest: string
+  sealed: { 'github.token': import('./sealed').Envelope }
+}
+/** Whether a GitHub token is saved; `null` when the GitHub add-on is off or asks for no key. */
+export type GithubCredential = 'stored' | 'missing' | null
+
 /** The signer's one-use key for the NEW passphrase of "off" (#1198 C12, sealed purpose custody.passphrase). */
 export interface CustodySealOffer {
   request_id: string

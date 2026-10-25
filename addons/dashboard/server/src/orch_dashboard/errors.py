@@ -63,6 +63,8 @@ def status(code: str) -> int:
         "host.required",
         "sign.hub_only",
         "market.actor_refused",
+        "passkey.stepup_required",
+        "passkey.invalid",
     } or code.startswith("grant."):
         return 403
     if code in {"intent.done", "intent.expired"}:

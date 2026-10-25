@@ -2813,9 +2813,8 @@ operations and future additions fail closed (terminal-only). There is one confir
   prepare: a second prepare with the same key is refused and its host request cancelled, and sealing refuses a key
   reserved for another request. The host caps a member's grant at the workspace `grant_hours`; an owner's (or a
   maintainer's) can run to 168 h. The page opens it, shows it once and drops its key. Contract: [orch-v2-sealed-field.md](orch-v2-sealed-field.md) §7.
-  **Until the passkey step-up (item 10.5, R1-6) is built**, the dashboard server prepares a reveal grant only for a
-  session opened on this computer (`login_kind` `local`); a remote or unknown session is refused before the signer is
-  asked.
+  On a remote session the review (`prepare`) is a plain click and signing the reveal (`sign` with the page's
+  `reveal_key`) needs the passkey step-up of item 10.5; a session opened on this computer needs none.
 
 | Class | Ops |
 |---|---|
@@ -3655,7 +3654,7 @@ login.
 | Phishing site with a look-alike name | The passkey is bound to the RP ID; a different name gets no assertion. |
 | DNS hijack or a mis-issued certificate for the real name | Not ours to stop; reduced by a CAA record (setup prints it as advice) and HSTS. A passkey does not help against a valid certificate for the same name. |
 | A TLS-terminating proxy in between (NetBird proxy, Cloudflare, a provider's load balancer) | Forbidden (10.2). Whoever serves the page's JavaScript can change it, read every typed secret before the sealed field encrypts it and click Sign. The start refuses any front other than the configured local socket. |
-| The enrollment link leaks | At least 128 random bits, single use, 15 min, first browser wins; 5 wrong codes in total kill every open link. Anyone on the internet can use that to kill open links without logging in (accepted: a denial of service only; IT makes a new link over SSH). The terminal and the dashboard show "A passkey was added: <name>, <time>" and list all passkeys with Remove; IT can reset over SSH. |
+| The enrollment link leaks | At least 128 random bits, single use, 15 min, first browser wins; 5 wrong secrets for one code burn that code only; a wrong guess of an unknown id costs its source a rate-limit charge and touches no code, so nobody can wipe the owner's open links by guessing. The terminal and the dashboard show "A passkey was added: <name>, <time>" and list all passkeys with Remove; IT can reset over SSH. |
 | Stolen bearer (XSS, an extension, a copied tab) | As in item 8, plus 2 h idle and 12 h absolute life, and step-up (10.5) for each listed action: one assertion per op, bound to that op's review. |
 | Stolen laptop with a passkey | User verification is required (device unlock). Remove the passkey from another device or over SSH. |
 | Lockout by brute-force traffic | Per-source buckets (IPv4 /32, IPv6 /64), so one source's traffic does not use the owner's budget. A distributed flood that reaches the global CPU cap can delay remote login; then the SSH tunnel is the fallback. |
@@ -3674,8 +3673,36 @@ login.
 - **The front is Caddy**, installed and configured by one admin step (`orch remote enable --name <name>`, run with
   sudo): its own system user `orch-front`, a generated Caddyfile that only does `reverse_proxy` to the front socket,
   ACME for the configured name, TLS 1.2 or later (1.3 preferred), HSTS `max-age=31536000` (no preload), a 10 s header
-  timeout and at most 32 open unauthenticated connections. Port 80 answers only the ACME challenge and a redirect. The
-  front runs on the same machine as root-installed infrastructure, inside the server's trust boundary like sshd.
+  timeout and at most 32 connections to the dashboard (`max_conns_per_host`; stock Caddy has no per-site cap on
+  inbound unauthenticated connections). Port 80 answers only the ACME challenge and a redirect. The front runs on the
+  same machine as root-installed infrastructure, inside the server's trust boundary like sshd.
+- **The client address (R1-7).** Caddy sets `X-Orch-Client` to `{client_ip}` with `header_up` (which replaces, so a
+  header from the browser is never forwarded). Caddy computes it from the TCP peer, or, for peers inside the networks
+  given with `orch remote enable --trusted-proxy` (`trusted_proxies static`; never a /0), from `X-Forwarded-For`. Without
+  that option the TCP peer is used. Needs Caddy 2.11 or newer: the version CI validates the generated Caddyfile with
+  (`{client_ip}` itself is 2.7+).
+- **`orch remote enable|disable|reset` (R1-7).** Run by the person on Linux, never as root. `enable --name <name>`
+  checks the name points to this server and that ports 80 and 443 are free (`remote.name_mismatch`), prints exactly
+  what will change (the root steps are the dry run of the code root will run), asks for a confirm on the person's own
+  terminal (`--dry-run` stops, `--yes` is for scripts), then runs the root steps through
+  `sudo /usr/bin/python3 -I -S /usr/lib/orch/os-setup/orch-os-setup --front-enable --person <user> --name <name>` (the
+  trusted root copy, `osfront.py`; root never runs the person's release): the system user `orch-front`
+  (`useradd --system`, no login, locked), the Caddyfile in `/etc/orch/front/`, the unit `orch-front.service` (Caddy as
+  `orch-front`, one capability for ports 80/443, sandboxed, `StateDirectory` for its certificates) and the tmpfiles
+  entry of the socket directory above. A file there that orch did not make, or a user `orch-front` with other
+  properties, is refused, never changed. Then the person's side writes `remote.json` and restarts the dashboard
+  (`orch-dashboard up`), and **root** (`sudo ... orch-os-setup --front-enroll --person <user> --ctl <ctl.sock>`, the
+  trusted copy again) asks it for the first enrollment link over its control socket and prints it on the terminal;
+  the link is never in argv, a file or a log (if sudo is set to record terminal output with `log_output`, the link is recorded there: turn that off for
+  `orch-os-setup`). The dashboard's `ctl.sock` answers `enroll` to a peer with uid 0 and to
+  nobody else (the person's own uid gets `enroll.root_only`), and root may do nothing else there (no launch code, no
+  stop): otherwise a same-UID agent could mint a code, register its own passkey and keep remote access. Later codes
+  come from "Add a device" in the dashboard (a local session, or a remote one with step-up). **Residual (tier A):** a
+  same-UID agent can still drive a local dashboard session as the person; that is the known limit "tier A = agents
+  run as you", and why One click defaults on only where isolation is detected. The printed lines also give the
+  SSH tunnel as the way back in, because a flood of login attempts can use up the global login budget. `disable` takes
+  `remote.json`, the dashboard and the front away and keeps the `orch-front` user and its certificates. `reset` stops
+  the dashboard (every remote session and open link ends), deletes every passkey and prints a new link.
 - **Own domain only.** No "no domain" quick start through a public wildcard DNS service (sslip.io, nip.io): that
   service could point the name elsewhere. `orch remote enable` checks that the name resolves to this server and that
   ports 80 and 443 are reachable, and stops before changing anything if not (`remote.name_mismatch`).
@@ -3702,20 +3729,62 @@ login.
   front**: they are a local credential.
 - **Remote session kind**: 12 h absolute, 2 h idle (local keeps 24 h / 12 h). Logout ends it at once; Settings has "Log
   out everywhere"; a restart of the dashboard ends every session.
+- **A session belongs to the listener that opened it (R1-4).** A launch code opens a `local` session on loopback; a
+  verified passkey login opens a `remote` one on the front. The bearer is refused on every other listener exactly like
+  an unknown token (loopback answers 401, the front 404), without ending the session, whatever else the request
+  carries. `Auth.exchange` takes the kind as a required argument and accepts `local` only. The local-only gates (One
+  click on/off with a typed passphrase, device rotate, dashboard execution on, a grant secret, a hub backup key) test
+  `login_kind` themselves too, so a remote session that somehow reached one is refused (fail closed) until the
+  step-up (10.5) exists. The front's `remote.json` (`{"name", "front_uid"}` in the dashboard state directory, mode
+  not writable by others, `front_uid` neither the person nor root) turns the front socket on; a file that is there
+  but wrong switches remote access off and shows `remote.not_configured` in `/api/session` (`remote_problem`); the
+  loopback dashboard keeps serving.
+- **The front socket (R1-4, R1-7).** `/run/orch/front/<person uid>/front.sock`. The directory is made by root at every
+  boot (systemd-tmpfiles, written by `orch remote enable`): owned by the person, group `orch-front`, mode 0750, below
+  `/run/orch/front` (0711). It is not under `<state>/run` (0700) or `/run/orch/<uid>` (setgid, the agent's group)
+  because the front's user could reach neither without opening it for the agent too; here the agent user, the add-on
+  users and other people cannot even look inside. The dashboard creates nothing there (it could not give the directory
+  the front's group): a missing directory, one that is not the person's, not in the front's group, group-writable or
+  open to others keeps remote access off (`remote.not_configured`). The socket file is mode 0666: who may connect is
+  decided by the server's peer-UID check on every accepted connection (closed before a byte is read unless the peer
+  is `front_uid`), which stays the gate; the directory only keeps everyone else from reaching it. Both servers run on
+  asyncio's selector loop (the check lives in `accept`; the front refuses to start on any other loop). The front server
+  adds `limit_concurrency` 64, keep-alive 5 s and a 16 KiB incomplete-event limit behind Caddy's own limits.
+  `front_uid` is never the person, root, or any user named `orch-agent-*` or `orch-addon-*` (every name the user
+  database gives that id counts).
+- **Terminal tickets belong to a listener.** A ticket records the listener it was minted on and redeems only on that
+  listener's socket, for a session of that listener; `attach` and `terminals/open` mint or open nothing where the
+  listener's policy has terminals off (the front's default).
 - **Rate limits** for passkey login, in buckets of their own: 20 per minute per source, the source being the client's
   IPv4 address (/32) or its IPv6 /64 prefix. A global cap of 600 per minute only guards the CPU, far above any single
   source; when a distributed flood reaches it, remote login waits and the SSH tunnel is the fallback. The loopback
   launch limiter stays as it is, so internet traffic cannot lock out the local owner.
 - **Enrollment.** `orch remote enable` (and later "Add a device" in Settings, a step-up action) prints or shows one link
   `https://<name>/#enroll=<code>`: the code is at least 128 random bits (`secrets.token_urlsafe(16)` or longer) and is
-  compared in constant time; single use, 15 min, the first browser that completes a registration wins; 5 wrong codes in
-  total kill every open link (`enroll.expired`). The fragment never reaches a server log.
+  compared in constant time; single use, 15 min, the first browser that completes a registration wins; 5 wrong secrets
+  for one code burn that code (`enroll.expired`). The fragment never reaches a server log.
 - **The passkey store** `<state>/dashboard/passkeys.json`: mode 0600, owned by the person UID, holding per passkey the
   credential id, the user handle, the COSE public key, its algorithm, the backup-eligible flag of the registration, a
   name ("MacBook, Chrome"), created, last used and the last sign count. No secret is in it, but writing it adds a login,
   so it is read with the `O_NOFOLLOW`, owner and mode checks of the pins file and fails closed.
 - **Pre-login surface**: the app shell and its assets, `/auth/passkey/*` and `/auth/enroll/*`. Nothing else answers
   without a remote session; `/setup` and `/api/setup/*` need a remote session (the setup token stays, on top).
+- **The route table (R1-5).** Every route of the dashboard app has one rule for the front in `routegate.TABLE`:
+  `allowed`, `refused`, `step_up` (a whole route whose handler asks for the passkey, 10.5), `pre_login` (the four
+  passkey routes) or `terminals` (allowed only where the listener's policy has terminals on). `security.Security` enforces it in one place, after the session
+  test: a route that is unlisted or matches nothing is refused (`remote.refused`, 403), and a test walks the app's
+  routes and fails on one without a rule. Refused for good: launch codes, the setup routes, hub signing, the widget
+  frame. Routes that serve several bodies (`click/custody`, `click/runner`, `click/runner/review`, `click/prepare`,
+  `click/sign`) stay `allowed`; their handlers ask `stepup.refuse_step_up`, which needs the passkey step-up (10.5)
+  for the step-up variants of every session that was not opened on this computer.
+- **Passkey routes (R1-5).** `POST /auth/passkey/options` and `/login`, `POST /auth/enroll/options` and `/register`.
+  Strict closed bodies (16 KiB), one rate-limit charge per request, a 120 s single-use challenge per ceremony held in
+  memory, and one answer for every failure (`passkey.invalid` for login, `enroll.expired` for enrollment: a wrong,
+  used, expired or killed code, a bad registration). The enrollment code is `<id>-<secret>` (public id, 128-bit secret kept only as a digest);
+  5 wrong secrets burn that code only, an unknown id or malformed code costs its source a rate-limit charge and
+  touches no code; the options step checks it, the register step spends it (first browser wins), and the
+  challenge is bound to the code that asked for it.
+  A store that fails its checks means no login and no enrollment.
 - **Terminals are off remotely by default.** `/term` on the front needs the bearer ticket, Origin `https://<name>`
   (`wss://<name>` connection) and the Settings switch "Terminals over remote access", which is off after enable. A
   terminal is a shell on the server.
@@ -3739,25 +3808,43 @@ these actions needs its own passkey assertion:
 Everything else, including turning things off and turning remote access off, is a plain click. The step-up rule does not
 apply on loopback, where the person is at the machine or behind the SSH tunnel.
 
-- **One assertion per op, no elevation.** A step-up covers exactly one listed op: it is made for that op's View, used
-  once when that op is signed, and at most 120 s after its challenge was issued. There is no session-wide "recently
-  verified" state (no `last_uv_at`): a step-up never covers another op, another View or a later click.
-- **The signer owns the nonce (R1-6).** When the sign panel shows the View of a listed op on a remote session, the
-  dashboard server asks the click signer for a step-up challenge for that request. The signer draws `nonce` (32 random
-  bytes), keeps `(nonce, request_id, view_digest, issued at)` in memory (monotonic clock) and returns the challenge
-  `SHA-256("orch/v2/dash-stepup|" || nonce || vd)`, where `vd` is the 32 raw bytes of the `view_digest` (`sha256:<hex>`)
-  of the View it built. The browser runs `navigator.credentials.get` with that challenge; the server passes the response
-  on with the sign call.
-- **The signer checks it.** It signs a listed op from a remote session only if the nonce is one it issued for this
-  request and this View, unused and issued at most 120 s ago, and the assertion verifies (10.6) against the passkey
-  store, which the signer reads itself with the store's checks. It marks the nonce used before anything else, whatever
-  the outcome; a restart forgets every nonce, so a new challenge is needed. Otherwise the answer is
-  `passkey.stepup_required`. So a buggy server, or an attacker who only drives its HTTP workflow, cannot replay an old
-  assertion, even when two Views of the same op have the same `view_digest` (code execution as the person is item 0's
-  accepted boundary). The server may check the assertion too, for an early answer; the signer's check
-  is the one that counts.
+- **One assertion per op, no elevation (as built, R1-6).** A step-up covers exactly one listed op: it is made for that
+  op's review digest (or, where the op has no signer review, for `action_digest(action, scope, extra)`: One click on,
+  a hub connect, "Add a device", removing one named passkey), is used once, and is at most ten minutes old when used
+  (owner decision: a fresh touch at most every ten minutes; it is also a request's own lifetime). The browser answers
+  the challenge within 120 s (the server's ceremony); the op follows within the ten minutes. A step-up never covers
+  another op, another review or a later click, and there is no session-wide "recently verified" state.
+- **The ceremony.** `POST /api/w/{ws}/stepup/options {action, view_digest?}` (workspace actions) or
+  `POST /api/stepup/options {action, credential_id?}` (adding a device, removing a passkey) returns a challenge for
+  this session: `SHA-256("orch/v2/dash-stepup|" || nonce || vd)` with `vd` the 32 raw bytes of the digest. The browser
+  runs `navigator.credentials.get` and posts the assertion to `POST /api/stepup/verify`; the server verifies it (10.6),
+  keeps it for this session only, keyed by the digest, and the action's own request then spends it. A failed or
+  second try of a challenge spends it.
+- **The signer owns the nonce for the ops it runs.** For `custody_on`, `custody_off {sealed}`, `rotate {sealed}`,
+  `runner` on and `sign` with a sealed value or reveal key, the server asks the signer (`stepup {workspace_id,
+  view_digest}`, feature `passkey_stepup`) for the nonce. The signer keeps `(nonce, workspace, digest, issued at)` in
+  memory (monotonic clock; a restart forgets all). The server relays the assertion with the op as `remote: true` and
+  `stepup: {nonce, id, response}`. For a call that says `remote`, the signer decides from the op and the arguments
+  whether the step-up is needed (not from anything the server says) and, before anything else, uses up the nonce and
+  accepts only an assertion that verifies (10.6) against the passkey store, which the signer reads itself, for the
+  relying party in `<state>/dashboard/remote.json`, for exactly this workspace and digest, issued at most ten
+  minutes ago. Otherwise the answer is `passkey.stepup_required`. So a buggy server, or an attacker who only drives
+  its HTTP workflow, cannot skip or replay it. A call without `remote` is a session opened on this computer, which
+  the signer trusts as it always has (item 0); a server that lies about that is code execution as the person.
+- **What the touch is bound to.** The signer's nonce is bound to the op and, for `custody_off`, `rotate` and `sign`, to
+  the `request_id`. A hub connect is bound to the hub id and the SHA-256 of the invite it will send; "Add a device" to a
+  `link_id` the server minted with the options; removing a passkey to the SHA-256 of that credential id. A session has
+  at most four open step-ups and each options call is charged to the source's bucket. Grants are keyed by
+  (action, digest); a signer op needs a proof, and a session that is not local always sends `remote: true`.
+- **Removing a passkey** (never the last, checked under the store's lock) ends every session that passkey opened,
+  the requesting one too if it used it, and drops every held step-up it made.
+- **Not signer ops.** The server's own check (the same helper, the same ceremony with a server-drawn nonce) covers
+  `hub/connect`, "Add a device" (`POST /api/passkeys/enroll-link`) and removing a passkey (`DELETE /api/passkeys/{id}`,
+  never the last one). The steps that only open a review (`custody/seal`, `rotate/seal`, `runner/review`, `prepare`)
+  are plain: they sign and reveal nothing, and the touch comes at the step that acts, when the review and its digest
+  exist.
 
-**10.6 WebAuthn verification contract (`orch_dashboard.passkeys`, vectors `addons/dashboard/server/tests/vectors/webauthn_*.json`).**
+**10.6 WebAuthn verification contract (`orch.click.passkeys`, vectors `addons/dashboard/server/tests/vectors/webauthn_*.json`).**
 An own small verifier on `cryptography` (already a core dependency), not the `webauthn` PyPI package: it would add
 `cbor2`, `asn1crypto` and every attestation format (TPM, Android, Apple, packed with x5c) to an internet-facing pre-login
 path, and its defaults (user verification preferred, RSA allowed) would have to be overridden at every call. The verifier
@@ -13430,10 +13517,28 @@ environment variable.
 ### 13.2 The one admin step: `orch-os-setup`
 
 Root is needed once, at install, never at run time: no setuid binary, no capabilities, no root daemon, no polkit rule.
-`orch-os-setup` is a short Python program in the release. The installer runs it when it is root (most VPSs); otherwise
-setup shows one line to copy, `sudo <release>/bin/orch-os-setup --person <user>`, with a "Check again" button. It
-computes a plan from OS facts, prints it, applies it, and may run again: it repairs, it never widens. It uses fixed
-absolute binaries.
+`orch-os-setup` is a short Python program, but **root never runs a file it does not own**: the person's release lives in
+the person's home, so it is not what root executes. The installer, as root, downloads the signed release into a root-owned
+0700 staging directory, verifies the signed manifest against the bytes there, and runs
+`/usr/bin/python3 -I -S <staging>/orch/setup/osinstall.py` (system interpreter, never the release venv, never `-m orch...`).
+That step re-checks the staging tree, copies the five stdlib-only setup modules (with the package `__init__` files; the fifth, `osfront`, is the HTTPS front of the remote dashboard, 10.2, run with `--front-enable` / `--front-disable`) and a launcher to the root-owned
+`/usr/lib/orch/os-setup/` (`/usr/lib`, not `/usr/local`: Debian's `/usr/local` can be group-writable), and re-hashes the copy
+against the source. The launcher `/usr/lib/orch/os-setup/orch-os-setup` has the shebang `#!/usr/bin/python3 -IS` (one argument: Linux does not split shebang arguments); before it
+imports anything of orch it checks that the interpreter, the standard library and the whole copy (and every directory above
+them) are root's and not writable by group or other, and afterwards that every loaded orch module came from the copy. The
+installer runs it when it is root (most VPSs); otherwise setup shows one line to copy,
+`sudo /usr/lib/orch/os-setup/orch-os-setup --person <user> --release <release>`, with a "Check again" button (the installer
+has put the copy there; the release path is validated: absolute, plain characters, a plain directory owned by root or by
+the person, and every ancestor owned by root or the person and not writable by group or other. A symbolic link anywhere
+on the path is refused, never followed ("give the release by its real path"): hosts such as Fedora Atomic, where `/home`
+is a link to `var/home`, must pass the resolved path. Root never executes anything in it: its only root-run line is the
+recheck from the trusted copy, and setup never writes an ACL for an agent or add-on user, the person does, item 6.
+`--release` is the releases directory that holds `current`, the same path `orch runner enable` compares the installed
+unit against). It computes a plan from OS
+facts, prints it, applies it (`--dry-run` prints the exact actions), and may run again: it repairs, it never widens. It uses
+fixed absolute binaries. Directories below an agent-owned one are only ever opened file-descriptor-relative with
+`O_NOFOLLOW` (never by path), so a symlink planted by the agent is refused. The agent's runner is started only after root
+has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner and drops the verdict from the pin.
 
 1. **Users.** `useradd --system --user-group --home-dir /var/lib/orch/agents/orch-agent-<user>/home --create-home --shell
    /bin/bash orch-agent-<user>`, password locked; `orch-addon-1..8` with `/usr/sbin/nologin` and home
@@ -13457,12 +13562,27 @@ absolute binaries.
    `u:<agent>:x` on each ancestor of the release, the interpreter and each workspace repository inside the person's
    home; `u:<agent>:rX` plus a default ACL on the release tree and on `<repo>/.git` only. Each ACL is read back and
    verified.
-7. **Units.** `orch-runner@.service` (instance = the agent user) and `orch-addon@.service` (instance = the slot),
-   enabled and started: `User=%i` (the instance is the user name, e.g. `orch-runner@orch-agent-sev`), `Delegate=yes` (per-run cgroups, D-P2-29), `NoNewPrivileges=yes`, `PrivateTmp=yes`,
-   `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/orch/agents/%i /run/orch/agents/%i`,
+7. **Units.** `orch-runner@.service` (instance = the person) and `orch-addon@.service` (instance = the slot number),
+   the runner enabled and started (add-on slot units are written but enabled by L3): `User=orch-agent-%i` (the instance is the bare person name, e.g. `orch-runner@sev`, so no instance such as `root` can ever run as root; slots: `orch-addon@<n>` with `User=orch-addon-%i`), `Delegate=yes` (per-run cgroups, D-P2-29), `NoNewPrivileges=yes`, `PrivateTmp=yes`,
+   `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/orch/agents/orch-agent-%i /run/orch/agents/orch-agent-%i`,
    `RestrictSUIDSGID=yes`, `TasksMax=`, `MemoryMax=` (agent: 80 % of RAM by default; D-P2-29's "no limits in phase 2"
-   was a tier-A limit). `ExecStart` is the person's `<release>/current`. On a new release the host sends
-   `runner.restart`; the runner exits when idle and `Restart=always` starts the new code, so updates need no root.
+   was a tier-A limit), plus `ProtectProc=invisible`, `ProtectKernelTunables/Modules/Logs`, `ProtectClock`,
+   `ProtectHostname`, `LockPersonality`, `RestrictRealtime` and `SystemCallArchitectures=native` (`ProtectControlGroups` stays
+   off: `Delegate=yes` needs a writable cgroup tree). `ReadWritePaths` is the agent's own tree (`home` for its
+   Claude/Codex login, `state`, `repos`) and its run directory; the state directory is the agent's, never the person's.
+   `ExecStart` is the person's `<release>/current/bin/orch-runner` (the release build writes it next to `orch-host`).
+   **Start check:** `ExecStartPre=+/usr/bin/python3 -I -S /usr/lib/orch/os-setup/orch-os-setup --recheck %i` runs as root
+   (the `+` prefix) from the trusted copy, never from the release, before every start, including every `Restart=always`
+   restart (`RestartSec=2` throttles it; `StartLimitIntervalSec=0`, because the agent can kill its own runner and a start limit would then stop the unit for good). It asks `sudo -l -U` and `sshd -T`
+   again (authoritative, so LDAP and sssd are covered; the policy files' stat signatures are taken before the questions and compared again after them, and a change in between gives no verdict), runs setup's user, group and pin checks, and exits non-zero if
+   any answer changed: it drops the verdict from the pin (the host answers broken) and systemd refuses the start. It
+   never calls `systemctl` (stopping a unit from its own start job would wait on itself). When every answer still holds
+   it refreshes the pin's stat signatures, so a harmless edit elsewhere in `/etc/ssh` does not leave the host saying
+   "policy changed" until the next setup run. On a new release the host sends `runner.restart` (it notices at
+   `runner.hello` that the runner loaded another release, once per release); the runner exits when it has no live runs
+   (`force`: at once); once the restart is armed the runner refuses new spawns, and the idle decision and a spawn's admission
+   share one lock, so no spawn is accepted and then killed and `Restart=always` starts the new code, so updates need no root. The person's CLI only reads the
+   unit (`is-active`, `show`); it never installs, starts or stops it.
 8. **Report.** It prints what it did. A root login: the installer creates the person user `orch` first and the tunnel
    line uses it. Running the dashboard as root would still separate agents, but a dashboard takeover would then be a
    takeover of the server.
@@ -13473,15 +13593,53 @@ absolute binaries.
   for Linux tier B, D-P2-6's mode 0711 and per-workspace `orch-<ws>` groups (they stay the later per-workspace option).
   The ancestor rules of D-P2-6 apply; a root-owned `/run/orch` 0755 is the helper-made parent. **Invariant:** inside
   `<run>` only the shared sockets (and the directories leading to them) are group-accessible; every other file (pid
-  files, launch codes, state) is 0600 and every other directory 0700. L4 teaches the transport's ancestor and ACL
-  checks to accept the setgid bit and group `r-x` on `<run>` and nothing wider.
+  files, launch codes, state) is 0600 and every other directory 0700. **Built (L4):** the host finds the agent user from
+  the root-owned pin (class `agent`, `host_uid` = its UID; the name must be `orch-agent-<person>`, the group its own with
+  no other member), never from a flag. It then requires `<run>` to exist already (root made it; the host never creates
+  or repairs it) with owner the person, group the agent's, mode exactly 2750 and no ACL; the runner and workspace socket
+  directories are 2750 with the same group, the control directory stays 0700 in the person's group, sockets are 0660,
+  and every recheck repeats all of it (and rejects an ACL on a socket). A pin that names an agent but cannot be trusted
+  shares nothing (no runner or workspace socket) and leaves the host on tier A modes, which the 2750 directory refuses,
+  so such a host does not start. A pin of class `addon` is a pinned UID that names no workspace and is never the
+  runner.
 - Workspace sockets `<run>/<ws>/host.sock` and the runner socket `<run>/runner/host.sock`: owner the person, group the
   agent's (inherited), socket 0660. The control socket directory stays 0700: `host.*` stay person-only.
 - The runner connects as before (D-P2-24): peer UID = the registered runner UID, bound to the unit's `MainPID` read over
   systemd's D-Bus (readable by any user); the runner checks that its peer is the host UID.
-- The terminal socket moves to `/run/orch/agents/orch-agent-<user>/term.sock` (agent-owned directory with the person's ACL,
-  socket 0660). §12.6.1's checks apply with that path: the directory owned by the runner UID, no write for others
-  except the person's ACL entry, peer UID and PID equal the runner's.
+  **Built (L4):** the runner socket admits only the pinned agent UID, and only when the peer PID is the `MainPID` of
+  `orch-runner@<person>.service` (`systemctl show -p MainPID`, a D-Bus client; the pin is read again at every
+  connection). A second process of the same agent user is `peer.denied`. The runner reads its own pin, so it knows the
+  host is the person (`host_uid`) at `/run/orch/<person uid>/runner/host.sock`, and refuses to start for any `--run` but
+  its own `/run/orch/agents/<user>`. `runner.hello` names
+  `/run/orch/agents/<user>/term/<runner uid>/term.sock` and the host accepts only that path.
+  The PID is bound to the process, not only compared: by the kernel's pidfd of the peer (`SO_PEERPIDFD`, Linux 6.5+),
+  else by its start time in `/proc/<pid>/stat` against the unit's `ExecMainStartTimestampMonotonic` (both converted to
+  the boot clock, within a second); where neither can be read the connection is denied. The query runs
+  `systemctl` with `env={PATH, LC_ALL=C}` and a 3 s limit. A suspend after the runner started makes the start times
+  disagree and denies it until the unit restarts (fail closed): after three `peer.denied` answers in a row the runner
+  exits non-zero and `Restart=always` (no start limit) starts it afresh. With a pidfd there is no such lockout. The
+  pidfd is the only path that is used when the kernel has it: only a kernel without the option (`ENOPROTOOPT`) falls back
+  to the start time; any other error (an exited peer: EINVAL, ESRCH) denies. The pidfd stays open until the decision
+  and its `Pid:` is read again after the manager was asked. **Residual (LOW):** on kernels before 6.5 (Debian 12,
+  Ubuntu 22.04) the start-time fallback cannot catch the reuse of a PID that the unit's own main process left behind;
+  the runner is inside the agent's trust domain, so this adds nothing the agent user could not already do.
+  The agent and its runner share one UID, so they share one connection-attempt bucket and the 32-connection cap: an agent
+  can lock its own runner out and nobody else. In tier B `runner.json` (programs, `login_shell`, `pass_env`) is owned
+  by the agent and the agent can edit it: no person-side policy may live in that file; it stays in state the host
+  enforces.
+- **The terminal socket** (L9) stays at `/run/orch/agents/orch-agent-<user>/term/<agent uid>/term.sock`, in the agent's
+  own run directory. The runner creates `term/` and `term/<uid>/` (owner the agent; the group and other bits show only the ACL mask, `--x` on the directories and `rw-` on the socket, and nothing for other)
+  and grants the person `--x` on both and `rw-` on the socket by a POSIX access ACL (`u:<person>:`, mask the same, group and
+  other nothing), written and read back at every start; if the ACL cannot be set, no terminal socket is served (fail
+  closed). The runner admits a connection only if the kernel's peer UID is the person's (`host_uid` of the pin; root or
+  the agent itself is refused at `open`), so the agent's own processes, which share the runner's UID, cannot attach.
+  The dashboard's `TermClient` does not trust the host's answer for the path: the runner UID must have a root-owned
+  `agent` pin whose `host_uid` is the client's own UID, the directory is `/run/orch/agents/<pw_name>` from the user
+  database (`orch-agent-*`), the `term/<uid>` directory must be the agent's with no more than `--x` for others, and the
+  peer UID and PID after `connect` must be the runner's (§12.6.1). Any mismatch is `RunnerChanged`.
+- **No shell as the person in tier B.** Terminals start only on a runner whose UID is the pinned agent's (never the
+  person's, never another UID: `runner.unavailable`), re-checked in `term.open`; `term.preview` reports
+  `as_person: false` and `runs_as: orch-agent-<user>`, and the dashboard shows the card line of §13.5.
 - The agent's `orch` CLI finds the host by `ORCH_HOST_RUN_DIR=/run/orch/<person uid>` from the runner's environment.
 - No abstract Unix sockets on the person's side (everyone can reach those); kept as a tested invariant.
 
@@ -13623,6 +13781,18 @@ first failed fact named.
 | **Another local user** | As §0.8.6 item 8 | Same; plus L8 drops their loopback connections to the dashboard on Linux |
 | **Root** | Out of scope | Out of scope |
 
+**Sudo and SSH policy check, and its limit (L2/L11).** The root-owned pin records the verdict of `sudo -l -U` and
+`sshd -T` taken at setup, plus the stat signature of each policy file. The unprivileged host compares signatures on
+every `detect()`. Where the person cannot search a policy folder (Ubuntu and RHEL: `/etc/sudoers.d` is 0750 root), only
+the folder's own signature is recorded: an entry added, removed or renamed is seen, but an **in-place edit of an existing
+file inside that folder is not**, because only root can stat it (the edit needs root as well, so this sits inside the
+"Root: out of scope" row). A folder the person can list but not search refuses with "is new" for any entry that was not
+recorded; that fails closed and is accepted. A recorded entry the host cannot stat (a symlink to a root-only target)
+reads as changed. **Closed by L3:** the runner unit's `ExecStartPre=+… --recheck %i` (13.2 item 7) asks `sudo -l -U` and
+`sshd -T` again at each runner start as root, refuses the start if an answer changed and rewrites the pin without a
+verdict. It runs at start, not continuously: a rule added while the runner runs is caught at its next start (or setup
+rerun), and the host's signature comparison covers the time in between.
+
 **What tier A honestly loses.** Without isolation, anything an agent runs can sign with One click and read every file
 of the person, including SSH keys and tokens; the column split of §0.5 is policy, not a boundary; community add-ons
 stay refused. The dashboard shows the red line "Agents run as you" and One click is off by default. An unprivileged
@@ -13656,7 +13826,7 @@ part; H3c's per-workspace groups and worker daemon stay later options.
 
 ### 13.12 Build tasks
 
-L1 setup plan (pure) → L2 apply and `bin/orch-os-setup`; L3 runner as system unit; L4 run directory and sockets; L5
+L1 setup plan (pure) → L2 apply and the root-owned launcher `/usr/lib/orch/os-setup/orch-os-setup`; L3 runner as system unit; L4 run directory and sockets; L5
 person-side ACLs; L6 agent clone and worktrees; L7 agent CLI (served mode only, `instructions.hook`, environment); L8
 dashboard peer-UID check; L9 terminals as the agent; L10 agent sign-in; L11 `isolation.detect()`; L12 the setup step;
 L13 doctor; A1–A4 slots, ACLs, credentials per call, #929; E1 e2e `vps-agent-uid` on the dev VPS; M1–M3 macOS. Real

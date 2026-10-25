@@ -10,8 +10,7 @@ The host is the authority for who may do what; this module only fixes the op, cl
 | DELETE /market/stage/{stage}           | market.unstage     | P, owner, human only                              |
 | POST   /market/uninstall               | market.uninstall   | P, owner, human only                              |
 | POST   /market/refresh                 | market.refresh     | P and G; no `commit` argument (human only) |
-
-| POST   /market/add                     | market.add         | P, owner, human only; the URL must be one of `market.list` `sources` |
+| POST   /market/add                     | market.add         | P, owner, human only; only a listed source |
 
 `market.add` is the "+ Add marketplace" picker: the page offers only the `sources` the host lists, and this route
 accepts only those too (a convenience; the host's gate stays the authority and decides again). No step-up, no signature.

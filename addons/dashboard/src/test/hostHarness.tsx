@@ -267,6 +267,7 @@ export class FakeHost {
     if (rest.startsWith('market/') && method !== 'GET' && (ws.role !== 'owner' || !ws.features.includes('actions'))) return json({ ok: false, error: { code: 'permission.denied', message: 'Owner approval is required', retryable: false } }, 403)
     if (rest === 'market') return json(ws.market ?? { markets: [] })
     if (rest === 'market/installed') return json(ws.marketInstalled ?? { addons: [] })
+    if (rest === 'market/add' && method === 'POST') return json({ added: true })
     if (rest === 'market/stage' && method === 'POST') return json(ws.marketStage)
     if (rest.startsWith('market/stage/') && method === 'DELETE') return json({ removed: true })
     if (rest === 'market/uninstall') return json({ name: body?.name, removed: true })

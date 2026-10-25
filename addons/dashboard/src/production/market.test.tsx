@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
 import { market, stage, installedAddon, updateStage } from '@/test/fixtures/market'
-import { EXTERNAL_HELP } from '@/api/market'
+import { ADD_MARKET_HELP } from '@/api/market'
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
 vi.mock('@/api/useLiveUpdates', async (original) => ({
@@ -112,9 +112,8 @@ it('marketplaces explain each publisher state and hub refusal', async () => {
   for (const name of ['Allowed by', 'Added by', 'Publisher signature', 'Repo', 'Last refreshed']) expect(screen.getByRole('columnheader', { name })).toBeInTheDocument()
   for (const text of ['Unsigned', 'First use - key will be remembered', 'Key changed - review required']) expect(screen.getByText(text)).toBeInTheDocument()
   const add = screen.getByRole('button', { name: '+ Add marketplace' })
-  expect(add).toBeDisabled()
-  expect(add).toHaveAccessibleDescription(/external marketplaces aren't available in this workspace yet/i)
-  expect(screen.getByText(EXTERNAL_HELP)).toBeInTheDocument()
+  expect(add).toBeDisabled() // this fixture lists no source to add
+  expect(add).toHaveAccessibleDescription(ADD_MARKET_HELP)
 })
 it.each(['member', 'no-actions'] as const)('hides every write control for %s', async (mode) => {
   if (mode === 'member') {

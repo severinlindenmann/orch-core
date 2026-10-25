@@ -228,6 +228,7 @@ const reads = {
   },
   marketList: (ws: string) => call<MarketList>(`${w(ws)}/market`),
   marketInstalled: (ws: string) => call<MarketInstalled>(`${w(ws)}/market/installed`),
+  marketAdd: (ws: string, url: string) => call<unknown>(`${w(ws)}/market/add`, 'POST', { url }),
   marketStage: (ws: string, input: StageInput) => call<StageResult>(`${w(ws)}/market/stage`, 'POST', input),
   marketUnstage: (ws: string, stage: string) => call<{ removed: boolean }>(`${w(ws)}/market/stage/${encodeURIComponent(stage)}`, 'DELETE'),
   marketUninstall: (ws: string, name: string) => call<{ name: string; removed: boolean }>(`${w(ws)}/market/uninstall`, 'POST', { name }),

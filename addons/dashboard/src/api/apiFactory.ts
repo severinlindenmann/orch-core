@@ -177,6 +177,7 @@ export function createApi(transport: Transport) {
     /** Marketplace reads and owner-only writes; approval uses the terminal hand-off. */
     marketList: (ws: string) => call<MarketList>('GET', `/api/w/${ws}/market`),
     marketInstalled: (ws: string) => call<MarketInstalled>('GET', `/api/w/${ws}/market/installed`),
+    marketAdd: (ws: string, url: string) => call<unknown>('POST', `/api/w/${ws}/market/add`, { url }),
     marketStage: (ws: string, input: StageInput) => call<StageResult>('POST', `/api/w/${ws}/market/stage`, input),
     marketUnstage: (ws: string, stage: string) => call<{ removed: boolean }>('DELETE', `/api/w/${ws}/market/stage/${encodeURIComponent(stage)}`),
     marketUninstall: (ws: string, name: string) => call<{ name: string; removed: boolean }>('POST', `/api/w/${ws}/market/uninstall`, { name }),

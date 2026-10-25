@@ -135,3 +135,44 @@ it('Settings opens a side panel over the list and Cancel puts focus back on the 
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   await waitFor(() => expect(screen.getByRole('button', { name: 'Settings' })).toHaveFocus())
 })
+
+const SRC = { url: 'https://github.com/acme/hub-market', class: 'company' as const, added: false }
+const DEV = { url: 'https://github.com/acme/test-market', class: 'dev' as const, added: false }
+const OFFICIAL = { url: market().url, class: 'official' as const, added: true }
+
+it('+ Add marketplace is greyed with the one sentence when no source is addable', async () => {
+  ws().market = { markets: [market()], sources: [OFFICIAL], any_source: false }
+  show('/w/DEMO/addons?tab=marketplaces')
+  const add = await screen.findByRole('button', { name: '+ Add marketplace' }, T)
+  expect(add).toBeDisabled()
+  expect(add).toHaveAccessibleDescription("Only the official and your hub's marketplaces can be added.")
+  expect(screen.queryByText(/by address/i)).toBeNull()
+})
+
+it('the picker lists only the sources not yet added, tags the dev one, and adds with one Add and one Approve', async () => {
+  ws().market = { markets: [market()], sources: [OFFICIAL, SRC, DEV], any_source: false }
+  show('/w/DEMO/addons?tab=marketplaces')
+  await userEvent.click(await screen.findByRole('button', { name: '+ Add marketplace' }, T))
+  const d = await screen.findByRole('dialog')
+  const rows = within(d).getAllByRole('listitem')
+  expect(rows).toHaveLength(2)
+  expect(within(rows[0]).getByText('Your hub')).toBeInTheDocument()
+  expect(within(rows[1]).getByText('dev sandbox only')).toBeInTheDocument()
+  expect(d).not.toHaveTextContent(market().url)
+  expect(state.host.calls.some((c) => c.path.endsWith('/market/add'))).toBe(false)
+  await userEvent.click(within(rows[0]).getByRole('button', { name: 'Add' }))
+  expect(state.host.calls.some((c) => c.path.endsWith('/market/add'))).toBe(false) // Add only picks
+  await userEvent.click(within(d).getByRole('button', { name: 'Approve' }))
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/add'))?.body).toEqual({ url: SRC.url }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+})
+
+it('Back from the confirm returns to the list and sends nothing', async () => {
+  ws().market = { markets: [market()], sources: [SRC], any_source: false }
+  show('/w/DEMO/addons?tab=marketplaces')
+  await userEvent.click(await screen.findByRole('button', { name: '+ Add marketplace' }, T))
+  await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Add' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+  expect(screen.getByRole('list', { name: 'Marketplaces you can add' })).toBeInTheDocument()
+  expect(state.host.calls.some((c) => c.path.endsWith('/market/add'))).toBe(false)
+})

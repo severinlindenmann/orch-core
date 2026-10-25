@@ -71,7 +71,15 @@ export interface MarketStage {
 }
 export type StageInput = { id: string; url?: string; update?: boolean }
 export type StageResult = MarketStage | { up_to_date: true; name: string; version: string }
-export type MarketList = { markets: Market[] }
+/** A marketplace this workspace could add, as the host's own add gate decides (`dev` = the sandbox's test marketplace). */
+export interface MarketSource {
+  url: string
+  class: 'official' | 'company' | 'dev'
+  added: boolean
+}
+export type MarketList = { markets: Market[]; sources?: MarketSource[]; any_source?: boolean; reason?: string }
+export const ADD_MARKET_HELP = "Only the official and your hub's marketplaces can be added."
+export const sourceTag = (c: MarketSource['class']) => (c === 'official' ? 'Official' : c === 'company' ? 'Your hub' : 'dev sandbox only')
 export type MarketInstalled = { addons: InstalledAddon[] }
 export const EXTERNAL_HELP = "External marketplaces aren't available in this workspace yet"
 export function stateLabel(state?: string, pending = false): string {

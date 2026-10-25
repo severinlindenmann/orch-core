@@ -5,7 +5,8 @@ import { api } from '@/api/client'
 import { canAct, hasFeature } from '@/api/features'
 import { queries } from '@/api/queries'
 import {
-  EXTERNAL_HELP,
+  ADD_MARKET_HELP,
+  sourceTag,
   marketError,
   permissionEffect,
   publisherWording,
@@ -213,6 +214,8 @@ function MarketWorkspace() {
   const [done, setDone] = useState<{ name: string; version: string } | null>(null)
   /** "Turn on now" after an install, and the first half of "Turn off and remove": one signed switch each. */
   const [turnOn, setTurnOn] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [addPick, setAddPick] = useState<string | null>(null)
   const [offThenRemove, setOffThenRemove] = useState<InstalledAddon | null>(null)
   const packages = useAddons()
   const refresh = async () => {
@@ -249,6 +252,7 @@ function MarketWorkspace() {
       setStage(null)
     })
   const markets = list.data?.markets ?? []
+  const addable = (list.data?.sources ?? []).filter((x) => !x.added)
   const entries = markets.flatMap((m) => m.addons.map((a) => ({ m, a })))
   const active = tab === 'installed' ? installed : list
   if (!hasFeature('market', ws)) return <p>Add-ons are not available in this workspace.</p>
@@ -470,20 +474,78 @@ function MarketWorkspace() {
                 </Table>
               )}
               <p className="text-xs text-text-muted">Allowed by, added by and publisher signature: shown by this computer, not covered by your approval.</p>
-              <p>{EXTERNAL_HELP}</p>
               {mayWrite && (
                 <div className="space-y-1">
-                  <Button disabled aria-describedby="add-market-why">
+                  <Button disabled={busy || !addable.length} aria-describedby={addable.length ? undefined : 'add-market-why'} onClick={() => setAdding(true)}>
                     + Add marketplace
                   </Button>
-                  <p id="add-market-why" className="text-xs text-text-muted">
-                    Not available: {EXTERNAL_HELP.charAt(0).toLowerCase() + EXTERNAL_HELP.slice(1)}.
-                  </p>
+                  {!addable.length && (
+                    <p id="add-market-why" className="text-xs text-text-muted">
+                      {ADD_MARKET_HELP}
+                    </p>
+                  )}
                 </div>
               )}
             </>
           )}
         </>
+      )}
+      {mayWrite && adding && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !busy) {
+              setAdding(false)
+              setAddPick(null)
+            }
+          }}
+        >
+          <DialogContent className="max-h-[85vh] overflow-y-auto break-words border-border bg-surface">
+            <DialogHeader>
+              <DialogTitle>{addPick ? 'Add this marketplace?' : 'Add a marketplace'}</DialogTitle>
+              <DialogDescription>{addPick ? 'Adding only lets you browse it. Installing an add-on is a separate approval.' : 'Pick one of the marketplaces this workspace may use.'}</DialogDescription>
+            </DialogHeader>
+            {addPick ? (
+              <>
+                <p className="font-mono text-xs">
+                  <Inline>{addPick.replace(/^https:\/\/github\.com\//, '')}</Inline>
+                </p>
+                <DialogFooter>
+                  <Button variant="ghost" disabled={busy} onClick={() => setAddPick(null)}>
+                    Back
+                  </Button>
+                  <Button
+                    disabled={busy}
+                    onClick={() =>
+                      void write(async () => {
+                        await api.marketAdd(ws, addPick)
+                        await refresh()
+                        setAdding(false)
+                        setAddPick(null)
+                      })
+                    }
+                  >
+                    Approve
+                  </Button>
+                </DialogFooter>
+              </>
+            ) : (
+              <ul aria-label="Marketplaces you can add" className="space-y-2">
+                {addable.map((x) => (
+                  <li key={x.url} className="flex flex-wrap items-center justify-between gap-2 rounded border border-border p-3">
+                    <span className="min-w-0 break-all font-mono text-xs">
+                      <Inline>{x.url.replace(/^https:\/\/github\.com\//, '')}</Inline>{' '}
+                      <span className="rounded border border-border px-2 font-sans">{sourceTag(x.class)}</span>
+                    </span>
+                    <Button size="sm" onClick={() => setAddPick(x.url)}>
+                      Add
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </DialogContent>
+        </Dialog>
       )}
       {mayWrite && stage && !handoff && (
         <Review

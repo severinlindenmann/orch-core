@@ -151,11 +151,23 @@ class CheckedDirectory:
     provisioned separately by H3c; the host never repairs foreign ownership.
     """
 
-    def __init__(self, path: Path, host_uid: int, *, mode: int, gid: int | None = None, create: bool = True):
+    def __init__(
+        self,
+        path: Path,
+        host_uid: int,
+        *,
+        mode: int,
+        gid: int | None = None,
+        create: bool = True,
+        strict_acl: bool = False,
+    ):
+        """``strict_acl``: the final directory carries no ACL at all (tier B, spec 13.3: the group is the only share).
+        A setgid ``mode`` (``0o2750``) must come out exactly: a directory made inside a setgid parent inherits the
+        bit, and it is never "repaired" by a chmod that a non-member would silently lose it in."""
         self.path = Path(path)
         if not self.path.is_absolute() or ".." in self.path.parts:
             raise UnsafePath("Expected an absolute path without parent traversal")
-        self.host_uid, self.mode, self.gid = host_uid, mode, gid
+        self.host_uid, self.mode, self.gid, self.strict_acl = host_uid, mode, gid, strict_acl
         self.fds: list[int] = []
         self.identities: list[tuple[int, int]] = []
         try:
@@ -176,7 +188,8 @@ class CheckedDirectory:
                         try:
                             if gid is not None:
                                 os.fchown(child, -1, gid)
-                            os.fchmod(child, mode)
+                            if stat.S_IMODE(os.fstat(child).st_mode) != mode:
+                                os.fchmod(child, mode)
                         finally:
                             os.close(child)
                 fd = os.open(part, _FLAGS, dir_fd=fd)
@@ -189,6 +202,8 @@ class CheckedDirectory:
                 raise UnsafePath(f"{path}: expected owner {host_uid} and mode {mode:o}, got {info.st_uid}")
             if gid is not None and info.st_gid != gid:
                 raise UnsafePath(f"{path}: unexpected group {info.st_gid}")
+            if strict_acl:
+                check_acl(fd, {0}, empty=True)
             self.identities = [(os.fstat(item).st_dev, os.fstat(item).st_ino) for item in self.fds]
         except BaseException:
             self.close()
@@ -199,7 +214,9 @@ class CheckedDirectory:
         return self.fds[-1]
 
     def recheck(self) -> None:
-        other = CheckedDirectory(self.path, self.host_uid, mode=self.mode, gid=self.gid, create=False)
+        other = CheckedDirectory(
+            self.path, self.host_uid, mode=self.mode, gid=self.gid, create=False, strict_acl=self.strict_acl
+        )
         try:
             if other.identities != self.identities:
                 raise UnsafePath(f"{self.path}: ancestor was replaced")

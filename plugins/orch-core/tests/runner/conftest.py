@@ -9,6 +9,7 @@ import pytest
 
 from orch.runner import procs
 from orch.runner.supervise import Supervisor
+from tests.host.tier_b_helpers import pins_dir, tree  # noqa: F401 - fixtures of the tier B tests
 from tests.runner.helpers import wait_for
 
 

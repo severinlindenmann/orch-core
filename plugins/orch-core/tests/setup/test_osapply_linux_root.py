@@ -6,15 +6,37 @@ Creates the real users, directories, pins and units on the runner, then asks ``i
 
 from __future__ import annotations
 
+import fcntl
 import os
 import pwd
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux only")
+pytestmark = [
+    pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux only"),
+    pytest.mark.xdist_group("linux_root"),  # with `--dist loadgroup` one worker; the lock below holds without it
+]
+
+#: Every test here creates and removes the SAME system users, pins and directories (the person's name, orch-agent-<p>,
+#: /usr/lib/orch/os-setup, /etc/orch/pins). Two at once, on different xdist workers of one machine, fight over
+#: /etc/passwd and delete each other's users. So each test holds this lock from its first line to its last.
+ROOT_LOCK = os.path.join(tempfile.gettempdir(), "orch-ci-root.lock")
+
+
+@pytest.fixture(autouse=True)
+def one_root_test_at_a_time():
+    handle = open(ROOT_LOCK, "a")  # noqa: SIM115 - held across the yield
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    try:
+        yield handle
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
 
 SUDO = ["sudo", "-n"]
 
@@ -244,3 +266,154 @@ def test_the_runner_unit_rechecks_sudo_as_root_at_every_start(root_machine, tmp_
     _sudo("/usr/bin/systemctl", "reset-failed", unit, check=False)
     assert _sudo("/usr/bin/systemctl", "restart", unit, check=False).returncode == 0
     assert _wait(active) and _wait(isolated)
+
+
+_PROBE = """#!/usr/bin/python3
+import json, socket, time
+
+def frame(value):
+    body = json.dumps(value, separators=(",", ":")).encode()
+    return len(body).to_bytes(4, "big") + body
+
+def read(sock):
+    size = int.from_bytes(sock.recv(4), "big")
+    data = b""
+    while len(data) < size:
+        data += sock.recv(size - len(data))
+    return json.loads(data)
+
+def save(result):
+    with open("/run/orch/agents/orch-agent-%(person)s/probe.json", "w") as out:
+        out.write(json.dumps(result))
+
+for _ in range(240):
+    try:
+        sock = socket.socket(socket.AF_UNIX)
+        sock.connect("/run/orch/%(uid)d/runner/host.sock")
+        sock.sendall(frame({"t": "hello", "proto": [1], "client": "probe", "caps": ["runner/1"], "ops": {}}))
+        welcome = read(sock)
+        save({"welcome": welcome})
+        if welcome.get("t") == "welcome":
+            break
+    except Exception as exc:
+        save({"error": repr(exc)})
+    time.sleep(0.5)
+time.sleep(100000)
+"""
+
+_CLIENT = """
+import json, socket, sys
+sock = socket.socket(socket.AF_UNIX)
+try:
+    sock.connect(sys.argv[1])
+except OSError as exc:
+    print(json.dumps({"errno": exc.errno})); raise SystemExit
+body = json.dumps({"t": "hello", "proto": [1], "client": "x", "caps": []}).encode()
+sock.sendall(len(body).to_bytes(4, "big") + body)
+size = int.from_bytes(sock.recv(4), "big"); data = b""
+while len(data) < size:
+    data += sock.recv(size - len(data))
+print(data.decode())
+"""
+
+
+def test_the_host_admits_only_the_runner_unit_through_the_shared_run_directory(
+    root_machine, tmp_path, monkeypatch
+) -> None:
+    """L4 against real users: the host (the person) serves ``/run/orch/<uid>/runner/host.sock`` in the setgid run
+    directory root made. The runner unit's main process (here a probe standing in for the runner) is admitted as class
+    ``runner``; another process of the SAME agent user is ``peer.denied``; an unrelated user cannot even connect."""
+    import logging
+
+    person, release = root_machine
+    applied = _apply_as_root(person, release)
+    assert applied.returncode == 0, applied.stdout + applied.stderr + _ancestors(release)
+    uid, agent = os.getuid(), pwd.getpwnam(f"orch-agent-{person}")
+    probe = tmp_path / "probe"
+    probe.write_text(_PROBE % {"uid": uid, "person": person})
+    _sudo("install", "-o", "root", "-g", "root", "-m", "0755", str(probe), f"{release}/current/bin/orch-runner")
+    unit = f"orch-runner@{person}.service"
+    assert _sudo("/usr/bin/systemctl", "restart", unit, check=False).returncode == 0
+    run = Path("/run/orch") / str(uid)
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)  # the real service manager is asked below
+    monkeypatch.delenv("ORCH_NO_SERVICE_MANAGER", raising=False)  # (CI may set it: the host would deny every runner)
+    host_log: list[str] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            host_log.append(self.format(record))
+
+    capture = Capture(level=logging.DEBUG)
+    top = logging.getLogger("orch.host")  # not "orch": other tests' leaked threads log there too
+    top.addHandler(capture)
+    top.setLevel(logging.DEBUG)
+    try:
+        _check_shared_run(person, uid, agent, run, state, host_log)
+    finally:
+        top.removeHandler(capture)
+
+
+def _diagnostics(person: str, uid: int, host_log: list[str]) -> str:
+    """What the next CI run needs to say why the probe never connected (shown only on failure)."""
+    unit = f"orch-runner@{person}.service"
+    sock = f"/run/orch/{uid}/runner/host.sock"
+    parts = [
+        _sudo("systemctl", "status", unit, "--no-pager", "-l", check=False).stdout,
+        _sudo("journalctl", "-u", unit, "-n", "80", "--no-pager", check=False).stdout,
+        _sudo("ls", "-lnd", "/run/orch", f"/run/orch/{uid}", f"/run/orch/{uid}/runner", sock, check=False).stdout,
+        _sudo(
+            "stat", "-c", "%U:%G %a %n", "/run/orch", f"/run/orch/{uid}", f"/run/orch/{uid}/runner", sock, check=False
+        ).stdout,
+        _sudo("ls", "-ln", f"/run/orch/{uid}", "/run/orch/agents", check=False).stdout,
+        "probe.json: " + _sudo("cat", f"/run/orch/agents/orch-agent-{person}/probe.json", check=False).stdout,
+        _sudo("systemctl", "show", "-p", "MainPID", "-p", "ExecMainStartTimestampMonotonic", unit, check=False).stdout,
+        "host log:\n" + "\n".join(host_log[-60:]),
+    ]
+    return "\n----\n".join(parts)
+
+
+def _check_shared_run(person, uid, agent, run, state, host_log) -> None:
+    import json
+    import stat
+
+    from tests.host.lifecycle_helpers import HostThread
+
+    with HostThread(state, run) as host:
+        assert host.host.share is not None and host.host.share.uid == agent.pw_uid
+        shown = {p: os.stat(p) for p in (run, run / "runner", run / "runner" / "host.sock", run / "control")}
+        assert stat.S_IMODE(shown[run].st_mode) == 0o2750 and shown[run].st_gid == agent.pw_gid
+        assert stat.S_IMODE(shown[run / "runner"].st_mode) == 0o2750
+        sock = shown[run / "runner" / "host.sock"]
+        assert stat.S_IMODE(sock.st_mode) == 0o660 and sock.st_uid == uid and sock.st_gid == agent.pw_gid
+        assert stat.S_IMODE(shown[run / "control"].st_mode) == 0o700
+        path = f"/run/orch/agents/orch-agent-{person}/probe.json"
+
+        def welcomed() -> bool:
+            try:
+                hello = json.loads(_sudo("cat", path, check=False).stdout).get("welcome") or {}
+            except ValueError:
+                return False
+            return hello.get("t") == "welcome" and (hello.get("peer") or {}).get("class") == "runner"
+
+        if not _wait(welcomed, 60):
+            pytest.fail("the runner never connected\n" + _diagnostics(person, uid, host_log))
+        got = json.loads(_sudo("cat", path).stdout)["welcome"]
+        assert (got["peer"]["class"], got["host_uid"]) == ("runner", uid), got
+        target = str(run / "runner" / "host.sock")
+        same_user = _sudo("-u", agent.pw_name, "/usr/bin/python3", "-I", "-c", _CLIENT, target)
+        assert "peer.denied" in same_user.stdout, same_user.stdout  # the agent user, but not the unit's main process
+        other = _sudo("-u", "nobody", "/usr/bin/python3", "-I", "-c", _CLIENT, target)
+        assert json.loads(other.stdout) == {"errno": 13}, other.stdout  # EACCES: not even a connection
+        control = _sudo(
+            "-u", agent.pw_name, "/usr/bin/python3", "-I", "-c", _CLIENT, str(run / "control" / "host.sock")
+        )
+        assert json.loads(control.stdout) == {"errno": 13}, control.stdout  # host.* stay person-only
+
+
+def test_the_module_never_runs_two_root_tests_at_once(one_root_test_at_a_time) -> None:
+    """The lock is held by this very test: a second holder (another worker) could not take it."""
+    with open(ROOT_LOCK, "a") as other:
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)

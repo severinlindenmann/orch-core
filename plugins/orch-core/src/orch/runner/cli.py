@@ -301,6 +301,36 @@ def terminals(args: argparse.Namespace, env: Mapping[str, str]) -> dict[str, Any
     return {"ok": True, "result": {"data": {"workspace_id": wid, "terminals": on}}}
 
 
+def _host_endpoint(uid: int, run_dir: Path, *, pins: Any = None) -> tuple[int, Path]:
+    """Where the host is and whose it is: ``(host UID, runner socket)``.
+
+    Tier A (no root-owned agent pin for this UID): the host is this UID and the socket is ``<--run>/runner/host.sock``.
+    Tier B (spec 13.3): this UID is the pinned agent user, so the host is the PERSON the root-owned pin names, at
+    ``/run/orch/<person uid>/runner/host.sock``; ``--run`` must be this agent's own run directory
+    (``/run/orch/agents/<user>``). A pin that cannot be trusted, or any other ``--run``, refuses to start: a runner
+    never falls back to tier A while a pin exists (it would look for a host that is the agent itself)."""
+    from orch.host.listener import default_run_directory
+    from orch.host.pins import AgentPins
+    from orch.setup.osusers import AGENT_RUN_ROOT
+
+    pins = pins if pins is not None else AgentPins()
+    doc = pins.get(uid)
+    if doc is None:
+        return uid, Path(run_dir) / "runner" / "host.sock"
+    host = doc.get("host_uid")
+    if doc.get("class") != "agent" or type(host) is not int or host in (0, uid):
+        raise SystemExit(f"orch-runner: the pin of UID {uid} is not a usable agent pin; not starting")
+    import pwd
+
+    try:
+        user = pwd.getpwuid(uid).pw_name
+    except KeyError:
+        raise SystemExit(f"orch-runner: UID {uid} is not in the user database; not starting") from None
+    if Path(run_dir) != Path(AGENT_RUN_ROOT) / user:
+        raise SystemExit(f"orch-runner: an agent runner uses {AGENT_RUN_ROOT}/{user} as --run, not {run_dir}")
+    return host, default_run_directory(host) / "runner" / "host.sock"
+
+
 def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     from orch.host import enable as svc
 
@@ -312,6 +342,7 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     run_dir = svc.run_dir_for(state, args.run, env)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     uid = os.getuid()
+    host_uid, host_socket = _host_endpoint(uid, run_dir)
     sup = Supervisor(state)
     swept = sup.open()
     log = logging.getLogger("orch.runner")
@@ -340,7 +371,7 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
             log.warning("dev runner: announced in %s (only a host started with --dev-runner admits it)", announced)
         except OSError as exc:
             log.warning("dev runner: not announced: %s", exc)
-    # tier A: the host runs as this UID; the link refuses a socket whose peer is another UID
+    # the link refuses a socket whose peer is not the host UID: this UID in tier A, the person's in tier B
     from .service import current_release, write_loaded_release
 
     release = current_release()  # eager: the release this runner loaded, for the host's hello and for enable
@@ -349,9 +380,15 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     from .restart import RestartGate
 
     gate = RestartGate(lambda: len(sup.table.live()), stop, lock=sup._spawn_lock)
-    link = HostLink(sup, Path(run_dir) / "runner" / "host.sock", host_uid=uid, gen=gen, term=term,
+    refused = threading.Event()
+
+    def give_up() -> None:  # refused again and again: exit non-zero, `Restart=always` starts a fresh process
+        refused.set()
+        stop.set()
+
+    link = HostLink(sup, host_socket, host_uid=host_uid, gen=gen, term=term,
                     config=lambda: read_config(state, uid), grants=grants, release=release,
-                    restart=gate.request, restarting=lambda: gate.armed)  # fmt: skip
+                    restart=gate.request, restarting=lambda: gate.armed, on_denied=give_up)  # fmt: skip
     link.start()
     for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(sig, lambda *_: stop.set())
@@ -369,7 +406,7 @@ def _run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
                 from . import devmode
 
                 devmode.withdraw(announced, os.getpid())
-    return 0
+    return 1 if refused.is_set() else 0
 
 
 def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO | None = None) -> int:

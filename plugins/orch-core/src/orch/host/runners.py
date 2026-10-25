@@ -43,8 +43,10 @@ import contextlib
 import hashlib
 import logging
 import math
+import os
 import re
 import secrets
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -55,7 +57,9 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 
 from . import frames
+from ._socket import pidfd_pid_now
 from .custody import ensure_private_dir, read_json, write_private
+from .enable import _default_run
 from .errors import HostError
 from .transport import Credentials, Session
 
@@ -72,6 +76,8 @@ __all__ = [
     "RunnerHub",
     "main_pid",
     "runner_identity",
+    "unit_main_process",
+    "system_runner_identity",
 ]
 
 LOG = logging.getLogger(__name__)
@@ -123,9 +129,8 @@ def _iso(t: float | None = None) -> str:
 def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platform: str | None = None) -> int | None:
     """The runner unit's main PID from the person's service manager, or ``None``. ``run`` defaults to the H7 command
     runner, which refuses under pytest and with ``ORCH_NO_SERVICE_MANAGER=1`` (so a test never reaches launchctl)."""
+    # lazy: orch.runner.service imports orch.host.enable, which imports back into the host package
     from orch.runner.service import LAUNCHD_LABEL, SYSTEMD_NAME
-
-    from .enable import _default_run
 
     run = run or _default_run
     platform = platform or sys.platform
@@ -144,6 +149,129 @@ def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platfor
         return None
     pid = int(found.group(1)) if found else 0
     return pid if pid > 1 else None
+
+
+SYSTEMCTL = ("/usr/bin/systemctl", "/bin/systemctl")
+
+
+#: the environment and time limit of the system manager query: it runs in the serialized accept loop
+SYSTEMCTL_ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
+SYSTEMCTL_SECONDS = 3
+
+
+def _system_query(argv: list[str]) -> Any:
+    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ORCH_NO_SERVICE_MANAGER") == "1":
+        raise OSError(f"{argv[0]} refused: the service manager is off (a test, or ORCH_NO_SERVICE_MANAGER=1)")
+    return subprocess.run(  # noqa: S603 - fixed binary, fixed arguments, a validated unit name
+        argv, capture_output=True, text=True, timeout=SYSTEMCTL_SECONDS, check=False, env=SYSTEMCTL_ENV
+    )
+
+
+def unit_main_process(unit: str, run: Callable[[list[str]], Any] | None = None) -> tuple[int, int] | None:
+    """``(MainPID, ExecMainStartTimestampMonotonic in microseconds)`` of the SYSTEM unit ``unit`` (tier B:
+    ``orch-runner@<person>.service``), asked of systemd over its D-Bus interface, which any user may read
+    (``systemctl show`` is that client; no privilege and no file of the agent's is involved). ``None``: not running,
+    unreadable or ambiguous (a denial)."""
+    if not re.fullmatch(r"orch-runner@[A-Za-z0-9_-]{1,40}\.service", unit):
+        return None
+    binary = next((path for path in SYSTEMCTL if os.path.exists(path)), SYSTEMCTL[0])
+    argv = [binary, "show", "-p", "MainPID", "-p", "ExecMainStartTimestampMonotonic", "--", unit]
+    try:
+        res = (run or _system_query)(argv)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode != 0:
+        return None
+    found = dict(line.split("=", 1) for line in (res.stdout or "").splitlines() if "=" in line)
+    try:
+        pid, start = int(found["MainPID"]), int(found["ExecMainStartTimestampMonotonic"])
+    except (KeyError, ValueError):
+        return None
+    return (pid, start) if pid > 1 and start > 0 else None
+
+
+def proc_start_seconds(pid: int) -> float | None:
+    """When ``pid`` started, in seconds on the boot clock (``/proc/<pid>/stat`` field 22, in clock ticks)."""
+    try:
+        with open(f"/proc/{int(pid)}/stat", "rb") as handle:
+            raw = handle.read(4096).decode("ascii", "replace")
+        fields = raw[raw.rindex(")") + 2 :].split()  # the name (field 2) may hold spaces and parentheses
+        return int(fields[19]) / os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def monotonic_to_boot_offset() -> float:
+    return time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
+
+
+#: systemd's start stamp and the kernel's start tick are read at different moments and resolutions
+START_TOLERANCE = 1.0
+
+
+def started_when_systemd_says(pid: int, start_us: int) -> bool:
+    """The process ``pid`` started when the unit's main process did. A reused PID has another start time. The two
+    clocks differ by the time spent suspended; a suspend after the start therefore denies (fail closed), and the
+    runner is then restarted by its unit. ``False`` when either time cannot be read."""
+    began = proc_start_seconds(pid)
+    if began is None:
+        return False
+    try:
+        expected = start_us / 1_000_000 + monotonic_to_boot_offset()
+    except (OSError, AttributeError):
+        return False
+    return abs(began - expected) <= START_TOLERANCE
+
+
+def system_runner_identity(
+    share: Any, pins: Any, credentials: Credentials, run: Callable[[list[str]], Any] | None = None
+) -> bool:
+    """Tier B: the connecting process is the main process of the agent's runner unit AND the root-owned pin still names
+    exactly this agent user for this host (read again at every connection: a replaced pin or user never matches).
+
+    The PID alone could be reused (a descriptor passed on, the process gone, the PID taken by the restarted runner).
+    So the PID must be bound to the process: by the kernel's pidfd of the peer where there is one (Linux 6.5+), else by
+    its start time against the unit's. Neither possible: denied."""
+    # every refusal says which condition denied (ids and numbers only), so a CI log can tell them apart
+    if credentials.uid != share.uid:
+        LOG.debug("runner identity denied: peer uid %s is not the agent uid %s", credentials.uid, share.uid)
+        return False
+    try:
+        if pins.share_for(share.host_uid) != share:
+            LOG.debug("runner identity denied: the pin no longer names this agent user")
+            return False
+    except (OSError, ValueError) as exc:
+        LOG.debug("runner identity denied: the pin cannot be trusted (%s)", type(exc).__name__)
+        return False
+    main = unit_main_process(share.unit, run)
+    if main is None:
+        LOG.debug("runner identity denied: the service manager gave no main process for %s", share.unit)
+        return False
+    if main[0] != credentials.pid:
+        LOG.debug("runner identity denied: peer pid %s is not the unit's MainPID %s", credentials.pid, main[0])
+        return False
+    if credentials.pidfd_pid is not None:
+        fd = credentials.pidfd
+        if fd is None or credentials.pidfd_pid != credentials.pid:
+            LOG.debug("runner identity denied: pidfd gave %s for peer pid %s", credentials.pidfd_pid, credentials.pid)
+            return False  # the kernel refused the pidfd (an exited peer), or it names another process
+        # read again now, after the manager was asked: the pidfd still names this process (``Pid:`` is -1 once it is
+        # gone, which is the liveness test: a signal-0 through the pidfd would fail for another user's process)
+        now = pidfd_pid_now(fd)
+        if now != credentials.pid:
+            LOG.debug("runner identity denied: pidfd now names %s, peer pid %s", now, credentials.pid)
+            return False
+        return True
+    ok = started_when_systemd_says(credentials.pid, main[1])
+    if not ok:
+        LOG.debug(
+            "runner identity denied: start time of pid %s is %s s, the unit's stamp %s us (boot offset %s)",
+            credentials.pid,
+            proc_start_seconds(credentials.pid),
+            main[1],
+            monotonic_to_boot_offset(),
+        )
+    return ok
 
 
 def runner_identity(credentials: Credentials) -> bool:
@@ -463,7 +591,7 @@ class RunnerHub:
     @property
     def term_socket(self) -> Path:
         return (
-            Path(self.host.run_dir)
+            Path(self.host.term_base)
             / "term"
             / str(self.uid if self.uid is not None else self.host.host_uid)
             / "term.sock"
@@ -555,7 +683,7 @@ class RunnerHub:
     # -- runner ops
     def expected_term_socket(self, uid: int) -> Path:
         """§12.6.1: the only term socket path the host accepts for a runner UID."""
-        return Path(self.host.run_dir) / "term" / str(uid) / "term.sock"
+        return Path(self.host.term_base) / "term" / str(uid) / "term.sock"
 
     async def hello(self, session: Session, args: dict[str, Any]) -> dict[str, Any]:
         if self.session is not None and self.session is not session and not self.session.closed:

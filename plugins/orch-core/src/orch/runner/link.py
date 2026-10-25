@@ -59,6 +59,8 @@ from .term import TermListener, TicketError
 __all__ = ["ENV_FIXED_NAMES", "ENV_FROM_RUNNER", "HostLink", "build_env", "new_gen", "spawn_spec"]
 
 LOG = logging.getLogger(__name__)
+#: ``peer.denied`` answers in a row after which the runner exits to be started afresh (its unit restarts it)
+DENIED_LIMIT = 3
 
 #: §2.4: what a run may get from the runner's own environment (values never reach the host)
 ENV_FROM_RUNNER = frozenset(
@@ -229,8 +231,13 @@ class HostLink:
         release: str | None = None,
         restart: Callable[[bool], dict[str, Any]] | None = None,
         restarting: Callable[[], bool] | None = None,
+        on_denied: Callable[[], None] | None = None,
     ) -> None:
         self.sup = sup
+        #: called once after :data:`DENIED_LIMIT` ``peer.denied`` refusals in a row (a stale view of who the runner
+        #: is): the runner exits non-zero and its unit starts it afresh
+        self._on_denied = on_denied
+        self._denied = 0
         #: ``runner.restart`` (tier B, spec 13.2 item 7): arms the runner's own restart (:mod:`orch.runner.restart`)
         self._restart = restart
         #: true once a restart is armed: new spawns are refused, so none is accepted and then killed by the exit
@@ -306,8 +313,10 @@ class HostLink:
                 self._session()
             except Exception as exc:  # noqa: BLE001 - any failure: reconnect later
                 LOG.info("runner link: %s", exc)
+                self._count_denial(exc)
             finally:
                 if self.ready.is_set():
+                    self._denied = 0
                     delay = self.backoff[0]  # it was connected: the next attempt starts from the short delay
                 self.ready.clear()
                 self.epoch = None
@@ -319,6 +328,15 @@ class HostLink:
                 self.disconnect()
             self._stop.wait(delay)
             delay = min(delay * 2, self.backoff[1])
+
+    def _count_denial(self, exc: Exception) -> None:
+        if getattr(exc, "code", None) != "peer.denied":
+            self._denied = 0
+            return
+        self._denied += 1
+        if self._denied >= DENIED_LIMIT and self._on_denied is not None:
+            LOG.error("the host refused this runner %d times in a row: exiting for a fresh start", self._denied)
+            self._on_denied()
 
     def _session(self) -> None:
         hello = {"t": "hello", "proto": [1], "client": "orch-runner", "caps": ["runner/1"], "ops": {}}

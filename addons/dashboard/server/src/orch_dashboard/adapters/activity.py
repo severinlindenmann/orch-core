@@ -176,8 +176,13 @@ def sentence(item: dict, name_of, can=None) -> str:
         return f"{verb} a device of {name_of(data.get('person'))}" if data.get("person") else f"{verb} a device"
     if kind == "settings.changed":
         return repo_sentence(data.get("repos")) or SIMPLE[kind]
-    if kind in ("addon.granted", "addon.disabled", "addon.purged"):
-        verb = {"addon.granted": "turned on", "addon.disabled": "turned off", "addon.purged": "removed"}[kind]
+    if kind in ("addon.granted", "addon.enabled", "addon.disabled", "addon.purged"):
+        verb = {
+            "addon.granted": "installed (and left off)" if data.get("off") is True else "turned on",
+            "addon.enabled": "turned on",
+            "addon.disabled": "turned off",
+            "addon.purged": "removed",
+        }[kind]
         name = display(data.get("name"))
         return f"{verb} the {name} add-on" if name else f"{verb} an add-on"
     return SIMPLE.get(kind, "did something")

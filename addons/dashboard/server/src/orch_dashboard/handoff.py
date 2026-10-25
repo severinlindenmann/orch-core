@@ -783,6 +783,14 @@ class MarketGrant(Action):
     staged: StageId
 
 
+class AddonOn(Action):
+    """`addon.enable {name}`: turn an installed add-on that is Off on (1237). One click, no second permissions review:
+    it gets exactly the permissions signed at install. Refused unless the host says it is `disabled`."""
+
+    action: Literal["addon_on"]
+    name: AddonName
+
+
 class AddonDisable(Action):
     """`addon.disable {name}`: turn it off. Its data stays; refused while its work is running."""
 
@@ -987,6 +995,7 @@ PrepareBody = Annotated[
     | AddonGrant
     | MarketGrant
     | AddonDisable
+    | AddonOn
     | PublishSetup
     | AddonEnable
     | PublishShare
@@ -1163,6 +1172,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "addon.grant", {"name": action.name, "staged": action.staged}
         case AddonDisable():
             return "addon.disable", {"name": action.name}
+        case AddonOn():
+            return "addon.enable", {"name": action.name}
         case GrantRevoke():
             return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
         case RunnerGrant():
@@ -1198,6 +1209,7 @@ WORKSPACE_OPS = (
     "move",
     "addon.grant",
     "addon.disable",
+    "addon.enable",
 )
 
 
@@ -1310,6 +1322,8 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "addon.granted", name=action.name)
         case AddonDisable():
             return lambda ev: one(ev, "addon.disabled", name=action.name)
+        case AddonOn():
+            return lambda ev: one(ev, "addon.enabled", name=action.name)
         case GrantRevoke():
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
         case RunnerGrant():
@@ -1429,13 +1443,15 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     if isinstance(body, Details) and body.via == "estimate" and not gateway.addon_on(link, "estimate"):
         raise fail("addon.disabled", "Estimate is switched off here. Switch it on in Settings, Add-ons.", exit=3)
     addon_base_ = None
-    if isinstance(body, AddonDisable | AddonGrant):
+    if isinstance(body, AddonDisable | AddonGrant | AddonOn):
         from .addon_switches import addon_base, check_off
 
         if isinstance(body, AddonDisable):
             check_off(gateway, ws, body.name)  # not while its work is running (the page greys the switch too)
         # the latest switch of this add-on is part of the intent: on, off, on is three requests
-        addon_base_ = addon_base(link, body.name, isinstance(body, AddonGrant))
+        addon_base_ = addon_base(
+            link, body.name, isinstance(body, AddonGrant | AddonOn), one_click_on=isinstance(body, AddonOn)
+        )
     if op in WORKSPACE_OPS and link.welcome.get("ops", {}).get(op) != 1:
         # policy.set and settings.set wait for F1 events on a real host (R5): never offered, never guessed.
         raise fail("op.unsupported", f"This host does not serve {op} yet.", exit=1)

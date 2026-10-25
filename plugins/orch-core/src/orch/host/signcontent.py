@@ -1465,7 +1465,9 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
             f"Turn on {nice} {_s(version)} (package {_short(ev.get('package_sha256'))}). "
             "It gets the permissions you approved when you installed it."
         )
-    off = ev.get("off") is True  # 1237: an install leaves it Off: the grant is reviewed now, the switch is a later click
+    off = (
+        ev.get("off") is True
+    )  # 1237: an install leaves it Off: the grant is reviewed now, the switch is a later click
     words = _capability_words(ev.get("capabilities"))
     declares = any(ev.get(k) not in (None, [], {}) for k in ("fields", "sections", "artifact_kinds", "runtime"))
     if named and words is not None and not declares and isinstance(version, str) and _VERSION.fullmatch(version):

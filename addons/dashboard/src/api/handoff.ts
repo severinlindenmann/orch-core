@@ -64,6 +64,8 @@ export type HandoffAction =
   /** R2-2 and #1237: turn a shipped or an installed marketplace add-on on (`addon.grant`) or off (`addon.disable`). The server refuses `dashboard` and `quick`; the host refuses a name with no package. */
   | { action: 'addon_grant'; name: string }
   | { action: 'addon_disable'; name: string }
+  /** #1237: turn an installed add-on that is Off on (`addon.enable`): one click, it gets the permissions signed at install. */
+  | { action: 'addon_on'; name: string }
   /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence). Publish: terminal only. */
   | { action: 'addon_enable'; name: 'publish'; publish: { server: string; share: string } }
   /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */
@@ -296,7 +298,7 @@ export function workspaceConfirmWord(request: Pick<HandoffRequest, 'op' | 'event
     return workspace && typeof name === 'string' ? `${name}~${workspace.id.slice(-8)}` : null
   }
   // Turning an add-on off: the terminal asks for the add-on's plain name (signer.confirm_word).
-  if (request.op === 'addon.disable') {
+  if (request.op === 'addon.disable' || request.op === 'addon.enable') {
     const name = request.events[0]?.name
     return typeof name === 'string' ? name : null
   }

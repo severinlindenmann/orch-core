@@ -3155,6 +3155,7 @@
    "ac.edit": 1,
    "activity.list": 1,
    "addon.disable": 1,
+   "addon.enable": 1,
    "addon.grant": 1,
    "addon.list": 1,
    "addon.purge": 1,

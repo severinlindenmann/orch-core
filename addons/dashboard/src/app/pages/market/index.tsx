@@ -210,7 +210,8 @@ function MarketWorkspace() {
   const [busy, setBusy] = useState(false)
   const [remove, setRemove] = useState<InstalledAddon | null>(null)
   const [settingsOf, setSettingsOf] = useState<string | null>(null)
-  const [done, setDone] = useState<{ name: string; version: string } | null>(null)
+  /** `state` is what the host says AFTER the install (an install is signed Off; an update keeps its state), never assumed. */
+  const [done, setDone] = useState<{ name: string; version: string; state?: string } | null>(null)
   /** "Turn on now" after an install, and the first half of "Turn off and remove": one signed switch each. */
   const [turnOn, setTurnOn] = useState<string | null>(null)
   const [offThenRemove, setOffThenRemove] = useState<InstalledAddon | null>(null)
@@ -518,7 +519,7 @@ function MarketWorkspace() {
               <p className="font-medium">
                 <Inline>{handoff.name}</Inline> · Version <Inline>{handoff.version}</Inline>
               </p>
-              <p>After installation it is Off. You choose later whether to turn it on.</p>
+              <p>A new install is Off. You choose later whether to turn it on.</p>
               <p className="text-text-muted">The marketplace lines below are shown by this computer, are not signed and are not verified. Your approval does not cover them.</p>
               {widened(handoff) && <p role="alert" className="font-medium text-warning">This update asks for more than before.</p>}
               {handoff.market.stale && <p className="text-warning">This review is out of date: the marketplace may have changed. Cancel and review again.</p>}
@@ -533,9 +534,20 @@ function MarketWorkspace() {
             if (['done', 'expired', 'cancelled', 'failed'].includes(phase)) {
               setPending((p) => p.filter((n) => n !== handoff.name))
               if (phase === 'done') {
-                setDone({ name: handoff.name, version: handoff.version })
+                const { name, version } = handoff
                 setStage(null)
                 setHandoff(null)
+                void (async () => {
+                  await refresh()
+                  let state: string | undefined
+                  try {
+                    state = (await api.marketInstalled(ws)).addons.find((a) => a.name === name)?.state
+                  } catch {
+                    state = undefined // not known: the dialog then claims nothing about On or Off
+                  }
+                  setDone({ name, version, state })
+                })()
+                return
               }
               void refresh()
             }
@@ -549,18 +561,30 @@ function MarketWorkspace() {
               <DialogTitle>
                 <Inline>{done.name}</Inline> is installed
               </DialogTitle>
-              <DialogDescription>
-                It is <StateChip on={false} /> for now. Installing is not the same as using it: you choose when to turn it on.
+              <DialogDescription data-testid="install-done-state">
+                {done.state === 'disabled' ? (
+                  <>It is <StateChip on={false} /> for now. Installing is not the same as using it: you choose when to turn it on.</>
+                ) : isOn(done.state) ? (
+                  <>It is <StateChip on /> , as before. The new version runs with the permissions you approved.</>
+                ) : (
+                  <>You can turn it on or off in Installed.</>
+                )}
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => {
-                setTurnOn(done.name)
-                setDone(null)
-              }}>
-                Turn on now
-              </Button>
-              <Button onClick={() => setDone(null)}>Done, leave it Off</Button>
+              {done.state === 'disabled' ? (
+                <>
+                  <Button variant="ghost" onClick={() => {
+                    setTurnOn(done.name)
+                    setDone(null)
+                  }}>
+                    Turn on now
+                  </Button>
+                  <Button onClick={() => setDone(null)}>Done, leave it Off</Button>
+                </>
+              ) : (
+                <Button onClick={() => setDone(null)}>Done</Button>
+              )}
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -583,7 +607,7 @@ function MarketWorkspace() {
           title={`Turn on ${turnOn}`}
           ws={ws}
           anchor={null}
-          action={{ action: 'addon_grant', name: turnOn }}
+          action={{ action: 'addon_on', name: turnOn }}
           autoStart
           lead={<p className="text-sm">It becomes available to you and your agents in this workspace. You can turn it off again at any time.</p>}
           onClose={() => setTurnOn(null)}

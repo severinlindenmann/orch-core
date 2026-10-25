@@ -131,7 +131,9 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         listed = {a["name"]: a for a in link.call("addon.list")["addons"] if isinstance(a, dict)}
         runner = project.runner(gateway.call(ws, "whoami").get("runner"))
         served = link.welcome.get("ops", {})
-        can_sign = served.get("addon.grant") == 1 and served.get("addon.disable") == 1
+        can_sign = (
+            served.get("addon.grant") == 1 and served.get("addon.disable") == 1 and served.get("addon.enable") == 1
+        )
         runs = live_runs(gateway, ws)
         own = versions_of(link)
         try:
@@ -152,6 +154,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                         "locked": LOCKED[info.id],
                         "blocked": None,
                         "runner_switch": False,
+                        "installed_off": False,
                         # always-on parts ship with the install: the dashboard's own package, quick tasks are core
                         "version": own["dashboard"]["version"] if info.id == "dashboard" else own["core"]["version"],
                     }
@@ -182,6 +185,8 @@ def register(app: FastAPI, gateway: Gateway) -> None:
                     "locked": None,
                     "blocked": blocked,
                     "runner_switch": (not on) and can_sign and runner_fix(info.id, runner),
+                    # 1237: granted and switched Off: turning it on is `addon.enable`, one click, no new review
+                    "installed_off": raw == "disabled",
                     "version": clean_version(got.get("version")) if got else None,
                 }
             )
@@ -195,6 +200,8 @@ def check_off(gateway: Gateway, ws: str, name: str) -> None:
         raise fail("addon.busy", why, exit=1)
 
 
+#: the events that move an add-on switch (1237: `addon.enabled` turns an Off install on)
+SWITCH_EVENTS = ("addon.granted", "addon.enabled", "addon.disabled")
 #: `addon.list` states that mean "off" ("changed" and "missing" are neither: granting again is a real change)
 OFF_STATES = ("disabled", "not_granted", "purged")
 
@@ -205,7 +212,7 @@ def addon_title(name: str) -> str:
     return next((a.title for a in facts.catalog(optional=True) if a.id == name), name)
 
 
-def addon_base(link, name: str, turning_on: bool) -> dict:
+def addon_base(link, name: str, turning_on: bool, *, one_click_on: bool = False) -> dict:
     """The intent base of an add-on switch: the add-on and its latest `addon.granted` / `addon.disabled` event.
 
     The host dedupes one idem to ONE request for 24 h, so an intent that is the same text again (on, off, on) would
@@ -221,16 +228,18 @@ def addon_base(link, name: str, turning_on: bool) -> dict:
     )
     if turning_on and state == "active":
         raise fail("addon.already", f"{addon_title(name)} is already on.", exit=1)
+    if one_click_on and state != "disabled":  # `addon.enable` turns on only what is installed and Off (1237)
+        raise fail("addon.not_off", f"{addon_title(name)} is not installed and switched off.", exit=1)
     if not turning_on and state in OFF_STATES:
         raise fail("addon.already", f"{addon_title(name)} is already off.", exit=1)
     page = None
     for _ in range(5):
-        args = {"scope": "workspace", "types": ["addon.granted", "addon.disabled"], "order": "desc", "limit": 100}
+        args = {"scope": "workspace", "types": list(SWITCH_EVENTS), "order": "desc", "limit": 100}
         data = link.call("activity.list", {**args, **({"page": page} if page else {})})
         for item in data.get("items") or []:
             if (
                 isinstance(item, dict)
-                and item.get("type") in ("addon.granted", "addon.disabled")
+                and item.get("type") in SWITCH_EVENTS
                 and (item.get("data") or {}).get("name") == name
                 and isinstance(item.get("id"), str)
             ):

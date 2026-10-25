@@ -663,7 +663,7 @@ export function describeEvent(e: Pick<OrchEvent, 'type'> & Record<string, unknow
     case 'addon.installed':
       return `installed ${t(e.name, 'an addon')}`
     case 'addon.granted':
-      return `granted ${t(e.name, 'an addon')}`
+      return e.off === true ? `installed ${t(e.name, 'an addon')} (left off)` : `granted ${t(e.name, 'an addon')}`
     case 'addon.enabled':
       return `enabled ${t(e.name, 'an addon')}`
     case 'addon.disabled':

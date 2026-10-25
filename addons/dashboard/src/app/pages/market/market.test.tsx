@@ -95,7 +95,7 @@ it('if the removal fails after the signature, it says it is turned off and never
   expect(state.host.posts()).toHaveLength(1)
 })
 
-it('Turn on now after an install is one signed addon_grant of that name; Done, leave it Off signs nothing', async () => {
+it('Turn on now after an install is one signed addon_on of that name (one click, no new permissions review)', async () => {
   show('/w/DEMO/addons')
   await userEvent.click(await screen.findByRole('button', { name: 'Install...' }, T))
   await userEvent.click(await screen.findByRole('button', { name: 'Review installation' }, T))
@@ -104,7 +104,7 @@ it('Turn on now after an install is one signed addon_grant of that name; Done, l
   const d = await screen.findByRole('dialog', { name: /calendar is installed/ }, T)
   await userEvent.click(within(d).getByRole('button', { name: 'Turn on now' }))
   await waitFor(() => expect(state.host.posts()).toHaveLength(2), T)
-  expect(state.host.posts()[1].body).toMatchObject({ action: 'addon_grant', name: 'calendar' })
+  expect(state.host.posts()[1].body).toMatchObject({ action: 'addon_on', name: 'calendar' })
 })
 
 it('after the install is approved the result dialog says Off and offers Done, leave it Off', async () => {
@@ -122,6 +122,33 @@ it('after the install is approved the result dialog says Off and offers Done, le
   await userEvent.click(within(d).getByRole('button', { name: 'Done, leave it Off' }))
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   expect(within(screen.getByRole('article', { name: 'calendar' })).getByText('Off')).toHaveAttribute('data-state-chip', 'off') // the card uses the same chip
+})
+
+const installThenSign = async (host: typeof state.host) => {
+  show('/w/DEMO/addons')
+  await userEvent.click(await screen.findByRole('button', { name: 'Install...' }, T))
+  await userEvent.click(await screen.findByRole('button', { name: 'Review installation' }, T))
+  await waitFor(() => expect(host.posts()).toHaveLength(1), T)
+  await signed()
+}
+
+it('the result dialog reads the state the host reports after the install: an update of an On add-on says On and offers only Done', async () => {
+  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+  await installThenSign(state.host)
+  const d = await screen.findByRole('dialog', { name: /calendar is installed/ }, T)
+  expect(within(d).getByTestId('install-done-state')).toHaveTextContent('as before')
+  expect(within(d).queryByRole('button', { name: 'Turn on now' })).toBeNull()
+  expect(within(d).queryByRole('button', { name: 'Done, leave it Off' })).toBeNull()
+  await userEvent.click(within(d).getByRole('button', { name: 'Done' }))
+  expect(state.host.posts()).toHaveLength(1) // nothing more is signed
+})
+
+it('the result dialog claims neither On nor Off when the host cannot say, and never offers a blind Turn on now', async () => {
+  state.host.override = (path) => (path.endsWith('/market/installed') ? Response.json({ error: { code: 'internal', message: 'x' } }, { status: 500 }) : undefined)
+  await installThenSign(state.host)
+  const d = await screen.findByRole('dialog', { name: /calendar is installed/ }, T)
+  expect(within(d).queryByText('Off')).toBeNull()
+  expect(within(d).queryByRole('button', { name: 'Turn on now' })).toBeNull()
 })
 
 it('Settings opens a side panel over the list and Cancel puts focus back on the row’s Settings button', async () => {

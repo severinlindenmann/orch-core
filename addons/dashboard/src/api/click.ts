@@ -202,7 +202,7 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<ClickAction['action']>([
   'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'addon_disable', 'addon_enable', 'publish_setup', 'publish_share',
+  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'addon_disable', 'addon_on', 'addon_enable', 'publish_setup', 'publish_share',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
 
@@ -266,7 +266,7 @@ export const unknownOutcome = (e: unknown): boolean => !(e instanceof ApiError) 
 
 /** Only server-sourced record facts; never the current form's values. */
 export function alreadySigned(e: Pick<ApiError, 'signed_at' | 'op' | 'summary'>): string {
-  const thing = e.op === 'log' ? 'comment with the same text' : e.op === 'answer' ? 'answer' : e.op === 'addon.grant' || e.op === 'addon.disable' ? 'add-on change' : 'action'
+  const thing = e.op === 'log' ? 'comment with the same text' : e.op === 'answer' ? 'answer' : e.op === 'addon.grant' || e.op === 'addon.disable' || e.op === 'addon.enable' ? 'add-on change' : 'action'
   const at = e.signed_at ? Date.parse(e.signed_at) : NaN
   const when = Number.isFinite(at) ? `${Math.max(0, Math.floor((Date.now() - at) / 60_000))} min ago` : '(signing time unavailable from this host)'
   // The host's record of what was signed is for the technical details (`alreadyDetails`), never for the sentence.

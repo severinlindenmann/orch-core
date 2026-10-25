@@ -18,6 +18,8 @@ export interface AddOnRow {
   blocked: string | null
   /** #1198 C14: what blocks it is dashboard execution being off (or terminals not on): the page offers to turn it on. */
   runner_switch?: boolean
+  /** #1237: granted and switched Off (an install leaves it Off): turning it on is the one-click `addon_on`, not a new grant. */
+  installed_off?: boolean
   /** The add-on's version from its manifest (always-on parts: the install's own); null or absent when the host does not say. */
   version?: string | null
 }

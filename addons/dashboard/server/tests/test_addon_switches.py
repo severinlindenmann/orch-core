@@ -6,7 +6,7 @@ from pydantic import TypeAdapter, ValidationError
 from orch_dashboard import handoff
 from orch_dashboard.addon_switches import busy, needs, runner_fix
 from orch_dashboard.errors import HostError
-from orch_dashboard.handoff import AddonDisable, AddonGrant, PrepareBody, expected, host_call
+from orch_dashboard.handoff import AddonDisable, AddonGrant, AddonOn, PrepareBody, expected, host_call
 
 
 def parse(body):
@@ -97,7 +97,7 @@ def test_publish_is_a_shipped_addon_with_no_machine_precondition_and_plain_words
 class _SwitchLink:
     """A host that keeps one add-on's state and its workspace-log events, like `addon.list` and `activity.list`."""
 
-    welcome = {"peer": {"person": "p_me"}, "ops": {"addon.grant": 1, "addon.disable": 1}}
+    welcome = {"peer": {"person": "p_me"}, "ops": {"addon.grant": 1, "addon.disable": 1, "addon.enable": 1}}
 
     def __init__(self):
         self.state, self.events = "not_granted", []
@@ -109,7 +109,7 @@ class _SwitchLink:
         if op == "addon.list":
             return {"addons": [{"name": "terminals", "state": self.state}, {"name": "worktrees", "state": "active"}]}
         assert op == "activity.list" and args["scope"] == "workspace"
-        assert set(args["types"]) == {"addon.granted", "addon.disabled"}
+        assert set(args["types"]) == {"addon.granted", "addon.enabled", "addon.disabled"}
         return {"items": [dict(e) for e in reversed(self.events)], "next_page": None}
 
     def switch(self, on):  # what a signature does to the host
@@ -185,7 +185,7 @@ def test_an_unrelated_event_of_the_same_name_is_not_the_head(gateway, stub, monk
 # ---- R3-A1: versions, read only ---------------------------------------------------------------------------
 class _VersionLink:
     def __init__(self, release="0123456789ab", addons=None):
-        self.welcome = {"release": release, "ops": {"addon.grant": 1, "addon.disable": 1}}
+        self.welcome = {"release": release, "ops": {"addon.grant": 1, "addon.disable": 1, "addon.enable": 1}}
         self.addons = addons if addons is not None else []
 
     def supports(self, op, cap):
@@ -252,3 +252,47 @@ def test_clean_version_accepts_versions_and_nothing_else():
         assert clean_version(good) == good
     for bad in ("", " 1.0", "1.0\n", "v" * 41, "1.0 <b>", None, 3, "‮1.0", "../x"):
         assert clean_version(bad) is None
+
+
+# ---- 1237: an install leaves an add-on Off; `addon_on` is the one click that turns it on --------------------------
+def test_addon_on_is_a_typed_one_name_action_for_a_shipped_or_installed_addon_never_a_locked_one():
+    body = parse({"action": "addon_on", "name": "echo"})
+    assert isinstance(body, AddonOn) and host_call(body) == ("addon.enable", {"name": "echo"})
+    for bad in (
+        {"action": "addon_on"},
+        {"action": "addon_on", "name": "dashboard"},
+        {"action": "addon_on", "name": "quick"},
+        {"action": "addon_on", "name": "echo", "staged": "st_" + "0" * 32},
+        {"action": "addon_on", "name": "Echo"},
+    ):
+        with pytest.raises(ValidationError):
+            parse(bad)
+    check = expected(body)
+    assert check([{"type": "addon.enabled", "name": "echo"}])
+    assert not check([{"type": "addon.granted", "name": "echo"}])  # a grant is not what was asked for
+    assert not check([{"type": "addon.enabled", "name": "other"}])
+    assert not check([{"type": "addon.enabled", "name": "echo"}] * 2)
+
+
+def test_addon_on_is_prepared_only_for_an_add_on_that_is_installed_and_off(gateway, stub, monkeypatch):
+    link = _SwitchLink()
+    for state in ("not_granted", "active", "changed", "purged", "missing"):
+        link.state = state
+        with pytest.raises(HostError) as err:
+            _plan(gateway, stub, link, monkeypatch, "addon_on")
+        assert err.value.error["code"] in ("addon.not_off", "addon.already"), state
+    link.state = "disabled"
+    one = _plan(gateway, stub, link, monkeypatch, "addon_on")
+    assert (one.op, one.args) == ("addon.enable", {"name": "terminals"})
+
+
+def test_off_on_off_on_with_an_enable_is_distinct_requests(gateway, stub, monkeypatch):
+    link = _SwitchLink()
+    link.state = "disabled"
+    first = _plan(gateway, stub, link, monkeypatch, "addon_on")
+    assert _plan(gateway, stub, link, monkeypatch, "addon_on").idem(stub.ws) == first.idem(stub.ws)  # a double click
+    link.state = "active"
+    link.events.append({"id": "5.e", "type": "addon.enabled", "data": {"name": "terminals"}})
+    link.state = "disabled"
+    link.events.append({"id": "6.e", "type": "addon.disabled", "data": {"name": "terminals"}})
+    assert _plan(gateway, stub, link, monkeypatch, "addon_on").idem(stub.ws) != first.idem(stub.ws)

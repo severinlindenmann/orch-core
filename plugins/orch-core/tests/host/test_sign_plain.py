@@ -1501,7 +1501,12 @@ def test_1237_an_install_off_says_it_stays_off_and_an_enable_has_no_capability_l
     assert full["headline"].startswith("Install Terminals 0.1.0. It stays Off")
     assert {"starts": "Off"}.items() <= {r["field"]: r["after"] for r in full["fields_changed"]}.items()
     assert build(_addon())["headline"].startswith("Turn on Terminals:")  # no "off": the old words
-    enabled = {"type": "addon.enabled", "name": "terminals", "version": "0.1.0", "package_sha256": "sha256:" + "aa" * 32}
+    enabled = {
+        "type": "addon.enabled",
+        "name": "terminals",
+        "version": "0.1.0",
+        "package_sha256": "sha256:" + "aa" * 32,
+    }
     on = build({"op": "addon.enable", "events": [enabled], "material": {"kind": "payload", "ticket": None}})
     assert on["headline"].startswith("Turn on Terminals 0.1.0 (package aaaaaaaaaaaa)")
     assert on["headline"].endswith("It gets the permissions you approved when you installed it.")

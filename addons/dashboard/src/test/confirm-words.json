@@ -5,6 +5,7 @@
     { "op": "addon.grant", "event": { "name": "publish" }, "word": "publish~89abcdef" },
     { "op": "addon.grant", "event": { "name": "terminals" }, "word": "terminals~89abcdef" },
     { "op": "addon.disable", "event": { "name": "terminals" }, "word": "terminals" },
+    { "op": "addon.enable", "event": { "name": "terminals" }, "word": "terminals" },
     { "op": "addon.purge", "event": { "name": "terminals" }, "word": "terminals~89abcdef" },
     { "op": "settings.set", "event": {}, "word": "DEMO~89abcdef/SETTINGS" },
     { "op": "policy.set", "event": {}, "word": "DEMO~89abcdef/POLICY" },

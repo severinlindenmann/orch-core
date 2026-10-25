@@ -196,8 +196,8 @@ def test_the_workspace_log_types_are_admin_only_and_a_ticket_type_is_not_custodi
 @pytest.mark.parametrize(
     "typ",
     ["member.added", "role.changed", "device.added", "hub.joined", "hub.left",
-     "grant.issued", "addon.granted", "addon.enabled", "restore", "invalid.acknowledged", "artifact.added", "claim.taken",
-     "task.done", "workspace.created", "gate.invalidated", "branch.pushed"],
+     "grant.issued", "addon.granted", "addon.enabled", "restore", "invalid.acknowledged", "artifact.added",
+     "claim.taken", "task.done", "workspace.created", "gate.invalidated", "branch.pushed"],
 )  # fmt: skip
 def test_the_types_the_contract_excludes_are_not_custodial_whatever_the_role(typ):
     for log in (LOG, "workspace"):

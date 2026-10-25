@@ -26,6 +26,7 @@ const EVENT_WORDS: Record<string, string> = {
   'member.removed': 'Remove a member',
   'grant.revoked': 'Revoke an agent grant',
   'addon.granted': 'Turn on an add-on',
+  'addon.enabled': 'Turn on an add-on',
   'addon.disabled': 'Turn off an add-on',
 }
 

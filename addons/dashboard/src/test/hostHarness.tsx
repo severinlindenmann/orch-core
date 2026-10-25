@@ -204,6 +204,8 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name, staged: body.staged })
     case 'addon_grant':
       return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
+    case 'addon_on':
+      return workspaceRequest('addon.enable', { type: 'addon.enabled', name: body.name })
     case 'addon_disable':
       return workspaceRequest('addon.disable', { type: 'addon.disabled', name: body.name })
     case 'grant_revoke':

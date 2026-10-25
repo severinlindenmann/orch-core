@@ -316,7 +316,7 @@ def ws_data(e: Mapping[str, Any], *, grant_person: str | None = None, devices: M
     if t == "grant.revoked":
         return {"grant": e.get("grant"), "person": grant_person}
     if t in ("addon.granted", "addon.enabled"):
-        return {"name": e.get("name"), "version": e.get("version")}
+        return {"name": e.get("name"), "version": e.get("version"), **({"off": True} if e.get("off") is True else {})}
     if t in ("addon.disabled", "addon.purged"):
         return {"name": e.get("name")}
     if t == "hub.pinned":  # "hub key/roles updated": the kind and, for a snapshot, its version

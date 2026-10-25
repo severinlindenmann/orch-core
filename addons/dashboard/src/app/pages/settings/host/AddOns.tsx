@@ -62,7 +62,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
     setBusy({ id: row.id, turningOn, stage: 'review' })
     ask({
       title: turningOn ? `Turn on ${name_}` : `Turn off ${name_}`,
-      action: { action: turningOn ? 'addon_grant' : 'addon_disable', name },
+      action: { action: turningOn ? (row.installed_off ? 'addon_on' : 'addon_grant') : 'addon_disable', name },
       autoStart: true,
       confirmLabel: turningOn ? 'Sign and turn on' : 'Sign and turn off',
       doneToast: turningOn ? `${name_} is on` : `${name_} is off`,

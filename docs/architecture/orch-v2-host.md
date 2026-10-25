@@ -1132,7 +1132,7 @@ ActivityItem = {id:ItemId, jpos:int, log:Uid | "workspace", key:Key | null, uid:
     | `settings.changed` | `{keys:[str]}` (the names in `set`, never repo paths or remotes); with `set.repos` also `repos:{name:"set"|"removed"}` (repo names only) |
     | `grant.issued` | `{grant, person, scope, expires_at}` |
     | `grant.revoked` | `{grant, person}` |
-    | `addon.granted`, `addon.disabled`, `addon.enabled`, `addon.purged` | `{name}` (`addon.granted` and `addon.enabled` add `version`) |
+    | `addon.granted`, `addon.disabled`, `addon.enabled`, `addon.purged` | `{name}` (`addon.granted` and `addon.enabled` add `version`; `addon.granted` adds `off: true` when it was signed Off) |
     | `restore` | `{from_seq}` |
     | `invalid.acknowledged` | `{invalid_seq}` |
 

@@ -572,3 +572,23 @@ def test_turn_on_an_addon_with_its_settings_on_the_real_host(world, api, token, 
         f"{api.base}/handoff/{prepared['id']}", headers={"Authorization": f"Bearer {token}", "Origin": ORIGIN}
     )
     assert res.status_code == 200 and res.json()["state"] == "cancelled", res.text
+
+
+def test_addon_on_is_one_signed_enable_on_the_real_host(world, api):
+    """#1237: a granted add-on that is Off (an install ends Off; here a shipped one switched off) is turned on by
+    `addon_on` = the real `addon.enable`: one signature, the row moves off -> on, and a second press is refused."""
+    name = "worktrees"
+    row = {r["id"]: r for r in api.get("/add-ons").json()["add_ons"]}[name]
+    assert row["state"] == "off" and row["installed_off"] is False  # never granted: turning it on is a grant
+    _, final = api.handoff({"action": "addon_grant", "name": name})
+    assert final["state"] == "submitted", final
+    _, final = api.handoff({"action": "addon_disable", "name": name})
+    assert final["state"] == "submitted", final
+    row = {r["id"]: r for r in api.get("/add-ons").json()["add_ons"]}[name]
+    assert row["state"] == "off" and row["installed_off"] is True
+    prepared, final = api.handoff({"action": "addon_on", "name": name})
+    assert prepared["op"] == "addon.enable" and final["state"] == "submitted", (prepared, final)
+    row = {r["id"]: r for r in api.get("/add-ons").json()["add_ons"]}[name]
+    assert row["state"] == "on" and row["installed_off"] is False
+    again = api.post("/handoff", {"action": "addon_on", "name": name, "retry": new_retry()})
+    assert again.status_code in (409, 422) or again.json().get("error"), again.text  # already on: never prepared

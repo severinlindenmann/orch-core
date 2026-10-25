@@ -246,7 +246,9 @@ def test_the_click_view_shows_the_runtime_the_packages_and_the_compiled_notes(se
     assert "runtime: " in full and "dependencies (listed by this computer from the lockfile" in full
     assert "dep idna 3.10" in full and "dep six 1.16.0 (compiled code)" in full
     c = v["content"]
-    assert v["headline"].startswith("Install Standup 1.0.0")  # never the short "Turn on" view for an add-on with runtime
+    assert v["headline"].startswith(
+        "Install Standup 1.0.0"
+    )  # never the short "Turn on" view for an add-on with runtime
     assert any("Also installs 2 Python packages listed in requirements.txt after you sign" in n for n in c["notes"])
     rows = {r["field"]: r["after"] for r in c["fields_changed"]}
     assert "idna 3.10" in rows["packages (listed by this computer from the lockfile; covered by the digest)"]

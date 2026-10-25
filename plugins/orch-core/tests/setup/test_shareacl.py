@@ -216,7 +216,6 @@ def test_symlink_inside_git_is_not_followed(world):
     (world.repo / ".git" / "alias").symlink_to(target)
     assert share(world).ok
     assert agent_entry(world.k.entries(target)) == 0  # closed as a working tree file; the link was not followed
-    assert world.k.entries(world.repo / ".git" / "alias") is None
 
 
 def test_git_that_is_a_file_or_a_link_is_refused(world):

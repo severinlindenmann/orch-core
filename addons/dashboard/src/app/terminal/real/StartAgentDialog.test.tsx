@@ -94,6 +94,23 @@ async function mountCard(over: Partial<Runner> = {}, onChanged = vi.fn()) {
   return { onChanged }
 }
 
+describe('tier B: a separate account (R1-8)', () => {
+  it('shows the plain separate-account line instead of the "runs as you" notice', async () => {
+    s.preview.mockResolvedValue(preview({ execution_line: 'This terminal runs as orch-agent-sev. It cannot read your keys. Never type secrets into it.' }))
+    mount()
+    const line = await screen.findByTestId('separate-account-line', {}, T)
+    expect(line).toHaveTextContent('This agent uses a separate account (orch-agent-sev). It cannot read your orch signing keys or passkeys.')
+    expect(screen.queryByTestId('execution-line')).toBeNull()
+    expect(screen.queryByTestId('agent-risk-full')).toBeNull()
+  })
+  it('ignores a line that does not name an agent user', async () => {
+    s.preview.mockResolvedValue(preview({ execution_line: 'This terminal runs as root. It cannot read your keys.' }))
+    mount()
+    await screen.findByTestId('agent-cwd', {}, T)
+    expect(screen.queryByTestId('separate-account-line')).toBeNull()
+  })
+})
+
 describe('the preview', () => {
   it('previews first and shows the host values and the approved texts verbatim', async () => {
     mount()

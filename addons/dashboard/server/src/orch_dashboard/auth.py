@@ -368,10 +368,12 @@ class Auth:
             self._drop(token)
 
     def logout_everywhere(self, kind="remote"):
-        """End every session of ``kind`` ("Log out everywhere" in Settings, R1-8)."""
+        """End every session of ``kind`` ("Log out everywhere" in Settings, R1-8). Returns the tokens it ended."""
         with self.lock:
-            for token in [t for t, k in self.kinds.items() if k == kind]:
+            gone = [t for t, k in self.kinds.items() if k == kind]
+            for token in gone:
                 self._drop(token)
+            return gone
 
     def bind_setup(self, token, setup_id):
         """Setup scope only. Core owns the 30 s single-use claim and 10 min idle/run-aware lifetime.

@@ -21,6 +21,7 @@ import { Topbar } from './Topbar'
 import { MandateBanner } from '../mandates/MandateBanner'
 import { DeliveryHoldBanner } from './DeliveryHoldBanner'
 import { SetupUnfinishedBanner } from './SetupUnfinishedBanner'
+import { RemoteProblemBanner } from './RemoteProblemBanner'
 
 /** Keyboard shortcuts from `shortcuts.ts`. */
 function Shortcuts() {
@@ -92,6 +93,8 @@ export function Shell() {
               <DeliveryHoldBanner />
               {/* One-click was begun in setup and not finished: the key is still in the terminal's hands. */}
               <SetupUnfinishedBanner />
+              {/* Remote access is meant to be on and is not working: a line on every page, linking to the details. */}
+              <RemoteProblemBanner />
               <DockArea>
               <main ref={main} id="main" tabIndex={-1} className="min-h-0 flex-1 overflow-y-auto p-4 outline-none @[60rem]/page:p-6">
                 <ErrorBoundary resetKey={path} fallback={(retry) => (

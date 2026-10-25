@@ -4,7 +4,7 @@ import { SignContent, SignDetails } from './SignContent'
 // own preview, the host's fingerprint or a cached ticket. `lines` are core's terminal
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
 // Every op signs on one plain click after the review; nothing is typed. The risk notice lives in Settings; the custody is a technical fact under Technical details.
-import { Loader2, ShieldAlert } from 'lucide-react'
+import { Fingerprint, Loader2, ShieldAlert } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { CLICK_RISK, type ClickProblem, type ClickViewAnswer } from '@/api/click'
 import { uuid8 } from '@/api/workspaces'
@@ -16,6 +16,8 @@ import { AgentAccess, WhatNext } from './SignAside'
 import type { SignStory } from './story'
 import { fmtClock } from '@/lib/time'
 import { STICKY_FOOTER } from './SignShell'
+import { resetStepUp } from '@/api/passkey'
+import { needsTouch, StepUpNote, TOUCH_LABEL, useStepUpPhase } from './StepUp'
 
 function RiskLine({ text }: { text: string }) {
   return (
@@ -132,7 +134,12 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
     onSign()
   }
   const technical = <TechnicalFacts view={view} />
-  const label = story?.signLabel ?? 'Sign'
+  // A typed key or a shown secret on the web address asks for a passkey touch: the same button, new words, and the
+  // review above stays on screen in every state (cancel, retry, expired). The View marks those with `seal`.
+  const touch = needsTouch() && view.seal !== undefined
+  const label = touch ? TOUCH_LABEL : (story?.signLabel ?? 'Sign')
+  const phase = useStepUpPhase()
+  useEffect(() => resetStepUp, [digest]) // a new review, or a closed panel: the last touch's story is over
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
@@ -145,8 +152,9 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
       {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
       {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={ws} />}
       {extra}
+      {touch && <StepUpNote />}
       <div className={STICKY_FOOTER} data-testid="sign-footer">
-        <p data-testid="sign-method" className="text-[12px] text-text-muted">On this computer</p>
+        <p data-testid="sign-method" className="text-[12px] text-text-muted">{touch ? (phase === 'waiting' ? 'Waiting for your passkey…' : 'Check the details above.') : 'On this computer'}</p>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>
             Cancel
@@ -162,7 +170,11 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           >
             {signing ? (
               <>
-                <Loader2 className="size-4 animate-spin" aria-hidden /> Signing…
+                <Loader2 className="size-4 animate-spin" aria-hidden /> {touch ? 'Waiting for your passkey…' : 'Signing…'}
+              </>
+            ) : touch ? (
+              <>
+                <Fingerprint className="size-4" aria-hidden /> {phase === 'cancelled' || phase === 'failed' ? 'Try again' : label}
               </>
             ) : (
               label

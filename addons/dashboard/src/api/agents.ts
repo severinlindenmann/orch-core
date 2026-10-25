@@ -5,6 +5,7 @@
 
 import { queryOptions } from '@tanstack/react-query'
 import type { DepositOutcome, DepositReason } from './click'
+import { noteStepUpRefused, stepUp } from './passkey'
 import { call, type Run, type RunnerInfo } from './runs'
 
 export type Harness = 'claude-code' | 'codex'
@@ -56,6 +57,8 @@ export interface AgentPreview {
   workdir?: { exists: boolean; empty: boolean }
   cwd_path_hidden: boolean
   will_create_worktree: boolean
+  /** Tier B: the card line naming the separate account the agent runs as; null or absent otherwise. */
+  execution_line?: string | null
   login_shell: boolean
   env: string[]
   grant: RunnerGrant | null
@@ -81,8 +84,14 @@ export const agentsApi = {
   runner: (ws: string) => call<{ runner: Runner | null }>('GET', `${w(ws)}/runner`),
   /** #1198 C14: core's review of turning dashboard execution on or off (its own words, relayed), then the switch itself. */
   runnerReview: (ws: string, body: RunnerSwitchBody) => call<RunnerReview>('POST', `${w(ws)}/click/runner/review`, body),
-  runnerSwitch: (ws: string, body: RunnerSwitchBody & { view_digest: string }) =>
-    call<{ enabled: boolean; terminals: boolean }>('POST', `${w(ws)}/click/runner`, body),
+  runnerSwitch: async (ws: string, body: RunnerSwitchBody & { view_digest: string }) => {
+    // Turning execution (or its terminals) on needs the passkey touch on the web address; off is a plain click.
+    if (body.on || body.terminals) await stepUp({ action: 'runner.on', ws, view_digest: body.view_digest })
+    return call<{ enabled: boolean; terminals: boolean }>('POST', `${w(ws)}/click/runner`, body).catch((e: unknown) => {
+      noteStepUpRefused(e)
+      throw e
+    })
+  },
   depositStatus: (ws: string, depositId: string) =>
     call<{ deposit: DepositOutcome | 'none'; reason?: DepositReason }>('GET', `${w(ws)}/runner/deposits/${encodeURIComponent(depositId)}`),
   forget: (ws: string, grant: string, idem: string) => call<{ forgotten: boolean }>('POST', `${w(ws)}/runner/forget`, { grant, idem }),

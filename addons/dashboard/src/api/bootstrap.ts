@@ -1,3 +1,4 @@
+import { getEnrollCode, setEnrollCode } from './enrollLink'
 const STORAGE = 'orch-session'
 let currentToken: string | null = null
 let channel: BroadcastChannel | null = null
@@ -14,6 +15,9 @@ function remember(token: string | null) {
   else sessionStorage.removeItem(STORAGE)
   listeners.forEach((fn) => fn())
 }
+/** A passkey login or enrollment opened a session on the server: keep its bearer exactly like a launch exchange does. */
+export function openSession(token: string) { remember(token) }
+
 export function clearSession(broadcast = true, token = currentToken) {
   if (currentToken === token) remember(null)
   if (broadcast && token) channel?.postMessage({ type: 'logout', token })
@@ -30,9 +34,12 @@ export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string |
   const code = fragment.get('launch')
   const destination = safeDestination(fragment.get('to'))
   const foreign = isForeignNavigation()
+  // An enrollment link keeps its fragment while the page is open, so a reload (after turning on a screen lock) works.
+  const enroll = !foreign && !code ? fragment.get('enroll') : null
+  setEnrollCode(enroll)
   // A reload must not authenticate an attacker-chosen deep link: a foreign document starts at the root and moves to
   // its destination only after its own launch code was redeemed (a made-up code keeps it on the root).
-  history.replaceState(null, '', foreign ? '/' : code ? destination : location.pathname + location.search)
+  if (!getEnrollCode()) history.replaceState(null, '', foreign ? '/' : code ? destination : location.pathname + location.search)
   currentToken = sessionStorage.getItem(STORAGE)
   if (foreign) clearSession(false) // sessionStorage may have been copied from an opener.
   channel?.close()

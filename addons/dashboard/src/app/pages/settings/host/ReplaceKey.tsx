@@ -3,6 +3,7 @@
 // one-use key (purposes device.recovery_code and custody.passphrase). The dashboard server only relays ciphertext. The
 // typed text lives in the input elements only: it is read once at the click, the fields are emptied at once, and nothing
 // else holds it (no state, no storage). Core refuses unless the code is the person's own.
+import { needsTouch, StepUpNote, TOUCH_LABEL } from '@/components/sign/StepUp'
 import { KeyRound, Loader2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -129,6 +130,8 @@ export function ReplaceKey({ workspace, owner = true }: { workspace: Workspace; 
                 {offer.view.lines.slice(0, 2).map((l) => <p key={l}><Inline>{l}</Inline></p>)}
                 <details>
                   <summary className="min-h-11 cursor-pointer py-2 text-text-muted">Technical details</summary>
+                  {/* every other review line: the touch binds the whole review, so none is left unseen */}
+                  {offer.view.lines.slice(2).map((l, i) => <p key={`${i}${l}`}><Inline>{l}</Inline></p>)}
                   <p>Old key: <Mono className="break-all"><Inline>{offer.view.old}</Inline></Mono></p>
                   <p>New key: <Mono className="break-all"><Inline>{offer.view.new}</Inline></Mono></p>
                 </details>
@@ -147,9 +150,10 @@ export function ReplaceKey({ workspace, owner = true }: { workspace: Workspace; 
               <label className="block text-[14px] font-medium" htmlFor="replace-key-pw2">Repeat new passphrase</label>
               <input id="replace-key-pw2" ref={pw2} type="password" autoComplete="new-password" data-1p-ignore data-lpignore="true" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-testid="replace-key-pw2" onChange={check} className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-[16px] text-text" />
               </div>
+              <StepUpNote />
               <div className="flex flex-wrap gap-2 pt-2">
                 <Button type="button" className="min-h-11" onClick={() => void replace()} disabled={!ready || phase === 'sending'} data-testid="replace-key-go">
-                  {phase === 'sending' ? <Loader2 className="mr-2 size-4 animate-spin" aria-hidden /> : null}Replace key
+                  {phase === 'sending' ? <Loader2 className="mr-2 size-4 animate-spin" aria-hidden /> : null}{needsTouch() ? TOUCH_LABEL : 'Replace key'}
                 </Button>
                 <Button type="button" variant="ghost" className="min-h-11" disabled={phase === 'sending'} onClick={() => { clear(); setOffer(null); setPhase('idle') }}>Cancel</Button>
               </div>

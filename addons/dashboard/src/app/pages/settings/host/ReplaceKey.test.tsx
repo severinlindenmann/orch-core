@@ -73,6 +73,9 @@ describe('Replace this device’s key', () => {
     expect(code.type).toBe('password')
     expect(screen.getByText(/Replace the signing key of this computer/)).toBeInTheDocument()
     expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
+    // every review line is on the page (the touch binds the whole review): the rest sit in the fold
+    expect(screen.getByTestId('replace-key-review')).toHaveTextContent(ROTATE_LINE)
+    expect(screen.getByTestId('replace-key-review')).toHaveTextContent(`new device: ${NEW}`)
     expect(screen.getByTestId('replace-key-go')).toBeDisabled()
     expect(begin).toHaveBeenCalledWith(WS)
   })

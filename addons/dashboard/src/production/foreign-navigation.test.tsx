@@ -80,6 +80,7 @@ it('keeps the normal login screen for an untagged document', async () => {
   history.replaceState(null, '', '/w/DEMO/tickets?tab=history#fragment')
   await bootstrap(vi.fn())
   expect(location.pathname + location.search + location.hash).toBe('/w/DEMO/tickets?tab=history')
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 }))) // this computer's own address: no passkey login
   render(<Shell />)
-  expect(screen.getByText('Open your dashboard')).toBeInTheDocument()
+  expect(await screen.findByText('Open your dashboard')).toBeInTheDocument()
 })

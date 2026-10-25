@@ -7,6 +7,7 @@
 // sealed in this browser to the signing helper's one-use key (sealed field, purpose custody.passphrase; #1198 C12), so
 // the dashboard server relays ciphertext only; the fields are emptied before anything is sent. Passphrases are sent
 // once and never kept here.
+import { needsTouch, StepUpNote, TOUCH_LABEL } from '@/components/sign/StepUp'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Loader2 } from 'lucide-react'
@@ -316,6 +317,13 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
           >
             {moveBack ? (
               <>
+                {/* The review the person confirms (the signer's offer carries only a digest and a key, so these are the card's own words): visible before any touch. */}
+                <dl data-testid="signing-off-review" className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
+                  <dt className="text-text-muted">What</dt><dd className="min-w-0">Turn off one-click signing</dd>
+                  <dt className="text-text-muted">For</dt><dd className="min-w-0 break-words">{workspace.name} ({workspace.prefix})</dd>
+                  <dt className="text-text-muted">Change</dt><dd className="min-w-0">Your key moves back under the new passphrase you enter below</dd>
+                  <dt className="text-text-muted">Until</dt><dd className="min-w-0">You turn one-click signing on again</dd>
+                </dl>
                 <p data-testid="signing-off-explain">
                   Turn off one-click signing and protect your key with a new passphrase. It moves your key back from this computer's key store, and you will enter this passphrase every time you sign in the terminal.
                 </p>
@@ -368,6 +376,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
                 </p>
               </>
             )}
+            {moveBack && <StepUpNote />}
             {error && (
               <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
                 {error.text}
@@ -384,7 +393,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
                 Cancel
               </Button>
               <Button type="submit" variant="outline" disabled={busy || (moveBack && !newOk)}>
-                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Turn off
+                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} {moveBack && needsTouch() ? TOUCH_LABEL : 'Turn off'}
               </Button>
             </div>
           </form>

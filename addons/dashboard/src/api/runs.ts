@@ -64,6 +64,8 @@ export interface TermPreview {
   cwd_path_hidden: boolean
   notice: string | null
   as_person: boolean
+  /** Tier B: the card line naming the separate account the terminal runs as (and then `as_person` is false); null otherwise. */
+  execution_line?: string | null
   login_shell: boolean
   env: string[]
   blocked: { code: string | null; message: string | null } | null

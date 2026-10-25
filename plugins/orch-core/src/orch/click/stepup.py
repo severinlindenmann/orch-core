@@ -14,6 +14,7 @@ read from ``<state>/dashboard/remote.json`` (the name `orch remote enable` wrote
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 import stat
@@ -27,6 +28,8 @@ from .protocol import ClickError
 
 __all__ = ["CODE", "NONCE_LIFETIME", "Stepups"]
 
+log = logging.getLogger("orch.click.stepup")
+
 CODE = "passkey.stepup_required"
 #: a nonce can be answered by the server within 120 s (its ceremony) and the answer used for the op for at most the
 #: ten minutes of a fresh step-up (owner decision of 24 Oct 2026; also a request's own lifetime)
@@ -37,7 +40,9 @@ _RESPONSE = {"clientDataJSON", "authenticatorData", "signature"}
 
 
 def _refuse(why: str) -> ClickError:
-    # one static text: nothing tells the caller which part failed (the reason is the signer's log line only)
+    # one static text for the caller: nothing tells it which part failed. The reason (a fixed phrase, never an
+    # assertion, challenge, nonce or credential id) goes to the signer's log.
+    log.warning("passkey step-up refused: %s", why)
     return ClickError(CODE, "This needs a fresh fingerprint or PIN check first.", reason=None)
 
 
@@ -56,6 +61,8 @@ class Stepups:
         self.mono = mono
         self._rp_id = rp_id or self._read_rp_id
         self.store = store or PasskeyStore(self.dir / "passkeys.json")
+        #: Not locked: the signer serves one request at a time (`server.serve` reads, handles and answers in one loop on
+        #: one socket), so `begin` and `check` never run concurrently.
         #: nonce (raw bytes) -> (workspace id, view digest, op, request id or None, issued at); in memory only, a
         #: restart forgets all
         self.nonces: dict[bytes, tuple[str, str, str, str | None, float]] = {}

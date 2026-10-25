@@ -175,6 +175,8 @@ class Passkeys:
         self.store, self.rp_id, self.origin = store, rp_id, "https://" + rp_id
         self.codes, self.ceremonies = EnrollCodes(clock), Ceremonies(clock)
         self.clock = clock
+        #: LOCK ORDER: enroll_lock > store.lock, auth.lock, codes.lock, ceremonies.lock. The last four are leaves: no
+        #: code holds one while taking another (checked for every path of passkey_routes and stepup_routes).
         #: held across a registration's spend + add + un-revoke, and across a removal's remove + drop + burn
         self.enroll_lock = threading.RLock()
 

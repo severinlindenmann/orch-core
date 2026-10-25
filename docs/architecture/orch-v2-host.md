@@ -3734,13 +3734,13 @@ login.
 - **Pre-login surface**: the app shell and its assets, `/auth/passkey/*` and `/auth/enroll/*`. Nothing else answers
   without a remote session; `/setup` and `/api/setup/*` need a remote session (the setup token stays, on top).
 - **The route table (R1-5).** Every route of the dashboard app has one rule for the front in `routegate.TABLE`:
-  `allowed`, `refused`, `step_up` (a whole route whose handler asks for the passkey, 10.5), `pre_login` (the four passkey routes) or `terminals` (allowed
-  only where the listener's policy has terminals on). `security.Security` enforces it in one place, after the session
+  `allowed`, `refused`, `step_up` (a whole route whose handler asks for the passkey, 10.5), `pre_login` (the four
+  passkey routes) or `terminals` (allowed only where the listener's policy has terminals on). `security.Security` enforces it in one place, after the session
   test: a route that is unlisted or matches nothing is refused (`remote.refused`, 403), and a test walks the app's
   routes and fails on one without a rule. Refused for good: launch codes, the setup routes, hub signing, the widget
   frame. Routes that serve several bodies (`click/custody`, `click/runner`, `click/runner/review`, `click/prepare`,
-  `click/sign`) stay `allowed`; their handlers ask `stepup.refuse_step_up`, which needs the passkey step-up (10.5) for the
-  step-up variants of every session that was not opened on this computer.
+  `click/sign`) stay `allowed`; their handlers ask `stepup.refuse_step_up`, which needs the passkey step-up (10.5)
+  for the step-up variants of every session that was not opened on this computer.
 - **Passkey routes (R1-5).** `POST /auth/passkey/options` and `/login`, `POST /auth/enroll/options` and `/register`.
   Strict closed bodies (16 KiB), one rate-limit charge per request, a 120 s single-use challenge per ceremony held in
   memory, and one answer for every failure (`passkey.invalid` for login, `enroll.expired` for enrollment: a wrong,

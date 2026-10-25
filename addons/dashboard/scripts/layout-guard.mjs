@@ -536,7 +536,7 @@ async function run(send, close) {
               ['real-host-addons-publish', 'addons-publish', [['the settings chevron', '[data-testid="addon-publish-expand"]']]],
               ['real-host-addons-publish-open', 'addons-publish-open', [['the publish box', '[data-testid="publish-server"]'], ['the connection check', '[data-testid="publish-connection"]']]],
               ['real-host-addons-publish-unset', 'addons-publish-unset', [['the publish row', '[data-testid="addon-publish"]']]],
-              ['real-host-agent-blocked', 'agent-blocked', [['the runner-off line', '[data-testid="agent-runner-off"]'], ['the enable command', '[data-testid="runner-enable-command"]']]],
+              ['real-host-agent-blocked', 'agent-blocked', [['the runner-off line', '[data-testid="agent-runner-off"]'], ['the Turn on dashboard execution button', '[data-testid="runner-enable"]']]],
               ['real-host-agent-grant', 'agent-grant', [['the access length', '[data-testid="agent-access"]'], ['the sign-and-start button', '[data-testid="agent-start"]']]],
               // Pair a phone (proposed pair/1): Settings → Devices from the fixture pairing api.
               ['real-host-pair-unavailable', 'pair-unavailable', [['the not-available line', '[data-testid="pair-unavailable"]']]],
@@ -622,12 +622,12 @@ async function run(send, close) {
               await settle()
               await check(config, 'real-host-drop-delete', opened ? await need([['the confirmation', '[data-testid="drop-confirm"]']]) : ['the Delete button is missing'])
             }
-            // Removal is CLI only: the "Remove this device" disclosure open with its command.
+            // Removal is a dashboard button (C15): the Remove button opens the "Remove this device" confirmation with its summary.
             if (!ONLY || ONLY.test('real-host-pair-remove-command')) {
               await go('/__layout/pair-devices')
-              const opened = (await present('[data-testid="device-row"]')) && (await clickText('summary', /^Remove this device$/))
+              const opened = (await present('[data-testid="device-row"]')) && (await clickText('button', /^Remove$/))
               await settle()
-              await check(config, 'real-host-pair-remove-command', opened ? await need([['the remove command', '[data-testid="device-remove-command"]']]) : ['the Remove this device disclosure is missing'])
+              await check(config, 'real-host-pair-remove-command', opened ? await need([['the remove confirmation', '[data-testid="device-remove-summary"]']]) : ['the device Remove button is missing'])
             }
             // The "Make a normal ticket" hand-off, opened from the row menu.
             if (!ONLY || ONLY.test('real-host-quick-normal-ticket')) {

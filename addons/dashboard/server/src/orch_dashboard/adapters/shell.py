@@ -175,3 +175,20 @@ def host_info(data):
         if rows:
             out["alarms"] = rows
     return out
+
+
+ISOLATION_MAX = 20
+ISOLATION_TEXT_MAX = 400
+
+
+def isolation_rows(data):
+    """The isolation problems of `host.status` (L13, person only): a list of `{what, fix}` strings, rebuilt row by row,
+    at most 20 rows of 400 characters each. Anything else is dropped; a host that sends none gives an empty list."""
+    rows = data.get("isolation") if isinstance(data, dict) else None
+    out = []
+    for row in rows[:ISOLATION_MAX] if isinstance(rows, list) else []:
+        what = row.get("what") if isinstance(row, dict) else None
+        fix = row.get("fix") if isinstance(row, dict) else None
+        if isinstance(what, str) and isinstance(fix, str):
+            out.append({"what": what[:ISOLATION_TEXT_MAX], "fix": fix[:ISOLATION_TEXT_MAX]})
+    return out

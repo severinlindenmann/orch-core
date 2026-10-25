@@ -23,6 +23,7 @@ import stat
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
+from ..canon.text import clean_line
 from ..setup.osfacts import OsFacts
 from ..setup.osusers import AGENT_HOME_ROOT, AGENT_PREFIX, PRIVILEGED_GROUPS
 
@@ -48,18 +49,28 @@ _USERINFO = re.compile(r"^[a-z][a-z0-9+.-]*://([^/@\s]+)@", re.IGNORECASE)
 
 @dataclass(frozen=True)
 class Finding:
+    """One problem. ``what`` and ``fix`` are plain words for a person; every text field is cleaned on creation (one
+    line, no control or invisible character), because paths and names come from files an agent can write."""
+
     code: str
-    what: str  # plain words
-    fix: str  # one line
+    what: str
+    fix: str  # one line; says when it needs an administrator
     path: str = ""
+    group: str = ""  # the privileged group, for privileged_group findings
+
+    def __post_init__(self) -> None:
+        for name in ("what", "fix", "path", "group"):
+            object.__setattr__(self, name, clean_line(getattr(self, name)))
 
 
-_PLAIN_NAME = re.compile(r"[A-Za-z0-9._-]+")
+_PLAIN_NAME = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._-]*")  # no leading "-": never an option
+_ADMIN = "as an administrator, run "
 
 
 def _cmd(*argv: str) -> str:
     """The one place a suggested command is built: every part is shell-quoted, because paths, remote names and user
-    names come from files an agent can write and the person may paste the line into a terminal."""
+    names come from files an agent can write and the person may paste the line into a terminal. Callers put ``--``
+    before any such operand where the tool supports it."""
     return " ".join(shlex.quote(a) for a in argv)
 
 
@@ -91,12 +102,12 @@ def _secret_files(facts: OsFacts, home: str) -> list[Finding]:
         if info is None or info.is_dir or info.is_symlink:
             continue
         if info.mode & 0o004 or info.has_acl:
-            why = "can be read by every user on this machine" if info.mode & 0o004 else "has extra access rules (ACL)"
+            why = "can be read by every user on this computer" if info.mode & 0o004 else "is shared with other users"
             out.append(
                 Finding(
                     "secret_file_readable",
                     f"{path} holds a password or token and {why}, so an agent could read it",
-                    _cmd("chmod", "600", path),
+                    _cmd("chmod", "600", "--", path),
                     path,
                 )
             )
@@ -113,20 +124,37 @@ def _token_in_url(url: str) -> bool:
     return info.startswith(_TOKEN_PREFIXES) or (len(info) >= 30 and not info.startswith("git"))
 
 
-def _remote_tokens(config: str) -> list[str]:
-    """Names of the remotes of a git config text whose url carries a credential."""
-    bad: list[str] = []
-    section = ""
+_HEADER = re.compile(r'\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\]\s*(.*)$')
+
+
+def _entries(config: str) -> list[tuple[str, str, str, str]]:
+    """(section, subsection, key, value) of a git config text; a header may share its line with a key."""
+    out = []
+    section = sub = ""
     for raw in config.splitlines():
         line = raw.strip()
         if line.startswith("["):
-            section = line
-            continue
+            m = _HEADER.match(line)
+            if not m:
+                section = sub = ""
+                continue
+            section, sub, line = m.group(1).lower(), m.group(2) or "", m.group(3).strip()
         key, sep, value = line.partition("=")
-        if sep and key.strip().lower() in {"url", "pushurl"} and section.lower().startswith("[remote"):
-            if _token_in_url(value.strip().strip('"')):
-                m = re.match(r'\[remote\s+"([^"]*)"\]', section, re.IGNORECASE)
-                bad.append(m.group(1) if m else "?")
+        if sep and section:
+            out.append((section, sub, key.strip().lower(), value.strip().strip('"')))
+    return out
+
+
+def _remote_tokens(config: str) -> list[str]:
+    """Names of the remotes (or ``a web address rewrite``) of a git config text that carry a credential."""
+    bad: list[str] = []
+    for section, sub, key, value in _entries(config):
+        if section == "remote" and key in {"url", "pushurl"} and _token_in_url(value):
+            bad.append(sub or "?")
+        elif section == "url" and (
+            _token_in_url(sub) or (key in {"insteadof", "pushinsteadof"} and _token_in_url(value))
+        ):
+            bad.append("")  # an address rewrite: no remote name
     return bad
 
 
@@ -138,17 +166,31 @@ def _repo_tokens(roots: Iterable[str], read: Callable[[str], str | None]) -> lis
         if text is None:
             continue
         for remote in sorted(set(_remote_tokens(text))):
+            if remote == "":
+                out.append(
+                    Finding(
+                        "token_in_remote_url",
+                        f"{path}: an address rewrite contains a password or token, which every program that can read "
+                        "the repository sees",
+                        f"open {path}, remove the token from the [url ...] entry and use a credential helper",
+                        path,
+                    )
+                )
+                continue
+            fix = (
+                "run "
+                + _cmd("git", "-C", root, "remote", "set-url", "--", remote)
+                + " followed by the address without the token, then use a credential helper"
+                if _plain(remote)
+                else "change the address of that remote with git remote set-url, without the token, then use a "
+                "credential helper"
+            )
             out.append(
                 Finding(
                     "token_in_remote_url",
                     f"{path}: the address of remote '{remote}' contains a password or token, which every program "
                     "that can read the repository sees",
-                    (
-                        _cmd("git", "-C", root, "remote", "set-url", remote) + " <address without the token>"
-                        if _plain(remote)
-                        else "change the address of that remote with git remote set-url, without the token"
-                    )
-                    + ", then use a credential helper",
+                    fix,
                     path,
                 )
             )
@@ -156,16 +198,7 @@ def _repo_tokens(roots: Iterable[str], read: Callable[[str], str | None]) -> lis
 
 
 def _safe_directory_star(text: str) -> bool:
-    section = ""
-    for raw in text.splitlines():
-        line = raw.strip()
-        if line.startswith("["):
-            section = line.split("#")[0].strip().lower()
-            continue
-        key, sep, value = line.partition("=")
-        if sep and section == "[safe]" and key.strip().lower() == "directory" and value.strip().strip('"') == "*":
-            return True
-    return False
+    return any(s == "safe" and k == "directory" and v == "*" for s, _, k, v in _entries(text))
 
 
 def _safe_directory(home: str, read: Callable[[str], str | None]) -> list[Finding]:
@@ -176,9 +209,8 @@ def _safe_directory(home: str, read: Callable[[str], str | None]) -> list[Findin
             out.append(
                 Finding(
                     "safe_directory_star",
-                    f"{path} sets safe.directory to *, which turns off git's check that a folder belongs to you for "
-                    "every folder, including ones an agent made",
-                    f"remove the safe.directory = * line from {_cmd(path)}",
+                    f"{path} tells git to trust every folder on this computer, including ones an agent made",
+                    f"remove the line 'directory = *' under [safe] in {path}",
                     path,
                 )
             )
@@ -204,41 +236,40 @@ def _groups(facts: OsFacts, person: str | None, agents: list[str]) -> list[Findi
             out.append(
                 Finding(
                     "privileged_group",
-                    f"{who} {'is' if is_agent else 'are'} in the group '{g}', which gives near-root power over this "
-                    "machine" + ("; an agent in it is not isolated" if is_agent else ""),
-                    _cmd("gpasswd", "-d", name, g) if _plain(name) and _plain(g) else "remove that user from the group",
-                    g,
+                    f"{who} {'is' if is_agent else 'are'} in the group '{g}', which lets that user take over this "
+                    "computer" + ("; an agent in it is not isolated" if is_agent else ""),
+                    _ADMIN + _cmd("gpasswd", "-d", name, g)
+                    if _plain(name) and _plain(g)
+                    else "as an administrator, remove that user from the group",
+                    group=g,
                 )
             )
     return out
 
 
 def _hidepid(facts: OsFacts, read: Callable[[str], str | None]) -> list[Finding]:
-    if facts.platform != "linux":
-        return []
     text = read("/proc/mounts")
     if text is None:
-        return []
+        raise OSError("no /proc/mounts")
     for line in text.splitlines():
         parts = line.split()
         if len(parts) >= 4 and parts[1] == "/proc":
             opts = parts[3].split(",")
-            hidden = any(
-                o in {"hidepid=1", "hidepid=2", "hidepid=noaccess", "hidepid=invisible", "hidepid=ptraceable"}
-                for o in opts
-            )
-            if not hidden:
-                return [
-                    Finding(
-                        "proc_visible",
-                        "other users on this machine can see the command lines of your programs, which may contain "
-                        "tokens",
-                        "mount -o remount,hidepid=2 /proc (and add hidepid=2 to the /proc line in /etc/fstab)",
-                        "/proc",
-                    )
-                ]
-            return []
+            if any(o.startswith("hidepid=") and o not in {"hidepid=0", "hidepid=off"} for o in opts):
+                return []
+            return [
+                Finding(
+                    "proc_visible",
+                    "other users on this computer can see the commands you run, which may contain tokens",
+                    _ADMIN + "mount -o remount,hidepid=2 /proc, and add hidepid=2 to the /proc line in /etc/fstab",
+                    "/proc",
+                )
+            ]
     return []
+
+
+def _could_not(what: str) -> Finding:
+    return Finding("could_not_check", f"Could not check {what}; this is not an all clear", "run orch host status again")
 
 
 def check(
@@ -250,14 +281,29 @@ def check(
     read: Callable[[str], str | None] | None = None,
 ) -> list[Finding]:
     """Every isolation hazard found; empty when none. ``person`` is the person's user name (None: skip the group check
-    for the person), ``repos`` the roots of the registered repositories."""
+    for the person), ``repos`` the roots of the registered repositories. A part that cannot be checked gives a
+    ``could_not_check`` finding, never silence."""
     read = read if read is not None else read_text  # looked up now, so a test can replace read_text
     home = home.rstrip("/")
-    agents = _agent_users(facts)
-    out = _secret_files(facts, home)
-    out += _repo_tokens(repos, read)
-    out += _safe_directory(home, read)
-    out += _groups(facts, person, agents)
-    if agents:  # only matters once agents run as another user
-        out += _hidepid(facts, read)
+    if facts.platform not in {"linux", "darwin"}:
+        return [_could_not("this computer for isolation hazards (this system is not supported yet)")]
+    out: list[Finding] = []
+    steps: list[tuple[str, Callable[[], list[Finding]]]] = [
+        ("the password files in your home folder", lambda: _secret_files(facts, home)),
+        ("the repositories for tokens in their addresses", lambda: _repo_tokens(repos, read)),
+        ("the git trust setting", lambda: _safe_directory(home, read)),
+    ]
+    try:
+        agents = _agent_users(facts)
+    except Exception:  # noqa: BLE001 - reported below, never silent
+        agents = []
+        out.append(_could_not("which agent users exist"))
+    steps.append(("the groups of the users", lambda: _groups(facts, person, agents)))
+    if agents and facts.platform == "linux":  # only matters once agents run as another user
+        steps.append(("whether other users can see your commands", lambda: _hidepid(facts, read)))
+    for what, step in steps:
+        try:
+            out += step()
+        except Exception:  # noqa: BLE001 - a failed step is a visible finding
+            out.append(_could_not(what))
     return out

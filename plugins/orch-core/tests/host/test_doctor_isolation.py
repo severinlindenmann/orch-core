@@ -35,7 +35,7 @@ def test_other_readable_secret_files_are_listed_without_content():
     found = di.check(f, HOME, person="pat", read=lambda p: None)
     paths = {x.path for x in found if x.code == "secret_file_readable"}
     assert paths == {f"{HOME}/{r}" for r in di.SECRET_FILES if r != ".pypirc"}
-    assert all(x.fix.startswith("chmod 600 ") for x in found)
+    assert all(x.fix.startswith("chmod 600 -- ") for x in found if x.code == "privileged_group")
 
 
 def test_acl_on_a_secret_file_counts():
@@ -88,9 +88,11 @@ def test_privileged_groups_for_person_and_agents():
     f.add_user("orch-agent-pat", 1200, home="/var/lib/orch/agents/orch-agent-pat", groups=("lxd", "sudo"))
     f.add_path("/var/lib/orch/agents/orch-agent-pat", uid=1200, kind="dir")
     found = di.check(f, HOME, person="pat", read=lambda p: None)
-    pairs = sorted((x.path, x.what.split()[0]) for x in found if x.code == "privileged_group")
     # person: docker only (sudo is normal for the owner of the machine); agent: lxd and sudo
-    assert [p for p, _ in pairs] == ["docker", "lxd", "sudo"]
+    assert [x.group for x in found if x.code == "privileged_group"] == ["docker", "lxd", "sudo"]
+    assert all(
+        x.path == "" and x.fix.startswith("as an administrator, ") for x in found if x.code == "privileged_group"
+    )
     assert any("not isolated" in x.what for x in found)
 
 
@@ -136,7 +138,7 @@ def test_status_report_shows_the_problems_with_fixes(tmp_path):
     state.mkdir()
     rep = status.report(state, {"HOME": HOME}, state / "run", isolation_facts=f)
     mine = [p for p in rep["problems"] if "aws/credentials" in p["what"]]
-    assert len(mine) == 1 and mine[0]["fix"] == f"chmod 600 {HOME}/.aws/credentials"
+    assert len(mine) == 1 and mine[0]["fix"] == f"chmod 600 -- {HOME}/.aws/credentials"
     assert rep["ok"] is False and "problem:" in status.render(rep)
 
 
@@ -159,13 +161,76 @@ def test_malicious_repo_path_and_home_are_quoted_in_fixes():
     evil = "/work/r; rm -rf ~ $(id)"
     cfg = '[remote "origin"]\n\turl = https://u:p@h/r.git\n'
     found = di.check(f, HOME, repos=[evil], read=lambda p: cfg if p.endswith(".git/config") else None)
-    assert found[0].fix.startswith("git -C '/work/r; rm -rf ~ $(id)' remote set-url origin ")
+    assert found[0].fix.startswith("run git -C '/work/r; rm -rf ~ $(id)' remote set-url -- origin ")
     f.add_path("/home/pat/x y; reboot", kind="dir")
     bad_home = "/home/pat/x y; reboot"
     f.add_path(f"{bad_home}/.netrc", uid=1000, mode=0o644)
     sec = di.check(f, bad_home, read=lambda p: None)
-    assert sec[0].fix == "chmod 600 '/home/pat/x y; reboot/.netrc'"
+    assert sec[0].fix == "chmod 600 -- '/home/pat/x y; reboot/.netrc'"
 
 
 def test_cmd_helper_quotes_every_part():
     assert di._cmd("a", "b c", "$(x)") == "a 'b c' '$(x)'"
+
+
+def test_every_text_field_is_one_clean_line():
+    f = _machine()
+    cfg = '[remote "o"]\n\turl = https://u:p@h/r.git\n'
+    found = di.check(
+        f, HOME, repos=["/work/r\nproblem: fake\x1b[31m"], read=lambda p: cfg if p.endswith(".git/config") else None
+    )
+    for x in found:
+        for text in (x.what, x.fix, x.path):
+            assert "\n" not in text and "\x1b" not in text
+
+
+def test_leading_dash_names_never_become_options():
+    f = _machine()
+    cfg = '[remote "-x"]\n\turl = https://u:p@h/r.git\n'
+    found = di.check(f, HOME, repos=["/w"], read=lambda p: cfg if p.endswith(".git/config") else None)
+    assert "set-url" in found[0].fix and "-x" not in found[0].fix
+    assert not di._plain("-x") and di._plain("origin")
+
+
+def test_unsupported_platform_and_failed_step_are_not_an_all_clear():
+    assert _codes(di.check(FakeOsFacts("windows"), "C:/u", read=lambda p: None)) == ["could_not_check"]
+    f = _machine()
+    f.add_user("orch-agent-pat", 1200, home="/var/lib/orch/agents/orch-agent-pat")
+    f.add_path("/var/lib/orch/agents/orch-agent-pat", uid=1200, kind="dir")
+    assert _codes(di.check(f, HOME, read=lambda p: None)) == ["could_not_check"]  # /proc/mounts unreadable
+    boom = FakeOsFacts("linux")
+    boom.listdir = lambda p: 1 / 0
+    assert "could_not_check" in _codes(di.check(boom, HOME, read=lambda p: None))
+
+
+def test_url_rewrite_and_one_line_remote_forms():
+    f = _machine()
+    cfg = (
+        '[url "https://ghp_' + "C" * 36 + '@github.com/"]\n\tinsteadOf = https://github.com/\n'
+        '[remote "one"] url = https://u:p@h/r.git\n'
+    )
+    found = di.check(f, HOME, repos=["/w"], read=lambda p: cfg if p.endswith(".git/config") else None)
+    assert len(found) == 2
+    assert not any("ghp_" in x.what + x.fix for x in found)
+    assert any("'one'" in x.what for x in found)
+
+
+def test_status_report_without_working_facts_says_could_not_check(tmp_path):
+    class Bad:
+        platform = "linux"
+
+        def user_by_uid(self, uid):
+            raise RuntimeError("secret /path")
+
+    state = tmp_path / "s"
+    state.mkdir()
+    rep = status.report(state, {"HOME": str(tmp_path)}, state / "run", isolation_facts=Bad())
+    row = next(p for p in rep["problems"] if "Could not check" in p["what"])
+    assert "secret" not in row["what"]
+
+
+def test_host_status_rows_are_cleaned_dicts():
+    f = _machine()
+    f.add_path(f"{HOME}/.netrc", uid=1000, mode=0o644)
+    rows = status.isolation_problems({"HOME": HOME}, [], f)
+    assert rows and set(rows[0]) == {"what", "fix"}

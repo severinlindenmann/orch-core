@@ -372,6 +372,26 @@ def host_error(e: OrchError, op: Operation | None) -> HostError:
     return out
 
 
+_ISOLATION_TTL = 30.0
+_isolation_cache: dict[str, tuple[float, list[dict[str, str]]]] = {}
+
+
+def _isolation_rows(root: str) -> list[dict[str, str]]:
+    """``{what, fix}`` rows of the isolation doctor (L13, already cleaned), cached for a short while: a status read
+    is polled by the dashboard and the check reads about twenty files."""
+    import os
+
+    from . import status
+
+    now = time.monotonic()
+    hit = _isolation_cache.get(root)
+    if hit is not None and now - hit[0] < _ISOLATION_TTL:
+        return hit[1]
+    rows = status.isolation_problems(os.environ, [root])
+    _isolation_cache[root] = (now, rows)
+    return rows
+
+
 class PlanGuard:
     """One write's plan: ``plan`` adds an announced batch to the outcome record (fsynced) before it is appended, and
     ``check`` (the store's append check during ``apply``) refuses any event the record does not list."""
@@ -859,6 +879,8 @@ class RegistryBackend:
                 data["dev"] = {"sim_convenience": True, "sandbox": dev.id8}
                 if dev.pending:
                     data["dev"]["pending"] = True
+        if call.column.name == "P":  # L13: the person's machine layout is for the person, not for an agent grant
+            data["isolation"] = _isolation_rows(call.service.entry.root)
         return data
 
     # -- registry ops

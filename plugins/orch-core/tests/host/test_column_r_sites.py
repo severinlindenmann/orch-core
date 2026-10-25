@@ -36,7 +36,10 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
     ("diff.py", "prepare"): (2, "R pins no base (only a P call may write the base pin): reads stay side-effect free"),
     ("dispatch.py", "RegistryBackend._context"): (2, "R carries no grant: the context's grant is None"),
     ("dispatch.py", "RegistryBackend._register"): (3, "unreachable (sub.open is not an R op)"),
-    ("dispatch.py", "RegistryBackend.status"): (2, "unreachable (host.status is not an R op); would be N's answer"),
+    ("dispatch.py", "RegistryBackend.status"): (
+        4,
+        "unreachable (host.status is not an R op); would be N's answer (isolation rows: column P only)",
+    ),
     ("dispatch.py", "RegistryBackend.whoami"): (2, "R gets no runner info (P and G only)"),
     ("outcomes.py", "principal_of"): (2, "raises for R (the principal is r:<device>, never derived from a uid)"),
     ("reads_ws.py", "_person_reader"): (1, "unreachable (session.list, grant.list are not R ops); refuses R"),

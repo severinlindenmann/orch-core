@@ -16,7 +16,7 @@ import { CopyButton } from '../General'
 import { visible } from '@/components/sign/visible'
 import { DASHBOARD_EXECUTION_LINE } from '@/api/quickRecords'
 import { SigningCard } from './SigningCard'
-import { HostAlarms } from '@/components/dev/DevHost'
+import { HostAlarms, IsolationProblems } from '@/components/dev/DevHost'
 import { Mono, Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { useViewerRole } from './useViewerRole'
@@ -212,6 +212,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           )}
 
           <HostAlarms alarms={hostInfo.data?.alarms ?? []} />
+          <IsolationProblems problems={id?.isolation ?? []} />
           <RecordsBlock workspace={workspace} />
         </div>
       </details>

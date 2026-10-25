@@ -101,19 +101,24 @@ def _default_facts() -> Any:
     return RealOsFacts()
 
 
-def _isolation_problems(env: Mapping[str, str], registry: Mapping[str, Any], facts: Any) -> list[dict[str, str]]:
-    """L13: the isolation hazards of this machine as problems (read only; a failure here never hides the rest)."""
+def isolation_problems(env: Mapping[str, str], roots: list[str], facts: Any = None) -> list[dict[str, str]]:
+    """L13: the isolation hazards of this machine as ``{what, fix}`` rows, already cleaned (read only). A check that
+    cannot run gives one "could not check" row, never an empty list that reads as all clear."""
     from . import doctor_isolation as di
 
-    home = env.get("HOME") or str(Path.home())
     try:
         facts = facts if facts is not None else _default_facts()
+        home = env.get("HOME") or str(Path.home())
         me = facts.user_by_uid(os.getuid())
-        roots = [str(e["root"]) for e in registry.get("workspaces") or [] if isinstance(e, dict) and e.get("root")]
         found = di.check(facts, home, person=me.name if me else None, repos=roots)
-    except Exception:  # noqa: BLE001 - an unreadable machine fact must not break the status report
-        return []
+    except Exception:  # noqa: BLE001 - no exception text: it could carry a path
+        found = [di._could_not("this computer for isolation hazards")]
     return [{"what": f.what, "fix": f.fix} for f in found]
+
+
+def _isolation_problems(env: Mapping[str, str], registry: Mapping[str, Any], facts: Any) -> list[dict[str, str]]:
+    roots = [str(e["root"]) for e in registry.get("workspaces") or [] if isinstance(e, dict) and e.get("root")]
+    return isolation_problems(env, roots, facts)
 
 
 def report(state: Path, env: Mapping[str, str], control: Path, *, isolation_facts: Any = None) -> dict[str, Any]:

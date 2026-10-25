@@ -258,6 +258,7 @@ def create_app(
             "key_fingerprint": show.get("wsk_fingerprint"),
             "created_at": None,
             "tier": status["tier"],
+            "isolation": adapters.isolation_rows(status),
             "me": who,
             "runner": who.runner,
         }

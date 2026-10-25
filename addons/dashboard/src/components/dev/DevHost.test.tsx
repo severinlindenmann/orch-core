@@ -7,7 +7,7 @@ import { DEV_HOST_SENTENCE, DEV_REFUSED_GENERIC, DEV_REFUSED_SENTENCE, UNAVAILAB
 import { ApiError } from '@/api/types'
 import { resetLayoutPreview } from '@/dev/layoutPreview'
 import { renderApp } from '@/test/renderApp'
-import { HostAlarms } from './DevHost'
+import { HostAlarms, IsolationProblems } from './DevHost'
 
 const T = { timeout: 4000 }
 afterEach(() => {
@@ -121,5 +121,19 @@ describe('the dev_host signing refusal', () => {
     expect(note).toHaveTextContent(DEV_HOST_SENTENCE)
     expect(screen.queryByRole('button', { name: 'Turn on…' })).toBeNull()
     expect(await screen.findByTestId('dev-badge')).toBeInTheDocument()
+  })
+})
+
+describe('the isolation problems (L13)', () => {
+  it('draws nothing when there are none', () => {
+    render(<IsolationProblems problems={[]} />)
+    expect(screen.queryByTestId('isolation-problems')).toBeNull()
+  })
+  it('draws each problem with its fix as plain text, never as markup', () => {
+    render(<IsolationProblems problems={[{ what: '/home/a/.netrc holds a password', fix: 'chmod 600 -- /home/a/.netrc <b>x</b>' }]} />)
+    const row = screen.getByTestId('isolation-problem')
+    expect(row.textContent).toContain('/home/a/.netrc holds a password')
+    expect(row.textContent).toContain('<b>x</b>')
+    expect(row.querySelector('b')).toBeNull()
   })
 })

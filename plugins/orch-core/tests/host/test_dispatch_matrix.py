@@ -417,7 +417,8 @@ def test_whoami_per_column(served):
 def test_host_status_gives_column_n_only_version_and_tier(served):
     c = served.client()
     p = ok(c.req("host.status"))["data"]
-    assert set(p) == {"version", "tier", "state", "uptime_s"} and p["state"] == "ok"
+    assert set(p) == {"version", "tier", "state", "uptime_s", "isolation"} and p["state"] == "ok"
+    assert isinstance(p["isolation"], list)  # L13: {what, fix} rows, for the person only (a grant gets none)
     assert set(ok(c.req("host.status", grant=served.grant))["data"]) == {"version", "tier", "state", "uptime_s"}
     n = ok(c.req("host.status", grant=wrong_secret(served.grant)))["data"]
     assert set(n) == {"version", "tier"}

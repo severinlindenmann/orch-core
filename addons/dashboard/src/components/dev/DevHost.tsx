@@ -82,3 +82,20 @@ export function HostAlarms({ alarms }: { alarms: HostAlarm[] }) {
     </section>
   )
 }
+
+/** L13: what lets an agent user reach your files, from the host's isolation check. Same look as the host alarms; drawn only when there is something. */
+export function IsolationProblems({ problems }: { problems: { what: string; fix: string }[] }) {
+  if (problems.length === 0) return null
+  return (
+    <section aria-label="Isolation problems" data-testid="isolation-problems" className="space-y-2 rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-[13px]">
+      <h3 className="font-semibold text-danger">Agents could reach your files</h3>
+      <ul className="space-y-1">
+        {problems.map((p, i) => (
+          <li key={i} data-testid="isolation-problem" className="min-w-0 break-words">
+            {p.what}. <span className="text-text-muted">To fix: {p.fix}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}

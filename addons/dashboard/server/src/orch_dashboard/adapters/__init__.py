@@ -2,7 +2,7 @@
 
 from . import handoff, settings
 from .changes import changes
-from .shell import Me, Member, Workspace, click_card, host_info, me, members, pinned_prefix, unavailable_reason
+from .shell import Me, Member, Workspace, click_card, host_info, isolation_rows, me, members, pinned_prefix, unavailable_reason
 from .tickets import UI_STATUSES, board_statuses, document, events, host_status, page, summary
 from .today import actionable_count, today
 
@@ -22,6 +22,7 @@ __all__ = [
     "events",
     "host_info",
     "host_status",
+    "isolation_rows",
     "me",
     "members",
     "page",

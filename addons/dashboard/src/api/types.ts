@@ -641,6 +641,8 @@ export interface WorkspaceIdentity {
   epoch: number
   /** A real host only: `whoami.runner`, null when the host does not say. */
   runner?: { connected: boolean; enabled: boolean; terminals: boolean } | null
+  /** A real host only (L13): what lets an agent user reach the person's files, in plain words; empty or absent when nothing. */
+  isolation?: { what: string; fix: string }[]
 }
 
 // ---------------------------------------------------------------- relay & devices (simulated; orch v2 P2/P3)

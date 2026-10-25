@@ -99,7 +99,7 @@ describe('Remote access settings', () => {
 describe('Remote access problem', () => {
   it('says people cannot sign in, copies details for IT, and still shows no passkey table', async () => {
     setFeatures({ features: [], login: 'local', remote_problem: 'remote.not_configured: the front socket did not start' })
-    const writeText = vi.fn(async () => {})
+    const writeText = vi.fn(async (_text: string) => {})
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     mount()
     expect(screen.getByTestId('remote-problem')).toHaveTextContent('People cannot sign in from the web right now')

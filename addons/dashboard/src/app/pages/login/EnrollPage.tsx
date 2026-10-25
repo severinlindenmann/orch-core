@@ -3,7 +3,8 @@
 import { Check, Fingerprint } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { deviceName, enrollDevice, PasskeyError, passkeysSupported, type PasskeyFailure } from '@/api/passkey'
-import { finishEnroll, getEnrollCode, openSession } from '@/api/bootstrap'
+import { openSession } from '@/api/bootstrap'
+import { finishEnroll, getEnrollCode } from '@/api/enrollLink'
 import { Button } from '@/components/ui/button'
 import { AuthCard, AuthPage, Badge } from './AuthCard'
 

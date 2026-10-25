@@ -160,7 +160,8 @@ const FRESH_MS = 90_000 // the server keeps a challenge 120 s
  * listener the route does not exist (404). Returns false then.
  */
 export async function prepareLogin(): Promise<boolean> {
-  const res = await request<PublicKeyOptions>('POST', '/auth/passkey/options', {})
+  // never a first screen that waits for good: a server that does not answer is 'orch did not answer' with Try again
+  const res = await request<PublicKeyOptions>('POST', '/auth/passkey/options', {}, AbortSignal.timeout(8000))
   if (res.status === 404) return false
   if (res.status !== 200 || !res.json) throw refused(res.status, 'login')
   waiting = { options: res.json, at: Date.now() }

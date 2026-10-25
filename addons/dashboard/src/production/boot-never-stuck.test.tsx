@@ -68,6 +68,7 @@ it('a server error shows the message with Try again', async () => {
 it('an ended session says so in plain words and names the command', async () => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
   mount()
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 404 }))) // this computer's own address: no passkey login
   token = null
   act(() => listener())
   expect(await screen.findByText('Your dashboard session ended')).toBeInTheDocument()

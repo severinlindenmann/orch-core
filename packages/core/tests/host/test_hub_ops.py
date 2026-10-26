@@ -707,3 +707,39 @@ def test_an_expired_proof_at_connect_leaves_a_way_out_leave_then_join_again(huma
     human.run("hub.join", join_args())  # a new join: a new proof, binding 2
     got = ok(c.req("hub.connect", connect_args(), idem=True))["data"]
     assert got["status"] == "bound" and got["binding_seq"] == 2
+
+
+def test_a_completed_full_leave_clears_the_relay_paired_mark(human, served, stub, keystore):
+    """B12: the full join's membership/ store read as 'relay paired' for good; a finished leave (no rotation owed,
+    no relay link ever) removes it, so One click works again."""
+    from orch.host import convenience
+    from tests.host.dispatch_helpers import ok
+    from tests.wsproto import r6kit
+
+    c = served.client()
+    mark = served.lab.state / "hosts" / served.wid / "membership"
+    mark.mkdir(parents=True)
+    assert convenience._relay_paired(served.lab.state, served.wid)
+    human.run("hub.join", join_args(mode="full"))
+    ok(c.req("hub.connect", connect_args(), idem=True))
+    human.run("hub.leave", {})
+    assert ok(c.req("hub.unbind", {}, idem=True))["data"]["rotation"] == "pending"
+    assert mark.exists()  # a rotation is still owed: nothing is removed yet
+    r6kit.rotate(keystore)
+    assert ok(c.req("hub.unbind", {}, idem=True))["data"]["rotation"] == "none"
+    assert not mark.exists() and not convenience._relay_paired(served.lab.state, served.wid)
+
+
+def test_a_leave_keeps_the_mark_of_a_workspace_with_a_relay(human, served, stub, keystore):
+    from tests.host.dispatch_helpers import ok
+
+    c = served.client()
+    base = served.lab.state / "hosts" / served.wid
+    (base / "membership").mkdir(parents=True)
+    (base / "relay").mkdir()
+    (base / "relay" / "unlinked-1.json").write_text("{}")
+    human.run("hub.join", join_args())
+    ok(c.req("hub.connect", connect_args(), idem=True))
+    human.run("hub.leave", {})
+    ok(c.req("hub.unbind", {}, idem=True))
+    assert (base / "membership").exists()

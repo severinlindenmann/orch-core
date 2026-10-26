@@ -30,6 +30,8 @@ USAGE = (
     "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
     "                    [--publish-url U] [--relay-url U] [--dev] [--yes] | status [--json] | remove PART [--purge]\n"
 )
+# Git ref the parts are installed from. Prototype: develop carries the current work; this moves to release tags later.
+DEFAULT_REF = "develop"
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 
 
@@ -167,7 +169,7 @@ def install_part(
     port: int | None = None,
     domain: str | None = None,
     source: str | None = None,
-    ref: str = "main",
+    ref: str = DEFAULT_REF,
     publish_url: str | None = None,
     relay_url: str | None = None,
     dev: bool = False,
@@ -339,6 +341,7 @@ def status(ctx: Ctx, as_json: bool) -> int:
                 "part": name,
                 "state": "running" if info["running"] else "stopped",
                 "version": rec.get("version"),
+                "ref": rec.get("ref"),
                 "url": rec["url"],
                 "service": rec["service"],
                 "pid": info.get("pid"),
@@ -360,13 +363,17 @@ def status(ctx: Ctx, as_json: bool) -> int:
     if as_json:
         ctx.say(json.dumps({"address": st.get("address"), "parts": rows}, indent=2))
         return 0
-    ctx.say(f"{'part':<10}{'state':<15}{'version':<12}{'address':<28}{'service'}")
+    ctx.say(f"{'part':<10}{'state':<15}{'version':<12}{'sha':<14}{'address':<28}{'service'}")
     for r in rows:
         where = r.get("service") or r.get("dir") or ""
-        ctx.say(f"{r['part']:<10}{r['state']:<15}{(r.get('version') or '-'):<12}{(r.get('url') or '-'):<28}{where}")
+        ctx.say(f"{r['part']:<10}{r['state']:<15}{(r.get('version') or '-'):<12}{_short(r.get('ref')):<14}{(r.get('url') or '-'):<28}{where}")
     if dash:
         ctx.say(f"workspace dashboard login link (single use, 5 min):  {dashboard_login_hint(dash)}")
     return 0
+
+
+def _short(ref: Any) -> str:
+    return str(ref)[:12] if ref else "-"
 
 
 def _ws_host(st: dict[str, Any]) -> str:
@@ -432,7 +439,7 @@ def full_server(
     *,
     address: str | None = None,
     source_for: Mapping[str, str] | None = None,
-    ref: str = "main",
+    ref: str = DEFAULT_REF,
     dev: bool = False,
 ) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
@@ -523,7 +530,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--port", type=int)
     p.add_argument("--domain")
     p.add_argument("--source")
-    p.add_argument("--ref", default="main")
+    p.add_argument("--ref", default=DEFAULT_REF)
     p.add_argument("--publish-url")
     p.add_argument("--relay-url")
     p.add_argument("--dev", action="store_true")

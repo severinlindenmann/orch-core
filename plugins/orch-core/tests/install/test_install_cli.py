@@ -213,3 +213,15 @@ def test_workspace_only_asks_for_no_address(home):
     ctx.interactive = True
     ctx.ask = lambda *a: (_ for _ in ()).throw(AssertionError("asked"))
     assert cli.full_server(ctx, []) == {}
+
+
+def test_default_ref_is_develop_override_works_and_status_shows_sha(home):
+    ctx, out, err, _ = make(home)
+    seen = []
+    ctx.resolve_ref = lambda url, ref: seen.append(ref) or "b" * 40
+    cli.main(["relay"], env=ctx.env, out=out, err=err, ctx=ctx)
+    cli.main(["hub", "--ref", "v1"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert seen == ["develop", "v1"]
+    out.truncate(0), out.seek(0)
+    cli.main(["status"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert "b" * 12 in out.getvalue()

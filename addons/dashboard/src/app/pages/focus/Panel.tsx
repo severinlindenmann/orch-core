@@ -3,15 +3,17 @@ import { Changes } from './panel/Changes'
 import { Artifacts } from './panel/Artifacts'
 import { Decisions } from './panel/Decisions'
 import { Context, useContextPages } from './panel/Context'
+import { Research, useSources } from './panel/Research'
 import { decisionGates, useChanges, usePanelTicket } from './panel/data'
 
-const tabs = { Changes, Artifacts, Decisions, Context }
+const tabs = { Changes, Artifacts, Decisions, Context, Research }
 
 export function Panel({ ticket }: { ticket?: string }) {
   const { data } = usePanelTicket(ticket)
   const changes = useChanges(ticket)
   const wiki = useContextPages(ticket)
-  const counts: Record<string, number> = { Changes: changes.data?.files.length ?? 0, Artifacts: data?.artifacts.length ?? 0, Decisions: (data?.questions_state.length ?? 0) + decisionGates(data).length, Context: (data?.acceptance_state.length ?? 0) + wiki.pages.length }
+  const research = useSources(ticket).sources.data
+  const counts: Record<string, number> = { Changes: changes.data?.files.length ?? 0, Artifacts: data?.artifacts.length ?? 0, Decisions: (data?.questions_state.length ?? 0) + decisionGates(data).length, Context: (data?.acceptance_state.length ?? 0) + wiki.pages.length, Research: research?.available ? research.sources.length : 0 }
   return (
     <Tabs defaultValue="Changes" data-testid="focus-panel" className="min-w-0">
       <TabsList aria-label="Session details" variant="line" className="w-full flex-wrap border-b border-border">

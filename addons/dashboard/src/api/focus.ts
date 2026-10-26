@@ -1,7 +1,8 @@
 // Focus mode phase 2 (focus/1): the dashboard server's typed routes. Nothing here names a host op.
 // Transcript text is untrusted (it is whatever the agent printed or read): the page draws it as plain text.
 
-import { call } from './runs'
+import type { AgentPreview } from './agents'
+import { call, type Run } from './runs'
 
 export interface ChatItem {
   id: string
@@ -66,6 +67,10 @@ const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`
 export const focusApi = {
   delegations: (ws: string, ticket: string) =>
     call<Delegations>('GET', `${w(ws)}/tickets/${encodeURIComponent(ticket)}/delegations`),
+  sources: (ws: string, run: string, child?: string) =>
+    call<ResearchSources>('GET', `${w(ws)}/runs/${encodeURIComponent(run)}/sources${child ? `?child=${encodeURIComponent(child)}` : ''}`),
+  source: (ws: string, run: string, id: string, child?: string) =>
+    call<SourceExtract>('GET', `${w(ws)}/runs/${encodeURIComponent(run)}/sources/${encodeURIComponent(id)}${child ? `?child=${encodeURIComponent(child)}` : ''}`),
   transcript: (ws: string, run: string, args: TranscriptArgs = {}) => {
     const q = new URLSearchParams()
     if (args.after) q.set('after', args.after)
@@ -129,4 +134,40 @@ export const worktreeDiffApi = {
 export const worktreeDiffQueries = {
   diffKey: (ws: string, ticket: string) => ['focus', 'worktree-diff', ws, ticket] as const,
   authorsKey: (ws: string, ticket: string) => ['focus', 'worktree-diff-authors', ws, ticket] as const,
+}
+
+// P2-4: what the agent read. Text only: nothing in the server or the browser fetches these URLs.
+export interface ResearchSource {
+  id: string
+  kind: 'web' | 'search' | 'file'
+  read_at: string | null
+  url?: string | null
+  host?: string | null
+  title?: string | null
+  has_extract?: boolean
+  query?: string | null
+  results?: { title: string | null; url: string }[]
+  path?: string | null
+}
+export interface ResearchSources { run: string; available: boolean; reason: string | null; sources: ResearchSource[] }
+export interface SourceExtract { id: string; url: string | null; extract: string; truncated: boolean }
+
+// P2-3: a human-delegated child task. Same typed routes as "Start agent" (`/agents/preview`, `/agents/start`) with
+// mode "task" and the live main run as `parent_run`. The start is dashboard-direct (no signature).
+export interface DelegateArgs {
+  ticket: string
+  harness: 'claude-code' | 'codex'
+  mode: 'task'
+  parent_run: string
+  label: string
+  brief?: string
+  expected?: string
+  model?: string
+  worktree: boolean
+}
+
+export const delegateApi = {
+  preview: (ws: string, args: DelegateArgs) => call<AgentPreview>('POST', `${w(ws)}/agents/preview`, args),
+  start: (ws: string, args: DelegateArgs, spec: string, idem: string) =>
+    call<{ run: Run }>('POST', `${w(ws)}/agents/start`, { ...args, spec, idem }),
 }

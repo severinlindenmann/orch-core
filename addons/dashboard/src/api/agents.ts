@@ -23,7 +23,11 @@ export interface AgentArgs {
   subagent_model?: string
   label?: string
   worktree: boolean
+  /** P2-3, Claude Code only: what the main session may delegate (fixed for the run). */
+  policy?: SpawnPolicy
 }
+
+export interface SpawnPolicy { delegate: boolean; max_children: number; models?: string[] }
 
 export interface RunnerGrant {
   id: string

@@ -8,6 +8,11 @@ run is the caller person's own (and its ticket visible to them), then forwards t
 ``run.transcript {run, after?, limit?, child?}`` -> ``{run, harness, available, reason?, items, next, eof}``;
 ``after`` is the cursor ``o:<n>`` of a previous answer, ``child`` a sub-agent (``agent-<id>``).
 
+``run.sources {run, child?, source?}`` (P2-4) -> ``{run, harness, available, reason?, sources:[...]}``: what the
+run read (web pages, searches, files in the run's folder), from the same transcript; with ``source`` the text the
+agent got for that web source, ``{id, url, extract, truncated}``. Nothing is ever fetched. Same checks as
+``run.transcript``.
+
 ``delegation.list {ticket}`` (P2-2) -> ``{ticket, sessions:[{run, session, harness, model, state, policy, files,
 visibility:{available, reason?}, children:[...]}]}``: for each agent run of the caller on the ticket the children the
 runner finds in the harness files (``spawned_by:"agent"``) plus the caller's runs whose record names it as
@@ -28,7 +33,7 @@ if TYPE_CHECKING:
 
 __all__ = ["TRANSCRIPT_CAPS", "TRANSCRIPT_OPS", "complete", "serve"]
 
-TRANSCRIPT_OPS: dict[str, int] = {"run.transcript": 1, "delegation.list": 1}
+TRANSCRIPT_OPS: dict[str, int] = {"run.transcript": 1, "delegation.list": 1, "run.sources": 1}
 TRANSCRIPT_CAPS = ["focus/1"]
 COMMAND_TIMEOUT = 15.0
 _SCHEMAS = {
@@ -39,6 +44,16 @@ _SCHEMAS = {
             "after": {"type": "string", "pattern": "^o:[0-9]{1,12}$"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 200},
             "child": {"type": "string", "pattern": "^agent-[A-Za-z0-9_-]{1,64}$"},
+        },
+        "required": ["run"],
+        "additionalProperties": False,
+    },
+    "run.sources": {
+        "type": "object",
+        "properties": {
+            "run": {"type": "string", "pattern": "^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+            "child": {"type": "string", "pattern": "^agent-[A-Za-z0-9_-]{1,64}$"},
+            "source": {"type": "string", "pattern": "^s_[0-9a-f]{10}$"},
         },
         "required": ["run"],
         "additionalProperties": False,
@@ -82,8 +97,13 @@ def serve(call: Call) -> dict[str, Any]:
     harness = rec.get("harness")
     if harness not in ("claude-code", "codex"):
         none = {"run": args["run"], "harness": harness, "available": False, "reason": "a shell has no transcript"}
+        if op == "run.sources":
+            if "source" in args:
+                raise HostError("not_found", "no such source")
+            return ok_result({"direct": none | {"sources": []}})
         return ok_result({"direct": none | {"items": [], "next": None, "eof": True}})
-    return ok_result({"command": {k: v for k, v in args.items() if k in ("run", "after", "limit", "child")}})
+    command = {k: v for k, v in args.items() if k in ("run", "after", "limit", "child", "source")}
+    return ok_result({"command": command | ({"sources": True} if op == "run.sources" else {})})
 
 
 def _plan(call: Call, hub: RunnerHub, ticket: str) -> dict[str, Any]:
@@ -168,7 +188,11 @@ async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
         return ok_result(await hub.command("transcript", data["command"], timeout=COMMAND_TIMEOUT))
     except HostError as exc:
         if exc.code == "not_found":  # the runner's table no longer has the run (older than its table keeps)
-            return ok_result({"run": data["command"]["run"], "harness": None, "available": False,
-                              "reason": "the runner no longer knows this run", "items": [], "next": None,
-                              "eof": True})  # fmt: skip
+            if "source" in data["command"]:
+                raise
+            gone = {"run": data["command"]["run"], "harness": None, "available": False,
+                    "reason": "the runner no longer knows this run"}  # fmt: skip
+            if data["command"].get("sources"):
+                return ok_result(gone | {"sources": []})
+            return ok_result(gone | {"items": [], "next": None, "eof": True})
         raise

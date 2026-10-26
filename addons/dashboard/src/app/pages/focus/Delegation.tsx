@@ -6,6 +6,7 @@ import mockDelegations from '@/mocks/addons/focus/delegations.json'
 import { cleanupDoubt, exitText, runQueries, runsApi, type Run } from '@/api/runs'
 import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
+import { DelegateSheet } from './DelegateSheet'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 const limitedText = 'Delegation visibility is limited in this version'
@@ -40,8 +41,9 @@ function useTasks(ticket?: string) {
     // Registry runs without a parent link are dashboard launches of the person.
     origin: 'Requested by you', harness: run.harness, model: run.model, result: exitText(run), run,
   }))
+  const mainSession = main ? sessions.find(s => s.run === main.run) : undefined
   const hidden = sessions.some(s => !s.visibility.available && s.harness !== 'shell')
-  return { ws, tasks, main, running: ticketRuns.filter(active), loading: !!ticket && (delegations.isPending || (real && runs.isPending)), limited: !ticket || delegations.isError || delegations.data?.supported === false || hidden || (real && (runs.isError || !!runs.data?.truncated)), unsupported: tasks.some(t => !t.run && t.state === 'running') }
+  return { ws, tasks, main, budget: { used: mainSession?.children.length ?? 0, max: mainSession?.policy?.max_children ?? null }, running: ticketRuns.filter(active), loading: !!ticket && (delegations.isPending || (real && runs.isPending)), limited: !ticket || delegations.isError || delegations.data?.supported === false || hidden || (real && (runs.isError || !!runs.data?.truncated)), unsupported: tasks.some(t => !t.run && t.state === 'running') }
 }
 
 function useStop(ws: string) {
@@ -71,8 +73,13 @@ export function TasksChip({ ticket }: { ticket?: string }) {
 export function TasksList({ ticket }: { ticket?: string }) {
   const data = useTasks(ticket)
   const action = useStop(data.ws)
+  const [delegating, setDelegating] = useState(false)
   return <section data-testid="focus-tasks-list" aria-label="Tasks" className="border-t border-border p-4 text-sm">
-    <h2 className="mb-3 font-medium">Tasks</h2>
+    <div className="mb-3 flex items-center justify-between gap-2">
+      <h2 className="font-medium">Tasks</h2>
+      {ticket && data.main && <Button variant="outline" size="sm" disabled={data.budget.max !== null && data.budget.used >= data.budget.max} title={data.budget.max !== null && data.budget.used >= data.budget.max ? 'The delegation limit of this session is reached.' : undefined} onClick={() => setDelegating(true)}>Delegate a task</Button>}
+    </div>
+    {delegating && ticket && data.main && <DelegateSheet ws={data.ws} ticket={ticket} parent={data.main} used={data.budget.used} max={data.budget.max} onClose={() => setDelegating(false)} />}
     {data.loading ? <p className="text-text-muted">Loading tasks...</p> : <>
       {data.limited && <p className="text-text-muted">{limitedText}</p>}
       {!data.limited && !data.tasks.length && <p className="text-text-muted">No tasks yet.</p>}

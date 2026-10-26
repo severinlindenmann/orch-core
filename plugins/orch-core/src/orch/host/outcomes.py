@@ -101,7 +101,7 @@ _READS = frozenset(
         "activity.list", "workspace.settings", "ticket.text",
         "records.snapshot", "records.export_check", "records.status", "reader.list",
         "phone.requests", "phone.status", "gate.input", "workdir.get",
-        "run.list", "run.sub", "run.transcript", "worktree.diff", "delegation.list",
+        "run.list", "run.sub", "run.transcript", "run.sources", "worktree.diff", "delegation.list",
     }
 )  # fmt: skip
 #: a multi-event write that is never ``partial``: it rolls forward (§0.8.1, H5a; ``relay.submit`` through the

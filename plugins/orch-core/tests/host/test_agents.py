@@ -402,3 +402,110 @@ def test_a_joiner_whose_first_start_failed_before_its_record_answers_outcome_unk
     d.ws.send("j2", "agent.start", args, opts={"idem": idem})
     assert err(c.answer("j1")) == "run.spawn_failed"
     assert err(d.answer("j2")) == "outcome.unknown"
+
+
+# -- P2-3: spawn policy and human-delegated children -------------------------------------------------------------------
+
+
+def _main(w, c, key, **policy):
+    args = dict(ticket=key, harness="claude-code", mode="work", **({"policy": policy} if policy else {}))
+    pre = preview(c, **args)
+    assert pre["blocked"] is None, pre["blocked"]
+    return pre, ok(start(c, spec=pre["spec"], **args))["data"]["run"]
+
+
+def test_policy_delegate_false_adds_the_disallow_flag_and_true_names_the_helper_model(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    off = preview(c, ticket=key, harness="claude-code", mode="work", policy={"delegate": False, "max_children": 2})
+    assert "--disallowedTools=Agent,Task" in off["argv"] and off["policy"]["max_children"] == 2
+    on = preview(c, ticket=key, harness="claude-code", mode="work", policy={"delegate": True, "models": ["haiku"]})
+    assert "--disallowedTools=Agent,Task" not in on["argv"] and "CLAUDE_CODE_SUBAGENT_MODEL" in on["env"]
+    none = preview(c, ticket=key, harness="claude-code", mode="work")
+    assert none["policy"] is None and not any(a.startswith("--disallowedTools") for a in none["argv"])
+    assert len({off["spec"], on["spec"], none["spec"]}) == 3  # the policy is in the spec digest
+    bad = preview(c, ticket=key, harness="claude-code", mode="work", policy={"delegate": True, "models": ["x;y"]})
+    assert bad["blocked"]["code"] == "launch.invalid"
+
+
+def record(w, run: str) -> dict:
+    return json.loads((Path(w.lab.state) / "hosts" / w.wid / "runs" / f"{run}.json").read_text())
+
+
+def test_policy_is_stored_on_the_run_for_claude_code_and_ignored_for_codex(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    _, run = _main(w, c, key, delegate=False, max_children=4, models=[])
+    assert record(w, run["run"])["policy"] == {"delegate": False, "max_children": 4, "models": []}
+    pre = preview(c, ticket=key, harness="codex", mode="work", policy={"delegate": False})
+    assert pre["policy"] is None and not any(a.startswith("--disallowedTools") for a in pre["argv"])
+
+
+def delegate(c, key, parent, **kw):
+    args = dict(
+        ticket=key,
+        harness="codex",
+        mode="task",
+        parent_run=parent,
+        label="Review it",
+        brief="Check X",
+        expected="A report",
+        **kw,
+    )
+    pre = preview(c, **args)
+    return pre, args
+
+
+def test_a_human_child_runs_in_the_parents_folder_with_a_dotted_session_and_the_task_prompt(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    _, parent = _main(w, c, key)
+    ok(c.call("claim", {"ref": key}, grant=w.grant, session=parent["session"], idem=True))  # the parent holds it
+    pre, args = delegate(c, key, parent["run"])
+    assert pre["blocked"] is None, pre["blocked"]  # launch.claimed is skipped for the parent's own claim
+    assert pre["session"] == parent["session"] + ".1" and pre["parent_run"] == parent["run"]
+    assert pre["cwd"] == parent["cwd"]
+    assert any("shared worktree" in x for x in pre["warnings"])
+    child = ok(start(c, spec=pre["spec"], **args))["data"]["run"]
+    assert child["session"] == parent["session"] + ".1" and child["label"] == "Review it"
+    argv, env = read_out(w, "codex")
+    text = argv[-1]
+    assert f"delegated task of session {parent['session']} on ticket {key}" in text
+    assert "Task: Review it." in text and "Brief: Check X" in text and "Expected output: A report" in text
+    assert env["ORCH_SESSION"] == child["session"]
+    rec = record(w, child["run"])
+    assert rec["parent_run"] == parent["run"] and rec["spawned_by"] == "human"
+    second, _ = delegate(c, key, parent["run"])
+    assert second["session"] == parent["session"] + ".2"  # the next free n
+
+
+def test_a_child_needs_a_live_parent_of_the_caller_on_the_same_ticket(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    _, other = w.ticket("Another ticket")
+    _, parent = _main(w, c, key)
+    ghost = "r_" + "0" * 26
+    assert delegate(c, key, ghost)[0]["blocked"]["code"] == "not_found"
+    assert delegate(c, other, parent["run"])[0]["blocked"]["code"] == "launch.invalid"
+    no_parent = preview(c, ticket=key, harness="codex", mode="task")
+    assert no_parent["blocked"]["code"] == "launch.invalid"
+    with_mode = preview(c, ticket=key, harness="codex", mode="work", parent_run=parent["run"])
+    assert with_mode["blocked"]["code"] == "launch.invalid"
+    ok(c.call("run.stop", {"run": parent["run"]}))
+    assert delegate(c, key, parent["run"])[0]["blocked"]["code"] == "launch.invalid"  # not live any more
+
+
+def test_stopping_the_parent_stops_its_live_human_children(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    _, parent = _main(w, c, key)
+    pre, args = delegate(c, key, parent["run"])
+    child = ok(start(c, spec=pre["spec"], **args))["data"]["run"]
+    ok(c.call("run.stop", {"run": parent["run"]}))
+    wait_for(lambda: record(w, child["run"])["state"] == "exited")
+    assert record(w, parent["run"])["state"] == "exited"

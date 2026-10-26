@@ -226,7 +226,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7); `worktree.diff` (1) (focus mode phase 2, §12.3.5; column P only) | workspace |
-| `focus/1` | `run.transcript`, `delegation.list` (1) (focus mode phase 2, §12.3.4; column P only) | workspace |
+| `focus/1` | `run.transcript`, `delegation.list`, `run.sources` (1) (focus mode phase 2, §12.3.4; column P only) | workspace |
 | `workdir/1` | `workdir.get`, `workdir.delete` (1) (r3 part C, §12.4.4; column P only) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
@@ -12163,6 +12163,7 @@ valid mapping to a member, and that the grant is that person's own `label:"runne
 | `quick/1` | `quick.list` | ✓ | ✓ | ✓ (workspace tickets only) | read |
 | `focus/1` | `run.transcript` | ✓ own runs | — | — | read |
 | `focus/1` | `delegation.list` | ✓ own runs | — | — | read |
+| `focus/1` | `run.sources` | ✓ own runs | — | — | read |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |
 
 Writes and resizes on a terminal are not host ops: they travel on the term socket (§12.6) under the capability.
@@ -12204,6 +12205,28 @@ Claude Code children are the files `<uuid>/subagents/agent-<id>.{jsonl,meta.json
 answer gives `visibility.available:false` with a `reason`, never an error. The runner command is `transcript {run,
 children:true}`.
 
+`run.sources {run, child?, source?}` (P2-4, column P, own runs) lists what the run read, from the same transcript:
+`{run, harness, available, reason?, sources:[{id, kind:"web"|"search"|"file", read_at, url?, host?, title?,
+has_extract?, query?, results?:[{title,url}], path?}]}`. Claude Code: `WebFetch` (url), `WebSearch` (query, hits) and
+`Read` of a file inside the run's folder; Codex: `web_search_call`. Deduped by url, query or path, newest first; `id` is a
+short hash of that key. With `source` the answer is the text the agent got for one web source, `{id, url, extract,
+truncated}` (64 KiB cap); an unknown source is `not_found`. Nothing is fetched by the runner, host or browser. The runner
+command is `transcript {run, sources:true, source?}`.
+
+`agent.preview` / `agent.start` take four optional keys and one more mode (P2-3, same cap, no new op, error code or signed
+shape): `policy {delegate?:bool, max_children?:0..9, models?:[Model]<=1}` (claude-code only; Codex stores nothing),
+`mode:"task"` with `parent_run:RunId`, `brief` (<= 4000) and `expected` (<= 400); the child's title is `label`. `policy` and
+the task fields are in the spec digest. `delegate:false` adds `--disallowedTools=Agent,Task` to the Claude Code argv (one
+element: a variadic flag would swallow the prompt); `delegate:true` with a model sets `CLAUDE_CODE_SUBAGENT_MODEL`. A
+`task` start needs `parent_run` to be the caller's live agent run on the same ticket (`not_found` otherwise,
+`launch.invalid` for a dead parent, another ticket, nine children or more than three levels). The child gets the session
+`<parent session>.<n>` (next free n <= 9; the `launch.claimed` check passes when the claim is the parent's session or a prefix
+of it), the parent's working folder (shared: the preview warns) and the prompt `Run orch status. You are a delegated task of
+session S on ticket KEY. Task: <label>. Brief: <brief> Expected output: <expected> Ask the parent, not the person; log your
+result with orch log, then stop.` The run record gains `policy`, `parent_run` and `spawned_by:"human"` (unsigned, never in
+`run.list`; `delegation.list` reads them). `run.stop` of a parent also stops the live runs whose `parent_run` is it. The
+budget (`max_children`) is shown and checked by the dashboard, not enforced by the host.
+
 #### 12.3.5 `worktree.diff`: the live diff of a ticket worktree (focus mode phase 2)
 
 Prototype addition (26 Oct 2026), additive, cap `worktree/1`, no new error code or signed shape. `worktree.diff {ticket,
@@ -12223,7 +12246,7 @@ worktree.diff {ticket:Ref, repo?:RepoName} -> {ticket, repo, available:bool, rea
 
 ```
 Harness   = "claude-code"|"codex"                 TermHarness = Harness | "shell"
-Mode      = "refine"|"work"|"fix"|"continue"|"context"
+Mode      = "refine"|"work"|"fix"|"continue"|"context"|"task"   (task: P2-3, with parent_run)
 Model     = str/[A-Za-z0-9][A-Za-z0-9._:\[\]\/-]{0,63}/          (never starts with "-")
 RunId     = str/r_[0-7][0-9A-HJKMNP-TV-Z]{25}/                     AttId = str/at_[0-7][0-9A-HJKMNP-TV-Z]{25}/
 Gen       = str/[0-9a-f]{32}/                                      (a runner generation, drawn at runner start)

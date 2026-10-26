@@ -163,3 +163,32 @@ def test_runner_json_that_is_not_an_object_refuses_never_defaults(tmp_path, text
 def test_the_prompt_can_name_the_instructions_by_path():
     argv, _, _ = launch_argv("codex", "work", None, "ORC-7", LOGIN, instructions="/p/.orch/AGENTS.orch.md")
     assert argv[-1] == "Run orch status, then work on ticket ORC-7. Follow /p/.orch/AGENTS.orch.md."
+
+
+def test_task_mode_is_one_prompt_element_and_needs_a_parent_session():
+    task = {
+        "session": "s_01J0000000000000000000000A",
+        "title": "Review it",
+        "brief": "Check X.",
+        "expected": "A report",
+    }
+    argv, _, _ = launch_argv("codex", "task", None, "ORC-7", LOGIN, task=task)
+    assert argv[-1] == (
+        "Run orch status. You are a delegated task of session s_01J0000000000000000000000A on ticket ORC-7. "
+        "Task: Review it. Brief: Check X. Expected output: A report Ask the parent, not the person; log your result "
+        "with orch log, then stop."
+    )
+    assert len(argv) == 6  # login shell form: the whole prompt is the last element
+    with pytest.raises(HostError):
+        launch_argv("codex", "task", None, "ORC-7", LOGIN)
+
+
+def test_delegate_false_adds_one_equals_flag_before_the_prompt_for_claude_only():
+    argv, _, _ = launch_argv("claude-code", "work", None, "ORC-7", LOGIN, delegate=False)
+    assert argv[-2] == "--disallowedTools=Agent,Task" and argv[-1].startswith("Run orch status")
+    assert not any(
+        a.startswith("--disallowedTools") for a in launch_argv("claude-code", "work", None, "ORC-7", LOGIN)[0]
+    )
+    assert not any(
+        a.startswith("--disallowedTools") for a in launch_argv("codex", "work", None, "ORC-7", LOGIN, delegate=False)[0]
+    )

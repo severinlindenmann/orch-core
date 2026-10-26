@@ -990,6 +990,9 @@ class RunnerHub:
             "gen": self.generation,
             "dispatched": True,
         }
+        for extra in ("policy", "parent_run", "spawned_by"):  # P2-3: the spawn policy and the human-delegated link
+            if fields.get(extra) is not None:
+                rec[extra] = fields[extra]
         if audit.get("spec"):  # an agent start: its idem names exactly this spec (a retry with another is a conflict)
             rec["spec"] = audit["spec"]
         saved = await self._save(rec)
@@ -1034,6 +1037,20 @@ class RunnerHub:
         return view(self.store.records[run])
 
     async def stop(self, run: str, grace_ms: int = 10_000) -> dict[str, Any]:
+        """Stop a run; the live runs a person delegated from it (``parent_run``) stop with it (P2-3)."""
+        kids = [
+            r["run"] for r in self.store.records.values()
+            if r.get("parent_run") == run and r.get("spawned_by") == "human" and r.get("state") in LIVE
+        ]  # fmt: skip
+        out = await self._stop_one(run, grace_ms)
+        for kid in kids:
+            try:
+                await self._stop_one(kid, grace_ms)
+            except HostError:
+                pass  # the parent's answer is the caller's; a child that would not stop shows as running
+        return out
+
+    async def _stop_one(self, run: str, grace_ms: int = 10_000) -> dict[str, Any]:
         rec = self.store.records.get(run)
         if rec is None:
             raise HostError("not_found", "no such run")

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mockStore, resetMockStoreForTests } from '@/api/client'
 import * as features from '@/api/features'
@@ -106,4 +106,16 @@ it('merges a human-requested child with its run and does not list it twice', asy
 it('is limited when the host does not support the delegation list or hides a harness', async () => {
   show([run('main')], false, 'DEMO-0042', { ...none, supported: false })
   expect((await screen.findAllByText('Delegation visibility is limited in this version')).length).toBeGreaterThan(0)
+})
+
+it('offers "Delegate a task" for a live main run and disables it at the policy limit', async () => {
+  const base = mockDelegations.sessions[0]
+  const open = { ...mockDelegations, sessions: [{ ...base, run: 'main', policy: { delegate: true, max_children: 5 } }] } as unknown as Delegations
+  show([run('main', { started_at: '2026-10-26T11:00:00Z' })], false, 'DEMO-0042', open)
+  const button = await screen.findByRole('button', { name: 'Delegate a task' })
+  await waitFor(() => expect(button).toBeEnabled())
+  cleanup()
+  const full = { ...mockDelegations, sessions: [{ ...base, run: 'main', policy: { delegate: true, max_children: base.children.length } }] } as unknown as Delegations
+  show([run('main', { started_at: '2026-10-26T11:00:00Z' })], false, 'DEMO-0042', full)
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Delegate a task' })).toBeDisabled())
 })

@@ -213,3 +213,23 @@ def test_delegation_list_is_a_column_p_read_under_cap_focus_1():
     from orch.host.transcripts import TRANSCRIPT_OPS
 
     assert TRANSCRIPT_OPS["delegation.list"] == 1 and op_kind("delegation.list") == ("person_read", "read")
+
+
+def test_run_sources_lists_what_the_run_read_and_one_extract(cfg, ready):
+    w = ready
+    c = w.conn()
+    run = open_shell(c)["run"]
+    assert ok(c.call("run.sources", {"run": run}))["data"]["sources"] == []  # a shell
+    as_claude(w, run)
+    assert ok(c.call("run.sources", {"run": run}))["data"]["available"] is False
+    proj = cfg / "projects" / "-work-proj"
+    proj.mkdir(parents=True)
+    shutil.copy(FIX / "claude_research.jsonl", proj / f"{transcript.session_id(run)}.jsonl")
+    data = ok(c.call("run.sources", {"run": run}))["data"]
+    assert data["available"] is True and {s["kind"] for s in data["sources"]} == {"web", "search", "file"}
+    web = next(s for s in data["sources"] if s["kind"] == "web")
+    got = ok(c.call("run.sources", {"run": run, "source": web["id"]}))["data"]
+    assert got["extract"].startswith("Newer") and got["url"] == web["url"]
+    assert err(c.call("run.sources", {"run": run, "source": "s_0000000000"})) == "not_found"
+    assert err(c.call("run.sources", {"run": run, "source": "x"})) == "invalid.input"
+    assert err(c.call("run.sources", {"run": run}, grant=w.lab.ws.grant)) == "op.not_allowed"  # G

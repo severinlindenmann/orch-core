@@ -117,6 +117,58 @@ def delegations(ticket: str, data: object) -> dict:
     return {"ticket": ticket, "sessions": sessions}
 
 
+SourceId = Annotated[str, StringConstraints(pattern=r"^s_[0-9a-f]{10}$")]
+
+
+class SourcesQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    child: Child | None = None
+
+
+def _result(v: object) -> dict | None:
+    if not isinstance(v, dict) or not isinstance(v.get("url"), str):
+        return None
+    return {"title": _s(v.get("title")), "url": v["url"][:2000]}
+
+
+def source(raw: object) -> dict | None:
+    """One research source with only the fields the page draws (P2-4); text only, nothing is ever fetched."""
+    kinds = ("web", "search", "file")
+    if not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or raw.get("kind") not in kinds:
+        return None
+    out: dict = {"id": raw["id"][:40], "kind": raw["kind"], "read_at": _s(raw.get("read_at"), 40)}
+    if raw["kind"] == "web":
+        out |= {"url": _s(raw.get("url"), 2000), "host": _s(raw.get("host"), 255), "title": _s(raw.get("title")),
+                "has_extract": raw.get("has_extract") is True}  # fmt: skip
+    elif raw["kind"] == "search":
+        res = raw.get("results") if isinstance(raw.get("results"), list) else []
+        out |= {"query": _s(raw.get("query"), 300), "results": [r for r in map(_result, res) if r][:20]}
+    else:
+        out["path"] = _s(raw.get("path"), 1000)
+    return out
+
+
+def sources(run: str, data: object) -> dict:
+    data = data if isinstance(data, dict) else {}
+    rows = data.get("sources") if isinstance(data.get("sources"), list) else []
+    reason = data.get("reason")
+    return {
+        "run": run,
+        "available": data.get("available") is True,
+        "reason": reason[:200] if isinstance(reason, str) else None,
+        "sources": [s for s in map(source, rows) if s][:200],
+    }
+
+
+def extract(source_id: str, data: object) -> dict:
+    data = data if isinstance(data, dict) else {}
+    text = data.get("extract")
+    return {
+        "id": source_id, "url": _s(data.get("url"), 2000),
+        "extract": text[:65536] if isinstance(text, str) else "", "truncated": data.get("truncated") is True,
+    }  # fmt: skip
+
+
 class WorktreeDiffQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     repo: RepoName | None = None
@@ -166,6 +218,23 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             return project(run, {"available": False, "reason": "this host has no transcript support"})
         args = {"run": run, **{k: v for k, v in query.model_dump().items() if v is not None}}
         return project(run, link.call("run.transcript", args))
+
+    @app.get("/api/w/{ws}/runs/{run}/sources")
+    def run_sources(run: RunId, query: Annotated[SourcesQuery, Query()], ws: str = Depends(reads.workspace)):
+        link = gateway.enabled(ws)
+        if not link.supports("run.sources", "focus/1"):
+            return sources(run, {"available": False, "reason": "this host has no research support"})
+        args = {"run": run, **({"child": query.child} if query.child else {})}
+        return sources(run, link.call("run.sources", args))
+
+    @app.get("/api/w/{ws}/runs/{run}/sources/{source_id}")
+    def run_source(run: RunId, source_id: SourceId, query: Annotated[SourcesQuery, Query()],
+                   ws: str = Depends(reads.workspace)):  # fmt: skip
+        link = gateway.enabled(ws)
+        if not link.supports("run.sources", "focus/1"):
+            return extract(source_id, {})
+        args = {"run": run, "source": source_id, **({"child": query.child} if query.child else {})}
+        return extract(source_id, link.call("run.sources", args))
 
     @app.get("/api/w/{ws}/tickets/{key}/worktree-diff")
     def worktree_diff(key: reads.Key, query: Annotated[WorktreeDiffQuery, Query()], ws: str = Depends(reads.workspace)):

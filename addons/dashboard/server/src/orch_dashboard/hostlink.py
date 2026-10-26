@@ -106,6 +106,7 @@ OPS = {
         "workdir.delete",
         # Focus mode (focus/1): a run's transcript as chat items (a read; the runner reads the harness files)
         "run.transcript",
+        "run.sources",
         "delegation.list",
         # Publish (P5/P6, design-publish-addon 2.2): list is a read; the others are person writes the routes call
         # with an idem. `publish.send` answers the share link ONCE (shares.py); `publish.share` is never sent as a
@@ -134,7 +135,7 @@ RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "g
 FORBIDDEN = frozenset({"grant.deposit"})
 WORKTREE_OPS = {"worktree.list", "worktree.create", "worktree.remove", "worktree.diff"}
 WORKDIR_OPS = {"workdir.get", "workdir.delete"}
-FOCUS_OPS = {"run.transcript", "delegation.list"}
+FOCUS_OPS = {"run.transcript", "run.sources", "delegation.list"}
 PUBLISH_OPS = {
     "publish.list",
     "publish.prepare",

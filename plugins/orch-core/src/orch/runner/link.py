@@ -49,7 +49,7 @@ from orch.host import frames
 from orch.host._socket import recv
 from orch.host.client import Pin, handshake_pinned
 
-from . import rules, transcript, transcript_children
+from . import rules, transcript, transcript_children, transcript_sources
 from .config import ConfigError, RunnerConfig
 from .grants import GrantError, GrantStore
 from .supervise import SpawnError, SpawnSpec, Supervisor
@@ -84,7 +84,7 @@ ENV_FIXED_NAMES = frozenset(
 LOGIN_EXEC = 'exec "$0" "$@"'
 REGISTRY_PROGRAMS = frozenset({"claude", "codex"})
 REGISTRY_PROGRAMS_BY_HARNESS = {"claude-code": "claude", "codex": "codex"}
-_SESSION = re.compile(r"s_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+_SESSION = re.compile(r"s_[0-7][0-9A-HJKMNP-TV-Z]{25}(?:\.[1-9][0-9]{0,3}){0,3}")  # P2-3: a delegated child's .n
 _PERSON = re.compile(r"p_[0-9a-f]{32}")
 FIXED = {"TERM": "xterm-256color", "COLORTERM": "truecolor"}
 VERSION = "orch-runner/1"
@@ -549,6 +549,8 @@ class HostLink:
                     raise _Stale()
                 return run_git(args, self.env, log=LOG.info)
         if cmd == "transcript":  # focus phase 2: the run's harness transcript as chat items
+            if args.get("sources"):  # P2-4: what the run read (web pages, searches, files)
+                return transcript_sources.serve(args, self.sup, self.env)
             if args.get("children"):  # P2-2: the delegated children of the run
                 return transcript_children.serve(args, self.sup, self.env)
             return transcript.serve(args, self.sup, self.env)

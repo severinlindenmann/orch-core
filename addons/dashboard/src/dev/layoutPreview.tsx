@@ -382,7 +382,7 @@ function quickRequest(action: Record<string, unknown>): HandoffRequest {
         { field: 'labels', before: null, after: 'quick' },
       ],
       notes: [
-        'Approves the requirements as written above, and the plan as written above (the signer checks that each approval covers exactly this text).',
+        'Approves the requirements as written above, and the plan as written above.',
         'The task still ends with your own verdict: nothing closes it for you.',
         ...(agent ? [`Agents may work on all workable tickets, not only this one, until about ${until}. The grant is signed last; its secret goes to your orch runner or your own terminal, never to the dashboard.`] : []),
         `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,

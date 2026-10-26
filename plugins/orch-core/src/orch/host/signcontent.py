@@ -1267,6 +1267,14 @@ def _event(
             out.setdefault("notes", []).append(
                 f"Agents may get access for up to {span(ev['set']['grant_hours'])} (members; the runner too)."
             )
+            if set(ev["set"]) == {"grant_hours"} and type(ev["set"]["grant_hours"]) is int:  # run-9 feedback 3.5: compact
+                now, was = ev["set"]["grant_hours"], before.get("grant_hours")
+                move = f"{span(was)} \u2192 {span(now)}" if type(was) is int and was != now else span(now)
+                out["title"] = "Change the longest agent access"
+                out["summary"] = {
+                    "title": "Change the longest agent access",
+                    "lines": [f"Longest agent access: {move}, in this workspace."],
+                }
         return "Change the workspace settings"
     if typ == "hub.joined":  # V3 C2a/C2b: the words say what the hub does and does not get
         hub = _short(ev.get("hub_id"))
@@ -1463,11 +1471,20 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
             _row(out, "it lets owners", EXPLORER_ROW)
         else:
             _row(out, "it says it will", words or "(declares no capabilities)")
-        notes = out.setdefault("notes", [])
-        notes.append(ADDON_TRUST)
-        notes.append("The package digest and the exact capability names are in the technical details.")
+        out.setdefault("notes", []).append(ADDON_TRUST)
         if explorer:
             return EXPLORER_HEADLINE
+        # The dashboard's compact view (run-9 feedback 3.5): the plain name as the headline, two facts, the trust risk.
+        # The rows above stay the exact signed values (the fold); the terminal keeps the long headline.
+        out["title"] = f"Turn on {nice}"
+        out["summary"] = {
+            "title": f"Turn on {nice}",
+            "lines": [
+                f"It says it will {words}." if words else "It declares no capabilities.",
+                f"Version {version}. Runs on this computer.",
+            ],
+            "risk": ADDON_TRUST,
+        }
         return f"Turn on {nice}: " + (f"it says it will {words}" if words else "it declares no capabilities")
     _row(out, "version", ev.get("version"))
     _row(out, "package digest", _short(ev.get("package_sha256")))

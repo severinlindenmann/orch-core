@@ -1,5 +1,5 @@
 """A TLS test hub for the link client tests: pyOpenSSL server on 127.0.0.1, one thread, closed in teardown. It plays
-the hub of orch-hub ``docs/protocol.md`` section 10 from the text and records every application byte it receives."""
+the hub of ``contracts/hub/protocol.md`` section 10 from the text and records every application byte it receives."""
 
 from __future__ import annotations
 

@@ -5,7 +5,7 @@
 Status: provisional, 10 October 2026. This is an implementation contract for OrchClient and
 OrchFakeHost, pending host P2 and relay P3 agreement; it is not a protocol-v2 amendment.
 [Decisions](decisions.md) win over proposals; [challenge](challenge-codex.md) obligations apply.
-Protocol references below mean [orch-relay protocol v2](/Users/severin/orch-dev/orch-relay/docs/protocol-v2.md).
+Protocol references below mean [orch-relay protocol v2](/Users/severin/orch-dev/contracts/relay/protocol-v2.md).
 Vector paths mean [vectors_v2.json](/Users/severin/orch-dev/orch-relay/tests/vectors_v2.json), `suites."2"`.
 Gap references link to the [numbered gap table](gaps.md); row numbers are part of each reference.
 Local P1/P2/P3 principle labels mean decisions.md; host P2/relay P3 mean upstream delivery phases.

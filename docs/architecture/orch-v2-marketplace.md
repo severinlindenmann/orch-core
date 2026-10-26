@@ -493,7 +493,7 @@ dependencies is the host's act, not available to the add-on.
 
 With a hub joined, the workspace host MUST ask the hub's policy before any marketplace use. The hub side (D14) is built:
 the policy is one hub-wide object that the hub admin edits in the hub's admin console and that `HK_op` signs inside
-**every `hub.snapshot`** as the required field `market_policy` (orch-hub `docs/protocol.md` 7.1; there is no snapshot
+**every `hub.snapshot`** as the required field `market_policy` (`contracts/hub/protocol.md` 7.1; there is no snapshot
 without it and no older shape, V3-D36). Core reads it only from a verified, pinned snapshot (`orch.hubclient.snapshot.hub_market_policy`,
 a read-only accessor that verifies again on every read: `None` only when the host is not hub-joined, `HubRefused` for every joined-but-unverifiable state) and can only refuse by it.
 The vectors are `vectors_hub_policy.json` (`policy` and `evaluate` cases); hub and core run the same file.

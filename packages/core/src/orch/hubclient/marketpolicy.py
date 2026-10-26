@@ -1,5 +1,5 @@
 """The hub marketplace policy ``orch.hub-policy/1`` as it rides in ``hub.snapshot.market_policy`` (orch-hub
-``docs/protocol.md`` 7.1, D14, orch-core#927).
+``contracts/hub/protocol.md`` 7.1, D14, orch-core#927).
 
 :func:`parse_policy` is the one validator: exact keys at every level, sorted unique lists, canonical marketplace URLs,
 ``class`` recomputed from the URL (never trusted), valid P-256 pins; malformed anywhere is the whole policy malformed

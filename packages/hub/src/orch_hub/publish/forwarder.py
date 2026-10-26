@@ -27,7 +27,7 @@ from .sync import PublishSync, PublishSyncError
 MAX_REQUEST_BODY = 8 * 1024 * 1024
 MAX_RESPONSE_BODY = 16 * 1024 * 1024
 #: orch-publish answers with these when the hub's card or the binding is not (or no longer) held: forget what we synced
-#: refusal codes of docs/protocol.md §14 / v2 that orch-publish's store can answer a card or binding with; any
+#: refusal codes of contracts/hub/protocol.md §14 / v2 that orch-publish's store can answer a card or binding with; any
 #: other code from the sync is reported as ``unavailable``
 SYNC_CODES = frozenset(
     [
@@ -142,7 +142,7 @@ class HubPublish:
 
     def binding(self, workspace_id: str, obj: Mapping[str, Any]) -> None:
         """Remember the workspace's newest binding / unbound. An unbound is final: a binding at or below the unbound
-        sequence never replaces it, and a lower sequence never replaces anything (docs/protocol.md §9.4)."""
+        sequence never replaces it, and a lower sequence never replaces anything (contracts/hub/protocol.md §9.4)."""
         o = obj.get("o") if isinstance(obj, Mapping) else None
         if (
             not isinstance(o, Mapping)

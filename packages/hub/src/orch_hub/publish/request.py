@@ -1,4 +1,4 @@
-"""Exact-shape check of a ``publish_out`` request body (docs/protocol.md §10.2, §11.1).
+"""Exact-shape check of a ``publish_out`` request body (contracts/hub/protocol.md §10.2, §11.1).
 
 The host sends ``{method, host, target, headers, body_hex}``. The hub forwards it unchanged, so anything that is not
 exactly the shape orch-publish verifies is refused here (``malformed``), never repaired: unknown keys, unknown or

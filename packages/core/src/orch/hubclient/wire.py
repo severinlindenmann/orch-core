@@ -1,4 +1,4 @@
-"""The workspace side of the hub contract H0 (orch-hub ``docs/protocol.md``), from the text: ids, the hub card and its
+"""The workspace side of the hub contract H0 (``contracts/hub/protocol.md``), from the text: ids, the hub card and its
 op certificate (section 5, 4.1) with its signed reader level, building and signing ``hub.binding`` / ``hub.unbound``
 (9.2, 9.3), the ``hub.joined`` and ``hub.left`` payloads (9.1), the binding store (9.4) and the owner proof of a hub op
 (9.6, #1198 C8). Pure functions; every check fails closed with :class:`HubRefused`."""

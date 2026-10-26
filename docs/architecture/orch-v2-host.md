@@ -2848,7 +2848,7 @@ expires_ms, dev}` signed by the person key `PK` (derived once from the owner's r
 under the domain `orch/v2/sig/hub-owner-proof|`, bound to the host request and to the event payload without its
 `owner_proof` member, valid at most 10 minutes; `hub.joined` and `hub.left` record it so the hub and readers can check
 it. The hub card gains a signed `reader` level that never goes down; a card below the workspace's `required_reader`
-is `hub_too_old`. Contract and vectors: orch-hub `docs/protocol.md` §5 and §9.6, core side
+is `hub_too_old`. Contract and vectors: `contracts/hub/protocol.md` §5 and §9.6, core side
 `orch.hubclient.wire` (`build_owner_proof`, `check_owner_proof`, `check_hub_reader`). *Enforced by the host from C9
 (`check_hub_proof` at binding and submit); until then the rules above hold.*
 
@@ -5868,7 +5868,7 @@ Status: **decided 13 Oct 2026 by orch-52 (see PR #435 comment)**; drafted 12 Oct
 independent Codex challenge and an Opus tie-break, recorded in 11A.13. Section 11 lists what the host owes the relay; this section is the design of the
 core-side client that pays it: the code that makes a served workspace reachable through orch-relay. It is numbered 11A
 so that the §12 references stay valid. Ground truth for the relay side is orch-relay `develop` @ `772d7b0`
-(`docs/protocol-v2.md` §8, §12.2, §13, §19; `docs/p3-relay-design.md` §3, §9, §10 "G4 as built", P3-D1 to P3-D37;
+(`contracts/relay/protocol-v2.md` §8, §12.2, §13, §19; `docs/p3-relay-design.md` §3, §9, §10 "G4 as built", P3-D1 to P3-D37;
 P3-D37 merged in relay PR #62, `7c0406a`). Where the relay and core disagree, the text says so; §11A.12 collects those
 points. "MUST" is normative for the implementation groups below.
 
@@ -7359,7 +7359,7 @@ store API exists for it to degrade the host itself (gap, below). The store passe
   `checkpoints.py` `completeness` (`missing` lists every index) and `publish` (`unpublished_refs`): P15.
 - 11A.3 `publish.json` and `published/` (this file, the 11A.3 table) vs `relay/state.py` `_NAME` (flat names) and
   `MAX_FILE` (1 MiB; a restore record is up to about 4.7 MiB): P2, P3.
-- 11A.5 "The relay does not announce it" (Maximum publication size) and orch-relay `docs/protocol-v2.md` §19.8 ("The
+- 11A.5 "The relay does not announce it" (Maximum publication size) and `contracts/relay/protocol-v2.md` §19.8 ("The
   relay does not advertise its maximum yet") vs `relay_info.py` at `438b719` (it does; 11A.12 already says so).
 - 11A.5 startup classification table vs §11 "A mismatch with an entry still in the outbox": the queued-restore row
   is missing (P5).
@@ -10645,7 +10645,7 @@ the routes stay off until then. The other marks:
 Ground truth:
 - orch-relay `develop` `docs/p3-relay-design.md` §14: P3-D39 items 1 to 12, P3-D40 items 1 to 9, amendment A1, and the
   host questions Q-H1 to Q-H7 of §14.9;
-- orch-relay `docs/protocol-v2.md` §9, §10, §19.9 and §19.10;
+- `contracts/relay/protocol-v2.md` §9, §10, §19.9 and §19.10;
 - orch-core `develop` @ `58c365a4` (R2, R3, R5 and H12b merged);
 - R6a PR #554;
 - orch-mobile `develop` @ `2cf4de2`: the Drop client of #75, the NSE, and the bridge ops `drop_claim` and `drop_rewrap`.

@@ -1,7 +1,7 @@
 # orch-relay
 
 Hub accounts, hub channels and hub phone push for orch V3 (the relay serves hubs only; no per-workspace routes).
-Contract: orch-hub `docs/protocol.md` §10.8; shared encodings in `tests/vectors_v2.json`.
+Contract: `contracts/hub/protocol.md` §10.8; shared encodings in `contracts/relay/vectors_v2.json`.
 
 ## Develop
 

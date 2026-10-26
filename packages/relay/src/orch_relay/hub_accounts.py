@@ -1,4 +1,4 @@
-"""Relay accounts of kind `hub` (orch-relay E1; orch-hub contract H0 `docs/protocol.md` §4, §5, §14).
+"""Relay accounts of kind `hub` (orch-relay E1; orch-hub contract H0 `contracts/hub/protocol.md` §4, §5, §14).
 
 A hub registers one account by presenting its hub card (`hub.card`, signed by `HK_op`, carrying the
 `hub.op_cert` signed by `HK_root`). The relay verifies it exactly as the contract's §5 says and keeps it

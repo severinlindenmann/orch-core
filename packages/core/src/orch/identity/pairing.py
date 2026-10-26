@@ -1,7 +1,7 @@
 """Pure builders for R6 pairing (design 11A.15.10, H12c items 1-4): the epoch-key commitment, the two 6-character codes,
 the pairing links and the pair request's meta (the six answers of item 5 are ``orch.identity.answers``).
 
-Specs: orch-relay ``docs/protocol-v2.md`` §2.5 (labels), §4 (pins, SAS, ``cert_code``), §7.2 (``wk_commit``), §8.3
+Specs: ``contracts/relay/protocol-v2.md`` §2.5 (labels), §4 (pins, SAS, ``cert_code``), §7.2 (``wk_commit``), §8.3
 (links, the pair meta), §8.4 (the challenge). Vectors: the relay corpus sections ``wk_commit``, ``bridge.sas``,
 ``cert_request.cert_code``, ``bridge.links`` and the epoch-0 ``bridge.host_cases`` (``tests/identity/test_pairing.py``).
 

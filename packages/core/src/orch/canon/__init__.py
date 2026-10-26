@@ -1,7 +1,7 @@
 """Canonical JSON (``cj``), the text rules, domain-labelled hashes, the gate hash, the event chain and the
 bytes that get signed.
 
-Specs: ``docs/architecture/orch-v2-ticket-format.md`` §5.3-§5.7 and §11, ``orch-relay/docs/protocol-v2.md`` §2.3.
+Specs: ``docs/architecture/orch-v2-ticket-format.md`` §5.3-§5.7 and §11, ``contracts/relay/protocol-v2.md`` §2.3.
 Each module's docstring states its decisions. There is deliberately no general RFC 8785 serialiser here.
 """
 

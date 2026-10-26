@@ -15,7 +15,7 @@ is the source of truth for *what* is built. This document decides *how it looks 
 document had to choose something the spec leaves open, the choice is marked **DECIDED HERE:**, and §17
 lists every such choice. A reviewer should read §17 first.
 
-The contract is [`tests/vectors_v2.json`](../tests/vectors_v2.json). Its reference implementation (`ref/`) was removed
+The contract is [`vectors_v2.json`](vectors_v2.json). Its reference implementation (`ref/`) was removed
 with the per-workspace relay (V3-D36); orch-relay keeps the file for the encodings and the push envelope its remaining
 tests replay (`tests/test_proto.py`, `tests/test_push_vectors.py`). Where the vectors and this document disagree, this
 document wins. Sections 6 to 18 describe the v2 workspace wire design.
@@ -2224,6 +2224,6 @@ sessions, members and epochs, bridge and pairing queues, authentication budgets,
 Drop, push registration and the host's send route, webhook doorbells, cut-over) is deleted from orch-relay together with
 its code, vectors and fixtures. A workspace never talks to the relay: in V3 the relay serves hub accounts, hub push targets,
 hub push sends, hub channel mailboxes and the phone's own channel mailbox read (`/v2/hubs/...`, `/v2/hub-channels/...`),
-plus the public `GET /v2/relay-info` and `GET /healthz`. The contract for those routes is orch-hub `docs/protocol.md`
+plus the public `GET /v2/relay-info` and `GET /healthz`. The contract for those routes is `contracts/hub/protocol.md`
 §10.8; the README of this repository lists the configuration. Text elsewhere in this document that refers to a §19 route is
 history of the v2 wire design, not a description of the relay.

@@ -1,4 +1,4 @@
-"""Test-side port of the verifier half of the orch hub contract H0 (orch-hub ``docs/protocol.md``).
+"""Test-side port of the verifier half of the orch hub contract H0 (``contracts/hub/protocol.md``).
 
 orch-core must never import hub code (D79), so this module re-implements, from the contract text, exactly the checks
 the vectors in ``vectors/vectors_hub.json`` pin for the workspace side and for the fake hub: op certs, the hub card,

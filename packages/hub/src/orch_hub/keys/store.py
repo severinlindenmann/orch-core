@@ -1,4 +1,4 @@
-"""The hub key store and issuer (V3-D2, docs/protocol.md §2-§6).
+"""The hub key store and issuer (V3-D2, contracts/hub/protocol.md §2-§6).
 
 Layout of the state dir (all directories 0700, all files 0600, owned by the running user)::
 

@@ -1,4 +1,4 @@
-"""How the hub gets its card and a workspace's binding to orch-publish before it forwards (docs/protocol.md §11.2).
+"""How the hub gets its card and a workspace's binding to orch-publish before it forwards (contracts/hub/protocol.md §11.2).
 
 orch-publish has no HTTP endpoint for this yet (F2). :class:`PublishSync` is the seam; the production implementation
 arrives with those endpoints, tests use an in-process one.

@@ -1,4 +1,4 @@
-"""Hub-forwarded publish requests (orch hub protocol H0, docs/protocol.md section 9 and 11; orch-core #898).
+"""Hub-forwarded publish requests (orch hub protocol H0, contracts/hub/protocol.md section 9 and 11; orch-core #898).
 
 orch-publish accepts a request carrying `Orch-Hub` + `Orch-Hub-Signature` only while the workspace holds a
 live `hub.binding` for that hub (signed by the card's current WSK), and for public access only with the owner's
@@ -42,7 +42,7 @@ LABELS = {
     "h_hub_publish_request": b"orch/v2/hub-publish-request|",
 }
 
-# HTTP status of every code this module raises (docs/protocol.md 11.2, 14); anything else is 400.
+# HTTP status of every code this module raises (contracts/hub/protocol.md 11.2, 14); anything else is 400.
 STATUS = {
     "stale_timestamp": 401,
     "unknown_workspace": 401,

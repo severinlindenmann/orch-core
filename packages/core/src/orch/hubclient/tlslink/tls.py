@@ -1,4 +1,4 @@
-"""TLS 1.3 transport of the host end of the hub link (orch-hub ``docs/protocol.md`` section 10.1).
+"""TLS 1.3 transport of the host end of the hub link (``contracts/hub/protocol.md`` section 10.1).
 
 The Python 3.14 ``ssl`` module has no keying-material exporter, so the link uses pyOpenSSL
 (``Connection.export_keying_material``; V3-D15). This is the only module in core that imports it. Trust is the pinned

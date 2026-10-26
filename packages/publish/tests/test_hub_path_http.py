@@ -1,4 +1,4 @@
-"""Hub-forwarded publish over HTTP (orch-core #898, docs/protocol.md 9 and 11): a request carrying Orch-Hub +
+"""Hub-forwarded publish over HTTP (orch-core #898, contracts/hub/protocol.md 9 and 11): a request carrying Orch-Hub +
 Orch-Hub-Signature is accepted only with a live hub.binding, and for public access only with the owner's
 single-use approval. Keys are generated here (test only); the shared vectors are in test_hub_path_vectors.py."""
 

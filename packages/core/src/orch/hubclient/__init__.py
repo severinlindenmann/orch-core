@@ -1,6 +1,6 @@
 """Core's own hub client (V3, C2a): what a workspace host needs to join a hub selectively and to leave it.
 
-Nothing here imports hub code (D79): the contract (orch-hub ``docs/protocol.md``) is implemented from its text, on
+Nothing here imports hub code (D79): the contract (``contracts/hub/protocol.md``) is implemented from its text, on
 core's own canonical JSON and suite 2. The real TLS link is C5; this package defines the :class:`HubTransport` it plugs
 into. Selective mode (spec 8a, D80) never gives the hub ``WK_e`` or a ``hub`` member; only the full path (C2b:
 ``join_full``, ``switch_full``) seals the current ``WK_e`` to the hub's ``HXK``.

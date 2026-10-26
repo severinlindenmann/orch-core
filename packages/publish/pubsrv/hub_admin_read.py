@@ -1,4 +1,4 @@
-"""Hub admin read at orch-publish (orch-hub docs/protocol.md 10.6, orch-core #900): release metadata of the
+"""Hub admin read at orch-publish (contracts/hub/protocol.md 10.6, orch-core #900): release metadata of the
 workspaces bound to the calling hub, for the hub console.
 
 `check_admin_read` is the contract's check in order (syntax, window, held hub card, signature, scope). The scope is

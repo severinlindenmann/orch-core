@@ -163,7 +163,7 @@ front-page warning name both. That is why the split layout is the recommendation
   meets a D49-level policy, and `password+totp` meets neither.
 - **Audit.** Every custodial signature and every grant or membership change is in a hash-chained hub audit log.
   Workspaces verify the records they see and acknowledge the head to the hub (`audit_ack`), so a gap in what a workspace
-  receives is detectable (orch-hub `docs/protocol.md` §10.5). The acks go to the hub itself, though: nothing yet detects
+  receives is detectable (`contracts/hub/protocol.md` §10.5). The acks go to the hub itself, though: nothing yet detects
   a hub that shows different chains to different workspaces. Fork detection needs HK_op-signed checkpoints, an open L7
   gap (orch-core #1007), so a compromised hub can still silently rewrite or withhold entries from workspaces it chooses.
   The workspace also keeps each signed event.
@@ -223,7 +223,7 @@ front-page warning name both. That is why the split layout is the recommendation
    signed by the person key `PK` (derived from the recovery code, never stored) and bound to the host request and the
    payload, so the One-click device key alone cannot hand the workspace to a hub. The hub card carries a signed
    `reader` level; a card below the workspace's `required_reader` is refused (`hub_too_old`). Contract: orch-hub
-   `docs/protocol.md` §5 and §9.6; host side: orch-v2-host §0.8.6 item 6. *Enforced by the host from C9.*
+   `contracts/hub/protocol.md` §5 and §9.6; host side: orch-v2-host §0.8.6 item 6. *Enforced by the host from C9.*
 4. The host signs `hub.binding {workspace_id, hub_id, hk_root_pub, valid_from}` with `WSK`. The hub hands it to
    orch-publish and the relay (D76).
 5. The workspace switches to hub mode, but **only from step H5 on** (§10). Before H5, `hub join` is a dev and test step
@@ -309,7 +309,7 @@ at step H5, so daily use keeps working.
 
 | Step | Content | Repos |
 |---|---|---|
-| H0 | Contract first: `orch-hub/docs/protocol.md` + vectors for the hub card (`HK_root`/`HK_op`), `UK` certificate, signing domains, custodial event with channel proof, group snapshot, `hub.joined`, `hub.binding`/`hub.unbound`, identity alias, member kind `hub`, host↔hub link operations, the `webauthn` channel contract | orch-hub, orch-core |
+| H0 | Contract first: `contracts/hub/protocol.md` + vectors for the hub card (`HK_root`/`HK_op`), `UK` certificate, signing domains, custodial event with channel proof, group snapshot, `hub.joined`, `hub.binding`/`hub.unbound`, identity alias, member kind `hub`, host↔hub link operations, the `webauthn` channel contract | orch-hub, orch-core |
 | H1 | Hub skeleton: install, `HK`, users, groups, grants, admin console (dashboard look and feel), audit log | orch-hub |
 | H2 | Workspace join/leave (§8), group snapshot pinning, `auth: hub` verification in core | orch-core, orch-hub |
 | H3 | Router: ws→ws through the hub; shared spaces on the hub | orch-hub, orch-core |

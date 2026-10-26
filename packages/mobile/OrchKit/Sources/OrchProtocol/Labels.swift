@@ -77,7 +77,7 @@ public enum Label {
     public static let macEnroll = "orch/v2/enroll|"
 }
 
-/// Labels of the orch hub contract (orch-hub `docs/protocol.md` section 3). Every one ends in `|`; the union with the v2 labels is
+/// Labels of the orch hub contract (`contracts/hub/protocol.md` section 3). Every one ends in `|`; the union with the v2 labels is
 /// prefix-free (checked against the hub vectors' label table by `HubVectorTests`).
 public extension Label {
     static let sigHubOpCert = "orch/v2/hub-op-cert|"

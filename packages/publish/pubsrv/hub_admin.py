@@ -1,5 +1,5 @@
 """HTTP endpoints through which a hub hands orch-publish its card, op-cert revocations and workspace bindings
-(docs/protocol.md 4, 5, 9.2-9.4; orch-core #899).
+(contracts/hub/protocol.md 4, 5, 9.2-9.4; orch-core #899).
 
     PUT /v2/hub/card                    body: signed hub.card (with its op_cert)
     PUT /v2/hub/op-revoked              body: root-signed hub.op_revoked

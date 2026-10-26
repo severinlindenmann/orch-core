@@ -4,7 +4,7 @@ This is the checklist for replacing FakeRelay/FakeHost with a real relay (P3) an
 It is an integration proposal, not a declaration that protocol v2 already specifies these routes.
 Baseline: `develop` checkout `5423757`, 10 October 2026; [host API v0](host-api-v0.md),
 [decisions](decisions.md) P1–P5, and every section of [gaps](gaps.md).
-Protocol section numbers refer to `orch-relay/docs/protocol-v2.md` in the sibling repository.
+Protocol section numbers refer to `contracts/relay/protocol-v2.md` in the sibling repository.
 
 Branch evidence below was read with `git show`, without checking out or merging branches:
 - `origin/feat/slice2a-bridge` at `2fc0732`: `OrchKit/Sources/OrchClient/WorkspaceSession.swift`,

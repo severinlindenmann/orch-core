@@ -1,6 +1,6 @@
 """The suite (P-256 per D46), sealing, signatures, domain labels.
 
-Spec: orch-relay ``docs/protocol-v2.md`` §1 (suite 2), §3 (labels), §4 (ids), §5 (SALTED-AEAD, sealing). Vectors:
+Spec: ``contracts/relay/protocol-v2.md`` §1 (suite 2), §3 (labels), §4 (ids), §5 (SALTED-AEAD, sealing). Vectors:
 ``contracts/relay/vectors_v2.json`` (suite 2).
 No key is read from disk here (that is ``custody/``).
 """

@@ -1,4 +1,4 @@
-"""One signer per key kind, with its signing domains hard-wired (docs/protocol.md §3, L2-4).
+"""One signer per key kind, with its signing domains hard-wired (contracts/hub/protocol.md §3, L2-4).
 
 This is the only signing API the contract offers. There is no "sign these bytes under this label" call: each signer
 takes the object (or the exact fields) it may sign, checks the ``kind`` (and the link direction), builds the label

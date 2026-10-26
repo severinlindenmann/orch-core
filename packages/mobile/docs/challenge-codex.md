@@ -1,6 +1,6 @@
 # Codex challenge of the converged M0 decisions
 
-Reviewed 10 October 2026: [decisions](decisions.md), [Codex proposal](proposals/codex.md), [Claude proposal](proposals/claude.md), [relay protocol v2](/Users/severin/orch-dev/orch-relay/docs/protocol-v2.md) (section references below), and [architecture D49](/Users/severin/orch-dev/orch-core/docs/architecture/orch-v2.md).
+Reviewed 10 October 2026: [decisions](decisions.md), [Codex proposal](proposals/codex.md), [Claude proposal](proposals/claude.md), [relay protocol v2](/Users/severin/orch-dev/contracts/relay/protocol-v2.md) (section references below), and [architecture D49](/Users/severin/orch-dev/orch-core/docs/architecture/orch-v2.md).
 This is a design review, not evidence of implementation vulnerabilities. Consequences below describe failure modes unless identified as observed.
 
 ## Acceptances

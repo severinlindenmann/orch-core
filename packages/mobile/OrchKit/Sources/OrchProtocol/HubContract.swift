@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-// The phone's side of the orch hub contract (orch-hub `docs/protocol.md` sections 2, 4.1, 5, 6.2 to 6.4). Pure functions, no I/O, no clock:
+// The phone's side of the orch hub contract (`contracts/hub/protocol.md` sections 2, 4.1, 5, 6.2 to 6.4). Pure functions, no I/O, no clock:
 // every check takes `nowMs` and the verifier's dev mode explicitly. Reference implementation: orch-hub `orch_hub.contract.hub` and
 // `.channelapi`; vectors: `vectors_hub.json` (replayed by `HubVectorTests`).
 

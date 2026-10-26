@@ -1,6 +1,6 @@
 """Person key, device certificates, recovery code, session grants, genesis and member checks, the signature verifier.
 
-Specs: orch-relay ``docs/protocol-v2.md`` §6 (certificates, revocation), §7.1 (delegation); ticket-format §5.3, §5.4.2,
+Specs: ``contracts/relay/protocol-v2.md`` §6 (certificates, revocation), §7.1 (delegation); ticket-format §5.3, §5.4.2,
 §5.11 (genesis), §10.1 (grants, D60); core §2. Pure functions over values; keys live in ``custody/``.
 """
 

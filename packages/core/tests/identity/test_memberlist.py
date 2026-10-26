@@ -1,5 +1,5 @@
 """H12c builders 6 and 7 for R6 (design 11A.15.10): the member list, the WK grant, the sealed keys, against the vendored
-relay corpus: every matching case, accept and refuse. Ground truth is orch-relay ``docs/protocol-v2.md`` §5.3, §7.1,
+relay corpus: every matching case, accept and refuse. Ground truth is ``contracts/relay/protocol-v2.md`` §5.3, §7.1,
 §7.2, §7.3 and the corpus; where the design text differs, the vectors win (the PR lists each difference)."""
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""The hub side of the host<->hub link (docs/protocol.md §10).
+"""The hub side of the host<->hub link (contracts/hub/protocol.md §10).
 
 Wire summary (all frames per :mod:`orch_hub.link.framing`: 4-byte big-endian length + canonical JSON):
 

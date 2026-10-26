@@ -282,7 +282,7 @@ blobs per device and epoch), `drop_spaces`, `revocations`.
 - **Mailboxes** are keyed by `(workspace_id, device_id)` or `(workspace_id, peer_workspace_id)`. Hosts and devices dial
   out with long polling. Sealed bodies live 60 s in the bridge (as in v1); ws→ws envelopes live until acknowledged,
   with a deadline (§9).
-- **Contract:** `orch-relay/docs/protocol-v2.md` plus `tests/vectors_v2.json`. As in v1, both sides test against
+- **Contract:** `contracts/relay/protocol-v2.md` plus `tests/vectors_v2.json`. As in v1, both sides test against
   the vectors, not against each other.
 
 ### 6.3 Push

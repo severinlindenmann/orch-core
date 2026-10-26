@@ -1,4 +1,4 @@
-"""TLS 1.3 transport for the link (docs/protocol.md §10.1).
+"""TLS 1.3 transport for the link (contracts/hub/protocol.md §10.1).
 
 The Python 3.14 stdlib ``ssl`` module has no keying-material export (only ``tls-unique`` channel binding, which does
 not exist in TLS 1.3), so the link uses pyOpenSSL (a thin layer over ``cryptography``/OpenSSL) on BOTH sides:

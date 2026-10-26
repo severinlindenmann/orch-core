@@ -1,4 +1,4 @@
-"""The v2 ws->ws envelope (orch-relay ``docs/protocol-v2.md`` section 11), end to end: build, and the receiver's
+"""The v2 ws->ws envelope (``contracts/relay/protocol-v2.md`` section 11), end to end: build, and the receiver's
 normative order (11.4). It is transport-free: the hub router (this package) and the v2 relay carry the same bytes.
 
 ``envelope = header (60) || u32(body_len) || body || signature (64) [|| u32(cosig_len) || cj(cosig)]``

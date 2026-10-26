@@ -1,7 +1,7 @@
 """Pure builders for R6 membership (design 11A.15.10, H12c items 6 and 7): the member list object and its check, the
 sealed ``WK`` of a grant, the grant object and its check, and the card-key wrap.
 
-Specs: orch-relay ``docs/protocol-v2.md`` §5.3 (sealing), §7.1 (card keys), §7.2 (member list), §7.3 (WK grants).
+Specs: ``contracts/relay/protocol-v2.md`` §5.3 (sealing), §7.1 (card keys), §7.2 (member list), §7.3 (WK grants).
 Vectors: the relay corpus sections ``member_lists``, ``member_list_snapshots``, ``wk_grants``, ``seal``,
 ``seal_open`` and ``card.card_key_wrap_to_phone`` (``tests/identity/test_memberlist.py``).
 

@@ -1,5 +1,5 @@
 """An in-process fake orch hub for core tests (C1). No sockets, no TLS: the transport is a function call that carries
-exactly the signed ``hub.link`` objects of the contract (orch-hub ``docs/protocol.md`` section 10.2).
+exactly the signed ``hub.link`` objects of the contract (``contracts/hub/protocol.md`` section 10.2).
 
 * :class:`FakeHub` is the hub: it holds the vector hub card (keys from the vector seeds, all FAKE), verifies every
   w2h message as the contract says (section 10.2 steps 1-6, the receiver's key being the workspace's pinned ``WSK``),

@@ -169,7 +169,7 @@ Findings (the spike changes neither spec nor protocol):
    The mapping is slightly biased (about 2^-32) and is for fixed test seeds only; it is not a key-generation method.
    A deterministic derivation of a real key (see open question (b)) needs FIPS 186-5 A.2.1 (at least 320 bits of HKDF
    output, then `mod (n-1) + 1`) or rejection sampling, with its own label.
-2. **Suite 2 is described as the "fallback" (D22, `docs/protocol-v2.md` §1 table and around line 1716) while D46 makes
+2. **Suite 2 is described as the "fallback" (D22, `contracts/relay/protocol-v2.md` §1 table and around line 1716) while D46 makes
    it the only suite.** Wording only. Suite 1 (Ed25519/X25519) is impossible in the Secure Enclave, which supports
    P-256 only.
 3. **Signing and key agreement are separate SE key types** in CryptoKit (`SecureEnclave.P256.Signing` vs `.KeyAgreement`).
@@ -194,7 +194,7 @@ Findings (the spike changes neither spec nor protocol):
    Python cannot tell an SE signature from a software one; the Swift tests are not in CI (only the Python fixture check
    runs everywhere).
 
-### Proposals for `docs/protocol-v2.md` (wording only, for the owner to accept or reject)
+### Proposals for `contracts/relay/protocol-v2.md` (wording only, for the owner to accept or reject)
 
 - **§1.1 table header and line 94:** "Suite 2 `p256` (the only suite, spec D46)". "Primitives come only from Apple
   CryptoKit, WebCrypto and the Python `cryptography` package." Retire "fallback" here and in §18 R5.
@@ -232,7 +232,7 @@ Options from the security review:
 The manual `--presence` mode has not been run; it should be run once by a human and the prompt recorded.
 
 **(b) Where `PK` (the person key) lives, given the 24-word recovery code.** `PK` is made by the primary device and signs
-certificates, revocations, delegations and cert challenges (`docs/protocol-v2.md` around line 361). It cannot live
+certificates, revocations, delegations and cert challenges (`contracts/relay/protocol-v2.md` around line 361). It cannot live
 only in the Secure Enclave if the recovery code must restore it: SE keys can neither be imported nor exported. If `PK`
 is lost with the primary phone, nobody can sign the revocation of that lost phone, and re-creating `PK` changes
 `person_id` and every `pk_pin`. Options from the review:

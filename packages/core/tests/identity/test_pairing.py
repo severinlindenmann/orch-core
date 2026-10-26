@@ -1,5 +1,5 @@
 """H12c builders 1-4 for R6 pairing (design 11A.15.10), against the vendored relay corpus: every matching case, accept
-and refuse. Ground truth is orch-relay ``docs/protocol-v2.md`` §4, §7.2, §8.3, §8.4 and the corpus; where the design
+and refuse. Ground truth is ``contracts/relay/protocol-v2.md`` §4, §7.2, §8.3, §8.4 and the corpus; where the design
 text differs, the vectors win (the PR lists each difference)."""
 
 from __future__ import annotations

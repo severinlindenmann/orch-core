@@ -1,7 +1,7 @@
 # orch mobile M0: a simulated prototype (proposal, Claude)
 
 Status: proposal for the owner, 10 Oct 2026. Independent of the Codex proposal. Nothing here changes the spec
-(`orch-core/docs/architecture/orch-v2.md`, "spec") or the wire contract (`orch-relay/docs/protocol-v2.md`, "proto").
+(`orch-core/docs/architecture/orch-v2.md`, "spec") or the wire contract (`contracts/relay/protocol-v2.md`, "proto").
 References: spec §n, proto §n, D-numbers, spikes S1/S2, issues `orch-mobile#n`.
 
 **The phase in one sentence.** Build the real app (real Core, real protocol v2 suite 2, real custody, real

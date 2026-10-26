@@ -1,4 +1,4 @@
-"""Domain labels of the hub contract H0 (docs/protocol.md §3). Every one is new, ends in ``|`` and keeps the union with
+"""Domain labels of the hub contract H0 (contracts/hub/protocol.md §3). Every one is new, ends in ``|`` and keeps the union with
 the orch v2 labels (orch-relay protocol-v2 §3, orch-core ``orch.crypto.labels`` and ``orch.canon.LABELS``)
 prefix-free; ``tests/test_labels.py`` checks that against a frozen copy of the v2 table."""
 

@@ -1,4 +1,4 @@
-"""Host end of the hub link over TLS 1.3 (orch-hub ``docs/protocol.md`` section 10).
+"""Host end of the hub link over TLS 1.3 (``contracts/hub/protocol.md`` section 10).
 
 Opening (10.1): dial, handshake TLS 1.3, compare the hub certificate's SPKI hash with the held card's
 ``tls_spki_sha256`` (nothing is sent before that), read the challenge frame (its ``hub_id`` must be the card's), answer

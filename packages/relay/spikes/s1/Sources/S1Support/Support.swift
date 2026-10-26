@@ -95,7 +95,7 @@ public func sigKey(seed: Data) throws -> P256.Signing.PrivateKey {
     try P256.Signing.PrivateKey(rawRepresentation: scalar(fromSeed: seed))
 }
 
-// MARK: protocol functions (docs/protocol-v2.md section 3 and 5)
+// MARK: protocol functions (contracts/relay/protocol-v2.md section 3 and 5)
 
 public func ctx(_ label: String, _ fields: [String]) -> Data {
     Data(([label] + fields).joined(separator: "|").utf8)

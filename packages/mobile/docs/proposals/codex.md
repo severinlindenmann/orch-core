@@ -16,7 +16,7 @@ It must not imply that a local demonstration proves relay connectivity or APNs d
 Read as inputs:
 
 - `orch-core/docs/architecture/orch-v2.md`: §§5–8, §22, D45–D49 and adjacent decisions.
-- `orch-relay/docs/protocol-v2.md`: suite 2, sealing, pairing §8, push §9, Drop §10, decisions §13.
+- `contracts/relay/protocol-v2.md`: suite 2, sealing, pairing §8, push §9, Drop §10, decisions §13.
 - `orch-relay/spikes/s1`: software vectors, Secure Enclave tests, fixture-generation approach.
 - `orch-relay/spikes/s2`: PushCore, NSE, shared store, self-test and XcodeGen project.
 - `orch-mobile/README.md`, including its proposed Core/app/extension boundaries.

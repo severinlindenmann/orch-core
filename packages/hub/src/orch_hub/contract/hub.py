@@ -1,7 +1,7 @@
-"""Reference builders and verifiers for the hub contract H0 (docs/protocol.md). Test support and the hub's own
+"""Reference builders and verifiers for the hub contract H0 (contracts/hub/protocol.md). Test support and the hub's own
 checks; pure functions, no I/O, no clock (``now_ms`` is always passed in), no key storage.
 
-Every verifier raises :class:`Refused` with one code from docs/protocol.md §14 and fails closed: any input it
+Every verifier raises :class:`Refused` with one code from contracts/hub/protocol.md §14 and fails closed: any input it
 cannot read is ``malformed``. Signed objects follow protocol-v2 §2.4: ``{"o": o, "sig": b64u}``,
 ``sig = Sign(key, label || cj(o))``; the verifier checks the envelope and ``v``/``suite``/``kind``/``hv`` first, then
 the signature, then the exact field set, then the semantics.
@@ -1634,7 +1634,7 @@ def check_direct_publish(req: Mapping[str, Any], wsk_pub: bytes) -> dict[str, An
 
 
 def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: int, dev_mode: bool) -> dict[str, Any]:
-    """orch-publish's check of a hub-forwarded request (docs/protocol.md §11), in order. ``req`` = {method, host,
+    """orch-publish's check of a hub-forwarded request (contracts/hub/protocol.md §11), in order. ``req`` = {method, host,
     target, headers, body (bytes), access ("public" or None: what the request grants, as orch-publish's routes
     define)}. ``st`` = {cards: {ws: {wsk_pub, owner_person_id}}, bindings: {ws: binding state}, hub_cards: {hub_id:
     held card}, nonces: {ws: {nonce: until_ms}}, revoked_devices}. Mutates ``st["nonces"]`` on success of step 8."""

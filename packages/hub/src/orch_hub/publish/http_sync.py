@@ -1,4 +1,4 @@
-"""``PublishSync`` over HTTP against orch-publish's hub admin endpoints (orch-publish F2, docs/protocol.md §4, §5, §9):
+"""``PublishSync`` over HTTP against orch-publish's hub admin endpoints (orch-publish F2, contracts/hub/protocol.md §4, §5, §9):
 
     PUT /v2/hub/card                     signed hub.card (with its op_cert)
     PUT /v2/hub/op-revoked               root-signed hub.op_revoked

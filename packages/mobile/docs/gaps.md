@@ -6,7 +6,7 @@ and [proposals/codex.md §8](proposals/codex.md). Context: [decisions.md](decisi
 This list is input for two readers: the owner of the orch-core spec (and the protocol), and whoever does the real
 relay and host integration. The prototype runs against a FakeRelay, FakeHost and FakePrimary, so it works around
 each gap with a provisional choice. Every item names where it must be fixed. "Spec" is
-`orch-core/docs/architecture/orch-v2.md`; "protocol" is `orch-relay/docs/protocol-v2.md`; "issue #n" is in
+`orch-core/docs/architecture/orch-v2.md`; "protocol" is `contracts/relay/protocol-v2.md`; "issue #n" is in
 orch-mobile. Section references were checked against both files on 10 Oct 2026. Items resolved by the
 "Provisional answers" in decisions.md are marked "provisionally decided: D-x"; the owner may still override them.
 
@@ -56,7 +56,7 @@ orch-mobile. Section references were checked against both files on 10 Oct 2026. 
 
 ## M2 protocol ambiguities
 
-Found while implementing `OrchProtocol` and `OrchPush` against `docs/protocol-v2.md` and `vectors_v2.json`. Each entry names the reading the code takes. No vector contradicts any of them; none is resolved by guessing silently.
+Found while implementing `OrchProtocol` and `OrchPush` against `contracts/relay/protocol-v2.md` and `vectors_v2.json`. Each entry names the reading the code takes. No vector contradicts any of them; none is resolved by guessing silently.
 
 - **JSON nesting depth (§2.3, "at most 16 levels").** Resolved upstream in orch-relay #32: the Python reference now counts the root as level 1, accepting 16 and refusing 17, as Swift always did. Vectors `strict_parse.depth_16`, `depth_17`, `depth_16_objects`, `depth_17_objects` cover it and run in `strictParseVectors`.
 - **`device_id` that is not hex in a revocation (§6.2, §14).** Python compares the string with the certificate's `device_id` and answers `other_person`; Swift parses it as an id first and answers `malformed`. The protocol text should say which.

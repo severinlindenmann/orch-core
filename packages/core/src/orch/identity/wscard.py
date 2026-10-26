@@ -1,7 +1,7 @@
 """The workspace card for R6 (design 11A.15.10 item 7, review round 1 of #495): the rotation's card ``o`` with its
 sealed part and ``ck_commit``, and the **typed** verified card every card consumer takes.
 
-Specs: orch-relay ``docs/protocol-v2.md`` §7.1. Vectors: the relay corpus ``card`` section
+Specs: ``contracts/relay/protocol-v2.md`` §7.1. Vectors: the relay corpus ``card`` section
 (``tests/identity/test_wscard.py``).
 
 A :class:`VerifiedCard` exists only through :func:`verify_card`, which runs ``orch.wsproto.card.verify_card`` (§7.1

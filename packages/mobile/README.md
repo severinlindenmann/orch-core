@@ -67,7 +67,7 @@ and `HubLaunch` (`--hub-pair`, `--hub-fake`, `--hub-sign`). Release ignores all 
 
 ## Hub pairing (V3)
 
-B1 (orch-core #861) pairs the phone with an orch hub (`orch-hub` `docs/protocol.md` 5, 6.3, 6.4; design `state/design-b-phone.md`).
+B1 (orch-core #861) pairs the phone with an orch hub (`orch-hub` `contracts/hub/protocol.md` 5, 6.3, 6.4; design `state/design-b-phone.md`).
 `orch://hub-pair/<authority>#h1.<hub_id>.<user_id>.<code>` is parsed strictly (`HubVerifier.parseLink`); the card is verified pinned to the
 link's `hub_id`, the HK_op-signed `hub.api_origin` must equal the link's origin (`other_origin`), and only then a password and a TOTP code are
 sent. The Secure Enclave channel key (`HubChannelSigner`: exactly five typed signatures, no "sign bytes") registers with the hub's challenge

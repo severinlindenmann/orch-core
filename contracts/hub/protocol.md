@@ -6,9 +6,9 @@ not right.
 
 - **Spec:** orch-core `docs/architecture/orch-v2-hub.md` (D67–D82), written *spec §n* below.
 - **Plan:** orch-core #838. The V3 DECISIONS (V3-D3, V3-D4, V3-D8) and the SHORTCUTS table apply.
-- **Base contract:** orch-relay `docs/protocol-v2.md`, written *v2 §n*. This contract reuses its suite, encodings,
+- **Base contract:** `contracts/relay/protocol-v2.md`, written *v2 §n*. This contract reuses its suite, encodings,
   signed-object shape and label rules unchanged. There is no second encoding.
-- **Vectors:** [`vectors/vectors_hub.json`](../vectors/vectors_hub.json), one file shared by hub, core and publish
+- **Vectors:** [`vectors_hub.json`](vectors_hub.json), one file shared by hub, core and publish
   (V3-D8). The reference code that produces it is `src/orch_hub/contract/`; `uv run pytest tests/test_vectors.py`
   checks that the reference rebuilds the file byte for byte and that every case replays from its JSON. Where the
   reference and this document disagree, this document wins.
@@ -537,7 +537,7 @@ value is `malformed`. Hardening (#910) defines `HK_root`-signed generations (spe
 **Purpose.** What the company allows its workspaces to install and run: which marketplaces, which add-ons, how much
 capability. The hub admin sets it; `HK_op` signs it inside every snapshot; orch-core reads it only from a verified
 snapshot and can only **refuse** by it (a human grant is still needed; core runs standalone without a hub, D79).
-Enforcement is core's (orch-core#928); this section is the shared contract. Vectors: `vectors/vectors_hub_policy.json`
+Enforcement is core's (orch-core#928); this section is the shared contract. Vectors: `vectors_hub_policy.json`
 (`check: "policy"` and `"evaluate"`) and the snapshot and audit cases of `vectors_hub.json`.
 
 ```
@@ -1451,7 +1451,7 @@ space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, membe
 - `sk_commit = b64u(H("orch/v2/hub-sk-commit|" || suite || space_id || u32(epoch) || SK_e))`: in the signed record, so
   every member opens a wrap to the same key (like v2's `ck_commit`).
 - **The wrap** is v2 §5.3 `seal_to` with a new purpose `space-sk`. **Amendment to v2 §5.3's closed purpose list**
-  (orch-relay `docs/protocol-v2.md`; to be applied there with this contract): `space-sk` | recipient: workspace (`WXK`)
+  (`contracts/relay/protocol-v2.md`; to be applied there with this contract): `space-sk` | recipient: workspace (`WXK`)
   | `object_id` space_id | `epoch` space epoch | `extra` `hub_id || u32(wxk_version)` | plaintext `SK_e` (32). It is the
   workspace-recipient counterpart of the device purpose `sk`: recipient = the member's `WXK` of `wxk_version`, recipient id = `workspace_id`, `object_id = space_id`,
   `epoch = space epoch`, `extra = hub_id || u32(wxk_version)`, plaintext `SK_e`. A sealed blob proves nothing about its

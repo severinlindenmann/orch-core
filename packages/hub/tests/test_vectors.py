@@ -179,7 +179,7 @@ def test_real_signer_randomises_and_still_verifies():
 
 
 def test_protocol_doc_names_every_label_and_code():
-    doc = (Path(__file__).resolve().parents[1] / "docs" / "protocol.md").read_text()
+    doc = (Path(__file__).resolve().parents[3] / "contracts" / "hub" / "protocol.md").read_text()
     for label in HUB_LABELS.values():
         assert label.replace("|", "\\|") in doc or label in doc, label
     for code in {c["expect"]["error"] for c in V["cases"] if "error" in c["expect"]}:

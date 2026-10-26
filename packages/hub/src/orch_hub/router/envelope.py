@@ -1,4 +1,4 @@
-"""The v2 ws->ws envelope as the router sees it (orch-relay ``docs/protocol-v2.md`` §11.1, §11.3).
+"""The v2 ws->ws envelope as the router sees it (``contracts/relay/protocol-v2.md`` §11.1, §11.3).
 
 ``envelope = header (60) || u32(body_len) || body || signature (64) [|| u32(cosig_len) || cj(cosig)]``
 ``header   = "ORWX" || u8(2) || u8(suite) || u8(flags) || u8(0) || id (16) || from_ws (16) || to_ws (16) || u32(wxk_version)``

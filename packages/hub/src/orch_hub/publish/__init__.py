@@ -1,4 +1,4 @@
-"""Publish forwarding: ``publish_out`` → orch-publish with the hub's transport signature (docs/protocol.md §11)."""
+"""Publish forwarding: ``publish_out`` → orch-publish with the hub's transport signature (contracts/hub/protocol.md §11)."""
 
 from .admin_read import AdminReadClient, AdminReadError
 from .forwarder import HubPublish, PublishConfig

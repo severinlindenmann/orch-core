@@ -35,7 +35,7 @@ def get(w, path, method="GET", host=HOST, headers=None):
 
 
 def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
-    assert set(FILES) == {"/", "/app.css", "/app.js", "/channel.js", "/cj.js", "/render.js", "/home.js", "/admin.js"}
+    assert set(FILES) == {"/", "/c", "/app.css", "/app.js", "/channel.js", "/cj.js", "/render.js", "/home.js", "/admin.js"}
     for path, (name, ctype) in FILES.items():
         s, h, body = get(w, path)
         assert s == 200 and body == (WEB_DIR / name).read_bytes(), path
@@ -43,7 +43,7 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         assert h["Content-Security-Policy"] == CSP
         assert h["X-Content-Type-Options"] == "nosniff" and h["Referrer-Policy"] == "no-referrer"
         assert h["Cross-Origin-Resource-Policy"] == "same-origin" and h["Cross-Origin-Opener-Policy"] == "same-origin"
-        assert h["Cache-Control"] == ("no-store" if path == "/" else "no-cache")
+        assert h["Cache-Control"] == ("no-store" if path in ("/", "/c") else "no-cache")
         assert "Strict-Transport-Security" in h  # the test hub has secure cookies
     assert FILES["/app.js"][1] == "text/javascript; charset=utf-8"
 

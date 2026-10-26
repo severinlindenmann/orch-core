@@ -41,6 +41,7 @@ from typing import Any, Protocol
 from ..access import Access, AccessError, role_rank
 from ..access.store import check_name
 from ..channels import Channels
+from ..connect import LinkError, build_link
 from ..channels.service import ChannelError
 from ..contract import channelapi as CA
 from ..contract import market_policy as MP
@@ -191,6 +192,9 @@ class WebDeps:
     api_origin: str | None = None
     #: the notifier that holds the push targets and keys (None = no relay: ``PUT /channels/{id}/push`` is ``unavailable``)
     push: Any = None
+    #: the invite gate (``mint``) and the hub link address, for "Connect a workspace" (None = route is ``unavailable``)
+    invites: Any = None
+    link_endpoint: Callable[[], str | None] | None = None
     now_ms: Callable[[], int] = lambda: int(time.time() * 1000)
 
 
@@ -289,6 +293,7 @@ ROUTES: tuple[Route, ...] = (
         "a_market_policy_set",
         "Replace the hub marketplace policy ({base_version, policy}); 409 conflict when base_version is stale",
     ),
+    _r("POST", "/admin/connect", "admin", "a_connect", "Mint a workspace invite and return the one connect link"),
     _r("GET", "/admin/audit", "admin", "a_audit", "Read the audit chain (?since=N, up to 100 records)"),
 )
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
@@ -1084,6 +1089,26 @@ class WebApi:
     def _h_a_market_policy_set(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, base_version=int, policy=dict)
         return 200, self.d.access.set_market_policy(b["base_version"], b["policy"], actor=c.user_id)
+
+    def _h_a_connect(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Mint a single-use invite (30 min) and build ``<base>/c#h1.<hub_id>.<code>[.<endpoint>]`` (docs/connect-link.md).
+        Body (all optional): ``endpoint`` = the host:port a workspace dials, default the hub's own link address."""
+        if self.d.invites is None:
+            raise ApiError("unavailable")
+        b = b or {}
+        endpoint = b.get("endpoint")
+        if endpoint is not None and type(endpoint) is not str:
+            raise ApiError("malformed")
+        endpoint = (endpoint or "").strip() or (self.d.link_endpoint() if self.d.link_endpoint else None)
+        base = c.origin or self.d.api_origin
+        if base is None:
+            raise ApiError("unavailable")
+        code, expires = self.d.invites.mint(self.d.now_ms())
+        try:
+            link = build_link(base, self.d.keys.hub_id, code, endpoint)
+        except LinkError:
+            raise ApiError("malformed") from None
+        return 200, {"link": link, "code": code, "hub_id": self.d.keys.hub_id, "endpoint": endpoint, "expires_ms": expires}
 
     def _h_a_audit(self, c: Ctx, p: dict, q: dict, b: dict | None):
         since = q.get("since", "0")

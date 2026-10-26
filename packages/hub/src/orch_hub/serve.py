@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import secrets
 import signal
 import sys
 import threading
@@ -67,7 +68,16 @@ class FixedInvites:
                 self._owner[code] = user
             else:  # CODE=<not a 32-hex user id>: refuse to start rather than silently drop the alias
                 raise ValueError(f"invite #{i}: the part after '=' ({user[:40]!r}) is not a 32-hex hub user id")
+        self._expires: dict[str, int] = {}  # minted codes only: code -> expiry ms
         self._lock = threading.Lock()
+
+    def mint(self, now_ms: int, ttl_ms: int = 30 * 60_000) -> tuple[str, int]:
+        """A fresh single-use code (admin console "Connect a workspace"); expires after ``ttl_ms``."""
+        code = secrets.token_urlsafe(12)
+        with self._lock:
+            self._codes.add(code)
+            self._expires[code] = now_ms + ttl_ms
+        return code, now_ms + ttl_ms
 
     def codes(self) -> list[str]:
         """The unused codes, sorted (never the ``=USER_ID`` alias part)."""
@@ -79,7 +89,7 @@ class FixedInvites:
 
     def check(self, invite: str, now_ms: int) -> str | None:
         with self._lock:
-            if invite not in self._codes:
+            if invite not in self._codes or self._expires.get(invite, now_ms + 1) <= now_ms:
                 raise Refused("bad_invite")
         return None
 
@@ -228,6 +238,8 @@ def serve(
                 trusted_peers=cfg.trusted_peers,
                 behind_edge=cfg.behind_edge,
                 api_origin=cfg.resolved_api_origin(),
+                invites=gate,
+                link_endpoint=lambda: f"{host}:{server.address[1]}",
                 push=notifier,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )

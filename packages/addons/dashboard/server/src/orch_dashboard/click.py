@@ -399,6 +399,7 @@ def verify(prepared: dict, ws: str, **expect) -> dict:
 
 def register(app: FastAPI, gateway: Gateway):
     clicks = app.state.clicks = Clicks()
+    failed_bumps: dict[str, int] = {}
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
     signer = gateway.click
     signer.unsettled = handoffs.any_unsettled  # a hung signer is not replaced while a signature may be mid-submit
@@ -801,8 +802,10 @@ def register(app: FastAPI, gateway: Gateway):
                 sent["deposit"] = True  # the deposit-only grant mode: the secret goes to the runner, never here
             return signer.call("prepare", sent)
 
+        idem_key = planned.idem(ws, 0)
+        start = max(body.retry, failed_bumps.get(idem_key, 0))
         try:
-            got = send_prepare(planned, ws, body.retry, call, lambda: human(ws, "human.pending", {}))
+            got = send_prepare(planned, ws, start, call, lambda: human(ws, "human.pending", {}))
         except HostError as exc:
             sweep()
             said = str(exc.error.get("message", "")) if exc.error["code"] == "human.request_state" else ""
@@ -811,7 +814,7 @@ def register(app: FastAPI, gateway: Gateway):
             # This intent's attempt was signed: answer "Already done" from the host's record.
             # The signer drops the terminal request id. Replay the exact binding through our link to obtain
             # the host record; opts.idem guarantees this cannot create another request.
-            signed_retry = getattr(exc, "retry_used", body.retry)  # the retry whose attempt was signed
+            signed_retry = getattr(exc, "retry_used", start)  # the retry whose attempt was signed
             device = signer.status().get(ws, {}).get("device")
             if not device:
                 raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
@@ -843,7 +846,10 @@ def register(app: FastAPI, gateway: Gateway):
                 raise
             if prepared.get("request", {}).get("state") != "submitted":
                 raise fail("internal", "The host did not return the submitted intent.")
-            raise read_done(human, ws, prepared["request"]["id"]) from None
+            error = read_done(human, ws, prepared["request"]["id"])
+            if error.error["code"] == "intent.failed":
+                failed_bumps[idem_key] = signed_retry + 1
+            raise error from None
         rid = got["request_id"]
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()

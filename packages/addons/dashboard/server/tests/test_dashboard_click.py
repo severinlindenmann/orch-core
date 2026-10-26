@@ -1469,6 +1469,42 @@ def test_failed_submit_state_never_reports_signed(client, token, stub, script, h
     assert response.json()["error"]["reason"] == "gate.stale"
 
 
+@pytest.mark.parametrize("retry", [0, 3])
+def test_failed_prepare_bumps_idem_for_next_attempt(client, token, stub, script, host_check, monkeypatch, retry):
+    body = {**approve(), "retry": retry}
+    first = prepare(client, token, stub, body)
+    assert first.status_code == 200, first.text
+    rid = first.json()["request_id"]
+    script.states[rid] = "submitted"
+    original = host_check.human
+
+    def failed(ws, op, args, **kw):
+        if op == "human.pending" and args.get("request_id") == rid:
+            return {
+                "requests": [
+                    {"id": rid, "state": "submitted", "seq": None, "error": {"code": "gate.stale"}}
+                ]
+            }
+        return original(ws, op, args, **kw)
+
+    monkeypatch.setattr(client.app.state, "human", failed)
+    response = prepare(client, token, stub, body)
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "intent.failed"
+    assert response.json()["error"]["reason"] == "gate.stale"
+
+    again = prepare(client, token, stub, body)
+    assert again.status_code == 200, again.text
+    assert again.json()["request_id"] != rid
+    pending = prepare(client, token, stub, body)
+    assert pending.status_code == 200 and pending.json() == again.json()
+    keys = [args["idem"] for op, args in script.clients[0].calls if op == "prepare"]
+    assert keys[0] == keys[1]
+    assert keys[2] != keys[0]
+    assert keys[3] == keys[2]
+    assert script.prepared == 2
+
+
 def test_concurrent_uncertain_sign_remarks_after_definite_failure(client, token, stub, script, monkeypatch):
     prepare(client, token, stub, comment(1))
     handoffs = client.app.state.handoffs

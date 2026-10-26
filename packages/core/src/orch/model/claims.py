@@ -77,7 +77,7 @@ def taken(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if t.status in ("done", "closed"):
         return Refusal(Code.TICKET_FROZEN, f"claim.taken is refused on {t.status} tickets")
     takeover = e.get("takeover")
-    if t.status in ("open", "backlog"):
+    if t.status in ("open", "backlog") or (t.status == "in_progress" and t.claim is None):
         if takeover is not None:
             return Refusal(Code.CLAIM_NOT_LIVE, "nothing to take over")
     elif t.status == "in_progress":

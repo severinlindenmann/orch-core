@@ -113,4 +113,10 @@ EMITS_V2: dict[str, frozenset[str]] = {**EMITS_V1, "grant": frozenset({"grant.is
 # tasks names ``task.add`` or ``agent``, which cover every ``ticket.updated``). Only the registry and person ops move.
 EMITS_V3: dict[str, frozenset[str]] = {**EMITS_V2, "task.edit": frozenset({"ticket.updated"})}
 
-CURRENT = EMITS_V3
+EMITS_V4: dict[str, frozenset[str]] = {
+    **EMITS_V3,
+    "follow-up.set": frozenset({"followup.set"}),
+    "follow-up.cancel": frozenset({"followup.cancelled"}),
+}
+
+CURRENT = EMITS_V4

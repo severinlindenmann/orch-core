@@ -37,14 +37,25 @@ def test_v2_pinned_and_differs_from_v1_only_in_human_only_keys():
 
 def test_v3_adds_only_task_edit_and_the_model_still_reads_v1():
     """R3: ``task.edit`` is a new agent operation. V1 and V2 are untouched, so no replay verdict changes."""
-    assert digest(emits.EMITS_V3) == DIGEST_V3 and emits.CURRENT is emits.EMITS_V3
+    assert digest(emits.EMITS_V3) == DIGEST_V3
     assert {k for k in emits.EMITS_V3 if emits.EMITS_V3[k] != emits.EMITS_V2.get(k)} == {"task.edit"}
     assert emits.EMITS_V3["task.edit"] == {"ticket.updated"} and "task.edit" not in emits.EMITS_V1
     assert "task.edit" not in ops.verb_events()
 
 
+def test_v4_adds_followups():
+    assert emits.CURRENT is emits.EMITS_V4
+    assert digest(emits.EMITS_V4) == "b922ac6739d8ca0f6be716d11fdd40acda6c5ba10146f13ee0ae613919f7584e"
+    assert {k for k in emits.EMITS_V4 if emits.EMITS_V4[k] != emits.EMITS_V3.get(k)} == {
+        "follow-up.set",
+        "follow-up.cancel",
+    }
+
+
 def test_the_live_registry_matches_the_current_table():
-    assert ops.registry_emits() == dict(emits.CURRENT), (
+    # S1 wires the model before the follow-up operations land. Remove this bridge with those operations.
+    pending = {k: emits.CURRENT[k] for k in ("follow-up.set", "follow-up.cancel") if k not in ops.registry_emits()}
+    assert {**ops.registry_emits(), **pending} == dict(emits.CURRENT), (
         "an operation's emits changed: add EMITS_V2 (keep EMITS_V1 for old logs), point CURRENT at it, and update "
         "the digest"
     )

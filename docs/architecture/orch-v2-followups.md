@@ -23,7 +23,7 @@ only**. No new person-signed grant exists; the follow-up grant is derived by the
 | follow-up | `fu_<ULID>`, on one ticket, created by `followup.set` |
 | parent grant | the grant of the agent that appended `followup.set` (a person's grant or an earlier follow-up grant) |
 | root grant | the person-issued grant at the top of that chain of grants |
-| follow-up grant (G') | `fgr_<ULID>`, derived at `followup.fired`; never a `grant.issued` event |
+| follow-up grant (G') | `gr_<ULID>`, derived at `followup.fired`; never a `grant.issued` event |
 | chain | the follow-ups set on a ticket since the last person event on that ticket; a person event resets it |
 | hook | a webhook doorbell, `hk_` plus 128 random bits; only `H(id)` is stored anywhere (label `orch/v2/hook|`) |
 
@@ -65,6 +65,8 @@ the model. Actor classes: P person (signed), A agent or person, G agent with a g
 | `followup.rescheduled` | P | `{id, due?, deadline?}` | changes the times of a pending or `needs_person` follow-up within the same caps. |
 | `webhook.created` | G | `{hook_hash, label, expires}` | records a hook; the id is shown once. |
 | `webhook.revoked` | P or A | `{hook_hash}` | ends a hook. |
+
+The four implemented events use `followup` for the payload follow-up ID (`fu_<ULID>`); the envelope `id` remains a unique event ULID. The `hook` field is not implemented.
 
 A model-derived cancel writes no event; the engine derives it on replay with `derived_cancel_reason`.
 

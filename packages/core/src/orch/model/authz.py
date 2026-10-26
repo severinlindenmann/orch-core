@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from . import breakglass, hubledger, identity, policies, visibility
+from . import breakglass, claims, hubledger, identity, policies, visibility
 from .codes import Code, Refusal
 from .emits import HUMAN_ONLY
 from .types import WORKSPACE, Core, Device, TCore, WsCore, ts
@@ -31,6 +31,10 @@ ACTOR_RULES: dict[str, str] = {
     "visibility.changed": "P",
     "people.changed": "P",
     "policy.changed": "P",
+    "followup.set": "G",
+    "followup.fired": "H",
+    "followup.outcome": "H",
+    "followup.cancelled": "PA",
     "claim.taken": "G",
     "claim.released": "PAH",
     "task.started": "G",
@@ -314,6 +318,20 @@ def authorize_agent(
     g = ws.grants.get(a["grant"])
     if g is None:
         return Refusal(Code.GRANT_INVALID, f"unknown grant {a['grant']}")
+    if g.parent is not None:
+        if t is None or t.uid != g.scope:
+            return Refusal(Code.GRANT_SCOPE, "follow-up grants belong to one ticket only")
+        session = t.fu_sessions.get(g.id)
+        if session is not None and not claims.in_family(a["session"], session):
+            return Refusal(Code.GRANT_SCOPE, "follow-up grants belong to one session family")
+        from .followups import chain_valid
+        from .followups_wire import grant_chain
+
+        if not chain_valid(
+            grant_chain(ws, g.id),
+            root_person_active=identity.member_role(ws, g.person) in ("owner", "maintainer", "member"),
+        ):
+            return Refusal(Code.GRANT_INVALID, "the follow-up grant chain is revoked")
     if g.person != a["for"]:
         return Refusal(Code.GRANT_INVALID, "an agent's `for` must be the person who issued the grant")
     if g.revoked or not (ts(g.issued_at) <= at < ts(g.expires_at)):

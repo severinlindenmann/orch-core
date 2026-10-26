@@ -1082,6 +1082,13 @@ class Store:
         for e in ws_events:
             if e["type"] == "grant.issued" and e["id"] not in invalid and e["grant"] in ws.grants:
                 self._grant_hashes.setdefault(e["grant"], e["secret_hash"])
+        for uid, events in tickets.items():
+            if uid not in self._state._core.logs:
+                continue
+            invalid = {i.id for i in self._state._core.logs[uid].invalid}
+            for e in events:
+                if e["type"] == "followup.fired" and e["id"] not in invalid and e["grant"] in ws.grants:
+                    self._grant_hashes.setdefault(e["grant"], e["secret_hash"])
         self._json_cache = {}
         try:
             applied = loads(self.fs.read_or_none(self.state_dir / "applied") or b"{}")
@@ -2315,7 +2322,7 @@ class Store:
             self._load()  # replay from here on carries the pin (the State built so far has none)
             if self._pins is not None and new.workspace.genesis:
                 self._pins.pin_genesis(new.workspace.genesis)
-        if typ == "grant.issued":
+        if typ in ("grant.issued", "followup.fired"):
             self._grant_hashes.setdefault(ev["grant"], ev["secret_hash"])
         if self._pins is not None:
             info = self._logs[log]

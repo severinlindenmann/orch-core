@@ -491,6 +491,10 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `people.changed` | P | `role`: `owner`, `assignees`, `reviewers` or `watchers`; `add`: [person id]; `remove`: [person id] | For `owner`, `add` has exactly one id and the old owner is removed. On `done`/`closed` refused for roles a gate policy names. |
 | `policy.changed` | P | `gates`: {gate: policy} | In the ticket log: an override, intersected with the workspace policy (§5.7). |
 | `claim.taken` | A | `takeover?`: {`from_session`: session id, `reason`: str} | Agents only. One claim per ticket. Refused on `done`/`closed`. |
+| `followup.set` | A | `followup`: fu_ ULID; `trigger`: time, orch, addon or webhook; `due?`: timestamp; `deadline?`: timestamp; `brief`: str, at most 4096 bytes | Agents only. Creates a follow-up and releases the claim; see orch-v2-followups FU1–FU16. |
+| `followup.fired` | H | `followup`: fu_ ULID; `grant`: grant id; `trigger`: time, orch, addon, webhook or deadline; `fallback?`: no_event, no_ring or addon_silent; `secret_hash`: hash; `run`: r_ ULID | Derives a one-run grant scoped to this ticket. |
+| `followup.outcome` | H | `followup`: fu_ ULID; `outcome`: ran, failed or did_not_run; `reason?`: follow-up outcome reason; `run?`: r_ ULID | Ends the run grant. |
+| `followup.cancelled` | A | `followup`: fu_ ULID; `reason`: person, agent, run_now or dismissed | Cancels a pending or needs_person follow-up. |
 | `claim.released` | A, H | `session`: session id; `reason`: claim release reason (§11.4) | An agent releases only its own claim; a person (§5.2) only a live claim, named by its `session`. |
 | `task.started` | A | `task`: task id | The lease (A4). Agents only. |
 | `task.done` | A | `task`; `receipt?`: {`cmd`: str, `exit`: int, `ms`: int, `repo`: repo name or null, `commit`: git commit id or null}; `log?`: artifact name; `text?`: str | With `--run`, `exit` must be 0, otherwise nothing is appended. `receipt.cmd` must equal the task's `verify.cmd` at append. `commit` is the head of `repo`, read by the CLI from git. |
@@ -564,7 +568,7 @@ with an old role.
 | `grant.issued`, `grant.revoked` | §10.1 A3 (D60) |
 | `grant.requested` | any role with a grant (hub `edit` and `admin`), through the hub only (C10) |
 
-**Unknown types.** The prefixes `ticket`, `status`, `visibility`, `people`, `policy`, `claim`, `task`, `handoff`,
+**Unknown types.** The prefixes `ticket`, `status`, `visibility`, `people`, `policy`, `claim`, `followup`, `task`, `handoff`,
 `log`, `question`, `gate`, `verdict`, `branch`, `artifact`, `edit`, `projection`, `restore`, `workspace`, `member`,
 `role`, `device`, `settings`, `grant`, `addon`, `invalid`, `hub` and `relay` are reserved: no addon may take one of these names, and an
 unknown type under one of them is refused. Custom `<addon>.<verb>` events are deferred (A5); in P1 they are
@@ -1944,6 +1948,7 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `source.missing` | §5.7 a linked repo has no observed branch |
 | `source.unlinked` | §5.7 the repo is not in `links.repos` |
 | `source.not_new` | §5.7 `branch.pushed` repeats the projection, has a wrong `before`, or changes a ref on a done ticket |
+| `followup.denied` | FU1–FU16 follow-up rule refused; detail names the pure rule denial |
 | `claim.not_live` | §5.2 no live claim of that session (or takeover of nothing) |
 | `claim.exists` | §5.4.1 the ticket is claimed and no takeover was given |
 | `claim.not_holder` | §5.4.1 an agent acts under another session's claim |

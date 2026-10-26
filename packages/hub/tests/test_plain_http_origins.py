@@ -5,7 +5,13 @@ import pytest
 from orch_hub.contract import hub
 from orch_hub.publish.forwarder import _endpoint
 
-OK = ["http://127.0.0.1:8100", "http://10.1.2.3", "http://172.16.0.1:8101", "http://192.168.1.10:80", "http://100.71.14.98:8102"]
+OK = [
+    "http://127.0.0.1:8100",
+    "http://10.1.2.3",
+    "http://172.16.0.1:8101",
+    "http://192.168.1.10:80",
+    "http://100.71.14.98:8102",
+]
 BAD = ["http://8.8.8.8", "http://172.32.0.1", "http://100.128.0.1", "http://relay.example.com", "http://10.0.0.256"]
 
 

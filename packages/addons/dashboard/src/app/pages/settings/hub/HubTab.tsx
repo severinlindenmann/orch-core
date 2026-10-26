@@ -20,6 +20,9 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
   if (status.isPending) return <Panel title="Hub"><p role="status">Loading hub settings…</p></Panel>
   if (status.isError) return <Panel title="Hub"><p role="alert">Could not load hub settings.</p><Action id="hub-status-retry" onClick={() => void status.refetch()}>Try again</Action></Panel>
   const s = status.data
+  // Older status responses have no display name; never substitute an id.
+  const named = s as HubStatus & { name?: string; hub_name?: string }
+  const hubName = named.hub_name ?? named.name
   if (s.mode === 'unknown') return <Panel title="Hub state not known"><p>The workspace has not reported its hub mode.</p></Panel>
   // Keep active dialogs mounted when a refetch changes the mode, so their done screen remains visible.
   return <div className="space-y-4" data-testid="hub-tab">
@@ -30,7 +33,8 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
       {s.mode === 'standalone' && <StandalonePage onJoin={() => setFlow('join')} />}
       {s.mode === 'selective' && <SelectivePage ws={ws} fullAllowed={fullAllowed} onShare={() => setFlow('share')} onFull={() => setFlow('full')} onLeave={() => setFlow('leave')} />}
       {s.mode === 'full' && <FullPage status={s} onLeave={() => setFlow('leave')} />}
-      {s.hub_id && <details><summary data-testid="hub-status-details" className="cursor-pointer text-sm text-text-muted">Technical details</summary><p className="break-all text-sm">Hub id (from the hub, not signed): <Raw>{s.hub_id}</Raw></p></details>}
+      {hubName && <p className="text-sm font-semibold">Hub <Raw>{hubName}</Raw></p>}
+      {s.hub_id && <details><summary data-testid="hub-status-details" className="cursor-pointer text-sm text-text-muted">Technical details</summary><p className="break-words text-sm">Hub id (from the hub, not signed): <Raw>{s.hub_id}</Raw></p></details>}
     </>}
     {flow === 'join' && <JoinFlow ws={ws} onClose={() => setFlow(undefined)} />}
     {flow === 'full' && <FullSwitch ws={ws} onClose={() => setFlow(undefined)} />}
@@ -57,15 +61,15 @@ export function SelectivePage({ ws, fullAllowed: _fullAllowed, onShare, onFull, 
     <Panel title="Let the hub read everything"><p>The hub will read every ticket, file and note. Hub admins become admins here. Going back requires leaving and rejoining.</p>
       <p>You review the change here and confirm it with one click.</p><Action id="hub-full-switch" onClick={onFull}>Let the hub read everything</Action>
     </Panel>
-    <Panel title="Leave the hub"><p>Keep working locally. Phone access, publishing and handoffs through the hub stop. You confirm here with one click and your backup key.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
+    <Panel title="Leave the hub"><p>Keep working locally. Phone access, publishing and handoffs through the hub stop. You confirm here with one click.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
   </>
 }
 export function FullPage({ status, onLeave }: { status: HubStatus; onLeave: () => void }) {
   return <><Panel title="The hub can read everything in this workspace" tone={violet}><p>Every ticket, file and note, now and later. Hub admins act as admins here. Approvals use your phone or passkey.</p></Panel>
     <Panel title="Access through the hub"><p className="text-text-muted">from the hub, not signed</p>
-      {(['read', 'edit', 'admin'] as const).map(role => <div key={role} className="flex flex-wrap justify-between gap-2 border-t border-border py-2"><span>{role === 'read' ? 'Can read' : role === 'edit' ? 'Can edit' : 'Admins'}</span><span>{status.groups ? status.groups[role] + ' people' : 'Count not available'}</span></div>)}
+      {(['read', 'edit', 'admin'] as const).map(role => <div key={role} className="flex flex-wrap justify-between gap-2 border-t border-border py-2"><span>{role === 'read' ? 'Can read' : role === 'edit' ? 'Can edit' : 'Admins'}</span><span>{status.groups ? (status.groups[role] === 1 ? '1 person' : status.groups[role] + ' people') : 'Count not available'}</span></div>)}
     </Panel>
     <Panel title="Share only some things instead"><p>Leave this hub, then rejoin and choose “Only what I choose”. What the hub has already read cannot be taken back.</p></Panel>
-    <Panel title="Leave the hub"><p>Your work stays on this computer. Hub members lose access through the hub. You confirm here with one click and your backup key.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
+    <Panel title="Leave the hub"><p>Your work stays on this computer. Hub members lose access through the hub. You confirm here with one click.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
   </>
 }

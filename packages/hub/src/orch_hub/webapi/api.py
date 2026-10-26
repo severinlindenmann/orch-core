@@ -1148,7 +1148,8 @@ class WebApi:
         if endpoint is not None and type(endpoint) is not str:
             raise ApiError("malformed")
         endpoint = (endpoint or "").strip() or (self.d.link_endpoint() if self.d.link_endpoint else None)
-        base = c.origin or self.d.api_origin
+        # the advertised address first (works from other computers); the console's own origin only as a fallback
+        base = self.d.api_origin or c.origin
         if base is None:
             raise ApiError("unavailable")
         code, expires = self.d.invites.mint(self.d.now_ms())

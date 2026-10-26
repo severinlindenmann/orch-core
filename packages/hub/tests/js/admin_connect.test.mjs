@@ -27,14 +27,14 @@ const bodies = {
   users: { users: [] }, groups: { groups: [] }, grants: { grants: [] }, workspaces: { workspaces: [] }, channels: { channels: [] },
   "market-policy": { version: 1, official_url: "https://x.test/o", policy: { markets: [], addons: { allow: null, block: [] }, ceiling: null } }, audit: { records: [] },
 };
-test("Connect a workspace mints one link and shows it", async () => {
+test("Connect a workspace mints one link and shows it", async (t) => {
   const calls = [];
   const d = { say: (c) => c, api: async (method, path, body) => {
     calls.push([method, path]);
     if (method === "POST" && path === "/admin/connect") return { status: 200, body: { link: LINK, code: "CODE123", hub_id: "ab".repeat(16), endpoint: "10.0.0.5:8105", expires_ms: Date.now() + 1800000 } };
     return { status: 200, body: bodies[path.replace("/admin/", "").split("?")[0]] };
   } };
-  const [, , , , panels] = adminView(d);
+  const [, , , panels] = adminView(d);
   for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
   const ws = panels.children[2];
   const btn = ws.all().find((n) => n.attrs.id === "connect-workspace");
@@ -46,4 +46,26 @@ test("Connect a workspace mints one link and shows it", async () => {
   assert.ok(input, "link shown");
   assert.equal(input.attrs.value, LINK);
   assert.match(panels.children[2].textContent, /works once/);
+  assert.ok(ws.all().some((n) => n.tag === "button" && n.textContent === "Make a new link"));
+
+  const clipboardWrites = [];
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { clipboard: { writeText: async (text) => { clipboardWrites.push(text); } } },
+  });
+  t.after(() => {
+    if (navigatorDescriptor) Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
+    else delete globalThis.navigator;
+  });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const copy = ws.all().find((n) => n.tag === "button" && n.textContent === "Copy link");
+  assert.ok(copy);
+  await copy.listeners.click();
+  assert.deepEqual(clipboardWrites, [LINK]);
+  assert.equal(copy.textContent, "Copied ✓");
+  t.mock.timers.tick(1999);
+  assert.equal(copy.textContent, "Copied ✓");
+  t.mock.timers.tick(1);
+  assert.equal(copy.textContent, "Copy link");
 });

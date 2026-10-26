@@ -5,6 +5,7 @@
 import { KeyRound, Loader2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { backupViewOk, plainHubViewOk, type HubJoinAction, type HubLeaveAction, type HubModeFullAction } from '@/api/click'
+import { ApiError } from '@/api/types'
 import { seal } from '@/api/sealed'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { storyOf } from '@/components/sign/story'
@@ -19,6 +20,7 @@ export interface HubStepProps {
   /** The hub state changed (the step was signed). */
   onChanged?: () => void
   /** What "done" says (default: Signed.). */
+  onFailedChange?: (failed: boolean) => void
   doneText?: string
 }
 
@@ -33,7 +35,7 @@ function clearOfSignBar(block: HTMLElement | null) {
   if (scroller && over > 0) scroller.scrollTop += over
 }
 
-export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepProps) {
+export function HubStep({ ws, action, onClose, onChanged, onFailedChange, doneText }: HubStepProps) {
   const click = useClickSign(ws)
   const field = useRef<HTMLInputElement>(null)
   const box = useRef<HTMLDivElement>(null)
@@ -55,6 +57,9 @@ export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepPro
   useEffect(() => {
     if (click.phase === 'done') onChanged?.()
   }, [click.phase, onChanged])
+
+  const failed = click.phase === 'failed' || click.phase === 'cancelled'
+  useEffect(() => { onFailedChange?.(failed) }, [failed, onFailedChange])
 
   const rid = click.prepared?.request_id
   const view = click.view
@@ -83,16 +88,35 @@ export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepPro
     }
   }
 
+  // Fold exact values for presentation; the hook keeps the original View and digest for signing.
+  const presented = view && {
+    ...view,
+    view: {
+      ...view.view,
+      content: {
+        ...(view.view.content ?? { headline: '', sections: [{ id: 'hub-review', title: 'Signed review', text: view.view.lines.join('\n') }] }),
+        summary: view.view.content?.summary ?? { title: 'Hub review', lines: [] },
+      },
+    },
+  }
+  const agentsEnd = action.action === 'hub_mode_full' && view?.view.lines.some(line =>
+    /agent access (?:on this computer )?(?:ends|is revoked|will end|will be revoked)/i.test(line),
+  )
+  const failureText = action.action === 'hub_leave' ? "Couldn't leave the hub. Nothing changed. Try again."
+    : action.action === 'hub_mode_full' ? "Couldn't switch. Try again." : "Couldn't connect. Try again."
+
   return (
     <section aria-label={action.action === 'hub_leave' ? 'Leave the hub' : action.action === 'hub_mode_full' ? 'Let the hub read everything' : 'Join the hub'} data-testid="hub-step" className="space-y-3">
       {(click.phase === 'idle' || click.phase === 'preparing' || click.phase === 'viewing') && (
         <p className="flex items-center gap-2 text-[13px] text-text-muted"><Loader2 className="size-4 animate-spin" aria-hidden />Preparing the review…</p>
       )}
       {view && (click.phase === 'ready' || click.phase === 'signing') && (viewOk ? (
+        <>
+        {agentsEnd && <p>Agent access on this computer ends.</p>}
         <ClickSignPanel
           ws={ws}
-          story={storyOf(action)}
-          answer={view}
+          story={{ ...storyOf(action)!, steps: [] }}
+          answer={presented!}
           problem={click.problem}
           signing={click.phase === 'signing' || sealing}
           ready={plain || filled}
@@ -122,6 +146,7 @@ export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepPro
             </div>
           }
         />
+        </>
       ) : (
         <p role="alert" data-testid="hub-bad-view" className="text-[13px] text-danger">
           The review does not ask for your backup key the way it should. Nothing was signed. <Button size="sm" variant="ghost" onClick={cancel}>Cancel</Button>
@@ -131,10 +156,18 @@ export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepPro
       {click.phase === 'done' && (
         <div className="space-y-2"><p role="status" data-testid="hub-step-done" className="text-[13px] text-text">{doneText ?? 'Signed.'}</p><div className="flex justify-end"><Button onClick={onClose}>Close</Button></div></div>
       )}
-      {(click.phase === 'failed' || click.phase === 'cancelled') && click.problem && (
-        <div className="space-y-2">
-          <p role="alert" className="text-[13px] text-danger"><Raw>{click.problem.title}</Raw>: <Raw>{click.problem.body}</Raw></p>
-          <div className="flex justify-end"><Button variant="outline" onClick={onClose}>Close</Button></div>
+      {failed && (
+        <div className="space-y-3">
+          <p role="alert" className="text-[13px] text-danger">{failureText}</p>
+          <details><summary className="cursor-pointer">Technical details</summary>
+            {click.problem && <p><Raw>{click.problem.title}</Raw>: <Raw>{click.problem.body}</Raw></p>}
+            {click.problem?.details && <p><Raw>{click.problem.details}</Raw></p>}
+            {click.error instanceof ApiError && <p><Raw>{click.error.code}</Raw>: <Raw>{click.error.message}</Raw></p>}
+          </details>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={cancel}>Cancel</Button>
+            <Button onClick={() => { setFilled(false); setRefused(null); void click.again(action) }}>Try again</Button>
+          </div>
         </div>
       )}
     </section>

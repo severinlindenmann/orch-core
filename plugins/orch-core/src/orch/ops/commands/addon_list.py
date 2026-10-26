@@ -66,7 +66,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         if pause is not None:
             row["paused"] = {k: v for k, v in pause.items() if v is not None}
         if state == "active" and (spec := _settings_spec(root, name)) is not None:
-            row["settings"] = spec  # what the person can configure (title and schema), for the dashboard's settings panel
+            row["settings"] = spec  # what the person can configure: title and schema
         held = _credential(c, name, state, granted[name].capabilities)
         if held is not None:
             row["credential"] = held

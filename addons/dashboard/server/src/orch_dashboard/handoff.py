@@ -743,7 +743,7 @@ class DeviceRemove(Action):
 
 
 # the dashboard add-on is always on; no other package is offered here
-AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki"]
+AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki", "quick"]
 
 
 class AddonGrant(Action):

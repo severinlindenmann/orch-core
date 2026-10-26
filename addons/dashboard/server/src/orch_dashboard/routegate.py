@@ -83,6 +83,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/explorer/ticket/{key}"): (ALLOWED, ""),
     (GET, W + "/wiki"): (ALLOWED, ""),
     (GET, W + "/wiki/page"): (ALLOWED, ""),
+    (POST, W + "/wiki/create"): (ALLOWED, "admin action, plain click"),
     (GET, W + "/wiki/search"): (ALLOWED, ""),
     (GET, W + "/wiki/backlinks"): (ALLOWED, ""),
     (GET, W + "/widgets/catalog"): (ALLOWED, ""),

@@ -82,6 +82,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/worktrees/remove",
         "/api/w/{ws}/wiki",
         "/api/w/{ws}/wiki/page",
+        "/api/w/{ws}/wiki/create",
         "/api/w/{ws}/wiki/search",
         "/api/w/{ws}/wiki/backlinks",
         "/api/w/{ws}/explorer",

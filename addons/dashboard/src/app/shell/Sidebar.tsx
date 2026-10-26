@@ -452,7 +452,7 @@ const CORE_NAV = [
   { to: '/artifacts', label: 'Artifacts', icon: Files, feature: 'artifacts' },
   { to: '/agents', label: 'Agents', icon: Bot, feature: 'agents' },
   /** `real`: a real host's page (M6); the mock has quick tasks as an addon. */
-  { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick', real: true },
+  { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick_on', real: true },
   /** Drop (proposed `drop/1`): listed where the host serves it; the page itself says when it is not available. */
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
   /** Worktrees (H11d): one folder per ticket; the mock has it as an addon page. */

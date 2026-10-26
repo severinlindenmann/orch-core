@@ -94,16 +94,58 @@ class Executor(Protocol):
     def secure_dir(self, base: str, spec: DirSpec) -> tuple[bool, str | None]: ...
 
 
+_STEP_TIMEOUT = 120
+
+
+def _hung_tree(root: int) -> str:
+    """What a step that exceeded its time was waiting on: the program and every descendant, with the kernel wait
+    channel (read from /proc, no extra program). For the failure message only; empty where /proc is not there."""
+    kids: dict[int, list[int]] = {}
+    for entry in os.listdir("/proc") if os.path.isdir("/proc") else []:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", encoding="utf-8", errors="replace") as handle:
+                rest = handle.read().rsplit(")", 1)[1].split()
+            kids.setdefault(int(rest[1]), []).append(int(entry))
+        except (OSError, IndexError, ValueError):
+            continue
+    lines, todo = [], [root]
+    while todo:
+        pid = todo.pop()
+        todo.extend(kids.get(pid, []))
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as handle:
+                cmd = handle.read().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+            with open(f"/proc/{pid}/wchan", encoding="utf-8", errors="replace") as handle:
+                wait = handle.read().strip()
+        except OSError:
+            continue
+        lines.append(f"  pid {pid} waits in {wait or '?'}: {cmd[:200]}")
+    return "\n".join(lines)
+
+
 def _spawn(argv: list[str]) -> RunResult:
     if argv[0] not in _ALLOWED:
         raise ValueError(f"{argv[0]} is not one of the fixed binaries")
     try:
-        done = subprocess.run(  # no shell, fixed absolute program, empty environment
-            argv, capture_output=True, text=True, timeout=120, check=False, env={"LC_ALL": "C"}
+        # no shell, fixed absolute program, empty environment
+        child = subprocess.Popen(  # noqa: S603
+            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env={"LC_ALL": "C"}
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except OSError as exc:
         return RunResult(127, f"{type(exc).__name__}: {exc}")
-    return RunResult(done.returncode, done.stdout + done.stderr)
+    try:
+        out, _ = child.communicate(timeout=_STEP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        tree = _hung_tree(child.pid)  # before the kill: this is the evidence of what it waited for
+        child.kill()
+        partial = child.communicate()[0] or ""
+        return RunResult(127, f"TimeoutExpired after {_STEP_TIMEOUT} s: {argv}\n{partial}\nwaiting:\n{tree}")
+    except (OSError, subprocess.SubprocessError) as exc:
+        child.kill()
+        return RunResult(127, f"{type(exc).__name__}: {exc}")
+    return RunResult(child.returncode, out)
 
 
 class RealExecutor:

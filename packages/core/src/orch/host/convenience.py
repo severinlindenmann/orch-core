@@ -406,6 +406,7 @@ def why(
     *,
     gated: bool = False,
     removing: frozenset[str] = frozenset(),
+    ignore_relay: bool = False,
 ) -> tuple[str, list[str]] | None:
     """The first reason convenience signing is not allowed now and the readers below level 1 it names, or None.
     H12d-2 (§0.8.6 item 9.9): ``other_member`` and ``phone_device`` count only readers below level 1 (a current
@@ -418,7 +419,9 @@ def why(
     methods = store.state.workspace.settings.get("sign_methods")
     if not gated and methods is not None and "click" not in methods:  # B6: the workspace does not allow one click
         return "disabled", []
-    if _relay_paired(state_dir, workspace_id):
+    # ignore_relay: leaving the hub (hub.left) by click; a full-mode workspace is relay paired by definition, and only
+    # that reason is waived (other_member, phone_device, reader_version stay)
+    if not ignore_relay and _relay_paired(state_dir, workspace_id):
         return "relay_paired", []
     ws = store.state.workspace
     found = below_level(ws, levels(state_dir, workspace_id, store.state, host_uid), person, device, None, removing)
@@ -482,12 +485,8 @@ def check(
     gated = isinstance(gate, DevGate) and gate.workspace_id == service.workspace_id
     found = why(
         service.store, service.state_dir, service.workspace_id, service.host_uid, person, device, gated=gated,
-        removing=removing,
+        removing=removing, ignore_relay=leaving,
     )  # fmt: skip
-    if found is not None and leaving and found[0] not in ("disabled", "idle"):
-        # prototype (e2e-4): leaving the hub (hub.left) by click is allowed whatever the readers are: it is the way out
-        # of a full-mode workspace, which is relay paired by definition. HARDENING SKIPPED
-        return
     if found is not None:
         if found[0] == "idle":
             raise unavailable("idle", [], hours=idle_hours(service.state_dir, service.workspace_id, service.host_uid))

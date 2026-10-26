@@ -1070,3 +1070,15 @@ def test_leaving_the_hub_by_click_ignores_the_readers_reasons(click, served, hum
     convenience.set_enabled(served.lab.state, served.wid, False, UID)
     with pytest.raises(Exception, match="disabled"):
         convenience.check(svc, human.person.ref, dev, leaving=True)  # the flag still decides
+
+
+def test_leaving_the_hub_still_refuses_other_readers(click, served, human, monkeypatch):
+    """Only relay_paired is waived for hub.leave; another member's old reader still refuses it."""
+    from orch.ops import readers
+
+    (served.lab.state / "hosts" / served.wid / "membership").mkdir(parents=True)
+    monkeypatch.setattr(readers, "levels", lambda *a, **k: {})
+    monkeypatch.setattr(readers, "below_level", lambda *a, **k: ("other_member", ["d_x"]))
+    svc, dev = served.service, human.person.device
+    with pytest.raises(Exception, match="other_member"):
+        convenience.check(svc, human.person.ref, dev, leaving=True)

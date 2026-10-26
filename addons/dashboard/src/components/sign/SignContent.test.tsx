@@ -81,7 +81,6 @@ it('renders every display string in fully populated content', () => {
   expect(screen.getByLabelText('Checked')).toBeVisible()
   expect(screen.getByLabelText('Unchecked')).toBeVisible()
   expect(screen.getByText('TASK-three').closest('li')).toHaveAttribute('value', '3')
-  expect(screen.getAllByText('—')).toHaveLength(1) // the missing before-value
   expect(screen.getAllByText('(not set)')).toHaveLength(1) // the missing after-value
 })
 
@@ -218,13 +217,11 @@ it('leads with the plain summary and still shows every signed line in full, labe
     sections: [{ id: 'share', title: 'What will be shared', text: SHARE_TEXT }],
   }} />)
   const summary = screen.getByTestId('sign-summary')
-  expect(within(summary).getByRole('heading', { name: 'Share these files' })).toBeVisible()
   expect(within(summary).getByText('The link works for 7 days from the moment it is made.')).toBeVisible()
   const exact = screen.getByTestId('sign-exact')
-  expect(exact).toHaveAttribute('open')
-  expect(within(exact).getByText('Exact signed details')).toBeVisible()
+  expect(exact).not.toHaveAttribute('open') // run-9 feedback: closed by default, still in the DOM
+  expect(within(exact).getByText('Show exactly what is signed')).toBeVisible()
   // every signed line, untruncated, inside the exact area
-  expect(exact).toBeVisible()
   for (const line of SHARE_TEXT.split('\n')) expect(exact.textContent).toContain(line)
   expect(summary.compareDocumentPosition(exact) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 })

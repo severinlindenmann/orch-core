@@ -135,7 +135,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
     onSign()
   }
   const technical = <TechnicalFacts view={view} />
-  const label = given ?? story?.signLabel ?? 'Sign'
+  const label = story?.signLabel ?? given ?? 'Sign'
   // A compact review (a summary, or a quick task shown folded) says what happens in its own lines: no step list under it.
   const lean = !!view.content?.summary || (!!story?.quick && !!view.content && alsoSigned(view.content, story.quick) !== null)
   return (

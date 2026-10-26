@@ -24,9 +24,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CopyButton } from '../../ticket/Header'
 import { Section } from '../../ticket/shared'
-import { fmtDateTime } from '@/lib/time'
+import { SignShell, SignFooter, STICKY_FOOTER } from '@/components/sign/SignShell'
 
-const CLICK_RISK_SHORT = 'One click signs for you from this browser on this computer; anyone using this browser session, and agents running as you, could approve. You can turn it off any time.'
+const CLICK_RISK_SHORT = 'One click signs for you from this browser on this computer; anyone using this browser, and agents running as you, could approve. You can turn it off any time.'
 
 /** Refusals after which nothing changed: the signer said so before (or instead of) moving anything. */
 /** The shortest passphrase core accepts (custody/strength.py MIN_CHARS); core still judges the strength. */
@@ -93,6 +93,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<Failure | null>(null)
   const errorId = useId()
+  const formId = useId()
   const inFlight = useRef(false) // a second submit in the same tick, before `busy` re-renders, sends nothing
 
   const reset = useCallback(() => {
@@ -162,8 +163,9 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             <p id="one-click-label" className="text-[14px] font-medium">Approve with one click on this computer</p>
             <p data-testid="click-risk" className="text-text-muted">{CLICK_RISK_SHORT}</p>
           </div>
+          {busy && <span role="status" className="shrink-0 text-text-muted">{mode === 'off' ? 'Turning off...' : 'Turning on...'}</span>}
           <Switch
-            checked={on}
+            checked={busy ? mode !== 'off' : on}
             aria-labelledby="one-click-label"
             disabled={!canFlip || mode !== 'idle'}
             onCheckedChange={() => open(on ? 'off' : terminalOn ? 'resume' : 'on')}
@@ -173,7 +175,6 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
           <summary className="cursor-pointer">Details</summary>
           <p className="mt-1" data-testid="click-risk-full">{CLICK_RISK}</p>
         </details>
-        {card?.risk_ack && <p className="text-text-muted">Risk notice acknowledged on <time dateTime={card.risk_ack}>{fmtDateTime(card.risk_ack)}</time></p>}
         <p data-testid="signing-state" className={on && card?.available ? "sr-only" : "text-text-muted"}>
           {on && card?.available
             ? 'On: you approve here with one click.'
@@ -210,124 +211,71 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             Your key is already saved on this computer, so there is no passphrase to check. Use the switch to turn it on after a short review, or in the terminal:{' '}
             <Command command={convenienceOnCommand(workspace.prefix)} what="orch host convenience on" />
           </p>
-        ) : mode === 'idle' ? null : mode === 'resume' ? (
-          <form
-            className="space-y-2"
-            onSubmit={(e) => {
-              e.preventDefault()
-              void submit({ on: true, resume: true })
-            }}
+        ) : null}
+        {mode !== 'idle' && (
+          <SignShell
+            anchor={null}
+            open
+            onDismiss={() => { if (!inFlight.current) reset() }}
+            title={mode === 'off' ? 'Turn off one-click approval' : 'Turn on one-click approval'}
+            description={mode === 'off' ? "You'll type this passphrase each time you approve." : 'Your key will be stored on this computer for one-click approval.'}
+            showClose={!busy}
+            onOpenAutoFocus={() => {}}
           >
-            <dl data-testid="signing-resume" className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-              <dt className="text-text-muted">Workspace</dt>
-              <dd className="min-w-0 break-words">
-                {workspace.name} ({workspace.prefix})
-              </dd>
-              <dt className="text-text-muted">Change</dt>
-              <dd className="min-w-0">One click approves for you again. Your key stays where it is. It switches itself off again after {card?.idle_hours ? `${card.idle_hours} hours` : 'a while'} without use.</dd>
-            </dl>
-            <p data-testid="resume-risk" className="text-text-muted">{CLICK_RISK}</p>
-            {error && (
-              <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
-                {error.text}
-                {error.command && (
-                  <>
-                    {' '}
-                    <Command {...error.command} />
-                  </>
+            {mode === 'resume' ? (
+              <form
+                id={formId}
+                className="space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void submit({ on: true, resume: true })
+                }}
+              >
+                <p data-testid="signing-resume">One click approves for you again. Your key stays where it is. It switches itself off again after {card?.idle_hours ? `${card.idle_hours} hours` : 'a while'} without use.</p>
+                <p data-testid="resume-risk" className="text-text-muted">{CLICK_RISK}</p>
+                {error && (
+                  <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
+                    {error.text}
+                    {error.command && (
+                      <>
+                        {' '}
+                        <Command {...error.command} />
+                      </>
+                    )}
+                  </p>
                 )}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={reset} disabled={busy}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={busy}>
-                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Turn on
-              </Button>
-            </div>
-          </form>
-        ) : mode === 'on' ? (
-          <form
-            className="space-y-2"
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (pass) void submit({ on: true, passphrase: pass })
-            }}
-          >
-            <dl data-testid="signing-conversion" className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
-              <dt className="text-text-muted">Workspace</dt>
-              <dd className="min-w-0 break-words">
-                {workspace.name} ({workspace.prefix})
-              </dd>
-              <dt className="text-text-muted">Device key</dt>
-              <dd className="min-w-0 break-all font-mono">{card?.device ?? "this computer's key for this workspace"}</dd>
-              <dt className="text-text-muted">Change</dt>
-              <dd className="min-w-0">Your key moves from passphrase protection to this computer's saved keys</dd>
-            </dl>
-            <Label htmlFor="signing-passphrase">Your passphrase for this workspace</Label>
-            <p className="text-text-muted">Asked once, to prove the key is yours. It is not kept.</p>
-            {/* The CURRENT passphrase is proven here: Chromium and Safari ignore autocomplete=off on password fields,
-                so say what it is (orch-9d L2 on #578). The dashboard never asks for a new one. */}
-            <Input
-              id="signing-passphrase"
-              type="password"
-              autoComplete="current-password"
-              aria-describedby={error ? errorId : undefined}
-              aria-invalid={error ? true : undefined}
-              autoCorrect="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              value={pass}
-              onChange={(e) => setPass(e.target.value)}
-              disabled={busy}
-            />
-            {error && (
-              <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
-                {error.text}
-                {error.command && (
-                  <>
-                    {' '}
-                    <Command {...error.command} />
-                  </>
-                )}
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={reset} disabled={busy}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={busy || !pass}>
-                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Turn on
-              </Button>
-            </div>
-          </form>
-        ) : (
-          <form
-            className="space-y-2"
-            onSubmit={(e) => {
-              e.preventDefault()
-              if (!(moveBack ? newOk : true)) return
-              const typed = pass
-              setPass('') // emptied before anything is sealed or sent: the text lives in this one closure
-              setPass2('')
-              void submit({ on: false }, moveBack ? typed : undefined)
-            }}
-          >
-            {moveBack ? (
-              <>
-                <p data-testid="signing-off-explain">
-                  Turn off one-click signing and protect your key with a new passphrase. It moves your key back from this computer's key store, and you will enter this passphrase every time you sign in the terminal.
-                </p>
-                <p data-testid="signing-off-copies" className="text-text-muted">
-                  This does not remove existing copies of your key from backups or snapshots on this computer. orch cannot erase those copies.
-                </p>
-                <Label htmlFor="signing-new-passphrase">New passphrase (at least {MIN_NEW_PASSPHRASE} characters, not a common phrase)</Label>
+                <SignFooter><div className={STICKY_FOOTER + " flex justify-end gap-2"}>
+                  <Button type="button" variant="ghost" onClick={reset} disabled={busy}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" form={formId} disabled={busy}>
+                    {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Turn on
+                  </Button>
+                </div></SignFooter>
+              </form>
+            ) : mode === 'on' ? (
+              <form
+                id={formId}
+                className="space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (pass) void submit({ on: true, passphrase: pass })
+                }}
+              >
+                <details className="text-text-muted">
+                  <summary className="cursor-pointer">Technical details</summary>
+                  <p className="break-all font-mono">Device key: {card?.device ?? "this computer's key for this workspace"}</p>
+                </details>
+                <Label htmlFor="signing-passphrase">Enter the passphrase you set when you turned one click off.</Label>
+                <p className="text-text-muted">Asked once, to prove the key is yours. It is not kept.</p>
+                {/* The CURRENT passphrase is proven here: Chromium and Safari ignore autocomplete=off on password fields,
+                    so say what it is (orch-9d L2 on #578). The dashboard never asks for a new one. */}
                 <Input
-                  id="signing-new-passphrase"
+                  id="signing-passphrase"
                   type="password"
-                  autoComplete="new-password"
+                  autoComplete="current-password"
                   aria-describedby={error ? errorId : undefined}
+                  aria-invalid={error ? true : undefined}
                   autoCorrect="off"
                   autoCapitalize="off"
                   spellCheck={false}
@@ -335,59 +283,116 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
                   onChange={(e) => setPass(e.target.value)}
                   disabled={busy}
                 />
-                <Label htmlFor="signing-new-passphrase-2">New passphrase again</Label>
-                <Input
-                  id="signing-new-passphrase-2"
-                  type="password"
-                  autoComplete="new-password"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  value={pass2}
-                  onChange={(e) => setPass2(e.target.value)}
-                  disabled={busy}
-                />
-                {pass !== '' && [...pass].length < MIN_NEW_PASSPHRASE && (
-                  <p data-testid="signing-short" className="text-text-muted">
-                    {[...pass].length} of at least {MIN_NEW_PASSPHRASE} characters so far.
+                {error && (
+                  <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
+                    {error.text}
+                    {error.command && (
+                      <>
+                        {' '}
+                        <Command {...error.command} />
+                      </>
+                    )}
                   </p>
                 )}
-                {pass2 !== '' && pass !== pass2 && (
-                  <p data-testid="signing-mismatch" className="text-warning">
-                    Passphrases don't match. Enter the same passphrase in both fields.
-                  </p>
-                )}
-                <p className="text-text-muted">Encrypted in this browser before it is sent, so only the signing helper on this computer can read it. It is used once and not saved.</p>
-              </>
+                <SignFooter><div className={STICKY_FOOTER + " flex justify-end gap-2"}>
+                  <Button type="button" variant="ghost" onClick={reset} disabled={busy}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" form={formId} disabled={busy || !pass}>
+                    {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Turn on
+                  </Button>
+                </div></SignFooter>
+              </form>
             ) : (
-              <>
-                <p className="text-text-muted">Your key stays saved on this computer; nothing here can sign while signing is off.</p>
-                <p data-testid="signing-move-back" className="text-text-muted">
-                  To move it back under a passphrase, run in the terminal:{' '}
-                  <Command command={custodyPassphraseCommand(workspace.prefix)} what="orch keys custody passphrase --in-place" />
-                </p>
-              </>
-            )}
-            {error && (
-              <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
-                {error.text}
-                {error.command && (
+              <form
+                id={formId}
+                className="space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  if (!(moveBack ? newOk : true)) return
+                  const typed = pass
+                  setPass('') // emptied before anything is sealed or sent: the text lives in this one closure
+                  setPass2('')
+                  void submit({ on: false }, moveBack ? typed : undefined)
+                }}
+              >
+                {moveBack ? (
                   <>
-                    {' '}
-                    <Command {...error.command} />
+                    <p data-testid="signing-off-explain">
+                      Protect your key with a new passphrase.
+                    </p>
+                    <details className="text-text-muted">
+                      <summary className="cursor-pointer">Details</summary>
+                      <p data-testid="signing-off-copies">Older backups of this computer may still hold your key.</p>
+                    </details>
+                    <Label htmlFor="signing-new-passphrase">New passphrase (at least {MIN_NEW_PASSPHRASE} characters, not a common phrase)</Label>
+                    <Input
+                      id="signing-new-passphrase"
+                      type="password"
+                      autoComplete="new-password"
+                      aria-describedby={error ? errorId : undefined}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      value={pass}
+                      onChange={(e) => setPass(e.target.value)}
+                      disabled={busy}
+                    />
+                    <Label htmlFor="signing-new-passphrase-2">New passphrase again</Label>
+                    <Input
+                      id="signing-new-passphrase-2"
+                      type="password"
+                      autoComplete="new-password"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      value={pass2}
+                      onChange={(e) => setPass2(e.target.value)}
+                      disabled={busy}
+                    />
+                    <p className="text-text-muted">Sent safely and never saved.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-text-muted">Your key stays saved on this computer; nothing here can sign while signing is off.</p>
+                    <p data-testid="signing-move-back" className="text-text-muted">
+                      To move it back under a passphrase, run in the terminal:{' '}
+                      <Command command={custodyPassphraseCommand(workspace.prefix)} what="orch keys custody passphrase --in-place" />
+                    </p>
                   </>
                 )}
-              </p>
+                {error && (
+                  <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
+                    {error.text}
+                    {error.command && (
+                      <>
+                        {' '}
+                        <Command {...error.command} />
+                      </>
+                    )}
+                  </p>
+                )}
+                <SignFooter><div className={STICKY_FOOTER + " flex flex-wrap items-center justify-end gap-2"}>
+                  {moveBack && (
+                    <div aria-live="polite" className="mr-auto flex flex-wrap gap-3 text-[12px]">
+                      <span data-testid="signing-length-check" className={[...pass].length >= MIN_NEW_PASSPHRASE ? 'text-brand' : 'text-text-muted'}>
+                        {[...pass].length >= MIN_NEW_PASSPHRASE && '✓ '}14+ characters
+                      </span>
+                      <span data-testid="signing-match-check" className={pass !== '' && pass === pass2 ? 'text-brand' : 'text-text-muted'}>
+                        {pass !== '' && pass === pass2 && '✓ '}Both match
+                      </span>
+                    </div>
+                  )}
+                  <Button type="button" variant="ghost" onClick={reset} disabled={busy}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" form={formId} variant="outline" disabled={busy || (moveBack && !newOk)}>
+                    {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Turn off
+                  </Button>
+                </div></SignFooter>
+              </form>
             )}
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={reset} disabled={busy}>
-                Cancel
-              </Button>
-              <Button type="submit" variant="outline" disabled={busy || (moveBack && !newOk)}>
-                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} Turn off
-              </Button>
-            </div>
-          </form>
+          </SignShell>
         )}
       </div>
     </Section>

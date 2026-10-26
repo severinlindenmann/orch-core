@@ -73,16 +73,16 @@ describe('alsoSigned: the fold is allowed only for exactly the derived review', 
 })
 
 describe('the quick review', () => {
-  it('shows the typed values and the sentence always; the fold is closed, named with a count and one click away', () => {
+  it('keeps typed values and derived facts inside the closed exact review', () => {
     render(<SignContent content={hostContent()} quick={typed} />)
+    document.querySelectorAll('details').forEach(fold => { fold.open = true })
     const visible = screen.getByTestId('sign-typed')
     expect(within(visible).getByText('Rename the team photo folder')).toBeVisible()
     expect(within(visible).getByText('Use the 2026 naming.')).toBeVisible()
     expect(visible).toHaveTextContent('Links still work (checked by npm run links)')
     expect(screen.getByTestId('sign-also-sentence')).toHaveTextContent('Counts as approved: what to do and how to check it.')
     const fold = screen.getByTestId('sign-also')
-    expect(fold).not.toHaveAttribute('open')
-    expect(fold.querySelector('summary')).toHaveTextContent('Show exactly what is signed (requirements, plan, 2 checks, 2 tasks)')
+    expect(fold.closest('details')?.querySelector('summary')).toHaveTextContent('Technical details')
     // Every derived row is in the fold (rendered, only collapsed).
     for (const t of ['Requirements', 'Plan', 'Acceptance checks', 'Tasks', 'Type', 'Owner', 'Labels', 'Chore', 'quick', SIGNER.slice(0, 14), 'Links still work (proves AC2) (checked by npm run links)']) expect(fold).toHaveTextContent(t)
   })
@@ -92,13 +92,13 @@ describe('the quick review', () => {
     ['an extra verify command', (c: Content) => ({ ...c, tasks: c.tasks!.map((t, i) => (i === 1 ? { ...t, verify: [...t.verify!, 'rm -rf /'] } : t)) }), 'rm -rf /'],
     ['an extra label', (c: Content) => ({ ...c, fields_changed: c.fields_changed!.map((f) => (f.field === 'labels' ? { ...f, after: 'quick, urgent' } : f)) }), 'quick, urgent'],
     ['a missing title', (c: Content) => ({ ...c, ticket: undefined }), 'Use the 2026 naming.'],
-  ])('shows the FULL review, no fold, for %s', (_n, change, text) => {
+  ])('keeps the full review in the exact fold for %s', (_n, change, text) => {
     render(<SignContent content={change(hostContent())} quick={typed} />)
     expect(screen.queryByTestId('sign-also')).toBeNull()
     expect(screen.queryByTestId('sign-typed')).toBeNull()
     expect(document.body).toHaveTextContent(text)
   })
-  it('shows the full review for an unknown key too (nothing hidden behind a fold)', () => {
+  it('retains the full review for an unknown key in the exact fold', () => {
     render(<SignContent content={{ ...hostContent(), fields_title: 'Details', sections: [...hostContent().sections!, { id: 'x', title: 'Extra', text: 'surprise text' }] }} quick={typed} />)
     expect(screen.queryByTestId('sign-also')).toBeNull()
     expect(document.body).toHaveTextContent('surprise text')

@@ -7,16 +7,14 @@ import { SignContent, SignDetails } from './SignContent'
 import { Loader2, ShieldAlert } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { CLICK_RISK, type ClickProblem, type ClickViewAnswer } from '@/api/click'
-import { uuid8 } from '@/api/workspaces'
 import { Button } from '@/components/ui/button'
 import { Raw } from './visible'
 import { ClickProblemBox } from './RefusalDevices'
 import { useActivation, useArming } from './useArming'
-import { AgentAccess, WhatNext } from './SignAside'
 import type { SignStory } from './story'
-import { alsoSigned } from './alsoSigned'
+import { AgentAccess, WhatNext } from './SignAside'
 import { fmtClock } from '@/lib/time'
-import { STICKY_FOOTER } from './SignShell'
+import { SignFooter, STICKY_FOOTER } from './SignShell'
 
 function RiskLine({ text }: { text: string }) {
   return (
@@ -74,7 +72,7 @@ export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
         <dt className="text-text-muted">Workspace</dt>
         <dd data-testid="click-workspace" className="flex flex-wrap items-center gap-x-2">
           <span className="rounded bg-surface-3 px-1 font-mono text-text" data-ws-id>
-            id {uuid8(view.workspace.id)}
+            id <Raw>{view.workspace.id}</Raw>
           </span>
           <Raw>{view.workspace.prefix}</Raw>
           <Raw>{view.workspace.name}</Raw>
@@ -111,7 +109,7 @@ export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
       )}
       {view.artifacts === 'checked' && (
         <p data-testid="click-artifacts" className="text-[12px] text-text-muted">
-          The signer checked the artifact bytes it signs.
+          The files were checked before signing.
         </p>
       )}
     </>
@@ -134,24 +132,18 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
     if (!activation.take() || !can) return
     onSign()
   }
-  const technical = <TechnicalFacts view={view} />
+  const technical = <><TechnicalFacts view={view} />{story?.scope && <p data-testid="sign-scope">{story.scope}</p>}<AgentAccess story={story ?? null} />{story && <WhatNext story={story} />}</>
   const label = story?.signLabel ?? given ?? 'Sign'
-  // A compact review (a summary, or a quick task shown folded) says what happens in its own lines: no step list under it.
-  const lean = !!view.content?.summary || (!!story?.quick && !!view.content && alsoSigned(view.content, story.quick) !== null)
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
-      {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
-      <AgentAccess story={story ?? null} />
-      {story && !lean && <WhatNext story={story} />}
       {view.checks.filter(c => !c.clean).map((c, i) => <p key={i} role="note" className="text-[13px] text-warning">Repository <Raw>{c.repo}</Raw>: not clean</p>)}
-      {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The signer did not see the artifact bytes: only their hash is signed.</p>}
-      {!view.content && <SignDetails>{technical}</SignDetails>}
-      {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
+      {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The files could not be checked before signing.</p>}
+      {!view.content && <details><summary className="cursor-pointer text-[13px]">Show exactly what is signed</summary><SignDetails>{technical}
+      <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div></SignDetails></details>}
       {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={ws} />}
       {extra}
-      <div className={STICKY_FOOTER} data-testid="sign-footer">
-        <p data-testid="sign-method" className="text-[12px] text-text-muted">On this computer</p>
+      <SignFooter><div className={STICKY_FOOTER} data-testid="sign-footer">
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>
             Cancel
@@ -174,7 +166,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
             )}
           </Button>
         </div>
-      </div>
+      </div></SignFooter>
     </section>
   )
 }

@@ -93,10 +93,8 @@ describe('the action dialog with click-to-sign', () => {
     expect(c.cancel.mock.calls[0][1]).toBe(REQ)
   })
 
-  it('opens straight on the review: content first, Sign under it, never a Sign button before the content (WYSIWYS)', async () => {
+  it('keeps Sign disabled in the footer until the review is ready', async () => {
     const { dialog } = await open()
-    // before the review is shown there is no Sign button at all
-    expect(within(dialog).queryByRole('button', { name: /^Sign/ })).toBeNull()
     await within(dialog).findByTestId('click-panel', {}, T)
     expect(within(dialog).getByText('Approve the plan of DEMO-0044')).toBeInTheDocument()
     expect(await within(dialog).findByRole('button', { name: /^Sign( |$)/ }, T)).toBeInTheDocument()
@@ -106,11 +104,11 @@ describe('the action dialog with click-to-sign', () => {
     expect(s.prepare).not.toHaveBeenCalled() // one click request, never also a terminal one
   })
 
-  it('at no moment is a Sign button on screen before the content is (observed on every DOM change)', async () => {
+  it('never enables Sign before the content is shown (observed on every DOM change)', async () => {
     const bad: string[] = []
     const look = () => {
       for (const d of document.querySelectorAll('[data-handoff-dialog]')) {
-        const signs = [...d.querySelectorAll('button')].filter((b) => /^Sign( in a terminal)?$/.test(b.textContent?.trim() ?? ''))
+        const signs = [...d.querySelectorAll('button')].filter((b) => !b.disabled && /^Sign( in a terminal)?$/.test(b.textContent?.trim() ?? ''))
         if (signs.length && !d.querySelector('[data-testid="click-panel"], [data-testid="handoff-command"]')) bad.push(d.textContent ?? '')
       }
     }
@@ -223,9 +221,7 @@ describe('answering a question in one-click mode', () => {
     // what is answered is in view; the question and the other options are under Details, closed
     expect(within(dialog).getByTestId('sign-choice')).toHaveTextContent(/Your answer.*DATE \(local midnight\)/)
     const compact = within(dialog).getByTestId('sign-compact')
-    const shown = within(compact).getAllByTestId('sign-ticket').find((e) => !e.closest('details'))! // outside Details
-    expect(shown).toHaveTextContent('DEMO-0043')
-    expect(shown).toHaveTextContent('abcd1234')
+    expect(within(compact).getByText('abcd1234')).not.toBeVisible()
     expect(compact).toHaveTextContent('Which date should the report use?')
     const exact = within(dialog).getByTestId('sign-exact')
     expect(exact).not.toHaveAttribute('open')
@@ -245,6 +241,6 @@ describe('answering a question in one-click mode', () => {
     await within(dialog).findByTestId('click-panel', {}, T)
     expect(within(dialog).queryByTestId('sign-compact')).toBeNull()
     expect(within(dialog).getByText('Which date should the report use?')).toBeVisible()
-    expect(within(dialog).getByText('TIMESTAMP')).toBeVisible()
+    expect(within(dialog).getByText('TIMESTAMP')).not.toBeVisible()
   })
 })

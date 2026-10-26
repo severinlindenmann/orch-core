@@ -11,7 +11,7 @@ export function asRow(a: InstalledAddon, summary: string | undefined): AddOnRow 
   return {
     id: a.name,
     title: a.name,
-    desc: summary ?? `Version ${a.version}`,
+    desc: summary ?? '',
     state: a.state === 'active' ? 'on' : 'off',
     locked: null,
     blocked: null,
@@ -43,16 +43,14 @@ export function InstalledGroup({
     <BuiltInAddOns
       workspace={workspace}
       rows={addons.map((a) => asRow(a, summaryOf(a.name)))}
-      tag="Marketplace"
       label="From marketplaces"
-      empty="Nothing installed from a marketplace yet. Browse has what is on offer."
+      empty="Nothing installed from a marketplace yet."
       actions={(row) => {
         const a = by.get(row.id)
         if (!a) return null
-        if (!mayWrite) return <span className="text-[11px] text-text-faint">{a.version}</span>
+        if (!mayWrite) return null
         return (
           <div className="flex flex-wrap items-center gap-1">
-            <span className="text-[11px] text-text-faint">{a.version}</span>
             {a.state !== 'active' && <span className="text-[11px] text-text-faint">{stateLabel(a.state)}</span>}
             {a.available && !a.available.revoked && (
               <Button size="sm" variant="secondary" disabled={busy} onClick={() => onUpdate(a)}>

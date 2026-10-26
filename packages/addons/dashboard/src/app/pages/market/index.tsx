@@ -284,7 +284,7 @@ function MarketWorkspace() {
       </nav>
       {message && <p role="status">{message}</p>}
       {!market ? (
-        workspace && <BuiltInGroup ws={workspace} />
+        workspace && <><BuiltInGroup ws={workspace} /><h2 className="pt-2 text-sm font-semibold">From marketplaces</h2><p className="text-[13px] text-text-muted">Nothing installed from a marketplace yet.</p></>
       ) : active.isError ? (
         <LoadFailed what={tab === 'installed' ? 'installed add-ons' : 'marketplaces'} onRetry={() => void active.refetch()} />
       ) : active.isPending ? (
@@ -338,15 +338,15 @@ function MarketWorkspace() {
                         </h2>
                       </div>
                       <p className="text-xs text-text-muted">
-                        <Inline>{`${m.class === 'official' ? 'official - ' : ''}${m.url.replace(/^https:\/\/github\.com\//, '')} - ${a.version}`}</Inline>
+                        <Inline>{`${m.class === 'official' ? 'official - ' : ''}${m.url.replace(/^https:\/\/github\.com\//, '')}`}</Inline>
                       </p>
-                      {m.class === 'official' && <p className="text-xs">Official marketplace</p>}
+                      <details className="text-xs text-text-muted"><summary>Technical details</summary><p>Version <Inline>{a.version}</Inline></p></details>
                       <AddonFrame addon={a.id} title="From the addon" compact className="flex-1 items-start text-sm">
                         <Inline>{a.from_marketplace.summary}</Inline>
                       </AddonFrame>
                       <p className="text-[11px] text-text-faint">The text above comes from the add-on package: not verified.</p>
                       <div className="flex flex-wrap gap-1">
-                        {a.capabilities.map((p) => (
+                        {[...new Set(a.capabilities)].map((p) => (
                           <span className="rounded-full border border-border px-2 text-xs" key={p}>
                             <Inline>{permissionEffect(p)}</Inline>
                           </span>

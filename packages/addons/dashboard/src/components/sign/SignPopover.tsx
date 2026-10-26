@@ -14,7 +14,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
 import { Button } from '@/components/ui/button'
-import { lastTrigger, SignShell, STICKY_FOOTER } from './SignShell'
+import { lastTrigger, SignShell, SignFooter, STICKY_FOOTER } from './SignShell'
 import { queries } from '@/api/queries'
 import { sharesPrefix, uuid8 } from '@/api/workspaces'
 import { useWorkspace } from '@/app/workspace'
@@ -279,7 +279,7 @@ export function SignPopover(p: SignPopoverProps) {
   if (viaHub) {
     const request = hubRequestOf(p.action)
     return (
-      <SignShell inline={p.inline} anchor={anchor} open onDismiss={p.onClose} title={<Inline>{p.title}</Inline>} description="Only you can approve this. Agents cannot." showClose onOpenAutoFocus={(e) => e.preventDefault()}>
+      <SignShell inline={p.inline} anchor={anchor} open onDismiss={p.onClose} title={<Inline>{p.title}</Inline>} description={null} showClose onOpenAutoFocus={(e) => e.preventDefault()}>
         {request && p.ws ? <HubSignPanel ws={p.ws} request={request} /> : <NotFromHub />}
         <div className="flex justify-end gap-2">
           <Button variant="outline" ref={cancelRef} onClick={p.onClose}>
@@ -292,35 +292,23 @@ export function SignPopover(p: SignPopoverProps) {
 
   // The Cancel row sits at the bottom of the review. The click panel carries its own (Cancel and Sign); before the request
   // exists, or while it is being read, there is nothing in it yet.
-  const footerShown = !['ready', 'signing', 'preparing', 'viewing'].includes(click.phase) && !(phase === 'idle' && click.phase === 'idle' && autoNow && !!p.action)
+  const preparingReview = ['preparing', 'viewing'].includes(click.phase) || phase === 'preparing' || (phase === 'idle' && click.phase === 'idle' && autoNow && !!p.action)
+  const footerShown = !['ready', 'signing'].includes(click.phase)
   const shown = click.view?.view.content ?? run.request?.content
   // A quick task whose review is exactly the derived one: the headline says the action, the typed text is quoted once below.
   const quickHead = story?.quick && shown && alsoSigned(shown, story.quick) ? (p.startsAgent ? 'Start a task' : 'Create a task') : null
   const title = quickHead ? <>{quickHead}</> : <Inline>{click.view?.view.content?.title ?? click.view?.view.content?.headline ?? click.view?.view.headline ?? run.request?.content?.title ?? run.request?.content?.headline ?? run.request?.headline ?? p.title}</Inline>
-  const description = (
-    <>
-      {shared && here && (
-        <p data-testid="handoff-workspace" className="text-[12px] text-text-muted">
-          Workspace {here.prefix}{' '}
-          <span className="rounded bg-surface-3 px-1 font-mono text-text" data-ws-id>
-            id {uuid8(here.id)}
-          </span>{' '}
-          · <bdi>
-            <Raw>{here.name}</Raw>
-          </bdi>
-        </p>
-      )}
-      {!(click.view?.view.content || run.request?.content) && <p>
-        {clickOpen
-          ? 'Only you can approve this. Agents cannot.'
-          : phase === 'idle'
-            ? method === 'click'
-              ? 'Sign with one click on this computer.'
-              : 'This one is signed in your terminal. This page only shows the request.'
-            : 'Only you can approve this. Agents cannot.'}
-      </p>}
-    </>
-  )
+  const description = shared && here ? (
+    <p data-testid="handoff-workspace" className="text-[12px] text-text-muted">
+      Workspace {here.prefix}{' '}
+      <span className="rounded bg-surface-3 px-1 font-mono text-text" data-ws-id>
+        id {uuid8(here.id)}
+      </span>{' '}
+      · <bdi>
+        <Raw>{here.name}</Raw>
+      </bdi>
+    </p>
+  ) : null
 
   return (
     <SignShell
@@ -438,13 +426,13 @@ export function SignPopover(p: SignPopoverProps) {
       {p.unsigned && !end && click.phase !== 'done' && <div data-testid="handoff-unsigned">{p.unsigned}</div>}
 
       {phase === 'waiting' && story && <WhatNext story={story} />}
-      {footerShown && <div className={`${STICKY_FOOTER} flex flex-wrap items-center gap-2 sm:justify-between`} data-testid="sign-footer-row">
+      {footerShown && <SignFooter><div className={`${STICKY_FOOTER} flex flex-wrap items-center gap-2 sm:justify-between`} data-testid="sign-footer-row">
         <span aria-live="polite" className="text-[12px] text-text-muted">
           {phase === 'idle' && p.hint}
           {phase === 'waiting' && 'Waiting for approval in a terminal…'}
         </span>
         <div className="flex flex-wrap gap-2">
-          {phase === 'idle' && !clickOpen && !(autoNow && p.action) && (
+          {phase === 'idle' && !clickOpen && !preparingReview && !(autoNow && p.action) && (
             <>
               <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
                 Cancel
@@ -476,10 +464,11 @@ export function SignPopover(p: SignPopoverProps) {
               Close
             </Button>
           )}
-          {phase === 'preparing' && (
-            <Button ref={cancelRef} variant="ghost" disabled>
-              Cancel
-            </Button>
+          {preparingReview && (
+            <>
+              <Button ref={cancelRef} variant="ghost" disabled>Cancel</Button>
+              <Button disabled>{p.confirmLabel ?? story?.signLabel ?? 'Sign'}</Button>
+            </>
           )}
           {phase === 'waiting' && (
             <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>
@@ -496,7 +485,7 @@ export function SignPopover(p: SignPopoverProps) {
             </Button>
           )}
         </div>
-      </div>}
+      </div></SignFooter>}
     </SignShell>
   )
 }

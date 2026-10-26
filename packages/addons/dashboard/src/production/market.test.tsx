@@ -32,7 +32,7 @@ it('shows a source on every card, states and a permanent nav link', async () => 
   show('/w/DEMO/addons')
   await screen.findByText('Available', {}, T)
   for (const text of ['Off', 'On', 'Waiting for installation approval', 'Withdrawn by its publisher']) expect(screen.getByText(text)).toBeInTheDocument()
-  for (const card of screen.getAllByRole('article')) expect(within(card).getByText('official - demo-example/market - 1.2.0')).toBeInTheDocument()
+  for (const card of screen.getAllByRole('article')) expect(within(card).getByText('official - demo-example/market')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'Add-ons' })).toHaveAttribute('href', '/w/DEMO/addons')
 })
 // Security review (UI provenance): publisher/marketplace text may only appear inside core's AddonFrame, never as bare core-looking UI.

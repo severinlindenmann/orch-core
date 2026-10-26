@@ -90,12 +90,12 @@ def terminal_waits(runs: list[dict], rows: list[dict], mine: dict[str, list[dict
     """Run-9 feedback 3.6: an agent run the host marks `waiting` (Notification hook, else a quiet terminal) on a ticket
     where nothing is open for the person and no event came after the marker. Local and display only; it is not a need
     (never counted). `ref` is the run id: "Open terminal" attaches to it."""
-    by_key = {r["key"]: r for r in rows}
+    by_key = {r["key"]: r for r in rows if "key" in r}
     out = []
     for r in runs:
         w = r.get("waiting")
         row = by_key.get(r.get("ticket") or "")
-        if not isinstance(w, dict) or row is None or mine.get(row["uid"]):
+        if not isinstance(w, dict) or row is None or mine.get(row.get("uid")):
             continue
         since, updated = _at(w.get("since")), _at(row.get("updated_at"))
         if since is None or (updated is not None and updated > since):

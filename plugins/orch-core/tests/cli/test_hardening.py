@@ -192,8 +192,8 @@ def test_commas_in_free_text_are_kept(cli):
     assert parser.parse(["task", "add", "x, y", "--proves", "AC1,AC2"]).args["text"] == "x, y"
 
 
-def test_option_tokens_with_whitespace_are_refused_not_stripped(cli):
-    for bad in ("yes, no", " yes,no", "ye s,no", "yes,no "):
+def test_option_titles_that_are_blank_or_without_letters_are_refused(cli):
+    for bad in ("yes, ,no", "yes,!!!", "yes,   "):
         r = cli("ask", "q?", "--options", bad, "--json", env=ENV)
         assert (r.code, code_of(r)) == (5, "invalid.input"), bad
 

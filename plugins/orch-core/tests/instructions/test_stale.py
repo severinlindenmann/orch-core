@@ -53,7 +53,7 @@ def test_an_older_skill_version_is_stale(root):
     doc = json.loads(side.read_text())
     doc["skill_version"] = "0.9.0"
     side.write_text(json.dumps(doc))
-    assert where(stale_findings(root)) == {".agents/skills/orch-tickets": "v0.9.0, this orch ships v1.0.1"}
+    assert where(stale_findings(root)) == {".agents/skills/orch-tickets": "v0.9.0, this orch ships v1.0.2"}
 
 
 def test_a_hand_edited_builtin_skill_is_reported_and_a_taken_over_one_is_not(root):

@@ -18,8 +18,7 @@ let package = Package(
         .target(name: "OrchProtocol", dependencies: [],
                 swiftSettings: [.unsafeFlags(["-application-extension", "-strict-concurrency=complete"])]),
         // Test-only: reads the protocol vectors from the repository's contracts/ folder (no copy here). Not a product, never linked into the app.
-        .target(name: "OrchTestVectors", path: "Tests/OrchTestVectors", exclude: ["PROVENANCE.md"],
-                resources: [.copy("reader_decl_vectors.json")]),
+        .target(name: "OrchTestVectors", path: "Tests/OrchTestVectors", exclude: ["PROVENANCE.md"]),
         .testTarget(name: "OrchProtocolTests", dependencies: ["OrchProtocol", "OrchTestVectors"]),
         .target(name: "OrchCustody", dependencies: ["OrchProtocol", "OrchPush"],
                 swiftSettings: [.unsafeFlags(["-application-extension", "-strict-concurrency=complete"])]),

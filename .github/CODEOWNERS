@@ -1,2 +1,49 @@
 # Only the owner approves changes to main, the orch v2 trunk (spec D33). develop and feature branches are the bot's.
 * @severinlindenmann
+
+# Security-relevant paths (crypto, keys, custody, auth, protocol, pairing, guard, permits, charter). The owner is the code owner;
+# the process adds an Opus security review before merge, and the workflow opus-review-label.yml labels the PR
+# `needs-opus-review` for the same paths (the regexes live in .github/security-paths.txt: keep both in step).
+/contracts/ @severinlindenmann
+/.github/ @severinlindenmann
+/scripts/release/ @severinlindenmann
+/packages/core/src/orch/crypto/ @severinlindenmann
+/packages/core/src/orch/custody/ @severinlindenmann
+/packages/core/src/orch/click/ @severinlindenmann
+/packages/core/src/orch/identity/ @severinlindenmann
+/packages/core/src/orch/canon/ @severinlindenmann
+/packages/core/src/orch/wsproto/ @severinlindenmann
+/packages/core/src/orch/hubclient/ @severinlindenmann
+/packages/core/src/orch/land/ @severinlindenmann
+/packages/core/src/orch/runner/ @severinlindenmann
+/packages/core/src/orch/publishclient/ @severinlindenmann
+/packages/core/src/orch/host/auth.py @severinlindenmann
+/packages/core/src/orch/host/admission.py @severinlindenmann
+/packages/core/src/orch/host/custody.py @severinlindenmann
+/packages/core/src/orch/host/signer.py @severinlindenmann
+/packages/core/src/orch/host/isolation.py @severinlindenmann
+/packages/core/src/orch/host/ownership.py @severinlindenmann
+/packages/core/src/orch/host/grantoff.py @severinlindenmann
+/packages/core/src/orch/host/runnergrants.py @severinlindenmann
+/packages/core/src/orch/host/hub*.py @severinlindenmann
+/packages/core/src/orch/model/authz.py @severinlindenmann
+/packages/core/hooks/ @severinlindenmann
+/packages/core/skills/ @severinlindenmann
+/packages/core/src/orch/instructions/ @severinlindenmann
+/packages/core/src/orch/market/ @severinlindenmann
+/packages/hub/src/orch_hub/keys/ @severinlindenmann
+/packages/hub/src/orch_hub/contract/ @severinlindenmann
+/packages/hub/src/orch_hub/custodial/ @severinlindenmann
+/packages/hub/src/orch_hub/access/ @severinlindenmann
+/packages/hub/src/orch_hub/link/ @severinlindenmann
+/packages/relay/src/orch_relay/proto/ @severinlindenmann
+/packages/relay/src/orch_relay/hub_accounts.py @severinlindenmann
+/packages/publish/pubsrv/auth.py @severinlindenmann
+/packages/publish/pubsrv/relay_proto.py @severinlindenmann
+/packages/publish/pubsrv/hub_*.py @severinlindenmann
+/packages/mobile/OrchKit/Sources/OrchProtocol/ @severinlindenmann
+/packages/mobile/OrchKit/Sources/OrchCustody/ @severinlindenmann
+/packages/addons/dashboard/server/src/orch_dashboard/auth.py @severinlindenmann
+/packages/addons/dashboard/server/src/orch_dashboard/click_signer.py @severinlindenmann
+/packages/addons/dashboard/server/src/orch_dashboard/passkey_routes.py @severinlindenmann
+/packages/addons/*/orch-addon.json @severinlindenmann

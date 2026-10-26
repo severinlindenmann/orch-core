@@ -17,9 +17,9 @@ let package = Package(
     targets: [
         .target(name: "OrchProtocol", dependencies: [],
                 swiftSettings: [.unsafeFlags(["-application-extension", "-strict-concurrency=complete"])]),
-        // Test-only: the single copy of the protocol vectors. Not a product, never linked into the app.
+        // Test-only: reads the protocol vectors from the repository's contracts/ folder (no copy here). Not a product, never linked into the app.
         .target(name: "OrchTestVectors", path: "Tests/OrchTestVectors", exclude: ["PROVENANCE.md"],
-                resources: [.copy("vectors_v2.json"), .copy("vectors_hub.json"), .copy("origin_http.json"), .copy("vectors_hub.SOURCE"), .copy("reader_decl_vectors.json"), .copy("http_fixtures"), .copy("push_fixtures"), .copy("f1"), .copy("r2")]),
+                resources: [.copy("reader_decl_vectors.json")]),
         .testTarget(name: "OrchProtocolTests", dependencies: ["OrchProtocol", "OrchTestVectors"]),
         .target(name: "OrchCustody", dependencies: ["OrchProtocol", "OrchPush"],
                 swiftSettings: [.unsafeFlags(["-application-extension", "-strict-concurrency=complete"])]),

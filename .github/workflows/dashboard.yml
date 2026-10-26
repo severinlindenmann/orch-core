@@ -13,38 +13,12 @@ concurrency:  # draft-event and full runs never cancel each other
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   changes:
-    # the workflow runs for every PR to develop (a ruleset needs its gate to report each time); the jobs below run only
-    # when a file they cover changed
+    # the workflow runs for every PR to develop (the ruleset needs "dashboard gate" on each); the jobs run only when a
+    # file they cover changed
     name: dashboard changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      relevant: ${{ steps.files.outputs.relevant }}
-      heavy: ${{ steps.files.outputs.heavy }}
-    steps:
-      - id: files
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          EVENT: ${{ github.event_name }}
-          PR: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT" = pull_request ]; then
-            files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
-          else
-            files="$(gh api --paginate "repos/$REPO/commits/$SHA" --jq '.files[].filename')"
-          fi
-          if grep -Eq '^(packages/addons/dashboard/|packages/core/|docs/architecture/orch-v2-host\.md$|\.github/workflows/dashboard\.yml$)' <<<"$files"; then
-            relevant=true
-          else
-            relevant=false
-          fi
-          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
-          heavy=true  # the PR's LIVE draft state, not the payload (push and `gh pr ready` can race)
-          if [ "$EVENT" = pull_request ] && [ "$(gh api "repos/$REPO/pulls/$PR" --jq .draft)" = true ]; then heavy=false; fi
-          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+    uses: ./.github/workflows/_changes.yml
+    with:
+      pattern: '^(packages/addons/dashboard/|packages/core/|contracts/core/|docs/architecture/orch-v2-host\.md$|\.github/workflows/(dashboard|_changes)\.yml$)'
   vitest:
     name: vitest (shard ${{ matrix.shard }}/3)
     needs: changes

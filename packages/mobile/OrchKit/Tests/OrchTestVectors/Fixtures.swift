@@ -62,8 +62,7 @@ public enum Fixtures {
     }
 
     public static var directory: URL {
-        // Bundle.module's resource URL is only nil for a broken bundle; fall back to a path that fails loudly on first read.
-        (Bundle.module.resourceURL ?? URL(fileURLWithPath: "/nonexistent")).appendingPathComponent("http_fixtures", isDirectory: true)
+        Vectors.contracts.appendingPathComponent("relay/http_fixtures", isDirectory: true)
     }
 
     /// Names of the JSON fixture files (README.md excluded), sorted.
@@ -84,12 +83,6 @@ public enum Fixtures {
 
     public static func loadAll() throws -> [File] { try fileNames().map(load) }
 
-    /// The push registration fixtures (orch-relay 4a9f954, see PROVENANCE.md "push_fixtures"): kept apart from `http_fixtures`, which is
-    /// pinned to an older manifest revision.
-    public static func loadPush(_ fileName: String) throws -> File {
-        let dir = (Bundle.module.resourceURL ?? URL(fileURLWithPath: "/nonexistent")).appendingPathComponent("push_fixtures", isDirectory: true)
-        var f = try JSONDecoder().decode(File.self, from: Data(contentsOf: dir.appendingPathComponent(fileName)))
-        f.fileName = fileName
-        return f
-    }
+    /// The push registration fixtures (`push_register.json`, `push_unregister.json`): files of the same directory.
+    public static func loadPush(_ fileName: String) throws -> File { try load(fileName) }
 }

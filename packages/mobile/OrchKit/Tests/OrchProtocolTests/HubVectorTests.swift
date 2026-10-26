@@ -32,17 +32,6 @@ enum HubVectors {
         }
     }
 
-    @Test func theVendoredFileMatchesItsSourcePin() {
-        let source = Dictionary(uniqueKeysWithValues: OrchTestVectors.Vectors.hubSource.split(separator: "\n").compactMap { line -> (String, String)? in
-            let kv = line.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-            return kv.count == 2 ? (kv[0], kv[1]) : nil
-        })
-        let digest = SHA256.hash(data: OrchTestVectors.Vectors.hub).map { String(format: "%02x", $0) }.joined()
-        #expect(source["hub_repo"] == "orch-hub")
-        #expect(source["hub_commit"]?.count == 40)
-        #expect(source["vectors_hub_sha256"] == digest, "re-run scripts/sync-hub-vectors.sh")
-    }
-
     @Test func cardReaderCases() throws {
         let cases = HubVectors.cases("card_reader")
         #expect(cases.count >= 11)

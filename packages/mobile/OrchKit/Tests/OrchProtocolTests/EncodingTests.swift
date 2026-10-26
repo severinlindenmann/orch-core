@@ -151,16 +151,6 @@ import Testing
     }
 }
 
-@Suite struct ProvenanceTests {
-    @Test func vectorsMatchProvenanceSHA256() throws {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("OrchTestVectors/PROVENANCE.md")
-        let prov = try String(contentsOf: url, encoding: .utf8)
-        let digest = Hex.encode(SHA256.hash(data: OrchTestVectors.Vectors.data))
-        #expect(prov.contains("sha256: `\(digest)`"))
-    }
-}
-
 /// The deeper `StrictJSON.parse(_:maxBytes:maxDepth:)` exists only for the vector corpus: no product source may call it.
 @Suite struct StrictJSONDepthOverrideTests {
     @Test func noProductCodeUsesTheDepthOverride() throws {

@@ -15,31 +15,17 @@ defaults:
   run:
     working-directory: packages/core
 jobs:
-  mode:
-    # Decides from the PR's LIVE draft state, not the event payload: a push and `gh pr ready` can race, and the payload
-    # then says draft for the head that is in fact ready (23 Oct: #1056 got a skipped run, gate green, no tests).
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    defaults:
-      run:
-        working-directory: .
-    outputs:
-      heavy: ${{ steps.m.outputs.heavy }}
-    steps:
-      - id: m
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          heavy=true
-          if [ "${{ github.event_name }}" = pull_request ]; then
-            d=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" -q .draft)
-            [ "$d" = true ] && heavy=false
-          fi
-          echo "draft=${d:-n/a} heavy=$heavy"; echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+  changes:
+    # the workflow runs for every PR to develop (the ruleset needs "core gate" on each); the jobs run when core, a
+    # contract it reads, the add-ons it scans or the release/dev scripts changed
+    name: core changes
+    uses: ./.github/workflows/_changes.yml
+    with:
+      pattern: '^(packages/core/|packages/addons/|contracts/|docs/architecture/|scripts/|\.claude-plugin/|\.github/plugin/|\.github/workflows/(orch-core|_changes)\.yml$)'
   tests:
     name: core tests (${{ matrix.shard }}/3)
-    needs: mode
-    if: needs.mode.outputs.heavy == 'true'
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -79,6 +65,8 @@ jobs:
     # D79: orch core always works standalone. No hub code imported anywhere in core or add-ons, and a fresh workspace
     # works with the network down. Runs on drafts too (cheap, a few seconds); needs no secret and no network.
     name: standalone (D79)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -94,8 +82,8 @@ jobs:
     # the slow marker holds, among others, the check that all 52 operation declarations validate against the
     # operation schema (startup does not validate); xdist, so it is quick
     name: core slow tests
-    needs: mode
-    if: needs.mode.outputs.heavy == 'true'
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -112,8 +100,8 @@ jobs:
   perf-budgets:
     # the latency budgets run alone, in their own job: nothing else on the machine while they measure
     name: core latency budgets
-    needs: mode
-    if: needs.mode.outputs.heavy == 'true'
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -129,7 +117,7 @@ jobs:
     # the one check a ruleset requires: it reports on every PR, also when the jobs above are skipped
     name: core gate
     if: always()
-    needs: [mode, tests, perf-schema, perf-budgets]  # mode: a failed draft check fails the gate
+    needs: [changes, tests, perf-schema, perf-budgets, standalone]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:

@@ -240,10 +240,10 @@ extension String {
         #expect(Hex.encode(h.finalize()) == Unicode16Data.digest)
     }
 
-    /// Drift from core, not only hand edits: `f1/core_unicode16.py` is core's `canon/_unicode16.py` at the pinned commit (PROVENANCE.md);
+    /// Drift from core, not only hand edits: core's `canon/_unicode16.py` (`Vectors.coreUnicode16`);
     /// every block the phone uses must equal the one in it.
     @Test func unicodeTablesEqualCoresBundledTables() throws {
-        let core = String(decoding: OrchTestVectors.Vectors.f1Raw("core_unicode16", ext: "py"), as: UTF8.self)
+        let core = String(decoding: OrchTestVectors.Vectors.coreUnicode16, as: UTF8.self)
         func block(_ name: String) -> String {
             let start = core.range(of: name + " = \"\"\"\n")!.upperBound
             let end = core.range(of: "\"\"\"", range: start..<core.endIndex)!.lowerBound

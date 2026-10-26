@@ -314,7 +314,7 @@ wheels = [
 [[package]]
 name = "orch-core"
 version = "2.0.0.dev0"
-source = { editable = "../../../plugins/orch-core" }
+source = { editable = "../../../core" }
 dependencies = [
     { name = "cryptography" },
     { name = "jsonschema" },
@@ -365,7 +365,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = "==0.143.1" },
-    { name = "orch-core", editable = "../../../plugins/orch-core" },
+    { name = "orch-core", editable = "../../../core" },
     { name = "starlette", specifier = "==1.8.0" },
     { name = "uvicorn", specifier = "==0.34.2" },
     { name = "websockets", specifier = "==13.1" },

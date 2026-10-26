@@ -1,0 +1,92 @@
+name: contracts
+# The shared vectors in contracts/ replayed on both sides: the producers (core's oracle and generators, the hub's vector
+# generator) must still write exactly the committed files, and every Python/JS consumer must still replay them. The phone
+# (Swift) side runs in the `mobile` workflow, which also triggers on contracts/. One copy of each vector: a change to a
+# vector is one commit and every consumer is listed in the PR.
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [develop]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: contracts-${{ github.ref }}-${{ github.event.pull_request.draft && 'draft' || 'full' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  changes:
+    name: contracts changes
+    uses: ./.github/workflows/_changes.yml
+    with:
+      # contracts/, or a producer or consumer of it (any package that reads or writes a vector)
+      pattern: '^(contracts/|packages/(core|hub|relay|publish)/|\.github/workflows/(contracts|_changes)\.yml$)'
+  vectors:
+    name: vectors (${{ matrix.package }})
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package: core
+            # producer: oracle_f1 / r2 / c3b generators must write the committed files; consumers: relay corpus, hub, publish, F1, KAT
+            tests: >-
+              tests/canon tests/wsproto tests/crypto tests/hub tests/publish tests/identity/test_reader_kat.py
+              tests/market/test_policy_vectors.py tests/addons/test_market_vectors.py tests/model/test_f1_vectors_policy_questions.py
+              tests/store/test_f1_vectors_store.py tests/store/test_f1_checkpoint_vectors.py
+          - package: hub
+            # producer of vectors_hub*.json (test_vectors, test_hub_policy_vectors); consumer of core's F1 vectors and origin_http
+            tests: >-
+              tests/test_vectors.py tests/test_hub_policy_vectors.py tests/test_origin_http_vectors.py tests/test_core_crosscheck.py
+              tests/test_question_spec.py tests/test_webapi_core.py
+          - package: relay
+            tests: tests/test_origin_http_vectors.py tests/test_proto.py tests/test_push_vectors.py tests/test_hub_accounts_vectors.py
+          - package: publish
+            tests: tests/test_origin_http_vectors.py tests/test_hub_path_vectors.py tests/test_publish_api_auth.py
+    defaults:
+      run:
+        working-directory: packages/${{ matrix.package }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: packages/${{ matrix.package }}/uv.lock
+      - run: uv sync --locked
+      - run: uv run pytest -q -m "" ${{ matrix.tests }}
+        env:
+          ORCH_REQUIRE_UNICODE16: "1"
+  js:
+    # the hub's browser code checks the same vectors (question hash, canonical JSON, render)
+    name: vectors (hub, node)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+      - run: node --test packages/hub/tests/js/question.test.mjs packages/hub/tests/js/cj.test.mjs packages/hub/tests/js/render.test.mjs
+  gate:
+    name: contracts gate
+    if: always()
+    needs: [changes, vectors, js]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          case " $RESULTS " in *" failure "*|*" cancelled "*) exit 1 ;; esac  # skipped (draft, nothing relevant) is fine

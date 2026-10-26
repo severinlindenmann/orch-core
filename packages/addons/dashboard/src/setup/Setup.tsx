@@ -13,6 +13,8 @@ import {
 import { Inline, Raw } from '../components/sign/visible'
 import './setup.css'
 
+const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
+const terminalStepCopy = "One step needs your terminal: you'll type yes once."
 const voidCopy =
   'If setup fails before your workspace is created, these secret words and recovery code will no longer work. Run orch setup again to get new ones.'
 const expiredCopy =
@@ -91,8 +93,6 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
       if (!Object.keys(set).every((k) => k === 'grant_hours' || k === 'sign_methods') || !okHours || !okMethods) odd(item.title)
       else {
         if (typeof set.grant_hours === 'number') lines.push(`Agents may work for you for up to ${duration(set.grant_hours)}`)
-        if (Array.isArray(set.sign_methods))
-          lines.push(`Ways to approve allowed here: ${set.sign_methods.map((m) => (m === 'click' ? 'one click' : String(m))).join(', ')}`)
       }
     } else odd(item.title)
   }
@@ -112,13 +112,12 @@ export function reviewFacts(review: Review): Fact[] {
   if (ws) {
     facts.push({ icon: '▦', label: 'Workspace', value: `${ws.workspace_name ?? ws.name} (tickets ${ws.prefix}-0001…)` })
     facts.push({ icon: '☺', label: 'Owner', value: ws.name })
-    facts.push({ icon: '▤', label: 'Folder', value: ws.dir })
+    facts.push({ icon: '▤', label: 'Folder', value: ws.dir.split(/[\\/]/).filter(Boolean).at(-1) ?? ws.dir })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
   if (has('custody')) facts.push({ icon: '◈', label: 'How you approve', value: 'One click on this computer' })
   else if (has('terminal') || review.tty_confirm) facts.push({ icon: '◈', label: 'How you approve', value: 'In a terminal, with your passphrase' })
   let agents: string | undefined
-  let methods: string | undefined
   for (const item of review.items) {
     const f = item.fields
     if (item.id === 'runner_grant' && f && typeof f.hours === 'number')
@@ -129,12 +128,10 @@ export function reviewFacts(review: Review): Fact[] {
     else if (item.type === 'settings.changed' && f?.set && typeof f.set === 'object') {
       const set = f.set as Record<string, unknown>
       if (agents === undefined && typeof set.grant_hours === 'number') agents = `may work for ${duration(set.grant_hours)}`
-      if (Array.isArray(set.sign_methods)) methods = set.sign_methods.map((m) => (m === 'click' ? 'one click' : String(m))).join(', ')
     }
   }
   if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
-  if (methods !== undefined) facts.push({ icon: '◈', label: 'Ways to approve', value: methods })
-  const addons = review.items.filter((i) => i.type === 'addon.granted').map((i) => i.title)
+  const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
   if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
   return facts
@@ -149,6 +146,28 @@ export function suggestPrefix(name: string): string {
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
+/** Roll up display rows only; setup still uses the original server steps. */
+export function groupProgress(steps: Progress['steps']): Progress['steps'] {
+  const groups = [
+    { id: 'key', label: 'Your key', ids: ['keys', 'genesis', 'custody'] },
+    { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records'] },
+    { id: 'services', label: 'Background services', ids: ['register', 'runner', 'runner_grant'] },
+    { id: 'addons', label: 'Add-ons', ids: [] },
+    { id: 'approval', label: 'Approval', ids: ['flags'] },
+  ]
+  return groups.flatMap(({ id, label, ids }) => {
+    const members = steps.filter((step) => ids.includes(step.id) || (id === 'addons' && step.id.startsWith('addon:')))
+    if (!members.length) return []
+    const has = (status: Progress['steps'][number]['status']) => members.some((step) => step.status === status)
+    const status = has('failed') ? 'failed' : has('doing') ? 'doing'
+      : has('todo') && !has('done') ? 'todo'
+      : members.every((step) => step.status === 'skipped') ? 'skipped' : 'done'
+    return [{ id, label, status }]
+  })
+}
+function SetupFooter({ cancel, children }: { cancel?: React.ReactNode; children: React.ReactNode }) {
+  return <footer>{cancel}<div className="footer-actions">{children}</div></footer>
+}
 function duration(hours: number): string {
   if (hours > 8 && hours % 24 === 0) return `${hours / 24} ${hours === 24 ? 'day' : 'days'}`
   return `${hours} hours`
@@ -167,7 +186,7 @@ function Words({ words }: { words: string[] | null }) {
   )
 }
 const pausedCopy = 'The setup in your terminal has ended. Run orch setup again to start a new session with new secret words.'
-const steps = ['Welcome', 'You', 'Agents may', 'Approval', 'Secret words', 'Review']
+const steps = ['Welcome', 'You', 'What agents can do', 'Approval', 'Check words', 'Review']
 /** Finish setup has two screens: what exists and what to add, then the review. */
 const finishSteps = ['Your workspace', 'Review']
 /** Hours a person can choose, in words. */
@@ -186,6 +205,7 @@ function FinishChoices({
   update,
   onContinue,
   onOpen,
+  cancel,
 }: {
   state: SetupState
   current: Current
@@ -193,6 +213,7 @@ function FinishChoices({
   update: (value: Partial<Profile>) => void
   onContinue: () => void
   onOpen: () => void
+  cancel: React.ReactNode
 }) {
   const on = state.addons.filter((a) => a.id === 'dashboard' || current.addons_on.includes(a.id))
   const canAdd = state.addons.filter((a) => a.kind === 'addon' && !a.required && !current.addons_on.includes(a.id))
@@ -202,7 +223,6 @@ function FinishChoices({
   const hoursFixed = current.agent_hours !== 8
   const chosen =
     canAdd.some((a) => profile.addons.includes(a.id)) || profile.agent_grant || (offersClick && profile.method === 'click')
-  const label = (id: string) => state.labels?.[id] ?? 'A setup step'
   return (
     <>
       {!state.complete && <p>This workspace already exists. Nothing that is on will be switched off.</p>}
@@ -252,8 +272,8 @@ function FinishChoices({
             <>
               <label className="toggle">
                 <span>
-                  <strong>{label('runner_grant')}</strong>
-                  <small>The runner is the program on this computer that starts your agents. Its access key never goes into this page.</small>
+                  <strong>Let agents start on this computer now</strong>
+                  <small>You can stop them at any time.</small>
                 </span>
                 <input
                   type="checkbox"
@@ -264,7 +284,7 @@ function FinishChoices({
               </label>
               {profile.agent_grant && !hoursFixed && (
                 <>
-                  <h2>Let agents work for:</h2>
+                  <h2>How long can agents work on their own?</h2>
                   <div className="segments">
                     {state.agent_hours.map((h) => (
                       <button key={h} aria-pressed={profile.agent_hours === h} onClick={() => update({ agent_hours: h })}>
@@ -294,7 +314,7 @@ function FinishChoices({
       ) : (
         <p>Nothing is missing.</p>
       )}
-      <footer>
+      <SetupFooter cancel={cancel}>
         {state.complete ? (
           <button className="primary" onClick={onOpen}>
             Open dashboard →
@@ -304,7 +324,7 @@ function FinishChoices({
             Continue →
           </button>
         )}
-      </footer>
+      </SetupFooter>
     </>
   )
 }
@@ -656,7 +676,24 @@ export function Setup({ api }: { api: SetupAPI }) {
     !!review &&
     (((state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
+  const approvalCount = review ? review.items.length + (review.workspace ? 1 : 0) : 0
   const summary = review ? summarize(review) : { lines: [], unknown: false, odd: [] as string[] }
+  const cancel = !ended && !run && state && !state.complete && (
+    <button
+      className="cancel"
+      disabled={busy}
+      onClick={() =>
+        void act(async () => {
+          drop()
+          await api.call('cancel', {})
+          api.forget()
+          setEnded(true)
+        })
+      }
+    >
+      Finish setup later
+    </button>
+  )
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
       Continue →
@@ -679,7 +716,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       : step === 0 && state?.complete
         ? 'Setup is complete'
         : step === 0
-        ? `${state?.mode === 'finish' ? 'Finish setup' : 'Set up orch'}${state ? ` in ${state.dir_name}` : ''}`
+        ? state?.mode === 'finish' ? 'Finish setting up your workspace' : 'Set up your workspace'
         : [
             '',
             'You',
@@ -728,13 +765,13 @@ export function Setup({ api }: { api: SetupAPI }) {
         <fieldset disabled={busy}>
           {step === 0 && (
             <>
-              <p>This keeps tickets for you and your AI agents.</p>
-              <div className="inset">
-                <small>Project folder</small>
-                <p>
-                  <Raw>{state.dir}</Raw>
-                </p>
-              </div>
+              <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
+              <p>Folder: <Inline>{state.dir_name}</Inline></p>
+              <details className="welcome-technical">
+                <summary>Technical details</summary>
+                <Raw>{state.dir}</Raw>
+              </details>
+              {profile.method === 'terminal' && <p>{terminalStepCopy}</p>}
               <p>Everything stays on this computer unless you choose to connect your phone.</p>
               {state.mode === 'finish' && state.current ? (
                 <FinishChoices
@@ -744,9 +781,10 @@ export function Setup({ api }: { api: SetupAPI }) {
                   update={update}
                   onContinue={() => void act(approveProfile)}
                   onOpen={() => void act(finish)}
+                  cancel={cancel}
                 />
               ) : (
-                <footer>{next(1)}</footer>
+                <SetupFooter cancel={cancel}>{next(1)}</SetupFooter>
               )}
             </>
           )}
@@ -786,7 +824,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </span>
                 ))}
               </div>
-              <footer>
+              <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(0)}>Back</button>
                 <button
                   className="primary"
@@ -795,7 +833,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 >
                   Continue →
                 </button>
-              </footer>
+              </SetupFooter>
             </>
           )}
           {step === 2 && (
@@ -879,7 +917,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </label>
                 </div>
               )}
-              <footer>
+              <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(1)}>Back</button>
                 {offersGit && profile.git_init === undefined ? (
                   <button className="primary" disabled>
@@ -888,7 +926,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 ) : (
                   next(3)
                 )}
-              </footer>
+              </SetupFooter>
             </>
           )}
           {step === 3 && (
@@ -904,23 +942,24 @@ export function Setup({ api }: { api: SetupAPI }) {
                     onChange={() => update({ method, ...(method === 'click' ? { relay: false } : {}) })}
                   />
                   <span>
-                    <strong>{method === 'click' ? 'One click on this computer' : 'Terminal'}</strong>
+                    <strong>{method === 'click' ? 'One click on this computer' : 'Passphrase'}</strong>
                     <small>
                       {method === 'terminal'
-                        ? 'Confirm in your terminal'
+                        ? 'Type your passphrase each time you approve'
                         : state.click_available
-                          ? 'Approve here with a click'
+                          ? 'Faster, but less safe'
                           : clickOffText(state.click_reason)}
                     </small>
+                    {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
                   </span>
                 </label>
               ))}
               {profile.method === 'click' && state.click_available && (
                 <p className="notice" data-testid="click-risk">
-                  <Inline>{state.click_risk}</Inline>
+                  <Inline>{clickRiskCopy}</Inline>
                 </p>
               )}
-              <h2>Let agents work for you for:</h2>
+              <h2>How long can agents work on their own?</h2>
               <div className="segments">
                 <button aria-pressed={access === 'none'} onClick={() => chooseAccess('none')}>
                   No agent access
@@ -936,10 +975,9 @@ export function Setup({ api }: { api: SetupAPI }) {
               ) : (
                 <label className="toggle">
                   <span>
-                    Let this computer’s agent runner start agents now
+                    Let agents start on this computer now
                     <small>
-                      The runner is the program on this computer that starts your agents. Its access key stays with it and
-                      never goes into this page.
+                      You can stop them at any time.
                     </small>
                   </span>
                   <input
@@ -983,12 +1021,12 @@ export function Setup({ api }: { api: SetupAPI }) {
                   />
                 </label>
               )}
-              <footer>
+              <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(2)}>Back</button>
                 <button className="primary" onClick={() => void act(approveProfile)}>
                   Continue →
                 </button>
-              </footer>
+              </SetupFooter>
             </>
           )}
           {step === 4 && (
@@ -1039,7 +1077,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     ))}
                   </div>
                   <p>Only these three recovery words are checked. Five incorrect attempts end this session.</p>
-                  <footer>
+                  <SetupFooter cancel={cancel}>
                     <button
                       className="primary"
                       disabled={!saved || secrets.check_positions.some((n) => !words[String(n)]?.trim())}
@@ -1047,16 +1085,15 @@ export function Setup({ api }: { api: SetupAPI }) {
                     >
                       Confirm saved words →
                     </button>
-                  </footer>
+                  </SetupFooter>
                 </>
               ) : (
-                <button onClick={() => void act(getReview)}>Continue to review →</button>
+                <SetupFooter cancel={cancel}><button onClick={() => void act(getReview)}>Continue to review →</button></SetupFooter>
               )}
             </>
           )}
           {step === 5 && review && (
             <>
-              <h2>Check and create</h2>
               <dl className="current review-facts review-summary">
                 {reviewFacts(review).map((f) => (
                   <Fragment key={f.label}>
@@ -1068,12 +1105,12 @@ export function Setup({ api }: { api: SetupAPI }) {
                         <span className="addon-chips">
                           {f.value.map((v) => (
                             <span className="chip" key={v}>
-                              <Raw>{v}</Raw>
+                              <Inline>{v}</Inline>
                             </span>
                           ))}
                         </span>
                       ) : (
-                        <Raw>{f.value}</Raw>
+                        <Inline>{f.value}</Inline>
                       )}
                     </dd>
                   </Fragment>
@@ -1103,7 +1140,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <summary>Why?</summary>
                     {review.risk && (
                       <p>
-                        <Raw>{review.risk.text}</Raw>
+                        <Raw>{clickRiskCopy}</Raw>
                       </p>
                     )}
                     {review.flags.map((f) => (
@@ -1115,7 +1152,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </div>
               )}
               <details className="review-technical">
-                <summary>Everything you approve ({review.items.length + (review.workspace ? 1 : 0)} items)</summary>
+                <summary>Everything you approve ({approvalCount} items)</summary>
                 <p>Times and IDs are filled in when you sign.</p>
                 {review.workspace && (
                   <section className="review-item">
@@ -1161,13 +1198,12 @@ export function Setup({ api }: { api: SetupAPI }) {
               </details>
               {review.tty_confirm && (
                 <div className="inset">
-                  <h2>One more confirmation after you click</h2>
+                  <h2>Check your terminal after you click</h2>
                   <ol>
                     <li>Click {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} below.</li>
                     <li>Return to the terminal window where you started orch setup. Leave this page open to compare the three words.</li>
                     <li>
-                      Check that the terminal shows the same words in the same order: <Words words={review.fingerprint} />. If they match, type yes in the terminal
-                      and press Enter.
+                      Check the terminal shows <Words words={review.fingerprint} />. If it does, type yes there.
                     </li>
                   </ol>
                   <p>If any word is different, do not type yes. Close the terminal window and run orch setup again.</p>
@@ -1177,10 +1213,9 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
               <p>
-                Clicking {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves everything listed above
-                {review.tty_confirm ? ' and starts the final check.' : ' and starts creating your workspace.'}
+                {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves the {approvalCount} items in the list above.
               </p>
-              <footer>
+              <SetupFooter cancel={cancel}>
                 <button
                   className="primary"
                   disabled={terminalReviewMissing}
@@ -1196,7 +1231,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 >
                   {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'}
                 </button>
-              </footer>
+              </SetupFooter>
             </>
           )}
         </fieldset>
@@ -1224,8 +1259,9 @@ export function Setup({ api }: { api: SetupAPI }) {
             </p>
             )
           )}
+          <p><small>Your Mac may say 'Background Items Added' for orch. That's expected. Leave it on.</small></p>
           <ol className="progress">
-            {progress?.steps.map((s) => (
+            {groupProgress(progress?.steps ?? []).map((s) => (
               <li key={s.id}>
                 <span>{s.label}</span>
                 <strong className={`status ${s.status}`} aria-label={`${s.label}: ${statusWord[s.status]}`}>
@@ -1250,18 +1286,20 @@ export function Setup({ api }: { api: SetupAPI }) {
                   {progress.retry.map((id) => state?.labels?.[id] ?? 'a setup step').join(', ')}
                 </p>
               )}
-              <button
-                onClick={() =>
-                  void act(async () => {
-                    await api.call('cancel', {})
-                    api.forget()
-                    setEnded(true)
-                    setRun(undefined)
-                  })
-                }
-              >
-                Finish setup later
-              </button>
+              <footer>
+                <button className="cancel"
+                  onClick={() =>
+                    void act(async () => {
+                      await api.call('cancel', {})
+                      api.forget()
+                      setEnded(true)
+                      setRun(undefined)
+                    })
+                  }
+                >
+                  Finish setup later
+                </button>
+              </footer>
             </>
           )}
           {progress?.done && !progress.error && (
@@ -1270,22 +1308,6 @@ export function Setup({ api }: { api: SetupAPI }) {
             </button>
           )}
         </section>
-      )}
-      {!ended && !run && state && !state.complete && (
-        <button
-          className="cancel"
-          disabled={busy}
-          onClick={() =>
-            void act(async () => {
-              drop()
-              await api.call('cancel', {})
-              api.forget()
-              setEnded(true)
-            })
-          }
-        >
-          Finish setup later
-        </button>
       )}
       {ended && (
         <p>

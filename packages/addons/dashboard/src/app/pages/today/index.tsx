@@ -301,7 +301,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
         <span>
           {readOnly
             ? `${dateLine(now)} · Nothing needs you · ${waiting.count} open in the workspace`
-            : `${dateLine(now)} · ${n} need you${agentsKnown ? ` · ${plural(counts.working, 'agent', 'agents')} working` : ''}`}
+            : `${dateLine(now)} · ${n === 0 ? 'Nothing needs you' : `${n} need you`}${agentsKnown ? ` · ${plural(counts.working, 'agent', 'agents')} working` : ''}`}
         </span>
         {readOnly && (
           <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-muted">
@@ -350,7 +350,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
           <p className="text-[15px] font-medium text-text">{readOnly ? 'Nothing is open in the workspace' : 'Nothing needs you right now'}</p>
           <p className="mt-1 text-[13px] text-text-muted">
             {!agentsKnown
-              ? 'You will see a row here when a question, a gate or a verdict waits for you.'
+              ? "You'll see a row here when an agent asks you something or needs your OK."
               : counts.working > 0
                 ? `${plural(counts.working, 'agent is', 'agents are')} working. You will see a row here when one needs a decision.`
                 : 'No agent is working either. Pick a ticket from the board to start something.'}

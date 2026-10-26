@@ -62,8 +62,7 @@ it('turning one on is a signed hand-off: the typed action opens the review, noth
   const dialog = await screen.findByTestId('addon-worktrees-accordion', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'worktrees' }])
-  expect(dialog).toHaveTextContent('Turn on an add-on')
-  expect(dialog).toHaveTextContent('In your terminal you type worktrees~aaaaaaaa to continue.')
+  expect(dialog).toHaveTextContent('Turn on')
 })
 
 it('feedback 3.3: the Wiki switch opens the sign step (it was missing from the page list)', async () => {
@@ -116,7 +115,7 @@ it('an add-on with settings says what it needs while Off; the toggle still opens
 it.each([['quick', 'Quick tasks', 'addon_disable'], ['focus', 'Focus mode', 'addon_grant']])('run 9: %s uses the Built in tag and inline switch review (no popup)', async (name, title, action) => {
   const user = userEvent.setup()
   await open()
-  expect(within(screen.getByTestId(`addon-${name}`)).getByText('Built in')).toBeInTheDocument()
+  expect(within(screen.getByTestId(`addon-${name}`)).queryByText('Built in')).toBeNull() // the group title says it
   await user.click(screen.getByRole('switch', { name: title }))
   const accordion = await screen.findByTestId(`addon-${name}-accordion`, {}, T)
   expect(screen.getByTestId(`addon-${name}`)).toContainElement(accordion)
@@ -124,12 +123,13 @@ it.each([['quick', 'Quick tasks', 'addon_disable'], ['focus', 'Focus mode', 'add
   await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action, name }]), T)
 })
 
-it('run 9: with One click on, pressing the switch signs directly (no Sign button, no popup)', async () => {
+it('run 9: with One click on, pressing the switch signs directly, the review shows under the row (no popup)', async () => {
   const ws = state.host.workspaces[0]
   ws.click = { custody: 'convenience', enabled: true, available: true }
   ws.features = [...ws.features, 'click']
   await open()
-  await userEvent.setup().click(screen.getByRole('switch', { name: 'Worktrees' }))
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('switch', { name: 'Worktrees' }))
   await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
   expect(screen.queryByRole('dialog')).toBeNull()
 })

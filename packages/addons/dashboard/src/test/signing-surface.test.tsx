@@ -778,7 +778,7 @@ describe('start agent', () => {
     expect(panel.textContent).toContain(DEPOSIT_RISK)
     expect(within(panel).queryByRole('textbox')).toBeNull() // nothing is typed
     expect(within(panel).getByTestId('access-length')).toHaveTextContent('Let agents work for you for 8 h.')
-    expect(within(panel).getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and start agent' })).toBeDisabled() // until armed
+    expect(screen.getByRole('button', { name: extend ? 'Sign and extend' : 'Sign and start agent' })).toBeDisabled() // until armed
     expect(prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable', ...(extend ? { extend: 'gr_old' } : {}) })
     vi.restoreAllMocks()
   })
@@ -827,7 +827,7 @@ it('setup Create posts the review digest shown with core rows and terminal finge
     return new Response(JSON.stringify(value))
   })
   render(<Setup api={new SetupAPI('demo-not-a-real-token', fetcher as typeof fetch)}/>)
-  await screen.findByRole('heading',{name:'Finish setup in demo'})
+  await screen.findByRole('heading',{name:'Finish setting up your workspace'})
   fireEvent.click(screen.getByLabelText(/Worktrees/))
   fireEvent.click(screen.getByRole('button',{name:'Continue →'}))
   await screen.findByRole('heading',{name:'Review your setup'})
@@ -888,8 +888,8 @@ it('reviews the exact task edit and relays that action through the existing hand
   await waitFor(() => expect(button).toBeEnabled())
   button.click()
   await waitFor(() => expect(prepare).toHaveBeenCalled())
-  expect(await screen.findByText('Check every header')).toBeVisible()
-  expect(screen.getByText('(not set)')).toBeVisible()
+  expect(await screen.findByText('Check every header')).toBeInTheDocument() // in the closed "Show exactly what is signed" fold (owner rule)
+  expect(screen.getByText('(not set)')).toBeInTheDocument()
   expect(prepare).toHaveBeenCalledWith(ws, action, 0)
 })
 

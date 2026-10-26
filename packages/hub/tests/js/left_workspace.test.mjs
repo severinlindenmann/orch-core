@@ -41,7 +41,7 @@ test("left workspace is hidden until toggled and Remove confirms then deletes", 
     }
     return { status: 200, body: bodies[path.replace("/admin/", "").split("?")[0]] };
   } };
-  const [, , , , panels] = adminView(d);
+  const [, , , panels] = adminView(d);
   await settle();
   const panel = () => panels.children[2];
   const toggle = () => panel().all().find((n) => n.attrs.type === "checkbox");

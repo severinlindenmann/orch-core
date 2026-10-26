@@ -6,8 +6,8 @@ import { renderApp } from '@/test/renderApp'
 // The "Demo data" pill in the top bar: shows the mode and switches between the normal demo and the busy day.
 const pill = () => screen.getByTestId('demo-mode')
 const decisions = async () => {
-  const line = await screen.findByText(/· \d+ (need you|open in the workspace)/)
-  return Number(/· (\d+) (need you|open)/.exec(line.textContent ?? '')![1])
+  const line = await screen.findByText(/· (?:\d+ (?:need you|open in the workspace)|Nothing needs you)/)
+  return Number(/· (\d+) (need you|open)/.exec(line.textContent ?? '')?.[1] ?? 0)
 }
 
 describe('demo mode switch', () => {

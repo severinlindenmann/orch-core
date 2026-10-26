@@ -6,11 +6,11 @@ import { Button } from '@/components/ui/button'
 import { AddonSetup } from './AddonSetup'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Focus, BookOpen, ChevronDown, ChevronRight, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Zap, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
 import { canChangeSettings } from '@/api/settings'
 import { queries } from '@/api/queries'
 import type { AddOnRow } from '@/api/addOnSwitches'
-import type { AddonSwitchName } from '@/api/handoff'
+import { AddonReview } from '../../market/AddonReview'
 import type { Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Switch } from '@/components/ui/switch'
@@ -38,7 +38,7 @@ export interface AddOnListProps {
   label?: string
 }
 
-export function BuiltInAddOns({ workspace, rows, tag = 'Built in', actions, empty, label = 'Add-ons' }: AddOnListProps) {
+export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'Add-ons' }: AddOnListProps) {
   const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean } | null>(null)
   const data = useQuery({ ...queries.addOns(workspace.id), enabled: !rows })
   const list = rows ? { available: true, add_ons: rows } : data.data
@@ -47,9 +47,8 @@ export function BuiltInAddOns({ workspace, rows, tag = 'Built in', actions, empt
   const [open, setOpen] = useState<Record<string, boolean>>({})
   // The row being switched: its switch keeps the old position (nothing is shown before the host confirms) and says what is happening.
   const [busy, setBusy] = useState<{ id: string; turningOn: boolean; stage: 'review' | 'signing' | 'waiting' } | null>(null)
-  const { ask, dialog, inline } = useSettingsHandoff(workspace.id, async () => {
+  const refresh = async () => {
     setBusy((b) => (b ? { ...b, stage: 'waiting' } : b))
-    // One read of everything the page and the sidebar are built from; the switch moves when these have answered.
     await Promise.all([
       qc.invalidateQueries({ queryKey: ['add-ons', workspace.id] }),
       qc.invalidateQueries({ queryKey: ['market', workspace.id] }),
@@ -57,38 +56,22 @@ export function BuiltInAddOns({ workspace, rows, tag = 'Built in', actions, empt
       qc.invalidateQueries({ queryKey: ['workspace-addons', workspace.id] }),
       qc.invalidateQueries({ queryKey: queries.hostSettings(workspace.id).queryKey }),
     ])
-  })
+    setBusy(null)
+  }
+  const { ask, dialog } = useSettingsHandoff(workspace.id, refresh)
+  const signing = useCallback((active: boolean) => setBusy(b => b && b.stage !== 'waiting' && b.stage !== (active ? 'signing' : 'review') ? { ...b, stage: active ? 'signing' : 'review' } : b), [])
   const owner = canChangeSettings(role)
 
   const flip = (row: AddOnRow) => {
     // The server sends `locked` for a row that has no switch; every other row is switchable and its id is the name the host validates.
     if (row.locked !== null) return
-    const name = row.id as AddonSwitchName
+    const name = row.id
     const turningOn = row.state !== 'on'
     if (turningOn && row.needs && row.set_up !== true && name === 'publish') {
       setSetup({ name: 'publish', enabling: true })
       return
     }
-    const name_ = plain(row.title)
     setBusy({ id: row.id, turningOn, stage: 'review' })
-    ask({
-      title: turningOn ? `Turn on ${name_}` : `Turn off ${name_}`,
-      action: { action: turningOn ? 'addon_grant' : 'addon_disable', name },
-      autoStart: true,
-      inline: true,
-      autoSign: true,
-      confirmLabel: turningOn ? 'Sign and turn on' : 'Sign and turn off',
-      doneToast: turningOn ? `${name_} is on` : `${name_} is off`,
-      onSigning: (signing) => setBusy((b) => (b && signing ? { ...b, stage: 'signing' } : b)),
-      onEnd: () => setBusy(null),
-      summary: (
-        <p className="text-[13px] text-text-muted">
-          {turningOn
-            ? `${name_} becomes available to you and your agents in this workspace.`
-            : `${name_} is switched off for you and your agents in this workspace. What it already saved stays, and you can switch it back on at any time.`}
-        </p>
-      ),
-    })
   }
 
   return (
@@ -135,11 +118,12 @@ export function BuiltInAddOns({ workspace, rows, tag = 'Built in', actions, empt
                         ) : (
                           <span className="font-medium"><Inline>{row.title}</Inline></span>
                         )}
-                        <span className="rounded-full border border-border px-1.5 text-[11px] leading-4 text-text-faint">{tag}</span>
+                        {tag && <span className="rounded-full border border-border px-1.5 text-[11px] leading-4 text-text-faint">{tag}</span>}
                         {fixed && <span className="text-[11px] text-text-faint">Always on</span>}
                         {needsSetup && <span data-testid={`addon-${row.id}-state`} className="rounded-full border border-warning/50 px-1.5 text-[11px] leading-4 text-warning">Needs setup</span>}
                       </div>
-                      <p className="text-text-muted"><Inline>{row.desc}</Inline></p>
+                      {!fixed && row.desc && <p className="text-text-muted"><Inline>{row.desc}</Inline></p>}
+                      {!mine && row.version && <details className="text-xs text-text-muted"><summary className="cursor-pointer">Technical details</summary><p>Version <Inline>{row.version}</Inline></p></details>}
                       {why && <OwnerNote id={`addon-${row.id}-why`}>{why}</OwnerNote>}
                       {owner && !on && row.runner_switch && <div className="mt-1.5"><RunnerSwitch ws={workspace.id} on initialTerminals={row.id === 'terminals'} testId={`addon-${row.id}-runner`} variant="secondary" /></div>}
                       {row.state === 'attention' && !why && (
@@ -152,19 +136,20 @@ export function BuiltInAddOns({ workspace, rows, tag = 'Built in', actions, empt
                         <Loader2 className="size-3.5 animate-spin" aria-hidden /> {mine.turningOn ? 'Turning on…' : 'Turning off…'}
                       </span>
                     )}
+                    {!fixed && on && !mine && <span className="text-xs text-text-muted">On</span>}
                     {actions?.(row, { owner, busy: !!busy })}
                     {!fixed && (
                       <Switch
                         aria-label={`${plain(row.title)}`}
                         aria-describedby={why ? `addon-${row.id}-why` : undefined}
-                        aria-busy={mine ? true : undefined}
+                        aria-busy={mine && mine.stage !== 'review' ? true : undefined}
                         checked={on}
                         disabled={disabled || !!busy}
                         onCheckedChange={() => flip(row)}
                       />
                     )}
                   </div>
-                  {mine && inline && <div data-testid={`addon-${row.id}-accordion`}>{dialog}</div>}
+                  {mine && <div data-testid={`addon-${row.id}-accordion`}><AddonReview workspace={workspace} row={row} marketplace={!!rows} onBusy={signing} onDone={() => void refresh()} onClose={() => setBusy(null)} /></div>}
                   {on && open[row.id] && (
                     <div id={`addon-${row.id}-panel`}>
                       {row.id === 'publish' && <PublishServer workspace={workspace} owner={owner} embedded />}
@@ -177,7 +162,7 @@ export function BuiltInAddOns({ workspace, rows, tag = 'Built in', actions, empt
         )
       }
       {setup && <AddonSetup name={setup.name} enabling={setup.enabling} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, autoStart: true }) }} />}
-      {!inline && dialog}
+      {dialog}
     </div>
   )
 }

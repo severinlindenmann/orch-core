@@ -81,7 +81,7 @@ def test_progress_rows_are_words(tmp):
 def test_the_terminal_prints_progress_lines(tmp):
     f, ports, p, rv = run_ok(tmp, PROFILE)
     shown = "".join(ports.terminal.shown)
-    assert "orch setup: working on it" in shown and "done: Making your keys" in shown
+    assert "orch setup: working on it" in shown and "done: Creating your key" in shown
 
 
 def test_custody_failure_gives_the_reason_on_both_sides_and_explains_the_passphrase(tmp):

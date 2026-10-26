@@ -24,9 +24,9 @@ describe('Today: a calm, grouped queue', () => {
 
   it('says in one line what needs you and how many agents work, from the shared attention numbers', async () => {
     renderApp('/', { viewer: 'p_sev' })
-    const line = await screen.findByText(/· \d+ need you · \d+ agents? working$/, {}, T)
+    const line = await screen.findByText(/· (?:\d+ need you|Nothing needs you) · \d+ agents? working$/, {}, T)
     const ws = mockStore.workspaces[0].id
-    const n = Number(/· (\d+) need you/.exec(line.textContent!)![1])
+    const n = Number(/· (\d+) need you/.exec(line.textContent!)?.[1] ?? 0)
     // R-c: the owner's count includes the connections that need a new login, as listed.
     const relogin = reloginItems(mockStore.conn.connections(ws)).length
     expect(relogin).toBeGreaterThan(0)

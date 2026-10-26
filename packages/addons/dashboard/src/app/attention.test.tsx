@@ -5,8 +5,8 @@ import { renderApp } from '@/test/renderApp'
 import { reloginItems } from '@/api/attention'
 
 const headerCount = async () => {
-  const line = await screen.findByText(/· \d+ need you ·/)
-  return Number(/· (\d+) need you/.exec(line.textContent ?? '')![1])
+  const line = await screen.findByText(/· (?:\d+ need you|Nothing needs you) ·/)
+  return Number(/· (\d+) need you/.exec(line.textContent ?? '')?.[1] ?? 0)
 }
 
 describe('one attention count', () => {

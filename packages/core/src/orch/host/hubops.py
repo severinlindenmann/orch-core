@@ -541,10 +541,29 @@ def epochs_for(service: WorkspaceService, *, create: bool = False) -> Any:
         return None
     try:
         mk = hubkeys.keys_for(service)
+        if create and not exists:
+            _mark_hub_only(service)
         owner = crypto.person_id(hubkeys.owner_pk_pub(service)).hex()
         return _Epochs(mk, owner, lambda: _sealed_epoch(service))
     except Exception:  # noqa: BLE001 - an unsafe or unreadable key store: no epochs (fail closed)
         return None
+
+
+def _mark_hub_only(service: Any) -> None:
+    """A key store made by a full join where no relay link ever existed is not a relay (B15): mark it, so
+    ``readerrecs.relay_level`` does not read it as "relay paired" and One click works after the leave."""
+    from pathlib import Path
+
+    from orch.store.readerrecs import HUB_ONLY_MARK
+
+    base = Path(os.path.realpath(service.state_dir)) / "hosts" / service.workspace_id
+    if (base / "relay").exists():
+        return
+    mark = base / "membership" / HUB_ONLY_MARK
+    try:
+        mark.touch(exist_ok=True)
+    except OSError:
+        pass
 
 
 def _sealed_epoch(service: WorkspaceService) -> int | None:

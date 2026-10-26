@@ -130,6 +130,35 @@ describe('a hub step by click', () => {
     expect(s.sign).not.toHaveBeenCalled()
   })
 
+  it('folds exact signed values without changing the signing view', async () => {
+    s.view.mockResolvedValue(view({ content: { headline: 'Hub', fields_changed: [{ field: 'hub', before: null, after: 'demo-hub-id' }] } }))
+    mount()
+    await input()
+    expect(screen.getByText('demo-hub-id').closest('details')).not.toHaveAttribute('open')
+    expect(screen.getByText('Show exactly what is signed')).toBeTruthy()
+  })
+
+  it('a failed leave has a plain error, closed details, Cancel and a working retry', async () => {
+    const { ApiError } = await import('@/api/types')
+    s.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'sign.convenience_unavailable', message: 'raw failure reason', retryable: false }))
+    s.view.mockResolvedValue(view({ op: 'hub.leave' }))
+    mount({ action: 'hub_leave' })
+    expect(await screen.findByRole('alert', {}, T)).toHaveTextContent("Couldn't leave the hub. Nothing changed. Try again.")
+    expect(screen.getByText(/raw failure reason/).closest('details')).not.toHaveAttribute('open')
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await input()
+    expect(s.prepare).toHaveBeenCalledTimes(2)
+  })
+
+  it('discloses agent access ending only when the signed review says it ends', async () => {
+    s.view.mockResolvedValue(view({ op: 'hub.mode', lines: ['Agent access on this computer ends.', BACKUP_KEY_LINE] }))
+    mount({ action: 'hub_mode_full', hub_card: '{}', hub_id: 'demo-hub-id' })
+    await input()
+    expect(screen.getAllByText('Agent access on this computer ends.').some(el => !el.closest('details'))).toBe(true)
+  })
+
   it('leave has its own button', async () => {
     s.view.mockResolvedValue(view({ op: 'hub.leave' }))
     mount({ action: 'hub_leave' })

@@ -356,7 +356,16 @@ class SetupServer:
             return 500, {"error": {"code": "internal", "message": "setup failed"}}
 
 
-class _Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+if hasattr(socketserver, "UnixStreamServer"):
+    _UnixBase: type = socketserver.UnixStreamServer
+else:  # pragma: no cover - Windows has no UnixStreamServer; the setup server is a later step of the port
+
+    class _UnixBase(socketserver.BaseServer):  # type: ignore[no-redef]
+        def __init__(self, *_a: object, **_k: object) -> None:
+            raise NotImplementedError("the setup server is not supported on Windows yet")
+
+
+class _Server(socketserver.ThreadingMixIn, _UnixBase):
     daemon_threads = True
     allow_reuse_address = False
 

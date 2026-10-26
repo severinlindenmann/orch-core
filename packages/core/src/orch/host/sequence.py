@@ -1529,12 +1529,12 @@ class Sessions:
         """A fresh session. An old one under the same digest (expired, aborted or complete) is replaced: the person
         asked again. A live unfinished one is not: another run of the same review holds it (the check and the write
         are one step under an exclusive lock on the session directory)."""
-        import fcntl
+        from orch import oslock
 
         fd = self._dir(workspace_id, create=True)
         assert fd is not None
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            oslock.flock(fd, oslock.LOCK_EX)
             held = self.get(workspace_id, digest)
             if held is not None and held["aborted"] is None and not _complete(held):
                 raise SessionError("another run of this same review is in progress")

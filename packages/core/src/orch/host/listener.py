@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import errno
-import fcntl
 import os
 import re
 import socket
@@ -14,6 +13,8 @@ import sys
 import threading
 from pathlib import Path
 from typing import Literal
+
+from orch import oslock
 
 from ._unix import CheckedDirectory, UnsafePath, check_acl
 from .pins import AgentShare
@@ -109,7 +110,7 @@ class Listener:
             ):
                 raise UnsafePath("Unsafe socket lock")
             check_acl(self.lock_fd, {0, host_uid})
-            fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            oslock.flock(self.lock_fd, oslock.LOCK_EX | oslock.LOCK_NB)
             self._bind(gid)
         except BaseException:
             self.close()

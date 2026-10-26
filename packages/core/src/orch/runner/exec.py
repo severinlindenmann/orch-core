@@ -23,13 +23,16 @@ status pipe, which the runner reads as success. This file imports the standard l
 from __future__ import annotations
 
 import errno
-import fcntl
 import json
 import os
-import resource
 import signal
 import sys
-import termios
+
+from orch.posixmod import posixmod
+
+fcntl = posixmod("fcntl")
+resource = posixmod("resource")
+termios = posixmod("termios")
 
 SPEC_LIMIT = 1024 * 1024
 NOFILE = 8192

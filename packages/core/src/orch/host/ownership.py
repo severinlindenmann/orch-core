@@ -12,13 +12,14 @@ Shared holders leave ``owner.holders/<pid>-<token>`` while they hold the lock, s
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import os
 import secrets
 import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+
+from orch import oslock
 
 from .custody import read_json
 from .errors import HostError
@@ -69,7 +70,7 @@ class OwnershipLock:
         deadline = time.monotonic() + timeout
         while True:
             try:
-                fcntl.flock(fd, flags | fcntl.LOCK_NB)
+                oslock.flock(fd, flags | oslock.LOCK_NB)
                 return True
             except BlockingIOError:
                 if time.monotonic() >= deadline:
@@ -83,7 +84,7 @@ class OwnershipLock:
         """The host's adoption lock: ``lock.busy`` (naming the holders' PIDs) after ``timeout`` seconds."""
         fd = self._open()
         try:
-            if not self._poll(fd, fcntl.LOCK_EX, timeout, sleep):
+            if not self._poll(fd, oslock.LOCK_EX, timeout, sleep):
                 pids = self.holders()
                 named = ", ".join(map(str, pids)) if pids else "unknown"
                 raise HostError(
@@ -94,7 +95,7 @@ class OwnershipLock:
             try:
                 yield
             finally:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                oslock.flock(fd, oslock.LOCK_UN)
         finally:
             os.close(fd)
 
@@ -104,7 +105,7 @@ class OwnershipLock:
         fd = self._open()
         marker: Path | None = None
         try:
-            if not self._poll(fd, fcntl.LOCK_SH, timeout, time.sleep):
+            if not self._poll(fd, oslock.LOCK_SH, timeout, time.sleep):
                 yield False
                 return
             try:
@@ -116,7 +117,7 @@ class OwnershipLock:
                 if marker is not None:
                     with contextlib.suppress(FileNotFoundError):
                         marker.unlink()
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                oslock.flock(fd, oslock.LOCK_UN)
         finally:
             os.close(fd)
 

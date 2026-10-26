@@ -7,10 +7,11 @@ import { cleanupDoubt, exitText, runQueries, runsApi, type Run } from '@/api/run
 import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { DelegateSheet } from './DelegateSheet'
+import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 const limitedText = 'Delegation visibility is limited in this version'
-type Task = { id: string; title: string; state: string; origin: string; harness: string; model?: string | null; result?: string | null; run?: Run; files?: string[]; depth?: number; endedAt?: string | null; startedAt?: string | null }
+type Task = { spawnedBy?: DelegationChild['spawned_by']; transcript?: DelegationChild['transcript']; id: string; title: string; state: string; origin: string; harness: string; model?: string | null; result?: string | null; run?: Run; files?: string[]; depth?: number; endedAt?: string | null; startedAt?: string | null }
 const active = (run: Run) => run.state === 'running' || run.state === 'starting'
 const childState = (c: DelegationChild) => c.state === 'running' ? 'running' : c.state === 'failed' ? 'failed' : 'done'
 
@@ -32,6 +33,7 @@ function useTasks(ticket?: string) {
     tasks.push({
       id: c.id, title: c.title, state: run ? (active(run) ? run.grant_state === 'ended' ? 'needs you' : 'running' : childState(c)) : childState(c),
       origin: c.spawned_by === 'agent' ? 'Spawned by main agent' : 'Requested by you', harness: c.harness ?? run?.harness ?? 'agent', model: c.model ?? run?.model,
+      spawnedBy: c.spawned_by, transcript: c.transcript,
       result: run ? exitText(run) : childState(c), run, files: c.files, depth: c.depth, startedAt: c.started_at, endedAt: c.ended_at,
     })
   }
@@ -70,9 +72,40 @@ export function TasksChip({ ticket }: { ticket?: string }) {
   return <Popover><PopoverTrigger asChild><Button data-testid="focus-tasks-chip" variant="outline" size="sm" className="rounded-full">{data.tasks.length} tasks · {data.tasks.filter(t => t.state === 'needs you').length} need you</Button></PopoverTrigger><PopoverContent className="max-h-[70vh] w-[380px] max-w-[90vw] overflow-auto p-0"><TasksList ticket={ticket} /></PopoverContent></Popover>
 }
 
+/** P2-6: a child a person delegated becomes a session of its own; one inside the agent's process starts anew. */
+function useSeparate(ws: string, ticket?: string) {
+  const client = useQueryClient()
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [note, setNote] = useState<string | null>(null)
+  async function refresh() {
+    await client.invalidateQueries({ queryKey: ['focus', 'delegations', ws, ticket ?? null] })
+    await client.invalidateQueries({ queryKey: runQueries.list(ws).queryKey })
+  }
+  async function detach(run: string) {
+    setBusy(true)
+    setMessage('')
+    try { await focusApi.detach(ws, run); await refresh() } catch { setMessage('Could not make this task a separate session. Try again.') }
+    setBusy(false)
+  }
+  async function startAnew(task: Task) {
+    setBusy(true)
+    setMessage('')
+    try {
+      const t = task.transcript
+      const got = t?.run ? await focusApi.transcript(ws, t.run, { child: t.child ?? undefined, limit: 20 }) : null
+      const first = got?.items.find(i => i.role === 'user' && i.kind === 'text' && i.text?.trim())?.text?.trim()
+      setNote(`Continue as a separate session: ${[task.title, first].filter(Boolean).join(' - ').slice(0, 600)}`)
+    } catch { setNote(task.title) }
+    setBusy(false)
+  }
+  return { detach, startAnew, busy, message, note, close: () => setNote(null) }
+}
+
 export function TasksList({ ticket }: { ticket?: string }) {
   const data = useTasks(ticket)
   const action = useStop(data.ws)
+  const separate = useSeparate(data.ws, ticket)
   const [delegating, setDelegating] = useState(false)
   return <section data-testid="focus-tasks-list" aria-label="Tasks" className="border-t border-border p-4 text-sm">
     <div className="mb-3 flex items-center justify-between gap-2">
@@ -92,10 +125,14 @@ export function TasksList({ ticket }: { ticket?: string }) {
           {!!task.files?.length && <p data-testid="focus-task-files">Files: {task.files.join(', ')}</p>}
           <Button variant="outline" size="sm" disabled={action.busy || !task.run || !active(task.run)} onClick={() => { if (task.run && window.confirm('Stop this task?')) void action.stop([task.run]) }}>Stop</Button>
           {!task.run && task.state === 'running' && <p>This task stops with the main session.</p>}
+          {task.spawnedBy === 'human' && task.run && <Button variant="outline" size="sm" disabled={separate.busy} onClick={() => void separate.detach(task.run!.run)}>Make separate session</Button>}
+          {task.spawnedBy === 'agent' && ticket && <Button variant="outline" size="sm" disabled={separate.busy} onClick={() => void separate.startAnew(task)}>Start as separate session</Button>}
         </div>
       </details>)}</div>
     </>}
     {action.message && <p role="alert" className="mt-2 text-xs">{action.message}</p>}
+    {separate.message && <p role="alert" className="mt-2 text-xs">{separate.message}</p>}
+    {ticket && <StartAgentDialog ws={data.ws} ticket={ticket} open={separate.note !== null} choose initial={{ note: separate.note ?? undefined }} onClose={separate.close} />}
   </section>
 }
 

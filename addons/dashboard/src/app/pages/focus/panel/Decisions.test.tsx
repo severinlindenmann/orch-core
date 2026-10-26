@@ -16,10 +16,10 @@ it('shows open option buttons, gate decisions and the existing answer dialog', a
   expect(await screen.findByRole('dialog')).toBeInTheDocument()
   expect(within(panel).getByText('Requirements')).toBeInTheDocument()
 })
-it('shows an empty state for scratch', async () => {
-  const { user } = renderApp('/focus?scratch=1', { setup })
-  await user.click(await screen.findByRole('tab', { name: 'Decisions' }))
-  expect(screen.getByText('No ticket yet. Decisions will appear here.')).toBeInTheDocument()
+it('has no Decisions tab for scratch', async () => {
+  renderApp('/focus?scratch=1', { setup })
+  await screen.findByRole('tab', { name: 'Context' })
+  expect(screen.queryByRole('tab', { name: 'Decisions' })).toBeNull()
 })
 it('shows the answered choice and a readable person name', async () => {
   const { user } = renderApp('/focus/DEMO-0043', { setup })

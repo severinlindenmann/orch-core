@@ -31,9 +31,13 @@ if TYPE_CHECKING:
     from .runners import RunnerHub
     from .workspace import Call
 
-__all__ = ["TRANSCRIPT_CAPS", "TRANSCRIPT_OPS", "complete", "serve"]
+__all__ = ["LINK_OPS", "TRANSCRIPT_CAPS", "TRANSCRIPT_OPS", "complete", "serve"]
 
-TRANSCRIPT_OPS: dict[str, int] = {"run.transcript": 1, "delegation.list": 1, "run.sources": 1}
+TRANSCRIPT_OPS: dict[str, int] = {
+    "run.transcript": 1, "delegation.list": 1, "run.sources": 1, "run.link": 1, "run.detach": 1,
+}  # fmt: skip
+#: the two writes among them (P2-6): plain person writes, naturally idempotent, so no idem
+LINK_OPS = frozenset({"run.link", "run.detach"})
 TRANSCRIPT_CAPS = ["focus/1"]
 COMMAND_TIMEOUT = 15.0
 _SCHEMAS = {
@@ -55,6 +59,21 @@ _SCHEMAS = {
             "child": {"type": "string", "pattern": "^agent-[A-Za-z0-9_-]{1,64}$"},
             "source": {"type": "string", "pattern": "^s_[0-9a-f]{10}$"},
         },
+        "required": ["run"],
+        "additionalProperties": False,
+    },
+    "run.link": {
+        "type": "object",
+        "properties": {
+            "run": {"type": "string", "pattern": "^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+            "ticket": {"type": "string", "minLength": 1, "maxLength": 64},
+        },
+        "required": ["run", "ticket"],
+        "additionalProperties": False,
+    },
+    "run.detach": {
+        "type": "object",
+        "properties": {"run": {"type": "string", "pattern": "^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$"}},
         "required": ["run"],
         "additionalProperties": False,
     },
@@ -87,6 +106,10 @@ def serve(call: Call) -> dict[str, Any]:
     hub: RunnerHub | None = getattr(service, "runners", None)
     if hub is None:
         raise HostError("runner.unavailable", "this host serves no runner", retry_after_ms=1000)
+    if op in LINK_OPS:
+        if (call.frame.get("opts") or {}).get("dry_run"):
+            raise HostError("invalid.input", f"dry_run is not supported by {op}")
+        return ok_result({"link": _link_plan(call, hub, op, args)})
     if op == "delegation.list":
         return ok_result({"delegation": _plan(call, hub, args["ticket"])})
     rec = hub.store.records.get(args["run"])
@@ -104,6 +127,26 @@ def serve(call: Call) -> dict[str, Any]:
         return ok_result({"direct": none | {"items": [], "next": None, "eof": True}})
     command = {k: v for k, v in args.items() if k in ("run", "after", "limit", "child", "source")}
     return ok_result({"command": command | ({"sources": True} if op == "run.sources" else {})})
+
+
+def _link_plan(call: Call, hub: RunnerHub, op: str, args: dict[str, Any]) -> dict[str, Any]:
+    """``run.link`` / ``run.detach`` (P2-6): the caller's own run, checked on the worker thread."""
+    from .visibility import Viewer
+
+    rec = hub.store.records.get(args["run"])
+    service = call.service
+    if rec is None or rec.get("workspace_id") != service.workspace_id or rec.get("person") != str(call.viewer):
+        raise HostError("not_found", "no such run")
+    if rec.get("ticket"):
+        Viewer.of(call).ticket(service.store, rec["ticket"])
+    if op == "run.detach":
+        if not rec.get("parent_run") or rec.get("spawned_by") != "human":
+            raise HostError("invalid.input", "run.detach: this run is not a session you delegated")
+        return {"op": op, "run": args["run"]}
+    key = Viewer.of(call).ticket(service.store, args["ticket"]).key
+    if rec.get("ticket") not in (None, key):
+        raise HostError("invalid.input", "run.link: this run already belongs to another ticket")
+    return {"op": op, "run": args["run"], "ticket": key}
 
 
 def _plan(call: Call, hub: RunnerHub, ticket: str) -> dict[str, Any]:
@@ -171,11 +214,33 @@ async def _delegation(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     return ok_result({"ticket": plan["ticket"], "sessions": out})
 
 
+async def _link(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    from .runners import view
+    from .workspace import ok_result
+
+    hub: RunnerHub | None = getattr(call.service, "runners", None)
+    if hub is None:
+        raise HostError("runner.unavailable", "this host serves no runner", retry_after_ms=1000)
+    rec = hub.store.records.get(plan["run"])
+    if rec is None:
+        raise HostError("not_found", "no such run")
+    if plan["op"] == "run.link":
+        new = {**rec, "ticket": plan["ticket"]}
+    else:
+        new = {**rec, "parent_run": None, "spawned_by": "promoted"}
+    if new != rec:
+        rec = await hub._save(new)
+    hub._audit(plan["op"], run=plan["run"], person=rec.get("person"), ticket=rec.get("ticket"))
+    return ok_result({"run": view(rec)})
+
+
 async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
     """The event-loop half: forward to the runner (15 s)."""
     from .workspace import ok_result
 
     data = checked["data"]
+    if "link" in data:
+        return await _link(call, data["link"])
     if "delegation" in data:
         return await _delegation(call, data["delegation"])
     if "direct" in data:

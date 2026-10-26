@@ -72,7 +72,7 @@ export interface TermPreview {
 
 export interface TermArgs {
   cwd?: { kind: 'workspace' | 'repo' | 'worktree'; repo?: string; ticket?: string }
-  harness?: 'shell'
+  harness?: 'shell' | 'claude-code' | 'codex'
   ticket?: string
   label?: string
 }

@@ -13,6 +13,7 @@ import { Conversation } from './Conversation'
 import { Panel } from './Panel'
 import { PauseButton, TasksChip, TasksList } from './Delegation'
 import { CreateFocusTicket, StartDialog } from './StartDialog'
+import { Promote } from './Promote'
 
 export function FocusPage() {
   usePageHeader('Focus mode')
@@ -20,10 +21,11 @@ export function FocusPage() {
   const { scratch } = useSearch({ strict: false })
   const { workspace } = useWorkspace()
   if (!workspace || !hasFeature('focus', workspace.id)) return null
-  return <FocusSession key={ticket ?? 'scratch'} ticket={ticket} workspace={workspace.id} start={!ticket && scratch !== 1} />
+  const scratchRun = typeof scratch === 'string' ? scratch : undefined
+  return <FocusSession key={ticket ?? `scratch:${scratchRun ?? ''}`} ticket={ticket} scratchRun={scratchRun} workspace={workspace.id} start={!ticket && !scratch} />
 }
 
-function FocusSession({ ticket, workspace, start }: { ticket?: string; workspace: string; start: boolean }) {
+function FocusSession({ ticket, scratchRun, workspace, start }: { ticket?: string; scratchRun?: string; workspace: string; start: boolean }) {
   const root = useRef<HTMLDivElement>(null)
   const [fallback, setFallback] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
@@ -63,7 +65,7 @@ function FocusSession({ ticket, workspace, start }: { ticket?: string; workspace
         <AddonFrame addon="focus" addonTitle="Focus mode" title="Focus mode" compact>
           {ticket ? <span data-testid="focus-ticket-chip" className="break-words text-sm">{data.data ? <><span className="font-mono">{data.data.key}</span> · {data.data.title}</> : data.isError ? 'Ticket unavailable' : 'Loading ticket...'}</span> : <span className="text-sm">No ticket</span>}
         </AddonFrame>
-        {!ticket && <Button variant="outline" size="sm" onClick={() => setCreate(true)}>Create ticket from this</Button>}
+        {!ticket && !start && <Button variant="outline" size="sm" onClick={() => setCreate(true)}>Create ticket from this</Button>}
         <span role="status" className="text-xs text-text-muted">{working ? 'Agent is working' : 'No active session'}</span>
         <TasksChip ticket={ticket} />
         <PauseButton ticket={ticket} />
@@ -75,14 +77,14 @@ function FocusSession({ ticket, workspace, start }: { ticket?: string; workspace
       </header>
       {start ? <StartDialog /> : <div className="flex min-h-0 min-w-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col overflow-auto">
-          {ticket && data.isError ? <p role="alert" className="p-5 text-sm">Could not load this ticket. <Button variant="outline" size="sm" onClick={() => void data.refetch()}>Try again</Button></p> : <Conversation ticket={ticket} />}
+          {ticket && data.isError ? <p role="alert" className="p-5 text-sm">Could not load this ticket. <Button variant="outline" size="sm" onClick={() => void data.refetch()}>Try again</Button></p> : <Conversation ticket={ticket} scratchRun={scratchRun} />}
         </div>
         {panel && <aside id="focus-side-panel" aria-label="Session details" className="flex w-[420px] max-w-[60%] min-w-0 shrink-0 flex-col overflow-auto border-l border-border bg-surface">
-          <Panel ticket={ticket} />
+          <Panel ticket={ticket} scratch={!ticket} />
           <TasksList ticket={ticket} />
         </aside>}
       </div>}
-      {create && <CreateFocusTicket onClose={() => setCreate(false)} />}
+      {create && (scratchRun ? <Promote run={scratchRun} onClose={() => setCreate(false)} /> : <CreateFocusTicket onClose={() => setCreate(false)} />)}
     </div>
   )
 }

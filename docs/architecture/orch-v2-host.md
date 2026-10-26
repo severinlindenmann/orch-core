@@ -226,7 +226,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7); `worktree.diff` (1) (focus mode phase 2, §12.3.5; column P only) | workspace |
-| `focus/1` | `run.transcript`, `delegation.list`, `run.sources` (1) (focus mode phase 2, §12.3.4; column P only) | workspace |
+| `focus/1` | `run.transcript`, `delegation.list`, `run.sources`, `run.link`, `run.detach` (1) (focus mode phase 2, §12.3.4; column P only) | workspace |
 | `workdir/1` | `workdir.get`, `workdir.delete` (1) (r3 part C, §12.4.4; column P only) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
@@ -12164,6 +12164,7 @@ valid mapping to a member, and that the grant is that person's own `label:"runne
 | `focus/1` | `run.transcript` | ✓ own runs | — | — | read |
 | `focus/1` | `delegation.list` | ✓ own runs | — | — | read |
 | `focus/1` | `run.sources` | ✓ own runs | — | — | read |
+| `focus/1` | `run.link`, `run.detach` | ✓ own runs | — | — | write, no idem (naturally idempotent), no dry run |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |
 
 Writes and resizes on a terminal are not host ops: they travel on the term socket (§12.6) under the capability.
@@ -12212,6 +12213,14 @@ has_extract?, query?, results?:[{title,url}], path?}]}`. Claude Code: `WebFetch`
 short hash of that key. With `source` the answer is the text the agent got for one web source, `{id, url, extract,
 truncated}` (64 KiB cap); an unknown source is `not_found`. Nothing is fetched by the runner, host or browser. The runner
 command is `transcript {run, sources:true, source?}`.
+
+`run.link {run, ticket}` and `run.detach {run}` (P2-6, column P, own runs; plain writes, no idem, no `dry_run`) change
+the unsigned run record only; no event, no signed shape. `run.link` sets `ticket` on a run that has none (a *scratch
+session*: a person-run `claude-code`/`codex` terminal opened with `term.open` and no ticket) once the person created the
+ticket the normal signed way; the ticket must be visible to the caller (`not_found` otherwise), the same ticket again is
+a no-op, another ticket is `invalid.input`. `run.detach` clears `parent_run` and sets `spawned_by:"promoted"` on a live
+or ended run the person delegated (`spawned_by:"human"`), so a stop of the parent no longer stops it and it is listed as
+a session of its own by `delegation.list`; any other run is `invalid.input`. Both answer `{run: <run view>}`.
 
 `agent.preview` / `agent.start` take four optional keys and one more mode (P2-3, same cap, no new op, error code or signed
 shape): `policy {delegate?:bool, max_children?:0..9, models?:[Model]<=1}` (claude-code only; Codex stores nothing),

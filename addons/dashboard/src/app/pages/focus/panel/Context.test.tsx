@@ -18,7 +18,7 @@ it('shows an empty state and zero counts for scratch', async () => {
   const { user } = renderApp('/focus?scratch=1', { setup })
   await user.click(await screen.findByRole('tab', { name: 'Context' }))
   expect(screen.getByText('No ticket yet. Context will appear here.')).toBeInTheDocument()
-  for (const name of ['Changes', 'Artifacts', 'Decisions', 'Context']) expect(screen.getByRole('tab', { name })).toHaveTextContent('0')
+  for (const name of ['Artifacts', 'Context']) expect(screen.getByRole('tab', { name })).toHaveTextContent('0')
 })
 it('lists linked wiki pages when the addon is enabled', async () => {
   const { user } = renderApp('/focus/DEMO-0043', { setup })

@@ -111,7 +111,7 @@ from .shareops import SHARE_OPS, SHARE_READS
 from .spaceops import NETWORK_OPS as SPACE_NETWORK_OPS
 from .spaceops import SPACE_OPS, SPACE_READS
 from .terms import TERM_CAPS, TERM_OPS
-from .transcripts import TRANSCRIPT_CAPS, TRANSCRIPT_OPS
+from .transcripts import LINK_OPS, TRANSCRIPT_CAPS, TRANSCRIPT_OPS
 from .visibility import Viewer
 from .workdirs import CAPS as WORKDIR_CAPS
 from .workdirs import WORKDIR_OPS
@@ -288,6 +288,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_write", "write")
     if name in RUN_OPS:  # H11a: P and G only (§0.5, D-P2-26)
         return ("pg_read", "read")
+    if name in LINK_OPS:  # focus/1 P2-6: run.link, run.detach: column P only, plain writes
+        return ("person_write", "write")
     if name in TRANSCRIPT_OPS:  # focus/1: column P only (the person in the dashboard)
         return ("person_read", "read")
     if name == "worktree.diff":  # focus/1 P2-5: column P only (the person in the dashboard)

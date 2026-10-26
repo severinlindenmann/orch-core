@@ -8,6 +8,7 @@ import mockDelegations from '@/mocks/addons/focus/delegations.json'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { PauseButton, TasksChip, TasksList } from './Delegation'
+vi.mock('@/app/terminal/real/StartAgentDialog', () => ({ StartAgentDialog: (p: { open: boolean; initial?: { note?: string } }) => p.open ? <div role="dialog" aria-label="Start agent">{p.initial?.note}</div> : null }))
 vi.mock('@/app/workspace', () => ({ useWorkspace: () => ({ workspace: mockStore.workspaces[0] }) }))
 import { installAndGrant } from '@/test/installAddon'
 
@@ -118,4 +119,25 @@ it('offers "Delegate a task" for a live main run and disables it at the policy l
   const full = { ...mockDelegations, sessions: [{ ...base, run: 'main', policy: { delegate: true, max_children: base.children.length } }] } as unknown as Delegations
   show([run('main', { started_at: '2026-10-26T11:00:00Z' })], false, 'DEMO-0042', full)
   await waitFor(() => expect(screen.getByRole('button', { name: 'Delegate a task' })).toBeDisabled())
+})
+
+it('detaches a human-requested child into a session of its own', async () => {
+  const child = { ...mockDelegations.sessions[0].children[0], id: 'run:child', spawned_by: 'human', run: 'child', title: 'Review it', state: 'running', transcript: { run: 'child', child: null }, files: [] }
+  const deleg = { ...mockDelegations, sessions: [{ ...mockDelegations.sessions[0], children: [child] }] } as Delegations
+  const detach = vi.spyOn(focusApi, 'detach').mockResolvedValue({ run: 'child', ticket: 'DEMO-0042' })
+  const { user } = show([run('main', { started_at: '2026-10-26T11:00:00Z' }), run('child', { label: 'Other label' })], false, 'DEMO-0042', deleg)
+  await user.click(await screen.findByText('Review it'))
+  await user.click(screen.getByRole('button', { name: 'Make separate session' }))
+  await waitFor(() => expect(detach).toHaveBeenCalledWith(mockStore.workspaces[0].id, 'child'))
+})
+
+it('an agent-spawned child can only start anew: the dialog opens with its title and first request', async () => {
+  const read = vi.spyOn(focusApi, 'transcript').mockResolvedValue({ run: 'main', harness: 'claude-code', available: true, reason: null, next: 'o:3', eof: true, items: [{ id: 'u', role: 'user', kind: 'text', text: 'Cover the boundary cases', ts: null }] })
+  const { user } = show([run('main', { started_at: '2026-10-26T11:00:00Z' })], false, 'DEMO-0042', mockDelegations as Delegations)
+  const title = await screen.findByText('Write boundary tests')
+  await user.click(title)
+  expect(within(title.closest('details')!).queryByRole('button', { name: 'Make separate session' })).toBeNull()
+  await user.click(within(title.closest('details')!).getByRole('button', { name: 'Start as separate session' }))
+  await waitFor(() => expect(read).toHaveBeenCalledWith(mockStore.workspaces[0].id, 'r_01J0000000000000000000000A', expect.objectContaining({ child: 'agent-a04b67fe' })))
+  expect(await screen.findByRole('dialog', { name: 'Start agent' })).toHaveTextContent('Write boundary tests - Cover the boundary cases')
 })

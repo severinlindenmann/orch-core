@@ -71,6 +71,12 @@ export const focusApi = {
     call<ResearchSources>('GET', `${w(ws)}/runs/${encodeURIComponent(run)}/sources${child ? `?child=${encodeURIComponent(child)}` : ''}`),
   source: (ws: string, run: string, id: string, child?: string) =>
     call<SourceExtract>('GET', `${w(ws)}/runs/${encodeURIComponent(run)}/sources/${encodeURIComponent(id)}${child ? `?child=${encodeURIComponent(child)}` : ''}`),
+  /** P2-6: attach the caller's scratch run to a ticket. */
+  link: (ws: string, run: string, ticket: string) =>
+    call<{ run: string | null; ticket: string | null }>('POST', `${w(ws)}/runs/${encodeURIComponent(run)}/link`, { ticket }),
+  /** P2-6: a session the person delegated becomes a separate one (parent stop no longer stops it). */
+  detach: (ws: string, run: string) =>
+    call<{ run: string | null; ticket: string | null }>('POST', `${w(ws)}/runs/${encodeURIComponent(run)}/detach`, {}),
   transcript: (ws: string, run: string, args: TranscriptArgs = {}) => {
     const q = new URLSearchParams()
     if (args.after) q.set('after', args.after)

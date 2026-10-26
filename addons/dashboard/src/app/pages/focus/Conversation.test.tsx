@@ -106,3 +106,12 @@ it('waits for an agent that is starting instead of offering another launch', asy
   expect(await within(pane).findByText('Starting agent...')).toBeInTheDocument()
   expect(within(pane).queryByRole('button', { name: 'Start an agent' })).not.toBeInTheDocument()
 })
+
+it('attaches a scratch session opened from "No ticket" by its run id (a person-run harness terminal)', async () => {
+  const { client } = renderApp('/focus?scratch=r_scratchrun', { setup })
+  await screen.findByTestId('focus-conversation')
+  const mine = run('r_scratchrun', { kind: 'shell', ticket: null, as_person: true })
+  act(() => client.setQueryData<RunList>(['runs', mockStore.workspaces[0].id], { runner: null, truncated: false, runs: [run('other', { ticket: null }), mine] }))
+  expect(await screen.findByTestId('real-terminal')).toBeInTheDocument()
+  expect(terminal).toHaveBeenLastCalledWith(expect.objectContaining({ run: mine, initial: 'write' }))
+})

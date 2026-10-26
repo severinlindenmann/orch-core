@@ -38,7 +38,7 @@ from orch.host.runners import RUN_OPS
 from orch.host.shareops import SHARE_OPS, SHARE_READS
 from orch.host.spaceops import SPACE_OPS, SPACE_READS
 from orch.host.terms import TERM_OPS
-from orch.host.transcripts import TRANSCRIPT_OPS
+from orch.host.transcripts import LINK_OPS, TRANSCRIPT_OPS
 from orch.host.worktrees import WORKTREE_OPS
 from orch.ops.errors import ERRORS
 from tests.host.dispatch_helpers import SESSION, UID, Served, err, ok
@@ -224,6 +224,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("person_write", "write")
         elif op in RUN_OPS:  # H11a: P and G only
             assert kind == ("pg_read", "read")
+        elif op in LINK_OPS:  # focus/1 P2-6: P only, plain writes
+            assert kind == ("person_write", "write")
         elif op in TRANSCRIPT_OPS:  # focus/1: P only
             assert kind == ("person_read", "read")
         elif op == "worktree.diff":  # focus/1 P2-5: P only

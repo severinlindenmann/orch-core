@@ -17,12 +17,12 @@ function scratchRuns(ws: string): string[] {
   } catch { return [] }
 }
 
-export function Conversation({ ticket }: { ticket?: string }) {
+export function Conversation({ ticket, scratchRun }: { ticket?: string; scratchRun?: string }) {
   const { workspace } = useWorkspace()
-  return workspace ? <ConversationPane key={`${workspace.id}:${ticket ?? ''}`} ws={workspace.id} ticket={ticket} /> : null
+  return workspace ? <ConversationPane key={`${workspace.id}:${ticket ?? ''}:${scratchRun ?? ''}`} ws={workspace.id} ticket={ticket} scratchRun={scratchRun} /> : null
 }
 
-function ConversationPane({ ws, ticket }: { ws: string; ticket?: string }) {
+function ConversationPane({ ws, ticket, scratchRun }: { ws: string; ticket?: string; scratchRun?: string }) {
   const client = useQueryClient()
   const hint = useId()
   const [starting, setStarting] = useState(false)
@@ -32,7 +32,8 @@ function ConversationPane({ ws, ticket }: { ws: string; ticket?: string }) {
   const terminal = useRef<RealTerminalHandle>(null)
   // The mock host has no PTY API. Its empty state must not fetch a live host.
   const runs = useQuery({ ...runQueries.list(ws), enabled: isRealHost(), retry: false, refetchInterval: 5000 })
-  const matching = runs.data?.runs.filter((r) => r.kind === 'agent' &&
+  // A scratch session opened from "No ticket" is the person's own harness terminal (kind shell, run id in the address).
+  const matching = runs.data?.runs.filter((r) => scratchRun && !ticket ? r.run === scratchRun : (r.kind === 'agent' || (r.as_person && r.harness !== 'shell')) &&
     (ticket ? r.ticket === ticket : !r.ticket && scratch.includes(r.run))) ?? []
   const run = matching.filter((r) => r.state === 'running')
     .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at))[0]
@@ -60,7 +61,7 @@ function ConversationPane({ ws, ticket }: { ws: string; ticket?: string }) {
     </header>
     <div className="relative flex min-h-[280px] min-w-0 flex-1 flex-col overflow-hidden">
       {run ? <>
-        <div className={`absolute inset-0 ${chat ? 'invisible' : ''}`} aria-hidden={chat || undefined}><RealTerminal key={run.run} ws={ws} run={run} initial="read" handle={terminal} onLease={setLease} /></div>
+        <div className={`absolute inset-0 ${chat ? 'invisible' : ''}`} aria-hidden={chat || undefined}><RealTerminal key={run.run} ws={ws} run={run} initial={scratchRun && !ticket ? 'write' : 'read'} handle={terminal} onLease={setLease} /></div>
         {chat && <Chat ws={ws} run={run} canSend={lease === 'writing'} onSend={(text) => terminal.current?.sendInput(text) ?? false} onTake={() => terminal.current?.take()} />}
       </> :
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-text-muted">

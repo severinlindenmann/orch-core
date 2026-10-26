@@ -1,5 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
+import * as features from '@/api/features'
+import { runsApi, type Run, type TermPreview } from '@/api/runs'
 import { mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 import { installAndGrant } from '@/test/installAddon'
@@ -42,4 +44,34 @@ it('creates a ticket through the existing form then opens its focus session', as
   const key = router.state.location.pathname.split('/').at(-1)!
   expect(mockStore.ticket(key)?.title).toBe('Focus entry ticket')
   await waitFor(() => expect(screen.getByTestId('focus-ticket-chip')).toHaveTextContent('Focus entry ticket'))
+})
+
+afterEach(() => vi.restoreAllMocks())
+const preview = (over: Partial<TermPreview> = {}): TermPreview => ({ spec: 'a'.repeat(64), display: 'claude', display_hidden: false, cwd_path: null, cwd_path_hidden: false, notice: null, as_person: true, login_shell: false, env: [], blocked: null, warnings: [], ...over })
+
+it('on a real host "No ticket" previews and opens a person-run Claude terminal, then shows it as scratch', async () => {
+  vi.spyOn(features, 'isRealHost').mockReturnValue(true)
+  const prev = vi.spyOn(runsApi, 'preview').mockResolvedValue(preview())
+  const open = vi.spyOn(runsApi, 'open').mockResolvedValue({ run: { run: 'r_SCRATCH1' } as Run })
+  vi.spyOn(runsApi, 'list').mockResolvedValue({ runs: [], runner: null, truncated: false })
+  const { user, router } = renderApp('/focus', { setup })
+  await user.click(await screen.findByRole('button', { name: 'No ticket, just work' }))
+  expect(await screen.findByTestId('focus-scratch-preview')).toHaveTextContent('Starts Claude as you')
+  expect(prev).toHaveBeenCalledWith(mockStore.workspaces[0].id, { harness: 'claude-code', cwd: { kind: 'workspace' } })
+  expect(open).not.toHaveBeenCalled()
+  await user.click(within(screen.getByTestId('focus-scratch-preview')).getByRole('button', { name: 'Start' }))
+  await waitFor(() => expect(router.state.location.search).toMatchObject({ scratch: 'r_SCRATCH1' }))
+  expect(open).toHaveBeenCalledWith(mockStore.workspaces[0].id, { harness: 'claude-code', cwd: { kind: 'workspace' } }, 'a'.repeat(64), expect.stringMatching(/^a_/))
+  expect(screen.queryByTestId('focus-start')).toBeNull()
+})
+
+it('a blocked preview cannot be started', async () => {
+  vi.spyOn(features, 'isRealHost').mockReturnValue(true)
+  vi.spyOn(runsApi, 'preview').mockResolvedValue(preview({ blocked: { code: 'runner.disabled', message: 'Terminals are off here.' } }))
+  const open = vi.spyOn(runsApi, 'open')
+  const { user } = renderApp('/focus', { setup })
+  await user.click(await screen.findByRole('button', { name: 'No ticket, just work' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Terminals are off here.')
+  expect(within(screen.getByTestId('focus-scratch-preview')).getByRole('button', { name: 'Start' })).toBeDisabled()
+  expect(open).not.toHaveBeenCalled()
 })

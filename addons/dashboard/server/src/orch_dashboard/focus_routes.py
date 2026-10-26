@@ -5,6 +5,8 @@ chat items, cursor based (``after`` is the ``next`` of the previous answer, so a
 host checks that the run is the caller's own. Items are projected to a closed set of fields; the browser draws all text
 as plain text.
 
+``POST /api/w/{ws}/runs/{run}/link {ticket}`` / ``POST .../detach`` -> the host ops ``run.link`` / ``run.detach``.
+
 ``GET /api/w/{ws}/tickets/{key}/worktree-diff?repo=`` -> the host op ``worktree.diff`` (P2-5): the uncommitted changes
 of the ticket's worktree (files plus unified text), projected to closed fields; unavailability is data.
 """
@@ -17,6 +19,7 @@ from fastapi import Depends, FastAPI, Query
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from . import reads
+from .errors import fail
 from .gateway import Gateway
 from .terminals import RunId
 
@@ -203,7 +206,38 @@ def project_worktree_diff(key: str, data: object) -> dict:
     }
 
 
+class LinkBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    ticket: reads.Key
+
+
+class DetachBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+def linked(data: object) -> dict:
+    """``run.link`` / ``run.detach`` answer (P2-6): the run's ticket and parent link, nothing else."""
+    run = data.get("run") if isinstance(data, dict) and isinstance(data.get("run"), dict) else {}
+    return {"run": _s(run.get("run"), 40), "ticket": _s(run.get("ticket"), 64)}
+
+
 def register(app: FastAPI, gateway: Gateway) -> None:
+    @app.post("/api/w/{ws}/runs/{run}/link")
+    def run_link(run: RunId, body: LinkBody, ws: str = Depends(reads.workspace)):
+        """Scratch -> ticket: attach the caller's own scratch run to a ticket they just created (P2-6)."""
+        link = gateway.enabled(ws)
+        if not link.supports("run.link", "focus/1"):
+            raise fail("not_found", "This host cannot attach a session to a ticket.")
+        return linked(link.call("run.link", {"run": run, "ticket": body.ticket}))
+
+    @app.post("/api/w/{ws}/runs/{run}/detach")
+    def run_detach(run: RunId, body: DetachBody, ws: str = Depends(reads.workspace)):
+        """A session the person delegated becomes a sibling: parent stop no longer stops it (P2-6)."""
+        link = gateway.enabled(ws)
+        if not link.supports("run.detach", "focus/1"):
+            raise fail("not_found", "This host cannot detach a session.")
+        return linked(link.call("run.detach", {"run": run}))
+
     @app.get("/api/w/{ws}/tickets/{key}/delegations")
     def delegation_list(key: reads.Key, ws: str = Depends(reads.workspace)):
         link = gateway.enabled(ws)

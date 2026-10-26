@@ -258,7 +258,8 @@ const wikiRoute = createRoute({
 const focusRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'focus',
-  validateSearch: (s: Record<string, unknown>): { scratch?: 1 } => Number(s.scratch) === 1 ? { scratch: 1 } : {},
+  validateSearch: (s: Record<string, unknown>): { scratch?: 1 | string } =>
+    Number(s.scratch) === 1 ? { scratch: 1 } : typeof s.scratch === 'string' && /^[A-Za-z0-9_-]{2,64}$/.test(s.scratch) ? { scratch: s.scratch } : {},
   beforeLoad: async ({ context }) => {
     await context.queryClient?.ensureQueryData(queries.workspaces())
     serves('focus')()

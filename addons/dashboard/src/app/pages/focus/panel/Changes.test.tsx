@@ -15,9 +15,11 @@ it('lists files and opens an inline diff', async () => {
   expect(files[0]).toHaveAttribute('aria-expanded', 'true')
   expect(panel.querySelector('pre')).toBeInTheDocument()
 })
-it('shows a scratch empty state', async () => {
+it('hides Changes and Decisions in a scratch session', async () => {
   renderApp('/focus?scratch=1', { setup })
-  expect(await screen.findByText('No ticket yet. Changes will appear here.')).toBeInTheDocument()
+  expect(await screen.findByRole('tab', { name: 'Artifacts' })).toBeInTheDocument()
+  expect(screen.queryByRole('tab', { name: 'Changes' })).toBeNull()
+  expect(screen.queryByRole('tab', { name: 'Decisions' })).toBeNull()
 })
 it('shows an available dirty worktree count', async () => {
   const { client } = renderApp('/focus/DEMO-0042', { setup })

@@ -233,3 +233,65 @@ def test_run_sources_lists_what_the_run_read_and_one_extract(cfg, ready):
     assert err(c.call("run.sources", {"run": run, "source": "s_0000000000"})) == "not_found"
     assert err(c.call("run.sources", {"run": run, "source": "x"})) == "invalid.input"
     assert err(c.call("run.sources", {"run": run}, grant=w.lab.ws.grant)) == "op.not_allowed"  # G
+
+
+# -- P2-6: run.link / run.detach -----------------------------------------------------------------------------------
+
+
+def test_run_link_sets_the_ticket_of_a_scratch_run_once(ready):
+    w = ready
+    c = w.conn()
+    run = open_shell(c)["run"]
+    uid, key = w.ticket("scratch-link")
+    assert w.h.host.runners.store.records[run].get("ticket") is None
+    got = ok(c.call("run.link", {"run": run, "ticket": key}))["data"]
+    assert got["run"]["run"] == run and got["run"]["ticket"] == key
+    assert w.h.host.runners.store.records[run]["ticket"] == key
+    assert ok(c.call("run.link", {"run": run, "ticket": key}))["data"]["run"]["ticket"] == key  # idempotent
+    _, other = w.ticket("scratch-other")
+    assert err(c.call("run.link", {"run": run, "ticket": other})) == "invalid.input"  # already on another ticket
+
+
+def test_run_link_checks_run_ticket_column_and_arguments(ready):
+    w = ready
+    c = w.conn()
+    run = open_shell(c)["run"]
+    _, key = w.ticket("scratch-chk")
+    assert err(c.call("run.link", {"run": new_run_id(), "ticket": key})) == "not_found"
+    assert err(c.call("run.link", {"run": run, "ticket": "NOPE-1"})) == "not_found"
+    assert err(c.call("run.link", {"run": run})) == "invalid.input"
+    assert err(c.call("run.link", {"run": run, "ticket": key, "x": 1})) == "invalid.input"
+    assert err(c.call("run.link", {"run": run, "ticket": key}, grant=w.lab.ws.grant)) == "op.not_allowed"  # G
+    other = new_run_id()
+    w.h.run(w.h.host.runners._save({**fields(w), "run": other, "person": w.quinn.ref, "workspace_id": w.wid,
+                                     "state": "running", "exit": None, "cleanup": None, "runner_uid": 0,
+                                     "gen": GEN1}))  # fmt: skip
+    assert err(c.call("run.link", {"run": other, "ticket": key})) == "not_found"  # another person's run
+
+
+def test_run_detach_makes_a_human_child_a_sibling_and_refuses_the_rest(ready):
+    w = ready
+    c = w.conn()
+    _, key = w.ticket("detach")
+    parent = open_shell(c)["run"]
+    agent_on(w, parent, key)
+    kid = new_run_id()
+    w.h.run(w.h.host.runners._save({**fields(w), "run": kid, "kind": "agent", "ticket": key, "workspace_id": w.wid,
+                                     "state": "running", "exit": None, "cleanup": None, "runner_uid": 0, "gen": GEN1,
+                                     "harness": "codex", "parent_run": parent, "spawned_by": "human"}))  # fmt: skip
+    assert err(c.call("run.detach", {"run": parent})) == "invalid.input"  # not a delegated child
+    got = ok(c.call("run.detach", {"run": kid}))["data"]["run"]
+    rec = w.h.host.runners.store.records[kid]
+    assert got["run"] == kid and rec["parent_run"] is None and rec["spawned_by"] == "promoted"
+    assert err(c.call("run.detach", {"run": kid})) == "invalid.input"  # already detached
+    data = ok(c.call("delegation.list", {"ticket": key}))["data"]
+    assert sorted(s["run"] for s in data["sessions"]) == sorted([parent, kid])  # it is a session of its own now
+    assert err(c.call("run.detach", {"run": kid}, grant=w.lab.ws.grant)) == "op.not_allowed"
+
+
+def test_link_ops_are_column_p_writes_under_cap_focus_1():
+    from orch.host.dispatch import op_kind
+    from orch.host.transcripts import TRANSCRIPT_OPS
+
+    for op in ("run.link", "run.detach"):
+        assert TRANSCRIPT_OPS[op] == 1 and op_kind(op) == ("person_write", "write")

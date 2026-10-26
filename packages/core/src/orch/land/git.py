@@ -29,7 +29,6 @@ This module is the only code that decides **which commit a landing would push**.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import os
 import re
@@ -42,7 +41,7 @@ import zlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from orch import gitsafe
+from orch import gitsafe, oslock
 from orch.gitread import limits
 from orch.gitread.errors import Unavailable
 from orch.gitread.fs import Dir, open_walk
@@ -369,7 +368,7 @@ class LandRepo:
         try:
             flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
             fd = os.open(os.path.join(self.path, "land-import.lock"), flags, 0o600)
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            oslock.flock(fd, oslock.LOCK_EX)
         except OSError:
             raise LandGitError("land.unavailable", "the landing repository cannot be locked") from None
         try:

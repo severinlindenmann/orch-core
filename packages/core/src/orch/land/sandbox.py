@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import pwd
 import re
 import signal
 import stat
@@ -54,6 +53,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from orch import fdwait
+from orch.posixmod import posixmod
+
+pwd = posixmod("pwd")
 
 CODE = "land.no_sandbox"
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"

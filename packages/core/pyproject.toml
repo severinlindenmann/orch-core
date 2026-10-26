@@ -36,6 +36,7 @@ addopts = "--durations=15"
 markers = [
     "needs_os_users: requires root and ORCH_TEST_OS_USERS=1 to exercise a second real OS user",
     "slow: takes more than ~2 s (builds wheels, property sweeps); a quick loop skips it with -m 'not slow'",
+    "windows_smoke: part of the Windows smoke job (pure unit, runs on every OS)",
     "t2_long: a T2 test with its own longer real-time budget, t2_long(seconds); runs once, on the default cap",
 ]
 

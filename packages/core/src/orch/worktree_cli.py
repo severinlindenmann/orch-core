@@ -156,7 +156,7 @@ class Direct:
     def mutating(self, wait: float | None = None) -> Any:
         """The exclusive cross-process lock of a direct mutation: the pin file is (re)loaded under it and it is held
         through git and the write of the registration."""
-        import fcntl
+        from orch import oslock
 
         d = self.state / "hosts" / self.wid
         d.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -170,7 +170,7 @@ class Direct:
             deadline = time.monotonic() + (LOCK_WAIT if wait is None else wait)
             while True:
                 try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
                     break
                 except BlockingIOError:
                     if time.monotonic() >= deadline:

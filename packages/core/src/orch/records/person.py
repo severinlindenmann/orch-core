@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
 import tempfile
@@ -21,6 +20,8 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+
+from orch import oslock
 
 from . import RecordsError
 
@@ -206,7 +207,7 @@ def run_lock(state: Path, workspace_id: str) -> Iterator[None]:
     fd = os.open(d / f"records-{workspace_id}.lock", os.O_RDWR | os.O_CREAT | _NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
         except BlockingIOError:
             raise RecordsError("records.busy", "another records run for this workspace is in progress") from None
         yield

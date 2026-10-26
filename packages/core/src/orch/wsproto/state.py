@@ -21,7 +21,6 @@ check); R5 may swap it for the host helpers behind the same interfaces.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import os
@@ -32,6 +31,8 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+
+from orch import oslock
 
 __all__ = [
     "FileHolderStore",
@@ -210,7 +211,7 @@ class StateDir:
             st = os.fstat(fd)
             if not stat.S_ISDIR(st.st_mode) or st.st_uid != _me() or stat.S_IMODE(st.st_mode) != 0o700:
                 raise StateError(f"relay state directory {self.path} must be a 0700 directory owned by this user")
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
         except BlockingIOError:
             os.close(fd)
             raise StateError(f"relay state directory {self.path} is in use by another instance") from None
@@ -424,7 +425,8 @@ class StateDir:
         self.write(name, json.dumps(obj, sort_keys=True, separators=(",", ":")).encode())
 
 
-os.register_at_fork(after_in_child=_after_fork_in_child)
+if hasattr(os, "register_at_fork"):  # not on Windows (no fork)
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 def _ledger_key_ok(kind: str, key: str) -> bool:

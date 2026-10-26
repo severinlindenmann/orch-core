@@ -322,17 +322,19 @@ export interface NewTicketFormProps {
   onCancel?: () => void
   /** Overlay: extra buttons in the footer (Open full page). */
   footerExtra?: ReactNode
+  /** Focus promote: a prefilled draft that wins over a remembered one (the person edits it before creating). */
+  initial?: Partial<Draft>
 }
 
-export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onClosed, onCancel, footerExtra }: NewTicketFormProps) {
+export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, onCreated, onClosed, onCancel, footerExtra, initial }: NewTicketFormProps) {
   const overlay = variant === 'overlay'
   const navigate = useNavigate()
   const qc = useQueryClient()
   const key = draftKey(me.person, workspace.id)
   const restored = useMemo(() => readDraft(key), [key])
-  const [draft, setDraft] = useState<Draft>(restored ?? EMPTY)
+  const [draft, setDraft] = useState<Draft>(initial ? { ...EMPTY, ...initial } : restored ?? EMPTY)
   // Read in the initializer (twice under StrictMode, so it is cleared in an effect, not here).
-  const [showRestored, setShowRestored] = useState(() => !(variant === 'page' && carriedFromOverlay) && !!restored && hasText(restored))
+  const [showRestored, setShowRestored] = useState(() => !(variant === 'page' && carriedFromOverlay) && !initial && !!restored && hasText(restored))
   useEffect(() => {
     if (variant === 'page') carriedFromOverlay = false
   }, [variant])

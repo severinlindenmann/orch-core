@@ -1,3 +1,4 @@
+import { installAndGrant } from '@/test/installAddon'
 import { bestOfFive } from '@/test/bestOf'
 import { describe, expect, it } from 'vitest'
 import { addonActive } from '@/api/addons'
@@ -8,8 +9,9 @@ import { createMockStore } from '../store'
 // The addons of the busy day: counts per addon, installed catalog addons, and the visibility rules still hold.
 const make = (dataset: 'normal' | 'busy' = 'busy', viewer = 'p_sev') => {
   const store = createMockStore({ persist: false, dataset })
-  store.setViewer(viewer)
   const ws = store.workspaces.find((w) => w.prefix === 'DEMO')!.id
+  installAndGrant(store, ws, 'focus')
+  store.setViewer(viewer)
   return { store, ws, api: createApi(createMockTransport(store, { latency: false })) }
 }
 const s = make()
@@ -89,7 +91,7 @@ describe('busy day: addons are installed and filled', () => {
 })
 
 describe('busy day: every addon answers for every viewer', () => {
-  const ADDONS = ['publish', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'factory', 'schedules', 'widgets', 'guide']
+  const ADDONS = ['focus', 'publish', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'factory', 'schedules', 'widgets', 'guide']
   for (const viewer of ['p_sev', 'p_mara', 'p_tom'])
     it(`${viewer}: all addon states load, and quickly`, async () => {
       const x = make('busy', viewer)
@@ -113,7 +115,7 @@ describe('busy day: restricted tickets stay out of addon views', () => {
     const visibleTitles = new Set(visible.map((t) => t.title))
     const hiddenTitles = hidden.map((t) => t.title).filter((t) => !visibleTitles.has(t))
     expect(hiddenTitles.length).toBeGreaterThanOrEqual(3)
-    for (const name of ['publish', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'factory', 'schedules']) {
+    for (const name of ['focus', 'publish', 'usage', 'wiki', 'estimate', 'terminals', 'worktrees', 'quick', 'records', 'activity', 'start-agent', 'factory', 'schedules']) {
       const json = JSON.stringify(await x.api.getAddonState(x.ws, name))
       for (const t of hidden) expect(json, `${name} leaks ${t.key}`).not.toContain(t.key)
       for (const title of hiddenTitles) expect(json, `${name} leaks "${title}"`).not.toContain(title)

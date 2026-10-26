@@ -98,7 +98,7 @@ describe('the preview', () => {
   it('previews first and shows the host values and the approved texts verbatim', async () => {
     mount()
     expect(await screen.findByTestId('agent-cwd', {}, T)).toHaveTextContent('A worktree for DEMO-1 in billing will be created at /w/billing.worktrees/0a1b2c3d-DEMO-1.')
-    expect(s.preview).toHaveBeenCalledWith(WS, { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true })
+    expect(s.preview).toHaveBeenCalledWith(WS, { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true, policy: { delegate: false, max_children: 3 } })
     expect(screen.getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
     expect(screen.getByTestId('agent-grant')).toHaveTextContent(GRANT)
   })
@@ -135,6 +135,22 @@ describe('start settings wording and layout (MR3/MR4)', () => {
     const form = screen.getByLabelText('Label').closest('form')!
     expect(form.className).toContain('grid-cols-1')
     expect(form.className).toContain('sm:grid-cols-[110px_minmax(0,1fr)]')
+  })
+})
+
+describe('P2-3: the delegation policy block', () => {
+  it('is off by default, previews again with the limit when turned on, and is not offered for Codex', async () => {
+    mount()
+    const on = (await screen.findByLabelText('Let the main agent delegate', {}, T)) as HTMLInputElement
+    expect(on).not.toBeChecked()
+    s.preview.mockClear()
+    fireEvent.click(on)
+    fireEvent.change(await screen.findByLabelText('Most delegated tasks'), { target: { value: '5' } })
+    fireEvent.submit(screen.getByLabelText('Label').closest('form')!)
+    await waitFor(() => expect(s.preview).toHaveBeenLastCalledWith(WS, { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true, policy: { delegate: true, max_children: 5 } }), T)
+    fireEvent.click(screen.getByRole('radio', { name: 'Codex' }))
+    expect(await screen.findByTestId('agent-policy')).toHaveTextContent('Codex: delegation limits not available')
+    await waitFor(() => expect(s.preview.mock.calls.at(-1)![1]).not.toHaveProperty('policy'), T)
   })
 })
 
@@ -205,7 +221,7 @@ describe('start', () => {
     fireEvent.click(screen.getByTestId('agent-start'))
     await waitFor(() => expect(onStarted).toHaveBeenCalledWith(run), T)
     const [a, b] = s.start.mock.calls
-    expect(a[1]).toEqual({ ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true })
+    expect(a[1]).toEqual({ ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true, policy: { delegate: false, max_children: 3 } })
     expect(a[2]).toBe('f'.repeat(64))
     expect(a[3]).toMatch(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
     expect(b[3]).toBe(a[3])

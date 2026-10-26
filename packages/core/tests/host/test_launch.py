@@ -24,6 +24,8 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "claude",
         "--model",
         "opus",
+        "--session-id",
+        "@orch-session-id",
         "Run orch status, then refine ticket ORC-7. Follow AGENTS.orch.md.",
     ]
     argv, _, _ = launch_argv("claude-code", "refine", "opus", "ORC-7", LOGIN, workdir=True)
@@ -31,6 +33,8 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "claude",
         "--model",
         "opus",
+        "--session-id",
+        "@orch-session-id",
         "--setting-sources",
         "user",
         "--strict-mcp-config",
@@ -44,12 +48,14 @@ def test_codex_and_claude_argv_through_the_login_shell():
 def test_only_a_work_folder_agent_ignores_project_settings_and_mcp_files():
     flags = {"--setting-sources", "--strict-mcp-config", "--append-system-prompt-file"}
     argv, _, _ = launch_argv("claude-code", "work", None, "ORC-7", LOGIN, workdir=True)
-    assert argv[4:8] == ["claude", "--setting-sources", "user", "--strict-mcp-config"] and flags <= set(argv)
+    head = ["claude", "--session-id", "@orch-session-id", "--setting-sources", "user", "--strict-mcp-config"]
+    assert argv[4:10] == head
+    assert flags <= set(argv)
     # a repo, worktree or root launch (workdir False), a person-run harness and codex: Claude Code's normal behaviour
     assert not flags & set(launch_argv("claude-code", "work", None, "ORC-7", LOGIN)[0])
     assert not flags & set(launch_argv("claude-code", None, None, None, LOGIN, workdir=True)[0])
     assert not flags & set(launch_argv("codex", "work", None, "ORC-7", LOGIN, workdir=True)[0])
-    assert launch_argv("claude-code", None, None, None, LOGIN)[0][4:] == ["claude"]
+    assert launch_argv("claude-code", None, None, None, LOGIN)[0][4:] == ["claude", "--session-id", "@orch-session-id"]
 
 
 def test_the_prompt_is_one_element_and_context_mode():
@@ -66,7 +72,7 @@ def test_the_prompt_is_one_element_and_context_mode():
 
 def test_without_a_mode_a_harness_starts_interactive():
     argv, _, _ = launch_argv("claude-code", None, None, None, LOGIN)
-    assert argv == ["$SHELL", "-l", "-c", LOGIN_EXEC, "claude"]
+    assert argv == ["$SHELL", "-l", "-c", LOGIN_EXEC, "claude", "--session-id", "@orch-session-id"]
     assert launch_argv("shell", None, None, None, LOGIN) == (["$SHELL", "-l"], False, None)
 
 
@@ -157,3 +163,32 @@ def test_runner_json_that_is_not_an_object_refuses_never_defaults(tmp_path, text
 def test_the_prompt_can_name_the_instructions_by_path():
     argv, _, _ = launch_argv("codex", "work", None, "ORC-7", LOGIN, instructions="/p/.orch/AGENTS.orch.md")
     assert argv[-1] == "Run orch status, then work on ticket ORC-7. Follow /p/.orch/AGENTS.orch.md."
+
+
+def test_task_mode_is_one_prompt_element_and_needs_a_parent_session():
+    task = {
+        "session": "s_01J0000000000000000000000A",
+        "title": "Review it",
+        "brief": "Check X.",
+        "expected": "A report",
+    }
+    argv, _, _ = launch_argv("codex", "task", None, "ORC-7", LOGIN, task=task)
+    assert argv[-1] == (
+        "Run orch status. You are a delegated task of session s_01J0000000000000000000000A on ticket ORC-7. "
+        "Task: Review it. Brief: Check X. Expected output: A report Ask the parent, not the person; log your result "
+        "with orch log, then stop."
+    )
+    assert len(argv) == 6  # login shell form: the whole prompt is the last element
+    with pytest.raises(HostError):
+        launch_argv("codex", "task", None, "ORC-7", LOGIN)
+
+
+def test_delegate_false_adds_one_equals_flag_before_the_prompt_for_claude_only():
+    argv, _, _ = launch_argv("claude-code", "work", None, "ORC-7", LOGIN, delegate=False)
+    assert argv[-2] == "--disallowedTools=Agent,Task" and argv[-1].startswith("Run orch status")
+    assert not any(
+        a.startswith("--disallowedTools") for a in launch_argv("claude-code", "work", None, "ORC-7", LOGIN)[0]
+    )
+    assert not any(
+        a.startswith("--disallowedTools") for a in launch_argv("codex", "work", None, "ORC-7", LOGIN, delegate=False)[0]
+    )

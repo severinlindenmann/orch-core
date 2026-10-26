@@ -1,0 +1,16 @@
+{
+  "run": "r_01J0000000000000000000000A",
+  "harness": "claude-code",
+  "available": true,
+  "reason": null,
+  "next": "o:20411",
+  "eof": true,
+  "items": [
+    { "id": "u1", "role": "user", "kind": "text", "text": "Rate-limit the invite endpoint. Keep the API contract.", "ts": "2026-10-26T10:40:02Z" },
+    { "id": "a1", "role": "assistant", "kind": "text", "text": "I read the handler and the existing tests. I recommend a shared counter with a limit of 20 invites per minute.", "ts": "2026-10-26T10:44:00Z" },
+    { "id": "a2", "role": "assistant", "kind": "tool", "text": "Edit src/api/invite.py", "ts": "2026-10-26T10:44:10Z", "tool": { "name": "Edit", "call": "toolu_01" }, "files": ["src/api/invite.py"] },
+    { "id": "toolu_01:r", "role": "tool", "kind": "result", "text": "ok", "ts": "2026-10-26T10:44:11Z", "error": false },
+    { "id": "a3", "role": "assistant", "kind": "question", "text": "Where should the limit apply?", "ts": "2026-10-26T10:45:00Z", "options": ["Per workspace", "Per user"] },
+    { "id": "s1", "role": "system", "kind": "status", "text": "turn complete", "ts": "2026-10-26T10:45:30Z" }
+  ]
+}

@@ -17,6 +17,7 @@ const ROWS = [
   row({ id: 'start-agent', title: 'Start agents', state: 'on' }),
   row({ id: 'terminals', title: 'Terminals', state: 'off', blocked: 'Needs dashboard execution first. Turn it on here, then switch this on.', runner_switch: true }),
   row({ id: 'worktrees', title: 'Worktrees', state: 'off' }),
+  row({ id: 'focus', title: 'Focus mode', state: 'off' }),
   row({ id: 'wiki', title: 'Wiki', state: 'off' }),
   row({ id: 'quick', title: 'Quick tasks', state: 'on' }),
 ]
@@ -28,7 +29,7 @@ const open = async () => {
 
 it('lists every add-on with its description and On or Off; the dashboard is always on and has no switch', async () => {
   const list = await open()
-  expect(within(list).getAllByRole('listitem')).toHaveLength(6)
+  expect(within(list).getAllByRole('listitem')).toHaveLength(7)
   expect(within(screen.getByTestId('addon-dashboard')).getByText('Always on')).toBeInTheDocument()
   expect(within(screen.getByTestId('addon-dashboard')).queryByRole('switch')).toBeNull()
   expect(screen.queryByTestId('addon-start-agent-state')).toBeNull() // no state chip: the switch says it
@@ -112,15 +113,15 @@ it('an add-on with settings says what it needs while Off; the toggle still opens
   await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'publish' }]), T)
 })
 
-it('run 9: the Built in group tags every row, Quick tasks is switchable like Wiki, the review opens under the row (no popup)', async () => {
+it.each([['quick', 'Quick tasks', 'addon_disable'], ['focus', 'Focus mode', 'addon_grant']])('run 9: %s uses the Built in tag and inline switch review (no popup)', async (name, title, action) => {
   const user = userEvent.setup()
   await open()
-  expect(within(screen.getByTestId('addon-quick')).getByText('Built in')).toBeInTheDocument()
-  await user.click(screen.getByRole('switch', { name: 'Quick tasks' }))
-  const accordion = await screen.findByTestId('addon-quick-accordion', {}, T)
-  expect(screen.getByTestId('addon-quick')).toContainElement(accordion)
+  expect(within(screen.getByTestId(`addon-${name}`)).getByText('Built in')).toBeInTheDocument()
+  await user.click(screen.getByRole('switch', { name: title }))
+  const accordion = await screen.findByTestId(`addon-${name}-accordion`, {}, T)
+  expect(screen.getByTestId(`addon-${name}`)).toContainElement(accordion)
   expect(screen.queryByRole('dialog')).toBeNull()
-  await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_disable', name: 'quick' }]), T)
+  await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action, name }]), T)
 })
 
 it('run 9: with One click on, pressing the switch signs directly (no Sign button, no popup)', async () => {

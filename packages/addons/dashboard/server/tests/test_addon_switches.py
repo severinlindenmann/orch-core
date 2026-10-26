@@ -13,6 +13,18 @@ def parse(body):
     return TypeAdapter(PrepareBody).validate_python(body)
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki", "quick", "focus"],
+)
+def test_every_switchable_addon_has_typed_actions(name):
+    from orch_dashboard.addon_switches import SWITCHABLE
+
+    assert name in SWITCHABLE
+    assert host_call(parse({"action": "addon_grant", "name": name})) == ("addon.grant", {"name": name})
+    assert host_call(parse({"action": "addon_disable", "name": name})) == ("addon.disable", {"name": name})
+
+
 def test_turning_an_addon_on_or_off_is_a_typed_action_for_any_installed_addon_but_never_the_dashboard():
     on = parse({"action": "addon_grant", "name": "terminals"})
     off = parse({"action": "addon_disable", "name": "worktrees"})
@@ -216,6 +228,7 @@ def test_each_addon_row_carries_the_manifest_version_and_odd_ones_are_dropped(
     assert rows["publish"]["version"] is None and rows["usage"]["version"] is None
     assert rows["estimate"]["version"] is None  # not listed by the host
     assert rows["dashboard"]["version"]  # the install's own package; quick is a switchable add-on now (run 9)
+    assert rows["focus"]["locked"] is None and rows["focus"]["state"] == "off"
     assert rows["quick"]["locked"] is None and rows["quick"]["state"] == "off"
 
 
@@ -256,3 +269,10 @@ def test_saving_an_addons_settings_is_one_settings_set_of_exactly_that_add_on():
     assert not expected(save)([{"type": "settings.changed", "set": {"addons": {"model-routing": {"work": "sonnet"}}}}])
     with pytest.raises(ValidationError):
         parse({"action": "addon_settings", "name": "model-routing", "value": {"x": "y" * 9000}})
+
+
+@pytest.mark.parametrize("on", [False, True])
+def test_focus_feature_follows_its_grant(gateway, stub, monkeypatch, on):
+    original = gateway.addon_on
+    monkeypatch.setattr(gateway, "addon_on", lambda link, name: on if name == "focus" else original(link, name))
+    assert ("focus" in gateway.workspaces()[0].features) is on

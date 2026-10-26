@@ -45,6 +45,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/click/status",
         "/api/w/{ws}/hubsign",
         "/api/w/{ws}/hub",
+        "/api/w/{ws}/hub/link",
         "/api/w/{ws}/hub/share",
         "/api/w/{ws}/hub/share/preview",
         "/api/w/{ws}/hub/connect",
@@ -113,6 +114,13 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/terminals/preview",
         "/api/w/{ws}/terminals/open",
         "/api/w/{ws}/runs/{run}/stop",
+        "/api/w/{ws}/runs/{run}/transcript",
+        "/api/w/{ws}/runs/{run}/link",
+        "/api/w/{ws}/runs/{run}/detach",
+        "/api/w/{ws}/runs/{run}/sources",
+        "/api/w/{ws}/runs/{run}/sources/{source_id}",
+        "/api/w/{ws}/tickets/{key}/delegations",
+        "/api/w/{ws}/tickets/{key}/worktree-diff",
         "/api/w/{ws}/tickets/{key}/workdir",
         "/api/w/{ws}/workdir/delete",
         "/api/w/{ws}/runs/{run}/attach",
@@ -219,6 +227,8 @@ def test_shell_p1_reads(client, token, stub):
         "/w/DEMO/quick",
         "/w/DEMO/activity",
         "/w/DEMO/usage",
+        "/w/DEMO/focus",
+        "/w/DEMO/focus/DEMO-0001",
         "/w/DEMO/ticket/DEMO-0001",
         "/ticket/DEMO-0001",
     ],
@@ -362,7 +372,7 @@ def test_fastapi_telemetry_is_off_even_when_the_environment_asks_for_it(monkeypa
 ROUTER = Path(__file__).resolve().parents[2] / "src" / "app" / "router.tsx"
 TABS_TS = Path(__file__).resolve().parents[2] / "src" / "app" / "pages" / "settings" / "tabs.ts"
 NOT_SERVED = {"__layout/$name"}  # the mockup's layout preview: never on a real host
-SAMPLE = {"$key": "DEMO-0001", "$tab": "general", "$name": "guide", "$page": "main"}
+SAMPLE = {"$key": "DEMO-0001", "$ticket": "DEMO-0001", "$tab": "general", "$name": "guide", "$page": "main"}
 
 
 def _client_routes():

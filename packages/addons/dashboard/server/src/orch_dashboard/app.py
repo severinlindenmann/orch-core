@@ -17,6 +17,7 @@ from . import (
     addon_switches,
     agents,
     click,
+    focus_routes,
     handoff,
     hub,
     hubapprove,
@@ -85,6 +86,9 @@ SPA_ROUTES = (
     "shares",
     "activity",
     "usage",
+    "wiki",
+    "focus",
+    "focus/$ticket",
     "guide",  # ?page=<x> is a query: not part of the path
     "settings",
     "settings/$tab",
@@ -99,6 +103,7 @@ SPA_BARE = ("ticket/$key", "checklist", "feedback")
 SPA_BARE_ONLY = ("checklist", "feedback")
 _PARAM = {
     "key": r"[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}",
+    "ticket": r"[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}",
     "tab": "(?:" + "|".join(SETTINGS_TABS) + ")",
     "name": r"[A-Za-z0-9_-]{1,64}",
     "page": r"[A-Za-z0-9_-]{1,64}",
@@ -291,6 +296,7 @@ def create_app(
     agents.register(app, gateway)
     testrun.register(app, gateway)
     worktrees.register(app, gateway)
+    focus_routes.register(app, gateway)
     workdirs.register(app, gateway)
     usage.register(app, gateway)
     shares.register(app, gateway)

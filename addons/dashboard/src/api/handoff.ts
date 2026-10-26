@@ -9,8 +9,8 @@
 // recompute is never shown as valid.
 import { sha256Hex } from './sha256'
 
-/** The built-in add-ons a person can switch (the server's `AddonName`; a row's `id` is one of these when it has no `locked`). */
-export type AddonSwitchName = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'wiki' | 'quick'
+/** An add-on a person can switch: built in or installed from a marketplace (the server checks the shape, the host knows the installed list). */
+export type AddonSwitchName = string
 export type HandoffAction =
   | { action: 'market_grant'; name: string; staged: string }
   | { action: 'accept_criterion'; key: string; ac: string; note?: string }

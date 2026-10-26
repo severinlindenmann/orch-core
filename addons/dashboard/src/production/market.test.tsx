@@ -130,11 +130,20 @@ it.each(['member', 'no-actions'] as const)('hides every write control for %s', a
   expect(screen.queryByRole('button', { name: '+ Add marketplace' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
 })
-it('requires turning an active add-on off before Remove', async () => {
-  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+it('run 9: an add-on installed from a marketplace has a row switch; with One click on the press itself signs, no second button', async () => {
+  ws().click = { custody: 'convenience', enabled: true, available: true }
+  ws().features = [...ws().features, 'click']
   show('/w/DEMO/addons?tab=installed')
-  expect(await screen.findByRole('button', { name: 'Remove' }, T)).toBeDisabled()
-  expect(screen.getByText('Turn it off first')).toBeInTheDocument()
+  await userEvent.click(await screen.findByRole('switch', { name: 'calendar' }, T))
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'addon_grant', name: 'calendar' })
+  expect(screen.queryByRole('dialog')).toBeNull() // the review lives under the row
+})
+it('with One click off, the marketplace add-on switch opens the terminal steps under its row', async () => {
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('switch', { name: 'calendar' }, T))
+  expect(await screen.findByTestId('addon-calendar-accordion', {}, T)).toBeInTheDocument()
+  await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'calendar' }]), T)
 })
 it('with One click on, install is the signer review and one Sign press: no Terminal, no typed word (V3-D38)', async () => {
   ws().click = { custody: 'convenience', enabled: true, available: true }

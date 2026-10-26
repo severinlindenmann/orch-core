@@ -742,10 +742,15 @@ class DeviceRemove(Action):
     device: DeviceId
 
 
-# the dashboard add-on is always on; no other package is offered here
-AddonName = Literal[
-    "start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki", "quick"
-]
+# a shipped add-on or one installed from a marketplace: the host knows the installed list and refuses any other name;
+# the dashboard add-on is always on and never named here
+def _not_dashboard(name: str) -> str:
+    if name == "dashboard":
+        raise ValueError("the dashboard add-on is always on")
+    return name
+
+
+AddonName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,39}$"), AfterValidator(_not_dashboard)]
 
 
 class AddonGrant(Action):

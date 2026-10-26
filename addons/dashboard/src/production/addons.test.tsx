@@ -122,3 +122,13 @@ it('run 9: the Built in group tags every row, Quick tasks is switchable like Wik
   expect(screen.queryByRole('dialog')).toBeNull()
   await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_disable', name: 'quick' }]), T)
 })
+
+it('run 9: with One click on, pressing the switch signs directly (no Sign button, no popup)', async () => {
+  const ws = state.host.workspaces[0]
+  ws.click = { custody: 'convenience', enabled: true, available: true }
+  ws.features = [...ws.features, 'click']
+  await open()
+  await userEvent.setup().click(screen.getByRole('switch', { name: 'Worktrees' }))
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  expect(screen.queryByRole('dialog')).toBeNull()
+})

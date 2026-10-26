@@ -27,6 +27,7 @@ import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
 import { BuiltInAddOns } from '../settings/host/AddOns'
+import { InstalledGroup } from './InstalledGroup'
 
 const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
 const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
@@ -371,54 +372,16 @@ function MarketWorkspace() {
             <>
               {workspace && <BuiltInGroup ws={workspace} />}
               <h2 className="pt-2 text-sm font-semibold">From marketplaces</h2>
-              {!installed.data?.addons.length ? (
-                <p className="text-[13px] text-text-muted">Nothing installed from a marketplace yet. Browse has what is on offer.</p>
-              ) : (
-                <Table columns={['Add-on', 'Source', 'Version', 'May', 'Actions']}>
-                  {installed.data.addons.map((a) => (
-                    <tr key={a.name} className="@max-[800px]:block @max-[800px]:py-3">
-                      <td className={cell} data-label="Add-on">
-                        <Inline>{a.name}</Inline>
-                        <p>{stateLabel(a.state)}</p>
-                      </td>
-                      <td className={cell} data-label="Source">
-                        <Inline>{a.origin ?? 'Built in'}</Inline>
-                      </td>
-                      <td className={cell} data-label="Version">
-                        <Inline>{a.version}</Inline>
-                        {a.available && (
-                          <p>
-                            <Inline>{a.available.version}</Inline> ready
-                          </p>
-                        )}
-                      </td>
-                      <td className={cell} data-label="May">
-                        {entries
-                          .find(({ a: entry }) => entry.id === a.name)
-                          ?.a.capabilities.map((p) => (
-                            <p key={p}>
-                              <Inline>{permissionEffect(p)}</Inline>
-                            </p>
-                          )) ?? 'See package review'}
-                      </td>
-                      <td className={cell} data-label="Actions">
-                        {mayWrite && a.origin && (
-                          <div className="flex flex-wrap gap-2">
-                            {a.available && !a.available.revoked && (
-                              <Button disabled={busy} onClick={() => prepare({ id: a.name, update: true })}>
-                                Update...
-                              </Button>
-                            )}
-                            <Button variant="ghost" disabled={busy || a.state !== 'disabled'} onClick={() => setRemove(a)}>
-                              Remove
-                            </Button>
-                            {a.state !== 'disabled' && <p>Turn it off first</p>}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+              {workspace && (
+                <InstalledGroup
+                  workspace={workspace}
+                  addons={installed.data?.addons ?? []}
+                  summaryOf={(name) => entries.find(({ a }) => a.id === name)?.a.from_marketplace.summary}
+                  mayWrite={mayWrite}
+                  busy={busy}
+                  onUpdate={(a) => prepare({ id: a.name, update: true })}
+                  onRemove={setRemove}
+                />
               )}
             </>
           )}

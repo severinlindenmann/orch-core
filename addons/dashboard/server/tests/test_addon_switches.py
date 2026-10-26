@@ -13,13 +13,16 @@ def parse(body):
     return TypeAdapter(PrepareBody).validate_python(body)
 
 
-def test_turning_an_addon_on_or_off_is_a_typed_action_for_the_shipped_addons_only():
+def test_turning_an_addon_on_or_off_is_a_typed_action_for_any_installed_addon_but_never_the_dashboard():
     on = parse({"action": "addon_grant", "name": "terminals"})
     off = parse({"action": "addon_disable", "name": "worktrees"})
     assert isinstance(on, AddonGrant) and isinstance(off, AddonDisable)
     assert host_call(on) == ("addon.grant", {"name": "terminals"})
     assert host_call(off) == ("addon.disable", {"name": "worktrees"})
-    for bad in ("dashboard", "../x", "echo", "", "Terminals"):  # the dashboard stays on; no other package is offered
+    assert (
+        parse({"action": "addon_grant", "name": "calendar"}).name == "calendar"
+    )  # installed from a marketplace (run 9)
+    for bad in ("dashboard", "../x", "", "Terminals", "a" * 41):  # the dashboard stays on; odd names are shape errors
         with pytest.raises(ValidationError):
             parse({"action": "addon_grant", "name": bad})
         with pytest.raises(ValidationError):

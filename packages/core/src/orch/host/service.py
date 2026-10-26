@@ -638,6 +638,7 @@ class Host:
                     LOG.exception("journal check failed")
 
     async def _start_followups(self, service) -> None:
+        from orch.model.engine import DEV_PREFIX
         from orch.model.followups_wire import enabled
 
         from .followups import FollowupRunner
@@ -647,6 +648,8 @@ class Host:
         service.followups = False  # claimed before the await: a second check must not start a second runner
         try:
             on = await service.call(lambda: service.store is not None and enabled(service.store.state._core.ws))
+            # DEV-ONLY: a dev sandbox workspace (signed genesis prefix SBX) ticks every 2 s instead of 30 s
+            dev = on and await service.call(lambda: service.store.state._core.ws.prefix == DEV_PREFIX)
         except BaseException:
             service.followups = None
             raise
@@ -656,7 +659,7 @@ class Host:
         if self.services.get(service.workspace_id) is not service or service.closing:
             service.followups = None  # closed while we waited: no runner for a dead service
             return
-        service.followups = FollowupRunner(service, clock=self.clock, mono=time.monotonic)
+        service.followups = FollowupRunner(service, clock=self.clock, mono=time.monotonic, tick_s=2 if dev else 30)
         service.followups.start()
 
     async def _check_loop(self) -> None:

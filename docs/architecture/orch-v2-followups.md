@@ -156,3 +156,12 @@ cancels its follow-ups."
   follow-up early.
 * **Laptop asleep or clock changes?** FU15. A wrong host clock can fire a follow-up early, no worse than an early
   ring; the model checks FU8 only for consistency.
+
+## Real-host end to end, and the dev shortcuts (26 Oct 2026)
+
+`packages/core/tests/host/test_followups_real_host.py` (slow, about 5 minutes) drives a real dev-sandbox host and a real
+foreground runner with a fake harness: set, fire, brief read through the one-run grant (never argv), outcome `ran`, cancel,
+host restart across the due time (fires late), a chained follow-up, the add-on turned off. Only a dev sandbox workspace (signed
+genesis prefix `SBX`, never a real one) gets the shortcuts that make it fast: a 30 s minimum lead instead of FU5's hour, no
+early-fire tolerance (FU8's 5 minutes), and a 2 s timer tick instead of 30 s. A follow-up run needs the `schedules` add-on and
+an enabled runner, not the `start-agent` add-on.

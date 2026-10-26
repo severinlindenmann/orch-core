@@ -105,10 +105,19 @@ class Caps:
     chain_max: int
     pending_max: int
     runs_per_day: int
+    min_lead_s: int = FU_MIN_LEAD_S
+    early_s: int = FU_TIME_EARLY_S
 
 
-def effective_caps(settings: Mapping[str, object]) -> Caps:
-    """FU6: signed settings may lower, but never raise, the code ceilings."""
+#: DEV-ONLY (workspace prefix SBX, the signed genesis of a throwaway dev-pair sandbox; see ``followups_wire.caps_of``):
+#: the minimum lead is 30 s and a host fires exactly at the due time, so an end-to-end run needs seconds, not an hour.
+DEV_MIN_LEAD_S = 30
+DEV_EARLY_S = 0
+
+
+def effective_caps(settings: Mapping[str, object], *, dev: bool = False) -> Caps:
+    """FU6: signed settings may lower, but never raise, the code ceilings. ``dev`` (a dev sandbox workspace only)
+    shortens the minimum lead and the early-fire tolerance."""
     values = []
     for key, ceiling in zip(
         ("max_days", "chain_max", "pending_max", "runs_per_day"),
@@ -119,7 +128,7 @@ def effective_caps(settings: Mapping[str, object]) -> Caps:
         if type(value) is not int or value < 1:
             raise ValueError(f"{key} must be an integer >= 1")
         values.append(min(value, ceiling))
-    return Caps(*values)
+    return Caps(*values, DEV_MIN_LEAD_S, DEV_EARLY_S) if dev else Caps(*values)
 
 
 def _norm_verbs(verbs: object) -> str | tuple[str, ...]:
@@ -283,7 +292,7 @@ def check_set(ctx: SetContext, req: SetRequest, caps: Caps) -> Denial | None:
     deadline = effective_deadline(req)
     if type(req.at) is not int or type(deadline) is not int or (req.due is not None and type(req.due) is not int):
         return Denial("bad_time", "times must be integer epoch seconds")
-    if req.due is not None and req.due < req.at + FU_MIN_LEAD_S:
+    if req.due is not None and req.due < req.at + caps.min_lead_s:
         return Denial("too_soon", "due must be at least one hour ahead")
     if req.due is not None and deadline < req.due:
         return Denial("deadline_before_due", "deadline must be at or after due")

@@ -67,13 +67,13 @@ class FollowupRunner:
     def _read(self, now):
         service = self.service
         if service.store is None or service.state != "ok" or service.closing:
-            return [], 0, 0
+            return [], 0, (0, rules.FU_TIME_EARLY_S)
         store = service.store
         store.refresh()
         store.load_all()
         core = store.state._core
         if not self._owns(store, core):
-            return [], 0, 0
+            return [], 0, (0, rules.FU_TIME_EARLY_S)
         rows, today = [], 0
         for ticket in core.tickets.values():
             for rec in ticket.followups.values():
@@ -82,8 +82,8 @@ class FollowupRunner:
                 state = wire.view_state(core, ticket, rec, now)[0]
                 if state == "fired" or (state == "pending" and rec.trigger == "time"):
                     rows.append((ticket.uid, ticket.key, copy.copy(rec)))
-        cap = rules.effective_caps(core.ws.settings.get("followups", {})).runs_per_day
-        return rows, today, cap
+        caps = wire.caps_of(core.ws)
+        return rows, today, (caps.runs_per_day, caps.early_s)
 
     async def tick_once(self):
         async with self._lock:
@@ -95,7 +95,7 @@ class FollowupRunner:
                 return
             if drift > 60:
                 self._slept_s = drift
-            rows, today, cap = await self.service.call(self._read, int(now))
+            rows, today, (cap, early) = await self.service.call(self._read, int(now))
             hub = getattr(self.service, "runners", None)
             records = hub.store.records if hub else {}
             self._blocked = {}
@@ -130,12 +130,12 @@ class FollowupRunner:
                 if now > ts(rec.deadline or rec.due) + rules.FU_LATE_S:
                     await self._outcome(uid, rec, "did_not_run", "no_host")
                     continue
-                if now < ts(rec.due) - rules.FU_TIME_EARLY_S or live >= rules.FU_CONCURRENT_RUNS or today >= cap:
+                if now < ts(rec.due) - early or live >= rules.FU_CONCURRENT_RUNS or today >= cap:
                     continue
                 reason = (
                     "runner_unavailable"
                     if hub is None or not hub.connected
-                    else await self.service.call(agents.agent_missing, self.service, hub)
+                    else await self.service.call(agents.agent_missing, self.service, hub, "schedules")
                 )
                 if reason:
                     self._blocked[rec.id] = reason

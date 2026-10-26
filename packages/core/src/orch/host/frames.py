@@ -348,7 +348,7 @@ _ITEM = {
             {
                 "id": _str(r"[0-9]{1,15}\.c"),
                 "cmd": _str(r"[0-7][0-9A-HJKMNP-TV-Z]{25}"),
-                "op": _str(r"[a-z][a-z.]{0,31}"),
+                "op": _str(r"[a-z][a-z._]{0,31}"),
                 "args": {"type": "object"},
             },
             host=True,

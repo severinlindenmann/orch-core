@@ -655,3 +655,15 @@ def test_property_each_start_task_credits_once(raw):
             last = i
     expected = sum(isinstance(e, f.ChainSet) for e in events[(last + 1 if last is not None else 0) :])
     assert s.without_progress == expected
+
+
+def test_dev_caps_shorten_the_lead_only_when_asked():
+    """DEV-ONLY (a dev sandbox workspace, see followups_wire.caps_of): a 60 s lead is too soon for a real workspace."""
+    dev = f.effective_caps({}, dev=True)
+    soon = replace(REQ, due=60)
+    denied(f.check_set(CTX, soon, CAPS), "too_soon")
+    assert f.check_set(CTX, soon, dev) is None
+    denied(f.check_set(CTX, replace(REQ, due=f.DEV_MIN_LEAD_S - 1), dev), "too_soon")
+    assert (CAPS.min_lead_s, CAPS.early_s) == (f.FU_MIN_LEAD_S, f.FU_TIME_EARLY_S)
+    assert (dev.min_lead_s, dev.early_s) == (f.DEV_MIN_LEAD_S, f.DEV_EARLY_S)
+    assert f.effective_caps({"max_days": 3}, dev=True).max_days == 3  # settings still lower the ceilings

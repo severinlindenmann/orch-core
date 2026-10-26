@@ -455,7 +455,7 @@ def remove(ctx: Ctx, part: str, purge: bool) -> int:
 def _json_of(out: str) -> Any:
     starts = [i for i in (out.find("{"), out.find("[")) if i >= 0]
     try:
-        return json.loads(out[min(starts):]) if starts else json.loads(out)
+        return json.loads(out[min(starts) :]) if starts else json.loads(out)
     except ValueError:
         raise InstallError("the hub answered something unreadable") from None
 

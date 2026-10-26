@@ -11,6 +11,7 @@ import { newIdem } from '@/api/runs'
 import { Raw } from '@/components/sign/visible'
 import { HubStep } from '../host/HubStep'
 import { Action, Flow, NoOneClick, caveat, useHubRefresh, useOneClick } from './shared'
+import { ModeChoice } from './ModeChoice'
 import { TerminalJoin } from './TerminalJoin'
 
 const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.\S+)?$/
@@ -25,6 +26,7 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
   const [looking, setLooking] = useState(false)
   const [problem, setProblem] = useState('')
   const [signed, setSigned] = useState(false)
+  const [mode, setMode] = useState<'selective' | 'full'>('selective')
   const link = text.trim()
   const valid = LINK.test(link)
 
@@ -56,20 +58,21 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
     {info && <>
       <div className="rounded-md border border-border p-3" data-testid="hub-link-hub">
         <p className="font-medium">Hub <Raw>{info.name}</Raw></p>
-        <p className="text-text-muted">Hub id <Raw>{short(info.hub_id)}</Raw> · Mode: Only what I choose</p>
+        <p className="text-text-muted">Hub id <Raw>{short(info.hub_id)}</Raw> · Mode: {mode === 'full' ? 'Everything' : 'Only what I choose'}</p>
       </div>
-      <p data-testid="hub-sign-for">You are connecting this workspace to this hub. The hub will see only what you share, plus notes that need your attention and full questions. {caveat}</p>
+      {!signed && <ModeChoice mode={mode} onChange={setMode} />}
+      <p data-testid="hub-sign-for">You are connecting this workspace to this hub. {mode === 'full' ? 'The hub will be able to read everything in this workspace.' : 'The hub will see only what you share, plus notes that need your attention and full questions.'} {caveat}</p>
       {oneClick !== 'on'
         ? <NoOneClick state={oneClick} what="Connecting"><Action id="hub-join-terminal-instead" onClick={() => setRoute('terminal')}>Do it in a terminal</Action></NoOneClick>
-        : signed ? <ConnectStage ws={ws} info={info} onClose={onClose} />
-        : <HubStep key={link} ws={ws} action={{ action: 'hub_join', hub_card: info.hub_card, hub_id: info.hub_id }} onClose={onClose} onChanged={() => { refresh(); setSigned(true) }} />}
+        : signed ? <ConnectStage ws={ws} info={info} mode={mode} onClose={onClose} />
+        : <HubStep key={link + mode} ws={ws} action={{ action: 'hub_join', hub_card: info.hub_card, hub_id: info.hub_id, mode }} onClose={onClose} onChanged={() => { refresh(); setSigned(true) }} />}
     </>}
     {!signed && <p className="text-xs text-text-muted">Prefer a terminal? <button type="button" data-testid="hub-join-terminal" className="underline" onClick={() => setRoute('terminal')}>Do it in a terminal</button></p>}
   </Flow>
 }
 
 /** The signed join is on the log; now the host tells the hub. "Connected" only when that worked. */
-function ConnectStage({ ws, info, onClose }: { ws: string; info: HubLinkInfo; onClose: () => void }) {
+function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkInfo; mode: 'selective' | 'full'; onClose: () => void }) {
   const refresh = useHubRefresh(ws)
   const [state, setState] = useState<'idle' | 'working' | 'done' | 'failed'>('idle')
   const [why, setWhy] = useState('')
@@ -83,7 +86,7 @@ function ConnectStage({ ws, info, onClose }: { ws: string; info: HubLinkInfo; on
   }
   useEffect(() => { if (!started.current) { started.current = true; run() } }, []) // eslint-disable-line react-hooks/exhaustive-deps
   return <div className="space-y-3" data-testid="hub-connect-stage">
-    {state === 'done' && <><p role="status" data-testid="hub-connected">Connected. The hub sees only what you choose to share, plus notes that need your attention and full questions.</p><div className="flex justify-end"><Action id="hub-connect-close" onClick={onClose}>Close</Action></div></>}
+    {state === 'done' && <><p role="status" data-testid="hub-connected">Connected. {mode === 'full' ? 'The hub can read everything in this workspace.' : 'The hub sees only what you choose to share, plus notes that need your attention and full questions.'}</p><div className="flex justify-end"><Action id="hub-connect-close" onClick={onClose}>Close</Action></div></>}
     {(state === 'idle' || state === 'working') && <p role="status">Signed. Telling the hub…</p>}
     {state === 'failed' && <div role="alert" className="space-y-2" data-testid="hub-connect-failed">
       <p className="text-danger">Your join is signed, but the hub did not accept it, so you are not connected yet. {why}</p>

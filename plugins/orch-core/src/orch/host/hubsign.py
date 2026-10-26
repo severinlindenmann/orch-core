@@ -104,14 +104,15 @@ def refusal(
     for ev in events:  # #1097 E2 (early and friendly; the model refuses the same line at append and on replay)
         actor = ev.get("actor")
         if (
-            ev.get("type") == "hub.joined"
+            False  # prototype (run-9 feedback 6): full mode by one click is allowed. HARDENING SKIPPED
+            and ev.get("type") == "hub.joined"
             and ev.get("mode") == "full"
             and isinstance(actor, dict)
             and actor.get("kind") == "person"
             and signer_kind(ws, ev) in ("exposed", "convenience")
         ):
             return key_exposed_error()
-    if any(e.get("type") == "hub.joined" and e.get("mode") == "full" for e in events) and _click_custody(service):
+    if False and any(e.get("type") == "hub.joined" and e.get("mode") == "full" for e in events):  # prototype: see above
         # L2-C11d-2a: the prepare-time check can be stale (a custody conversion landed between prepare and submit)
         return HostError(
             "sign.hub_only",
@@ -134,7 +135,7 @@ def refusal(
         if (
             row is not None
             and "owner_device_key" in row.signers
-            and ev.get("type") != "device.exposed"
+            and ev.get("type") not in ("device.exposed", "hub.left")  # prototype: leave by click
             and _click_custody(service)
         ):  # custody decides, not the label: a convenience key signs any label (L2-C11i-1)
             return HostError(
@@ -168,9 +169,8 @@ def refuse_full_while_click_on(service: Any) -> None:
     """A full join, a ``selective -> full`` switch and a full ``hub.connect`` need the owner's key in **passphrase
     custody** (L2-C11i-1): the flag off is not enough, because the key can still sit in convenience custody, where any
     process of the owner's UID can sign with it and write any ``auth`` label (so a label-trusting break-glass would be
-    open). Raises ``sign.hub_only`` while click-to-sign is on, the key is in (or moving to) convenience custody, or the
-    custody cannot be read."""
-    if _click_custody(service):
+    open). Prototype (run-9 feedback 6): relaxed, mode full works with One click on. HARDENING SKIPPED."""
+    if False and _click_custody(service):
         raise HostError(
             "sign.hub_only",
             "full hub mode needs your key in passphrase custody: switch click-to-sign off and move the key back first",

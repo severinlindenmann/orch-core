@@ -62,7 +62,14 @@ _SPAWN_EVENTS = {
 _LAUNCHER_EVENTS = {"subprocess.Popen", "os.posix_spawn"}
 _NO_LOAD = {"ctypes.dlopen", "ctypes.dlsym"}
 #: modules the host never imports (H5c): the click signer and person custody that signs without a factor
-NEVER = ("orch.click", "orch.custody.convenience", "orch.custody.keychain", "orch.custody.select", "orch.custody.cli")
+NEVER = (
+    "orch.click",
+    "orch.custody.pkvault",
+    "orch.custody.convenience",
+    "orch.custody.keychain",
+    "orch.custody.select",
+    "orch.custody.cli",
+)
 
 
 def _never(module: str) -> bool:

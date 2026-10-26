@@ -33,6 +33,7 @@ from .handoff import (
     AgentAccess,
     EditTicket,
     HubJoin,
+    HubModeFull,
     HubLeave,
     NewTicketSequence,
     PrepareBody,
@@ -184,7 +185,7 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
 RUNNER_LINE = "Agents may run commands on this computer as you when you start them."
 #: core's constant (orch.click.protocol BACKUP_KEY_LINE): a hub step's View that lacks it is not shown
 BACKUP_KEY_LINE = "This step also needs your backup key. You type it once here; orch does not keep it"
-HUB_STEPS = (HubJoin, HubLeave)
+HUB_STEPS = (HubJoin, HubModeFull, HubLeave)
 B64URL = r"[A-Za-z0-9_-]"
 
 
@@ -209,6 +210,20 @@ def backup_view_ok(view: dict, ws: str) -> bool:
         and isinstance(lines, list)
         and BACKUP_KEY_LINE in lines
         and view.get("backup_key_line") == BACKUP_KEY_LINE
+        and view.get("confirm") == {"kind": "click"}
+    )
+
+
+def plain_hub_view_ok(view: dict, ws: str) -> bool:
+    """Run-9 feedback 6: a hub step whose person key the signer kept asks for nothing sealed: a plain click, this
+    workspace, no seal, no backup-key line."""
+    workspace = view.get("workspace")
+    return (
+        isinstance(workspace, dict)
+        and workspace.get("id") == ws
+        and view.get("deposit") is None
+        and view.get("seal") is None
+        and view.get("backup_key_line") is None
         and view.get("confirm") == {"kind": "click"}
     )
 
@@ -879,8 +894,10 @@ def register(app: FastAPI, gateway: Gateway):
         if isinstance(
             wanted, HUB_STEPS
         ):  # a hub step: the signer's own key for the backup key, and nothing else sealed
-            if not backup_view_ok(shown, ws):
-                raise refusal_check("The review does not ask for your backup key. Nothing was shown. Cancel it.")
+            if not (backup_view_ok(shown, ws) or plain_hub_view_ok(shown, ws)):
+                raise refusal_check(
+                    "The review of this hub step is not the one expected. Nothing was shown. Cancel it."
+                )
         elif isinstance(wanted, AgentAccess) != (shown.get("seal") is not None) or (
             isinstance(wanted, AgentAccess) and not reveal_view_ok(shown, ws, wanted.reveal_key)
         ):
@@ -978,9 +995,8 @@ def register(app: FastAPI, gateway: Gateway):
             elif body.reveal_key is not None:
                 raise fail("invalid.input", "only a grant shown in the page takes reveal_key", exit=1)
             if isinstance(wanted, HUB_STEPS):  # the backup key, sealed: relayed as ciphertext, never read or logged
-                if body.sealed is None:
-                    raise fail("invalid.input", "A hub step needs your backup key.", exit=1)
-                sent["sealed"] = {"hub.backup_key": body.sealed.hub_backup_key.model_dump()}
+                if body.sealed is not None:  # none: the signer kept the person key (run-9 feedback 6)
+                    sent["sealed"] = {"hub.backup_key": body.sealed.hub_backup_key.model_dump()}
             elif body.sealed is not None:
                 raise fail("invalid.input", "only a hub step takes a sealed value", exit=1)
             got = signer.call("sign", sent, lost=lost_sign())

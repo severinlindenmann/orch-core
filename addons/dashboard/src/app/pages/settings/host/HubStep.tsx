@@ -4,7 +4,7 @@
 // (no state, no storage). Core refuses the step unless the key is the person's own.
 import { KeyRound, Loader2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { backupViewOk, type HubJoinAction, type HubLeaveAction } from '@/api/click'
+import { backupViewOk, plainHubViewOk, type HubJoinAction, type HubLeaveAction, type HubModeFullAction } from '@/api/click'
 import { seal } from '@/api/sealed'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { storyOf } from '@/components/sign/story'
@@ -14,7 +14,7 @@ import { Button } from '@/components/ui/button'
 
 export interface HubStepProps {
   ws: string
-  action: HubJoinAction | HubLeaveAction
+  action: HubJoinAction | HubModeFullAction | HubLeaveAction
   onClose: () => void
   /** The hub state changed (the step was signed). */
   onChanged?: () => void
@@ -58,11 +58,13 @@ export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepPro
 
   const rid = click.prepared?.request_id
   const view = click.view
-  const viewOk = view ? backupViewOk(view.view, ws) : null
+  const plain = !!view && plainHubViewOk(view.view, ws) // the person key is kept: nothing to type
+  const viewOk = view ? plain || backupViewOk(view.view, ws) : null
   const cancel = () => void click.cancel().then(() => { click.reset(true); onClose() })
 
   const sign = async () => {
     const el = field.current
+    if (plain) { await click.sign(); return }
     if (!el || !view || !rid) return
     let text: string | null = el.value
     el.value = '' // cleared before anything else happens: a failure never leaves the key on screen
@@ -82,7 +84,7 @@ export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepPro
   }
 
   return (
-    <section aria-label={action.action === 'hub_leave' ? 'Leave the hub' : 'Join the hub'} data-testid="hub-step" className="space-y-3">
+    <section aria-label={action.action === 'hub_leave' ? 'Leave the hub' : action.action === 'hub_mode_full' ? 'Let the hub read everything' : 'Join the hub'} data-testid="hub-step" className="space-y-3">
       {(click.phase === 'idle' || click.phase === 'preparing' || click.phase === 'viewing') && (
         <p className="flex items-center gap-2 text-[13px] text-text-muted"><Loader2 className="size-4 animate-spin" aria-hidden />Preparing the review…</p>
       )}
@@ -93,10 +95,10 @@ export function HubStep({ ws, action, onClose, onChanged, doneText }: HubStepPro
           answer={view}
           problem={click.problem}
           signing={click.phase === 'signing' || sealing}
-          ready={filled}
+          ready={plain || filled}
           onSign={() => void sign()}
           onCancel={cancel}
-          extra={
+          extra={plain ? undefined :
             <div className="space-y-2" data-testid="hub-backup" ref={box}>
               <label className="block text-[13px] font-medium text-text" htmlFor="hub-backup-key">
                 <KeyRound className="mr-1 inline size-4" aria-hidden />Backup key (from setup)

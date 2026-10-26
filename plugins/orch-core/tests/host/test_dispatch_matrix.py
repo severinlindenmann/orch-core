@@ -233,7 +233,9 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == want
         elif op in HUB_OPS:  # V3 C2a: P only (the op checks the owner role); status reads
             assert kind == (
-                ("person_read", "read") if op in ("hub.status", "hub.handoff", "hub.link") else ("person_write", "write")
+                ("person_read", "read")
+                if op in ("hub.status", "hub.handoff", "hub.link")
+                else ("person_write", "write")
             )
         elif op in SHARE_OPS:  # V3 C6: column P only (owner role)
             assert kind == (("person_read", "read") if op in SHARE_READS else ("person_write", "write"))

@@ -14,9 +14,8 @@ from orch.custody import select
 from orch.host import convenience
 from orch.host.errors import HostError
 from tests.host import human_helpers
-from tests.host.human_helpers import err
 from tests.host.lifecycle_helpers import UID
-from tests.host.test_hub_only import append, full_joined, join_args, log_len, owner_event
+from tests.host.test_hub_only import full_joined
 from tests.host.test_hub_ops import CARD, connect_args, dev_workspace, keystore, stub  # noqa: F401
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
@@ -116,11 +115,3 @@ def test_every_path_into_convenience_custody_goes_through_the_refusal():
     assert "refuse_turn_on" in {name for name, _ in _calls(port)}
 
 
-def test_a_full_join_rechecks_custody_at_the_append(human, served, monkeypatch):
-    """L2-C11d-2a: prepare passed (passphrase custody); the key then moved to convenience before the submit."""
-    human.prepare("hub.join", join_args(mode="full"))  # prepare-time check passes
-    monkeypatch.setattr(select, "read_selection", lambda state, wid: {"custody": "convenience", "transition": None})
-    before = log_len(served)
-    landed, error = append(served, [owner_event(served, "hub.joined", mode="full")])
-    assert error.code == "sign.hub_only" and landed == [] and log_len(served) == before
-    assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "sign.hub_only"

@@ -63,9 +63,11 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
       return { signLabel: 'Sign and show the secret', access: { length }, steps: ['You sign.', `The secret is shown once on this page. Agents that hold it may work for you for ${length} from now.`] }
     }
     case 'hub_join':
-      return { signLabel: 'Sign and join the hub', steps: ['You type your backup key and sign.', 'This workspace is joined to the hub as shown.'] }
+      return { signLabel: 'Sign and join the hub', steps: ['You sign.', 'This workspace is joined to the hub as shown.'] }
+    case 'hub_mode_full':
+      return { signLabel: 'Sign and let the hub read everything', steps: ['You sign.', 'The hub can read everything in this workspace.'] }
     case 'hub_leave':
-      return { signLabel: 'Sign and leave the hub', steps: ['You type your backup key and sign.', 'This workspace leaves the hub.'] }
+      return { signLabel: 'Sign and leave the hub', steps: ['You sign.', 'This workspace leaves the hub.'] }
     case 'runner_grant': {
       const length = accessLength(action.hours)
       return action.extend

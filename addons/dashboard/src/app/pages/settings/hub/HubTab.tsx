@@ -55,9 +55,7 @@ export function SelectivePage({ ws, fullAllowed, onShare, onFull, onLeave }: { w
       {share.data?.available !== false && <Action id="hub-choose-share" onClick={onShare}>Choose what to share</Action>}
     </Panel>
     <Panel title="Let the hub read everything"><p>The hub will read every ticket, file and note. Hub admins become admins here. Going back requires leaving and rejoining.</p>
-      {fullAllowed
-        ? <><p>You review the change here and confirm it in your terminal.</p><Action id="hub-full-switch" onClick={onFull}>Let the hub read everything</Action></>
-        : <StrictNeeds testId="hub-full-blocked" />}
+      <p>You review the change here and confirm it with one click.</p><Action id="hub-full-switch" onClick={onFull}>Let the hub read everything</Action>
     </Panel>
     <Panel title="Leave the hub"><p>Keep working locally. Phone access, publishing and handoffs through the hub stop. You confirm here with one click and your backup key.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
   </>

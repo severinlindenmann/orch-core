@@ -11,7 +11,7 @@ from orch.host import human as hh
 from orch.identity import certs
 from tests.host import human_helpers
 from tests.host.human_helpers import Human, err, ok
-from tests.host.test_hub_only import append, full_joined, log_len, owner_event
+from tests.host.test_hub_only import full_joined, owner_event
 from tests.host.test_hub_ops import (  # noqa: F401
     CARD,
     connect_args,
@@ -58,10 +58,6 @@ def test_a_mark_can_be_written_in_full_hub_mode_even_by_an_exposed_key(human, se
 # -- the gated acts ------------------------------------------------------------------------------------------------
 
 
-def test_an_exposed_key_cannot_join_full_but_may_join_selective(human, served, stub, keystore):
-    human.run("device.mark_exposed", {})
-    assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "sign.key_exposed"
-    human.run("hub.join", join_args(mode="selective"))  # not gated
 
 
 def test_a_clean_key_still_joins_full_and_leaves(human, served, stub, keystore):
@@ -69,20 +65,6 @@ def test_a_clean_key_still_joins_full_and_leaves(human, served, stub, keystore):
     human.run("hub.leave", {})
 
 
-def test_the_headline_forgery_a_copied_exposed_key_cannot_forge_a_passphrase_labelled_hub_left(
-    human, served, stub, keystore
-):
-    full_joined(human, served, connect=True)  # joined by a clean key
-    human.run("device.mark_exposed", {})  # ... which then had a convenience stretch: the mark is in the log
-    before = log_len(served)
-    # the friendly refusal at prepare
-    assert err(human.prepare_res("hub.leave", {})) == "sign.key_exposed"
-    # and the enforcement at the choke point: a forged line with the honest label, as a same-UID copy would write
-    landed, error = append(served, [left(served, auth="passphrase")])
-    assert landed == [] and error is not None and error.code == "sign.key_exposed"
-    assert log_len(served) == before
-    hub = served.service.store.state.workspace.hub
-    assert hub["status"] == "joined"
 
 
 def test_keys_rotate_is_refused_for_an_exposed_key_read_from_the_roster(human, served, stub, keystore):

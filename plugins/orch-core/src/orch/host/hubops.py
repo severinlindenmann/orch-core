@@ -724,6 +724,7 @@ def serve(call: Call) -> dict[str, Any]:
                     binding, up
                 ),  # V3 D78: "unreachable" when bound but the hub does not answer
                 "binding": binding,
+                "hub_card": None if state is None else state.card,  # public; the dashboard's one-click mode switch
                 "reachable": up,
                 **hublinkprobe.peer_view(service),  # peer_outbox, link_error
                 "log_sync": _log_sync_status(service),

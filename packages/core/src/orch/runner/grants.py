@@ -34,6 +34,8 @@ _WS = re.compile(r"[0-9a-f]{32}")
 _PERSON = re.compile(r"p_[0-9a-f]{32}")
 _TIME = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z")
 MAX_HELD = 64
+MAX_RUN_HELD = 16
+_RUN = re.compile(r"r_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 
 
 class GrantError(Exception):
@@ -62,6 +64,7 @@ class GrantStore:
     def __init__(self, *, clock: Any = time.time) -> None:
         self._lock = threading.Lock()
         self._held: dict[tuple[str, str], _Held] = {}
+        self._runs: dict[str, _Held] = {}
         self.clock = clock
 
     def put(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -94,13 +97,58 @@ class GrantStore:
             "replaced": old.grant if old is not None and old.grant != grant else None,
         }
 
-    def drop(self, grant: Any) -> bool:
+    def put_run(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Hold a secret for one spawn, separately from the person's runner grant."""
+        run, wid, person = args.get("run"), args.get("workspace_id"), args.get("person")
+        grant, secret, until = args.get("grant"), args.get("secret"), args.get("until")
+        if not (isinstance(run, str) and _RUN.fullmatch(run)):
+            raise GrantError("invalid.input", "grant.put_run: invalid run")
+        if not (isinstance(wid, str) and _WS.fullmatch(wid) and isinstance(person, str) and _PERSON.fullmatch(person)):
+            raise GrantError("invalid.input", "grant.put_run: invalid workspace or person")
+        if not (isinstance(grant, str) and _GRANT_ID.fullmatch(grant)):
+            raise GrantError("invalid.input", "grant.put_run: invalid grant id")
+        if not (isinstance(secret, str) and GRANT_SHAPE.fullmatch(secret) and secret.startswith(grant + ".")):
+            raise GrantError("invalid.input", "grant.put_run: the secret is not this grant's")
+        if not (isinstance(until, str) and _TIME.fullmatch(until)):
+            raise GrantError("invalid.input", "grant.put_run: invalid until")
+        try:
+            until_s = _epoch(until)
+        except ValueError:
+            raise GrantError("invalid.input", "grant.put_run: invalid until") from None
         with self._lock:
-            for key, held in list(self._held.items()):
-                if held.grant == grant:
-                    del self._held[key]
-                    return True
-        return False
+            now = self.clock()
+            for key, held in list(self._runs.items()):
+                if held.until_s <= now:
+                    del self._runs[key]
+            if until_s <= now:
+                raise GrantError("launch.no_grant", "grant.put_run: the grant has expired")
+            old = self._runs.get(run)
+            if old is None and len(self._runs) >= MAX_RUN_HELD:
+                raise GrantError("invalid.input", f"grant.put_run: at most {MAX_RUN_HELD} grants are held")
+            self._runs[run] = _Held(grant, secret, until, until_s, "")
+        return {"grant": grant, "until": until, "replaced": old.grant if old and old.grant != grant else None}
+
+    def secret_for_run(self, run: str, grant: Any) -> str:
+        """Consume the matching, unexpired secret of this run exactly once."""
+        with self._lock:
+            held = self._runs.get(run) if isinstance(run, str) else None
+            if held is not None and held.until_s <= self.clock():
+                del self._runs[run]
+                held = None
+            if held is None or held.grant != grant:
+                raise GrantError("launch.no_grant", "the runner holds no such grant for this run")
+            del self._runs[run]
+            return held.secret
+
+    def drop(self, grant: Any) -> bool:
+        dropped = False
+        with self._lock:
+            for entries in (self._held, self._runs):
+                for key, held in list(entries.items()):
+                    if held.grant == grant:
+                        del entries[key]
+                        dropped = True
+        return dropped
 
     def secret_for(self, workspace_id: str, person: str, grant: Any) -> str:
         """The secret of ``grant`` if it is this (workspace, person)'s current, unexpired grant; else
@@ -126,7 +174,7 @@ class GrantStore:
 
     def secrets(self) -> list[str]:
         with self._lock:
-            return [h.secret for h in self._held.values()]
+            return [h.secret for entries in (self._held, self._runs) for h in entries.values()]
 
 
 class RedactFilter(logging.Filter):

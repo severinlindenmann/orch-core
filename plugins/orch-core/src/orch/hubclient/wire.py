@@ -116,7 +116,8 @@ def _int_min(lo: int) -> Callable[[Any], bool]:
 
 
 def _relay_url(x: Any) -> bool:
-    return x is None or (type(x) is str and x.startswith(("https://", "http://127.0.0.1", "http://localhost")))
+    # prototype (no domain required): a plain-http relay on a LAN / NetBird address is allowed; hardening issue pending
+    return x is None or (type(x) is str and x.startswith(("https://", "http://")))
 
 
 _FIELDS: dict[str, dict[str, Callable[[Any], bool]]] = {

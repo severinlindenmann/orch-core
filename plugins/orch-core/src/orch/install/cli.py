@@ -432,7 +432,10 @@ def full_server(
     address = choose_address(ctx, address, st)
     out = {}
     for p in parts:
-        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev)
+        # every hub is dev-only in V3: a publish server installed beside it must be a dev one, or it refuses the hub's
+        # dev card and binding (publish send: hub.refused dev_refused)
+        pdev = dev or (p == "publish" and "hub" in parts)
+        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=pdev)
     return out
 
 
@@ -465,6 +468,9 @@ def start_dashboard(ctx: Ctx, bind: str, port: int) -> dict[str, Any] | None:
     lay = ctx.layout
     lay.ensure()
     env = {"HOME": str(lay.home), "PATH": ctx.env.get("PATH", os.defpath), "ORCH_STATE_DIR": str(lay.root.parent)}
+    # setup's "Open your workspace" may already have started the launcher dashboard (random loopback port, owns the
+    # control socket): the service would then exit with "dashboard already running" and nothing listens on ``port``.
+    ctx.run([*entry, "stop"], {**ctx.env, **env})
     started = ctx.runner.start(
         "dashboard", P.dashboard_command(entry, address=bind, port=port), env, lay.logs / "dashboard.log"
     )

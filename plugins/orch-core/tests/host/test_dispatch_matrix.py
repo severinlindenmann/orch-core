@@ -38,6 +38,7 @@ from orch.host.runners import RUN_OPS
 from orch.host.shareops import SHARE_OPS, SHARE_READS
 from orch.host.spaceops import SPACE_OPS, SPACE_READS
 from orch.host.terms import TERM_OPS
+from orch.host.transcripts import TRANSCRIPT_OPS
 from orch.host.worktrees import WORKTREE_OPS
 from orch.ops.errors import ERRORS
 from tests.host.dispatch_helpers import SESSION, UID, Served, err, ok
@@ -93,6 +94,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(RECORDS_OPS)
     host |= set(RUN_OPS) | set(TERM_OPS)  # H11a, H11b
     host |= set(WORKTREE_OPS)  # H11d
+    host |= set(TRANSCRIPT_OPS)  # focus/1
     host |= set(PUBLISH_OPS)  # P5
     host |= set(HUB_OPS)  # V3 C2a
     host |= set(PEER_OPS)  # V3 C12
@@ -222,6 +224,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("person_write", "write")
         elif op in RUN_OPS:  # H11a: P and G only
             assert kind == ("pg_read", "read")
+        elif op in TRANSCRIPT_OPS:  # focus/1: P only
+            assert kind == ("person_read", "read")
         elif op in WORKTREE_OPS:  # H11d: P and G (never N); list reads, create and remove write
             assert kind == (("pg_read", "read") if op == "worktree.list" else ("pg_write", "write"))
         elif op in PUBLISH_OPS:  # P5: prepare and discard P and G, list reads, send/revoke/register P only

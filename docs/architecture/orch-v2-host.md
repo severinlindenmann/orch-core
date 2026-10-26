@@ -226,6 +226,7 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
 | `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
+| `focus/1` | `run.transcript` (1) (focus mode phase 2, §12.3.4; column P only) | workspace |
 | `workdir/1` | `workdir.get`, `workdir.delete` (1) (r3 part C, §12.4.4; column P only) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
@@ -12159,9 +12160,30 @@ valid mapping to a member, and that the grant is that person's own `label:"runne
 | `reader/1` | `reader.declare` | ✓ own current devices | — | — | side effect, idem (column R, H12d-3: the requesting device's own declaration, kind `device_signed`, no idem, exempt from `rd`) |
 | `reader/1` | `reader.list` | ✓ | — | — | read (column R too, trimmed to `{device, person, reader, level}`) |
 | `quick/1` | `quick.list` | ✓ | ✓ | ✓ (workspace tickets only) | read |
+| `focus/1` | `run.transcript` | ✓ own runs | — | — | read |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |
 
 Writes and resizes on a terminal are not host ops: they travel on the term socket (§12.6) under the capability.
+
+#### 12.3.4 `focus/1`: transcripts (focus mode phase 2)
+
+Prototype addition (26 Oct 2026), additive: no new error code, no new event kind, no signed shape. `run.transcript {run,
+after?, limit?, child?}` (column P, the run must be the caller's own and its ticket visible to them; N5: otherwise
+`not_found`) returns a run's harness transcript as normalized chat items. The runner reads the files (they live in the
+home of the account that runs the agents, which may be another UID than the host); the host forwards the read as the
+runner command `transcript` (15 s). Claude Code runs are launched with `--session-id <uuid5(ORCH_NS, run)>` (the argv
+carries the placeholder `@orch-session-id`, which the runner replaces); a Codex run is bound by cwd and start time.
+
+```
+TranscriptItem = {id, role:"user"|"assistant"|"tool"|"system", kind:"text"|"tool"|"result"|"question"|"status",
+                  text:str (<= 4 KiB, truncated:true if cut), ts, tool?:{name,call}, files?:[relpath], options?:[str],
+                  error?:bool}
+run.transcript -> {run, harness, available:bool, reason?, items:[TranscriptItem] (<= 200), next:"o:<n>"|null, eof:bool}
+```
+
+`after` is the `next` of a previous answer (a byte offset; the reader never returns a partial line). Unavailability is
+data: `available: false` with a `reason` (no transcript yet, a shell run, Codex rollout not found). `child` is a Claude
+Code sub-agent id `agent-<id>`.
 
 #### 12.3.2 Schemas
 

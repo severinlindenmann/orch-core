@@ -17,7 +17,7 @@ import pytest
 from orch.host.control_client import new_idem
 from orch.host.launch import LOGIN_EXEC, LOGIN_NOTICE
 from orch.identity import new_ulid
-from orch.runner import enablement
+from orch.runner import enablement, transcript
 from orch.runner.config import parse
 from tests.host.dispatch_helpers import SESSION, err, ok
 from tests.host.lifecycle_helpers import UID
@@ -148,14 +148,16 @@ def test_preview_blocks_in_order_and_has_no_side_effects(w, tmp_path, monkeypatc
         # a Claude Code agent in the ticket's work folder is isolated from the folder's own settings and MCP files
         cl = preview(c, **{**args, "harness": "claude-code"})
         assert cl["cwd"]["kind"] == "workdir"
-        assert cl["argv"][4:9] == [
+        assert cl["argv"][4:11] == [
             "claude",
+            "--session-id",
+            "@orch-session-id",
             "--setting-sources",
             "user",
             "--strict-mcp-config",
             "--append-system-prompt-file",
         ]
-        assert cl["argv"][9] == "@orch-rules"
+        assert cl["argv"][11] == "@orch-rules"
     finally:
         r.close()
 
@@ -334,7 +336,9 @@ def test_a_person_run_harness_has_no_grant_no_session_no_claim_precheck(ready):
     argv, env = read_out(w, "claude")
     assert "ORCH_GRANT" not in env and "ORCH_SESSION" not in env and env["ORCH_TICKET"] == key
     assert "ORCH_WORKSPACE" not in env  # only an agent is told its workspace
-    assert [pre["program"], *argv] == pre["argv"]
+    session = argv[argv.index("--session-id") + 1]  # the runner swapped the placeholder for the run's session uuid
+    assert session == transcript.session_id(run["run"])
+    assert [pre["program"], *argv] == [session if a == "@orch-session-id" else a for a in pre["argv"]]
     inter = ok(c.call("term.preview", {"harness": "codex"}))["data"]
     assert inter["blocked"] is None and inter["argv"] == [str(w.out.parent / "bin" / "codex")]
 

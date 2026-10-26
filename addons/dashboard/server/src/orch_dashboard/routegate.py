@@ -170,6 +170,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     # --- runs, agents, terminals
     (GET, W + "/runs"): (ALLOWED, ""),
     (POST, W + "/runs/{run}/stop"): (ALLOWED, "turning off"),
+    (GET, W + "/runs/{run}/transcript"): (ALLOWED, "focus mode: the chat view of a run, read only"),
     (POST, W + "/runs/{run}/attach"): (TERMINALS, "a terminal is a shell on the server"),
     (POST, W + "/terminals/open"): (TERMINALS, "a terminal is a shell on the server"),
     (POST, W + "/terminals/preview"): (TERMINALS, "a terminal is a shell on the server"),

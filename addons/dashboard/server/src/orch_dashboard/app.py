@@ -17,6 +17,7 @@ from . import (
     addon_switches,
     agents,
     click,
+    focus_routes,
     handoff,
     hub,
     hubapprove,
@@ -294,6 +295,7 @@ def create_app(
     agents.register(app, gateway)
     testrun.register(app, gateway)
     worktrees.register(app, gateway)
+    focus_routes.register(app, gateway)
     workdirs.register(app, gateway)
     usage.register(app, gateway)
     shares.register(app, gateway)

@@ -39,6 +39,7 @@ CAPS = [
     "worktree/1",
     "workdir/1",
     "publish/1",
+    "focus/1",
 ]
 MARKET_READS = ("market.list", "market.installed")
 MARKET_WRITES = ("market.stage", "market.unstage", "market.uninstall", "market.refresh", "market.add")
@@ -102,6 +103,8 @@ OPS = {
         # person's own delete of it (a host-side write with an idem, no log event).
         "workdir.get",
         "workdir.delete",
+        # Focus mode (focus/1): a run's transcript as chat items (a read; the runner reads the harness files)
+        "run.transcript",
         # Publish (P5/P6, design-publish-addon 2.2): list is a read; the others are person writes the routes call
         # with an idem. `publish.send` answers the share link ONCE (shares.py); `publish.share` is never sent as a
         # plain op: it is the inner op of a signed hand-off (handoff.py).
@@ -129,6 +132,7 @@ RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "g
 FORBIDDEN = frozenset({"grant.deposit"})
 WORKTREE_OPS = {"worktree.list", "worktree.create", "worktree.remove"}
 WORKDIR_OPS = {"workdir.get", "workdir.delete"}
+FOCUS_OPS = {"run.transcript"}
 PUBLISH_OPS = {
     "publish.list",
     "publish.prepare",
@@ -355,6 +359,8 @@ class HostLink:
             if op in TERM_OPS
             else "worktree/1"
             if op in WORKTREE_OPS
+            else "focus/1"
+            if op in FOCUS_OPS
             else "workdir/1"
             if op in WORKDIR_OPS
             else "publish/1"

@@ -24,6 +24,8 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "claude",
         "--model",
         "opus",
+        "--session-id",
+        "@orch-session-id",
         "Run orch status, then refine ticket ORC-7. Follow AGENTS.orch.md.",
     ]
     argv, _, _ = launch_argv("claude-code", "refine", "opus", "ORC-7", LOGIN, workdir=True)
@@ -31,6 +33,8 @@ def test_codex_and_claude_argv_through_the_login_shell():
         "claude",
         "--model",
         "opus",
+        "--session-id",
+        "@orch-session-id",
         "--setting-sources",
         "user",
         "--strict-mcp-config",
@@ -44,12 +48,14 @@ def test_codex_and_claude_argv_through_the_login_shell():
 def test_only_a_work_folder_agent_ignores_project_settings_and_mcp_files():
     flags = {"--setting-sources", "--strict-mcp-config", "--append-system-prompt-file"}
     argv, _, _ = launch_argv("claude-code", "work", None, "ORC-7", LOGIN, workdir=True)
-    assert argv[4:8] == ["claude", "--setting-sources", "user", "--strict-mcp-config"] and flags <= set(argv)
+    head = ["claude", "--session-id", "@orch-session-id", "--setting-sources", "user", "--strict-mcp-config"]
+    assert argv[4:10] == head
+    assert flags <= set(argv)
     # a repo, worktree or root launch (workdir False), a person-run harness and codex: Claude Code's normal behaviour
     assert not flags & set(launch_argv("claude-code", "work", None, "ORC-7", LOGIN)[0])
     assert not flags & set(launch_argv("claude-code", None, None, None, LOGIN, workdir=True)[0])
     assert not flags & set(launch_argv("codex", "work", None, "ORC-7", LOGIN, workdir=True)[0])
-    assert launch_argv("claude-code", None, None, None, LOGIN)[0][4:] == ["claude"]
+    assert launch_argv("claude-code", None, None, None, LOGIN)[0][4:] == ["claude", "--session-id", "@orch-session-id"]
 
 
 def test_the_prompt_is_one_element_and_context_mode():
@@ -66,7 +72,7 @@ def test_the_prompt_is_one_element_and_context_mode():
 
 def test_without_a_mode_a_harness_starts_interactive():
     argv, _, _ = launch_argv("claude-code", None, None, None, LOGIN)
-    assert argv == ["$SHELL", "-l", "-c", LOGIN_EXEC, "claude"]
+    assert argv == ["$SHELL", "-l", "-c", LOGIN_EXEC, "claude", "--session-id", "@orch-session-id"]
     assert launch_argv("shell", None, None, None, LOGIN) == (["$SHELL", "-l"], False, None)
 
 

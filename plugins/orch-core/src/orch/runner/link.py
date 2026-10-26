@@ -49,7 +49,7 @@ from orch.host import frames
 from orch.host._socket import recv
 from orch.host.client import Pin, handshake_pinned
 
-from . import rules
+from . import rules, transcript
 from .config import ConfigError, RunnerConfig
 from .grants import GrantError, GrantStore
 from .supervise import SpawnError, SpawnSpec, Supervisor
@@ -168,6 +168,12 @@ def _is_claude(argv: list[str]) -> bool:
     """A registry launch of Claude Code: ``... -c 'exec "$0" "$@"' claude ...`` or an absolute ``claude``."""
     prog = argv[4] if len(argv) >= 5 and argv[1:4] == ["-l", "-c", LOGIN_EXEC] else argv[0]
     return os.path.basename(prog) == "claude"
+
+
+def _harness_of(argv: list[str]) -> str | None:
+    """The registry harness a spawn argv starts (``claude-code``, ``codex``), ``None`` for a shell."""
+    prog = argv[4] if len(argv) >= 5 and argv[1:4] == ["-l", "-c", LOGIN_EXEC] else argv[0]
+    return {"claude": "claude-code", "codex": "codex"}.get(os.path.basename(prog))
 
 
 def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerConfig, grants: GrantStore) -> SpawnSpec:
@@ -513,6 +519,7 @@ class HostLink:
             spec = spawn_spec(args, self.env, self.config(), self.grants)
             spec.check()
             spec = dataclasses.replace(spec, argv=rules.prepare(self._rules_base(), spec.run, spec.argv, spec.env))
+            spec = dataclasses.replace(spec, argv=transcript.prepare(spec.run, spec.argv))
             if spec.trusted is not None:
                 self._trusted[spec.run] = spec.trusted
             with self.sup._spawn_lock:  # the epoch check and the spawn are one step against a reconnect's snapshot
@@ -521,6 +528,8 @@ class HostLink:
                 if self._restarting():
                     raise SpawnError("runner.unavailable", "the agent runner is restarting on a new release; try again")
                 res = self.sup.spawn(spec)
+                if not res.get("duplicate"):  # the transcript reader finds the run's file from these
+                    self.sup.table.update(spec.run, harness=_harness_of(spec.argv), cwd_path=spec.cwd.get("path"))
             return {k: res.get(k) for k in ("pid", "state", "started_at", "duplicate")}
         if cmd == "stop":
             run = str(args.get("run"))
@@ -539,6 +548,8 @@ class HostLink:
                 if not self._current(tag):
                     raise _Stale()
                 return run_git(args, self.env, log=LOG.info)
+        if cmd == "transcript":  # focus phase 2: the run's harness transcript as chat items
+            return transcript.serve(args, self.sup, self.env)
         if cmd == "grant.put":  # H11c: the secret arrives here once; it is answered without it
             try:
                 return self.grants.put(args)

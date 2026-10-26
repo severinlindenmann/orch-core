@@ -1,6 +1,7 @@
 import { act, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { api, mockStore } from '@/api/client'
+import { focusApi } from '@/api/focus'
 import type { Run, RunList } from '@/api/runs'
 import { renderApp } from '@/test/renderApp'
 import { installAndGrant } from '@/test/installAddon'
@@ -28,18 +29,36 @@ it('shows the empty state and opens the existing start dialog with the ticket', 
   expect(start).toHaveBeenLastCalledWith(expect.objectContaining({ open: true, ticket: 'DEMO-0043', choose: true }))
 })
 
-it('keeps Chat keyboard reachable but unavailable', async () => {
+it('keeps Chat keyboard reachable but unavailable while no agent runs', async () => {
   const { user } = renderApp('/focus?scratch=1', { setup })
   const pane = await screen.findByTestId('focus-conversation')
   const chat = within(pane).getByRole('button', { name: 'Chat' })
   expect(chat).toHaveAttribute('aria-disabled', 'true')
-  expect(chat).toHaveAccessibleDescription('Chat view needs transcript support, coming in a later step')
+  expect(chat).toHaveAccessibleDescription('Chat opens once an agent is running')
   within(pane).getByRole('button', { name: 'Terminal' }).focus()
   await user.tab()
   expect(chat).toHaveFocus()
   await user.keyboard('{Enter} ')
   expect(within(pane).getByRole('button', { name: 'Terminal' })).toHaveAttribute('aria-pressed', 'true')
   expect(screen.queryByRole('region', { name: 'Needs you' })).not.toBeInTheDocument()
+})
+
+it('switches to Chat and back while the terminal stays mounted for the composer', async () => {
+  const { client, user } = renderApp('/focus/DEMO-0043', { setup })
+  const pane = await screen.findByTestId('focus-conversation')
+  const chosen = run('chat-run')
+  act(() => client.setQueryData<RunList>(['runs', mockStore.workspaces[0].id], { runner: null, truncated: false, runs: [chosen] }))
+  await screen.findByTestId('real-terminal')
+  const read = vi.spyOn(focusApi, 'transcript').mockResolvedValue({ run: 'chat-run', harness: 'claude-code', available: true, reason: null, next: 'o:1', eof: true,
+    items: [{ id: 'u1', role: 'user', kind: 'text', text: 'hello from the transcript', ts: null }] })
+  await user.click(within(pane).getByRole('button', { name: 'Chat' }))
+  expect(await screen.findByText('hello from the transcript')).toBeInTheDocument()
+  expect(read).toHaveBeenCalledWith(mockStore.workspaces[0].id, 'chat-run', expect.anything())
+  expect(screen.getByTestId('real-terminal')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Chat' })).toHaveAttribute('aria-pressed', 'true')
+  await user.click(within(pane).getByRole('button', { name: 'Terminal' }))
+  expect(screen.queryByRole('region', { name: 'Chat' })).not.toBeInTheDocument()
+  expect(screen.getByTestId('real-terminal')).toBeInTheDocument()
 })
 
 it('mounts the real terminal for the newest running agent on this ticket', async () => {

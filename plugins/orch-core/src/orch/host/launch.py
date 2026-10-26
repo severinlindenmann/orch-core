@@ -39,6 +39,8 @@ __all__ = [
     "CLAUDE_AGENT_FLAGS",
     "RULES_FLAG",
     "RULES_PLACEHOLDER",
+    "SESSION_FLAG",
+    "SESSION_PLACEHOLDER",
     "check_model",
     "display",
     "launch_argv",
@@ -63,6 +65,9 @@ CLAUDE_AGENT_FLAGS = ("--setting-sources", "user", "--strict-mcp-config")
 #: the runner replaces the placeholder with the path of the rules file it writes for the run (orch.runner.rules)
 RULES_FLAG = "--append-system-prompt-file"
 RULES_PLACEHOLDER = "@orch-rules"
+#: Claude Code gets a session id the runner derives from the run id: the transcript file is then known
+SESSION_FLAG = "--session-id"
+SESSION_PLACEHOLDER = "@orch-session-id"
 KEY = re.compile(r"(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}")
 
 
@@ -117,6 +122,8 @@ def launch_argv(
     rest: list[str] = []
     if model is not None:
         rest += ["--model", model]
+    if harness == "claude-code":
+        rest += [SESSION_FLAG, SESSION_PLACEHOLDER]
     if harness == "claude-code" and mode is not None and workdir:
         # ONLY an agent in a ticket work folder (<project>/.orch-work/<KEY>, `workdir`: the folders the runner
         # pre-trusts in Claude Code) reads no project or local settings and no .mcp.json (hooks, permissions, env and

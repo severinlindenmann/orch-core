@@ -145,6 +145,7 @@ def test_column_r_serves_only_its_closed_op_list():
     refused = [
         "doctor", "instructions.sync", "instructions.hook", "wait", "sub.open", "sub.close", "blob.put", "blob.drop",
         "host.status", "session.list", "grant.list", "records.snapshot", "run.list", "run.sub", "run.stop",
+        "run.transcript",
         "term.open", "term.attach", "worktree.list", "worktree.create", "human.prepare", "human.get", "human.submit",
         "human.pending", "human.cancel", "grant.issue", "ask", "log", "artifact.add", "new", "move", "decision",
         "job.next", "host.list", "agent.start",

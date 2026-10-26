@@ -15,7 +15,7 @@ def test_focus_manifest():
     assert manifest.capabilities == []
     assert "orch ask" in manifest.agents_md
     assert "focus" in builtin.NAMES
-    repo = Path(__file__).resolve().parents[4] / "addons/focus/orch-addon.json"
+    repo = Path(__file__).resolve().parents[3] / "addons/focus/orch-addon.json"
     assert repo.read_bytes() == data
     assert json.loads(data)["entry"] == {"cmd": ["orch-focus", "serve"]}
 

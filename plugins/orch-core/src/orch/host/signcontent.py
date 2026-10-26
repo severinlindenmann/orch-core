@@ -1151,6 +1151,20 @@ def _payload(
                 ("WIDENED: " if diff.get("widened") is True else "not widened: ")
                 + "; ".join(one(x) for x in diff["lines"]),
             )
+    if isinstance(out.get("summary"), dict) and out["summary"].get("risk"):
+        # the compact add-on view keeps every warning in sight, not only in the fold
+        warns = []
+        if isinstance(market, Mapping):
+            if market.get("stale") is True:
+                warns.append("The marketplace index is past its expiry.")
+            if market.get("class") == "dev-folder":
+                warns.append("This is a local folder, not a marketplace package.")
+            if isinstance(market.get("publisher"), Mapping) and market["publisher"].get("tofu") == "new":
+                warns.append("First use of this publisher key.")
+        if isinstance(deps, Mapping) and isinstance(deps.get("diff"), Mapping) and deps["diff"].get("widened") is True:
+            warns.append("Its dependencies widened.")
+        if warns:
+            out["summary"]["risk"] += " " + " ".join(warns)
     issued = [ev.get("grant") for ev in events if ev.get("type") == "grant.issued"]
     revoked = [ev.get("grant") for ev in events if ev.get("type") == "grant.revoked"]
     if issued and revoked:  # an Extend: the access it replaces must be another one than the new access

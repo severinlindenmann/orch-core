@@ -101,7 +101,7 @@ const details = () => screen.getByText(/Technical details/).closest('details')!
 
 it('shows a known member as name WITH short id; the full id and the key line only under Technical details', () => {
   withMembers([{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Mara' }], [{ field: 'owner', before: null, after: SEV }, { field: 'reviewer', before: MARA, after: B }])
-  expect(row('owner')).toHaveTextContent('Owner: — → Severin · p_181d953f12ab…')
+  expect(row('owner')).toHaveTextContent('Owner: Severin · p_181d953f12ab…')
   expect(row('owner')).not.toHaveTextContent(SEV)
   expect(row('reviewer')).toHaveTextContent('Reviewer: Mara · p_aaaa11112222… → p_bbbb11112222… (unknown person)')
   expect(details()).toHaveTextContent(`Severin (p_181d953f12ab…) = ${SEV}`)
@@ -143,7 +143,7 @@ const table: [string, string, string][] = [
 ]
 it.each(table)('personLabel: %s', (_n, id, text) => {
   withMembers(members, [{ field: 'owner', before: null, after: id }])
-  expect(row('owner')).toHaveTextContent(`Owner: — → ${text}`)
+  expect(row('owner')).toHaveTextContent(`Owner: ${text}`)
   expect(row('owner')).not.toHaveTextContent(id.length > 15 ? id : 'never')
 })
 
@@ -156,7 +156,7 @@ it('every signed person id that is not cut appears in full under Technical detai
 
 it('a member of another workspace is an unknown person here', () => {
   withWorkspaces([{ id: 'w_1', members: [{ person: SEV, name: 'Severin' }] }, { id: 'w_2', members: [{ person: MARA, name: 'Mara' }] }], [{ field: 'owner', before: null, after: MARA }])
-  expect(row('owner')).toHaveTextContent('Owner: — → p_aaaa11112222… (unknown person)')
+  expect(row('owner')).toHaveTextContent('Owner: p_aaaa11112222… (unknown person)')
   expect(row('owner')).not.toHaveTextContent('Mara')
 })
 
@@ -196,12 +196,12 @@ it('a combining mark that case-folds to a letter (U+0345 -> iota) does not survi
 
 it('a name mixing covered letters with letters the table does not cover is not shown', () => {
   withMembers([{ person: SEV, name: 'Sev\u05D0' }], [{ field: 'owner', before: null, after: SEV }])
-  expect(row('owner')).toHaveTextContent('Owner: — → p_181d953f12ab… (name not shown)')
+  expect(row('owner')).toHaveTextContent('Owner: p_181d953f12ab… (name not shown)')
 })
 
 it.each(['\u3164', '\u115F', '\uFFA0'])('a name with the invisible Hangul filler U+%s is not shown', (filler) => {
   withMembers([{ person: SEV, name: `Sev${filler}erin` }], [{ field: 'owner', before: null, after: SEV }])
-  expect(row('owner')).toHaveTextContent('Owner: — → p_181d953f12ab… (name not shown)')
+  expect(row('owner')).toHaveTextContent('Owner: p_181d953f12ab… (name not shown)')
 })
 
 const SHARE_TEXT = [

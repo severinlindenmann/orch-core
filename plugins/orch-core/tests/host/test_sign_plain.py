@@ -1470,3 +1470,16 @@ def test_788_the_hosts_word_never_reaches_a_headline_or_summary_as_if_it_were_si
     assert all(
         "per host, not signed" in x.lower() for x in ext["summary"]["lines"] if "this computer's runner, until" in x
     )
+
+
+def test_run9_the_compact_addon_risk_line_carries_market_and_dependency_warnings():
+    p = _addon()
+    p["material"] = {
+        "kind": "payload", "ticket": None,
+        "market": {"url": "https://m.example/x", "stale": True, "class": "dev-folder", "publisher": {"tofu": "new"}},
+        "deps": {"rows": [], "diff": {"widened": True, "lines": ["+ left-pad 1.0"]}},
+    }  # fmt: skip
+    risk = build(p)["summary"]["risk"]
+    for words in ("past its expiry", "local folder", "First use of this publisher key", "dependencies widened"):
+        assert words in risk
+    assert build(_addon())["summary"]["risk"] == signcontent.ADDON_TRUST

@@ -1,6 +1,7 @@
 import { api } from '@/api/client'
 import { useSignMethods } from './SignMethods'
 import { WhatNext } from './SignAside'
+import { alsoSigned } from './alsoSigned'
 import { storyOf } from './story'
 import { methodLabel, type SignContent } from '@/api/signing'
 // Core's signing dialog in hand-off mode. Same place, same core words in the title and the buttons as the simulated
@@ -280,7 +281,10 @@ export function SignPopover(p: SignPopoverProps) {
   // The Cancel row sits at the bottom of the review. The click panel carries its own (Cancel and Sign); before the request
   // exists, or while it is being read, there is nothing in it yet.
   const footerShown = !['ready', 'signing', 'preparing', 'viewing'].includes(click.phase) && !(phase === 'idle' && click.phase === 'idle' && autoNow && !!p.action)
-  const title = <Inline>{click.view?.view.content?.title ?? click.view?.view.content?.headline ?? click.view?.view.headline ?? run.request?.content?.title ?? run.request?.content?.headline ?? run.request?.headline ?? p.title}</Inline>
+  const shown = click.view?.view.content ?? run.request?.content
+  // A quick task whose review is exactly the derived one: the headline says the action, the typed text is quoted once below.
+  const quickHead = story?.quick && shown && alsoSigned(shown, story.quick) ? (p.startsAgent ? 'Start a task' : 'Create a task') : null
+  const title = quickHead ? <>{quickHead}</> : <Inline>{click.view?.view.content?.title ?? click.view?.view.content?.headline ?? click.view?.view.headline ?? run.request?.content?.title ?? run.request?.content?.headline ?? run.request?.headline ?? p.title}</Inline>
   const description = (
     <>
       {shared && here && (
@@ -294,15 +298,15 @@ export function SignPopover(p: SignPopoverProps) {
           </bdi>
         </p>
       )}
-      <p>
-        {(click.view?.view.content || run.request?.content) ? (click.view?.view.content?.subline ?? run.request?.content?.subline ?? 'Review what you’re approving.') : clickOpen
+      {!(click.view?.view.content || run.request?.content) && <p>
+        {clickOpen
           ? 'Only you can approve this. Agents cannot.'
           : phase === 'idle'
             ? method === 'click'
               ? 'Sign with one click on this computer.'
               : 'This one is signed in your terminal. This page only shows the request.'
             : 'Only you can approve this. Agents cannot.'}
-      </p>
+      </p>}
     </>
   )
 
@@ -341,6 +345,7 @@ export function SignPopover(p: SignPopoverProps) {
           onCancel={() => void close()}
           waitUntil={waitUntil}
           story={story}
+          label={p.confirmLabel}
         />
       )}
       {click.phase === 'ready' && click.problem?.stale && p.action && (
@@ -388,6 +393,7 @@ export function SignPopover(p: SignPopoverProps) {
           )}
           <HandoffPanel
             request={run.request}
+            quick={story?.quick}
             workspace={here ?? null}
             why={clickEligible(p.action) ? 'click_off' : 'terminal_only'}
             whyAction={router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()} className="text-brand underline underline-offset-2 hover:no-underline">Turn on One click</Link>}

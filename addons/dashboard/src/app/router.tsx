@@ -245,14 +245,21 @@ const usageRoute = createRoute({
 const focusRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'focus',
-  beforeLoad: serves('focus'),
+  validateSearch: (s: Record<string, unknown>): { scratch?: 1 } => Number(s.scratch) === 1 ? { scratch: 1 } : {},
+  beforeLoad: async ({ context }) => {
+    await context.queryClient?.ensureQueryData(queries.workspaces())
+    serves('focus')()
+  },
   loader: pageLoader(() => [], [FocusPage.preload]),
   component: FocusPage,
 })
 const focusTicketRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'focus/$ticket',
-  beforeLoad: serves('focus'),
+  beforeLoad: async ({ context }) => {
+    await context.queryClient?.ensureQueryData(queries.workspaces())
+    serves('focus')()
+  },
   loader: pageLoader(() => [], [FocusPage.preload]),
   component: FocusPage,
 })

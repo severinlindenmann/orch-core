@@ -56,6 +56,7 @@ def make(home, **kw):
         detect=lambda: [("127.0.0.1", "this computer only"), ("100.64.1.2", "NetBird")],
         port_free=lambda p, h: True,
         token=lambda: "TOKEN",
+        dashboard_entry=lambda: ["/bin/orch-dashboard"],
         **kw,
     )
     return ctx, out, err, calls
@@ -72,11 +73,14 @@ def test_hub_install_pins_a_ref_starts_it_and_prints_console_and_setup_link(home
     )
     assert rc == 0, err.getvalue()
     text = out.getvalue()
-    assert "http://127.0.0.1:8100/#setup=TOKEN" in text and "100.64.1.2:8105" in text
+    assert "http://100.64.1.2:8100/#setup=TOKEN" in text and "100.64.1.2:8105" in text
+    assert (ctx.layout.data("hub") / "setup-token").read_text() == "TOKEN\n"
     install = next(c for c in calls if c[:3] == ["uv", "tool", "install"])
     assert install[-1] == "git+https://github.com/severinlindenmann/orch-hub@" + "a" * 40
     argv, _ = ctx.runner.started["hub"]
-    assert "--link-listen" in argv and "100.64.1.2:8105" in argv and "--web-listen" in argv
+    assert "--link-listen" in argv and "100.64.1.2:8105" in argv
+    assert argv[argv.index("--web-listen") + 1] == "100.64.1.2:8100"
+    assert "--dev-shared-machine" not in argv  # only with --dev
     assert any(c[1] == "keys" and c[-1] == "init" for c in calls)
     st = load(ctx.layout)
     assert st["parts"]["hub"]["port"] == 8100 and st["parts"]["hub"]["version"] == "0.1.0"
@@ -131,7 +135,7 @@ def test_full_server_and_more_workspaces_take_the_next_ports(home):
     cli.full_server(ctx, ["publish", "relay", "hub"], address="100.64.1.2")
     assert set(load(ctx.layout)["parts"]) == {"hub", "relay", "publish"}
     assert cli.add_workspace(ctx, "/w/one") == 8151
-    assert cli.add_workspace(ctx, "/w/two") == 8152
+    assert cli.add_workspace(ctx, "/w/two") == 8151  # one dashboard serves every workspace of this person
     assert cli.add_workspace(ctx, "/w/one") == 8151
 
 
@@ -167,3 +171,34 @@ def test_full_server_on_an_overlay_ip_lets_the_hub_dial_publish_and_relay_over_l
     hub = ctx.runner.started["hub"][0]
     assert hub[hub.index("--publish-url") + 1] == "http://127.0.0.1:8102"
     assert hub[hub.index("--relay-url") + 1] == "http://127.0.0.1:8101"
+
+
+def test_hub_with_dev_gets_the_shared_machine_flag_on_a_network_address(home):
+    ctx, out, err, _ = make(home)
+    assert cli.main(["hub", "--address", "100.64.1.2", "--dev"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    assert "--dev-shared-machine" in ctx.runner.started["hub"][0]
+
+
+def test_a_workspace_dashboard_runs_on_the_chosen_address_and_status_shows_it(home):
+    ctx, out, err, _ = make(home)
+    cli.full_server(ctx, ["hub"], address="100.64.1.2")
+    assert cli.add_workspace(ctx, "/w/one") == 8151
+    argv, env = ctx.runner.started["dashboard"]
+    assert argv == ["/bin/orch-dashboard", "serve", "--port", "8151", "--listen", "100.64.1.2"]
+    assert env["ORCH_STATE_DIR"] == str(ctx.layout.root.parent)
+    out.truncate(0), out.seek(0)
+    cli.main(["status", "--json"], env=ctx.env, out=out, err=err, ctx=ctx)
+    ws = [r for r in json.loads(out.getvalue())["parts"] if r["part"] == "workspace"]
+    assert ws[0]["url"] == "http://100.64.1.2:8151/" and ws[0]["state"] == "running"
+    out.truncate(0), out.seek(0)
+    cli.main(["status"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert "orch dashboard open --print-url --network" in out.getvalue()
+    assert cli.main(["remove", "dashboard"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    assert "dashboard" not in ctx.runner.started
+
+
+def test_a_loopback_dashboard_has_no_listen_flag(home):
+    ctx, *_ = make(home)
+    cli.full_server(ctx, ["hub"], address="127.0.0.1")
+    cli.add_workspace(ctx, "/w/one")
+    assert "--listen" not in ctx.runner.started["dashboard"][0]

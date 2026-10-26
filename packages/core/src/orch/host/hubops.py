@@ -1019,6 +1019,32 @@ def _join(
     )  # fmt: skip
 
 
+def _clear_relay_mark(service: Any) -> None:
+    """A completed hub leave (no rotation owed) removes the ``membership/`` store a full join made in a workspace that
+    never had a relay, and its stored level: ``readerrecs.relay_level`` read it as "relay paired" and refused every
+    convenience signature (B12). A workspace with a relay link, or a former one, keeps all of it."""
+    import shutil
+    from pathlib import Path
+
+    from orch.store.readerrecs import clear_relay_level
+
+    from . import hubkeys
+
+    base = Path(os.path.realpath(service.state_dir)) / "hosts" / service.workspace_id
+    relay = base / "relay"
+    try:
+        names = os.listdir(relay)
+    except FileNotFoundError:
+        names = []
+    except OSError:
+        return  # cannot tell: a relay may exist
+    if "link.json" in names or any(n.startswith("unlinked-") and n.endswith(".json") for n in names):
+        return
+    hubkeys.close(service)
+    shutil.rmtree(base / "membership", ignore_errors=True)
+    clear_relay_level(service.state_dir, service.workspace_id)
+
+
 def _unbind(
     call: Call, plan: dict[str, Any], state: Any, sign: Any, wsk_pub: Any, now: Any, save: Any, leave: Any, flush: Any
 ) -> dict[str, Any]:
@@ -1050,6 +1076,8 @@ def _unbind(
         if state.rotate_after is not None:  # a full hub was left: ask again, record when the new epoch is there
             settle_rotation(state=state, epochs=epochs, save=save, request=True)
     owed = state.rotate_after is not None
+    if model.get("status") == "left" and not owed:
+        _clear_relay_mark(service)  # B12: the full join's key store is no relay; One click must work again
     out = {
         # not "unbound" while a key rotation is owed: the leave is not finished until the hub's key is replaced
         "hub_id": state.hub_id, "unbound": not owed, "binding_ended": True, "delivered": not state.outbox,

@@ -1072,13 +1072,18 @@ def test_leaving_the_hub_by_click_ignores_the_readers_reasons(click, served, hum
         convenience.check(svc, human.person.ref, dev, leaving=True)  # the flag still decides
 
 
-def test_leaving_the_hub_still_refuses_other_readers(click, served, human, monkeypatch):
-    """Only relay_paired is waived for hub.leave; another member's old reader still refuses it."""
+@pytest.mark.parametrize("reason", ["other_member", "phone_device", "reader_version"])
+def test_leaving_the_hub_still_refuses_other_readers(click, served, human, monkeypatch, reason):
+    """Only relay_paired is waived for hub.leave; another reader below level 1 or an old model still refuses it.
+    (`why` imports levels/below_level from orch.ops.readers at call time, so patching that module takes effect.)"""
     from orch.ops import readers
 
     (served.lab.state / "hosts" / served.wid / "membership").mkdir(parents=True)
-    monkeypatch.setattr(readers, "levels", lambda *a, **k: {})
-    monkeypatch.setattr(readers, "below_level", lambda *a, **k: ("other_member", ["d_x"]))
+    if reason == "reader_version":
+        monkeypatch.setattr(convenience, "_model_knows", lambda: False)
+    else:
+        monkeypatch.setattr(readers, "levels", lambda *a, **k: {})
+        monkeypatch.setattr(readers, "below_level", lambda *a, **k: (reason, ["d_x"]))
     svc, dev = served.service, human.person.device
-    with pytest.raises(Exception, match="other_member"):
+    with pytest.raises(Exception, match=reason):
         convenience.check(svc, human.person.ref, dev, leaving=True)

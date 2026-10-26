@@ -290,7 +290,20 @@ def register(app: FastAPI, gateway: Gateway):
     def link_for(ws: str, *ops: str, paused_ok: bool = False):
         # paused_ok: after the signed `hub.join` the host pauses every add-on (this one too) until the hub snapshot is
         # pinned; the connect that pins it must still go through (e2e-4). The host checks who may call it.
-        link = gateway.link(ws) if paused_ok else gateway.enabled(ws)
+        try:
+            link = gateway.enabled(ws)
+        except HostError as exc:
+            if not paused_ok or exc.error.get("code") != "addon.disabled":
+                raise
+            link = gateway.link(ws)  # pinned workspace only; "not enabled" is accepted just for the fresh-join pause
+            try:
+                rows = link.call("addon.list")["addons"]
+            except (HostError, KeyError, TypeError):
+                raise exc from None
+            row = next((a for a in rows if isinstance(a, dict) and a.get("name") == "dashboard"), {})
+            paused = row.get("paused")
+            if not (row.get("state") == "paused" and isinstance(paused, dict) and paused.get("cause") == "unverified"):
+                raise exc from None
         if not all(link.supports(op, "hub/1") for op in ops):
             raise fail("click.contract", "Update orch-core: it cannot show hubs yet.", exit=9)
         return link

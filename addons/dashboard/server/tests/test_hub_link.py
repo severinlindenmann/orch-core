@@ -32,3 +32,10 @@ def test_connect_passes_the_address_of_the_link_to_the_host():
     assert connect(connect_client(link), addr="10.0.0.5:8105").status_code == 200
     assert link.calls[0][1]["addr"] == "10.0.0.5:8105"
     assert connect(connect_client(link), addr="x y").status_code in (400, 422)
+
+
+def test_hub_link_is_a_read_op_of_the_host_link():
+    # without it HostLink.call("hub.link") treated the op as a write and demanded an idem: the route answered 500
+    from orch_dashboard import hostlink
+
+    assert "hub.link" in hostlink.OPS

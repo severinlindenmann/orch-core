@@ -35,6 +35,7 @@ const WorktreesPage = lazyPage(() => import('./pages/worktrees'), 'WorktreesPage
 const ExplorerPage = lazyPage(() => import('./pages/explorer'), 'ExplorerPage')
 const TerminalsPage = lazyPage(() => import('./pages/terminals'), 'TerminalsPage')
 const ActivityPage = lazyPage(() => import('./pages/activity'), 'ActivityPage')
+const FocusPage = lazyPage(() => import('./pages/focus'), 'FocusPage')
 const UsagePage = lazyPage(() => import('./pages/usage'), 'UsagePage')
 const WikiPage = lazyPage(() => import('./pages/wiki'), 'WikiPage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
@@ -254,6 +255,27 @@ const wikiRoute = createRoute({
   loader: pageLoader(() => [], [WikiPage.preload]),
   component: WikiPage,
 })
+const focusRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'focus',
+  validateSearch: (s: Record<string, unknown>): { scratch?: 1 } => Number(s.scratch) === 1 ? { scratch: 1 } : {},
+  beforeLoad: async ({ context }) => {
+    await context.queryClient?.ensureQueryData(queries.workspaces())
+    serves('focus')()
+  },
+  loader: pageLoader(() => [], [FocusPage.preload]),
+  component: FocusPage,
+})
+const focusTicketRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'focus/$ticket',
+  beforeLoad: async ({ context }) => {
+    await context.queryClient?.ensureQueryData(queries.workspaces())
+    serves('focus')()
+  },
+  loader: pageLoader(() => [], [FocusPage.preload]),
+  component: FocusPage,
+})
 const layoutPreviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '__layout/$name',
@@ -337,7 +359,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, wikiRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, wikiRoute, focusRoute, focusTicketRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

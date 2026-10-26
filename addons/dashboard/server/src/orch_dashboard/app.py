@@ -61,7 +61,7 @@ SETTINGS_TABS = (
     "members",
     "gates",
     "grants",
-    "addons",
+    "devices",
     "hub",
 )  # HOST_TABS (settings/tabs.ts)
 SPA_ROUTES = (
@@ -84,9 +84,13 @@ SPA_ROUTES = (
     "shares",
     "activity",
     "usage",
+    "wiki",
+    "focus",
+    "focus/$ticket",
     "guide",  # ?page=<x> is a query: not part of the path
     "settings",
     "settings/$tab",
+    "settings/addons",  # legacy address redirects to the unified Add-ons page
     "settings/addon/$name",
     "settings/addons/$name",
     "addon/$name/$page",
@@ -97,6 +101,7 @@ SPA_BARE = ("ticket/$key", "checklist", "feedback")
 SPA_BARE_ONLY = ("checklist", "feedback")
 _PARAM = {
     "key": r"[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}",
+    "ticket": r"[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}",
     "tab": "(?:" + "|".join(SETTINGS_TABS) + ")",
     "name": r"[A-Za-z0-9_-]{1,64}",
     "page": r"[A-Za-z0-9_-]{1,64}",

@@ -3,6 +3,12 @@
 Non-trivial product and engineering decisions made during the autonomous run, for the owner's review.
 Format: date, decision, why, how to revert.
 
+## 2026-10-26 — Focus merge into run9fb
+
+- **Decision:** Focus uses the existing Built in list, switch and inline signing accordion; preserve Quick tasks, marketplace actions and per-add-on settings. Keep the extensible handoff name types.
+- **Why:** Focus must follow the current Add-ons design. Align server reload routes with the current Wiki and Devices pages while retaining the legacy Add-ons address.
+- **Revert:** Remove the focus catalog, switch, navigation and routes and their test entries.
+
 ## 2026-10-23 All evidence previews, agent pictures included (#1069)
 
 - **Decision:** Every evidence file previews in the Artifacts tab, under each acceptance criterion and in the verdict dialogs: HTML in the inert frame (also with the Widgets add-on off), pictures (PNG, JPEG, GIF, WebP, SVG) as an `<img>` from digest-checked bytes, text/json/csv/md/diff as text, and a card with the reason for anything else (PDF included: no preview). Owner, 23 Oct: "all evidence not just html should have a preview".

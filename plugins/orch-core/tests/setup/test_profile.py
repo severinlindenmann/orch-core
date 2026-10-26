@@ -28,6 +28,7 @@ def test_state_lists_the_contract_fields(flow):
         assert k in out
     assert out["phase"] == "profile" and out["mode"] == "new" and out["agent_hours"] == [8, 24, 72, 168]
     ids = [a["id"] for a in out["addons"]]
+    assert "focus" not in ids  # Optional: only offered later in Settings > Add-ons.
     assert ids[0] == "dashboard" and {"start-agent", "terminals", "worktrees", "quick"} <= set(ids)
     term = next(a for a in out["addons"] if a["id"] == "terminals")
     assert term["kind"] == "addon" and term["capabilities"] == ["pty"]

@@ -7,6 +7,7 @@ import {
   ChevronsUpDown,
   Ellipsis,
   Files,
+  Focus,
   History,
   LayoutDashboard,
   ListChecks,
@@ -466,6 +467,7 @@ const CORE_NAV = [
   { to: '/addons', label: 'Add-ons', icon: Puzzle, feature: 'settings', real: true },
   /** Shares (Publish add-on): listed only while the add-on is ON for this workspace (the server adds `publish` then). */
   { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
+  { to: '/focus', label: 'Focus', icon: Focus, feature: 'focus' },
   /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */
   { to: '/usage', label: 'Usage', icon: Gauge, feature: 'usage', real: true },
   /** Wiki (add-on): pages of the project's wiki folder; listed only while the add-on is ON (the server adds `wiki` then). */

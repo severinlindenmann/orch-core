@@ -800,7 +800,9 @@ def _ensure_host(environ: Mapping[str, str], err: Any) -> None:
     else:
         why = (buf.getvalue().strip().splitlines() or [""])[0][:200]
         raise SetupError(
-            "host.unavailable", "the orch host could not be started (orch host enable)" + (f": {why}" if why else ""), 500
+            "host.unavailable",
+            "the orch host could not be started (orch host enable)" + (f": {why}" if why else ""),
+            500,
         )
     for _ in range(40):
         try:

@@ -404,7 +404,9 @@ def test_ensure_host_retries_enable_and_names_the_reason(monkeypatch):
     F._ensure_host({"ORCH_STATE_DIR": "/nonexistent-orch-state"}, io.StringIO())
     assert len(calls) == 3
     calls.clear()
-    monkeypatch.setattr(host_cli, "main", lambda argv, env=None, out=None: (calls.append(1), out.write("nope: x\n"), 4)[2])
+    monkeypatch.setattr(
+        host_cli, "main", lambda argv, env=None, out=None: (calls.append(1), out.write("nope: x\n"), 4)[2]
+    )
     monkeypatch.setattr(wi, "connect_host", lambda s: (_ for _ in ()).throw(OSError("down")))
     with pytest.raises(F.SetupError) as e:
         F._ensure_host({"ORCH_STATE_DIR": "/nonexistent-orch-state"}, io.StringIO())

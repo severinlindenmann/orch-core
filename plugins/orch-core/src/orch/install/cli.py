@@ -117,15 +117,20 @@ def _mint_login(argv: list[str], env: Mapping[str, str]) -> str | None:
 
 
 def workspace_login_url(ctx: Ctx, directory: str) -> str | None:
-    """Setup's "Open your workspace": register the workspace, make sure the dashboard SERVICE (not the stopped launcher
-    of the setup page) runs, and return a fresh single-use login URL on it. ``None`` when there is no dashboard service."""
+    """Setup's "Open your workspace": register the workspace, make sure the dashboard SERVICE (not the stopped
+    launcher of the setup page) runs, and return a fresh single-use login URL on it.
+    ``None`` when there is no dashboard service."""
     if add_workspace(ctx, directory) is None:
         return None
     dash = load(ctx.layout).get("dashboard")
     entry = ctx.dashboard_entry()
     if not dash or not entry:
         return None
-    env = {"HOME": str(ctx.layout.home), "PATH": ctx.env.get("PATH", os.defpath), "ORCH_STATE_DIR": str(ctx.layout.root.parent)}
+    env = {
+        "HOME": str(ctx.layout.home),
+        "PATH": ctx.env.get("PATH", os.defpath),
+        "ORCH_STATE_DIR": str(ctx.layout.root.parent),
+    }
     return ctx.mint_login(entry, env)
 
 
@@ -401,7 +406,8 @@ def status(ctx: Ctx, as_json: bool) -> int:
     ctx.say(f"{'part':<10}{'state':<15}{'version':<12}{'sha':<14}{'address':<28}{'service'}")
     for r in rows:
         where = r.get("service") or r.get("dir") or ""
-        ctx.say(f"{r['part']:<10}{r['state']:<15}{(r.get('version') or '-'):<12}{_short(r.get('ref')):<14}{(r.get('url') or '-'):<28}{where}")
+        ver, sha, url = r.get("version") or "-", _short(r.get("ref")), r.get("url") or "-"
+        ctx.say(f"{r['part']:<10}{r['state']:<15}{ver:<12}{sha:<14}{url:<28}{where}")
     if dash:
         ctx.say(f"workspace dashboard login link (single use, 5 min):  {dashboard_login_hint(dash)}")
     return 0

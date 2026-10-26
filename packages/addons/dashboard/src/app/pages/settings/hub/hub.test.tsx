@@ -112,6 +112,7 @@ describe('switching to full access (run-9 feedback 6): one click, no backup key'
   afterEach(() => setMockVault(false))
   it('is one click with One click on: review, sign, the hub is told, then full', async () => {
     const connectHub = vi.spyOn(api, 'connectHub')
+    const prepare = vi.spyOn(api, 'prepareClick')
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-full-switch', {}, T))
     expect(screen.getByText(/One way/)).toBeTruthy()
@@ -120,8 +121,9 @@ describe('switching to full access (run-9 feedback 6): one click, no backup key'
     await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
     fireEvent.pointerDown(btn)
     fireEvent.click(btn)
-    expect(await screen.findByTestId('hub-full-done', {}, T)).toHaveTextContent(/read everything/)
-    expect(connectHub).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(connectHub).toHaveBeenCalledTimes(1), T)
+    await waitFor(() => expect(screen.queryByTestId('hub-full-stage')).toBeNull(), T) // the dialog closed
+    expect(prepare).toHaveBeenCalledTimes(1) // only the switch itself: nothing is prepared after the connect
     expect(connectHub.mock.calls[0][1].invite).toBeUndefined() // a mode switch has no invite
   })
 })

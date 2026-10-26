@@ -38,10 +38,25 @@ jobs:
           enable-cache: true
           cache-dependency-glob: packages/core/uv.lock
       - run: uv sync --locked
-      - name: Required set, every OS (the key file)
-        run: uv run pytest tests/custody/test_convenience.py -q -m "not slow" -p no:cacheprovider
-      - name: Custody, setup and host convenience tests (not required on Windows)
-        continue-on-error: ${{ runner.os == 'Windows' }}
+      - name: Required set, Windows - the key file round trip (the pytest conftest imports pwd, so no pytest here yet)
+        if: runner.os == 'Windows'
+        run: |
+          uv run python - <<'PY'
+          import os, tempfile
+          from orch import crypto
+          from orch.custody import convenience as c
+          os.environ.setdefault("LOCALAPPDATA", tempfile.mkdtemp())
+          store = c.open_store(tempfile.mkdtemp())
+          assert store.kind == "file", store.kind
+          ws, dev = "a" * 32, "d_" + "b" * 32
+          store.put(ws, dev, bytes(range(32)), prefix="X")
+          assert store.exists(ws, dev) and store.get(ws, dev) == bytes(range(32))
+          store.delete(ws, dev)
+          assert not store.exists(ws, dev)
+          print("windows key file ok")
+          PY
+      - name: Required set, Unix - custody and convenience tests
+        if: runner.os != 'Windows'
         run: |
           uv run pytest -q -m "not slow" -p no:cacheprovider tests/custody
           uv run pytest -q -m "not slow" -p no:cacheprovider tests/setup tests/host -k convenience

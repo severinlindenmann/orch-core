@@ -88,3 +88,26 @@ def test_a_card_of_another_hub_is_refused(human, served, hub_card_server):
     link = f"{hub_card_server['origin']}/c#h1.{'0' * 32}.Code_1"
     assert err(served.client().req("hub.link", {"link": link})) != ""
     assert hub_card_server["card"] == CARD
+
+
+def test_a_hub_that_answers_503_unavailable_says_its_address_changed():
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(503)
+            self.end_headers()
+            self.wfile.write(b'{"error":"unavailable"}')
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        link = connectlink.parse_link(f"http://127.0.0.1:{srv.server_port}/c#h1.{HUB_ID}.Code_1")
+        with pytest.raises(HubRefused) as e:
+            connectlink.fetch_card(link)
+        assert e.value.code == "hub_address_changed"
+    finally:
+        srv.shutdown()
+    he = hubops._refused("hub_address_changed")
+    assert "address changed" in str(he) and "new link" in str(he)

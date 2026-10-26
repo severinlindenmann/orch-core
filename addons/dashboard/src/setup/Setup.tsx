@@ -637,7 +637,10 @@ export function Setup({ api }: { api: SetupAPI }) {
   async function finish() {
     const result = await api.call<{ url: string; workspace_id?: string }>('finish', {})
     const url = new URL(result.url, location.origin)
-    if (url.origin !== location.origin || !url.pathname.startsWith('/')) throw new Error('destination')
+    // The setup page's own origin stops with `orch setup`: the destination is the running dashboard service
+    // (another port, a single-use login link), so a plain http(s) URL from the setup server is accepted too.
+    const elsewhere = url.origin !== location.origin
+    if ((elsewhere && !/^https?:$/.test(url.protocol)) || !url.pathname.startsWith('/')) throw new Error('destination')
     // The dashboard opens the workspace it remembers: make that the new one (same key as app/workspace.tsx).
     if (typeof result.workspace_id === 'string' && result.workspace_id) {
       try {
@@ -648,7 +651,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     }
     drop()
     api.forget()
-    location.assign(url.pathname + url.search + url.hash)
+    location.assign(elsewhere ? url.href : url.pathname + url.search + url.hash)
   }
   const terminalReviewMissing =
     !!review &&

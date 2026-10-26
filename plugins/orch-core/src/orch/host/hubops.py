@@ -592,6 +592,12 @@ def _owner(call: Call) -> str:
 def _refused(code: str) -> HostError:
     if code == "hub_unreachable":
         return HostError("hub.unreachable", "the hub could not be reached; nothing was lost", retry_after_ms=2000)
+    if code == "hub_address_changed":
+        return HostError(
+            "hub.refused",
+            "the hub's address changed: make a new link in the hub console",
+            hint="make a new link in the hub console (Admin > Workspaces > Connect a workspace)",
+        )
     if code == "no_epoch":
         return HostError("hub.no_epoch", "this workspace has no epoch key to give the hub (link a relay first)")
     if code == "rotation_pending":

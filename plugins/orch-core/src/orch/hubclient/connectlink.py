@@ -80,6 +80,9 @@ def fetch_card(link: Link) -> dict[str, Any]:
     try:
         with opener.open(req, timeout=TIMEOUT) as r:  # noqa: S310
             raw = r.read(MAX_CARD + 1)
+    except urllib.error.HTTPError as exc:
+        # a hub whose address changed answers 503 "unavailable" (its api origin is pinned to the operation certificate)
+        raise HubRefused("hub_address_changed" if exc.code == 503 else "hub_unreachable") from None
     except (urllib.error.URLError, OSError, ValueError):
         raise HubRefused("hub_unreachable") from None
     if len(raw) > MAX_CARD:

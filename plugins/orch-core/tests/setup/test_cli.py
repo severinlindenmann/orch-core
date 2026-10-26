@@ -371,3 +371,62 @@ def test_role_full_installs_the_parts_then_the_workspace_and_a_second_run_takes_
 def test_role_argument_is_checked(tmp):
     assert run_main(tmp, ["--role", "bogus"])[0] == 2
     assert run_main(tmp, ["--role"])[0] == 2
+
+
+def test_ensure_host_retries_enable_and_names_the_reason(monkeypatch):
+    import io
+
+    from orch.host import cli as host_cli
+    from orch.ops import workspace_init as wi
+    from orch.setup import flow as F
+
+    calls = []
+
+    def fake_main(argv, env=None, out=None):
+        calls.append(argv)
+        out.write("host.busy: still settling\n")
+        return 0 if len(calls) == 3 else 4
+
+    class Conn:
+        def close(self):
+            pass
+
+    state = {"up": False}
+
+    def connect(_s):
+        if state["up"] or len(calls) >= 3:
+            return Conn()
+        raise OSError("down")
+
+    monkeypatch.setattr(host_cli, "main", fake_main)
+    monkeypatch.setattr(wi, "connect_host", connect)
+    monkeypatch.setattr(F, "ENABLE_RETRY_WAIT", 0)
+    F._ensure_host({"ORCH_STATE_DIR": "/nonexistent-orch-state"}, io.StringIO())
+    assert len(calls) == 3
+    calls.clear()
+    monkeypatch.setattr(
+        host_cli, "main", lambda argv, env=None, out=None: (calls.append(1), out.write("nope: x\n"), 4)[2]
+    )
+    monkeypatch.setattr(wi, "connect_host", lambda s: (_ for _ in ()).throw(OSError("down")))
+    with pytest.raises(F.SetupError) as e:
+        F._ensure_host({"ORCH_STATE_DIR": "/nonexistent-orch-state"}, io.StringIO())
+    assert "nope: x" in e.value.message and len(calls) == 3
+
+
+def test_open_workspace_goes_to_the_dashboard_service_with_a_login(tmp, tmp_path):
+    from orch.install import cli as icli
+    from orch.install.state import load, save
+
+    ictx = icli.Ctx(env={"HOME": str(tmp_path)}, out=io.StringIO(), err=io.StringIO())
+    st = load(ictx.layout)
+    st["dashboard"] = {"port": 8151, "bind": "127.0.0.1", "url": "http://127.0.0.1:8151/", "service": "x"}
+    st["workspaces"] = [{"dir": "/w", "port": 8151}]
+    ictx.layout.ensure()
+    save(ictx.layout, st)
+    seen = []
+    ictx.dashboard_entry = lambda: ["orch-dashboard"]
+    ictx.mint_login = lambda argv, env: seen.append(argv) or "http://127.0.0.1:8151/#launch=abc&to=%2F"
+    assert icli.workspace_login_url(ictx, "/w") == "http://127.0.0.1:8151/#launch=abc&to=%2F"
+    assert seen == [["orch-dashboard"]]
+    ictx.dashboard_entry = lambda: None
+    assert icli.workspace_login_url(ictx, "/w") is None

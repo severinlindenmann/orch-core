@@ -140,12 +140,12 @@ class HubKeys:
         *,
         relay_url: str | None = None,
         tls_spki_sha256: str | None = None,
-        dev: bool | None = None,
+        real: bool = False,  # a real hub (dev: false); the default is the V3 dev hub
         **kw: Any,
     ) -> HubKeys:
         """Create a new hub identity: HK_root, the first HK_op (op_seq 1), HXK, and the first card (card_seq 1)."""
         self = cls(state, **kw)
-        self.dev = DEV if dev is None else dev
+        self.dev = DEV and not real
         try:
             if self.state.exists() and any(self.state.iterdir()):
                 raise KeysError("already_initialised", "the state dir is not empty")

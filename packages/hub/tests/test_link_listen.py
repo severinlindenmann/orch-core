@@ -85,6 +85,11 @@ def test_host_or_agent_users_refuse_without_the_flag(acc):
         check_bind_allowed(acc, hub_user="orch-hub-split", card_dev=True, dev_shared_machine=False)
 
 
+def test_a_real_hub_on_a_machine_with_workspace_users_only_warns():
+    warn = check_bind_allowed(_acc(), hub_user="orch-hub-split", card_dev=False, dev_shared_machine=False)
+    assert warn and "weaker isolation" in warn
+
+
 def test_dev_flag_with_a_non_dev_card_is_a_hard_error():
     with pytest.raises(BindRefused, match="dev: true"):
         check_bind_allowed(_acc(), hub_user="orch-hub-split", card_dev=False, dev_shared_machine=True)
@@ -171,7 +176,7 @@ def test_serve_refuses_host_users_and_dev_flag_on_a_non_dev_card(state, tmp_path
     with pytest.raises(BindRefused, match="split layout"):
         _serve(state, link_listen="10.1.2.3:8106", assigned=ALWAYS, accounts=_acc())
     nondev = tmp_path / "prod"
-    HubKeys.init(nondev, dev=False)
+    HubKeys.init(nondev, real=True)
     with pytest.raises(BindRefused, match="dev: true"):
         _serve(nondev, link_listen="10.1.2.3:8106", assigned=ALWAYS, accounts=_acc(), dev_shared_machine=True)
 
@@ -231,7 +236,7 @@ def test_root_is_refused_even_on_a_clean_machine(monkeypatch):
 
 def test_real_hub_card_is_not_dev_and_survives_reopen(tmp_path):
     real = tmp_path / "real"
-    HubKeys.init(real, dev=False)
+    HubKeys.init(real, real=True)
     k = HubKeys.open(real)
     assert k.dev is False and k.card()["o"]["dev"] is False
     assert HubKeys.open(HubKeys.init(tmp_path / "d").state).card()["o"]["dev"] is True

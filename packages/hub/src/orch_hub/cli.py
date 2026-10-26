@@ -229,9 +229,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         state = Path(args.state) if args.state else default_state_dir()
         if args.cmd == "init":
-            keys = HubKeys.init(
-                state, relay_url=args.relay_url, tls_spki_sha256=args.tls_spki_sha256, dev=not args.real
-            )
+            keys = HubKeys.init(state, relay_url=args.relay_url, tls_spki_sha256=args.tls_spki_sha256, real=args.real)
             out = keys.card()
         else:
             keys = HubKeys.open(state)

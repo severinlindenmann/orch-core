@@ -2,7 +2,9 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { mockStore, resetMockStoreForTests } from '@/api/client'
 import * as features from '@/api/features'
+import { focusApi, type Delegations } from '@/api/focus'
 import { runsApi, type Run } from '@/api/runs'
+import mockDelegations from '@/mocks/addons/focus/delegations.json'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { PauseButton, TasksChip, TasksList } from './Delegation'
@@ -13,8 +15,10 @@ const run = (id: string, extra: Partial<Run> = {}): Run => ({ run: id, rev: 1, k
 function setup(store: typeof mockStore) {
   installAndGrant(store, store.workspaces[0].id, 'focus')
 }
-function show(runs: Run[] = [run('main', { started_at: '2026-10-26T11:00:00Z' }), run('child', { grant_state: 'ended' })], unavailable = false, ticket = 'DEMO-0042') {
+const none: Delegations = { ticket: 'DEMO-0042', supported: true, sessions: [] }
+function show(runs: Run[] = [run('main', { started_at: '2026-10-26T11:00:00Z' }), run('child', { grant_state: 'ended' })], unavailable = false, ticket = 'DEMO-0042', delegations: Delegations = none) {
   vi.spyOn(features, 'isRealHost').mockReturnValue(true)
+  vi.spyOn(focusApi, 'delegations').mockResolvedValue(delegations)
   const list = vi.spyOn(runsApi, 'list')
   if (unavailable) list.mockRejectedValue(new Error('Unavailable'))
   else list.mockResolvedValue({ runs, runner: null, truncated: false })
@@ -74,11 +78,32 @@ it('confirms and stops the main run and every active task, excluding other ticke
   expect(stop.mock.calls.map(args => args[1])).toEqual(['main', 'child'])
 })
 
-it('includes child sessions from the mock host and exposes their stop limitation', async () => {
-  show([], false, 'DEMO-0043')
+it('lists agent-spawned children from the host with files and no stop button action', async () => {
+  const { user } = show([run('main', { started_at: '2026-10-26T11:00:00Z' })], false, 'DEMO-0042', mockDelegations as Delegations)
   const list = screen.getByTestId('focus-tasks-list')
-  await waitFor(() => expect(within(list).getAllByText('Spawned by main agent').length).toBeGreaterThan(0))
+  const title = await within(list).findByText('Write boundary tests')
+  await user.click(title)
+  const row = title.closest('details')!
+  expect(within(row).getByText('Spawned by main agent')).toBeVisible()
+  expect(within(row).getByText('Result: done')).toBeVisible()
+  expect(within(row).getByTestId('focus-task-files')).toHaveTextContent('tests/test_invite.py')
+  expect(within(row).getByRole('button', { name: 'Stop' })).toBeDisabled()
+  expect(within(list).getByText('This task stops with the main session.')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Stop all' })).toBeDisabled()
-  expect(within(list).getAllByText('Stopping this task is not supported by this host.').length).toBeGreaterThan(0)
-  expect(list.textContent).not.toContain('s_77c2')
+  expect(list.textContent).not.toContain('s_main')
+})
+
+it('merges a human-requested child with its run and does not list it twice', async () => {
+  const child = { ...mockDelegations.sessions[0].children[0], id: 'run:child', spawned_by: 'human', run: 'child', title: 'Review it', state: 'running', transcript: { run: 'child', child: null }, files: [] }
+  const deleg = { ...mockDelegations, sessions: [{ ...mockDelegations.sessions[0], children: [child] }] } as Delegations
+  show([run('main', { started_at: '2026-10-26T11:00:00Z' }), run('child', { label: 'Other label' })], false, 'DEMO-0042', deleg)
+  const list = screen.getByTestId('focus-tasks-list')
+  expect(await within(list).findByText('Review it')).toBeVisible()
+  expect(within(list).queryByText('Other label')).toBeNull()
+  expect(within(list).getAllByText('Requested by you')).toHaveLength(1)
+})
+
+it('is limited when the host does not support the delegation list or hides a harness', async () => {
+  show([run('main')], false, 'DEMO-0042', { ...none, supported: false })
+  expect((await screen.findAllByText('Delegation visibility is limited in this version')).length).toBeGreaterThan(0)
 })

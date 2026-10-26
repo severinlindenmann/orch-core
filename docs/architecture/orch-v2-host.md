@@ -225,8 +225,8 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `control/1` | `host.list`, `host.register`, `host.unregister`, `host.wsk_create`, `host.bootstrap`, `host.restart` (1) | control |
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
-| `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
-| `focus/1` | `run.transcript` (1) (focus mode phase 2, §12.3.4; column P only) | workspace |
+| `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7); `worktree.diff` (1) (focus mode phase 2, §12.3.5; column P only) | workspace |
+| `focus/1` | `run.transcript`, `delegation.list` (1) (focus mode phase 2, §12.3.4; column P only) | workspace |
 | `workdir/1` | `workdir.get`, `workdir.delete` (1) (r3 part C, §12.4.4; column P only) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
@@ -12156,11 +12156,13 @@ valid mapping to a member, and that the grant is that person's own `label:"runne
 | `worktree/1` | `worktree.list` | ✓ | ✓ grant scope | — | read |
 | `worktree/1` | `worktree.create` | ✓ visible ticket | ✓ own claimed ticket | — | idem create |
 | `worktree/1` | `worktree.remove` | ✓ (`force` too) | ✓ own claimed ticket, no `force` | — | side effect |
+| `worktree/1` | `worktree.diff` | ✓ visible ticket | — | — | read |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` | ✓ owner, maintainer | — | — | read / side effect |
 | `reader/1` | `reader.declare` | ✓ own current devices | — | — | side effect, idem (column R, H12d-3: the requesting device's own declaration, kind `device_signed`, no idem, exempt from `rd`) |
 | `reader/1` | `reader.list` | ✓ | — | — | read (column R too, trimmed to `{device, person, reader, level}`) |
 | `quick/1` | `quick.list` | ✓ | ✓ | ✓ (workspace tickets only) | read |
 | `focus/1` | `run.transcript` | ✓ own runs | — | — | read |
+| `focus/1` | `delegation.list` | ✓ own runs | — | — | read |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |
 
 Writes and resizes on a terminal are not host ops: they travel on the term socket (§12.6) under the capability.
@@ -12183,7 +12185,39 @@ run.transcript -> {run, harness, available:bool, reason?, items:[TranscriptItem]
 
 `after` is the `next` of a previous answer (a byte offset; the reader never returns a partial line). Unavailability is
 data: `available: false` with a `reason` (no transcript yet, a shell run, Codex rollout not found). `child` is a Claude
-Code sub-agent id `agent-<id>`.
+Code sub-agent id `agent-<id>`; for Codex it is `agent-<thread id>` of a child rollout.
+
+`delegation.list {ticket}` (column P, a visible ticket) returns, for each agent run of the caller on the ticket, the
+children the runner finds in the harness files plus the caller's runs whose record names it as `parent_run`:
+
+```
+DelegationChild = {id:"cc:agent-<id>"|"cx:agent-<thread>"|"run:<run>", parent_run, title, spawned_by:"agent"|"human"|"promoted",
+                   harness, model?, depth, state:"running"|"done"|"failed", started_at?, ended_at?, run?:str|null,
+                   transcript:{run, child?}, files:[relpath]}
+delegation.list -> {ticket, sessions:[{run, session?, harness, model?, state, policy?, files:[relpath],
+                   visibility:{available:bool, reason?}, children:[DelegationChild]}]}
+```
+
+Claude Code children are the files `<uuid>/subagents/agent-<id>.{jsonl,meta.json}` next to the parent transcript (state from
+`meta.finished` and the parent's `toolUseResult.status`). A Codex child rollout names its parent in
+`session_meta.source.subagent.thread_spawn.parent_thread_id` (spike 26 Oct 2026, codex-cli 0.163). A runner that cannot
+answer gives `visibility.available:false` with a `reason`, never an error. The runner command is `transcript {run,
+children:true}`.
+
+#### 12.3.5 `worktree.diff`: the live diff of a ticket worktree (focus mode phase 2)
+
+Prototype addition (26 Oct 2026), additive, cap `worktree/1`, no new error code or signed shape. `worktree.diff {ticket,
+repo?}` (column P, a visible ticket) returns the uncommitted changes of the ticket's registered worktree. The reader
+(profile `worktree`, request `worktree_diff`) takes the changed paths from the same `tree.check` the clean-tree check
+uses, reads each working file through the pinned working-copy fd (`O_NOFOLLOW`) and the `HEAD` side from the object
+store, and builds the hunks with its own Myers diff; no git process. A symlink, a non-regular file, a binary file or one
+over 1 MiB is listed without hunks. Caps: 200 files, 256 KiB of unified text (`truncated:true` past either). A ticket
+without a linked repo, an unregistered or unpinned worktree, or a worktree that moved is data, not an error.
+
+```
+worktree.diff {ticket:Ref, repo?:RepoName} -> {ticket, repo, available:bool, reason?, path_label, branch, head, checked_at,
+  truncated:bool, files:[{path, status:"M"|"A"|"D"|"?", added, removed, binary, too_large?}]{0..200}, unified:str}
+```
 
 #### 12.3.2 Schemas
 

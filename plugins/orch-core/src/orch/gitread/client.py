@@ -557,6 +557,26 @@ class HostGitReader:
         job = treejob.job_input(name, self._pins(path))
         return treejob.run_child(self.pool, principal or self.principal, job, removal=removal)
 
+    def worktree_diff(
+        self,
+        path: str | os.PathLike[str],
+        name: str,
+        principal: str | None = None,
+        *,
+        max_bytes: int = 262144,
+        max_files: int = 200,
+    ) -> dict[str, Any]:
+        """The uncommitted changes of the registered working copy at ``path`` as files plus unified text (focus mode
+        P2-5), read in a ``worktree``-profile child. Raises :class:`Unavailable` like :meth:`tree_check`."""
+        from . import treejob
+
+        if not self.tree_checks:
+            raise Unavailable("the live diff needs the worker, which this workspace does not have yet")
+        job = treejob.job_input(name, self._pins(path))
+        hello = {"profile": "worktree", "pins": treejob.pins_of(job).to_json()}
+        req = {"op": "worktree_diff", "args": {"max_bytes": max_bytes, "max_files": max_files}}
+        return _check_worktree_diff(self.pool.call(principal or self.principal, hello, req), max_bytes, max_files)
+
 
 def _id(pin: Any) -> tuple[int, int]:
     return (pin.dev, pin.ino)
@@ -655,6 +675,26 @@ def _check_pin_many(got: Any, paths: list[str], roots: list[str]) -> list[RepoPi
             raise Unavailable("the reader answered nonsense")
         out.append(err["message"][:300] or "the reader failed")
     return out
+
+
+def _check_worktree_diff(got: Any, max_bytes: int, max_files: int) -> dict[str, Any]:
+    if not isinstance(got, dict) or set(got) != {"head", "head_ref", "files", "unified", "truncated"}:
+        raise Unavailable("the reader answered nonsense")
+    if got["head"] is not None and not isinstance(got["head"], str):
+        raise Unavailable("the reader answered nonsense")
+    if not isinstance(got["unified"], str) or len(got["unified"].encode()) > 4 * max_bytes:
+        raise Unavailable("the reader answered nonsense")
+    files = got["files"]
+    if type(got["truncated"]) is not bool or not isinstance(files, list) or len(files) > max_files:
+        raise Unavailable("the reader answered nonsense")
+    for f in files:
+        ok = isinstance(f, dict) and {"path", "status", "added", "removed", "binary"} <= set(f) <= {
+            "path", "status", "added", "removed", "binary", "too_large"}  # fmt: skip
+        if not ok or not isinstance(f["path"], str) or f["status"] not in ("M", "A", "D", "?"):
+            raise Unavailable("the reader answered a malformed file entry")
+        if type(f["added"]) is not int or type(f["removed"]) is not int or type(f["binary"]) is not bool:
+            raise Unavailable("the reader answered a malformed file entry")
+    return got
 
 
 _BASE_SOURCES = ("local_ref", "first_parent", "host_pinned", "approved", "pushed")

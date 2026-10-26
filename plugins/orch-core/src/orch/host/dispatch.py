@@ -290,6 +290,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("pg_read", "read")
     if name in TRANSCRIPT_OPS:  # focus/1: column P only (the person in the dashboard)
         return ("person_read", "read")
+    if name == "worktree.diff":  # focus/1 P2-5: column P only (the person in the dashboard)
+        return ("person_read", "read")
     if name in WORKTREE_OPS:  # H11d: P and G (G only on its claimed ticket, checked by the op), never N
         return ("pg_read", "read") if name == "worktree.list" else ("pg_write", "write")
     if name in PUBLISH_OPS:  # P5: prepare and discard P and G (G on its claimed ticket); send, revoke, register P only
@@ -495,7 +497,7 @@ class RegistryBackend:
             from . import runnergrants
 
             return await runnergrants.complete(call, result)
-        if op in WORKTREE_OPS and op != "worktree.list":  # H11d: the runner's git, then the registration
+        if op in WORKTREE_OPS and op not in ("worktree.list", "worktree.diff"):  # H11d: runner git, then registration
             from . import worktrees
 
             return await worktrees.execute(call, result)

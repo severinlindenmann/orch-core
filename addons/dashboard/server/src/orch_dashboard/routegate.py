@@ -171,6 +171,8 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/runs"): (ALLOWED, ""),
     (POST, W + "/runs/{run}/stop"): (ALLOWED, "turning off"),
     (GET, W + "/runs/{run}/transcript"): (ALLOWED, "focus mode: the chat view of a run, read only"),
+    (GET, W + "/tickets/{key}/delegations"): (ALLOWED, "focus mode: the delegation tree of a ticket, read only"),
+    (GET, W + "/tickets/{key}/worktree-diff"): (ALLOWED, "focus mode: live worktree diff, read only"),
     (POST, W + "/runs/{run}/attach"): (TERMINALS, "a terminal is a shell on the server"),
     (POST, W + "/terminals/open"): (TERMINALS, "a terminal is a shell on the server"),
     (POST, W + "/terminals/preview"): (TERMINALS, "a terminal is a shell on the server"),

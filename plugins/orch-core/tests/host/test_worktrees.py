@@ -345,3 +345,34 @@ def test_a_relink_after_prepare_is_observe_unavailable_at_binding(w, bound_first
     assert w.human.agent("set", {"ref": w.key, "pairs": ['links={"repos":["proj"],"branches":{"proj":"feat/y"}}']})
     res = w.human.c.req("human.get", {"request_id": rid, "signer": w.human.signer})
     assert err(res) == "observe.unavailable" and "branch changed" in res["error"]["message"]
+
+
+# -- worktree.diff (focus mode P2-5) --------------------------------------------------------------------------------
+
+
+def wt_diff(w, **args):
+    return w.c.req("worktree.diff", {"ticket": w.key, **args})
+
+
+def test_diff_reads_the_uncommitted_changes_of_the_registered_worktree(w):
+    assert ok(wt_diff(w))["data"]["available"] is False  # nothing registered yet
+    ok(create(w))
+    clean = ok(wt_diff(w))["data"]
+    assert clean["available"] is True and clean["files"] == [] and clean["unified"] == ""
+    (wt_path(w) / "impl.txt").write_text("changed by the agent\n")
+    (wt_path(w) / "scratch.txt").write_text("new\nfile\n")
+    got = ok(wt_diff(w))["data"]
+    assert got["ticket"] == w.key and got["repo"] == "proj" and got["head"] == gitc(w.repo, "rev-parse", "feat/x")
+    files = {f["path"]: f for f in got["files"]}
+    assert files["impl.txt"]["status"] == "M" and files["scratch.txt"]["status"] == "?"
+    assert files["scratch.txt"]["added"] == 2
+    assert "+changed by the agent" in got["unified"] and "+++ b/scratch.txt" in got["unified"]
+    assert str(w.repo) not in got["unified"]
+
+
+def test_diff_is_person_only_and_follows_the_repo_rules(w):
+    ok(create(w))
+    assert err(w.c.req("worktree.diff", {"ticket": w.key}, grant=w.served.grant, session=SESSION)) == "op.not_allowed"
+    assert err(wt_diff(w, repo="other")) == "not_found"
+    no_repo = ok(w.c.req("worktree.diff", {"ticket": w.nob}))["data"]
+    assert no_repo["available"] is False

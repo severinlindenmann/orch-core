@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 __all__ = ["WORKTREE_CAPS", "WORKTREE_OPS", "WRITE_OPS", "execute", "serve"]
 
-WORKTREE_OPS: dict[str, int] = {"worktree.list": 1, "worktree.create": 1, "worktree.remove": 1}
+WORKTREE_OPS: dict[str, int] = {"worktree.list": 1, "worktree.create": 1, "worktree.remove": 1, "worktree.diff": 1}
 WRITE_OPS = frozenset({"worktree.create", "worktree.remove"})
 WORKTREE_CAPS = ["worktree/1"]
 ADDON = "worktrees"
@@ -62,6 +62,12 @@ _SCHEMAS = {
     "worktree.list": {
         "type": "object",
         "properties": {"ticket": _REF, "check": {"type": "boolean"}},
+        "additionalProperties": False,
+    },
+    "worktree.diff": {
+        "type": "object",
+        "properties": {"ticket": _REF, "repo": _REPO},
+        "required": ["ticket"],
         "additionalProperties": False,
     },
     "worktree.create": {
@@ -118,6 +124,8 @@ def serve(call: Call) -> dict[str, Any]:
     service.store.refresh()
     if op == "worktree.list":
         return ok_result({"worktrees": _list(call, args)})
+    if op == "worktree.diff":
+        return ok_result(_diff(call, args))
     idem = opts.get("idem")
     if idem is not None and (not isinstance(idem, str) or not _IDEM.fullmatch(idem)):
         raise HostError("invalid.input", "opts.idem is not an idem")
@@ -496,3 +504,42 @@ def _list(call: Call, args: dict[str, Any]) -> list[dict[str, Any]]:
         if len(rows) >= MAX_REGISTERED:
             break
     return rows
+
+
+# -- worktree.diff (focus mode P2-5) ----------------------------------------------------------------------------------
+
+
+def _diff(call: Call, args: dict[str, Any]) -> dict[str, Any]:
+    """The uncommitted changes of the ticket's registered worktree: files plus unified text, read by the reader under
+    the caller's principal. Unavailability is data (``available: false``, ``reason``), not an error."""
+    from orch.gitread.errors import Unavailable
+
+    view = _ticket(call, args["ticket"])
+    linked = list((view.fields.get("links") or {}).get("repos") or [])
+    base = {"ticket": view.key, "repo": None, "available": False}
+    if not linked:
+        return {**base, "reason": "this ticket has no linked repo, so there is no worktree to read"}
+    repo = _repo_of(view, args.get("repo"))
+    base["repo"] = repo
+    git = _git(call)
+    slot = git.reader.pins.worktree(view.uid, repo)
+    reg = slot["reg"]
+    if reg is None:
+        return {**base, "reason": "no worktree is registered for this ticket"}
+    if reg["pins"] is None:
+        return {**base, "reason": "the worktree is not pinned; remove it and create it again"}
+    try:
+        st = os.lstat(reg["path"])
+    except OSError:
+        return {**base, "reason": "the worktree directory is missing"}
+    pin = reg["pins"]["worktree"]
+    if (st.st_dev, st.st_ino) != (pin["dev"], pin["ino"]):
+        return {**base, "reason": "the worktree directory was replaced"}
+    try:
+        git.reader.verify_worktree(reg["path"], principal=git.principal)  # the .git file is still the pinned one
+        got = git.reader.worktree_diff(reg["path"], repo, principal=git.principal)
+    except Unavailable as exc:
+        return {**base, "reason": f"the worktree cannot be read now: {exc.reason}"[:300]}
+    return {**base, "available": True, "path_label": f"{repo}/{os.path.basename(reg['path'])}",
+            "branch": reg["branch"], "head": got["head"], "checked_at": _iso(call.service.clock()),
+            "truncated": got["truncated"], "files": got["files"], "unified": got["unified"]}  # fmt: skip

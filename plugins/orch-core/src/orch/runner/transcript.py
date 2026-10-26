@@ -323,9 +323,14 @@ def serve(args: Mapping[str, Any], sup: Any, env: Mapping[str, str]) -> dict[str
     path = locate(run, harness, rec, env)
     child = args.get("child")
     if child is not None:
-        if not (isinstance(child, str) and CHILD.fullmatch(child)) or harness != "claude-code":
+        if not (isinstance(child, str) and CHILD.fullmatch(child)) or harness not in ("claude-code", "codex"):
             raise SpawnError("invalid.input", "transcript: invalid child")
-        path = None if path is None else path.with_suffix("") / "subagents" / f"{child}.jsonl"
+        if path is not None and harness == "codex":  # P2-2: the child rollout names its parent thread
+            from .transcript_children import codex_child_path
+
+            path = codex_child_path(path, child, env)
+        elif path is not None:
+            path = path.with_suffix("") / "subagents" / f"{child}.jsonl"
     if path is None or not path.is_file():
         return out | {"available": False, "reason": "transcript not found yet", "items": [], "next": None, "eof": True}
     cursor = CURSOR.fullmatch(str(args.get("after") or "o:0"))

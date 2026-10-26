@@ -49,7 +49,7 @@ from orch.host import frames
 from orch.host._socket import recv
 from orch.host.client import Pin, handshake_pinned
 
-from . import rules, transcript
+from . import rules, transcript, transcript_children
 from .config import ConfigError, RunnerConfig
 from .grants import GrantError, GrantStore
 from .supervise import SpawnError, SpawnSpec, Supervisor
@@ -549,6 +549,8 @@ class HostLink:
                     raise _Stale()
                 return run_git(args, self.env, log=LOG.info)
         if cmd == "transcript":  # focus phase 2: the run's harness transcript as chat items
+            if args.get("children"):  # P2-2: the delegated children of the run
+                return transcript_children.serve(args, self.sup, self.env)
             return transcript.serve(args, self.sup, self.env)
         if cmd == "grant.put":  # H11c: the secret arrives here once; it is answered without it
             try:

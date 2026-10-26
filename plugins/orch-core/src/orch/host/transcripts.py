@@ -6,7 +6,12 @@ run is the caller person's own (and its ticket visible to them), then forwards t
 ``transcript``. Column P only. Unavailability is data (``available: false, reason``), never a new error code.
 
 ``run.transcript {run, after?, limit?, child?}`` -> ``{run, harness, available, reason?, items, next, eof}``;
-``after`` is the cursor ``o:<n>`` of a previous answer, ``child`` a Claude Code sub-agent (``agent-<id>``).
+``after`` is the cursor ``o:<n>`` of a previous answer, ``child`` a sub-agent (``agent-<id>``).
+
+``delegation.list {ticket}`` (P2-2) -> ``{ticket, sessions:[{run, session, harness, model, state, policy, files,
+visibility:{available, reason?}, children:[...]}]}``: for each agent run of the caller on the ticket the children the
+runner finds in the harness files (``spawned_by:"agent"``) plus the caller's runs whose record names it as
+``parent_run`` (``spawned_by:"human"``). Column P only.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ if TYPE_CHECKING:
 
 __all__ = ["TRANSCRIPT_CAPS", "TRANSCRIPT_OPS", "complete", "serve"]
 
-TRANSCRIPT_OPS: dict[str, int] = {"run.transcript": 1}
+TRANSCRIPT_OPS: dict[str, int] = {"run.transcript": 1, "delegation.list": 1}
 TRANSCRIPT_CAPS = ["focus/1"]
 COMMAND_TIMEOUT = 15.0
 _SCHEMAS = {
@@ -36,6 +41,12 @@ _SCHEMAS = {
             "child": {"type": "string", "pattern": "^agent-[A-Za-z0-9_-]{1,64}$"},
         },
         "required": ["run"],
+        "additionalProperties": False,
+    },
+    "delegation.list": {
+        "type": "object",
+        "properties": {"ticket": {"type": "string", "minLength": 1, "maxLength": 64}},
+        "required": ["ticket"],
         "additionalProperties": False,
     },
 }
@@ -61,6 +72,8 @@ def serve(call: Call) -> dict[str, Any]:
     hub: RunnerHub | None = getattr(service, "runners", None)
     if hub is None:
         raise HostError("runner.unavailable", "this host serves no runner", retry_after_ms=1000)
+    if op == "delegation.list":
+        return ok_result({"delegation": _plan(call, hub, args["ticket"])})
     rec = hub.store.records.get(args["run"])
     if rec is None or rec.get("workspace_id") != service.workspace_id or rec.get("person") != str(call.viewer):
         raise HostError("not_found", "no such run")
@@ -73,11 +86,78 @@ def serve(call: Call) -> dict[str, Any]:
     return ok_result({"command": {k: v for k, v in args.items() if k in ("run", "after", "limit", "child")}})
 
 
+def _plan(call: Call, hub: RunnerHub, ticket: str) -> dict[str, Any]:
+    """The caller's agent runs on the ticket (and their human-requested children), read under the worker lock."""
+    from .runners import LIVE, view
+    from .visibility import Viewer
+
+    key = Viewer.of(call).ticket(call.service.store, ticket).key
+    person, wsid = str(call.viewer), call.service.workspace_id
+    mine = [
+        r for r in hub.store.records.values()
+        if r.get("workspace_id") == wsid and r.get("person") == person and r.get("ticket") == key
+    ]  # fmt: skip
+    mine.sort(key=lambda r: str(r.get("started_at") or ""))
+    parents = [r for r in mine if r.get("kind") == "agent" and not r.get("parent_run")]
+    sessions = []
+    for rec in parents:
+        v = view(rec)
+        row = {k: v.get(k) for k in ("run", "session", "harness", "model", "state")}
+        row["policy"] = rec.get("policy") if isinstance(rec.get("policy"), dict) else None
+        humans = []
+        for kid in (r for r in mine if r.get("parent_run") == rec["run"]):
+            kv = view(kid)
+            ended = (kv["exit"] or {}).get("at")
+            bad = kv["exit"] and (kv["exit"].get("code") not in (0, None) or kv["exit"].get("reason") == "spawn_failed")
+            state = "running" if kv["state"] in LIVE else "failed" if bad or kv["state"] == "lost" else "done"
+            humans.append({
+                "id": f"run:{kid['run']}", "parent_run": rec["run"], "title": kv["label"] or kv["mode"] or "Task",
+                "spawned_by": kid.get("spawned_by") or "human", "harness": kv["harness"], "model": kv["model"],
+                "depth": 1, "state": state,
+                "started_at": kv["started_at"], "ended_at": ended, "run": kid["run"],
+                "transcript": {"run": kid["run"]}, "files": [],
+            })  # fmt: skip
+        sessions.append({"row": row, "humans": humans, "ask": rec.get("harness") in ("claude-code", "codex")})
+    return {"ticket": key, "sessions": sessions}
+
+
+async def _delegation(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    from .workspace import ok_result
+
+    hub: RunnerHub | None = getattr(call.service, "runners", None)
+    if hub is None:
+        raise HostError("runner.unavailable", "this host serves no runner", retry_after_ms=1000)
+    hub.require_current()
+    out = []
+    for s in plan["sessions"]:
+        row, run = s["row"], s["row"]["run"]
+        files: list[str] = []
+        kids: list[dict[str, Any]] = []
+        vis: dict[str, Any] = {"available": True}
+        if not s["ask"]:
+            vis = {"available": False, "reason": "a shell has no delegation"}
+        else:
+            try:
+                got = await hub.command("transcript", {"run": run, "children": True}, timeout=COMMAND_TIMEOUT)
+                files = [f for f in got.get("files") or [] if isinstance(f, str)]
+                for c in got.get("children") or []:
+                    kids.append({**c, "parent_run": run, "transcript": {"run": run, **(c.get("transcript") or {})}})
+            except HostError as exc:
+                reason = (
+                    "the runner no longer knows this run" if exc.code == "not_found" else "the runner is not reachable"
+                )
+                vis = {"available": False, "reason": reason}
+        out.append({**row, "files": files, "visibility": vis, "children": [*kids, *s["humans"]]})
+    return ok_result({"ticket": plan["ticket"], "sessions": out})
+
+
 async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
     """The event-loop half: forward to the runner (15 s)."""
     from .workspace import ok_result
 
     data = checked["data"]
+    if "delegation" in data:
+        return await _delegation(call, data["delegation"])
     if "direct" in data:
         return ok_result(data["direct"])
     hub: RunnerHub | None = getattr(call.service, "runners", None)

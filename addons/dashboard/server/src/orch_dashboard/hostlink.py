@@ -99,12 +99,14 @@ OPS = {
         "worktree.list",
         "worktree.create",
         "worktree.remove",
+        "worktree.diff",  # focus mode P2-5: the uncommitted changes of a ticket's worktree (a read)
         # Ticket work folders (design r3 part C): what a ticket without a codebase left in its folder, and the
         # person's own delete of it (a host-side write with an idem, no log event).
         "workdir.get",
         "workdir.delete",
         # Focus mode (focus/1): a run's transcript as chat items (a read; the runner reads the harness files)
         "run.transcript",
+        "delegation.list",
         # Publish (P5/P6, design-publish-addon 2.2): list is a read; the others are person writes the routes call
         # with an idem. `publish.send` answers the share link ONCE (shares.py); `publish.share` is never sent as a
         # plain op: it is the inner op of a signed hand-off (handoff.py).
@@ -130,9 +132,9 @@ RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "g
 #: ops this process never sends, whatever a caller asks: `grant.deposit` carries the runner grant's secret
 #: (`auth.grant`), which never reaches the dashboard's HTTP process (D-P2-27, section 0.8.6 item 6).
 FORBIDDEN = frozenset({"grant.deposit"})
-WORKTREE_OPS = {"worktree.list", "worktree.create", "worktree.remove"}
+WORKTREE_OPS = {"worktree.list", "worktree.create", "worktree.remove", "worktree.diff"}
 WORKDIR_OPS = {"workdir.get", "workdir.delete"}
-FOCUS_OPS = {"run.transcript"}
+FOCUS_OPS = {"run.transcript", "delegation.list"}
 PUBLISH_OPS = {
     "publish.list",
     "publish.prepare",

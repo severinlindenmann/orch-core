@@ -226,6 +226,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == ("pg_read", "read")
         elif op in TRANSCRIPT_OPS:  # focus/1: P only
             assert kind == ("person_read", "read")
+        elif op == "worktree.diff":  # focus/1 P2-5: P only
+            assert kind == ("person_read", "read")
         elif op in WORKTREE_OPS:  # H11d: P and G (never N); list reads, create and remove write
             assert kind == (("pg_read", "read") if op == "worktree.list" else ("pg_write", "write"))
         elif op in PUBLISH_OPS:  # P5: prepare and discard P and G, list reads, send/revoke/register P only

@@ -1,41 +1,47 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { isRealHost } from '@/api/features'
-import { queries } from '@/api/queries'
+import { focusApi, type DelegationChild, type Delegations } from '@/api/focus'
+import mockDelegations from '@/mocks/addons/focus/delegations.json'
 import { cleanupDoubt, exitText, runQueries, runsApi, type Run } from '@/api/runs'
 import { useWorkspace } from '@/app/workspace'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 const limitedText = 'Delegation visibility is limited in this version'
-type Task = { id: string; title: string; state: string; origin: string; harness: string; model?: string | null; result?: string | null; run?: Run }
+type Task = { id: string; title: string; state: string; origin: string; harness: string; model?: string | null; result?: string | null; run?: Run; files?: string[]; depth?: number; endedAt?: string | null; startedAt?: string | null }
 const active = (run: Run) => run.state === 'running' || run.state === 'starting'
+const childState = (c: DelegationChild) => c.state === 'running' ? 'running' : c.state === 'failed' ? 'failed' : 'done'
 
 function useTasks(ticket?: string) {
   const { workspace } = useWorkspace()
   const ws = workspace?.id ?? ''
   const real = isRealHost()
   const runs = useQuery({ ...runQueries.list(ws), enabled: !!ws && !!ticket && real, retry: false, refetchInterval: 5000 })
-  const sessions = useQuery({ ...queries.agents(ws), enabled: !!ws && !!ticket, retry: false, refetchInterval: 5000 })
+  // Real children come from the host (the runner reads the harness files); the mock host serves a fixture.
+  const delegations = useQuery({ queryKey: ['focus', 'delegations', ws, ticket ?? null], queryFn: () => real ? focusApi.delegations(ws, ticket!) : Promise.resolve(mockDelegations as Delegations), enabled: !!ws && !!ticket, retry: false, refetchInterval: 5000 })
   const ticketRuns = (runs.data?.runs ?? []).filter(r => r.ticket === ticket)
   const main = ticketRuns.filter(r => r.kind === 'agent' && r.state === 'running').sort((a, b) => b.started_at.localeCompare(a.started_at))[0]
-  const tasks: Task[] = ticketRuns.filter(r => r !== main).map((run, i) => ({
-    id: run.run, title: run.label_hidden ? `Task ${i + 1}` : run.label || `Task ${i + 1}`,
+  const sessions = delegations.data?.sessions ?? []
+  const known = new Set<string>()
+  const tasks: Task[] = []
+  for (const s of sessions) for (const c of s.children) {
+    const run = c.run ? ticketRuns.find(r => r.run === c.run) : undefined
+    if (c.run) known.add(c.run)
+    tasks.push({
+      id: c.id, title: c.title, state: run ? (active(run) ? run.grant_state === 'ended' ? 'needs you' : 'running' : childState(c)) : childState(c),
+      origin: c.spawned_by === 'agent' ? 'Spawned by main agent' : 'Requested by you', harness: c.harness ?? run?.harness ?? 'agent', model: c.model ?? run?.model,
+      result: run ? exitText(run) : childState(c), run, files: c.files, depth: c.depth, startedAt: c.started_at, endedAt: c.ended_at,
+    })
+  }
+  ticketRuns.filter(r => r !== main && !known.has(r.run)).forEach((run, i) => tasks.push({
+    id: run.run, title: run.label_hidden ? `Task ${tasks.length + i + 1}` : run.label || `Task ${tasks.length + i + 1}`,
     state: active(run) ? run.grant_state === 'ended' ? 'needs you' : 'running' : run.state === 'lost' || (run.exit?.code != null && run.exit.code !== 0) || run.exit?.reason === 'spawn_failed' ? 'failed' : 'done',
-    // Registry runs are dashboard launches. Session-only children come from the agent tree.
+    // Registry runs without a parent link are dashboard launches of the person.
     origin: 'Requested by you', harness: run.harness, model: run.model, result: exitText(run), run,
   }))
-  const allSessions = sessions.data ?? []
-  const belongs = (id: string): boolean => {
-    const session = allSessions.find(s => s.session === id)
-    return !!session && (session.claims.some(c => c.ticket === ticket) || session.leases.some(l => l.ticket === ticket) || session.waiting_on?.ticket === ticket)
-  }
-  for (const s of allSessions) {
-    if (!/\.\d+$/.test(s.session) || ticketRuns.some(r => r.run === s.session)) continue
-    if (!belongs(s.session) && !belongs(s.parent ?? s.session.replace(/\.\d+$/, ''))) continue
-    tasks.push({ id: s.session, title: `Task ${tasks.length + 1}`, state: s.state === 'stopped' ? 'done' : s.waiting_on ? 'needs you' : s.state === 'waiting' || s.state === 'idle' ? 'waiting on parent' : 'running', origin: 'Spawned by main agent', harness: s.harness, model: s.model })
-  }
-  return { ws, tasks, main, running: ticketRuns.filter(active), loading: !!ticket && (sessions.isPending || (real && runs.isPending)), limited: !ticket || sessions.isError || (real && (runs.isError || !!runs.data?.truncated)), unsupported: tasks.some(t => !t.run && t.state !== 'done') }
+  const hidden = sessions.some(s => !s.visibility.available && s.harness !== 'shell')
+  return { ws, tasks, main, running: ticketRuns.filter(active), loading: !!ticket && (delegations.isPending || (real && runs.isPending)), limited: !ticket || delegations.isError || delegations.data?.supported === false || hidden || (real && (runs.isError || !!runs.data?.truncated)), unsupported: tasks.some(t => !t.run && t.state === 'running') }
 }
 
 function useStop(ws: string) {
@@ -75,9 +81,10 @@ export function TasksList({ ticket }: { ticket?: string }) {
         <div className="space-y-3 border-t border-border p-3 text-text-muted">
           <p>Result: {task.result || task.state}</p>
           <p>{task.harness} <span className="rounded border border-border px-2 py-0.5">{task.model || 'Model not reported'}</span></p>
-          {task.run && <p>Started {new Date(task.run.started_at).toLocaleString()}</p>}
+          {(task.run?.started_at || task.startedAt) && <p>Started {new Date(task.run?.started_at ?? task.startedAt!).toLocaleString()}{task.endedAt ? `, ended ${new Date(task.endedAt).toLocaleString()}` : ''}</p>}
+          {!!task.files?.length && <p data-testid="focus-task-files">Files: {task.files.join(', ')}</p>}
           <Button variant="outline" size="sm" disabled={action.busy || !task.run || !active(task.run)} onClick={() => { if (task.run && window.confirm('Stop this task?')) void action.stop([task.run]) }}>Stop</Button>
-          {!task.run && task.state !== 'done' && <p>Stopping this task is not supported by this host.</p>}
+          {!task.run && task.state === 'running' && <p>This task stops with the main session.</p>}
         </div>
       </details>)}</div>
     </>}

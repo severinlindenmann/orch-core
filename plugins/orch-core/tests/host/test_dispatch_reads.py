@@ -54,7 +54,7 @@ READS = sorted(
     op
     for op in served_ops()
     if (op_kind(op)[0] in {"read", "person_read"} or op in PERSON_GRANT_REGISTRY_READS)
-    and op not in ("term.preview", "agent.preview", "run.transcript")
+    and op not in ("term.preview", "agent.preview", "run.transcript", "delegation.list", "worktree.diff")
 )  # agent.preview (H11c) is not a registry op either: tests/host/test_agents.py; run.transcript: test_transcripts.py
 
 

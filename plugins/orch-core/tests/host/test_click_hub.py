@@ -305,8 +305,6 @@ def test_the_typed_code_source_wipes_the_code_refuses_other_labels_and_agents(mo
     assert set(agent) == {0}
 
 
-
-
 def keep_person_key(click, served, code=CODE):
     """What ``orch setup`` now does: keep the person key for hub steps (run-9 feedback 6)."""
     from orch import crypto

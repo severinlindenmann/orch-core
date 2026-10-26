@@ -17,8 +17,6 @@ afterEach(() => {
   setHubScenario(null)
 })
 const WORDS = 'orchid anchor ribbon velvet quarter timber lantern cobalt meadow harbor window thunder'
-const HUB = '9f3c1ab277de40c8aa11bb22cc33dd44'
-const CARD = JSON.stringify({ o: { hub_id: HUB }, sig: 'x' })
 // Typing a long JSON string key by key is slow; a paste is one change.
 const paste = async (id: string, text: string) => fireEvent.change(await screen.findByTestId(id, {}, T), { target: { value: text } })
 

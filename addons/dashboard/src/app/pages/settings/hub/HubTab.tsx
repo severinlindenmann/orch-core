@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import type { Workspace } from '@/api/types'
 import { hubQueries, hubServed, type HubStatus } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
-import { Action, Panel, StrictNeeds, useFullAllowed, useHub, violet } from './shared'
+import { Action, Panel, useFullAllowed, useHub, violet } from './shared'
 import { JoinFlow } from './JoinFlow'
 import { FullSwitch } from './FullSwitch'
 import { LeaveFlow } from './LeaveFlow'
@@ -43,7 +43,7 @@ export function StandalonePage({ onJoin }: { onJoin: () => void }) {
     <Action id="hub-connect" onClick={onJoin}>Connect a hub</Action>
   </Panel><Panel title="What stays the same"><p>Your tickets, agents and keys stay on this computer.</p><p>You can leave the hub at any time and keep working.</p></Panel></>
 }
-export function SelectivePage({ ws, fullAllowed, onShare, onFull, onLeave }: { ws: string; fullAllowed: boolean; onShare: () => void; onFull: () => void; onLeave: () => void }) {
+export function SelectivePage({ ws, fullAllowed: _fullAllowed, onShare, onFull, onLeave }: { ws: string; fullAllowed: boolean; onShare: () => void; onFull: () => void; onLeave: () => void }) {
   const share = useQuery(hubQueries.share(ws))
   return <><Panel title="Connected · Hub sees only what you share" tone={violet}><p>You keep signing locally. Needs-you notes (items that need your attention) and full questions are always shared; the hub sees nothing else unless you choose it.</p></Panel>
     <Panel title="What the hub can see">

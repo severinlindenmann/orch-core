@@ -113,5 +113,3 @@ def test_every_path_into_convenience_custody_goes_through_the_refusal():
     port = next(n for n in ast.walk(steps) if isinstance(n, ast.FunctionDef) and n.name == "convenience_on" and n.body
                 and not isinstance(n.body[0], ast.Expr | ast.Pass))  # fmt: skip
     assert "refuse_turn_on" in {name for name, _ in _calls(port)}
-
-

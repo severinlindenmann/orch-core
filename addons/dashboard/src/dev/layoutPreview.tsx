@@ -13,7 +13,6 @@ import { ApiError } from '@/api/types'
 import { SettingsFrame } from '@/app/pages/settings'
 import { HostGeneral } from '@/app/pages/settings/host/General'
 import { RecordsBlock } from '@/app/pages/settings/host/Records'
-import { HostAddOns } from '@/app/pages/settings/host/AddOns'
 import { HostGates } from '@/app/pages/settings/host/Gates'
 import { HostGrants } from '@/app/pages/settings/host/Grants'
 import { HostMembers } from '@/app/pages/settings/host/Members'
@@ -1008,13 +1007,6 @@ export function LayoutPreview({ name }: { name: string }) {
         <HostDevices workspace={workspace} />
       </SettingsFrame>
     )
-  if (scenario.startsWith('addons-'))
-    return (
-      <SettingsFrame current="addons" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-        <HostAddOns workspace={workspace} />
-        {scenario.endsWith('-open') && <OpenAddOnPanel />}
-      </SettingsFrame>
-    )
   if (scenario === 'settings-general') return <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGeneral workspace={{ ...workspace, click: signingCard('signing-off'), icon_known: true }} /></SettingsFrame>
   if (scenario === 'settings-members') return <SettingsFrame current="members" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostMembers workspace={workspace} /></SettingsFrame>
   if (scenario.startsWith('settings-approvals')) return <SettingsFrame current="gates" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGates workspace={workspace} /></SettingsFrame>
@@ -1136,15 +1128,3 @@ function SignBPreview({ scenario, ws }: { scenario: string; ws: string }) {
   return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} /></div>
 }
 
-/** Preview only: opens the one add-on that is On (the person's click on its title). */
-function OpenAddOnPanel() {
-  useEffect(() => {
-    const t = setInterval(() => {
-      const expand = document.querySelector<HTMLButtonElement>('[data-testid$="-expand"][aria-expanded="false"]')
-      if (expand) return void expand.click()
-      if (document.querySelector('[data-testid="publish-server"]')) clearInterval(t)
-    }, 100)
-    return () => clearInterval(t)
-  }, [])
-  return null
-}

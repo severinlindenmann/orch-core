@@ -202,9 +202,7 @@ def install_part(
         publish_url = publish_url or (pubs and _dial_url(pubs))
         relay_url = relay_url or (rels and _dial_url(rels))
         if relay_url and not _hub_accepts(relay_url):
-            ctx.say(
-                f"  note: the hub does not accept {relay_url} as a relay address: left out, push stays off"
-            )
+            ctx.say(f"  note: the hub does not accept {relay_url} as a relay address: left out, push stays off")
             relay_url = None
         fresh = not any(data.iterdir())
         if fresh:

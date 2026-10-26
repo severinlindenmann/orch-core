@@ -15,7 +15,7 @@ vi.mock('@/api/useLiveUpdates', async (original) => ({ ...(await original<typeof
 
 const A = 'a'.repeat(32)
 const T = { timeout: 5000 }
-const FEATURES = [...READS, ...DO, 'actions', 'quick', 'records']
+const FEATURES = [...READS, ...DO, 'actions', 'quick', 'quick_on', 'records']
 const URL_PUSH = 'https://git.example.test/me/records.git'
 const row = (key: string, title: string, status: string, quick: { commits: number | null; files: number | null; over: boolean | null } | null, labels: string[] = ['quick']) => ({
   key, uid: 'U' + key, title, type: 'chore', priority: null, size: null, status, labels, parent: null, owner: null, assignees: [], claim: null,

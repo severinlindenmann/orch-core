@@ -92,9 +92,9 @@ function QuickOff() {
         Nobody in this workspace can make a new quick task while it is off, not from the dashboard, the command line or an
         agent. The quick tasks you already have stay as ordinary tickets and you can still open them.
       </p>
-      <p className="text-[13px] text-text-muted">An owner can switch it on again in Settings, Add-ons.</p>
+      <p className="text-[13px] text-text-muted">An owner can switch it on again on the Add-ons page.</p>
       <Button asChild variant="outline" size="sm">
-        <Link to="/addons">Open Add-ons</Link>
+        <Link to="/addons" search={{ tab: 'installed' }}>Open Add-ons</Link>
       </Button>
     </div>
   )

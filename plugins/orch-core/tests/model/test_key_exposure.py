@@ -92,20 +92,12 @@ def test_a_mark_lands_in_full_mode_even_from_an_exposed_key(w):
 # --- the headline forgery ------------------------------------------------------------------------------------------
 
 
-
-
 def test_clean_keys_are_unaffected_an_unmarked_key_leaves(w):
     assert not hasattr(admit(strict(w), leave(w, w.b), log="workspace"), "code")
     assert not hasattr(admit(strict(w), leave(w, "sev"), log="workspace"), "code")  # A has no mark: clean
 
 
 # --- full-mode entry -----------------------------------------------------------------------------------------------
-
-
-
-
-
-
 
 
 # --- rotation ------------------------------------------------------------------------------------------------------
@@ -174,7 +166,3 @@ def test_a_failed_verifier_refuses_the_rotation(w):
 
 
 LABELS = [None, "passphrase", "click", "convenience", "secure-enclave-unlocked", "no-such-label"]
-
-
-
-

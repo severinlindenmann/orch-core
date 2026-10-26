@@ -50,8 +50,6 @@ def test_the_set_is_exactly_leave_recover_repin_rotate_and_the_1097_rows():
     }  # fmt: skip
 
 
-
-
 # --- the model rule ------------------------------------------------------------------------------------------------
 
 
@@ -61,8 +59,6 @@ def test_a_local_person_event_in_full_mode_is_refused_and_leave_is_not(w):
     assert admit(st, e, log="workspace").code == Code.SIGN_HUB_ONLY
     left = w.build_unappended("workspace", "hub.left", "sev", roster_v=w.roster_v, hub_id=HUB, binding_seq=1)
     assert not hasattr(admit(st, left, log="workspace"), "code")
-
-
 
 
 def test_a_selective_or_left_workspace_signs_locally():

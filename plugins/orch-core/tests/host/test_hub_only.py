@@ -259,8 +259,6 @@ def left(person="p_o", device="d_o", **kw):
     return fake_event("hub.left", person=person, device=device, **kw)
 
 
-
-
 def test_the_recovery_key_recovers_a_device_and_never_signs_anything_else():
     """L2-C8i-1: ``device.recover`` is the one ``pk`` row (the D50 ``device.added`` shape: the new device signs with the
     recovery certificate, the owner has no valid device); a plain device key or any other label never recovers."""
@@ -336,10 +334,6 @@ def test_a_second_hub_joined_is_refused_in_full_mode(human, served):
 # -- I8: join in full leaves convenience off -------------------------------------------------------------------------
 
 
-
-
-
-
 # -- I11: the unsigned safety verbs ----------------------------------------------------------------------------------
 
 
@@ -406,16 +400,6 @@ def convenience_custody(monkeypatch):
     monkeypatch.setattr(select, "read_selection", lambda state, wid: {"custody": "convenience", "transition": None})
 
 
-
-
-
-
-
-
-
-
-
-
 def test_moving_the_key_into_convenience_custody_is_refused_in_full_mode(human, served, stub, keystore):
     entry = {"workspace_id": served.wid, "root": served.lab.root}
     convenience.refuse_full_mode_entry(served.lab.state, entry, UID)  # standalone: allowed
@@ -423,8 +407,6 @@ def test_moving_the_key_into_convenience_custody_is_refused_in_full_mode(human, 
     with pytest.raises(HostError) as ei:
         convenience.refuse_full_mode_entry(served.lab.state, entry, UID)
     assert ei.value.code == "sign.hub_only"
-
-
 
 
 def test_direct_mode_refuses_break_glass_while_custody_is_convenience(convenience_custody, tmp_path):

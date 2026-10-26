@@ -284,7 +284,7 @@ function MarketWorkspace() {
       </nav>
       {message && <p role="status">{message}</p>}
       {!market ? (
-        <BuiltInGroup ws={workspace} />
+        workspace && <BuiltInGroup ws={workspace} />
       ) : active.isError ? (
         <LoadFailed what={tab === 'installed' ? 'installed add-ons' : 'marketplaces'} onRetry={() => void active.refetch()} />
       ) : active.isPending ? (

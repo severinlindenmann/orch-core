@@ -58,13 +58,9 @@ def test_a_mark_can_be_written_in_full_hub_mode_even_by_an_exposed_key(human, se
 # -- the gated acts ------------------------------------------------------------------------------------------------
 
 
-
-
 def test_a_clean_key_still_joins_full_and_leaves(human, served, stub, keystore):
     full_joined(human, served, connect=True)
     human.run("hub.leave", {})
-
-
 
 
 def test_keys_rotate_is_refused_for_an_exposed_key_read_from_the_roster(human, served, stub, keystore):

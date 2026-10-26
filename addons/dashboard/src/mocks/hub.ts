@@ -173,7 +173,7 @@ export function registerHubClickRoutes(r: MockRouter) {
     if (!req) return fail(404, 'not_found', 'No such request.')
     if (!keptKey() && !b?.sealed?.['hub.backup_key']) return fail(400, 'invalid.input', 'A hub step needs your backup key.')
     setHubScenario(req.op === 'hub.leave' ? 'standalone' : req.full ? 'full' : 'selective')
-    open.delete(b.request_id!)
+    open.delete(b!.request_id!)
     return ok({ state: 'submitted', duplicate: false })
   })
   r.add('POST', '/api/w/:ws/click/cancel', (_s, c) => {

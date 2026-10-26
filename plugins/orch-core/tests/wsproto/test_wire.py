@@ -77,8 +77,15 @@ def test_origin_parts():
 
 @pytest.mark.parametrize(
     "origin",
-    ["http://10.1.2.3", "http://172.16.0.1:80", "http://172.31.255.255", "http://192.168.1.10:8100",
-     "http://100.64.0.1", "http://100.127.255.254:9", "http://100.71.14.98:8102"],
+    [
+        "http://10.1.2.3",
+        "http://172.16.0.1:80",
+        "http://172.31.255.255",
+        "http://192.168.1.10:8100",
+        "http://100.64.0.1",
+        "http://100.127.255.254:9",
+        "http://100.71.14.98:8102",
+    ],
 )
 def test_origin_http_private_and_cgnat_accepted(origin):
     assert wire.check_origin(origin) == origin
@@ -86,9 +93,20 @@ def test_origin_http_private_and_cgnat_accepted(origin):
 
 @pytest.mark.parametrize(
     "origin",
-    ["http://8.8.8.8", "http://172.15.0.1", "http://172.32.0.1", "http://192.169.0.1", "http://100.63.0.1",
-     "http://100.128.0.1", "http://10.1.2", "http://10.256.0.1", "http://10.0.0.1.example", "http://10.0.0.1:0",
-     "http://10.0.0.1:70000", "http://relay.example"],
+    [
+        "http://8.8.8.8",
+        "http://172.15.0.1",
+        "http://172.32.0.1",
+        "http://192.169.0.1",
+        "http://100.63.0.1",
+        "http://100.128.0.1",
+        "http://10.1.2",
+        "http://10.256.0.1",
+        "http://10.0.0.1.example",
+        "http://10.0.0.1:0",
+        "http://10.0.0.1:70000",
+        "http://relay.example",
+    ],
 )
 def test_origin_http_public_refused(origin):
     with pytest.raises(wire.WireError):

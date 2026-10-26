@@ -1,0 +1,126 @@
+# orch mobile
+
+Native iPhone app for orch v2 (Swift/SwiftUI). It replaces the PWA that earlier drafts planned.
+
+orch mobile is the phone side of orch: pair with your hub (QR scan or `orch://hub-pair/...` link), see the workspaces the hub
+lists, answer questions ("needs you"), receive push and explicitly confirm signatures. The phone pairs with the hub only, never
+directly with a workspace (V3 D69); the old direct pairing, direct relay transport and phone Drop were deleted (V3-D36).
+
+## Decisions
+
+Source of truth: [orch-core PR #327](https://github.com/severinlindenmann/orch-core/pull/327) (branch `docs/v2-native-ios`).
+
+- **D45, native iPhone app.** Swift and SwiftUI, iOS 18 and later, this repo (`orch-mobile`). It has a Core Swift
+  package with protocol v2, a notification service extension, a share extension and XCUITest end-to-end tests.
+  It replaces the PWA (D16).
+- **D46, P-256 everywhere.** The one crypto suite is protocol v2 suite 2: ECDSA P-256, ECDH P-256, HKDF-SHA-256,
+  AES-256-GCM. Device keys live in the Secure Enclave (iPhone and Apple-silicon Macs), cannot be exported, and sign
+  while the iPhone is unlocked (D49), after explicit confirmation in the sign sheet. Replaces D22 (Ed25519/X25519).
+- **D47, TestFlight and APNs.** Builds go out through TestFlight (Apple Developer Program account). Push goes through
+  APNs; the relay holds the auth key (`.p8`) on the VPS, never in a repo. App Store later, if ever.
+
+## Layout
+
+```
+orch-mobile/
+├── project.yml             XcodeGen source; Orch.xcodeproj is generated and ignored
+├── App/                    SwiftUI hub screens, DEBUG launch options, app entitlements
+├── OrchKit/                Swift 6 package (iOS 18 / macOS 15), no third-party dependencies
+│   ├── Sources/            OrchProtocol, OrchCustody, OrchCoordination, OrchPush,
+│   │                       OrchClient, OrchFakeHost, OrchUI (tokens and shared rails)
+│   └── Tests/              One unit-test target per module
+├── NotificationService/    OrchNotify: generic notification fallback, completion gate
+├── AppTests/               Hosted unit tests
+├── UITests/                Home XCUITest
+├── scripts/                Extension dependency audit
+└── .github/workflows/      Core and hosted-app CI
+```
+
+The NSE links only OrchPush, OrchProtocol and OrchCoordination. All package modules compile with extension API
+restrictions. The app owns the `.keys` keychain group; only the app and NSE share `.push`. App Group:
+`group.io.severin.orch` (app + NSE: hub push replay state).
+
+## Build and test
+
+Requires Xcode 16.4 or later, Swift 6, and XcodeGen **2.46.0**. CI pins Xcode 16.4 on
+`macos-15` and builds XcodeGen's pinned tag if Homebrew supplies another version.
+Automatic signing uses team `77D4THRYUN`; simulator tests require no signing identity.
+
+```sh
+brew install xcodegen
+xcodegen --version # expected: Version: 2.46.0
+swift test --package-path OrchKit
+xcodegen generate
+xcodebuild -project Orch.xcodeproj -scheme Orch \
+  -destination 'platform=iOS Simulator,id=B64F1C73-E1D2-42D2-980B-C0E537CD618C' \
+  -derivedDataPath .build/dd CODE_SIGNING_ALLOWED=NO test
+scripts/check-extension-links.sh
+```
+
+That UUID is the dedicated local iOS 18.3 simulator. Elsewhere, choose an available
+simulator from `xcrun simctl list devices available`. The Orch scheme runs hosted and UI
+tests locally; CI uses `build-for-testing` then `test-without-building` with
+`-only-testing:OrchTests` to exclude UI tests from execution.
+
+Debug launch arguments are parsed only by `LaunchOptions` (`--ui-testing`, `--appearance`, `--push-harness`, `--push-material`)
+and `HubLaunch` (`--hub-pair`, `--hub-fake`, `--hub-sign`). Release ignores all of them and shows the real hub app.
+
+## Hub pairing (V3)
+
+B1 (orch-core #861) pairs the phone with an orch hub (`orch-hub` `docs/protocol.md` 5, 6.3, 6.4; design `state/design-b-phone.md`).
+`orch://hub-pair/<authority>#h1.<hub_id>.<user_id>.<code>` is parsed strictly (`HubVerifier.parseLink`); the card is verified pinned to the
+link's `hub_id`, the HK_op-signed `hub.api_origin` must equal the link's origin (`other_origin`), and only then a password and a TOTP code are
+sent. The Secure Enclave channel key (`HubChannelSigner`: exactly five typed signatures, no "sign bytes") registers with the hub's challenge
+(checked field by field before it signs), the certificate is verified (`se-unlocked`, our key, our user), the pairing session is bound to the
+channel, and only then are the key, the session token and the record kept (`HubPairingCoordinator`, staged: a failure leaves nothing).
+The phone keeps the verified origin and sends every later request there. The push key (`HubPushOpener`) is an agreement-only key in the
+`.push` group. The app is a dev verifier from the compile-time `DEBUG` flag: a release build refuses every `dev: true` object and any
+loopback or http link, and has no hub UI.
+
+`vectors_hub.json` is orch-hub's contract file, copied byte for byte (`Tests/OrchTestVectors/PROVENANCE.md`). In a debug build:
+`--hub-pair` opens the screen on the real stack, `--hub-fake [link|confirm|paired]` runs it against the in-process `FakeHub`, and an opened
+`orch://hub-pair/...` link lands on it.
+
+## TestFlight
+
+`scripts/testflight.sh` archives (Release, generic iOS), exports with method
+`app-store-connect`, and optionally uploads to App Store Connect (app "Orch
+Mobile", internal testing only: `testFlightInternalTestingOnly` is set).
+
+```
+scripts/testflight.sh               # same as --dry-run: archive + export a local .ipa
+scripts/testflight.sh --upload      # archive + export + upload to App Store Connect
+scripts/testflight.sh --add-internal  # --upload, then wait for processing and add the
+                                    # build to the internal group "Owner" (created if missing)
+```
+
+- Needs a clean git tree on a commit that exists on origin; runs `xcodegen generate`.
+- Marketing version comes from `MARKETING_VERSION` in `project.yml`; the build number is
+  UTC `yymmdd.HHMMSS` (override with `BUILD_NUMBER=...`; 1-3 dotted integers), compared per
+  component by App Store Connect. Uploads are refused unless it exceeds the latest uploaded build.
+- Signing is automatic. By default xcodebuild uses the Apple account signed in to Xcode;
+  `USE_API_KEY=1` makes it use the App Store Connect key at
+  `~/.appstoreconnect/private_keys/AuthKey_HVML779F7U.p8` instead. The `--add-internal`
+  REST calls always use that key (ES256 JWT from `scripts/asc-jwt.swift`; the key and the
+  token are never printed or logged).
+- Logs and the .ipa land in `.build/testflight/` (gitignored).
+- Xcode's export uses rsync; the script runs it with a system-only `PATH` because a
+  Homebrew rsync breaks it.
+- Export compliance is intentionally not declared in the build, so a new build may show
+  "Missing Compliance" until answered in App Store Connect.
+
+## Status
+
+The hub path (B1-B7) is built: pairing, home lists, sign prompts, push hints, leave/wipe. The hub UI is dev-build only.
+
+Work is tracked in the issues (labels `v2`, `v2:P4-mobile`). Security-relevant changes
+carry the `security-review` label and need an Opus review before merge.
+
+## Branches
+
+`main` is protected (PR with one approving review and code-owner review). Work happens on `develop` and in feature
+branches that merge into it.
+
+## License
+
+Licensed under the PolyForm Noncommercial License 1.0.0. Commercial use requires a separate license from the author. See [LICENSE](LICENSE).

@@ -273,5 +273,6 @@ def test_review_names_the_workspace_it_creates(flow):
     out = to_review(flow, PROFILE)
     ws = out["workspace"]
     assert ws["prefix"] == PROFILE["prefix"] and ws["name"] == PROFILE["name"] and ws["dir"] == flow.dir
-    assert ws["lines"][0] == f"Workspace {PROFILE['prefix']} for {PROFILE['name']}"
+    assert ws["workspace_name"] == PROFILE["workspace_name"]
+    assert ws["lines"][0] == f"Workspace {PROFILE['workspace_name']} ({PROFILE['prefix']}) for {PROFILE['name']}"
     assert f"Folder: {flow.dir}" in ws["lines"]

@@ -955,7 +955,16 @@ class RealPorts:
         try:
             wi._empty_root(root)
             wi._hosted_bootstrap(
-                ctx, self.state, root, profile["prefix"], profile["name"], passphrase, code, st, backend_factory=factory
+                ctx,
+                self.state,
+                root,
+                profile["prefix"],
+                profile["name"],
+                passphrase,
+                code,
+                st,
+                backend_factory=factory,
+                workspace_name=profile.get("workspace_name"),
             )  # type: ignore[arg-type]
         except OrchError as e:
             wi._drop_unless_pending(self.state, st.wid, st.pending)
@@ -1122,9 +1131,9 @@ IGNORE_LINES = (f"{STORE_DIR}/", f"{WORK_DIR}/")
 
 def init_repository(root: Path) -> None:
     """``git init`` in the project folder under orch's isolated environment (no config of the person's or the system's,
-    no template, no hook), then ``.gitignore`` lines for orch's own folders. Never commits, never touches a file of the
-    person's except to APPEND the missing ignore lines to a ``.gitignore`` that is already there. A folder that is
-    already a repository is left alone."""
+    no template, no hook), then ``.gitignore`` lines for orch's own folders, then one empty first commit (the empty
+    tree: none of the person's files). Never touches a file of the person's except to APPEND the missing ignore lines
+    to a ``.gitignore`` that is already there. A folder that is already a repository is left alone."""
     import os
     import shutil
     import stat
@@ -1163,6 +1172,37 @@ def init_repository(root: Path) -> None:
             os.write(fd, lead + "".join(x + "\n" for x in add).encode())
     finally:
         os.close(fd)
+    _first_commit(git, root, env)
+
+
+FIRST_COMMIT_MESSAGE = "Start of project (created by orch setup)"
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
+def _first_commit(git: str, root: Path, env: dict[str, str]) -> None:
+    """One empty root commit on ``main`` (the empty tree, so nothing staged or untracked is committed) so that HEAD
+    exists: worktrees, verdicts and ``orch doctor`` need a commit. ``commit-tree`` + ``update-ref`` run no hook and no
+    signing; the identity is fixed."""
+    import os
+    import subprocess
+
+    who = {"GIT_AUTHOR_NAME": "orch", "GIT_AUTHOR_EMAIL": "orch@localhost",
+           "GIT_COMMITTER_NAME": "orch", "GIT_COMMITTER_EMAIL": "orch@localhost"}  # fmt: skip
+    cenv = {**env, **who}
+    cwd = os.fspath(root)
+    made = subprocess.run(  # noqa: S603 - fixed argv under the isolated environment
+        [git, "-c", "commit.gpgsign=false", "commit-tree", EMPTY_TREE, "-m", FIRST_COMMIT_MESSAGE],
+        cwd=cwd, env=cenv, stdin=subprocess.DEVNULL, capture_output=True, timeout=30, check=False,
+    )  # fmt: skip
+    sha = made.stdout.decode().strip()
+    if made.returncode != 0 or len(sha) < 40:
+        raise SetupError("git.init_failed", "git could not make the first commit in this folder", 500)
+    ref = subprocess.run(  # noqa: S603
+        [git, "update-ref", "refs/heads/main", sha],
+        cwd=cwd, env=cenv, stdin=subprocess.DEVNULL, capture_output=True, timeout=30, check=False,
+    )  # fmt: skip
+    if ref.returncode != 0:
+        raise SetupError("git.init_failed", "git could not make the first commit in this folder", 500)
 
 
 def _ends_newline(fd: int, size: int) -> bool:

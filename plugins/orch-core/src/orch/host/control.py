@@ -122,8 +122,9 @@ _PEERS = {
 _OFFER = {"type": "string", "pattern": r"^[0-9a-f]{32}$"}
 
 
-def _closed(required: dict[str, Any]) -> dict[str, Any]:
-    return {"type": "object", "properties": required, "required": list(required), "additionalProperties": False}
+def _closed(required: dict[str, Any], optional: tuple[str, ...] = ()) -> dict[str, Any]:
+    need = [k for k in required if k not in optional]
+    return {"type": "object", "properties": required, "required": need, "additionalProperties": False}
 
 
 _SCHEMAS = {
@@ -139,7 +140,9 @@ _SCHEMAS = {
             "root": _ROOT,
             "events": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"type": "object"}},
             "peers": _PEERS,
-        }
+            "workspace_name": {"type": "string", "minLength": 1, "maxLength": 80},
+        },
+        optional=("workspace_name",),
     ),
 }
 _VALIDATORS = {op: Draft202012Validator(schema) for op, schema in _SCHEMAS.items()}
@@ -583,7 +586,7 @@ class ControlOps:
                 host=BackendSigner(backend, "wsk"),
                 host_state_dir=self.state_dir,
                 clock=self.host.clock,
-                workspace_name=Path(root).name or event.get("prefix"),
+                workspace_name=intent.args.get("workspace_name") or Path(root).name or event.get("prefix"),
                 load="lazy",
                 create=True,
             )

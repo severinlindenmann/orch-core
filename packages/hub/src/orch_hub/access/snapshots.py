@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from ..config import dev_of
 from ..contract import hub as H
 from ..contract.canon import cj
 from ..contract.hub import Refused
@@ -62,7 +63,7 @@ class AccessSnapshots:
                 "roles": roles,
                 "revoked_channels": revoked,
                 "market_policy": mp["policy"],
-                "dev": True,
+                "dev": dev_of(self._keys),
             }
             signed = signer.sign_object(o)
             db.execute(

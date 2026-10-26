@@ -108,11 +108,12 @@ def _addon(service: WorkspaceService, name: str) -> bool:
     return hubpolicy.running(service, name)  # granted, on, and not paused by the hub policy
 
 
-def agent_missing(service: WorkspaceService, hub: RunnerHub) -> str | None:
-    """The first of ``addon`` (``start-agent``), ``machine`` that is not in place, else ``None``."""
+def agent_missing(service: WorkspaceService, hub: RunnerHub, addon: str = ADDON) -> str | None:
+    """The first of ``addon`` (``start-agent``; a follow-up run asks for ``schedules``, whose grant already says it
+    starts agents on this computer), ``machine`` that is not in place, else ``None``."""
     from orch.runner import enablement
 
-    if not _addon(service, ADDON):
+    if not _addon(service, addon):
         return "addon"
     if not enablement.state_of(hub.host.state_dir, service.workspace_id, hub.host.host_uid)["enabled"]:
         return "machine"
@@ -364,7 +365,7 @@ def plan(
     if hub is None:
         p.block("runner.unavailable", "this host serves no runner")
     else:
-        gone = agent_missing(service, hub) if agent else missing(service, hub)
+        gone = agent_missing(service, hub, "schedules" if fu is not None else ADDON) if agent else missing(service, hub)
         if gone is not None:
             p.block("runner.disabled", f"dashboard execution is not available here: {gone} missing", missing=gone)
         elif not hub.connected:
@@ -616,7 +617,9 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
 
     service = call.service
     wid, person, run = service.workspace_id, data["person"], data["run"]
-    gone = await asyncio.wrap_future(service.submit(agent_missing, service, hub))  # again, at use
+    gone = await asyncio.wrap_future(
+        service.submit(agent_missing, service, hub, "schedules" if data["launch"].get("run_grant") else ADDON)
+    )  # again, at use
     if gone is not None:
         raise HostError("runner.disabled", "dashboard execution is not available here", detail={"missing": gone})
     # from here to the reservation there is no await: the identity check, the limits, the rate charge and the

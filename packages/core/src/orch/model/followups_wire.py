@@ -23,6 +23,14 @@ def grant_chain(ws: WsCore, gid: str):
     )
 
 
+def caps_of(ws: WsCore) -> fu.Caps:
+    """The caps of a workspace. DEV-ONLY: a dev sandbox workspace (signed genesis prefix SBX, never a real one) gets the
+    short minimum lead and zero early tolerance, so real-host e2e runs take seconds."""
+    from .engine import DEV_PREFIX
+
+    return fu.effective_caps(ws.settings.get("followups", {}), dev=ws.prefix == DEV_PREFIX)
+
+
 def enabled(ws: WsCore) -> bool:
     addon = ws.addons.get("schedules")
     return bool(addon and addon.enabled and not addon.purged)
@@ -39,7 +47,7 @@ def chain_state(ws: WsCore, t: TCore, now: int, *, before: int | None = None):
     return fu.chain_state(
         sorted((e for e in events if before is None or e.at < before), key=lambda e: e.at),
         open_tasks_at_start=c.get("start_tasks", frozenset()),
-        caps=fu.effective_caps(ws.settings.get("followups", {})),
+        caps=caps_of(ws),
         now=now,
         since=c.get("since"),
     )
@@ -97,7 +105,7 @@ def set_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         ts(e["deadline"]) if "deadline" in e else None,
         e["brief"],
     )
-    caps = fu.effective_caps(ws.settings.get("followups", {}))
+    caps = caps_of(ws)
     if (r := denied(fu.check_set(ctx, req, caps))) is not None:
         return r
     for old in pending:

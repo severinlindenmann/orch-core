@@ -27,6 +27,7 @@ from .state import Layout, load, save
 __all__ = ["Ctx", "main", "add_workspace", "choose_role", "full_server", "default_ctx"]
 
 USAGE = (
+    "usage: orch install phone [--user ID]\n"
     "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
     "                    [--publish-url U] [--relay-url U] [--dev] [--yes] | status [--json] | remove PART [--purge]\n"
 )
@@ -77,6 +78,7 @@ class Ctx:
     token: Callable[[], str] = lambda: secrets.token_urlsafe(18)
     dashboard_entry: Callable[[], list[str] | None] = lambda: _dashboard_entry()
     mint_login: Callable[[list[str], Mapping[str, str]], str | None] = lambda argv, env: _mint_login(argv, env)
+    qr: Callable[[str], str | None] = lambda link: _qr(link)
     publish_setup: Callable[[str], str | None] = lambda url: None  # configure the workspace; returns a hint on failure
     layout: Layout = field(init=False)
 
@@ -447,6 +449,75 @@ def remove(ctx: Ctx, part: str, purge: bool) -> int:
     return 0
 
 
+# -------------------------------------------------------------------------------------------------------------- phone
+
+
+def _json_of(out: str) -> Any:
+    starts = [i for i in (out.find("{"), out.find("[")) if i >= 0]
+    try:
+        return json.loads(out[min(starts):]) if starts else json.loads(out)
+    except ValueError:
+        raise InstallError("the hub answered something unreadable") from None
+
+
+def phone_origin(rec: dict[str, Any]) -> str:
+    """The origin a phone dials: the advertised (LAN/NetBird) address or the domain, never loopback."""
+    if rec.get("domain"):
+        return f"https://{rec['domain']}"
+    host = rec.get("address") or rec.get("bind") or P.ADDRESS_LOOPBACK
+    if host in ("localhost", P.ADDRESS_LOOPBACK, "::1") or host.startswith("127."):
+        raise InstallError(
+            "this hub only listens on this computer (127.0.0.1), a phone cannot reach it. "
+            "Reinstall it on a LAN or NetBird address: orch install hub --address <your address>"
+        )
+    return f"http://{host}:{rec['port']}"
+
+
+def phone(ctx: Ctx, user: str | None) -> int:
+    """``orch install phone``: mint a one-time phone pairing link for the hub on this computer; shown, never stored."""
+    rec = load(ctx.layout)["parts"].get("hub")
+    if not rec:
+        raise InstallError("no hub is installed on this computer; run: orch install hub")
+    origin = phone_origin(rec)
+    binary, data = rec["binary"], str(ctx.layout.data("hub"))
+    if not user:
+        rc, out = ctx.run([binary, "users", "--state", data, "list"], dict(ctx.env))
+        if rc != 0:
+            raise InstallError(f"cannot list the hub's users:\n{out.strip()[-400:]}")
+        users = _json_of(out)
+        admins = [u for u in users if "hub-admin" in (u.get("groups") or [])]
+        if len(admins) != 1:
+            names = ", ".join(f"{u['user_id']} ({u.get('name', '')})" for u in users) or "none yet"
+            raise InstallError(f"say which user: orch install phone --user <id>   (users: {names})")
+        user = admins[0]["user_id"]
+    rc, out = ctx.run(
+        [binary, "channels", "--state", data, "pair-code", "--user", user, "--link", "--api-origin", origin],
+        dict(ctx.env),
+    )
+    if rc != 0:
+        raise InstallError(f"the hub refused to make a pairing link:\n{out.strip()[-400:]}")
+    got = _json_of(out)
+    link = got.get("link") if isinstance(got, dict) else None
+    if not link:
+        raise InstallError("the hub made no pairing link")
+    ctx.say("Open the orch app on your phone and scan this, or open the link (one use, valid 10 minutes):")
+    ctx.say(link)
+    qr = ctx.qr(link)
+    if qr is None:
+        ctx.say("(no QR here: brew install qrencode, then run this again)")
+    else:
+        ctx.say(qr)
+    return 0
+
+
+def _qr(link: str) -> str | None:
+    exe = shutil.which("qrencode")
+    if not exe:
+        return None
+    r = subprocess.run([exe, "-t", "ANSIUTF8", link], capture_output=True, text=True)
+    return r.stdout if r.returncode == 0 else None
+
+
 # ------------------------------------------------------------------------------------------------- setup integration
 
 
@@ -565,7 +636,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         err.write("orch install: installing parts is a person's job; an agent never does it\n")
         return 3
     p = argparse.ArgumentParser(prog="orch install", add_help=False)
-    p.add_argument("cmd", choices=("hub", "relay", "publish", "status", "remove"))
+    p.add_argument("cmd", choices=("hub", "relay", "publish", "status", "remove", "phone"))
     p.add_argument("rest", nargs="*")
     p.add_argument("--address")
     p.add_argument("--port", type=int)
@@ -578,6 +649,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
     p.add_argument("--purge", action="store_true")
+    p.add_argument("--user")
     try:
         a = p.parse_args(list(argv))
     except SystemExit:
@@ -589,6 +661,8 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     try:
         if a.cmd == "status":
             return status(ctx, a.json)
+        if a.cmd == "phone":
+            return phone(ctx, a.user)
         if a.cmd == "remove":
             if len(a.rest) != 1:
                 err.write(USAGE)

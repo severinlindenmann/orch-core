@@ -13,6 +13,7 @@ import { ClickProblemBox } from './RefusalDevices'
 import { useActivation, useArming } from './useArming'
 import type { SignStory } from './story'
 import { AgentAccess, WhatNext } from './SignAside'
+import { alsoSigned } from './alsoSigned'
 import { fmtClock } from '@/lib/time'
 import { SignFooter, STICKY_FOOTER } from './SignShell'
 
@@ -132,15 +133,21 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
     if (!activation.take() || !can) return
     onSign()
   }
-  const technical = <><TechnicalFacts view={view} />{story?.scope && <p data-testid="sign-scope">{story.scope}</p>}<AgentAccess story={story ?? null} />{story && <WhatNext story={story} />}</>
+  const technical = <TechnicalFacts view={view} />
+  // A compact review (a summary, or a quick task shown folded) says what happens in its own lines: no step list under it.
+  const lean = !!view.content?.summary || (!!story?.quick && !!view.content && alsoSigned(view.content, story.quick) !== null)
   const label = story?.signLabel ?? given ?? 'Sign'
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
+      {/* authority stays in the default view, never folded: the scope, the agent access length, what happens next */}
+      {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
+      <AgentAccess story={story ?? null} />
+      {story && !lean && <WhatNext story={story} />}
       {view.checks.filter(c => !c.clean).map((c, i) => <p key={i} role="note" className="text-[13px] text-warning">Repository <Raw>{c.repo}</Raw>: not clean</p>)}
       {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The files could not be checked before signing.</p>}
-      {!view.content && <details><summary className="cursor-pointer text-[13px]">Show exactly what is signed</summary><SignDetails>{technical}
-      <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div></SignDetails></details>}
+      {!view.content && <SignDetails>{technical}</SignDetails>}
+      {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
       {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={ws} />}
       {extra}
       <SignFooter><div className={STICKY_FOOTER} data-testid="sign-footer">

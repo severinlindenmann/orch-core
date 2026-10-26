@@ -59,7 +59,7 @@ describe('the sign panel shows only the signer’s View', () => {
     expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
     // the custody is a technical fact now (no orange line in the main view); the risk notice lives in Settings
     expect(screen.queryByTestId('click-risk-more')).toBeNull()
-    expect(panel.querySelectorAll('details')).toHaveLength(2)
+    expect(panel.querySelectorAll('details')).toHaveLength(1)
     expect(screen.getByTestId('click-custody')).toHaveTextContent('One click on this computer, no fingerprint/passphrase')
     expect(screen.getByTestId('click-custody')).not.toBeVisible()
     expect(CLICK_RISK).toBe('Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.')
@@ -263,8 +263,8 @@ it('keeps warnings visible with structured content and technical details collaps
 
 it('shows the full terminal lines when structured content is absent', () => {
   mount(answer({ lines: ['Fallback first line', 'Fallback second line'] }))
-  expect(screen.getByText('Fallback first line')).not.toBeVisible()
-  expect(screen.getByText('Fallback second line')).not.toBeVisible()
+  expect(screen.getByText('Fallback first line')).toBeVisible()
+  expect(screen.getByText('Fallback second line')).toBeVisible()
 })
 
 it('K6: a removed person reads "remove: Severin", never "remove: — → Severin"', () => {

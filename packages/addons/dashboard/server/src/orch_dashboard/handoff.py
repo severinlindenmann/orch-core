@@ -1536,14 +1536,14 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
 
 
 def hub_base(link) -> dict:
-    """B10: the latest `hub.*` event is part of a hub step's intent, so join, leave, join again with the same
-    card is a new request each time; a double click (no event in between) is still one."""
-    types = ["hub.joined", "hub.left"]
-    data = link.call("activity.list", {"scope": "workspace", "types": types, "order": "desc", "limit": 10})
-    for item in data.get("items") or []:
-        if isinstance(item, dict) and item.get("type") in types and isinstance(item.get("id"), str):
-            return {"hub_head": item["id"]}
-    return {"hub_head": None}
+    """B10/B13: the host's hub state is part of a hub step's intent (the hub events are not in `activity.list`), so
+    leave, join, mode full, leave is a new request each time; a double click (no state change) is still one."""
+    try:
+        st = link.call("hub.status")
+    except HostError:
+        return {"hub": None}
+    keys = ("joined", "hub_id", "mode", "binding_seq", "binding")
+    return {"hub": {k: st.get(k) for k in keys}}
 
 
 #: How many earlier ENDED (cancelled, expired) attempts of one action a single press steps past. The cap bounds the

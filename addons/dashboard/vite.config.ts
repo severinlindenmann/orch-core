@@ -83,6 +83,11 @@ export default defineConfig(({ command }) => ({
       // The production build swaps the api module (and so every page's `api`) for the real one; dev, tests and the
       // layout guard keep the in-process mock. The module-graph check above fails the build if a mock slips in.
       ...(command === 'build' ? [{ find: /^@\/api\/client$/, replacement: path.resolve(import.meta.dirname, './src/api/client.prod.ts') }] : []),
+      // Focus mode's demo data (mock host only) is swapped for empty stubs in the production build, like the api module.
+      ...(command === 'build' ? [
+        { find: /^@\/mocks\/addons\/focus\/demo$/, replacement: path.resolve(import.meta.dirname, './src/api/focusDemo.prod.ts') },
+        { find: /^@\/mocks\/addons\/focus\/(?:sources|source-extract)\.json$/, replacement: path.resolve(import.meta.dirname, './src/api/focusJson.prod.ts') },
+      ] : []),
       { find: '@', replacement: path.resolve(import.meta.dirname, './src') },
     ],
   },

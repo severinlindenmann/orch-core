@@ -24,7 +24,7 @@ function useTasks(ticket?: string) {
   // Real children come from the host (the runner reads the harness files); the mock host serves a fixture.
   const delegations = useQuery({ queryKey: ['focus', 'delegations', ws, ticket ?? null], queryFn: () => real ? focusApi.delegations(ws, ticket!) : Promise.resolve(ticket === DEMO_FOCUS_TICKET ? demoDelegations() : { ticket: ticket!, supported: true, sessions: [] } as Delegations), enabled: !!ws && !!ticket, retry: false, refetchInterval: real ? 5000 : false })
   const ticketRuns = (runs.data?.runs ?? []).filter(r => r.ticket === ticket)
-  const main = ticketRuns.filter(r => r.kind === 'agent' && r.state === 'running').sort((a, b) => b.started_at.localeCompare(a.started_at))[0]
+  const main = ticketRuns.filter(r => r.kind === 'agent' && r.state === 'running' && !r.parent_run).sort((a, b) => b.started_at.localeCompare(a.started_at))[0]
   const sessions = delegations.data?.sessions ?? []
   const known = new Set<string>()
   const tasks: Task[] = []

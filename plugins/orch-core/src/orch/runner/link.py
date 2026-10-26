@@ -170,8 +170,13 @@ def _is_claude(argv: list[str]) -> bool:
     return os.path.basename(prog) == "claude"
 
 
-def _harness_of(argv: list[str]) -> str | None:
-    """The registry harness a spawn argv starts (``claude-code``, ``codex``), ``None`` for a shell."""
+def _harness_of(argv: list[str], config: RunnerConfig | None = None) -> str | None:
+    """The registry harness a spawn argv starts (``claude-code``, ``codex``), ``None`` for a shell. A program that
+    ``runner.json`` names for a harness is that harness whatever its file is called (a wrapper, the test seam)."""
+    if config is not None and argv and argv[0].startswith("/"):
+        named = next((h for h, prog in config.programs.items() if prog == argv[0]), None)
+        if named in ("claude-code", "codex"):
+            return named
     prog = argv[4] if len(argv) >= 5 and argv[1:4] == ["-l", "-c", LOGIN_EXEC] else argv[0]
     return {"claude": "claude-code", "codex": "codex"}.get(os.path.basename(prog))
 
@@ -529,7 +534,7 @@ class HostLink:
                     raise SpawnError("runner.unavailable", "the agent runner is restarting on a new release; try again")
                 res = self.sup.spawn(spec)
                 if not res.get("duplicate"):  # the transcript reader finds the run's file from these
-                    self.sup.table.update(spec.run, harness=_harness_of(spec.argv), cwd_path=spec.cwd.get("path"))
+                    self.sup.table.update(spec.run, harness=_harness_of(spec.argv, self.config()), cwd_path=spec.cwd.get("path"))
             return {k: res.get(k) for k in ("pid", "state", "started_at", "duplicate")}
         if cmd == "stop":
             run = str(args.get("run"))

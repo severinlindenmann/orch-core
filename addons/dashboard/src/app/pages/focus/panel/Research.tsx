@@ -16,7 +16,7 @@ export function useSources(ticket?: string) {
   const ws = workspace?.id ?? ''
   const real = isRealHost()
   const runs = useQuery({ ...runQueries.list(ws), enabled: !!ws && !!ticket && real, retry: false, refetchInterval: 5000 })
-  const mine = (runs.data?.runs ?? []).filter((r) => r.ticket === ticket && r.kind === 'agent' && r.harness !== 'shell')
+  const mine = (runs.data?.runs ?? []).filter((r) => r.ticket === ticket && r.kind === 'agent' && r.harness !== 'shell' && !r.parent_run)
   const run = [...mine].sort((a, b) => (a.state === 'running' ? 0 : 1) - (b.state === 'running' ? 0 : 1) || b.started_at.localeCompare(a.started_at))[0]
   const live = run?.state === 'running'
   const sources = useQuery({

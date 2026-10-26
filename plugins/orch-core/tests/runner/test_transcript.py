@@ -186,3 +186,14 @@ def test_codex_locate_picks_by_cwd_and_start_time(tmp_path):
     assert transcript.locate(RUN, "codex", rec, env) is None  # a stale cache entry is not trusted
     assert transcript.locate(RUN, "codex", {**rec, "cwd_path": None}, env) is None
     assert transcript.locate(RUN, "shell", rec, env) is None
+
+
+def test_harness_of_follows_runner_json_for_a_program_with_another_name():
+    from orch.runner.config import parse
+    from orch.runner.link import _harness_of
+
+    cfg = parse({"v": 1, "login_shell": False, "programs": {"claude-code": "/opt/wrap/my-agent", "codex": "/opt/wrap/cx"}})
+    assert _harness_of(["/opt/wrap/my-agent", "--session-id", "x"], cfg) == "claude-code"
+    assert _harness_of(["/opt/wrap/cx"], cfg) == "codex"
+    assert _harness_of(["/opt/wrap/my-agent"]) is None  # without the config only the program's name counts
+    assert _harness_of(["/usr/bin/claude"], cfg) == "claude-code"

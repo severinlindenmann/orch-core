@@ -38,7 +38,7 @@ function ConversationPane({ ws, ticket, scratchRun, onReview }: { ws: string; ti
   // A scratch session opened from "No ticket" is the person's own harness terminal (kind shell, run id in the address).
   const matching = runs.data?.runs.filter((r) => scratchRun && !ticket ? r.run === scratchRun : (r.kind === 'agent' || (r.as_person && r.harness !== 'shell')) &&
     (ticket ? r.ticket === ticket : !r.ticket && scratch.includes(r.run))) ?? []
-  const run = matching.filter((r) => r.state === 'running')
+  const run = matching.filter((r) => r.state === 'running' && !(ticket && r.parent_run))
     .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at))[0]
   const launching = matching.some((r) => r.state === 'starting')
   function started(next: Run) {

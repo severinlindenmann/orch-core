@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { PauseButton, TasksChip, TasksList } from './Delegation'
 vi.mock('@/app/terminal/real/StartAgentDialog', () => ({ StartAgentDialog: (p: { open: boolean; initial?: { note?: string } }) => p.open ? <div role="dialog" aria-label="Start agent">{p.initial?.note}</div> : null }))
+vi.mock('./DelegateSheet', () => ({ DelegateSheet: (p: { parent: { run: string } }) => <div role="dialog" aria-label="Delegate sheet">parent:{p.parent.run}</div> }))
 vi.mock('@/app/workspace', () => ({ useWorkspace: () => ({ workspace: mockStore.workspaces[0] }) }))
 import { installAndGrant } from '@/test/installAddon'
 
@@ -141,4 +142,12 @@ it('an agent-spawned child can only start anew: the dialog opens with its title 
   await user.click(within(title.closest('details')!).getByRole('button', { name: 'Start as separate session' }))
   await waitFor(() => expect(read).toHaveBeenCalledWith(mockStore.workspaces[0].id, 'r_01J0000000000000000000000A', expect.objectContaining({ child: 'agent-a04b67fe' })))
   expect(await screen.findByRole('dialog', { name: 'Start agent' })).toHaveTextContent('Write boundary tests - Cover the boundary cases')
+})
+
+it('the main session is the newest running run WITHOUT a parent: a newer human-delegated child never becomes it', async () => {
+  const base = mockDelegations.sessions[0]
+  const open = { ...mockDelegations, sessions: [{ ...base, run: 'main', policy: { delegate: true, max_children: 5 }, children: [] }] } as unknown as Delegations
+  const { user } = show([run('main', { started_at: '2026-10-26T10:00:00Z' }), run('child', { started_at: '2026-10-26T11:00:00Z', parent_run: 'main', label: 'Review it' })], false, 'DEMO-0042', open)
+  await user.click(await screen.findByRole('button', { name: 'Delegate a task' }))
+  expect(await screen.findByRole('dialog', { name: 'Delegate sheet' })).toHaveTextContent('parent:main')
 })

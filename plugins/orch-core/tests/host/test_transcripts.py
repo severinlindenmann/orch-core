@@ -295,3 +295,10 @@ def test_link_ops_are_column_p_writes_under_cap_focus_1():
 
     for op in ("run.link", "run.detach"):
         assert TRANSCRIPT_OPS[op] == 1 and op_kind(op) == ("person_write", "write")
+
+
+def test_run_view_names_the_parent_of_a_delegated_child():
+    from orch.host.runners import view
+
+    assert view({"run": "r_B", "parent_run": "r_A"})["parent_run"] == "r_A"
+    assert view({"run": "r_A"})["parent_run"] is None

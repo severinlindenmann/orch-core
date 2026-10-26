@@ -686,6 +686,7 @@ async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
                "person": person}  # fmt: skip
     if launch.get("run_grant"):
         payload["run_grant"] = True
+        payload["workspace_id"] = wid
     await hub.intent(wid, fields, payload, idem=data["idem"], spec=data["spec"])
     hub.grants.watch()
     if launch.get("mkdir"):

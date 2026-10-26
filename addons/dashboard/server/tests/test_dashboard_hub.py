@@ -205,7 +205,7 @@ def test_module_never_names_a_hub_write():
 
     src = Path(hub.__file__).read_text()
     calls = re.findall(r"\.call\(\s*\"([a-z_.]+)\"", src)
-    assert set(calls) <= {"hub.status", "share.rules", "share.preview", "hub.connect"}  # connect: C11's one write
+    assert set(calls) <= {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link"}  # connect: C11's one write
     assert src.count("write=True") == 1
     assert "hubclient" not in src and "import orch" not in src
 

@@ -41,7 +41,7 @@ const setup = (name: 'publish', on = false, setUp: boolean | null = false) => {
 it.each(['publish'] as const)('off %s opens settings and sends one enable action', async (name) => {
   setup(name)
   const user = userEvent.setup()
-  show('/w/DEMO/settings/addons')
+  show('/w/DEMO/addons')
   const title = name === 'publish' ? 'Publish' : 'Model routing'
   await user.click(await screen.findByRole('switch', { name: title }, T))
   const form = within(await screen.findByRole('dialog', { name: `Turn on ${title}` }, T))
@@ -59,7 +59,7 @@ it.each(['publish'] as const)('off %s opens settings and sends one enable action
 it.each(['publish'] as const)('on %s without settings signs settings only', async (name) => {
   setup(name, true, false)
   const user = userEvent.setup()
-  show('/w/DEMO/settings/addons')
+  show('/w/DEMO/addons')
   expect(await screen.findByTestId(`addon-${name}-state`, {}, T)).toHaveTextContent('Needs setup')
   await user.click(screen.getByRole('button', { name: 'Set up' }))
   const form = within(screen.getByRole('dialog'))
@@ -76,7 +76,7 @@ it('a non-owner cannot open setup', async () => {
   setup('publish', true, false)
   state.host.workspaces[0].me = TOM
   state.host.workspaces[0].role = 'member'
-  show('/w/DEMO/settings/addons')
+  show('/w/DEMO/addons')
   expect(await screen.findByRole('switch', { name: 'Publish' }, T)).toBeDisabled()
   expect(screen.queryByRole('button', { name: 'Set up' })).toBeNull()
 })

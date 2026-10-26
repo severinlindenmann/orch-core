@@ -212,7 +212,8 @@ def test_each_addon_row_carries_the_manifest_version_and_odd_ones_are_dropped(
     assert rows["worktrees"]["version"] == "1.2.3"
     assert rows["publish"]["version"] is None and rows["usage"]["version"] is None
     assert rows["estimate"]["version"] is None  # not listed by the host
-    assert rows["dashboard"]["version"] and rows["quick"]["version"]  # the install's own packages
+    assert rows["dashboard"]["version"]  # the install's own package; quick is a switchable add-on now (run 9)
+    assert rows["quick"]["locked"] is None and rows["quick"]["state"] == "off"
 
 
 def test_c14_rows_offer_the_switch_only_where_dashboard_execution_is_what_is_missing(

@@ -18,16 +18,37 @@ import { settingsTabs } from './tabs'
 import { isRealHost } from '@/api/features'
 import { HostGates } from './host/Gates'
 import { HostGeneral } from './host/General'
-import { HostAddOns } from './host/AddOns'
+import { HostDevices } from './host/Devices'
 import { HostGrants } from './host/Grants'
 import { HostMembers } from './host/Members'
 import { CopyLinkButton } from '../../shell/CopyLinkButton'
 import { useMe } from '@/app/useMe'
+import { Smartphone } from 'lucide-react'
+import type { Workspace } from '@/api/types'
 
 export const ONLY_OWNERS = 'Only owners change settings.'
 
 const link = 'flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-text-muted hover:bg-surface-2 hover:text-text'
 const active = 'bg-surface-2 text-text'
+
+/** Settings > Devices on a real host: the Phone block (it used to sit under Add-ons; a phone is not an add-on). */
+function HostPhone({ workspace }: { workspace: Workspace }) {
+  return (
+    <div className="space-y-4">
+      <h2 className="text-base font-semibold">Devices</h2>
+      <section aria-label="Phone" data-testid="addon-phone" className="space-y-1">
+        <div className="flex items-center gap-3 text-[13px]">
+          <Smartphone aria-hidden className="size-4 shrink-0 text-text-muted" />
+          <div className="min-w-0 flex-1">
+            <span className="font-medium">Phone</span>
+            <p className="text-text-muted">Pair the orch app on your phone, and see, rename or remove the devices that can approve.</p>
+          </div>
+        </div>
+      </section>
+      <HostDevices workspace={workspace} />
+    </div>
+  )
+}
 
 /** /settings/$tab (general | members | gates | relay | addons | skills | connections) and /settings/addon/$name (Addons with that addon's settings drawer open). */
 export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
@@ -49,7 +70,7 @@ export function SettingsPage({ tab, addon }: { tab?: string; addon?: string }) {
         {tab === 'members' && <HostMembers workspace={workspace} />}
         {tab === 'gates' && <HostGates workspace={workspace} />}
         {tab === 'grants' && <HostGrants workspace={workspace} />}
-        {tab === 'addons' && <HostAddOns key={workspace.id} workspace={workspace} />}
+        {tab === 'devices' && <HostPhone key={workspace.id} workspace={workspace} />}
         {tab === 'hub' && <HubTab key={workspace.id} workspace={workspace} />}
       </SettingsFrame>
     )

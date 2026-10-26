@@ -111,6 +111,8 @@ export interface SignPopoverProps {
   /** The button this review belongs to. Default: the button that was pressed last. */
   anchor?: HTMLElement | null
   onClose: () => void
+  /** Show the review in place, under the row that asked (an accordion), not as a popover. */
+  inline?: boolean
   initialFocus?: () => HTMLElement | null
 }
 
@@ -267,7 +269,7 @@ export function SignPopover(p: SignPopoverProps) {
   if (viaHub) {
     const request = hubRequestOf(p.action)
     return (
-      <SignShell anchor={anchor} open onDismiss={p.onClose} title={<Inline>{p.title}</Inline>} description="Only you can approve this. Agents cannot." showClose onOpenAutoFocus={(e) => e.preventDefault()}>
+      <SignShell inline={p.inline} anchor={anchor} open onDismiss={p.onClose} title={<Inline>{p.title}</Inline>} description="Only you can approve this. Agents cannot." showClose onOpenAutoFocus={(e) => e.preventDefault()}>
         {request && p.ws ? <HubSignPanel ws={p.ws} request={request} /> : <NotFromHub />}
         <div className="flex justify-end gap-2">
           <Button variant="outline" ref={cancelRef} onClick={p.onClose}>
@@ -312,6 +314,7 @@ export function SignPopover(p: SignPopoverProps) {
 
   return (
     <SignShell
+      inline={p.inline}
       anchor={anchor}
       open={!(p.onSigning && signing)}
       onDismiss={() => phase !== 'preparing' && click.phase !== 'preparing' && click.phase !== 'signing' && void close()}

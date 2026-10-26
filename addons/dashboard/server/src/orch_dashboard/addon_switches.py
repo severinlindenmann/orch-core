@@ -27,11 +27,11 @@ SWITCHABLE = (
     "estimate",
     "explorer",
     "wiki",
+    "quick",
 )
 #: what the dashboard cannot turn off or on at all
 LOCKED = {
     "dashboard": "The dashboard is always on: it is what shows this workspace.",
-    "quick": "Always available. There is nothing to switch.",
 }
 _VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z.+_-]{0,39}$")
 _RELEASE = re.compile(r"^[0-9a-f]{12}$")

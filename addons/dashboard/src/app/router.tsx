@@ -204,7 +204,8 @@ const marketRoute = createRoute({
   validateSearch: (s: Record<string, unknown>): { tab: 'browse' | 'installed' | 'marketplaces' } => ({ tab: s.tab === 'installed' || s.tab === 'marketplaces' ? s.tab : 'browse' }),
   beforeLoad: () => {
     if (!isRealHost()) throw redirect({ to: '/' })
-    serves('market')()
+    // The page also serves a host without the market ops: it then shows the built-in add-ons only.
+    serves('settings')()
   },
   loader: pageLoader(({ qc, ws }) => hasFeature('market', ws.id) ? [qc.ensureQueryData(queries.marketList(ws.id))] : [], [MarketPage.preload]),
   component: MarketPage,
@@ -278,6 +279,8 @@ const settingsTabRoute = createRoute({
   // An unknown tab (or /settings/addon without a name) would render only the sub-nav: go to General instead.
   beforeLoad: ({ params }) => {
     serves('settings')()
+    // Add-ons live on the Add-ons page now (the old Settings tab is gone).
+    if (isRealHost() && params.tab === 'addons') throw redirect({ to: '/addons', search: { tab: 'installed' } })
     if (!knownSettingsTab(params.tab)) throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
   },
   loader: ({ context, params }) => pageLoader(settingsData(params.tab), [SettingsPage.preload])({ context }),
@@ -293,7 +296,7 @@ const settingsAddonRoute = createRoute({
   beforeLoad: () => {
     serves('settings')()
     // An addon's own settings are not on a real host yet (the reduced settings have General, Members, Gates, Grants).
-    if (isRealHost()) throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
+    if (isRealHost()) throw redirect({ to: '/addons', search: { tab: 'installed' } })
   },
   loader: ({ context, params }) => pageLoader(settingsData('addons', params.name), [SettingsPage.preload, addonNodes])({ context }),
   pendingComponent: SettingsSkeleton,

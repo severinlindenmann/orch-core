@@ -120,13 +120,10 @@ def workspace_login_url(ctx: Ctx, directory: str) -> str | None:
     """Setup's "Open your workspace": register the workspace, make sure the dashboard SERVICE (not the stopped
     launcher of the setup page) runs, and return a fresh single-use login URL on it.
     ``None`` when there is no dashboard service."""
-    _dbg = lambda m: open("/Users/lume/p9e3-dbg.log", "a").write(m + "\n")  # DEBUG-E2E3
-    _dbg(f"start dir={directory} dash={load(ctx.layout).get('dashboard')}")
     if add_workspace(ctx, directory) is None:
         return None
     dash = load(ctx.layout).get("dashboard")
     entry = ctx.dashboard_entry()
-    _dbg(f"after add dash={dash} entry={entry}")
     if not dash or not entry:
         return None
     env = {
@@ -134,9 +131,7 @@ def workspace_login_url(ctx: Ctx, directory: str) -> str | None:
         "PATH": ctx.env.get("PATH", os.defpath),
         "ORCH_STATE_DIR": str(ctx.layout.root.parent),
     }
-    r = ctx.mint_login(entry, env)
-    _dbg(f"mint={r}")
-    return r
+    return ctx.mint_login(entry, env)
 
 
 def default_ctx(env: Mapping[str, str], out: TextIO, err: TextIO) -> Ctx:

@@ -64,7 +64,7 @@ _RESYNC_CODES = (b"not_bound", b"unknown_hub")
 
 @dataclass(frozen=True)
 class PublishConfig:
-    base_url: str  # where orch-publish listens; https, or http on a loopback address only
+    base_url: str  # where orch-publish listens; https, or http on loopback, private or CGNAT (100.64/10) addresses
     api_host: (
         str  # the host the workspaces sign (orch-publish's configured api_host): requests naming another are refused
     )
@@ -72,6 +72,11 @@ class PublishConfig:
     deadline_s: float = 30.0  # for the whole forward, sync included
     max_request_body: int = MAX_REQUEST_BODY
     max_response_body: int = MAX_RESPONSE_BODY
+
+
+_PLAIN_HTTP_NETS = tuple(
+    ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10")
+)
 
 
 def _endpoint(base_url: str) -> tuple[str, str, int]:
@@ -82,11 +87,12 @@ def _endpoint(base_url: str) -> tuple[str, str, int]:
         raise ValueError("base_url carries no credentials")
     if u.scheme == "http":
         try:
-            loopback = u.hostname == "localhost" or ipaddress.ip_address(u.hostname).is_loopback
+            ip = None if u.hostname == "localhost" else ipaddress.ip_address(u.hostname)
+            ok = ip is None or ip.is_loopback or any(ip in n for n in _PLAIN_HTTP_NETS if ip.version == n.version)
         except ValueError:
-            loopback = False
-        if not loopback:
-            raise ValueError("plain http only on a loopback address")
+            ok = False
+        if not ok:
+            raise ValueError("plain http only on a loopback, private or CGNAT address")
     return u.scheme, u.hostname, u.port or (443 if u.scheme == "https" else 80)
 
 

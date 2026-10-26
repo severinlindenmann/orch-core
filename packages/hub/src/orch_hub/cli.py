@@ -51,11 +51,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="dev only: allow --link-listen on a machine that has host/agent users (needs a dev card; network link, not separation)",
     )
-    sv.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback)")
+    sv.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback, private or 100.64/10 addresses)")
     sv.add_argument("--api-host", help="host the workspaces sign (default: the host:port of --publish-url)")
     sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
     sv.add_argument("--web-listen", help="loopback host:port of the web API (the edge fronts it); default: no web API")
-    sv.add_argument("--relay-url", help="the relay for push (https, or http on loopback); default: the card's")
+    sv.add_argument("--relay-url", help="the relay for push (https, or http on loopback, private or 100.64/10 addresses); default: the card's")
     sv.add_argument("--trusted-peer", action="append", default=[], help="edge address that may state the client (XFF)")
     sv.add_argument(
         "--behind-edge", action="store_true", help="the web API is served behind the edge (needs --trusted-peer)"
@@ -72,7 +72,7 @@ def _parser() -> argparse.ArgumentParser:
         "releases", help="dev: release metadata of the bound full-mode workspaces, read at orch-publish (admin read)"
     )
     rl.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
-    rl.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback)")
+    rl.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback, private or 100.64/10 addresses)")
     rl.add_argument("--workspace", help="only this workspace id (32 lower-case hex)")
     rl.add_argument("--json", action="store_true", required=True, help="print JSON (the only format)")
     dr = sub.add_parser(
@@ -101,7 +101,7 @@ def _parser() -> argparse.ArgumentParser:
     dr.add_argument("--fw-file", help="the link firewall file (default: /etc/orch/hub-fw.nft)")
     rg = sub.add_parser("relay", help="dev: the hub's account at its relay (card from the key store)")
     rg.add_argument("--state", help="hub state dir (default: $ORCH_HUB_STATE)")
-    rg.add_argument("--relay-url", help="override the card's relay_url (https, or http on loopback)")
+    rg.add_argument("--relay-url", help="override the card's relay_url (https, or http on loopback, private or 100.64/10 addresses)")
     rgs = rg.add_subparsers(dest="cmd", required=True)
     rgs.add_parser("register", help="register or rotate the account by hub card (POST /v2/hubs, unsigned)")
     from .access.cli import add_parsers

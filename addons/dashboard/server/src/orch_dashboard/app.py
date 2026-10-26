@@ -61,7 +61,7 @@ SETTINGS_TABS = (
     "members",
     "gates",
     "grants",
-    "addons",
+    "devices",
     "hub",
 )  # HOST_TABS (settings/tabs.ts)
 SPA_ROUTES = (
@@ -80,6 +80,7 @@ SPA_ROUTES = (
     "worktrees",
     "terminals",
     "explorer",
+    "wiki",
     "addons",
     "shares",
     "activity",
@@ -87,6 +88,7 @@ SPA_ROUTES = (
     "guide",  # ?page=<x> is a query: not part of the path
     "settings",
     "settings/$tab",
+    "settings/addons",  # old address: the app redirects it to /addons (run-9 feedback 3.2)
     "settings/addon/$name",
     "settings/addons/$name",
     "addon/$name/$page",

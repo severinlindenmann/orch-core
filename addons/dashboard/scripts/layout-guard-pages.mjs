@@ -7,7 +7,7 @@ export const REAL_HOST_PAGES = [
   'real-host-runner-on', 'real-host-runner-off', 'real-host-addons', 'real-host-agent-model', 'real-host-addons-publish', 'real-host-addons-publish-open', 'real-host-addons-publish-unset',
   'real-host-terminal-dock', 'real-host-terminal-preview', 'real-host-terminal-readonly', 'real-host-terminal-take',
   'real-host-terminal-exited', 'real-host-terminal-stop',
-  'real-host-pair-unavailable', 'real-host-pair-blocked-convenience', 'real-host-pair-offer', 'real-host-pair-pending',
+  'real-host-pair-unavailable', 'real-host-pair-unavailable-click', 'real-host-pair-blocked-convenience', 'real-host-pair-offer', 'real-host-pair-pending',
   'real-host-pair-cert', 'real-host-pair-failed', 'real-host-pair-devices', 'real-host-pair-link', 'real-host-pair-remove-command',
   'real-host-readers-devices', 'real-host-convenience-refusals',
   'real-host-signing-on', 'real-host-signing-off', 'real-host-signing-terminal-on', 'real-host-signing-unsafe', 'real-host-signing-unknown',

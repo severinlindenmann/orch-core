@@ -358,7 +358,7 @@ class SetupFlow:
         if any(i.id == "runner_grant" for i in plan.items):
             ids.append("runner_grant")
         if self.profile and self.profile["method"] == "click":
-            ids += ["flags", "custody"]
+            ids += ["custody", "flags"]
         if any(f["id"] == "records" for f in plan.flags):
             ids.append("records")
         return ids

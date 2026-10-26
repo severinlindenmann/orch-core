@@ -527,8 +527,8 @@ class Creator:
             self._runner()
             self._stop_point()
             self._batch()
-            self._flags()
-            self._custody()
+            self._custody()  # the key moves into click custody FIRST ...
+            self._flags()  # ... and the convenience flag is set LAST: never "flag on, key not held"
             self._records()
             self.run.done = True
         except KeyboardInterrupt:
@@ -585,7 +585,7 @@ class Creator:
                 self.run.set(s["id"], "failed")
         # B12 N14: the one-click switch is only effective with the key moved; a "Done" row above a failure would lie
         if not self._custody_done and self.run.status("custody") in ("failed", "skipped", "todo", "doing"):
-            if self.run.status("flags") == "done":
+            if self.run.status("flags") in ("todo", "doing"):
                 self.run.set("flags", "skipped")
         self.run.error = {"code": e.code, "message": self._safe(e.message, 400), "finishable": bool(post_genesis)}
 

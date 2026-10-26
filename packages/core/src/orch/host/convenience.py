@@ -473,7 +473,12 @@ def unavailable(reason: str, devices: list[str], *, hours: int | None = None) ->
 
 
 def check(
-    service: Any, person: str, device: str, *, gate: Any = None, removing: frozenset[str] = frozenset(),
+    service: Any,
+    person: str,
+    device: str,
+    *,
+    gate: Any = None,
+    removing: frozenset[str] = frozenset(),
     leaving: bool = False,
 ) -> None:
     """Raise ``sign.convenience_unavailable`` (message ``<reason>: …``, detail ``{reason, devices}``) unless the

@@ -167,9 +167,7 @@ def _with_passphrase(create, passphrase):
     return wrapped
 
 
-def test_the_on_hint_gives_the_placeholder_when_the_folder_is_reached_through_a_symlink(
-    served, monkeypatch, tmp_path
-):
+def test_the_on_hint_gives_the_placeholder_when_the_folder_is_reached_through_a_symlink(served, monkeypatch, tmp_path):
     """A copyable hint must not be steerable: a planted symlink ($PWD != real cwd) gets the placeholder."""
     state = str(served.lab.state)
     link = tmp_path / "link"

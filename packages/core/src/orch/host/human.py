@@ -414,7 +414,10 @@ class HumanOps:
         # the submit and the model check every hub event under the lock (hubproof).
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(
-                service, person, signer["device"], removing=_removing(name, [args["args"].get("device")]),
+                service,
+                person,
+                signer["device"],
+                removing=_removing(name, [args["args"].get("device")]),
                 leaving=name == "hub.leave",
             )  # the owner's condition, at prepare
         if signer is not None and name != ROTATE_OP:

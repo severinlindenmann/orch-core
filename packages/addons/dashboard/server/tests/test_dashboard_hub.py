@@ -266,10 +266,12 @@ class PausedGw:
 
 def test_connect_is_still_refused_when_the_add_on_is_simply_disabled():
     """Only the fresh-join pause is waived, not a dashboard that is off for another reason."""
-    link = Link({
-        "hub.connect": {"mode": "selective"},
-        "addon.list": {"addons": [{"name": "dashboard", "state": "disabled"}]},
-    })
+    link = Link(
+        {
+            "hub.connect": {"mode": "selective"},
+            "addon.list": {"addons": [{"name": "dashboard", "state": "disabled"}]},
+        }
+    )
 
     class Off(PausedGw):
         pass
@@ -316,10 +318,12 @@ def test_connect_relays_the_invite_and_card_to_the_host_as_one_write():
 
 def test_connect_works_while_the_dashboard_add_on_is_paused_by_the_join():
     """e2e-4: join by click signs hub.join, the host pauses all add-ons, and only then the page calls hub/connect."""
-    link = Link({
-        "hub.connect": {"hub_id": HUB32, "status": "bound", "mode": "selective", "binding_seq": 1},
-        "addon.list": {"addons": [{"name": "dashboard", "state": "paused", "paused": {"cause": "unverified"}}]},
-    })
+    link = Link(
+        {
+            "hub.connect": {"hub_id": HUB32, "status": "bound", "mode": "selective", "binding_seq": 1},
+            "addon.list": {"addons": [{"name": "dashboard", "state": "paused", "paused": {"cause": "unverified"}}]},
+        }
+    )
     got = connect(connect_client(link, gw=PausedGw))
     assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective"}
     assert [c[0] for c in link.calls] == ["addon.list", "hub.connect"]

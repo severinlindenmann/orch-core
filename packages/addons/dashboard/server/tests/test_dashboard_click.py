@@ -1480,11 +1480,7 @@ def test_failed_prepare_bumps_idem_for_next_attempt(client, token, stub, script,
 
     def failed(ws, op, args, **kw):
         if op == "human.pending" and args.get("request_id") == rid:
-            return {
-                "requests": [
-                    {"id": rid, "state": "submitted", "seq": None, "error": {"code": "gate.stale"}}
-                ]
-            }
+            return {"requests": [{"id": rid, "state": "submitted", "seq": None, "error": {"code": "gate.stale"}}]}
         return original(ws, op, args, **kw)
 
     monkeypatch.setattr(client.app.state, "human", failed)

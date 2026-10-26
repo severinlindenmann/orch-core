@@ -8,6 +8,8 @@
   ``remote.origin.url`` values.
 * ``diff {branch, default_branch, context, max_bytes}`` (profile ``gitdir``): base and head per section 0.8 and the
   patch text of ``git diff --no-ext-diff --no-textconv --no-renames base head``.
+* ``worktree_diff {max_bytes?, max_files?}`` (profile ``worktree`` only): the uncommitted changes of the working copy as
+  a unified diff against ``HEAD`` (focus mode P2-5; :func:`worktree_diff`).
 * ``tree_check {removal?}`` (profile ``worktree`` only): is the working copy clean relative to ``HEAD``
   (:mod:`orch.gitread.treecheck`; H10, F2, N3).
 
@@ -24,12 +26,13 @@ from typing import Any
 from orch import canon  # imported here, before the sandbox hook: the request must not import anything later
 from orch.records.tool import _headers_ok, _message_ok  # the one rule for a records commit (not copied)
 
-from . import limits, treecheck
+from . import limits, myers, treecheck  # myers: imported before the sandbox hook, like everything the request uses
 from .errors import NotFound, Unavailable
 from .fs import RepoPins, open_pin
 from .patchtext import Change, diff_trees, quote_path, render
 from .pinning import pin_repo
 from .repo import Repo
+from .treejob import escape_path
 
 __all__ = ["PROFILES", "allowed_paths", "run"]
 
@@ -40,6 +43,7 @@ _OPS = {
     "observe": ("gitdir", "worktree"),
     "diff": ("gitdir", "worktree"),
     "tree_check": ("worktree",),
+    "worktree_diff": ("worktree",),
     "records_identify": ("pin",),
 }
 _HISTORY_MAX = 20_000  # commits looked at to identify a records repository; more is "cannot tell"
@@ -433,6 +437,110 @@ def records_identify(args: dict[str, Any], roots: list[str]) -> dict[str, Any]:
         return {"ours": True, "gitdir": ident}
 
 
+WT_FILE_MAX = 1 << 20  # one side of one file in the live diff; larger is listed without hunks
+WT_FILES_MAX = 200
+_PROBE = 8000
+
+
+def _head_entry(repo: Repo, tree: str, path: bytes) -> tuple[int, str] | None:
+    """``(mode, oid)`` of ``path`` in the tree ``tree``, ``None`` when HEAD has no such blob."""
+    cur: str | None = tree
+    parts = path.split(b"/")
+    for i, name in enumerate(parts):
+        assert cur is not None
+        hit = next((e for e in repo.tree(cur) if e.name == name), None)
+        if hit is None:
+            return None
+        if i == len(parts) - 1:
+            return None if hit.is_tree else (hit.mode, hit.oid)
+        if not hit.is_tree:
+            return None
+        cur = hit.oid
+    return None
+
+
+def worktree_diff(
+    repo: Repo,
+    worktree: Any,
+    *,
+    max_bytes: int = 262144,
+    max_files: int = WT_FILES_MAX,
+    **check_kw: Any,
+) -> dict[str, Any]:
+    """The uncommitted changes of a working copy against ``HEAD`` (focus mode P2-5). The changed paths are the ones
+    :mod:`orch.gitread.treecheck` finds (the same check ``dirty()`` uses); each file is read through the pinned
+    working copy fd (``O_NOFOLLOW``), the ``HEAD`` side from the object store, and the hunks come from
+    :mod:`orch.gitread.myers`. Binary, oversize, symlink and non-regular files are listed without hunks."""
+    raw = treecheck.check(repo, worktree, **check_kw)
+    head = raw.get("head")
+    tree = repo.commit(head).tree if head else None
+    files: list[dict[str, Any]] = []
+    parts: list[bytes] = []
+    size = 0
+    truncated = bool(raw.get("more"))
+    for c in raw["changed"]:
+        if len(files) >= max_files:
+            truncated = True
+            break
+        path = base64.b64decode(c["path_b64"])
+        shown = escape_path(path, bool(c["cut"]))
+        old = _head_entry(repo, tree, path) if tree and not c["cut"] else None
+        rel = path.decode("utf-8", errors="surrogateescape")
+        kind = None
+        try:
+            kind = worktree.kind(rel)
+        except Unavailable:
+            pass
+        status = "?" if c["why"] == "untracked" else ("D" if kind is None else ("A" if old is None else "M"))
+        entry: dict[str, Any] = {"path": shown, "status": status, "added": 0, "removed": 0, "binary": False}
+        files.append(entry)
+        a_data = b""
+        if old is not None:
+            if old[0] & 0o170000 != 0o100000:
+                entry["binary"] = True
+                continue
+            a_data = repo.blob(old[1])
+        b_data = b""
+        if kind == "file":
+            try:
+                b_data = worktree.read(rel, WT_FILE_MAX)
+            except Unavailable:
+                entry["too_large"] = True
+                continue
+        elif kind is not None:  # a symlink, a directory in a file's place, a FIFO: never opened
+            entry["binary"] = True
+            continue
+        if len(a_data) > WT_FILE_MAX:
+            entry["too_large"] = True
+            continue
+        if b"\0" in a_data[:_PROBE] or b"\0" in b_data[:_PROBE]:
+            entry["binary"] = True
+            continue
+        body, add, dele = myers.render(myers.split_lines(a_data), myers.split_lines(b_data), 3)
+        entry["added"], entry["removed"] = add, dele
+        q = quote_path(shown.encode("utf-8"))
+        head_lines = [b"diff --git " + quote_path(b"a/" + shown.encode()) + b" " + quote_path(b"b/" + shown.encode())]
+        if old is None:
+            head_lines.append(b"new file mode %06o" % 0o100644)
+        elif kind is None:
+            head_lines.append(b"deleted file mode %06o" % old[0])
+        head_lines.append(b"--- " + (b"/dev/null" if old is None else b"a/" + q))
+        head_lines.append(b"+++ " + (b"/dev/null" if kind is None else b"b/" + q))
+        text = b"\n".join(head_lines) + b"\n" + body if body else b"\n".join(head_lines[:1]) + b"\n"
+        if size + len(text) > max_bytes:
+            truncated = True
+            continue
+        parts.append(text)
+        size += len(text)
+    return {
+        "head": head,
+        "head_ref": raw.get("head_ref"),
+        "files": files,
+        "unified": b"".join(parts).decode("utf-8", errors="replace"),
+        "truncated": truncated,
+    }
+
+
 def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, Any]:
     op = req.get("op")
     args = req.get("args") or {}
@@ -456,6 +564,17 @@ def run(profile: str, hello: dict[str, Any], req: dict[str, Any]) -> dict[str, A
                 # no person configuration here: the policy matches the repository's own ignore files in the case modes
                 # its config allows (orch.gitread.ignorepolicy); a removal check never applies any (#583 round 3)
                 return treecheck.check(repo, worktree, removal=bool(args.get("removal")))
+            finally:
+                worktree.close()
+        if op == "worktree_diff":
+            mb, mf = args.get("max_bytes", 262144), args.get("max_files", WT_FILES_MAX)
+            if set(args) - {"max_bytes", "max_files"} or type(mb) is not int or not 1024 <= mb <= 1048576:
+                raise Unavailable("bad request: worktree_diff")
+            if type(mf) is not int or not 1 <= mf <= WT_FILES_MAX:
+                raise Unavailable("bad request: worktree_diff")
+            worktree = open_pin(pins.worktree)
+            try:
+                return worktree_diff(repo, worktree, max_bytes=mb, max_files=mf)
             finally:
                 worktree.close()
         if op == "observe":

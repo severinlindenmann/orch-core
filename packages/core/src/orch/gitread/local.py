@@ -293,6 +293,33 @@ class LocalGitReader:
             finally:
                 worktree.close()
 
+    def worktree_diff(
+        self,
+        path: str | os.PathLike[str],
+        env: Mapping[str, str] | None = None,
+        *,
+        max_bytes: int = 262144,
+        max_files: int = 200,
+    ) -> dict[str, Any]:
+        """:func:`orch.gitread.ops.worktree_diff` for the repository ``path`` is in (direct mode: the person's global
+        ignore file is honoured, a detached ``HEAD`` is compared like a branch)."""
+        from .fs import open_pin
+        from .wildmatch import Budget
+
+        _top, pins = self._open(path)
+        person = person_ignore(env if env is not None else os.environ)
+        budget = Budget(SECONDS)
+        with Repo(pins) as repo:
+            worktree = open_pin(pins.worktree)
+            try:
+                policy = IgnorePolicy.status(repo, person, budget)
+                return ops.worktree_diff(
+                    repo, worktree, max_bytes=max_bytes, max_files=max_files,
+                    detached_ok=True, policy=policy, budget=budget,
+                )  # fmt: skip
+            finally:
+                worktree.close()
+
     def dirty(self, path: str | os.PathLike[str], env: Mapping[str, str] | None = None) -> str:
         """What is uncommitted: ``""`` when clean, else one ``why: path`` line per change (paths escaped for
         display, :func:`orch.gitread.treejob.escape_path`) and ``and more`` past 200. Raises :class:`Unavailable`

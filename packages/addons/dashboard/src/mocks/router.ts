@@ -7,6 +7,8 @@ import { atLeast, can } from '@/api/permissions'
 import { APPROVER_GROUPS, codeReviewWaits, unmeetablePolicy } from '@/api/gates'
 import { GRANT_MAX_HOURS } from '@/api/grants'
 import { validIcon } from '@/api/wsIcons'
+import { isRealHost, refreshFeatures } from '@/api/features'
+import { focusFeatures } from './addons/focus'
 import { addonActive } from '@/api/addons'
 import peopleFixture from './fixtures/people.json'
 import type { RelayRequest, RelaySimRequest } from '@/api/types'
@@ -393,7 +395,11 @@ export function buildRouter(): MockRouter {
       return h(s, c)
     })
   r.add('GET', '/api/me', (s) => ok(s.me()))
-  r.add('GET', '/api/workspaces', (s) => ok(s.workspaceList()))
+  r.add('GET', '/api/workspaces', (s) => {
+    const rows = s.workspaceList()
+    if (!isRealHost()) refreshFeatures(rows.map((w) => ({ id: w.id, features: focusFeatures(s, w.id) })))
+    return ok(rows)
+  })
   // Who an owner can add: the registry plus the people already in the caller's workspaces. Owners only (names and emails).
   readOf('/api/workspaces/:ws/people', (s, c) => {
     if (!can(s.roleIn(c.params.ws, s.viewer), 'settings')) return fail(403, 'forbidden', 'Only owners see the people directory.', 'Ask an owner.')

@@ -67,6 +67,17 @@ def test_registry_forms_pass_and_the_shell_is_the_runners_own():
     assert spec.argv == ["/bin/sh", "-l", "-c", LOGIN_EXEC, "codex", "Run orch status, then work on ticket 7."]
 
 
+def test_the_delegate_off_flag_passes_and_a_delegated_childs_dotted_session_is_accepted():
+    argv = ["$SHELL", "-l", "-c", LOGIN_EXEC, "claude", "--model", "sonnet", "--session-id", "@orch-session-id",
+            "--disallowedTools=Agent,Task", "Run orch status."]  # fmt: skip
+    store = store_with((WS, ME, GID, SECRET))
+    spec = spawn_spec(agent(argv=argv, session=SESSION + ".2"), OWN, RunnerConfig(), store)
+    assert spec.argv[4:] == argv[4:] and spec.env["ORCH_SESSION"] == SESSION + ".2"
+    for bad in (SESSION + ".0", SESSION + ".1.2.3.4", SESSION + ".x", SESSION + "."):
+        with pytest.raises(SpawnError):
+            spawn_spec(agent(session=bad), OWN, RunnerConfig(), store)
+
+
 @pytest.mark.parametrize(
     "argv",
     [

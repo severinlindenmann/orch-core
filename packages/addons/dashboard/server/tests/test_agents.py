@@ -308,3 +308,48 @@ def test_runner_card_passes_the_hosts_startable_rule_when_well_formed(client, to
     assert got == {**RUNNER_GRANT, "startable": False, "startable_until": None}
     host.answers["whoami"]["runner"]["grant"] = {**RUNNER_GRANT, "startable": "yes"}  # not a bool: dropped
     assert client.get(url(stub, "/runner"), headers=hdr(token)).json()["runner"]["grant"] == RUNNER_GRANT
+
+
+# -- P2-3: spawn policy and the Delegate sheet's task body ---------------------------------------------------------
+
+
+def test_preview_passes_policy_and_a_delegated_task_to_the_host_typed(client, token, stub, host):
+    host.answers["agent.preview"] = PREVIEW
+    parent = "r_01M4Y46B485AXD4CBEJZ15Z1TV"
+    policy = {
+        "ticket": "DEMO-1",
+        "harness": "claude-code",
+        "mode": "work",
+        "policy": {"delegate": True, "max_children": 2, "models": ["haiku"]},
+    }
+    task = {
+        "ticket": "DEMO-1",
+        "harness": "codex",
+        "mode": "task",
+        "parent_run": parent,
+        "label": "Review it",
+        "brief": "Check X",
+        "expected": "A report",
+    }
+    for body in (policy, task):
+        assert client.post(url(stub, "/agents/preview"), json=body, headers=hdr(token)).status_code == 200
+    assert host.calls == [("agent.preview", {**policy, "worktree": True}, False, None),
+                          ("agent.preview", {**task, "worktree": True}, False, None)]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"policy": {"delegate": "yes"}},
+        {"policy": {"max_children": 10}},
+        {"policy": {"models": ["a", "b"]}},
+        {"policy": {"surprise": 1}},
+        {"parent_run": "r_nope"},
+        {"brief": "x" * 4001},
+        {"expected": "x" * 401},
+    ],
+)
+def test_policy_and_task_bodies_are_closed(client, token, stub, host, extra):
+    body = {"ticket": "DEMO-1", "harness": "codex", "mode": "task", **extra}
+    assert client.post(url(stub, "/agents/preview"), json=body, headers=hdr(token)).status_code == 400
+    assert host.calls == []

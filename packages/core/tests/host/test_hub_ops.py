@@ -743,3 +743,15 @@ def test_a_leave_keeps_the_mark_of_a_workspace_with_a_relay(human, served, stub,
     human.run("hub.leave", {})
     ok(c.req("hub.unbind", {}, idem=True))
     assert (base / "membership").exists()
+
+
+def test_a_full_join_without_a_relay_is_not_relay_paired_after_a_leave_without_unbind(human, served, stub, monkeypatch):
+    """B15: a click leave never runs hub.unbind; the key store the full join made must not read as a relay."""
+    from orch.host import convenience
+    from tests.host.dispatch_helpers import ok
+
+    human.run("hub.join", join_args(mode="full"))
+    ok(served.client().req("hub.connect", connect_args(), idem=True))
+    assert (served.lab.state / "hosts" / served.wid / "membership").exists()
+    human.run("hub.leave", {})
+    assert not convenience._relay_paired(served.lab.state, served.wid)

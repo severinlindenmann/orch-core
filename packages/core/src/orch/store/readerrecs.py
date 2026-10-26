@@ -124,6 +124,8 @@ def remove_record(state_dir: Path, workspace_id: str, device_hex: str) -> bool:
 #: exists) and at every R1 login (:func:`orch.host.relaylink.observe_relay_level`). It survives an unlink (the
 #: renamed ``unlinked-*.json`` keeps counting with its last level); a relink writes the new relay's level.
 LEVEL_FILE = "reader.json"
+#: written into ``membership/`` by a full hub join in a workspace that never had a relay
+HUB_ONLY_MARK = ".hub-only"
 _LEVEL_MAX = 2**31 - 1
 
 
@@ -214,7 +216,9 @@ def relay_level(state_dir: Path | None, workspace_id: str, uid: int | None = Non
     if state_dir is None:
         return None
     base = Path(state_dir) / "hosts" / workspace_id
-    if not (os.path.lexists(base / "membership") or os.path.lexists(base / "relay" / "link.json")):
+    # a key store only a full hub join made (HUB_ONLY_MARK, no relay ever) is not a relay (B12/B15)
+    member = os.path.lexists(base / "membership") and not os.path.lexists(base / "membership" / HUB_ONLY_MARK)
+    if not (member or os.path.lexists(base / "relay" / "link.json")):
         try:
             names = os.listdir(base / "relay")
         except FileNotFoundError:

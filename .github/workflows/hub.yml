@@ -16,7 +16,7 @@ jobs:
     name: hub changes
     uses: ./.github/workflows/_changes.yml
     with:
-      pattern: '^(packages/hub/|packages/core/src/|contracts/|\.github/workflows/(hub|_changes)\.yml$)'
+      pattern: '^(packages/hub/|packages/core/src/|packages/publish/|contracts/|\.github/workflows/(hub|_changes)\.yml$)'
   tests:
     name: hub tests
     needs: changes

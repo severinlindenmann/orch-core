@@ -793,3 +793,19 @@ def test_a_readable_folder_entry_is_recorded_and_watched() -> None:
     assert "/etc/sudoers.d/90-x" in facts.pins[facts.users["orch-agent-sev"].uid]["policy"]["files"]
     facts.sigs["/etc/sudoers.d/90-x"] = (31, 2, 3, 5)  # edited in place
     assert "90-x differs in size" in _policy_codes(facts)["policy_changed_since_setup"]
+
+
+def test_a_step_that_hangs_is_killed_and_the_failure_says_what_it_waited_for(monkeypatch) -> None:
+    """#1308: a useradd that hung for the whole step time used to fail with only 'TimeoutExpired'."""
+    import sys
+
+    from orch.setup import osapply
+
+    sleeper = "/bin/sleep" if sys.platform != "linux" else "/usr/bin/sleep"
+    monkeypatch.setattr(osapply, "_ALLOWED", frozenset({sleeper}))
+    monkeypatch.setattr(osapply, "_STEP_TIMEOUT", 1)
+    result = osapply._spawn([sleeper, "30"])
+    assert result.rc == 127 and "TimeoutExpired after 1 s" in result.out
+    assert "waiting:" in result.out
+    if sys.platform == "linux":
+        assert "waits in" in result.out and "sleep" in result.out

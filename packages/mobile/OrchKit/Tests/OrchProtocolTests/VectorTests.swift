@@ -458,11 +458,11 @@ import Testing
     @Test func everyGroupIsAccountedFor() {
         let run: Set<String> = ["keys", "ids", "sign", "hkdf", "salted_aead", "seal", "seal_open", "label_sealed", "certs", "revocations",
                                 "card", "wk_grants", "wk_commit", "member_lists", "cert_request", "question_hash", "decisions", "push", "relay_auth", "drop",
-                                "cert_binding", "rejected_forms", "approved_anchor"]      // G3b: OrchProtocolTests, OrchFakeHostTests, OrchRelayFixtureTests
+                                "cert_binding", "rejected_forms", "approved_anchor", "reader_decl"]      // G3b (reader_decl: ReaderDeclTests, whole group from contracts/ since #1301): OrchProtocolTests, OrchFakeHostTests, OrchRelayFixtureTests
         let partial: Set<String> = ["bridge"]                       // seal, device_cases and sas run; host_cases, pair_answers, links deferred
         // member_list_snapshots run through WorkspaceSession in OrchFakeHostTests.SnapshotVectorTests; checkpoints are F1 (host/relay)
         let deferred: Set<String> = ["enroll", "webauthn", "revocation_op", "ws_envelopes", "publish", "p3", "member_list_snapshots", "checkpoints",
-                              "checkpoints_g4", "reader_decl", "unpublished"]  // p3: relay state machine; its membership cases replay in OrchRelayFixtureTests.P3MembershipVectorTests, the rest with PR4/PR5
+                              "checkpoints_g4", "unpublished"]  // p3: relay state machine; its membership cases replay in OrchRelayFixtureTests.P3MembershipVectorTests, the rest with PR4/PR5
         let meta: Set<String> = ["suite", "name"]
         let all = Set(s2.object!.keys)
         #expect(all == run.union(partial).union(deferred).union(meta), "unaccounted: \(all.subtracting(run).subtracting(partial).subtracting(deferred).subtracting(meta))")

@@ -1,7 +1,7 @@
 """Runs a REAL orch-publish app (uvicorn on 127.0.0.1, ephemeral port) for the D11 e2e test.
 
-Started by tests/test_publish_e2e.py with orch-publish's own python and cwd = an orch-publish checkout
-($ORCH_PUBLISH_SRC). It registers a workspace through orch-publish's test helpers (vector keys), prints
+Started by tests/test_publish_e2e.py with `uv run --project packages/publish` and cwd = packages/publish.
+It registers a workspace through orch-publish's test helpers (vector keys), prints
 ``PORT <n>``, then serves HTTP (including orch-publish's /v2/hub/ admin endpoints) until stdin closes.
 """
 
@@ -32,7 +32,7 @@ def main() -> None:
 
     e.c, e.wsk, e.path = TestClient(e.app, base_url="http://" + host), _priv("wsk_a.sig"), e.app.state.settings.db_path
     e.allow()
-    assert e.register(sign_host=host).status_code == 200
+    assert e.register().status_code == 200  # the workspace card as the hub hands it over (V3-D36)
     srv = uvicorn.Server(uvicorn.Config(e.app, log_level="warning"))
     threading.Thread(target=srv.run, kwargs={"sockets": [sock]}, daemon=True).start()
     while not srv.started:

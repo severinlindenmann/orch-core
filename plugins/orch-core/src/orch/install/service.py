@@ -115,7 +115,14 @@ class LaunchdRunner:
                 }
             )
         )
-        self.run(["launchctl", "bootstrap", f"gui/{self.uid}", str(path)], check=True, capture_output=True)
+        # bootout answers before the job is gone: a bootstrap right after it fails with exit 5 (re-run of an install)
+        for attempt in range(10):
+            r = self.run(["launchctl", "bootstrap", f"gui/{self.uid}", str(path)], capture_output=True)
+            if r.returncode == 0:
+                break
+            if attempt == 9:
+                self.run(["launchctl", "bootstrap", f"gui/{self.uid}", str(path)], check=True, capture_output=True)
+            time.sleep(0.5)
         return {"service": self.label(part), "pid": self.info(part)["pid"]}
 
     def stop(self, part):

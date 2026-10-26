@@ -81,7 +81,8 @@ def test_hub_install_pins_a_ref_starts_it_and_prints_console_and_setup_link(home
     assert "--link-listen" in argv and "100.64.1.2:8105" in argv
     assert argv[argv.index("--web-listen") + 1] == "100.64.1.2:8100"
     assert "--dev-shared-machine" not in argv  # only with --dev
-    assert any(c[1] == "keys" and c[-1] == "init" for c in calls)
+    assert any(c[1] == "keys" and "init" in c and "--real" in c for c in calls)  # no --dev: a real hub
+    assert "--bind-all" in argv and "127.0.0.1:8100/#setup=TOKEN" in text  # every interface; loopback line printed
     st = load(ctx.layout)
     assert st["parts"]["hub"]["port"] == 8100 and st["parts"]["hub"]["version"] == "0.1.0"
     assert str(home) in str(ctx.layout.root)  # state under the temp HOME, never the real config
@@ -163,11 +164,14 @@ def test_an_agent_is_refused(home):
     assert cli.main(["status"], env={"ORCH_SESSION": "x", "HOME": str(home)}, out=out, err=err) == 3
 
 
-def test_full_server_on_an_overlay_ip_listens_there_and_the_hub_dials_it(home):
+def test_full_server_on_an_overlay_ip_listens_everywhere_advertises_it_and_the_hub_dials_it(home):
     ctx, out, err, _ = make(home)
     cli.full_server(ctx, ["publish", "relay", "hub"], address="100.64.1.2")
     pub = ctx.runner.started["publish"][0]
-    assert "100.64.1.2:8102" in pub and "0.0.0.0" not in " ".join(pub) and "http://100.64.1.2:8102" in pub
+    # this computer cannot dial its own overlay IP: every interface listens, the chosen address is only advertised
+    assert pub[pub.index("--listen") + 1] == "0.0.0.0:8102" and "http://100.64.1.2:8102" in pub
+    relay = ctx.runner.started["relay"][0]
+    assert relay[relay.index("--host") + 1] == "0.0.0.0"
     hub = ctx.runner.started["hub"][0]
     assert hub[hub.index("--publish-url") + 1] == "http://100.64.1.2:8102"
     assert hub[hub.index("--relay-url") + 1] == "http://100.64.1.2:8101"
@@ -202,3 +206,10 @@ def test_a_loopback_dashboard_has_no_listen_flag(home):
     cli.full_server(ctx, ["hub"], address="127.0.0.1")
     cli.add_workspace(ctx, "/w/one")
     assert "--listen" not in ctx.runner.started["dashboard"][0]
+
+
+def test_workspace_only_asks_for_no_address(home):
+    ctx, out, err, _ = make(home)
+    ctx.interactive = True
+    ctx.ask = lambda *a: (_ for _ in ()).throw(AssertionError("asked"))
+    assert cli.full_server(ctx, []) == {}

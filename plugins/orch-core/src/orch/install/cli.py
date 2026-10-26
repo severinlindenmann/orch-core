@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from orch.wsproto import wire
+from orch.wsproto.localdial import dial_host
 
 from . import parts as P
 from .parts import InstallError
@@ -181,7 +182,7 @@ def install_part(
     if _is_domain(address) and address != "localhost":
         domain, address = address, P.ADDRESS_LOOPBACK  # a domain is only noted; the part listens on this computer
     bind = _listen_address(address)
-    port = choose_port(ctx, part, port, st, bind)
+    port = choose_port(ctx, part, port, st, bind if bind == P.ADDRESS_LOOPBACK else P.ADDRESS_ALL)
     lay.ensure()
     tool_env = {**ctx.env, "UV_TOOL_DIR": str(lay.tools), "UV_TOOL_BIN_DIR": str(lay.bin)}
     if source:
@@ -206,8 +207,10 @@ def install_part(
             relay_url = None
         fresh = not any(data.iterdir())
         if fresh:
-            cmd = [str(binary), "keys", "--state", str(data), "init"] + (
-                ["--relay-url", relay_url] if relay_url else []
+            cmd = (
+                [str(binary), "keys", "--state", str(data), "init"]
+                + ([] if dev else ["--real"])  # a hub without --dev is a real one: real workspaces join it
+                + (["--relay-url", relay_url] if relay_url else [])
             )
             rc, out = ctx.run(cmd, tool_env)
             if rc != 0:
@@ -230,7 +233,7 @@ def install_part(
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(part, argv, P.env_for(part, data), log)
-    check_host = bind
+    check_host = dial_host(bind)  # the part listens on every interface; this computer dials itself on loopback
 
     # a computer often cannot dial its own overlay IP (NetBird): then a held port on that IP and a live process count
     def answers() -> bool:
@@ -303,7 +306,11 @@ def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
     if part == "hub":
         ctx.say(f"  hub console:  {hub_console_url(rec)}")
         ctx.say(f"  first admin:  {hub_console_url(rec)}#setup={rec['setup_token']}")
+        if rec["bind"] != P.ADDRESS_LOOPBACK:
+            ctx.say(f"  on this computer: http://{P.ADDRESS_LOOPBACK}:{rec['port']}/#setup={rec['setup_token']}")
         ctx.say(f"  workspaces connect to the hub link at {rec['bind']}:{rec['link_port']}")
+    if part != "hub" and rec["bind"] != P.ADDRESS_LOOPBACK:
+        ctx.say(f"  on this computer: http://{P.ADDRESS_LOOPBACK}:{rec['port']}")
     if rec.get("domain"):
         ctx.say(
             f"  domain {rec['domain']}: point its DNS at this computer yourself and put your own TLS in front of "
@@ -428,14 +435,13 @@ def full_server(
     ref: str = "main",
     dev: bool = False,
 ) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    if not parts:  # a workspace-only setup installs no part, so it has no address to ask for
+        return out
     st = load(ctx.layout)
     address = choose_address(ctx, address, st)
-    out = {}
     for p in parts:
-        # every hub is dev-only in V3: a publish server installed beside it must be a dev one, or it refuses the hub's
-        # dev card and binding (publish send: hub.refused dev_refused)
-        pdev = dev or (p == "publish" and "hub" in parts)
-        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=pdev)
+        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev)
     return out
 
 
@@ -489,6 +495,8 @@ def start_dashboard(ctx: Ctx, bind: str, port: int) -> dict[str, Any] | None:
     st = load(lay)
     st["dashboard"] = rec
     save(lay, st)
+    if bind != P.ADDRESS_LOOPBACK:
+        ctx.say(f"  workspace dashboard: http://{bind}:{port}/   on this computer: http://{P.ADDRESS_LOOPBACK}:{port}/")
     return rec
 
 

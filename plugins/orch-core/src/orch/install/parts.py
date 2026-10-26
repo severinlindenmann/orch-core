@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
+    "ADDRESS_ALL",
     "ADDRESS_LOOPBACK",
     "DEFAULT_PORTS",
     "PARTS",
@@ -25,6 +26,7 @@ __all__ = [
 ]
 
 ADDRESS_LOOPBACK = "127.0.0.1"
+ADDRESS_ALL = "0.0.0.0"  # every interface: parts on a network address listen here, the address is only advertised
 WORKSPACE_FIRST_PORT = 8151
 DEFAULT_PORTS = {"hub": 8100, "relay": 8101, "publish": 8102}
 HUB_LINK_PORT = 8105  # the hub link (workspaces dial it); the console is the part's own port
@@ -147,7 +149,13 @@ def command_for(
     bind = address if address else ADDRESS_LOOPBACK
     if part == "hub":
         loop = bind in (ADDRESS_LOOPBACK, "localhost")
-        link = ["--listen", f"127.0.0.1:{HUB_LINK_PORT}"] if loop else ["--link-listen", f"{bind}:{HUB_LINK_PORT}"]
+        # a network address is the advertised one; the hub listens on every interface (--bind-all) because a computer
+        # cannot dial its own overlay address
+        link = (
+            ["--listen", f"127.0.0.1:{HUB_LINK_PORT}"]
+            if loop
+            else ["--link-listen", f"{bind}:{HUB_LINK_PORT}", "--bind-all"]
+        )
         cmd = [
             str(binary),
             "serve",
@@ -164,7 +172,7 @@ def command_for(
         if dev and not loop:  # one user on one dev machine: the hub allows its link on a network address
             cmd += ["--dev-shared-machine"]
         return cmd
-    listen = bind
+    listen = bind if bind in (ADDRESS_LOOPBACK, "localhost") else ADDRESS_ALL
     if part == "relay":
         return [str(binary), "serve", "--host", listen, "--port", str(port)]
     cmd = [

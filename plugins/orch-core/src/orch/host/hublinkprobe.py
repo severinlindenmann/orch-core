@@ -13,6 +13,8 @@ import threading
 import time
 from typing import Any
 
+from orch.wsproto.localdial import dial_host
+
 PROBE_TIMEOUT_S = 1.0
 CACHE_S = 3.0
 
@@ -38,7 +40,7 @@ def reachable(scope: str, addr: str | None, *, now: float | None = None) -> bool
         if hit is not None and 0 <= t - hit[0] < CACHE_S:
             return hit[1]
     try:
-        with socket.create_connection((host, port), timeout=PROBE_TIMEOUT_S):
+        with socket.create_connection((dial_host(host), port), timeout=PROBE_TIMEOUT_S):
             ok = True
     except (OSError, ValueError):
         ok = False

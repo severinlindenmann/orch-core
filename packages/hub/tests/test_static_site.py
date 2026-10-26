@@ -35,7 +35,17 @@ def get(w, path, method="GET", host=HOST, headers=None):
 
 
 def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
-    assert set(FILES) == {"/", "/c", "/app.css", "/app.js", "/channel.js", "/cj.js", "/render.js", "/home.js", "/admin.js"}
+    assert set(FILES) == {
+        "/",
+        "/c",
+        "/app.css",
+        "/app.js",
+        "/channel.js",
+        "/cj.js",
+        "/render.js",
+        "/home.js",
+        "/admin.js",
+    }
     for path, (name, ctype) in FILES.items():
         s, h, body = get(w, path)
         assert s == 200 and body == (WEB_DIR / name).read_bytes(), path

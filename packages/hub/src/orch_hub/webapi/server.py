@@ -90,9 +90,9 @@ class WebServer:
     @classmethod
     def from_listen(cls, api: WebApi, listen: str) -> WebServer:
         """Bind like the link listener: ``host:port`` and loopback only (``serve.parse_listen``); the edge fronts it."""
-        from ..serve import parse_listen
+        from ..serve import parse_web_listen
 
-        host, port = parse_listen(listen)
+        host, port = parse_web_listen(listen)
         return cls(api, host, port)
 
     @property

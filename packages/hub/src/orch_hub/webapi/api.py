@@ -27,6 +27,7 @@ Nothing secret is logged: this module does not log at all.
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import json
 import re
@@ -36,12 +37,13 @@ import urllib.parse
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from ..access import Access, AccessError, role_rank
-from ..access.store import check_name
+from ..access.store import ADMIN_GROUP, check_name
 from ..channels import Channels
-from ..channels.service import ChannelError
+from ..channels.service import MIN_PASSWORD, ChannelError
 from ..connect import LinkError, build_link
 from ..contract import channelapi as CA
 from ..contract import market_policy as MP
@@ -196,6 +198,8 @@ class WebDeps:
     invites: Any = None
     link_endpoint: Callable[[], str | None] | None = None
     now_ms: Callable[[], int] = lambda: int(time.time() * 1000)
+    #: one-time first-admin token (``orch install hub`` writes it, ``POST /setup`` consumes it); None = no setup route
+    setup_token_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -219,6 +223,7 @@ def _r(method: str, path: str, auth: str, handler: str, purpose: str) -> Route:
 ROUTES: tuple[Route, ...] = (
     # (0) the public card (phone pairing, protocol §6.4)
     _r("GET", "/hub/card", "none", "hub_card", "The held card and the signed API origin (pairing; no session)"),
+    _r("POST", "/setup", "none", "setup", "First admin: the one-time setup token creates the admin (password, TOTP)"),
     # (a) session
     _r("POST", "/session", "none", "sign_in", "Sign in with user id, password and TOTP; sets the session cookie"),
     _r("GET", "/session", "session", "whoami", "Who am I: user id, name, hub-admin flag"),
@@ -726,6 +731,28 @@ class WebApi:
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
         attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
         return 200, out, [("Set-Cookie", attrs + ("; Secure" if self.d.secure_cookies else ""))]
+
+    def _h_setup(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Prototype: the installer's token file is the proof; a right token makes one hub-admin and is deleted."""
+        b = _need(b, token=str, name=str, password=str)
+        f = self.d.setup_token_file
+        with self._plock:
+            try:
+                want = f.read_text().strip() if f is not None else ""
+            except OSError:
+                want = ""
+            if not want or not hmac.compare_digest(want.encode(), b["token"].encode()):
+                raise ApiError("bad_credentials")
+            check_name(b["name"])
+            if len(b["password"]) < MIN_PASSWORD:
+                raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
+            uid = self.d.keys.issue_uk(None)["o"]["user_id"]
+            self.d.access.add_user(uid, b["name"])
+            self.d.access.add_member(ADMIN_GROUP, uid)
+            self.d.channels.set_password(uid, b["password"])
+            t = self.d.channels.new_totp(uid)
+            f.unlink(missing_ok=True)  # single use
+        return 200, {"user_id": uid, "totp_secret": t["secret"], "totp_uri": t["uri"]}
 
     def _h_hub_card(self, c: Ctx, p: dict, q: dict, b: dict | None):
         """Public: the held card and the ``hub.api_origin`` that names this hub's own API origin (§6.4, L2B-1)."""

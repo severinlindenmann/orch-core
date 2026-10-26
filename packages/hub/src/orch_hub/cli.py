@@ -54,7 +54,10 @@ def _parser() -> argparse.ArgumentParser:
     sv.add_argument("--publish-url", required=True, help="orch-publish base URL (https, or http on loopback)")
     sv.add_argument("--api-host", help="host the workspaces sign (default: the host:port of --publish-url)")
     sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
-    sv.add_argument("--web-listen", help="loopback host:port of the web API (the edge fronts it); default: no web API")
+    sv.add_argument(
+        "--web-listen",
+        help="host:port of the web API: loopback (the edge fronts it) or one private/NetBird IP of this computer (dev, plain http); default: no web API",
+    )
     sv.add_argument("--relay-url", help="the relay for push (https, or http on loopback); default: the card's")
     sv.add_argument("--trusted-peer", action="append", default=[], help="edge address that may state the client (XFF)")
     sv.add_argument(

@@ -164,6 +164,13 @@ def test_click_status_reports_the_mode_and_prepare_is_refused_in_full_mode(clien
     assert script.prepared == 0  # the signer is never asked
 
 
+def test_leaving_the_hub_is_prepared_in_full_mode(client, token, stub, script, monkeypatch):
+    """e2e-4: hub.leave is the break-glass the host takes by click; refusing it left no way out of full mode."""
+    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "full")
+    res = client.post(f"/api/w/{stub.ws}/click/prepare", json={"action": "hub_leave"}, headers=hdr(token))
+    assert res.json().get("error", {}).get("code") != "sign.hub_only"
+
+
 def test_unknown_mode_is_refused_like_full(client, token, stub, script, monkeypatch):
     monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "unknown")
     assert prepare(client, token, stub).json()["error"]["code"] == "sign.hub_only"

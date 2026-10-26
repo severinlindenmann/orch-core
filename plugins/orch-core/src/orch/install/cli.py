@@ -465,6 +465,9 @@ def start_dashboard(ctx: Ctx, bind: str, port: int) -> dict[str, Any] | None:
     lay = ctx.layout
     lay.ensure()
     env = {"HOME": str(lay.home), "PATH": ctx.env.get("PATH", os.defpath), "ORCH_STATE_DIR": str(lay.root.parent)}
+    # setup's "Open your workspace" may already have started the launcher dashboard (random loopback port, owns the
+    # control socket): the service would then exit with "dashboard already running" and nothing listens on ``port``.
+    ctx.run([*entry, "stop"], {**ctx.env, **env})
     started = ctx.runner.start(
         "dashboard", P.dashboard_command(entry, address=bind, port=port), env, lay.logs / "dashboard.log"
     )

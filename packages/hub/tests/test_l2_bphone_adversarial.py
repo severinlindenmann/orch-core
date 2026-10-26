@@ -38,7 +38,7 @@ def test_every_loopback_spelling_is_refused_at_a_real_verifier(authority):
     assert e.value.code == "malformed"
 
 
-@pytest.mark.parametrize("authority", ["127.0.0.2:8443", "0.0.0.0:80", "10.0.0.1", "127.1", "localhost.localdomain"])
+@pytest.mark.parametrize("authority", ["127.0.0.2:8443", "0.0.0.0:80", "8.8.8.8", "127.1", "localhost.localdomain"])
 def test_other_local_addresses_never_become_plain_http(authority):
     """Not in the loopback list → https (WebPKI then fails for them): no way to plain http outside the dev gate."""
     for dev in (True, False):

@@ -1536,14 +1536,25 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
 
 
 def hub_base(link) -> dict:
-    """B10/B13: the host's hub state is part of a hub step's intent (the hub events are not in `activity.list`), so
-    leave, join, mode full, leave is a new request each time; a double click (no state change) is still one."""
+    """B10/B13/B14: the workspace log head (the journal position and entry of the latest event of any kind or source,
+    read fresh) and the host's hub state are part of every hub step's intent. Hub events are not in `activity.list`,
+    but its `sub_cursor` names the head. So a change from the terminal or a click makes a new request; a double click
+    (nothing happened in between) is still one."""
+    from orch.host.journal import peek_cursor
+
+    head = None
+    try:
+        page = link.call("activity.list", {"scope": "workspace", "limit": 1, "order": "desc"})
+        body = peek_cursor(page.get("sub_cursor")) or {}
+        head = {k: body.get(k) for k in ("e", "j", "r")}
+    except HostError:
+        pass
     try:
         st = link.call("hub.status")
     except HostError:
-        return {"hub": None}
+        return {"head": head, "hub": None}
     keys = ("joined", "hub_id", "mode", "binding_seq", "binding")
-    return {"hub": {k: st.get(k) for k in keys}}
+    return {"head": head, "hub": {k: st.get(k) for k in keys}}
 
 
 #: How many earlier ENDED (cancelled, expired) attempts of one action a single press steps past. The cap bounds the

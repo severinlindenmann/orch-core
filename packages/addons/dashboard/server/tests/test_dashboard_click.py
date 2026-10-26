@@ -3,6 +3,7 @@ rules the section 0.8.6 item 7 puts on this process. The signer is faked here (a
 runs in test_realhost_click.py."""
 
 import base64
+import json
 import logging
 import re
 import secrets
@@ -3259,12 +3260,19 @@ def test_hub_steps_get_a_fresh_idem_once_the_hub_state_moved(client, token, stub
     assert keys[0] == keys[1] and keys[3] != keys[0]
 
 
-def test_hub_base_is_the_hosts_hub_state():
+def test_hub_base_is_the_log_head_and_the_hub_state():
+    from orch.host.journal import CURSOR_PREFIX
+
     from orch_dashboard.handoff import hub_base
+
+    body = base64.urlsafe_b64encode(json.dumps({"e": "E", "j": 7, "p": "P", "r": "R9", "w": "W"}).encode())
+    cursor = CURSOR_PREFIX + body.decode().rstrip("=") + ".mac"
 
     class L:
         def call(self, op, args=None):
+            if op == "activity.list":
+                return {"items": [], "sub_cursor": cursor}
             return {"joined": True, "mode": "full", "binding_seq": 4, "hub_id": "ab", "binding": "bound", "x": 1}
 
     want = {"joined": True, "hub_id": "ab", "mode": "full", "binding_seq": 4, "binding": "bound"}
-    assert hub_base(L()) == {"hub": want}
+    assert hub_base(L()) == {"head": {"e": "E", "j": 7, "r": "R9"}, "hub": want}

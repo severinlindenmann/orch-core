@@ -10,7 +10,9 @@ from orch_relay import proto as P
 from orch_relay.apns import apns_body
 from orch_relay.common import MAX_OUTER
 
-VECTORS = json.loads(Path("tests/vectors_v2.json").read_text())["suites"]["2"]["push"]
+VECTORS = json.loads(
+    (Path(__file__).resolve().parents[3] / "contracts" / "relay" / "vectors_v2.json").read_text()
+)["suites"]["2"]["push"]
 ENVELOPE = VECTORS["apns_envelope"]
 CASES = ENVELOPE["cases"]
 

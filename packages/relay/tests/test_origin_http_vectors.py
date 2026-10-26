@@ -5,7 +5,9 @@ import pytest
 
 from orch_relay import hub_accounts
 
-V = json.loads((pathlib.Path(__file__).parent / "vectors" / "origin_http.json").read_text())
+V = json.loads(
+    (pathlib.Path(__file__).resolve().parents[3] / "contracts" / "origin_http.json").read_text()
+)
 
 
 @pytest.mark.parametrize("o", V["accept"])

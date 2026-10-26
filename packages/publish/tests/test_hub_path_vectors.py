@@ -11,7 +11,11 @@ from pubsrv import hub_admin_read as R
 from pubsrv import hub_path as H
 from pubsrv import relay_proto as proto
 
-VEC = json.loads((pathlib.Path(__file__).parent / "vectors/vectors_hub.json").read_text())
+VEC = json.loads(
+    (
+        pathlib.Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json"
+    ).read_text()
+)
 CHECKS = (
     "binding_store", "publish", "card", "card_text", "op_cert", "op_revoked",
     "admin_read", "admin_read_rows", "admin_read_row", "card_reader",

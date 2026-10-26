@@ -1,4 +1,4 @@
-"""D14 (orch-core#927): the committed ``vectors/vectors_hub_policy.json`` is exactly what the reference generator
+"""D14 (orch-core#927): the committed ``contracts/hub/vectors_hub_policy.json`` is exactly what the reference generator
 builds, and every case gives its expected result under the reference validator and evaluation."""
 
 from __future__ import annotations
@@ -7,7 +7,7 @@ import importlib.util
 import json
 from pathlib import Path
 
-VEC = Path(__file__).resolve().parents[1] / "vectors"
+VEC = Path(__file__).resolve().parents[3] / "contracts" / "hub"
 
 
 def _gen():

@@ -15,7 +15,7 @@ from orch_hub.contract import market_policy as MP
 from orch_hub.contract.hub import Refused
 from orch_hub.keys import HubKeys
 
-DOC = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "vectors_hub_policy.json").read_text())
+DOC = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub_policy.json").read_text())
 POLICY_CASES = [c for c in DOC["cases"] if c["check"] == "policy"]
 ADMIN, USER, WS = "0a" * 16, "0b" * 16, "a1" * 16
 

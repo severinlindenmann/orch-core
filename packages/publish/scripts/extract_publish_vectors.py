@@ -1,14 +1,14 @@
-"""Extract tests/vectors/publish_v2.json (suite 2) from orch-relay's tests/vectors_v2.json.
+"""Extract contracts/publish/publish_v2.json (suite 2) from contracts/relay/vectors_v2.json.
 
-Usage: python scripts/extract_publish_vectors.py PATH/TO/orch-relay/tests/vectors_v2.json
+Usage: python scripts/extract_publish_vectors.py   (from anywhere; paths are relative to the repository root)
 """
 
 import hashlib
 import json
 import pathlib
-import sys
 
-raw = pathlib.Path(sys.argv[1]).read_bytes()
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+raw = (ROOT / "contracts" / "relay" / "vectors_v2.json").read_bytes()
 src = json.loads(raw)
 v = src["suites"]["2"]
 out = {
@@ -17,7 +17,7 @@ out = {
     " client (P4) checks parity against THIS file. Regenerate: scripts/extract_publish_vectors.py.",
     "source": {
         "repo": "orch-relay",
-        "path": "tests/vectors_v2.json",
+        "path": "contracts/relay/vectors_v2.json",
         "sha256": hashlib.sha256(raw).hexdigest(),
     },
     "suite": 2,
@@ -30,4 +30,6 @@ out = {
         "cases": v["card"]["cases"],
     },
 }
-pathlib.Path("tests/vectors/publish_v2.json").write_text(json.dumps(out, indent=1, sort_keys=True))
+(ROOT / "contracts" / "publish" / "publish_v2.json").write_text(
+    json.dumps(out, indent=1, sort_keys=True)
+)

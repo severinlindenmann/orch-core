@@ -1,6 +1,6 @@
 """Independent check with orch-core's own primitives (canonical JSON, suite-2 verify, b64u, F1 signing bytes, the live
 label table). Read-only import from an orch-core checkout; skipped when none is present (GitHub CI). Path:
-$ORCH_CORE_SRC, else ~/orch-dev/orch-core/packages/core/src."""
+$ORCH_CORE_SRC, else packages/core/src of this repository."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-SRC = Path(os.environ.get("ORCH_CORE_SRC", Path.home() / "orch-dev/orch-core/packages/core/src"))
+SRC = Path(os.environ.get("ORCH_CORE_SRC", Path(__file__).resolve().parents[2] / "core" / "src"))
 if not (SRC / "orch" / "crypto" / "suite.py").is_file():
     pytest.skip("orch-core source not present", allow_module_level=True)
 sys.path.insert(0, str(SRC))
@@ -29,7 +29,7 @@ finally:
 
 from orch_hub.contract.labels import HUB_LABELS
 
-V = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "vectors_hub.json").read_text())
+V = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 
 
 def pub(name: str) -> bytes:
@@ -123,7 +123,7 @@ def test_v2_card_check_accepts_the_relay_corpus_card():
     orch-core's publish_v2.json), an independent fixture, and refuses it under another owner key."""
     from orch_hub.contract import hub as H
 
-    fx = SRC.parent / "tests" / "publish" / "vectors" / "publish_v2.json"
+    fx = Path(__file__).resolve().parents[3] / "contracts" / "publish" / "publish_v2.json"
     v2 = json.loads(fx.read_text())
     card = v2["card"]["card"]
     pk = bytes.fromhex(v2["keys"]["person_alice.sig"]["pub"])
@@ -147,7 +147,7 @@ def test_question_hash_and_refusals_agree_with_live_core():
 
     if list(inspect.signature(core_hash.question_hash).parameters)[:3] != ["qid", "ticket_uid", "question"]:
         pytest.skip("core checkout predates the raw-question hash")
-    f = json.loads((Path(__file__).resolve().parent / "data" / "core_f1" / "hashes.json").read_text())
+    f = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "core" / "f1" / "hashes.json").read_text())
     for v in f["question_hash"]:
         assert PR.question_hash(v["qid"], v["ticket"], v["question"]) == core_hash.question_hash(
             v["qid"], v["ticket"], v["question"]

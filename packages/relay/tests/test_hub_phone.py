@@ -21,7 +21,9 @@ from orch_relay import proto as P
 from orch_relay.app import create_app
 from orch_relay.common import Refusal
 
-VECTORS = json.loads((Path(__file__).parent / "vectors/hub/vectors_hub.json").read_text())
+VECTORS = json.loads(
+    (Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text()
+)
 ROUTE_CASES = [
     c
     for c in VECTORS["cases"]

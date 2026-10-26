@@ -1,4 +1,4 @@
-"""vectors/vectors_hub.json both ways: the reference rebuilds the file byte for byte, and every case, signature and
+"""contracts/hub/vectors_hub.json both ways: the reference rebuilds the file byte for byte, and every case, signature and
 byte string replays from its JSON alone (keys from their seeds, signatures verified, deterministic re-signing)."""
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from orch_hub.contract.cases import outcome
 from orch_hub.contract.labels import HUB_LABELS, custodial_label
 from orch_hub.contract.vectorgen import build
 
-PATH = Path(__file__).resolve().parents[1] / "vectors" / "vectors_hub.json"
+PATH = Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json"
 V = json.loads(PATH.read_text())
 KEYS = {n: S.key_from_seed(bytes.fromhex(k["seed"])) for n, k in V["keys"].items()}
 

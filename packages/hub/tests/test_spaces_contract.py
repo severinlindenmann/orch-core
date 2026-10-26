@@ -14,7 +14,7 @@ from orch_hub.contract import suite as S
 from orch_hub.contract import vectorgen as G
 from orch_hub.contract.canon import b64u, unb64u
 
-V = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "vectors_hub.json").read_text())
+V = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 SV = V["spaces"]
 
 

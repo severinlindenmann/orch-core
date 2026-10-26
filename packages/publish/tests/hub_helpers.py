@@ -13,7 +13,7 @@ from pubsrv import hub_path as H
 from pubsrv import relay_proto as proto
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-VEC = json.loads((ROOT / "tests/vectors/publish_v2.json").read_text())
+VEC = json.loads((ROOT.parents[0].parent / "contracts" / "publish" / "publish_v2.json").read_text())
 HOST = "127.0.0.1:8103"
 NOW = 1_790_000_000_000
 WS_A = VEC["ids"]["workspace_a"]

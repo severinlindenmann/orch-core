@@ -9,7 +9,9 @@ from orch_relay import hub_accounts as H
 from orch_relay import proto as P
 from orch_relay.common import Refusal
 
-VECTORS = json.loads((Path(__file__).parent / "vectors/hub/vectors_hub.json").read_text())
+VECTORS = json.loads(
+    (Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text()
+)
 CHECKS = ("card", "card_text", "card_reader", "op_cert", "op_revoked")
 CASES = [c for c in VECTORS["cases"] if c["check"] in CHECKS and not c["args"].get("pinned_root")]
 

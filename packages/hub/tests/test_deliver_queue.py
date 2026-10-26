@@ -14,7 +14,7 @@ from orch_hub.contract import phase4 as P4
 from orch_hub.contract.canon import cj
 from orch_hub.custodial.deliver import DeliveryQueue, build_delivery
 
-VEC = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_hub.json").read_text())
+VEC = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 WS = "ab" * 16
 LOG = "01J9ZP0000000000000000TKT1"
 SEC = 1000

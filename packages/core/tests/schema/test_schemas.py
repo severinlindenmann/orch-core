@@ -1956,7 +1956,9 @@ def test_repo_identity_agrees_with_canon_and_the_shared_vectors():
 
     from orch.canon import check_repo_identity
 
-    vec = json.loads((Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1" / "repo_identity.json").read_text())
+    vec = json.loads(
+        (Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1" / "repo_identity.json").read_text()
+    )
     for ident in vec["ok"]:
         assert check_repo_identity(ident) == ident and _schema_accepts_identity(ident), ident
     for ident in vec["refused"]:

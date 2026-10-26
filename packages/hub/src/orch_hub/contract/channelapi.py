@@ -46,7 +46,7 @@ _AUTHORITY = re.compile(rf"(?P<host>{_HOST}|\[::1\])(?::(?P<port>[1-9][0-9]{{0,4
 _LOOPBACK = ("localhost", "127.0.0.1", "[::1]")
 _NETS = tuple(
     ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10")
-)  # private + CGNAT: plain http like the stored-origin rule (vectors/origin_http.json)
+)  # private + CGNAT: plain http like the stored-origin rule (contracts/origin_http.json)
 _IPV4 = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
 
 

@@ -176,7 +176,11 @@ import pathlib
 
 from pubsrv import db
 
-_VEC = json.loads((pathlib.Path(__file__).parent / "vectors/vectors_hub.json").read_text())
+_VEC = json.loads(
+    (
+        pathlib.Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json"
+    ).read_text()
+)
 _ROUTE_CASES = [
     c
     for c in _VEC["cases"]

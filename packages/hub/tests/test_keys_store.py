@@ -18,7 +18,7 @@ from orch_hub.contract import vectorgen as G
 from orch_hub.contract.canon import b64u, cj
 from orch_hub.keys import HubKeys, KeysError
 
-VEC = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_hub.json").read_text())
+VEC = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 NOW = G.NOW
 DAY = G.DAY
 

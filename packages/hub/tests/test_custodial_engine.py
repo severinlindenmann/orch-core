@@ -18,7 +18,7 @@ from orch_hub.contract.hub import Refused
 from orch_hub.contract.labels import custodial_label
 from orch_hub.custodial import BuiltEvent, CustodialEngine
 
-VEC = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_hub.json").read_text())
+VEC = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 
 
 @pytest.fixture

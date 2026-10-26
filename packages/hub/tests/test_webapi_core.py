@@ -13,7 +13,7 @@ from orch_hub.view import project as PR
 from orch_hub.webapi import ROUTES, WebApi
 from orch_hub.webapi.api import _render
 
-HASHES = json.loads((Path(__file__).parent / "data" / "core_f1" / "hashes.json").read_text())
+HASHES = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "core" / "f1" / "hashes.json").read_text())
 
 
 @pytest.fixture

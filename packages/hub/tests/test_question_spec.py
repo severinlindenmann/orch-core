@@ -1,5 +1,5 @@
 """#1123 D-hub: the raw-question hash over ``{question_id, ticket, text, options, spec}`` against the frozen core
-fixtures (``tests/data/core_f1``, copied from core PR #1135 commit e0525503, see PROVENANCE.md), the per-question
+fixtures (``contracts/core/f1``), the per-question
 "unverifiable" degradation (the ticket stays), verbatim ``options`` + ``spec`` in the needs content, the hub-built ask and
 the per-kind custodial answer rules. Pure units first; the needs tests use the D15 fake host."""
 
@@ -18,7 +18,7 @@ from orch_hub.contract import phase4 as P4
 from orch_hub.contract.hub import Refused
 from orch_hub.view import project as PR
 
-DATA = Path(__file__).resolve().parent / "data" / "core_f1"
+DATA = Path(__file__).resolve().parents[3] / "contracts" / "core" / "f1"
 HASHES = json.loads((DATA / "hashes.json").read_text())
 FORMS = {f["name"]: f for f in json.loads((DATA / "questions.json").read_text())["forms"]}
 USER = "cd" * 16

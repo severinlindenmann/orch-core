@@ -22,7 +22,7 @@ from orch_hub.link.wkseal import WkSeals
 from orch_hub.view import ViewStore
 from orch_hub.view.service import Keyring
 
-V = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_hub.json").read_text())
+V = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 HXK_PRIV, HXK_PUB = G.K.priv["hxk"], G.K.pub["hxk"]
 
 

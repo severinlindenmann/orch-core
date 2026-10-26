@@ -56,7 +56,7 @@ try {
     await shot("admin-" + tab.toLowerCase());
   }
   // D14: the hub marketplace policy (one draft, one Save; every write is the whole object with its base version)
-  const KEY = JSON.parse(readFileSync(new URL("../../vectors/vectors_hub_policy.json", import.meta.url), "utf8")).keys.company_1;
+  const KEY = JSON.parse(readFileSync(new URL("../../../../contracts/hub/vectors_hub_policy.json", import.meta.url), "utf8")).keys.company_1;
   const COMPANY = "https://git.acme.example/tools/orch-market";
   await page.getByRole("tab", { name: "Marketplaces" }).click();
   await page.getByText("Official marketplace", { exact: true }).first().waitFor();

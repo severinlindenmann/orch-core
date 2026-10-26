@@ -17,7 +17,7 @@ from orch_hub.contract import suite as S
 from orch_hub.contract.canon import cj
 from orch_hub.relay import RelayClient
 
-V = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "vectors_hub.json").read_text())
+V = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 RRV = V["phase4"]["relay_routes"]
 HUB = V["ids"]["hub"]
 

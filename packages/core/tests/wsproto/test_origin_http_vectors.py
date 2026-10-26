@@ -7,7 +7,7 @@ import pytest
 
 from orch.wsproto import card, wire
 
-V = json.loads((pathlib.Path(__file__).parent / "vectors" / "origin_http.json").read_text())
+V = json.loads((pathlib.Path(__file__).resolve().parents[4] / "contracts" / "origin_http.json").read_text())
 
 
 @pytest.mark.parametrize("o", V["accept"])

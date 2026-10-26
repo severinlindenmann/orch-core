@@ -18,7 +18,7 @@ from orch_hub.contract import vectorgen as G
 from orch_hub.contract import vectorgen_p4 as V4
 from orch_hub.contract.hub import Refused
 
-VEC = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_hub.json").read_text())
+VEC = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 CASES = {c["name"]: c for c in VEC["cases"]}
 ENGINE_FIELDS = {
     "v", "id", "actor", "auth", "channel", "channel_factor", "hub_id", "snapshot_version", "channel_cert", "uk_cert",

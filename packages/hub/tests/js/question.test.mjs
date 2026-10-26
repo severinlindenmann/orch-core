@@ -1,12 +1,12 @@
-// #1123 D-hub: the hub web checks the question hash itself (frozen core fixtures, tests/data/core_f1), shows the selected
+// #1123 D-hub: the hub web checks the question hash itself (frozen core fixtures, contracts/core/f1), shows the selected
 // option in the sign prompt, and never signs an option it has not verified.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { checkBindings, describe, questionRenderable, renderMulti, verifyQuestion } from "../../src/orch_hub/web/render.js";
 
-const FORMS = JSON.parse(readFileSync(new URL("../data/core_f1/questions.json", import.meta.url))).forms;
-const HASHES = JSON.parse(readFileSync(new URL("../data/core_f1/hashes.json", import.meta.url)));
+const FORMS = JSON.parse(readFileSync(new URL("../../../../contracts/core/f1/questions.json", import.meta.url))).forms;
+const HASHES = JSON.parse(readFileSync(new URL("../../../../contracts/core/f1/hashes.json", import.meta.url)));
 const form = (n) => FORMS.find((f) => f.name === n);
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const needs = (f) => ({ item: f.hub_needs.row, content: f.hub_needs.content });

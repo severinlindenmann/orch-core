@@ -6,7 +6,7 @@ import pytest
 from orch_hub.contract import hub
 from orch_hub.publish.forwarder import _endpoint
 
-V = json.loads((pathlib.Path(__file__).parent.parent / "vectors" / "origin_http.json").read_text())
+V = json.loads((pathlib.Path(__file__).resolve().parents[3] / "contracts" / "origin_http.json").read_text())
 
 
 @pytest.mark.parametrize("o", V["accept"])

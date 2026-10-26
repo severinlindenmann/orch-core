@@ -7,7 +7,9 @@ import pytest
 
 from orch_relay import proto as P
 
-V = json.loads(Path("tests/vectors_v2.json").read_text())
+V = json.loads(
+    (Path(__file__).resolve().parents[3] / "contracts" / "relay" / "vectors_v2.json").read_text()
+)
 S = V["suites"]["2"]
 
 

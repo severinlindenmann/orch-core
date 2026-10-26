@@ -8,6 +8,7 @@ import pytest
 from orch import canon
 from orch.model import policies
 
+from ..canon import oracle_f1 as oracle
 from .f1_runner import load
 
 DIR = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1"
@@ -59,8 +60,12 @@ def test_the_four_gates_are_each_raised_by_something_and_gate_invalidated_by_not
 
 def test_every_vector_file_is_described_in_the_index():
     idx = load("index.json")["files"]
-    assert sorted(p.name for p in DIR.glob("*.json")) == sorted(idx)
+    assert sorted([p.name for p in DIR.glob("*.json")] + ["reader_kat_1.json"]) == sorted(
+        idx
+    )  # the KAT ships in orch.identity
     for name in idx:
-        d = json.loads((DIR / name).read_text(encoding="utf-8"))
+        d = json.loads(
+            (oracle.path_of(name) if name == "reader_kat_1.json" else DIR / name).read_text(encoding="utf-8")
+        )
         if "[shared" not in idx[name] and name != "index.json":
             assert isinstance(d, dict) and ("pins" in d or "note" in d or "scenarios" in d or "labels" in d), name

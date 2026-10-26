@@ -180,7 +180,9 @@ def test_self_referential_input_is_a_jcs_error_not_recursion_error():
 
 
 def test_depth_and_minus_zero_vectors():
-    v = json.loads((Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1" / "canon.json").read_text(encoding="utf-8"))
+    v = json.loads(
+        (Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1" / "canon.json").read_text(encoding="utf-8")
+    )
     for d in v["depth"]:
         if d["ok"]:
             assert jcs.dumps(jcs.loads_strict(d["text"])).decode() == d["canonical"]

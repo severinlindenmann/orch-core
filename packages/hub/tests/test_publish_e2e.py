@@ -19,10 +19,11 @@ from orch_hub.contract.canon import cj
 from orch_hub.contract.hub import Refused
 from orch_hub.publish import HttpPublishSync, HubPublish, PublishConfig
 
-SRC = os.environ.get("ORCH_PUBLISH_SRC")
+SRC = os.environ.get("ORCH_PUBLISH_SRC")  # packages/publish with its .venv; opt-in (the server helper below is stale)
 pytestmark = [
     pytest.mark.skipif(
-        not SRC or not (Path(SRC or "x") / ".venv/bin/python").exists(), reason="ORCH_PUBLISH_SRC not set"
+        not SRC or not (Path(SRC or "x") / ".venv/bin/python").exists(),
+        reason="ORCH_PUBLISH_SRC not set",
     ),
     pytest.mark.slow,
 ]
@@ -52,7 +53,11 @@ def pub():
 def env(tmp_path, pub):
     proc, port, ws = pub
     hub = make_hub(tmp_path)
-    wsk = wsk_key(json.loads((Path(SRC) / "tests/vectors/publish_v2.json").read_text())["keys"]["wsk_a.sig"]["seed"])
+    wsk = wsk_key(
+        json.loads((Path(__file__).resolve().parents[3] / "contracts" / "publish" / "publish_v2.json").read_text())[
+            "keys"
+        ]["wsk_a.sig"]["seed"]
+    )
     host = f"127.0.0.1:{port}"
     fw = HubPublish(hub, HttpPublishSync(f"http://{host}"), PublishConfig(f"http://{host}", host, timeout_s=10))
     return type("E", (), {"hub": hub, "wsk": wsk, "ws": ws, "fw": fw, "host": host, "proc": proc})()

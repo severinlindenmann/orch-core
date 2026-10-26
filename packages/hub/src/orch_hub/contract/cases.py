@@ -1,4 +1,4 @@
-"""Replays one vector case from its JSON form (vectors/vectors_hub.json ``cases``). Shared by the generator (which
+"""Replays one vector case from its JSON form (contracts/hub/vectors_hub.json ``cases``). Shared by the generator (which
 asserts every hand-written expectation while it builds the file) and tests/test_vectors.py.
 
 A case is ``{"name", "check", "args", "expect"}``; ``expect`` is ``{"ok": <summary>}`` or ``{"error": <code>}``.

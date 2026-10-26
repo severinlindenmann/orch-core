@@ -12,7 +12,7 @@ from orch_hub.channels import ChannelError
 from orch_hub.contract import hub as H
 from orch_hub.contract.canon import b64u
 
-VEC = json.loads((Path(__file__).parent.parent / "vectors" / "vectors_hub.json").read_text())
+VEC = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 
 
 @pytest.fixture

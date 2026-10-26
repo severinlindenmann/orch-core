@@ -1,6 +1,6 @@
-"""Builds vectors/vectors_hub.json (test support; never imported by shipped hub code paths).
+"""Builds contracts/hub/vectors_hub.json (test support; never imported by shipped hub code paths).
 
-``uv run python -m orch_hub.contract.vectorgen > vectors/vectors_hub.json``. Deterministic: FAKE keys from
+``uv run python -m orch_hub.contract.vectorgen > contracts/hub/vectors_hub.json``. Deterministic: FAKE keys from
 SHA-256 of public labels, RFC 6979 signatures, fixed clock. Every expectation below is written by hand and asserted
 against :mod:`orch_hub.contract.cases` while the file is built, so the file and the reference cannot drift apart.
 """

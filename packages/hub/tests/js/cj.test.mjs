@@ -1,11 +1,11 @@
-// cj.js against the hub's own vectors (vectors/vectors_hub.json) and the A8-9 refusals.
+// cj.js against the hub's own vectors (contracts/hub/vectors_hub.json) and the A8-9 refusals.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { CanonError, b64u, cj, hex, parseStrict, sha256, unb64u, utf8 } from "../../src/orch_hub/web/cj.js";
 import { contextDigest } from "../../src/orch_hub/web/render.js";
 
-const V = JSON.parse(readFileSync(new URL("../../vectors/vectors_hub.json", import.meta.url)));
+const V = JSON.parse(readFileSync(new URL("../../../../contracts/hub/vectors_hub.json", import.meta.url)));
 
 test("cj matches RFC 8785 on the subset", () => {
   assert.equal(cj({ b: [1, "x", null, true], a: { z: -5, y: "é\n\u0001" } }), '{"a":{"y":"é\\n\\u0001","z":-5},"b":[1,"x",null,true]}');

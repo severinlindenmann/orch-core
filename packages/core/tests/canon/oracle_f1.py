@@ -719,6 +719,11 @@ INDEX: dict[str, str] = {
 }
 
 
+def path_of(name: str) -> Path:
+    """Where the oracle writes ``name``: contracts/core/f1, except the KAT, which ships inside the package."""
+    return READER_KAT if name == "reader_kat_1.json" else OUT / name
+
+
 def render(v: dict[str, Any]) -> str:
     return json.dumps(v, indent=1, sort_keys=True, ensure_ascii=True) + "\n"
 
@@ -726,8 +731,7 @@ def render(v: dict[str, Any]) -> str:
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     for name, v in all_vectors().items():
-        # reader_kat_1.json ships inside the package (orch.identity reads it at run time): that is its one copy
-        (READER_KAT if name == "reader_kat_1.json" else OUT / name).write_text(render(v))
+        path_of(name).write_text(render(v))
 
 
 if __name__ == "__main__":

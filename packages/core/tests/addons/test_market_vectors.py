@@ -21,7 +21,9 @@ DOC = Path(__file__).parents[4] / "docs/architecture/orch-v2-marketplace.md"
 # codes the doc defines that need a network, git or a running host, so there is no pure vector for them here
 NO_VECTOR = {"market.commit_mismatch", "market.fetch_failed", "market.staged_changed"}
 # the hub-policy codes are covered by the shared vectors_hub_policy.json (`evaluate` cases, D14); see SHARED below
-SHARED = json.loads((Path(__file__).resolve().parents[4] / "contracts/hub/vectors_hub_policy.json").read_text())["cases"]
+SHARED = json.loads((Path(__file__).resolve().parents[4] / "contracts/hub/vectors_hub_policy.json").read_text())[
+    "cases"
+]
 
 
 def doc_codes() -> set[str]:

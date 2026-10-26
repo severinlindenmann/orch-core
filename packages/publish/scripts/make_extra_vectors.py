@@ -1,4 +1,4 @@
-"""Generate tests/vectors/publish_v2_extra.json (edge vectors for the nonce retention boundary, L1).
+"""Generate contracts/publish/publish_v2_extra.json (edge vectors for the nonce retention boundary, L1).
 
 Run from the repo root with `uv run python scripts/make_extra_vectors.py`. Fake keys only.
 """
@@ -48,6 +48,6 @@ out = {
     "suite": 2,
     "cases": cases,
 }
-pathlib.Path("tests/vectors/publish_v2_extra.json").write_text(
-    json.dumps(out, indent=1, sort_keys=True)
-)
+(
+    pathlib.Path(__file__).resolve().parents[3] / "contracts" / "publish" / "publish_v2_extra.json"
+).write_text(json.dumps(out, indent=1, sort_keys=True))

@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { DECISIONS, MOVES, Refusal, checkBindings, checkPrepared, contextDigest, describe, renderText, shortDigest, shortHash } from "../../src/orch_hub/web/render.js";
 import { hex, parseStrict } from "../../src/orch_hub/web/cj.js";
 
-const V = JSON.parse(readFileSync(new URL("../../vectors/vectors_hub.json", import.meta.url)));
+const V = JSON.parse(readFileSync(new URL("../../../../contracts/hub/vectors_hub.json", import.meta.url)));
 const cases = (prefix) => V.cases.filter((c) => c.name.startsWith(prefix));
 
 test("render_* vectors", () => {

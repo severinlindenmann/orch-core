@@ -15,7 +15,9 @@ from orch_relay import hub_accounts as H
 from orch_relay import proto as P
 from orch_relay.app import create_app
 
-V = json.loads((Path(__file__).parent / "vectors/hub/vectors_hub.json").read_text())
+V = json.loads(
+    (Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text()
+)
 NOW = V["now_ms"]
 N = P.P256_N
 

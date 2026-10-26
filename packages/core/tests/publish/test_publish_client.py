@@ -5,7 +5,6 @@ Vectors: ``contracts/publish/publish_v2.json`` (P1), the suite-2 subset of ``con
 from __future__ import annotations
 
 import base64
-import hashlib
 import http.client
 import json
 import logging

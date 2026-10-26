@@ -19,7 +19,7 @@ from orch_hub.contract import cases as C
 from orch_hub.contract import phase4 as P4
 from orch_hub.contract import vectorgen as VG
 
-V = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "vectors_hub.json").read_text())
+V = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 NAMES = {c["name"]: c for c in V["cases"]}
 F1_ITEM = V["phase4"]["share_item_f1"]["item"]
 F1_HASH = V["phase4"]["share_item_f1"]["item_hash"]

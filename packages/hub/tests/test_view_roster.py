@@ -10,7 +10,7 @@ import pytest
 
 from orch_hub.view import project as PR
 
-V = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "vectors_hub.json").read_text())
+V = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 CASES = [c for c in V["cases"] if c["check"] == "roster_v"]
 
 

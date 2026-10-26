@@ -21,7 +21,7 @@ from orch_hub.contract.canon import b64u, loads_strict
 from orch_hub.contract.cases import run
 from orch_hub.relay import PushNotifier
 
-VEC = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "vectors_hub.json").read_text())
+VEC = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 CASES = {c["name"]: c for c in VEC["cases"]}
 HUB = "38d8abed52ccfb538da401fd54e64bdc"
 USER = "a368bd380588e5dabee62a516031e21f"

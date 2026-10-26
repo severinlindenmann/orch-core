@@ -13,7 +13,7 @@ from orch_hub.contract import phase4 as P4
 from orch_hub.contract.canon import b64u
 from orch_hub.contract.hub import Refused
 
-V = json.loads((Path(__file__).resolve().parents[1] / "vectors" / "vectors_hub.json").read_text())
+V = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "hub" / "vectors_hub.json").read_text())
 NAMES = {c["name"]: c for c in V["cases"]}
 WS = "00" * 16
 

@@ -1,6 +1,5 @@
 """Signed-request auth for pubsrv (protocol-v2 12.1, design 2.5/2.6/3). Fake keys only (vectors)."""
 
-import hashlib
 import json
 import os
 import pathlib
@@ -18,8 +17,7 @@ from pubsrv.app import create_app
 from tests.hub_helpers import Hub, binding, build
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-VEC = json.loads((ROOT / "tests/vectors/publish_v2.json").read_text())
-VENDORED_SHA256 = "9f5a070301c6a440dc9c1a2c8fd4a21fdd49fa53b49cee599645d66c919f7382"
+VEC = json.loads((ROOT.parents[0].parent / "contracts" / "publish" / "publish_v2.json").read_text())
 HOST = "127.0.0.1:8103"
 NOW = 1_790_000_000_000
 WS_A = VEC["ids"]["workspace_a"]
@@ -151,16 +149,10 @@ def err(r):
 # --- the vendored card code ---------------------------------------------------------------------
 
 
-def test_vendored_proto_is_pinned():
-    raw = (ROOT / "pubsrv/relay_proto.py").read_bytes()
-    assert hashlib.sha256(raw).hexdigest() == VENDORED_SHA256
-
-
-def test_vendored_proto_matches_relay_checkout_if_present():
-    src = os.environ.get("ORCH_RELAY_SRC")
-    if not src or not pathlib.Path(src).exists():
-        pytest.skip("set ORCH_RELAY_SRC=/path/to/orch-relay/src/orch_relay/proto/__init__.py")
-    assert pathlib.Path(src).read_bytes() == (ROOT / "pubsrv/relay_proto.py").read_bytes()
+def test_vendored_proto_is_the_relay_packages_proto():
+    """publish ships on its own, so it carries a copy of the relay's proto module; this keeps the two byte-equal."""
+    relay = ROOT.parent / "relay" / "src" / "orch_relay" / "proto" / "__init__.py"
+    assert relay.read_bytes() == (ROOT / "pubsrv/relay_proto.py").read_bytes()
 
 
 def test_block_bites_on_the_next_request(env):

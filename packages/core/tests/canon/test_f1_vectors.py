@@ -22,7 +22,7 @@ def load(name: str):
 
 @pytest.mark.parametrize("name", sorted(oracle.all_vectors()))
 def test_fixture_files_are_what_the_oracle_produces(name):
-    assert open(DIR / name, encoding="utf-8", newline="").read() == oracle.render(oracle.all_vectors()[name])
+    assert open(oracle.path_of(name), encoding="utf-8", newline="").read() == oracle.render(oracle.all_vectors()[name])
 
 
 def test_labels_are_prefix_free_with_the_protocol_labels():
@@ -274,7 +274,7 @@ def test_same_repo_identity_ignores_ascii_case_only():
 
 
 def test_repo_userinfo_decision_defers_to_the_operative_rule():
-    spec = DIR.parents[4] / "docs" / "architecture" / "orch-v2-ticket-format.md"
+    spec = DIR.parents[2] / "docs" / "architecture" / "orch-v2-ticket-format.md"
     row = next(line for line in spec.read_text(encoding="utf-8").splitlines() if line.startswith("| 116 |"))
     assert "Only ssh/scp `git@` userinfo is allowed and removed" in row
     assert "all https userinfo" in row and "`local:<name>`" in row and "§5.7" in row

@@ -364,7 +364,8 @@ def test_facts_read_the_explicit_sign_methods():
 
 def test_finish_on_a_complete_workspace_can_be_closed_with_the_dashboard_url(tmp):
     """B12 N9: nothing missing -> state says complete; finish is allowed without a run and ends as done."""
-    box = [mkfacts(addons=frozenset({"dashboard", "terminals", "worktrees", "start-agent"}), grant_issued=True)]
+    on = frozenset({"dashboard", "terminals", "worktrees", "start-agent", "quick"})
+    box = [mkfacts(addons=on, grant_issued=True)]
     f = finish_flow(tmp, FakePorts(), box)
     st = f.dispatch("GET", "state", {}, None)[1]
     assert st["missing"] == [] and st["complete"] is True

@@ -59,7 +59,7 @@ class AddonInfo:
 
 #: add-ons ticked at the start of a NEW setup (U1): the person still sees each as a switch, can untick it, and every one
 #: of them is signed (``addon.granted``) in the same review; nothing is enabled without that signature
-DEFAULT_ON = frozenset({"start-agent", "terminals", "worktrees"})
+DEFAULT_ON = frozenset({"start-agent", "terminals", "worktrees", "quick"})
 #: the agent-access choice a NEW setup starts on (3 days, ticked); the person can pick "No agent access" or 1/7 days
 DEFAULT_AGENT_HOURS = 72
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
@@ -122,6 +122,12 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
             False,
             False,
         ),
+        "quick": (
+            "Quick tasks",
+            "Small one-off tasks that skip the usual steps. Off: nobody (you, the CLI or agents) can make new ones.",
+            False,
+            False,
+        ),
         "dashboard": ("Dashboard", "This workspace's dashboard (locked on).", False, False),
     }
     out = []
@@ -141,16 +147,6 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
                 needs_terminals=terms,
             )
         )
-    out.append(
-        AddonInfo(
-            "quick",
-            "Quick tasks",
-            "Small one-off tasks. Always available; there is nothing to switch on.",
-            required=False,
-            default=True,
-            kind="flag",
-        )
-    )
     return out
 
 

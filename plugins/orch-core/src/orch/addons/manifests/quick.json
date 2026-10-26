@@ -1,0 +1,9 @@
+{
+  "schema": "orch.addon/2",
+  "name": "quick",
+  "version": "0.1.0",
+  "title": "Quick tasks",
+  "entry": {"cmd": ["orch-quick", "serve"]},
+  "capabilities": [],
+  "agents_md": "Quick tasks: small one-off tasks (a chore ticket labelled quick). Make one with orch quick add TITLE. When the Quick tasks add-on is off, new quick tasks are refused."
+}

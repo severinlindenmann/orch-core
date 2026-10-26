@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from .. import reads
 from ..errors import fail
-from . import index, reader, scope, search
+from . import create, index, reader, scope, search
 
 
 class EmptyQuery(BaseModel):
@@ -50,6 +50,10 @@ def register(app, gateway):
         if result["pages"]:
             linked(result["pages"], index.links_by_slug(sc.link, ws, sc.person))
         return {"available": True, "message": MESSAGES[result["state"]], **result}
+
+    @app.post("/api/w/{ws}/wiki/create")
+    def create_folder(body: EmptyQuery, ws: str = Depends(reads.workspace)):
+        return create.create(gateway, ws)
 
     @app.get("/api/w/{ws}/wiki/page")
     def page(query: Annotated[PageQuery, Query()], ws: str = Depends(reads.workspace)):

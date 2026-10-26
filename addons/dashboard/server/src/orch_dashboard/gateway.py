@@ -360,6 +360,8 @@ class Gateway:
             features.append("usage")
         if self.addon_on(link, "wiki"):
             features.append("wiki")
+        if "quick" in features and self.addon_on(link, "quick"):
+            features.append("quick_on")  # the menu entry and the page's controls; Off: the page says so
         if self.addon_on(link, "estimate"):
             # Estimate: points on tickets (the ticket's size), shown and set only while the add-on is ON here.
             features.append("estimate")

@@ -325,6 +325,10 @@ def set_fields(c: Call, p: Projection, args: dict[str, Any]) -> Out:
         if f"ticket.{key}" in sets:
             raise OrchError("invalid.input", f"{key} is given twice")
         sets[f"ticket.{key}"] = parse_pair(c, p, key, raw)
+    from orch.ops import quick
+
+    if quick.LABEL in (sets.get("ticket.labels") or ()) and quick.LABEL not in (p.last_view.fields.get("labels") or ()):
+        quick.require_on(c.store.state.workspace.addons)  # a NEW quick task needs the add-on; existing ones stay
     p.add({"type": "ticket.updated", "base_rev": {path: p.base(path) for path in sets}, "set": sets})
     return Out({"fields": [k[len("ticket.") :] for k in sets]})
 

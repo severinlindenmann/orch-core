@@ -33,6 +33,7 @@ custody.no_batch 3 retry:false
 grant.required 3 retry:false
 grant.expired 3 retry:false
 grant.verb 3 retry:false
+quick.off 3 retry:false
 role.denied 3 retry:false
 transition.refused 3 retry:false
 verify.unapproved 3 retry:false

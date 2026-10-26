@@ -30,6 +30,6 @@ OP = operation(
     emits=("ticket.updated",),
     text="ok {key} ticket.updated {fields} seq={seq}\nnext: {next}",
     data=obj({"fields": arr(STR)}),
-    errors=(err("conflict.field"), err("transition.refused"), err("not_found"), err("parse.text")),
+    errors=(err("conflict.field"), err("transition.refused"), err("not_found"), err("parse.text"), err("quick.off")),
     handler=handle,
 )

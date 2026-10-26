@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from orch.wsproto import wire
+from orch.wsproto.localdial import dialling_locally
 from orch.wsproto.pubsign import PublishSigner, SignedPublish
 from orch.wsproto.sign import SignerRefused
 
@@ -85,6 +86,7 @@ class Transport:
             )
         else:
             conn = http.client.HTTPConnection(netloc, timeout=timeout)
+        dialling_locally(conn)
         try:
             conn.putrequest(method, target, skip_host=True, skip_accept_encoding=True)
             conn.putheader("Host", netloc)

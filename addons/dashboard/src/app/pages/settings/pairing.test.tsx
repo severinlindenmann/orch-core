@@ -60,6 +60,11 @@ describe('the gate', () => {
     expect(pairingApi.served).toBe(realPairingApi.served)
   })
 
+  it('pair-unavailable names One click when it is on', async () => {
+    open('pair-unavailable-click')
+    expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone comes later. For now you approve on this computer, with One click.')
+  })
+
   it('pair-unavailable says so and calls nothing', async () => {
     open('pair-unavailable')
     expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone comes later. For now you approve on this computer, in the terminal.')

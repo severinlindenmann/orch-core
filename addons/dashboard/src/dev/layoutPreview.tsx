@@ -94,6 +94,7 @@ export const LAYOUT_SCENARIOS = [
   'setup-words',
   // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
   'pair-unavailable',
+  'pair-unavailable-click',
   'pair-blocked-convenience',
   'pair-offer',
   'pair-pending',
@@ -594,6 +595,7 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
   const members = member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { reader: null, label: 'Work phone\nsecond line' }), pairDevice(9, { label: '' })])
   switch (scenario) {
     case 'pair-unavailable':
+    case 'pair-unavailable-click':
       return { served: false }
     case 'pair-blocked-convenience':
       return {
@@ -1004,7 +1006,7 @@ export function LayoutPreview({ name }: { name: string }) {
   if (scenario.startsWith('pair-') || scenario === 'readers-devices' || scenario === 'readers-solo')
     return (
       <SettingsFrame current="devices" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-        <HostDevices workspace={workspace} />
+        <HostDevices workspace={scenario === 'pair-unavailable-click' ? { ...workspace, click: { custody: 'convenience', enabled: true, available: true } } : workspace} />
       </SettingsFrame>
     )
   if (scenario === 'settings-general') return <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGeneral workspace={{ ...workspace, click: signingCard('signing-off'), icon_known: true }} /></SettingsFrame>

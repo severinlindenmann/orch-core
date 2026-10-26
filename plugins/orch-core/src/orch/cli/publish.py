@@ -184,7 +184,29 @@ def _admin_lines(info: Mapping[str, Any], server: str | None) -> list[str]:
     ]
 
 
-def _register(target: Any, env: Mapping[str, str], out: TextIO) -> int:
+def _allow_on_local_server(info: Mapping[str, Any], env: Mapping[str, str]) -> bool:
+    """A full server on this computer (``orch install publish``) is the person's own: allow the workspace owner and the
+    workspace on it, as its admin would. False when no publish server is installed here or the admin tool fails."""
+    import subprocess
+
+    from orch.install.state import Layout, load
+
+    ws, owner = info.get("workspace"), info.get("owner")
+    lay = Layout(env)
+    rec = (load(lay).get("parts") or {}).get("publish")
+    if not rec or not ws or not owner:
+        return False
+    base = [str(rec["binary"]), "admin", "--data", str(lay.data("publish"))]
+    for tail in (["owners", "add", str(owner)], ["ws", "allow", str(ws), str(owner)]):
+        try:
+            if subprocess.run([*base, *tail], capture_output=True, timeout=30).returncode != 0:
+                return False
+        except (OSError, subprocess.SubprocessError):
+            return False
+    return True
+
+
+def _register(target: Any, env: Mapping[str, str], out: TextIO, _again: bool = True) -> int:
     """Tell the server this workspace exists. A server that does not know it yet is said plainly, with what its admin
     runs; that is not a failure of the command's other work, but it is exit 3."""
     from orch.ops.errors import OrchError
@@ -194,6 +216,9 @@ def _register(target: Any, env: Mapping[str, str], out: TextIO) -> int:
     except OrchError as exc:
         if exc.code == "publish.server_refused" and "knows this workspace" in str(exc.message):
             info = _call(target, "publish.list", {}, env)
+            if _again and _allow_on_local_server(info, env):
+                out.write("allowed this workspace on the publish server of this computer\n")
+                return _register(target, env, out, _again=False)
             out.write("\n".join(_admin_lines(info, None)) + "\n")
             return 3
         if exc.code == "hub.not_joined":

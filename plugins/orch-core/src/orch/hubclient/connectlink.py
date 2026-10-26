@@ -16,6 +16,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
+from orch.wsproto.localdial import local_url
+
 from . import wire
 from .errors import HubRefused
 from .tlsadapter import parse_addr
@@ -72,7 +74,9 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def fetch_card(link: Link) -> dict[str, Any]:
     opener = urllib.request.build_opener(_NoRedirect)
-    req = urllib.request.Request(link.card_url, headers={"Accept": "application/json"})  # noqa: S310
+    url, host_header = local_url(link.card_url)  # this computer's own address is dialled on loopback
+    headers = {"Accept": "application/json", **({"Host": host_header} if host_header else {})}
+    req = urllib.request.Request(url, headers=headers)  # noqa: S310
     try:
         with opener.open(req, timeout=TIMEOUT) as r:  # noqa: S310
             raw = r.read(MAX_CARD + 1)

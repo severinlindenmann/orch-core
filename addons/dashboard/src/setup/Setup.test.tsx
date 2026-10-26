@@ -1060,7 +1060,7 @@ test('reviewFacts builds the short card in plain words from the review', () => {
     workspace: { prefix: 'MD', name: 'Severin', workspace_name: 'Marketing', dir: '/p', lines: [] },
     flags: [{ id: 'custody', text: 'x' }, { id: 'records', text: 'y' }],
     items: [
-      { id: 'runner_grant', title: 'Agent access', lines: [], details: [], volatile: [], type: 'grant.issued', fields: { hours: 72 } },
+      { id: 'runner_grant', title: 'Agent access', lines: [], details: [], volatile: [], type: 'grant.issued', fields: { hours: 72, scope: 'workable', verbs: 'agent' } },
       { id: 'addon:dashboard', title: 'Dashboard', lines: [], details: [], volatile: [], type: 'addon.granted', fields: {} },
     ],
   } as unknown as Review

@@ -118,16 +118,23 @@ export function reviewFacts(review: Review): Fact[] {
   const has = (id: string) => review.flags.some((f) => f.id === id)
   if (has('custody')) facts.push({ icon: '◈', label: 'How you approve', value: 'One click on this computer' })
   else if (has('terminal') || review.tty_confirm) facts.push({ icon: '◈', label: 'How you approve', value: 'In a terminal, with your passphrase' })
-  let hours: number | undefined
+  let agents: string | undefined
+  let methods: string | undefined
   for (const item of review.items) {
     const f = item.fields
-    if (item.id === 'runner_grant' && f && typeof f.hours === 'number') hours = f.hours
-    else if (hours === undefined && item.type === 'settings.changed' && f?.set && typeof f.set === 'object') {
-      const g = (f.set as Record<string, unknown>).grant_hours
-      if (typeof g === 'number') hours = g
+    if (item.id === 'runner_grant' && f && typeof f.hours === 'number')
+      // the short words only for the ordinary grant; any other scope or verbs keeps the raw values on the card
+      agents = f.scope === 'workable' && f.verbs === 'agent'
+        ? `may work for ${duration(f.hours)}`
+        : `agent access for ${duration(f.hours)} (scope ${String(f.scope)}, verbs ${String(f.verbs)})`
+    else if (item.type === 'settings.changed' && f?.set && typeof f.set === 'object') {
+      const set = f.set as Record<string, unknown>
+      if (agents === undefined && typeof set.grant_hours === 'number') agents = `may work for ${duration(set.grant_hours)}`
+      if (Array.isArray(set.sign_methods)) methods = set.sign_methods.map((m) => (m === 'click' ? 'one click' : String(m))).join(', ')
     }
   }
-  if (hours !== undefined) facts.push({ icon: '✦', label: 'Agents', value: `may work for ${duration(hours)}` })
+  if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
+  if (methods !== undefined) facts.push({ icon: '◈', label: 'Ways to approve', value: methods })
   const addons = review.items.filter((i) => i.type === 'addon.granted').map((i) => i.title)
   if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })

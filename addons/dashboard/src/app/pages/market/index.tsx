@@ -29,6 +29,7 @@ import { BuiltInAddOns } from '../settings/host/AddOns'
 import { InstalledGroup } from './InstalledGroup'
 import { RemoveSheet } from './RemoveSheet'
 import { AddMarketplace } from './AddMarketplace'
+import { SettingsSheet } from './SettingsSheet'
 
 const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
 const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
@@ -219,6 +220,7 @@ function MarketWorkspace() {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [remove, setRemove] = useState<InstalledAddon | null>(null)
+  const [settingsOf, setSettingsOf] = useState<string | null>(null)
   const refresh = async () => {
     await Promise.all([qc.invalidateQueries({ queryKey: queries.marketList(ws).queryKey }), qc.invalidateQueries({ queryKey: queries.marketInstalled(ws).queryKey })])
   }
@@ -381,6 +383,7 @@ function MarketWorkspace() {
                   mayWrite={mayWrite}
                   busy={busy}
                   onUpdate={(a) => prepare({ id: a.name, update: true })}
+                  onSettings={(a) => setSettingsOf(a.name)}
                   onRemove={setRemove}
                 />
               )}
@@ -514,6 +517,7 @@ function MarketWorkspace() {
           }}
         />
       )}
+      {mayWrite && workspace && settingsOf && <SettingsSheet workspace={workspace} name={settingsOf} onClose={() => setSettingsOf(null)} />}
       {mayWrite && remove && <RemoveSheet ws={ws} addon={remove} onClose={() => setRemove(null)} onRemoved={(name) => { setRemove(null); setMessage(`${name} removed. Install it again from Browse.`) }} />}
     </div>
   )

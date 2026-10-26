@@ -20,7 +20,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Request
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
@@ -785,6 +785,21 @@ class AddonDisable(Action):
     name: AddonName
 
 
+class AddonSettings(Action):
+    """`settings.set {set: {addons: {name: value}}}`: one add-on's settings (the side panel's Save). Signed. The host
+    checks the value against the schema of the manifest that was granted; ``null`` removes the settings."""
+
+    action: Literal["addon_settings"]
+    name: AddonName
+    value: dict[str, Any] | None
+
+    @model_validator(mode="after")
+    def small(self):
+        if len(json.dumps(self.value, separators=(",", ":"))) > 8192:
+            raise ValueError("the settings are too large")
+        return self
+
+
 class AddonPurge(Action):
     """`addon.purge {name}`: delete the add-on's data (the remove sheet's "Also delete its data"). Signed."""
 
@@ -990,6 +1005,7 @@ PrepareBody = Annotated[
     | MarketGrant
     | AddonDisable
     | AddonPurge
+    | AddonSettings
     | PublishSetup
     | AddonEnable
     | PublishShare
@@ -1168,6 +1184,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "addon.disable", {"name": action.name}
         case AddonPurge():
             return "addon.purge", {"name": action.name}
+        case AddonSettings():
+            return "settings.set", {"set": {"addons": {action.name: action.value}}}
         case GrantRevoke():
             return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
         case RunnerGrant():
@@ -1262,7 +1280,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
+        case SettingsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable() | AddonSettings():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PublishShare():

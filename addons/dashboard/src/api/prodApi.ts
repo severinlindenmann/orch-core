@@ -164,6 +164,7 @@ const listWorkspaces = async () => {
   return rows.map(workspace)
 }
 
+import type { AddonSettingsData } from './addOnSwitches'
 export async function logout() {
   const result = await createFetchTransport('', getToken).request('POST', '/auth/logout')
   if (result.status >= 400 && result.status !== 401) throw new Error('Logout failed; please try again')
@@ -215,6 +216,7 @@ const reads = {
   // Reduced workspace settings (M4): what the host gives this person, nothing more.
   getHostSettings: (ws: string) => call<HostSettings>(`${w(ws)}/settings`),
   getRoster: (ws: string) => call<RosterMember[]>(`${w(ws)}/members`),
+  addonSettings: (ws: string, name: string) => call<AddonSettingsData>(`${w(ws)}/add-ons/${name}/settings`),
   getAddOns: (ws: string) => call<import('./addOnSwitches').AddOnsData>(`${w(ws)}/add-ons`),
   getReaders: (ws: string) => call<HostReaders>(`${w(ws)}/readers`),
   listHostGrants: (ws: string, active = true) => call<HostGrant[]>(`${w(ws)}/grants?active=${active}`),

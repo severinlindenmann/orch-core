@@ -255,3 +255,26 @@ it('run 9 remove sheet: an On add-on says it is turned off first, then Turn off 
   await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
   await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/uninstall'))?.body).toEqual({ name: 'calendar' }), T)
 })
+
+it('run 9 side panel: Settings opens a panel beside the list with controls from the schema; Save is one press with One click on', async () => {
+  ws().click = { custody: 'convenience', enabled: true, available: true }
+  ws().features = [...ws().features, 'click']
+  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+  ws().addonSettings = {
+    calendar: {
+      name: 'calendar',
+      title: 'Calendar',
+      schema: { type: 'object', properties: { mode: { type: 'string', title: 'Mode', enum: ['day', 'week'] }, limit: { type: 'integer', title: 'Limit', minimum: 100, maximum: 1000, multipleOf: 100 } } },
+      value: { mode: 'day', limit: 200 },
+    },
+  }
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('button', { name: 'Settings' }, T))
+  const sheet = await screen.findByTestId('settings-sheet', {}, T)
+  expect(within(sheet).getByRole('button', { name: 'Save' })).toBeDisabled() // unchanged
+  await userEvent.click(await within(sheet).findByRole('radio', { name: 'week' }, T))
+  await userEvent.click(within(sheet).getByRole('button', { name: 'More Limit' }))
+  await userEvent.click(within(sheet).getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'addon_settings', name: 'calendar', value: { mode: 'week', limit: 300 } }), T)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+})

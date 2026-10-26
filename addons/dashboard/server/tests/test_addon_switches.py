@@ -247,3 +247,12 @@ def test_deleting_an_addons_data_is_a_typed_signed_action():
     assert expected(purge)([{"type": "addon.purged", "name": "calendar"}])
     with pytest.raises(ValidationError):
         parse({"action": "addon_purge", "name": "dashboard"})
+
+
+def test_saving_an_addons_settings_is_one_settings_set_of_exactly_that_add_on():
+    save = parse({"action": "addon_settings", "name": "model-routing", "value": {"work": "opus"}})
+    assert host_call(save) == ("settings.set", {"set": {"addons": {"model-routing": {"work": "opus"}}}})
+    assert expected(save)([{"type": "settings.changed", "set": {"addons": {"model-routing": {"work": "opus"}}}}])
+    assert not expected(save)([{"type": "settings.changed", "set": {"addons": {"model-routing": {"work": "sonnet"}}}}])
+    with pytest.raises(ValidationError):
+        parse({"action": "addon_settings", "name": "model-routing", "value": {"x": "y" * 9000}})

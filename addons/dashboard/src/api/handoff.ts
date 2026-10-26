@@ -68,6 +68,8 @@ export type HandoffAction =
   | { action: 'addon_disable'; name: AddonSwitchName }
   /** The remove sheet's "Also delete its data" (`addon.purge`). */
   | { action: 'addon_purge'; name: AddonSwitchName }
+  /** One add-on's settings (`settings.set {addons: {name: value}}`); `null` removes them. */
+  | { action: 'addon_settings'; name: AddonSwitchName; value: Record<string, unknown> | null }
   /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence). Publish: terminal only. */
   | { action: 'addon_enable'; name: 'publish'; publish: { server: string; share: string } }
   /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */

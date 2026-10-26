@@ -59,7 +59,7 @@ export function InstalledGroup({
                 Update...
               </Button>
             )}
-            {onSettings && (
+            {onSettings && a.state === 'active' && (
               <Button size="sm" variant="ghost" disabled={busy} onClick={() => onSettings(a)}>
                 Settings
               </Button>

@@ -125,6 +125,22 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     def versions(ws: str = Depends(reads.workspace)):
         return versions_of(gateway.enabled(ws))
 
+    @app.get("/api/w/{ws}/add-ons/{name}/settings")
+    def addon_settings(name: str, ws: str = Depends(reads.workspace)):
+        """The side panel: the settings an On add-on declares (title, schema) and the value the workspace holds."""
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", name):
+            raise fail("invalid.input", "not an add-on name", exit=1)
+        link = gateway.enabled(ws)
+        row = next(
+            (a for a in link.call("addon.list")["addons"] if isinstance(a, dict) and a.get("name") == name), None
+        )
+        spec = row.get("settings") if row else None
+        if not isinstance(spec, dict):
+            raise fail("not_found", "this add-on has no settings", exit=1)
+        held = link.call("workspace.settings", {}).get("addons")
+        value = held.get(name) if isinstance(held, dict) else None
+        return {"name": name, "title": spec.get("title"), "schema": spec.get("schema"), "value": value}
+
     @app.get("/api/w/{ws}/add-ons")
     def add_ons(ws: str = Depends(reads.workspace)):
         link = gateway.enabled(ws)

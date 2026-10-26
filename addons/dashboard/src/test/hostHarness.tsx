@@ -35,6 +35,8 @@ export interface FakeWs {
   market?: import('@/api/market').MarketList
   marketInstalled?: import('@/api/market').MarketInstalled
   marketStage?: import('@/api/market').StageResult
+  /** `GET add-ons/<name>/settings` per add-on (the side panel). */
+  addonSettings?: Record<string, import('@/api/addOnSwitches').AddonSettingsData>
   id: string
   prefix: string
   name: string
@@ -206,6 +208,10 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
     case 'addon_disable':
       return workspaceRequest('addon.disable', { type: 'addon.disabled', name: body.name })
+    case 'addon_purge':
+      return workspaceRequest('addon.purge', { type: 'addon.purged', name: body.name })
+    case 'addon_settings':
+      return workspaceRequest('settings.set', { type: 'settings.changed', set: { addons: { [String(body.name)]: body.value } } })
     case 'grant_revoke':
       return workspaceRequest('grant.revoke', { type: 'grant.revoked', grant: body.grant, ...(body.reason ? { reason: body.reason } : {}) })
     default:
@@ -270,6 +276,10 @@ export class FakeHost {
     if (rest === 'market/stage' && method === 'POST') return json(ws.marketStage)
     if (rest.startsWith('market/stage/') && method === 'DELETE') return json({ removed: true })
     if (rest === 'market/uninstall') return json({ name: body?.name, removed: true })
+    {
+      const m = /^add-ons\/([a-z0-9-]+)\/settings$/.exec(rest)
+      if (m && method === 'GET') return ws.addonSettings?.[m[1]] ? json(ws.addonSettings[m[1]]) : json({ ok: false, error: { code: 'not_found', message: 'this add-on has no settings', retryable: false } }, 404)
+    }
     if (rest === 'market/add') return json({ url: body?.url, class: 'dev', added: true })
     if (rest === 'market/refresh') return json({ refreshed: true })
     if (rest === 'today') return json(today)

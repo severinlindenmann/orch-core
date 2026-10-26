@@ -47,10 +47,13 @@ class Link:
 
 class Gw:
     def __init__(self, link):
-        self.link = link
+        self._link = link
 
     def enabled(self, ws):
-        return self.link
+        return self._link
+
+    def link(self, ws):
+        return self._link
 
 
 def client(link):
@@ -247,10 +250,23 @@ class Auth:
         return False, None  # no passkey step-up was made
 
 
-def connect_client(link, kind="local"):
+class PausedGw:
+    """After the signed hub.join the host pauses every add-on, the dashboard too, until the snapshot is pinned."""
+
+    def __init__(self, link):
+        self._link = link
+
+    def enabled(self, ws):
+        raise fail("addon.disabled", exit=3)
+
+    def link(self, ws):
+        return self._link
+
+
+def connect_client(link, kind="local", gw=Gw):
     app = FastAPI()
     app.state.auth = Auth(kind)
-    hub.register(app, Gw(link))
+    hub.register(app, gw(link))
 
     @app.middleware("http")
     async def token(request, call_next):
@@ -280,6 +296,14 @@ def test_connect_relays_the_invite_and_card_to_the_host_as_one_write():
         )
     ]
     assert "7QK2M9XD" not in got.text  # the answer never repeats the invite
+
+
+def test_connect_works_while_the_dashboard_add_on_is_paused_by_the_join():
+    """e2e-4: join by click signs hub.join, the host pauses all add-ons, and only then the page calls hub/connect."""
+    link = Link({"hub.connect": {"hub_id": HUB32, "status": "bound", "mode": "selective", "binding_seq": 1}})
+    got = connect(connect_client(link, gw=PausedGw))
+    assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective"}
+    assert link.calls and link.calls[0][0] == "hub.connect"
 
 
 def test_connect_strips_the_hub_id_of_a_full_invite_and_refuses_another_hubs():

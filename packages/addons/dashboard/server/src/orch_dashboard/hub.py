@@ -287,8 +287,10 @@ def preview_view(raw) -> dict:
 
 
 def register(app: FastAPI, gateway: Gateway):
-    def link_for(ws: str, *ops: str):
-        link = gateway.enabled(ws)
+    def link_for(ws: str, *ops: str, paused_ok: bool = False):
+        # paused_ok: after the signed `hub.join` the host pauses every add-on (this one too) until the hub snapshot is
+        # pinned; the connect that pins it must still go through (e2e-4). The host checks who may call it.
+        link = gateway.link(ws) if paused_ok else gateway.enabled(ws)
         if not all(link.supports(op, "hub/1") for op in ops):
             raise fail("click.contract", "Update orch-core: it cannot show hubs yet.", exit=9)
         return link
@@ -354,7 +356,7 @@ def register(app: FastAPI, gateway: Gateway):
             if m.group(1) != (card.get("o") or {}).get("hub_id"):
                 raise fail("invalid.input", "The invite is for another hub than this card.", exit=1)
             invite = m.group(2)
-        link = link_for(ws, "hub.connect")
+        link = link_for(ws, "hub.connect", paused_ok=True)
         args = {"hub_card": card} | ({"invite": invite} if invite else {}) | ({"addr": body.addr} if body.addr else {})
         got = link.call("hub.connect", args, write=True, idem=body.idem)
         mode = got.get("mode") if isinstance(got, dict) else None

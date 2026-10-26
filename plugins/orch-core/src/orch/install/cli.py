@@ -432,7 +432,10 @@ def full_server(
     address = choose_address(ctx, address, st)
     out = {}
     for p in parts:
-        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev)
+        # every hub is dev-only in V3: a publish server installed beside it must be a dev one, or it refuses the hub's
+        # dev card and binding (publish send: hub.refused dev_refused)
+        pdev = dev or (p == "publish" and "hub" in parts)
+        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=pdev)
     return out
 
 

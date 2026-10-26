@@ -277,6 +277,16 @@ _SPECS = [
         "A grant with a list of verbs names operations, matched exactly (F1 10.1); this operation is not in it.",
     ),
     _e(
+        "quick.off",
+        3,
+        False,
+        "Quick tasks is switched off in this workspace",
+        "ask an owner to turn Quick tasks on in Settings, Add-ons",
+        ["orch", "addon", "list"],
+        "The built-in quick add-on is not granted or is switched off: no new quick task can be made (dashboard, "
+        "orch quick, agents). Existing quick tasks stay readable.",
+    ),
+    _e(
         "role.denied",
         3,
         False,

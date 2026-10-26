@@ -11,6 +11,7 @@ errors:
   not_found (exit 2): orch list
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
+  quick.off (exit 3): ask an owner to turn Quick tasks on in Settings, Add-ons | fix: orch addon list
   transition.refused (exit 3): orch show REF | fix: orch show
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   parse.text (exit 6): orch describe set

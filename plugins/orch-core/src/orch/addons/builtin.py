@@ -28,6 +28,7 @@ NAMES = (
     "estimate",
     "explorer",
     "wiki",
+    "quick",
 )
 
 

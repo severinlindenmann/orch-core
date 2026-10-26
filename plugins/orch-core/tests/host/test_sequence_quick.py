@@ -20,6 +20,22 @@ from tests.host.test_click import click  # noqa: E402,F401
 pytestmark = pytest.mark.slow
 
 
+@pytest.fixture(autouse=True)
+def _quick_on(served):
+    """Quick tasks is a built-in add-on: without its grant the sequence is refused (quick.off)."""
+    hws = served.lab.ws
+    hws.tick()
+    served.append(
+        lambda store: store.append(
+            hws.person_event(
+                hws.owner, "workspace", "addon.granted", name="quick", version="0.1.0",
+                package_sha256="sha256:" + "0" * 64, capabilities=[], fields={}, sections=[], artifact_kinds=[],
+            ),
+            log="workspace",
+        )
+    )  # fmt: skip
+
+
 def quick(agent=None, checks=None, **over):
     base = {
         "v": 1,

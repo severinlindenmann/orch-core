@@ -128,6 +128,12 @@ def main(
     title = rest[1]
     if "\n" in title or "\r" in title or not 1 <= len(title.strip()) <= core.TITLE_MAX:
         return fail(OrchError("invalid.input", f"a quick task's title is one line of 1 to {core.TITLE_MAX} characters"))
+    code, doc = _step(["addon", "list"], run)
+    if code == 0 and not any(
+        a.get("name") == core.ADDON and a.get("state") not in ("disabled", "purged", "not_granted")
+        for a in doc["data"].get("addons", [])
+    ):
+        return fail(OrchError("quick.off", core.MESSAGE))
     key = _earlier(title, run, env, now())
     created = key is None
     if created:

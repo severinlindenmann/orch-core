@@ -10,7 +10,7 @@ import { useHub } from '../hub/shared'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { encode } from 'uqr'
-import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, SIGN_COMMAND, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, primaryCommand, type PairBlocked, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
+import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, SIGN_COMMAND, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, PAIR_UNAVAILABLE_CLICK, primaryCommand, type PairBlocked, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
 import { ApiError, type Workspace } from '@/api/types'
 import { hasFeature } from '@/api/features'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -65,7 +65,7 @@ export function HostDevices({ workspace }: { workspace: Workspace }) {
         <div className="space-y-3">
           <h2 className="text-base font-semibold">Devices</h2>
           <p data-testid="pair-unavailable" className="rounded-md border border-border px-3 py-2 text-[13px] text-text-muted">
-            {PAIR_UNAVAILABLE}
+            {workspace.click?.custody === 'convenience' ? PAIR_UNAVAILABLE_CLICK : PAIR_UNAVAILABLE}
           </p>
         </div>
       ) : (

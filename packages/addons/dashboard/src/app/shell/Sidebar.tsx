@@ -179,6 +179,7 @@ export function Sidebar() {
   // The viewer's own active grant in the current workspace (revoke, re-issue and switching all show).
   const ws = workspace?.id
   const grants = useQuery({ ...queries.grants(ws!), enabled: !!ws })
+  const addOns = useQuery({ ...queries.addOns(ws!), enabled: isRealHost() && !!ws && hasFeature('worktrees', ws) })
   const today = useQuery({ ...queries.today(ws!), enabled: !!ws })
   const grant = grants.data && today.data ? activeGrantOf(grants.data, me?.person, Date.parse(today.data.now)) : undefined
   // A grant that ends on another day says the date (grants run up to 24 h).
@@ -246,7 +247,7 @@ export function Sidebar() {
 
         <div className="relative flex min-h-0 flex-1 flex-col">
         <nav ref={navRef} className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 py-2" aria-label="Main">
-          {CORE_NAV.filter((n) => hasFeature(n.feature, workspace?.id) && (!('real' in n) || isRealHost())).map(({ to, label: text, icon: Icon }) => (
+          {CORE_NAV.filter((n) => hasFeature(n.feature, workspace?.id) && (n.feature !== 'worktrees' || addOns.data?.add_ons.some((a) => a.id === 'worktrees' && a.state === 'on')) && (!('real' in n) || isRealHost())).map(({ to, label: text, icon: Icon }) => (
             <RailTip key={to} label={text}>
               <Link to={to} className={link} activeProps={activeProps} activeOptions={{ exact: to === '/' || to === '/tickets', includeSearch: false }} aria-label={to === '/' && attention.badge > 0 ? `${text}, ${attention.badge} need you` : text}>
                 <span className="relative">
@@ -469,7 +470,7 @@ const CORE_NAV = [
   /** Drop (proposed `drop/1`): listed where the host serves it; the page itself says when it is not available. */
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
   /** Worktrees (H11d): one folder per ticket; the mock has it as an addon page. */
-  { to: '/worktrees', label: 'Worktrees', icon: FolderGit2, feature: 'worktrees', real: true },
+  { to: '/worktrees', label: 'Ticket copies', icon: FolderGit2, feature: 'worktrees', real: true },
   /** Terminals (add-on): every terminal and agent session; listed only while the add-on is ON (the server adds `terminals_page` then). */
   { to: '/terminals', label: 'Terminals', icon: SquareTerminal, feature: 'terminals_page', real: true },
   /** Files (File Explorer add-on): owners only, listed only while the add-on is ON (the server adds `explorer` then). */

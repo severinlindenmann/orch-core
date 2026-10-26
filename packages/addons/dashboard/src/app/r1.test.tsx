@@ -35,8 +35,8 @@ it('R-b: card fields and sums are neutral, Display credits Estimate once', async
 
 it('R-c: connections are counted and fixing one updates header and badge together', async () => {
   const { user } = renderApp('/')
-  const line = await screen.findByText(/· \d+ need you ·/)
-  const count = () => Number(/· (\d+) need you/.exec(line.textContent!)![1])
+  const line = await screen.findByText(/· (?:\d+ need you|Nothing needs you) ·/)
+  const count = () => Number(/· (\d+) need you/.exec(line.textContent!)?.[1] ?? 0)
   const ws = mockStore.workspaces[0].id
   expect(count()).toBe(mockStore.needsYou(ws).length + mockStore.addonDecisions(ws).length + reloginItems(mockStore.conn.connections(ws)).length)
   const old = count()
@@ -112,7 +112,7 @@ it('Reset restores all questions directly, with no new-items buffer', async () =
 
 it('Agents waiting-on-you link opens the exact question', async () => {
   const { user } = renderApp('/')
-  await screen.findByText(/· \d+ need you ·/)
+  await screen.findByText(/· (?:\d+ need you|Nothing needs you) ·/)
   const bar = screen.getByRole('region', { name: 'Agents' })
   await user.click(within(bar).getByRole('button', { name: 'Show' }))
   const link = await within(await screen.findByRole('dialog')).findByRole('link', { name: /^waiting on you · Q2, answer it on DEMO-0043$/ })

@@ -74,7 +74,7 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
   const idle = !live && !stopped && runner.isSuccess && !runner.isFetching
   if (!live && !stopped && !idle && !extend && !askStop && !partial && queue.length === 0) return null
   const pill = 'flex min-h-11 min-w-0 shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9'
-  return <div className="agent-access flex min-w-0 items-center gap-2 text-xs">
+  return <div className="agent-access flex shrink-0 min-w-0 items-center gap-2 text-xs">
     {live && !partial ? <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild><button type="button" className={`${pill} ${ending ? 'border-warning/40 bg-warning/5 text-warning' : ''}`}>
         <span aria-hidden className={`size-2 shrink-0 rounded-full ${ending ? 'bg-warning' : 'bg-success'}`} />
@@ -93,8 +93,8 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
           <Button size="sm" variant="outline" className="min-h-11 w-full border-border bg-bg text-text" disabled={!hasFeature('do:grant.revoke', ws)} onClick={() => { setOpen(false); setAskStop(true) }}>Stop</Button>
         </div>
       </PopoverContent>
-    </Popover> : <div className={pill} role="group" aria-label="Agent access">
-      {idle && !partial ? <><span role="status">No agent access</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Let agents work</Button></> : partial ? <span role="status">Stopped {partial.done} of {partial.total}. {partial.total - partial.done} still active — <Button size="xs" variant="ghost" onClick={() => setAskStop(true)}>Stop again</Button></span> : stopped ? <><span role="status">Agents stopped</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Start again</Button></> : <span>Checking agent access…</span>}
+    </Popover> : <div className={`${pill}${idle && !partial ? ' whitespace-nowrap' : ''}`} role="group" aria-label="Agent access">
+      {idle && !partial ? <><span role="status">Agents off</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Turn on</Button></> : partial ? <span role="status">Stopped {partial.done} of {partial.total}. {partial.total - partial.done} still active — <Button size="xs" variant="ghost" onClick={() => setAskStop(true)}>Stop again</Button></span> : stopped ? <><span role="status">Agents stopped</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Start again</Button></> : <span>Checking agent access…</span>}
     </div>}
     {extend && <Dialog open onOpenChange={open => { if (!open) setExtend(false) }}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{live ? 'Extend agent access' : 'Allow agent access'}</DialogTitle><DialogDescription>{live ? 'Choose how long agents may keep working for you. The time is counted from now and replaces your current access.' : 'Choose how long agents may work for you, counted from now.'}</DialogDescription></DialogHeader>
       <RunnerGrantCard sheet ws={ws} runner={runner.data?.runner ?? null} loading={runner.isPending} blocked={null} extend={live ?? undefined} onChanged={refresh} onOutcome={outcome} onConfirmed={() => setExtend(false)} />

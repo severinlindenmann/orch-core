@@ -54,10 +54,10 @@ __all__ = [
 ]
 
 HUB_OPS: dict[str, int] = {
-    "hub.connect": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1, "hub.history": 1,
-    "keys.rotate": 1,
+    "hub.connect": 1, "hub.link": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1,
+    "hub.history": 1, "keys.rotate": 1,
 }  # fmt: skip
-NETWORK_OPS = frozenset({"hub.connect", "hub.unbind", "hub.refresh"})
+NETWORK_OPS = frozenset({"hub.connect", "hub.link", "hub.unbind", "hub.refresh"})
 HUB_CAPS = ["hub/1"]
 _MU = threading.Lock()
 
@@ -68,6 +68,12 @@ TRANSPORT: Any = None
 CARD_SOURCE: Any = None
 
 _SCHEMAS: dict[str, dict[str, Any]] = {
+    "hub.link": {  # run-9 feedback 6: a read; fetch the hub card named by a connect link and check it against the link
+        "type": "object",
+        "properties": {"link": {"type": "string", "minLength": 8, "maxLength": 1024}},
+        "required": ["link"],
+        "additionalProperties": False,
+    },
     "hub.connect": {
         "type": "object",
         "properties": {
@@ -674,6 +680,8 @@ def serve(call: Call) -> dict[str, Any]:
         out = breakglass.rotate(call, epochs_for(service))
         _audit(call, "keys.rotate")
         return out
+    if op == "hub.link":
+        return {"plan": {"op": "hub.link", "link": args["link"], "dev": workspace_dev(service)}}
     model = dict(service.store.state.workspace.hub)
     state = _load_state(service)
     if op == "hub.history":
@@ -716,6 +724,7 @@ def serve(call: Call) -> dict[str, Any]:
                     binding, up
                 ),  # V3 D78: "unreachable" when bound but the hub does not answer
                 "binding": binding,
+                "hub_card": None if state is None else state.card,  # public; the dashboard's one-click mode switch
                 "reachable": up,
                 **hublinkprobe.peer_view(service),  # peer_outbox, link_error
                 "log_sync": _log_sync_status(service),
@@ -801,6 +810,15 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from .workspace import ok_result
 
     service = call.service
+    if plan["op"] == "hub.link":
+        from orch.hubclient import connectlink
+
+        try:
+            return ok_result(
+                connectlink.resolve(plan["link"], now_ms=int(service.clock() * 1000), dev_mode=plan["dev"])
+            )
+        except HubRefused as exc:
+            raise _refused(exc.code) from None
     wsk_pub, sign = _wsk_sign(service)
     now = lambda: int(service.clock() * 1000)  # noqa: E731
     save = lambda s: _save_state(service, s)  # noqa: E731

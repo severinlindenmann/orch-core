@@ -547,6 +547,9 @@ def _signed_genesis(
     delegation = identity_certs.make_delegation(
         pk_pub, pk_sign, workspace_id=wid, wsk_pub=wsk_pub, client_hosted=False, issued_ms=now_ms
     )
+    from orch.custody import pkvault  # prototype (run-9 feedback 6): hub steps by one click
+
+    pkvault.put(sd, wid, pk_pub, pk_scalar)
     pk = pk_scalar = None  # the person key is not needed again
     event: dict[str, Any] = {
         "v": 2,

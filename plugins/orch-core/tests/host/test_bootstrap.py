@@ -183,7 +183,9 @@ def test_hosted_create_runs_the_composite_and_the_host_never_sees_the_person_key
         }
         sent = json.dumps(recording.sent).encode()
         assert [n for n, v in person_secrets.items() if v in sent] == []
-        assert _scan(lab.state, person_secrets) == [] and _scan(root, person_secrets) == []
+        # run-9 feedback 6: the client keeps the person key for one-click hub steps (pkvault): the one allowed place
+        assert [h for h in _scan(lab.state, person_secrets) if "/person-key/" not in str(h[1])] == []
+        assert _scan(root, person_secrets) == []
         # the workspace key: only its public half is ever sent back, and it is in no host file but its own
         d = json.loads((lab.state / "hosts" / wid / "keys" / "wsk.filekey.json").read_bytes())["d"]
         wsk = {"wsk b64": d.encode(), "wsk hex": crypto.unb64u(d).hex().encode()}

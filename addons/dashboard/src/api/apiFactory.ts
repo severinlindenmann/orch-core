@@ -149,6 +149,7 @@ export function createApi(transport: Transport) {
     getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
       call<import('./hub').HubPreview>('POST', `/api/w/${ws}/hub/share/preview`, body),
     getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>('POST', `/api/w/${ws}/hub/command`, body),
+    getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>('POST', `/api/w/${ws}/hub/link`, { link }),
     connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>('POST', `/api/w/${ws}/hub/connect`, body),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
     clickStatus: (ws: string) => call<ClickCard>('GET', `/api/w/${ws}/click/status`),

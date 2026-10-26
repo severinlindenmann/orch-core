@@ -130,6 +130,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/hub"): (ALLOWED, ""),
     (GET, W + "/hub/share"): (ALLOWED, ""),
     (POST, W + "/hub/share/preview"): (ALLOWED, "a read-only preview"),
+    (POST, W + "/hub/link"): (ALLOWED, "reads the link's hub card; nothing is signed or kept"),
     (POST, W + "/hub/connect"): (STEP_UP, "the second half of a hub join"),
     (POST, W + "/hub/command"): (ALLOWED, "returns text only"),
     # --- the passkey step-up ceremony and the passkey store (R1-6)

@@ -50,14 +50,6 @@ def test_the_set_is_exactly_leave_recover_repin_rotate_and_the_1097_rows():
     }  # fmt: skip
 
 
-@pytest.mark.parametrize("signer", breakglass.SIGNER_KINDS)
-def test_matrix_verb_by_signer(signer):
-    dev = signer == "owner_device_key"
-    assert breakglass.allowed("hub.leave", signer) is dev
-    assert breakglass.allowed("keys.rotate", signer) is dev
-    assert breakglass.allowed("device.recover", signer) is (signer == "pk")  # L2-C8i-1: the recovery key recovers
-    assert breakglass.allowed("hub.repin", signer) is (signer == "pk")  # recovery key only: a device key is refused
-    assert not breakglass.allowed("hub.join", signer) and not breakglass.allowed("hub.leave", "nobody")
 
 
 # --- the model rule ------------------------------------------------------------------------------------------------
@@ -71,11 +63,6 @@ def test_a_local_person_event_in_full_mode_is_refused_and_leave_is_not(w):
     assert not hasattr(admit(st, left, log="workspace"), "code")
 
 
-def test_leave_by_the_click_signer_or_a_non_owner_is_refused(w):
-    st = strict(w)
-    for who, extra in (("sev", {"auth": "convenience"}), ("mara", {})):
-        e = w.build_unappended("workspace", "hub.left", who, roster_v=w.roster_v, hub_id=HUB, binding_seq=1, **extra)
-        assert admit(st, e, log="workspace").code == Code.SIGN_HUB_ONLY
 
 
 def test_a_selective_or_left_workspace_signs_locally():

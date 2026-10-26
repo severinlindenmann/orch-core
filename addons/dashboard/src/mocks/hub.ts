@@ -37,7 +37,7 @@ const HUB_ID = '9f3c1ab277de40c8'
 export function mockHubStatus(s: HubScenario = scenario()): HubStatus {
   const joined = { ...BASE, joined: true, hub_id: HUB_ID, link: 'bound' as const, groups: { read: 3, edit: 8, admin: 2 }, snapshot_version: 4 }
   switch (s) {
-    case 'selective': return { ...joined, mode: 'selective' }
+    case 'selective': return { ...joined, mode: 'selective', hub_card: JSON.stringify({ o: { hub_id: HUB_ID }, sig: 'x' }) }
     case 'full': return { ...joined, mode: 'full', member: true }
     case 'offline': return { ...joined, mode: 'selective', reachable: false }
     case 'nottold': return { ...BASE, hub_id: HUB_ID, link: 'unbound', not_told: true, owed: 1 }
@@ -132,19 +132,23 @@ export const setMockConnectError = (message: string | null) => {
   connectError = message
 }
 const SIGNER_PK = 'BABS9E022fzn3B-vMJGezPNuQW1z-oyas3W9A_ddxudSTZvCUQxuuTtcP1R8LE_ZJ7UrTnxyss6LZ8YgRK_YMpU' // a fixed public point
-const open = new Map<string, { op: 'hub.join' | 'hub.leave'; hubId: string }>()
+const open = new Map<string, { op: 'hub.join' | 'hub.mode' | 'hub.leave'; hubId: string; full: boolean }>()
+// Run-9 feedback 6: with the person key kept (the new default) a hub step asks for no backup key. Off: the old way.
+let vault = false
+export const setMockVault = (on: boolean) => { vault = on }
+const keptKey = () => { try { return vault || new URLSearchParams(location.search).get('vault') === '1' } catch { return vault } }
 
 function mockView(ws: string, id: string): ClickViewAnswer | null {
   const r = open.get(id)
   if (!r) return null
-  const join = r.op === 'hub.join'
+  const join = r.op !== 'hub.leave'
   return {
     view_digest: 'sha256:' + '1'.repeat(64),
     view: {
       risk: CLICK_RISK, op: r.op, workspace: { id: ws, name: 'billing', prefix: 'DEMO' }, fingerprint: '0123456789ab',
-      lines: [join ? `join hub ${r.hubId} in selective mode: the hub sees only what you share and never gets the workspace key` : `leave hub ${r.hubId} and tell it that this workspace is no longer bound`, '', BACKUP_KEY_LINE],
+      lines: [join ? `join hub ${r.hubId} in ${r.full ? 'full' : 'selective'} mode: ${r.full ? 'the hub will be able to read everything in this workspace' : 'the hub sees only what you share and never gets the workspace key'}` : `leave hub ${r.hubId} and tell it that this workspace is no longer bound`, '', BACKUP_KEY_LINE],
       checks: [], confirm: { kind: 'click' }, expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_' + 'a'.repeat(32), artifacts: null,
-      seal: { v: 1, alg: 'P256-HKDF-SHA256-A256GCM', pk: SIGNER_PK, purposes: ['hub.backup_key'] }, backup_key_line: BACKUP_KEY_LINE,
+      ...(keptKey() ? {} : { seal: { v: 1, alg: 'P256-HKDF-SHA256-A256GCM', pk: SIGNER_PK, purposes: ['hub.backup_key'] }, backup_key_line: BACKUP_KEY_LINE }),
     },
   }
 }
@@ -152,11 +156,11 @@ function mockView(ws: string, id: string): ClickViewAnswer | null {
 export function registerHubClickRoutes(r: MockRouter) {
   r.add('GET', '/api/w/:ws/click/status', () => ok({ custody: oneClickOn ? 'convenience' : 'passphrase', enabled: oneClickOn, available: true, switchable: true }))
   r.add('POST', '/api/w/:ws/click/prepare', (_s, c) => {
-    const b = c.body as { action?: string; hub_id?: string } | null
+    const b = c.body as { action?: string; hub_id?: string; mode?: string } | null
     if (!oneClickOn) return fail(409, 'human.click_refused', 'One click is off in this workspace.')
-    if (b?.action !== 'hub_join' && b?.action !== 'hub_leave') return fail(400, 'invalid.input', 'The mock signs only hub steps.')
+    if (b?.action !== 'hub_join' && b?.action !== 'hub_leave' && b?.action !== 'hub_mode_full') return fail(400, 'invalid.input', 'The mock signs only hub steps.')
     const id = 'hr_01M5PVRB46WS3X8H5X2RQK' + String(open.size).padStart(2, '0') + 'AB'
-    open.set(id, { op: b.action === 'hub_join' ? 'hub.join' : 'hub.leave', hubId: b.hub_id ?? mockHubStatus().hub_id ?? HUB_ID })
+    open.set(id, { op: b.action === 'hub_join' ? 'hub.join' : b.action === 'hub_mode_full' ? 'hub.mode' : 'hub.leave', hubId: b.hub_id ?? mockHubStatus().hub_id ?? HUB_ID, full: b.action === 'hub_mode_full' || b.mode === 'full' })
     return ok({ request_id: id, expires_at: new Date(Date.now() + 600_000).toISOString(), op: open.get(id)!.op, confirm: 'click' })
   })
   r.add('POST', '/api/w/:ws/click/view', (_s, c) => {
@@ -167,8 +171,8 @@ export function registerHubClickRoutes(r: MockRouter) {
     const b = c.body as { request_id?: string; sealed?: Record<string, unknown> } | null
     const req = open.get(b?.request_id ?? '')
     if (!req) return fail(404, 'not_found', 'No such request.')
-    if (!b?.sealed?.['hub.backup_key']) return fail(400, 'invalid.input', 'A hub step needs your backup key.')
-    setHubScenario(req.op === 'hub.join' ? 'selective' : 'standalone')
+    if (!keptKey() && !b?.sealed?.['hub.backup_key']) return fail(400, 'invalid.input', 'A hub step needs your backup key.')
+    setHubScenario(req.op === 'hub.leave' ? 'standalone' : req.full ? 'full' : 'selective')
     open.delete(b.request_id!)
     return ok({ state: 'submitted', duplicate: false })
   })
@@ -177,9 +181,16 @@ export function registerHubClickRoutes(r: MockRouter) {
     open.delete(id)
     return ok({ id, state: 'cancelled' })
   })
+  r.add('POST', '/api/w/:ws/hub/link', (_s, c) => {
+    const link = (c.body as { link?: string } | null)?.link ?? ''
+    const m = /^https?:\/\/([^/]+)\/c#h1\.([0-9a-f]{32})\.([A-Za-z0-9_-]{1,64})(?:\.(.+))?$/.exec(link)
+    if (!m) return fail(400, 'invalid.input', 'That is not a connect link.')
+    const card = JSON.stringify({ o: { hub_id: m[2] }, sig: 'x' })
+    return ok({ hub_id: m[2], name: m[1], code: m[3], endpoint: m[4] ?? null, dev: true, hub_card: card })
+  })
   r.add('POST', '/api/w/:ws/hub/connect', (_s, c) => {
     const b = c.body as { invite?: string; hub_card?: string } | null
-    if (!b?.invite || !b.hub_card) return fail(400, 'invalid.input', 'Needs an invite and a card.')
+    if (!b?.hub_card) return fail(400, 'invalid.input', 'Needs an invite and a card.')
     if (connectError) return fail(502, 'hub.unreachable', connectError, undefined, true)
     return ok({ connected: true, mode: 'selective' })
   })

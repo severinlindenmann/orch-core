@@ -932,7 +932,20 @@ class HubJoin(Action):
     action: Literal["hub_join"]
     hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_HUB_CARD_BYTES)]
     hub_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,64}$")]
-    mode: Literal["selective"] = "selective"
+    mode: Literal["selective", "full"] = "selective"
+
+    @model_validator(mode="after")
+    def check_card(self):
+        _strict_json_object(self.hub_card)
+        return self
+
+
+class HubModeFull(Action):
+    """Run-9 feedback 6: switch the joined hub from selective to full. One click; the card is the host's pinned one."""
+
+    action: Literal["hub_mode_full"]
+    hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_HUB_CARD_BYTES)]
+    hub_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,64}$")]
 
     @model_validator(mode="after")
     def check_card(self):
@@ -984,6 +997,7 @@ PrepareBody = Annotated[
     | RunnerGrant
     | AgentAccess
     | HubJoin
+    | HubModeFull
     | HubLeave,
     Field(discriminator="action"),
 ]
@@ -1167,8 +1181,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "hub.join", {
                 "hub_card": _strict_json_object(action.hub_card),
                 "hub_id": action.hub_id,
-                "mode": "selective",
+                "mode": action.mode,
             }
+        case HubModeFull():
+            return "hub.mode", {"hub_card": _strict_json_object(action.hub_card), "mode": "full"}
         case HubLeave():
             return "hub.leave", {}
     raise AssertionError("closed allowlist")  # pragma: no cover
@@ -1352,7 +1368,15 @@ def expected(action: Action, person: str | None = None):
         case HubJoin():
             # exactly one `hub.joined`: a selective binding to the hub the person was told, the caller as its person
             return lambda ev: (
-                one(ev, "hub.joined", mode="selective", hub_id=action.hub_id)
+                one(ev, "hub.joined", mode=action.mode, hub_id=action.hub_id)
+                and person is not None
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
+        case HubModeFull():
+            return lambda ev: (
+                one(ev, "hub.joined", mode="full", hub_id=action.hub_id)
                 and person is not None
                 and isinstance(ev[0].get("actor"), dict)
                 and ev[0]["actor"].get("kind") == "person"
@@ -1837,10 +1861,12 @@ def register(app: FastAPI, gateway: Gateway):
                     "Agent access with a shown secret is signed with one click in the dashboard.",
                     exit=1,
                 )
-            if isinstance(body, HubJoin | HubLeave):  # the backup key is typed in the page and sealed: a click only
+            if isinstance(
+                body, HubJoin | HubModeFull | HubLeave
+            ):  # the backup key is typed in the page and sealed: a click only
                 raise fail(
                     "invalid.input",
-                    "A hub step is signed with one click in the dashboard, with your backup key.",
+                    "A hub step is signed with one click in the dashboard.",
                     exit=1,
                 )
             planned = plan(gateway, ws, body)

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import * as sealed from '@/api/sealed'
-import { setHubScenario, setMockConnectError, setMockOneClick, type HubScenario } from '@/mocks/hub'
+import { setHubScenario, setMockConnectError, setMockOneClick, setMockVault, type HubScenario } from '@/mocks/hub'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 4000 }
@@ -21,7 +21,6 @@ const HUB = '9f3c1ab277de40c8aa11bb22cc33dd44'
 const CARD = JSON.stringify({ o: { hub_id: HUB }, sig: 'x' })
 // Typing a long JSON string key by key is slow; a paste is one change.
 const paste = async (id: string, text: string) => fireEvent.change(await screen.findByTestId(id, {}, T), { target: { value: text } })
-const fill = async (card = CARD, invite = '7QK2M9XD') => { await paste('hub-card-text', card); await paste('hub-invite-text', invite) }
 
 const hubPage = (scenario: HubScenario, path = '/w/DEMO/settings/hub') => {
   setHubScenario(scenario)
@@ -49,8 +48,7 @@ describe('the Hub tab has a different page for each mode', () => {
     expect(screen.queryAllByRole('switch')).toHaveLength(0)
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
     expect(screen.getByTestId('hub-choose-share')).toBeTruthy()
-    expect(screen.getByTestId('hub-full-blocked')).toBeTruthy() // One click is on: the plain sentence, not a dead button
-    expect(screen.queryByTestId('hub-full-switch')).toBeNull()
+    expect(screen.getByTestId('hub-full-switch')).toBeTruthy() // one click, also with One click on
   })
 
   it('full: says the hub reads everything and labels the hub numbers "from the hub, not signed"', async () => {
@@ -111,28 +109,22 @@ describe('joining (A3.1): the person decides, the terminal signs', () => {
   })
 })
 
-describe('switching to full access (A3.2): one way, only while One click is off, then the terminal', () => {
-  it('says plainly why not while One click is on, and offers the honest ways', async () => {
-    const view = hubPage('selective')
-    expect(await screen.findByTestId('hub-full-blocked', {}, T)).toHaveTextContent(/One click off and your key back under a passphrase/)
-    expect(screen.queryByTestId('hub-full-switch')).toBeNull() // no dead button
-    expect(screen.queryByText(/do it in a terminal/i)).toBeNull() // the host refuses a terminal too while One click is on
-    expect(screen.getByTestId('hub-settings-link')).toBeTruthy()
-    expect(view).toBeTruthy()
-  })
-
-  it('with One click off: a card path, then the terminal (no typed words)', async () => {
-    setMockOneClick(false)
+describe('switching to full access (run-9 feedback 6): one click, no backup key', () => {
+  beforeEach(() => setMockVault(true))
+  afterEach(() => setMockVault(false))
+  it('is one click with One click on: review, sign, the hub is told, then full', async () => {
+    const connectHub = vi.spyOn(api, 'connectHub')
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-full-switch', {}, T))
     expect(screen.getByText(/One way/)).toBeTruthy()
-    const go = screen.getByTestId('hub-full-continue') as HTMLButtonElement
-    expect(go.disabled).toBe(true)
-    expect(screen.queryByTestId('hub-full-words')).toBeNull()
-    await type(view, 'hub-full-card', 'card.json')
-    expect(go.disabled).toBe(false)
-    await view.user.click(go)
-    expect((await screen.findByTestId('hub-command', {}, T)).textContent).toBe('orch hub mode full --hub-card card.json')
+    const btn = await screen.findByRole('button', { name: 'Sign and let the hub read everything' }, T)
+    expect(screen.queryByTestId('hub-backup-input')).toBeNull() // the person key is kept: nothing to type
+    await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
+    fireEvent.pointerDown(btn)
+    fireEvent.click(btn)
+    expect(await screen.findByTestId('hub-full-done', {}, T)).toHaveTextContent(/read everything/)
+    expect(connectHub).toHaveBeenCalledTimes(1)
+    expect(connectHub.mock.calls[0][1].invite).toBeUndefined() // a mode switch has no invite
   })
 })
 
@@ -240,68 +232,51 @@ describe('by click (#1198 C11)', () => {
     fireEvent.click(btn)
   }
 
-  it('connects: the card is read, the hub shown, the backup key typed once, and the page then says connected', async () => {
+  const LINK = 'http://10.0.0.5:8106/c#h1.9f3c1ab277de40c8aa11bb22cc33dd44.7QK2M9XD.10.0.0.5:8105'
+  const pasteLink = async (link = LINK) => paste('hub-link-text', link)
+
+  it('connects from a link: the hub is shown at once, one click with the backup key, then connected', async () => {
     const connectHub = vi.spyOn(api, 'connectHub')
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
-    expect(screen.getByText(/hub card file from a hub admin/)).toBeTruthy()
-    expect((screen.getByTestId('hub-join-continue') as HTMLButtonElement).disabled).toBe(true)
-    await paste('hub-card-text', 'not a card')
-    expect(screen.getByTestId('hub-card-bad')).toBeTruthy()
-    expect((screen.getByTestId('hub-join-continue') as HTMLButtonElement).disabled).toBe(true)
-    await paste('hub-card-text', CARD)
-    expect((screen.getByTestId('hub-join-continue') as HTMLButtonElement).disabled).toBe(true) // the invite is needed too
-    await paste('hub-invite-text', '7QK2M9XD')
-    expect(screen.getByTestId('hub-card-id').textContent).toContain('9f3c 1ab2 77de 40c8')
-    await view.user.click(screen.getByTestId('hub-join-continue'))
-    expect((screen.getByTestId('hub-join-review') as HTMLButtonElement).disabled).toBe(true) // pre-selects nothing
-    await view.user.click(screen.getByTestId('hub-mode-selective'))
-    await view.user.click(screen.getByTestId('hub-join-review'))
-    expect(screen.getByTestId('hub-sign-for').textContent).toContain('9f3c 1ab2 77de 40c8')
+    await pasteLink('not a link')
+    expect(screen.getByTestId('hub-link-bad')).toBeTruthy()
+    await pasteLink()
+    expect((await screen.findByTestId('hub-link-hub', {}, T)).textContent).toContain('10.0.0.5:8106')
+    expect(screen.getByTestId('hub-link-hub').textContent).toContain('9f3c 1ab2 77de 40c8')
+    expect(screen.getByTestId('hub-link-hub').textContent).toContain('Only what I choose')
+    expect(screen.queryByTestId('hub-card-text')).toBeNull() // no card file, no separate invite, no mode step
     await sign('Sign and join the hub')
     expect(await screen.findByTestId('hub-connected', {}, T)).toHaveTextContent(/Connected/)
     expect(seal).toHaveBeenCalledTimes(1)
     expect(seal.mock.calls[0][1]).toBe(WORDS)
-    expect(connectHub).toHaveBeenCalledTimes(1) // the host tells the hub right after the signed join, with the invite
-    expect(connectHub.mock.calls[0][1]).toMatchObject({ invite: '7QK2M9XD', hub_card: CARD, idem: expect.stringMatching(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/) })
-    expect(document.body.textContent).not.toContain('orchid')
+    expect(connectHub).toHaveBeenCalledTimes(1) // the host tells the hub right after the signed join, with the link's code
+    expect(connectHub.mock.calls[0][1]).toMatchObject({ invite: '7QK2M9XD', addr: '10.0.0.5:8105', idem: expect.stringMatching(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/) })
     expect(screen.queryByTestId('hub-command')).toBeNull() // no terminal command anywhere in this path
     await view.user.click(screen.getByTestId('hub-connect-close'))
     expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy()
   })
 
-  it('everything is not a click: it says so and goes to the terminal', async () => {
+  it('with the person key kept the join is one click and asks for no backup key, also in full mode', async () => {
+    setMockVault(true)
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
-    await fill()
-    await view.user.click(screen.getByTestId('hub-join-continue'))
-    await view.user.click(screen.getByTestId('hub-mode-full'))
-    expect(screen.getByTestId('hub-full-needs').textContent).toMatch(/One click off and your key back under a passphrase/)
-    expect(screen.queryByTestId('hub-full-to-terminal')).toBeNull() // refused in a terminal too while One click is on
-    expect((screen.getByTestId('hub-join-review') as HTMLButtonElement).disabled).toBe(true)
-  })
-
-  it('everything goes to the terminal only with One click off and the key under a passphrase', async () => {
-    setMockOneClick(false)
-    const view = hubPage('standalone')
-    await view.user.click(await screen.findByTestId('hub-connect', {}, T))
-    await fill()
-    await view.user.click(screen.getByTestId('hub-join-continue'))
-    await view.user.click(screen.getByTestId('hub-mode-full'))
-    await view.user.click(screen.getByTestId('hub-full-to-terminal'))
-    expect(await screen.findByTestId('hub-invite', {}, T)).toBeTruthy()
-    await view.user.click(screen.getByTestId('hub-join-back-click'))
-    expect(await screen.findByTestId('hub-mode-full', {}, T)).toBeTruthy()
+    await pasteLink()
+    await view.user.click(await screen.findByTestId('hub-mode-full', {}, T))
+    const btn = await screen.findByRole('button', { name: 'Sign and join the hub' }, T)
+    expect(screen.queryByTestId('hub-backup-input')).toBeNull()
+    await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
+    fireEvent.pointerDown(btn)
+    fireEvent.click(btn)
+    expect(await screen.findByTestId('hub-connected', {}, T)).toHaveTextContent(/read everything/)
+    setMockVault(false)
   })
 
   it('with One click off, connecting says why and offers the terminal, not a dead button', async () => {
     setMockOneClick(false)
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
-    await fill()
-    await view.user.click(screen.getByTestId('hub-join-continue'))
-    await view.user.click(screen.getByTestId('hub-mode-selective'))
-    await view.user.click(screen.getByTestId('hub-join-review'))
+    await pasteLink()
     expect(await screen.findByTestId('hub-no-one-click', {}, T)).toHaveTextContent(/One click is off/)
     expect(screen.queryByTestId('hub-backup-input')).toBeNull()
     await view.user.click(screen.getByTestId('hub-join-terminal-instead'))
@@ -312,10 +287,7 @@ describe('by click (#1198 C11)', () => {
     setMockConnectError('The invite was not accepted.')
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
-    await fill()
-    await view.user.click(screen.getByTestId('hub-join-continue'))
-    await view.user.click(screen.getByTestId('hub-mode-selective'))
-    await view.user.click(screen.getByTestId('hub-join-review'))
+    await pasteLink()
     await sign('Sign and join the hub')
     const failed = await screen.findByTestId('hub-connect-failed', {}, T)
     expect(failed.textContent).toMatch(/not connected yet/)

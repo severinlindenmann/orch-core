@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch.wsproto import wire
+
 from . import parts as P
 from .parts import InstallError
 from .service import Runner, pick_runner
@@ -168,7 +170,6 @@ def install_part(
     publish_url: str | None = None,
     relay_url: str | None = None,
     dev: bool = False,
-    wildcard: bool = False,
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
@@ -202,8 +203,7 @@ def install_part(
         relay_url = relay_url or (rels and _dial_url(rels))
         if relay_url and not _hub_accepts(relay_url):
             ctx.say(
-                f"  note: the hub accepts only https or loopback http for the relay ({relay_url}): left out, "
-                "push stays off until the hub allows a plain-http IP origin"
+                f"  note: the hub does not accept {relay_url} as a relay address: left out, push stays off"
             )
             relay_url = None
         fresh = not any(data.iterdir())
@@ -229,11 +229,10 @@ def install_part(
         publish_url=publish_url,
         relay_url=relay_url,
         dev=dev,
-        wildcard=wildcard,
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(part, argv, P.env_for(part, data), log)
-    check_host = "127.0.0.1" if wildcard else bind
+    check_host = bind
 
     # a computer often cannot dial its own overlay IP (NetBird): then a held port on that IP and a live process count
     def answers() -> bool:
@@ -257,7 +256,6 @@ def install_part(
         "dev": dev,
         "service": started["service"],
         "runner": ctx.runner.kind,
-        "wildcard": wildcard,
         "pid": started.get("pid"),
         "started": int(time.time()),
     }
@@ -281,13 +279,17 @@ def install_part(
 
 
 def _dial_url(rec: dict[str, Any]) -> str:
-    """How the hub on this computer dials a part: loopback when the part also listens there."""
-    return f"http://127.0.0.1:{rec['port']}" if rec.get("wildcard") else rec["url"]
+    """How the hub on this computer dials a part: its own address."""
+    return str(rec["url"])
 
 
 def _hub_accepts(url: str) -> bool:
-    """The hub (card and ``--publish-url``) takes https, or http on loopback only."""
-    return url.startswith("https://") or url.split("://", 1)[-1].split(":")[0] in ("127.0.0.1", "localhost")
+    """The hub (card and ``--publish-url``) takes https, or http on loopback, private and CGNAT addresses."""
+    try:
+        wire.check_origin(url)
+    except wire.WireError:
+        return False
+    return True
 
 
 def _version(ctx: Ctx, rec: dict[str, Any], name: str, env: Mapping[str, str]) -> None:
@@ -432,12 +434,7 @@ def full_server(
     address = choose_address(ctx, address, st)
     out = {}
     for p in parts:
-        # the hub dials publish and relay on this computer through loopback (it takes no plain-http IP origin), so
-        # with a non-loopback address they listen on all interfaces; the shown address stays the chosen one
-        wild = "hub" in parts and p != "hub" and _listen_address(address) != P.ADDRESS_LOOPBACK
-        out[p] = install_part(
-            ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev, wildcard=wild
-        )
+        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev)
     return out
 
 

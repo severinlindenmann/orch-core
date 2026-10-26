@@ -163,14 +163,14 @@ def test_an_agent_is_refused(home):
     assert cli.main(["status"], env={"ORCH_SESSION": "x", "HOME": str(home)}, out=out, err=err) == 3
 
 
-def test_full_server_on_an_overlay_ip_lets_the_hub_dial_publish_and_relay_over_loopback(home):
+def test_full_server_on_an_overlay_ip_listens_there_and_the_hub_dials_it(home):
     ctx, out, err, _ = make(home)
     cli.full_server(ctx, ["publish", "relay", "hub"], address="100.64.1.2")
     pub = ctx.runner.started["publish"][0]
-    assert "0.0.0.0:8102" in pub and "http://100.64.1.2:8102" in pub
+    assert "100.64.1.2:8102" in pub and "0.0.0.0" not in " ".join(pub) and "http://100.64.1.2:8102" in pub
     hub = ctx.runner.started["hub"][0]
-    assert hub[hub.index("--publish-url") + 1] == "http://127.0.0.1:8102"
-    assert hub[hub.index("--relay-url") + 1] == "http://127.0.0.1:8101"
+    assert hub[hub.index("--publish-url") + 1] == "http://100.64.1.2:8102"
+    assert hub[hub.index("--relay-url") + 1] == "http://100.64.1.2:8101"
 
 
 def test_hub_with_dev_gets_the_shared_machine_flag_on_a_network_address(home):

@@ -57,3 +57,55 @@ def test_today_hides_restricted_tickets(client, token, stub, rich):
 def test_today_has_no_write_method(client, token, stub):
     res = client.post(f"/api/w/{stub.ws}/today", json={}, headers={**headers(token), "Origin": ORIGIN})
     assert res.status_code == 405
+
+
+# -- terminal_wait: "Agent may need you: check its terminal" (run-9 feedback 3.6) ------------------------------------
+
+
+def _rows():
+    return [
+        {"key": "DEMO-0001", "uid": "u1", "title": "A ticket", "updated_at": "2026-10-26T09:00:00Z", "status": "in_progress"}
+    ]
+
+
+def _runs(since="2026-10-26T09:10:00Z"):
+    return [{"run": "r_1", "ticket": "DEMO-0001", "waiting": {"since": since, "source": "hook"}}]
+
+
+def test_a_waiting_run_is_a_terminal_wait_row_with_the_run_id():
+    from orch_dashboard.adapters.today import TERMINAL_WAIT, terminal_waits
+
+    got = terminal_waits(_runs(), _rows(), {})
+    assert got == [
+        {
+            "kind": "terminal_wait",
+            "ticket": "DEMO-0001",
+            "uid": "u1",
+            "title": "A ticket",
+            "text": TERMINAL_WAIT,
+            "ref": "r_1",
+            "since": "2026-10-26T09:10:00Z",
+            "blocking": False,
+        }
+    ]
+
+
+def test_a_newer_event_or_a_real_need_hides_the_terminal_wait():
+    from orch_dashboard.adapters.today import terminal_waits
+
+    assert terminal_waits(_runs("2026-10-26T08:00:00Z"), _rows(), {}) == []  # the ticket moved on after the marker
+    assert terminal_waits(_runs(), _rows(), {"u1": [{"kind": "question"}]}) == []  # a real question is open
+    assert terminal_waits(_runs(), [], {}) == []  # a ticket the person does not see
+
+
+def test_terminal_waits_are_listed_but_never_counted(monkeypatch):
+    import importlib
+
+    from orch_dashboard.adapters import actionable_count, today
+
+    today_mod = importlib.import_module("orch_dashboard.adapters.today")
+    monkeypatch.setattr(today_mod, "summary", lambda *a, **k: {})
+
+    doc = today({"items": [], "sub_cursor": None}, _rows(), "ws", "now", "Owner", "owner", runs=_runs())
+    assert [n["kind"] for n in doc["needs_you"]] == ["terminal_wait"]
+    assert actionable_count(doc["needs_you"], "owner") == 0

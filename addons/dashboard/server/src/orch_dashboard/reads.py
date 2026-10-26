@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, Query
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from . import adapters
-from .errors import fail
+from .errors import HostError, fail
 from .gateway import WORKSPACE_ID, Gateway
 
 Key = Annotated[str, StringConstraints(pattern=r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}$", max_length=26)]
@@ -86,6 +86,23 @@ def all_rows(gateway: Gateway, ws: str, args: dict, cap: int = MAX_ROWS):
         if not page or len(rows) >= cap:
             break
     return rows[:cap], last
+
+
+def waiting_runs(gateway: Gateway, ws: str) -> list[dict]:
+    """The person's live agent runs the host marks `waiting` ("Agent may need you", run-9 feedback 3.6): `{run, ticket,
+    waiting}` only. A host without runs, or one that cannot say, gives none."""
+    link = gateway.link(ws)
+    if not link.supports("run.list", "run/1"):
+        return []
+    try:
+        data = gateway.call(ws, "run.list", {"state": "live", "kind": "agent"})
+    except HostError:
+        return []
+    return [
+        {"run": r["run"], "ticket": r.get("ticket"), "waiting": r["waiting"]}
+        for r in data.get("runs") or []
+        if isinstance(r, dict) and isinstance(r.get("waiting"), dict) and isinstance(r.get("run"), str)
+    ]
 
 
 def recent_activity(gateway: Gateway, ws: str, want: int = RECENT):
@@ -382,7 +399,8 @@ def register(app: FastAPI, gateway: Gateway):
 
         sign = "hub" if mode_of(gateway, ws) in HUB_ONLY else None  # V3 C11: full hub mode, approved elsewhere
         return adapters.today(
-            data, rows, ws, last.get("as_of") or "", who, role, recent_activity(gateway, ws), closed, sign
+            data, rows, ws, last.get("as_of") or "", who, role, recent_activity(gateway, ws), closed, sign,
+            waiting_runs(gateway, ws),
         )
 
     def listing(ws: str, query: TicketsQuery):

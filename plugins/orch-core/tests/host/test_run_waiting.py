@@ -1,4 +1,4 @@
-"""``waiting`` on a run (run-9 feedback 3.6): the hook marker, else the terminal quiet for a while; new output clears it."""
+"""``waiting`` on a run (run-9 feedback 3.6): hook marker, else a quiet terminal; new output clears it."""
 
 from __future__ import annotations
 

@@ -365,7 +365,11 @@ export class MockStore {
   }
 
   /** Back to the seed. `dataset` switches the demo to that dataset; without it the current one is reloaded. */
+  /** Demo and tests: "Agent may need you: check its terminal" hints the host would send (run-9 feedback 3.6). */
+  terminalWaits: NeedsYouItem[] = []
+
   reset(dataset: Dataset = this.dataset, keepViewer = false) {
+    this.terminalWaits = []
     this.sim.stopAll()
     this.relaySim.clear()
     this.mandatesPreview.reset()
@@ -1485,10 +1489,11 @@ export class MockStore {
     const mayAct = can(this.roleIn(workspaceId, this.viewer), 'ticket.act')
     const mine = mayAct ? this.openItems(workspaceId, this.viewer, tickets, blocks) : []
     const open = this.openItems(workspaceId, undefined, tickets, blocks)
+    const hints = mayAct ? this.terminalWaits : []
     return {
       now: this.now(),
       workspace: workspaceId,
-      needs_you: mine,
+      needs_you: [...mine, ...hints],
       read_only_open: mayAct ? [] : open,
       waiting_on_others: this.waitingOnOthersFrom(workspaceId, this.viewer, mine, open, tickets),
       working: tickets.filter((t) => t.claim).map((t) => this.summary(t, blocks)),

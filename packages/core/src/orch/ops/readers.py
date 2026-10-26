@@ -646,7 +646,9 @@ def check_readers(
             if e.get("type") == "device.removed" and isinstance(e.get("device"), str)
             else frozenset()
         )
-        why = below_level(ws, lv, str(actor.get("id")), str(actor.get("device")), relay_level, gone)
+        # leaving the hub by click waives only the relay reason (a full-mode workspace is relay paired by definition)
+        rl = None if e.get("type") == "hub.left" else relay_level
+        why = below_level(ws, lv, str(actor.get("id")), str(actor.get("device")), rl, gone)
         if why is not None:
             reason, devices = why
             named = f" ({', '.join(devices)})" if devices else ""

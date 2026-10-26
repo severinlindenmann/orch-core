@@ -8,6 +8,8 @@ import { queries } from '@/api/queries'
 import type { HostReader, RosterMember } from '@/api/settings'
 import { DeviceName, nameDevices } from '@/components/sign/RefusalDevices'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Link } from '@tanstack/react-router'
+import { api } from '@/api/client'
 import { Pill } from '../../ticket/shared'
 
 export const NEEDS_UPDATE = 'Needs an update of the orch app'
@@ -37,6 +39,8 @@ export function ReaderLevels({ ws }: { ws: string }) {
   const served = hasFeature('readers', ws)
   const readers = useQuery({ ...queries.readers(ws), enabled: served })
   const roster = useQuery({ ...queries.roster(ws), enabled: served })
+  const click = useQuery({ queryKey: ['click-status', ws], queryFn: () => api.clickStatus(ws), enabled: served })
+  const mine = click.data?.device
   return (
     <section className="space-y-3" aria-labelledby="readers-heading" data-testid="reader-levels">
       <h2 id="readers-heading" className="text-base font-semibold">
@@ -53,9 +57,37 @@ export function ReaderLevels({ ws }: { ws: string }) {
       ) : !readers.data ? (
         <p className="text-[13px] text-text-muted">Loading…</p>
       ) : (
-        <ReaderTable readers={readers.data.readers} required={readers.data.required_reader} roster={roster.data} />
+        <ReaderPanel readers={readers.data.readers} required={readers.data.required_reader} roster={roster.data} mine={mine} />
       )}
     </section>
+  )
+}
+
+/** This computer is the signer: it is shown as ready and never counted (the host's gate skips it too). With no other
+ * device the table and its warning do not appear at all: "Only this computer approves for now" + Connect a hub. */
+function ReaderPanel({ readers, required, roster, mine }: { readers: HostReader[]; required: number | null; roster: RosterMember[] | undefined; mine: string | undefined }) {
+  const others = readers.filter((r) => r.device !== mine)
+  return (
+    <div className="space-y-3">
+      <div data-testid="this-computer" className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-[13px]">
+        <span>
+          <b>This computer</b>
+          <span className="block text-[11px] text-text-muted">Approves with one click</span>
+        </span>
+        <Pill tone="success">Ready</Pill>
+      </div>
+      {others.length === 0 ? (
+        <div data-testid="only-this-computer" className="space-y-2 rounded-md border border-border px-3 py-3 text-[13px]">
+          <b>Only this computer approves for now</b>
+          <p className="text-text-muted">To add a phone or another computer, connect a hub first.</p>
+          <Link data-testid="readers-connect-hub" to="/settings/$tab" params={{ tab: 'hub' }} className="inline-block rounded-md border border-border px-3 py-1 text-chart-4 underline">
+            Connect a hub
+          </Link>
+        </div>
+      ) : (
+        <ReaderTable readers={others} required={required} roster={roster} />
+      )}
+    </div>
   )
 }
 

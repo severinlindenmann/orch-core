@@ -86,7 +86,7 @@ class ChannelError(Exception):
 
 
 def registration_object(
-    hub_id: str, user_id: str, kind: str, key_pub: str, nonce: str, expires_ms: int, dev: bool = True
+    hub_id: str, user_id: str, kind: str, key_pub: str, nonce: str, expires_ms: int, dev: bool
 ) -> dict:
     """The ``hub.channel_register`` object the channel key signs (§6.3). ``attestation`` is the gate the hub checked."""
     return {

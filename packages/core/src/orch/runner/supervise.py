@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import contextlib
 import errno
-import fcntl
 import json
 import logging
 import os
@@ -50,7 +49,6 @@ import signal
 import struct
 import subprocess
 import sys
-import termios
 import threading
 import time
 from collections.abc import Callable
@@ -58,12 +56,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from orch import fdwait
+from orch import fdwait, oslock
+from orch.posixmod import posixmod
 
 from . import procs
 from .cgroup import CgroupTree, detect
 from .ring import RING_BYTES, Ring
 from .table import KEEP_SECONDS, RUN_ID, RunTable, now_iso
+
+fcntl = posixmod("fcntl")
+termios = posixmod("termios")
 
 __all__ = ["EXEC", "SpawnError", "SpawnSpec", "Supervisor"]
 
@@ -363,7 +365,7 @@ class Supervisor:
         ensure_private_dir(self.table.directory, self.uid)
         fd = os.open(self.table.directory / "runner.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
         except BlockingIOError:
             os.close(fd)
             raise RunnerBusy(f"another runner holds {self.table.directory}") from None

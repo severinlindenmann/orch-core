@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import resource
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -27,7 +26,10 @@ from orch.custody import NoPrompt
 from orch.host.errors import HostError
 from orch.market import ADDONS
 from orch.ops.workspace_init import Terminal
+from orch.posixmod import posixmod
 from orch.runner.cli import _state, _workspace
+
+resource = posixmod("resource")
 
 __all__ = ["main"]
 

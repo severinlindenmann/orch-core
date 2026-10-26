@@ -23,7 +23,6 @@ reaches running code without the person's signed grant.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import json
 import os
@@ -34,6 +33,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+from orch import oslock
 from orch.market import ADDONS, MarketError
 from orch.store.fsio import write_atomic
 
@@ -145,7 +145,7 @@ class MarketFiles:
         with _MU:
             fd = os.open(directory / "markets.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
+                oslock.flock(fd, oslock.LOCK_EX)
 
                 def write(records: dict[str, dict[str, Any]], caches: dict[str, bytes]) -> None:
                     for url, data in caches.items():  # the cache first: a record never points at a missing file
@@ -189,7 +189,7 @@ class MarketFiles:
         with _MU:
             fd = os.open(directory / "markets.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX)
+                oslock.flock(fd, oslock.LOCK_EX)
 
                 def write(doc: dict[str, Any]) -> None:
                     body = json.dumps({"v": 1, **doc}, sort_keys=True).encode()
@@ -286,7 +286,7 @@ class MarketFiles:
         )
         try:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
             except OSError:
                 raise MarketError("market.refresh_running") from None
             yield

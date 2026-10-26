@@ -6,12 +6,13 @@ import asyncio
 import contextlib
 import errno
 import logging
-import resource
 import socket
 from collections import deque
 from collections.abc import Awaitable, Callable
 from time import monotonic
 from typing import Any, Protocol
+
+from orch.posixmod import posixmod
 
 from . import frames
 from ._socket import Credentials as Credentials
@@ -30,6 +31,8 @@ from .listener import (
     default_run_directory as default_run_directory,
 )
 from .peer import Peer as Peer
+
+resource = posixmod("resource")
 
 IDLE_SECONDS = 600
 RECHECK_SECONDS = 60

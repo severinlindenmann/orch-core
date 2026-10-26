@@ -27,8 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import fcntl
-import grp
 import hashlib
 import logging
 import os
@@ -39,9 +37,10 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
-from orch import canon
+from orch import canon, oslock
 from orch import layout as layout_mod
 from orch.layout import LayoutError
+from orch.posixmod import posixmod
 
 from . import frames
 from ._unix import UnsafePath
@@ -59,6 +58,8 @@ from .pins import AgentPins, AgentShare
 from .registry import Entry, Registry, host_dir
 from .transport import WRITE_TIMEOUT_SECONDS, HostLimits, Server
 from .workspace import OpBackend, WorkspaceGate, WorkspaceService
+
+grp = posixmod("grp")
 
 
 def _release_id() -> str:
@@ -311,7 +312,7 @@ class Host:
         path = host_dir(self.state_dir) / "host.lock"
         fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
         except BlockingIOError:
             try:
                 other = os.pread(fd, 32, 0).decode("ascii", "replace").strip() or "unknown"

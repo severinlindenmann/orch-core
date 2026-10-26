@@ -26,7 +26,6 @@ import contextlib
 import ipaddress
 import json
 import os
-import pwd
 import socket
 import subprocess
 import sys
@@ -37,8 +36,11 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from orch.host.errors import HostError
+from orch.posixmod import posixmod
 from orch.setup import osfront
 from orch.setup.oslauncher import LAUNCHER_PATH
+
+pwd = posixmod("pwd")
 
 __all__ = ["main"]
 

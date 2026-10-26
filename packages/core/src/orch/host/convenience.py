@@ -28,7 +28,6 @@ request.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import os
 import stat
 import time
@@ -36,6 +35,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from orch import oslock
 from orch.ops.readers import (  # one list for the host and the op handlers
     READER_OPS,
     convenience_seen,
@@ -734,7 +734,7 @@ def _flock(state_dir: Path, name: str, host_uid: int) -> Iterator[None]:
         deadline = time.monotonic() + LOCK_WAIT
         while True:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
                 break
             except BlockingIOError:
                 if time.monotonic() >= deadline:

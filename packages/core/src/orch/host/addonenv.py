@@ -28,7 +28,6 @@ changed environment is ``market.env_changed`` and the add-on does not run.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import logging
 import os
@@ -43,6 +42,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from orch import oslock
 from orch.addons import envtree, install, lockfile
 from orch.addons.envtree import TreeError
 from orch.addons.manifest import ManifestError
@@ -101,7 +101,7 @@ def _flock(service: WorkspaceService, name: str, *, block: bool = True) -> Itera
     fd = os.open(d / f"{name}.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
+            oslock.flock(fd, oslock.LOCK_EX | (0 if block else oslock.LOCK_NB))
         except BlockingIOError:
             yield False
             return

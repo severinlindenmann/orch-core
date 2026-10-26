@@ -12,10 +12,8 @@ workspace: an unreadable pin never turns an agent into a person. An unknown clas
 
 from __future__ import annotations
 
-import grp
 import json
 import os
-import pwd
 import re
 import stat
 import sys
@@ -23,7 +21,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from orch.posixmod import posixmod
+
 from ._unix import UnsafePath
+
+grp = posixmod("grp")
+pwd = posixmod("pwd")
 
 __all__ = ["DEFAULT_PIN_DIR", "AgentPins", "AgentShare"]
 

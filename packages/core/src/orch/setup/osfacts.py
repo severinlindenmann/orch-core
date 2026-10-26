@@ -10,9 +10,7 @@ reads as accessible, so a check that wants "not readable by the agent" fails rat
 from __future__ import annotations
 
 import errno
-import grp
 import os
-import pwd
 import stat
 import struct
 import sys
@@ -22,6 +20,11 @@ from functools import reduce
 from operator import or_
 from pathlib import Path
 from typing import Protocol
+
+from orch.posixmod import posixmod
+
+grp = posixmod("grp")
+pwd = posixmod("pwd")
 
 __all__ = ["GroupInfo", "OsFacts", "PathInfo", "RealOsFacts", "UnitState", "UserInfo"]
 

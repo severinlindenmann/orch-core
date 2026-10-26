@@ -21,7 +21,6 @@ import contextlib
 import errno
 import json
 import os
-import pwd
 import secrets
 import stat
 import struct
@@ -29,6 +28,8 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from typing import Protocol
+
+from orch.posixmod import posixmod
 
 from .osfacts import UNREADABLE, GroupInfo, OsFacts, RealOsFacts
 from .oslauncher import TRUSTED_ROOT
@@ -46,6 +47,8 @@ from .osusers import (
     plan,
     valid_person,
 )
+
+pwd = posixmod("pwd")
 
 __all__ = [
     "BIN",

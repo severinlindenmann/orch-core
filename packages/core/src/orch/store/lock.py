@@ -1,4 +1,4 @@
-"""The workspace lock: one cross-process lock per file (``fcntl.flock``; ``msvcrt.locking`` on Windows).
+"""The workspace lock: one cross-process lock per file (``orch.oslock``: ``fcntl.flock``, ``LockFileEx`` on Windows).
 
 Within a process the lock is re-entrant and shared by every :class:`FileLock` of the same lock file, by inode (two
 ``flock`` file descriptions of one file would deadlock a process against itself). The lock file is never deleted.
@@ -16,11 +16,7 @@ from .errors import StoreError
 
 __all__ = ["FileLock", "LockTimeout"]
 
-try:  # POSIX
-    import fcntl
-except ImportError:  # pragma: no cover - Windows
-    fcntl = None  # type: ignore[assignment]
-    import msvcrt
+from .. import oslock
 
 _registry: dict[tuple[int, int], _Held] = {}
 _registry_guard = threading.Lock()
@@ -43,32 +39,18 @@ class _Held:
 
 def _flock(fd: int, timeout: float | None) -> None:
     deadline = None if timeout is None else time.monotonic() + timeout
-    if fcntl is not None:
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return
-            except BlockingIOError:
-                if deadline is not None and time.monotonic() >= deadline:
-                    raise LockTimeout() from None
-                time.sleep(0.002)
-    while True:  # pragma: no cover - Windows
+    while True:
         try:
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            oslock.flock(fd, oslock.LOCK_EX | oslock.LOCK_NB)
             return
-        except OSError:
+        except BlockingIOError:
             if deadline is not None and time.monotonic() >= deadline:
                 raise LockTimeout() from None
-            time.sleep(0.01)
+            time.sleep(0.002)
 
 
 def _funlock(fd: int) -> None:
-    if fcntl is not None:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    else:  # pragma: no cover - Windows
-        os.lseek(fd, 0, os.SEEK_SET)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    oslock.flock(fd, oslock.LOCK_UN)
 
 
 class FileLock:

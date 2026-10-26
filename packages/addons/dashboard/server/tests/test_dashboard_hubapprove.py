@@ -11,7 +11,7 @@ import pytest
 from conftest import ORIGIN
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from test_dashboard_click import approve, click_start, hdr, prepare, script, url  # noqa: F401
+from test_dashboard_click import approve, backup, click_start, hdr, host_check, prepare, script, url  # noqa: F401
 
 from orch_dashboard import click, hubapprove
 from orch_dashboard.errors import HostError, fail, host_response
@@ -162,6 +162,14 @@ def test_click_status_reports_the_mode_and_prepare_is_refused_in_full_mode(clien
     res = prepare(client, token, stub)
     assert res.status_code == 403 and res.json()["error"]["code"] == "sign.hub_only"
     assert script.prepared == 0  # the signer is never asked
+
+
+def test_leaving_the_hub_is_prepared_in_full_mode(client, token, stub, script, backup, monkeypatch):
+    """e2e-4: hub.leave is the break-glass the host takes by click; refusing it left no way out of full mode."""
+    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "full")
+    res = client.post(f"/api/w/{stub.ws}/click/prepare", json={"action": "hub_leave"}, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert script.prepared == 1  # the signer was asked: the full-mode refusal did not fire
 
 
 def test_unknown_mode_is_refused_like_full(client, token, stub, script, monkeypatch):

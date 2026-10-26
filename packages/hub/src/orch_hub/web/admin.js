@@ -1,5 +1,7 @@
 import { renderText } from "./render.js";
 
+let showLeft = false;
+
 function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(props)) {
@@ -96,7 +98,7 @@ export function adminView(d) {
       h("div", { class: "form-grid" }, fields, button));
   }
   const enc = encodeURIComponent;
-  const workspaceName = (id) => txt(data.workspaces.find((w) => w.workspace_id === id)?.name ?? "Workspace " + String(id).slice(0, 8));
+  const workspaceName = (id) => txt(data.workspaces.find((w) => w.workspace_id === id)?.name ?? "Workspace");
   const personName = (id) => txt(data.users.find((u) => u.user_id === id)?.name ?? id);
   const groupMembers = (group) => (data.groups.find((g) => g.name === group)?.members ?? []).map(personName).join(", ") || "No members";
   function people() {
@@ -182,7 +184,16 @@ export function adminView(d) {
   function workspaces() {
     return [h("div", { class: "row" }, h("h2", { class: "grow", text: "Workspaces" }),
       h("button", { type: "button", class: "pri", id: "connect-workspace", text: "Connect a workspace", onclick: (ev) => void mintLink(ev.target) })),
-      connectBox, ...data.workspaces.map((w) => h("article", { class: "card" },
+      connectBox,
+      data.workspaces.some((w) => w.status === "unbound") ? field("Show left workspaces", h("input", {
+        type: "checkbox", checked: showLeft, onchange: (ev) => { showLeft = ev.target.checked; draw(); },
+      })) : null,
+      ...data.workspaces.filter((w) => showLeft || w.status !== "unbound").map((w) => w.status === "unbound"
+        ? h("article", { class: "card left" },
+          h("div", { class: "row" }, h("h3", { class: "grow", text: workspaceName(w.workspace_id) }), chip("Left")),
+          p(w.left_ms == null ? "Left on an unknown date" : "Left on " + new Date(w.left_ms).toLocaleDateString()),
+          remove("Remove", "DELETE", "/admin/workspaces/" + w.workspace_id))
+        : h("article", { class: "card" },
       h("div", { class: "row" }, h("h3", { class: "grow", text: workspaceName(w.workspace_id) }), chip(w.mode === "full" ? "Full" : "Selective", w.mode === "full" ? "full" : "sel")),
       p(w.mode === "full" ? "Hub can read everything" : "Hub can read shared items and summaries"),
       chip((w.online ?? (w.status === "bound" || w.status === "online")) ? "Connection online" : "Connection offline", (w.online ?? (w.status === "bound" || w.status === "online")) ? "ok" : "warn"),

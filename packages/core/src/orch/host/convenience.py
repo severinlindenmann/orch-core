@@ -406,6 +406,7 @@ def why(
     *,
     gated: bool = False,
     removing: frozenset[str] = frozenset(),
+    ignore_relay: bool = False,
 ) -> tuple[str, list[str]] | None:
     """The first reason convenience signing is not allowed now and the readers below level 1 it names, or None.
     H12d-2 (§0.8.6 item 9.9): ``other_member`` and ``phone_device`` count only readers below level 1 (a current
@@ -418,7 +419,9 @@ def why(
     methods = store.state.workspace.settings.get("sign_methods")
     if not gated and methods is not None and "click" not in methods:  # B6: the workspace does not allow one click
         return "disabled", []
-    if _relay_paired(state_dir, workspace_id):
+    # ignore_relay: leaving the hub (hub.left) by click; a full-mode workspace is relay paired by definition, and only
+    # that reason is waived (other_member, phone_device, reader_version stay)
+    if not ignore_relay and _relay_paired(state_dir, workspace_id):
         return "relay_paired", []
     ws = store.state.workspace
     found = below_level(ws, levels(state_dir, workspace_id, store.state, host_uid), person, device, None, removing)
@@ -469,7 +472,15 @@ def unavailable(reason: str, devices: list[str], *, hours: int | None = None) ->
     )
 
 
-def check(service: Any, person: str, device: str, *, gate: Any = None, removing: frozenset[str] = frozenset()) -> None:
+def check(
+    service: Any,
+    person: str,
+    device: str,
+    *,
+    gate: Any = None,
+    removing: frozenset[str] = frozenset(),
+    leaving: bool = False,
+) -> None:
     """Raise ``sign.convenience_unavailable`` (message ``<reason>: …``, detail ``{reason, devices}``) unless the
     condition holds. §11A.17: for a column-R event
     with a :class:`~orch.host.devmode.DevGate` of this workspace, the gate stands in for the flag (``disabled`` does
@@ -479,7 +490,7 @@ def check(service: Any, person: str, device: str, *, gate: Any = None, removing:
     gated = isinstance(gate, DevGate) and gate.workspace_id == service.workspace_id
     found = why(
         service.store, service.state_dir, service.workspace_id, service.host_uid, person, device, gated=gated,
-        removing=removing,
+        removing=removing, ignore_relay=leaving,
     )  # fmt: skip
     if found is not None:
         if found[0] == "idle":

@@ -77,9 +77,13 @@ def test_convenience_defaults_to_the_workspace_of_the_current_folder(served, mon
     convenience.set_enabled(served.lab.state, served.wid, True, UID)
     monkeypatch.chdir(served.service.entry.root)
     monkeypatch.setenv("PWD", os.getcwd())
-    code, out, _ = run("host", "convenience", "on", "--state", state)  # `on` never defaults to the folder
-    assert code == 5 and "--workspace is required" in out
-    assert f"convenience on --workspace {served.service.entry.prefix}" in out  # the folder's prefix, not a placeholder
+    from orch.custody import select as _select
+
+    real_status = _select.status  # B8: `on` infers the folder's workspace exactly like `off`
+    monkeypatch.setattr(_select, "status", lambda st, wid: {**real_status(st, wid), "custody": "convenience"})
+    code, out, _ = run("host", "convenience", "on", "--state", state)
+    monkeypatch.setattr(_select, "status", real_status)
+    assert code == 0 and "this folder belongs to" in out and served.service.entry.prefix in out
     code, out, _ = run("host", "convenience", "off", "--state", state)
     assert code == 0 and not convenience.enabled(served.lab.state, served.wid, UID)
     assert "this folder belongs to" in out and served.service.entry.prefix in out
@@ -163,9 +167,7 @@ def _with_passphrase(create, passphrase):
     return wrapped
 
 
-def test_the_on_hint_names_the_prefix_only_when_the_folder_is_not_reached_through_a_symlink(
-    served, monkeypatch, tmp_path
-):
+def test_the_on_hint_gives_the_placeholder_when_the_folder_is_reached_through_a_symlink(served, monkeypatch, tmp_path):
     """A copyable hint must not be steerable: a planted symlink ($PWD != real cwd) gets the placeholder."""
     state = str(served.lab.state)
     link = tmp_path / "link"
@@ -175,10 +177,6 @@ def test_the_on_hint_names_the_prefix_only_when_the_folder_is_not_reached_throug
     code, out, _ = run("host", "convenience", "on", "--state", state)
     assert code == 5 and "convenience on --workspace <your workspace prefix>" in out
     assert served.service.entry.prefix not in out
-    monkeypatch.chdir(served.service.entry.root)
-    monkeypatch.setenv("PWD", os.getcwd())
-    code, out, _ = run("host", "convenience", "on", "--state", state)
-    assert f"convenience on --workspace {served.service.entry.prefix}" in out
 
 
 def test_convenience_off_asks_to_move_the_key_back_only_with_a_terminal(served, monkeypatch):
@@ -202,3 +200,12 @@ def test_convenience_off_asks_to_move_the_key_back_only_with_a_terminal(served, 
     monkeypatch.setattr(select, "downgrade_in_place", lambda *a, **k: (_ for _ in ()).throw(select.CustodyError("x")))
     code, out, _ = run("host", "convenience", "off", "--workspace", served.wid, "--state", state)
     assert code != 0 and "could not be moved back" in out and "orch keys custody passphrase" in out
+
+
+def test_passphrase_prompt_wording_for_an_existing_key_moving_back():
+    """B9: moving a key back under a passphrase is not "create this key"."""
+    from orch.custody.passphrase import PassphraseRequest, render_prompt
+
+    assert "action: create this key" in render_prompt(PassphraseRequest("create", "dk", "", ""))
+    moved = render_prompt(PassphraseRequest("create", "dk", "", "", existing=True))
+    assert "protect your key with a passphrase again" in moved and "create this key" not in moved

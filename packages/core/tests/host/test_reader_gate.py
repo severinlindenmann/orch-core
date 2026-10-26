@@ -174,6 +174,27 @@ def test_other_member_and_phone_device_count_only_readers_below_level_1(click, s
     refused(lambda: click.prepare("log", {"ref": key, "text": "z"}), "sign.convenience_unavailable", "other_member")
 
 
+def test_readers_old_expires_on_status_without_restarting(click, served, human, monkeypatch):
+    from orch.click import signer as click_signer
+    from orch.custody import select
+
+    now = 100.0
+    monkeypatch.setattr(click_signer.time, "monotonic", lambda: now)
+    monkeypatch.setattr(select, "status", lambda *a: {"custody": "convenience", "device": click.owner.device})
+    _, key = human.ticket()
+    q = served.lab.add_member()
+    refused(lambda: click.prepare("log", {"ref": key, "text": "x"}), "sign.convenience_unavailable", "other_member")
+    (row,) = click.signer.status({})["workspaces"]
+    assert row["problem"] == "readers_old" and row["available"] is False
+
+    declare(served, q, 1)
+    now += click_signer.READERS_OLD_TTL + 0.01
+    (row,) = click.signer.status({})["workspaces"]
+    assert row["available"] is True and "problem" not in row
+    assert served.wid not in click.signer.problems
+    assert served.wid not in click.signer.problem_at
+
+
 def test_a_member_added_without_a_declaration_drops_a_stale_record_at_the_host(served, human):
     convenience.set_enabled(served.lab.state, served.wid, False, UID)
     q, args, files = _member(served, None)

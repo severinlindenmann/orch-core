@@ -9,7 +9,6 @@ import { Action, Flow, NoOneClick, useHub, useHubRefresh, useOneClick } from './
 // after the signed switch the host tells the hub (hub.connect without an invite) and seals the workspace key to it.
 export function FullSwitch({ ws, onClose }: { ws: string; onClose: () => void }) {
   const oneClick = useOneClick(ws)
-  const refresh = useHubRefresh(ws)
   const status = useHub(ws).data
   const [signed, setSigned] = useState(false)
   const card = status?.hub_card ?? null
@@ -21,9 +20,9 @@ export function FullSwitch({ ws, onClose }: { ws: string; onClose: () => void })
   return <Flow title="Let the hub read everything" onClose={onClose} finish="here">
     {review}
     {!status?.hub_id || !card ? <p role="alert" data-testid="hub-full-nocard">The host did not give this page the hub it joined. Reload, or leave the hub and connect again.</p>
-      : oneClick !== 'on' ? <NoOneClick state={oneClick} what="Switching" />
       : signed ? <Connect ws={ws} card={card} onClose={onClose} />
-      : <HubStep ws={ws} action={{ action: 'hub_mode_full', hub_card: card, hub_id: status.hub_id }} onClose={onClose} onChanged={() => { refresh(); setSigned(true) }} />}
+      : oneClick !== 'on' ? <NoOneClick state={oneClick} what="Switching" />
+      : <HubStep ws={ws} action={{ action: 'hub_mode_full', hub_card: card, hub_id: status.hub_id }} onClose={onClose} onChanged={() => { setSigned(true) }} />}
   </Flow>
 }
 
@@ -35,7 +34,7 @@ function Connect({ ws, card, onClose }: { ws: string; card: string; onClose: () 
   const run = () => {
     setState('working'); setWhy('')
     api.connectHub(ws, { idem: newIdem(), hub_card: card }).then(
-      () => { setState('done'); refresh() },
+      () => { refresh(); onClose() }, // connected: the page shows full mode, nothing else is prepared
       e => { setWhy(e instanceof ApiError && e.message ? e.message : 'The hub did not answer.'); setState('failed') },
     )
   }

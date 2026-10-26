@@ -1058,3 +1058,32 @@ def test_a_removal_cannot_clear_the_readers_rule_while_another_reader_still_fail
     _, key = human.ticket()
     with pytest.raises(ClickError):  # no blanket exemption: other ops stay refused
         click.prepare("log", {"ref": key, "text": "x"})
+
+
+def test_leaving_the_hub_by_click_ignores_the_readers_reasons(click, served, human):
+    """e2e-4: a full-mode workspace is relay paired, so every click was refused; hub.leave is the way out."""
+    (served.lab.state / "hosts" / served.wid / "membership").mkdir(parents=True)
+    svc, dev = served.service, human.person.device
+    with pytest.raises(Exception, match="relay_paired"):
+        convenience.check(svc, human.person.ref, dev)
+    convenience.check(svc, human.person.ref, dev, leaving=True)
+    convenience.set_enabled(served.lab.state, served.wid, False, UID)
+    with pytest.raises(Exception, match="disabled"):
+        convenience.check(svc, human.person.ref, dev, leaving=True)  # the flag still decides
+
+
+@pytest.mark.parametrize("reason", ["other_member", "phone_device", "reader_version"])
+def test_leaving_the_hub_still_refuses_other_readers(click, served, human, monkeypatch, reason):
+    """Only relay_paired is waived for hub.leave; another reader below level 1 or an old model still refuses it.
+    (`why` imports levels/below_level from orch.ops.readers at call time, so patching that module takes effect.)"""
+    from orch.ops import readers
+
+    (served.lab.state / "hosts" / served.wid / "membership").mkdir(parents=True)
+    if reason == "reader_version":
+        monkeypatch.setattr(convenience, "_model_knows", lambda: False)
+    else:
+        monkeypatch.setattr(readers, "levels", lambda *a, **k: {})
+        monkeypatch.setattr(readers, "below_level", lambda *a, **k: (reason, ["d_x"]))
+    svc, dev = served.service, human.person.device
+    with pytest.raises(Exception, match=reason):
+        convenience.check(svc, human.person.ref, dev, leaving=True)

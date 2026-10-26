@@ -251,3 +251,17 @@ def test_a_record_that_is_not_an_object_is_level_0(tmp_path):
     for raw in (b"[]", b"7", b'"x"', b"null"):
         path.write_bytes(raw)
         assert readers.levels(tmp_path, WS, _state(_ws(a))) == {a.device: None}
+
+
+def test_hub_left_by_convenience_waives_only_the_relay_reason():
+    me, other = Person(), Person()
+    ws = _ws(me, other)
+    left = {**_conv(me), "type": "hub.left"}
+    ok = {me.device: None, other.device: 1}
+    readers.check_readers(ws, ok, [left], required=0, relay_level=0)  # relay_paired alone: leaving passes
+    with pytest.raises(readers.ReadersRefused) as info:  # the same relay refuses any other convenience event
+        readers.check_readers(ws, ok, [_conv(me)], required=0, relay_level=0)
+    assert info.value.reason == "relay_paired"
+    with pytest.raises(readers.ReadersRefused) as info:  # another member's old reader still refuses leaving
+        readers.check_readers(ws, {**ok, other.device: 0}, [left], required=0, relay_level=0)
+    assert info.value.reason == "other_member"

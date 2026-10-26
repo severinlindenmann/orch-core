@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { plainReason, Setup, summarize } from './Setup'
+import { plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -8,7 +8,7 @@ const state: SetupState = {
   mode: 'new',
   dir: '/demo/project',
   dir_name: 'project',
-  suggested: { name: 'Demo', prefix: 'TST' },
+  suggested: { name: 'Demo', workspace_name: 'Personal Workspace', prefix: 'TST' },
   addons: [
     {
       id: 'dashboard',
@@ -115,11 +115,11 @@ function fake(
         ...(options.complete ? { complete: true } : {}),
         ...(options.defaults
           ? {
-              suggested: { name: 'Demo', prefix: 'TST', agent_hours: 72, agent_grant: true },
+              suggested: { name: 'Demo', workspace_name: 'Personal Workspace', prefix: 'TST', agent_hours: 72, agent_grant: true },
               addons: state.addons.map((a) => (a.id === 'worktrees' ? { ...a, default: true } : a)),
             }
           : {}),
-        ...(options.suggested ? { suggested: { name: 'Demo', prefix: 'TST', ...options.suggested } } : {}),
+        ...(options.suggested ? { suggested: { name: 'Demo', workspace_name: 'Personal Workspace', prefix: 'TST', ...options.suggested } } : {}),
         ...(options.finish ? { current } : {}),
       }
     if (path === 'secrets/reveal')
@@ -139,8 +139,9 @@ function fake(
               workspace: {
                 prefix: 'RA',
                 name: 'Severin',
+                workspace_name: 'Marketing',
                 dir: '/demo/orch-run2-a',
-                lines: ['Workspace RA for Severin', 'Short name: RA', 'Person: Severin', 'Folder: /demo/orch-run2-a'],
+                lines: ['Workspace Marketing (RA) for Severin', 'Ticket prefix: RA', 'Person: Severin', 'Folder: /demo/orch-run2-a'],
               },
             }),
         tty_confirm: !!options.finish,
@@ -223,7 +224,7 @@ test('shows secrets only as text, sends exactly three words, drops secrets after
   expect(screen.queryByRole('button', { name: /Copy passphrase|PDF/ })).not.toBeInTheDocument()
   expect(screen.getByText(/If setup fails before/)).toBeInTheDocument()
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(container.textContent).not.toContain('demo-word-')
   expect(container.textContent).not.toContain('demo-not-a-real-passphrase')
   expect(f.calls.find((c) => c.path === 'secrets/confirm')?.body).toEqual({
@@ -313,13 +314,13 @@ test('long runner access is one plain click after the review; digest and fingerp
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
-  expect(screen.getByText('This computer’s agent runner may work on any ticket you can see, as you, for 3 days')).toBeInTheDocument()
+  await screen.findByRole('heading', { name: 'Check and create' })
+  expect(document.querySelector('.review-summary')).toHaveTextContent('may work for 3 days')
   expect(screen.queryByText(/scope workable/)).toBeNull() // the raw values are only in the technical details
   expect(screen.getByText(/Return to the terminal window where you started orch setup/)).toBeInTheDocument()
   expect(screen.getByText(/Check that the terminal shows the same words/)).toHaveTextContent('demo not real. If they match, type yes in the terminal and press Enter.')
   // everything signed stays inspectable, collapsed in one disclosure
-  expect(screen.getByText('Show technical details').closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByText(/^Everything you approve \(/).closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Create workspace' })).toBeEnabled()
   expect(screen.queryByLabelText(/Type/)).toBeNull()
@@ -345,7 +346,7 @@ test('finish skips secrets; progress exposes failure and Finish setup later', as
   await screen.findByRole('heading', { name: 'Finish setup in project' })
   fireEvent.click(screen.getByLabelText(/Worktrees/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(f.calls.some((c) => c.path.startsWith('secrets/'))).toBe(false)
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
   await screen.findByRole('heading', { name: 'Setup needs your attention' })
@@ -381,11 +382,11 @@ test('review.changed rebuilds the review without trying to reveal secrets again'
   render(<Setup api={new SetupAPI('demo-not-a-real-token', fetcher)} />)
   await reveal()
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'How do you want to approve things?' })
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(f.calls.filter((c) => c.path === 'secrets/reveal')).toHaveLength(1)
   expect(f.calls.filter((c) => c.path === 'review')).toHaveLength(2)
 })
@@ -426,7 +427,7 @@ test('successful progress offers the workspace, while finish mode never reveals 
   await screen.findByRole('heading', { name: 'Finish setup in project' })
   fireEvent.click(screen.getByLabelText(/Worktrees/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
   await screen.findByRole('heading', { name: 'Your workspace is ready' })
   expect(screen.getByRole('button', { name: 'Open your workspace →' })).toBeEnabled()
@@ -461,7 +462,7 @@ test('extended access without a runner grant is one plain click, with no word to
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(screen.queryByLabelText(/Type/)).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await waitFor(() => expect(f.calls.find(c => c.path === 'create')?.body).toEqual({ review_id: 'demo-review', digest: 'demo-digest' }))
@@ -473,7 +474,7 @@ test.each(['waiting for terminal', 'waiting for runner'])('shows progress waitin
   render(<Setup api={f.api} />)
   await reveal()
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   expect(await screen.findByRole('status')).toHaveTextContent(
     waiting === 'waiting for terminal' ? 'Now look at your terminal: orch asks you to confirm there.' : 'Waiting for the agent runner to connect…')
@@ -543,8 +544,8 @@ test('review is a compact plain summary; blanks and "set at signing" lines stay 
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
-  expect(screen.getByText('You are about to approve')).toBeInTheDocument()
+  await screen.findByRole('heading', { name: 'Check and create' })
+  expect(screen.getByText('Check and create')).toBeInTheDocument()
   expect(screen.queryByText('""')).toBeNull()
   expect(screen.queryByText(/: set at signing/)).toBeNull()
   expect(screen.getByText('Times and IDs are filled in when you sign.')).toBeInTheDocument()
@@ -568,7 +569,7 @@ test('finish shows the current values read-only and offers only what is missing,
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeDisabled()
   fireEvent.click(screen.getByLabelText(/Worktrees/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({
     name: 'Demo',
     prefix: 'TST',
@@ -597,13 +598,13 @@ test('the steps have visible names next to the dots', async () => {
   expect(nav.querySelector('[aria-current="step"]')).toHaveTextContent('Welcome')
 })
 
-test('the name is not prefilled and the hint follows the typed short name', async () => {
+test('the name is not prefilled and the preview follows the typed prefix', async () => {
   const f = fake()
   const fetcher: typeof fetch = async (url, init) => {
     const res = await f.fetcher(url, init)
     if (String(url).endsWith('/state')) {
       const body = await res.json()
-      return new Response(JSON.stringify({ ...body, suggested: { name: '', prefix: 'TST' } }))
+      return new Response(JSON.stringify({ ...body, suggested: { name: '', workspace_name: 'Personal Workspace', prefix: 'TST' } }))
     }
     return res
   }
@@ -612,8 +613,43 @@ test('the name is not prefilled and the hint follows the typed short name', asyn
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   expect(screen.getByLabelText('Your name')).toHaveValue('')
   expect(screen.getByRole('button', { name: 'Continue →' })).toBeDisabled()
-  fireEvent.change(screen.getByLabelText('Workspace short name'), { target: { value: 'RA' } })
-  expect(screen.getByText('Used in ticket names, like RA-0001.')).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText(/^Ticket prefix/), { target: { value: 'RA' } })
+  expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('RA-0001')
+  expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('RA-0003')
+})
+
+test('the prefix is suggested from the workspace name until the person edits it', async () => {
+  const f = fake()
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up orch in project' })
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Ann' } })
+  const prefix = screen.getByLabelText(/^Ticket prefix/)
+  fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Other' } })
+  fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Personal Workspace' } })
+  expect(prefix).toHaveValue('PW')
+  expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('PW-0001')
+  fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Marketing' } })
+  expect(prefix).toHaveValue('MARK')
+  fireEvent.change(prefix, { target: { value: 'mx' } })
+  expect(prefix).toHaveValue('MX')
+  fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Sales Team' } })
+  expect(prefix).toHaveValue('MX') // edited by hand: no longer suggested
+  fireEvent.change(prefix, { target: { value: 'M' } })
+  expect(screen.getByRole('button', { name: 'Continue →' })).toBeDisabled()
+})
+
+test('the ready list gives every status an icon and a word, never colour alone', async () => {
+  const f = fake({ finish: true, running: true })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Finish setup in project' })
+  fireEvent.click(screen.getByLabelText(/Worktrees/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Check and create' })
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+  const running = await screen.findByLabelText('Create workspace: Running')
+  expect(running).toHaveClass('status', 'doing')
+  expect(running).toHaveTextContent('Running')
 })
 
 test('agent step: no raw capability codes, plain worktrees text, quick tasks has no switch, No agent access is the default', async () => {
@@ -644,7 +680,7 @@ test('the "If setup fails" warning shows once, after the words, and not again on
   const words = container.querySelector('.recovery-print')!
   expect(words.compareDocumentPosition(container.querySelector('.warning')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(page(container)).not.toContain('If setup fails')
 })
 
@@ -677,7 +713,7 @@ test('the progress words are shown, and the unfinished items are named in words'
   await screen.findByRole('heading', { name: 'Finish setup in project' })
   fireEvent.click(screen.getByLabelText(/Worktrees/))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
   await screen.findByRole('heading', { name: 'Setup needs your attention' })
   expect(page(container)).toContain('one-click could not be set up because')
@@ -721,11 +757,11 @@ test('the summary comes from the review core returned, not from the choices on t
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('Agents may work for you for up to 1 day')
+  expect(summary).toHaveTextContent('may work for 1 day')
   expect(summary).not.toHaveTextContent('3 days')
-  expect(summary).toHaveTextContent('Every approval asks for your passphrase in a terminal.')
+  expect(summary).toHaveTextContent('In a terminal, with your passphrase')
 })
 
 test('nothing about agents or approval is claimed when the review has none of it', async () => {
@@ -736,12 +772,12 @@ test('nothing about agents or approval is claimed when the review has none of it
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   const summary = document.querySelector('.review-summary')!
   expect(summary).not.toHaveTextContent(/7 days|terminal|one click|Agents may/)
 })
 
-test('a review item of a kind this page does not know is named in the summary and opens the details', async () => {
+test('a review item of a kind this page does not know is named in the summary and the details stay closed', async () => {
   const { api } = withReview({
     items: [
       { id: 'mystery', title: 'Something new to sign', lines: ['Do the new thing'], details: [], volatile: [], type: 'thing.done', fields: {}, placeholders: [], placeholder_details: [] },
@@ -752,9 +788,9 @@ test('a review item of a kind this page does not know is named in the summary an
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(document.querySelector('.review-summary')).toHaveTextContent('Something new to sign')
-  expect(screen.getByText('Show technical details').closest('details')).toHaveAttribute('open')
+  expect(screen.getByText(/^Everything you approve \(/).closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText('Do the new thing')).toBeInTheDocument()
 })
 
@@ -769,7 +805,7 @@ test('a settings change this page does not know is named, not summarised away', 
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(document.querySelector('.review-summary')).toHaveTextContent('Workspace settings')
 })
 
@@ -795,7 +831,7 @@ test('only the lines core flags as placeholders are hidden; a line that merely e
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   const details = document.querySelector('.review-technical')!
   expect(details).toHaveTextContent('label: set at signing')
   expect(details).toHaveTextContent('note: set at signing')
@@ -804,16 +840,16 @@ test('only the lines core flags as placeholders are hidden; a line that merely e
   expect(details).not.toHaveTextContent('expires_at: set at signing')
 })
 
-test('an unrecognised flag is shown in the summary and opens the details', async () => {
+test('an unrecognised flag is shown in the summary and the details stay closed', async () => {
   const { api } = withReview({ flags: [{ id: 'surprise', text: 'Something else happens too.' }] })
   render(<Setup api={api} />)
   await approval()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(document.querySelector('.review-summary')).toHaveTextContent('Something else happens too.')
-  expect(screen.getByText('Show technical details').closest('details')).toHaveAttribute('open')
+  expect(screen.getByText(/^Everything you approve \(/).closest('details')).not.toHaveAttribute('open')
 })
 
 test('the runner line comes from the signed grant item, not from review.runner_grant', async () => {
@@ -827,9 +863,9 @@ test('the runner line comes from the signed grant item, not from review.runner_g
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('may work on any ticket you can see, as you, for 1 day')
+  expect(summary).toHaveTextContent('may work for 1 day')
   expect(summary).not.toHaveTextContent(/7 days|everything/)
 })
 
@@ -838,7 +874,7 @@ test.each([
   ['a grant item without hours', { id: 'runner_grant', type: 'grant.issued', fields: { type: 'grant.issued' } }],
   ['a settings payload with extra keys', { id: 'settings', type: 'settings.changed', fields: { type: 'settings.changed', set: { grant_hours: 24 }, extra: 1 } }],
   ['a non-number grant_hours', { id: 'settings', type: 'settings.changed', fields: { type: 'settings.changed', set: { grant_hours: '24' } } }],
-])('%s is named and opens the details', async (_name, patch) => {
+])('%s is named and the details stay closed', async (_name, patch) => {
   const { api } = withReview({
     items: [{ title: 'Odd item', lines: ['x'], details: [], volatile: [], placeholders: [], placeholder_details: [], ...patch } as Review['items'][number]],
   })
@@ -847,9 +883,9 @@ test.each([
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(document.querySelector('.review-summary')).toHaveTextContent('Odd item')
-  expect(screen.getByText('Show technical details').closest('details')).toHaveAttribute('open')
+  expect(screen.getByText(/^Everything you approve \(/).closest('details')).not.toHaveAttribute('open')
 })
 
 test('finish offers no runner grant when the workspace agent time is below the shortest choice', async () => {
@@ -873,10 +909,10 @@ test('N7: the review names the workspace from what core returned, not from the t
   await reveal()
   // the page's own profile says Demo/TST; the review shows what core's review holds
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
-  const box = container.querySelector('.review-workspace')!
-  expect(box).toHaveTextContent('Workspace RA for Severin')
-  expect(box).toHaveTextContent('Short name')
+  await screen.findByRole('heading', { name: 'Check and create' })
+  const box = container.querySelector('.review-facts')!
+  expect(box).toHaveTextContent('Marketing')
+  expect(box).toHaveTextContent('RA-0001')
   expect(box).toHaveTextContent('/demo/orch-run2-a')
   expect(box.textContent).not.toContain('Demo')
 })
@@ -896,7 +932,7 @@ test('N8: leaving the page after ready tells the setup it is finished', async ()
   render(<Setup api={f.api} />)
   await reveal()
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Your workspace is ready' })
   const before = f.calls.filter((c) => c.path === 'finish').length
@@ -919,7 +955,7 @@ test('N14: a failed step is shown with its reason in full', async () => {
   const { container } = render(<Setup api={f.api} />)
   await reveal()
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await waitFor(() => expect(container.textContent).toContain(msg))
 })
@@ -948,7 +984,7 @@ test('U1: a new setup starts with the main add-ons and agent access ticked, all 
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({
     addons: expect.arrayContaining(['worktrees']),
     agent_grant: true,
@@ -969,7 +1005,7 @@ test.each([
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ agent_grant: false, agent_hours: 8 })
 })
 
@@ -1012,8 +1048,24 @@ test('after the terminal confirms, the words are replaced by a matched notice', 
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
-  await screen.findByRole('heading', { name: 'Review your setup' })
+  await screen.findByRole('heading', { name: 'Check and create' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   expect(await screen.findByText('The three words matched. Your choices are confirmed.')).toBeInTheDocument()
   expect(screen.queryByRole('list', { name: 'Your three words' })).toBeNull()
+})
+
+test('reviewFacts builds the short card in plain words from the review', () => {
+  const review = {
+    review_id: 'r', digest: 'd', fingerprint: null, tty_confirm: false, risk: null, runner_grant: null,
+    workspace: { prefix: 'MD', name: 'Severin', workspace_name: 'Marketing', dir: '/p', lines: [] },
+    flags: [{ id: 'custody', text: 'x' }, { id: 'records', text: 'y' }],
+    items: [
+      { id: 'runner_grant', title: 'Agent access', lines: [], details: [], volatile: [], type: 'grant.issued', fields: { hours: 72 } },
+      { id: 'addon:dashboard', title: 'Dashboard', lines: [], details: [], volatile: [], type: 'addon.granted', fields: {} },
+    ],
+  } as unknown as Review
+  const facts = reviewFacts(review)
+  expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Owner', 'Folder', 'How you approve', 'Agents', 'Add-ons', 'History'])
+  expect(facts.find((f) => f.label === 'Agents')!.value).toBe('may work for 3 days')
+  expect(facts.find((f) => f.label === 'Add-ons')!.value).toEqual(['Dashboard'])
 })

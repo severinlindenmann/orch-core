@@ -184,7 +184,9 @@ def mkfacts(**kw):
 def test_finish_mode_skips_the_secrets_and_fixes_name_and_prefix(tmp):
     f = finish_flow(tmp, FakePorts(), [mkfacts()])
     st = f.dispatch("GET", "state", {}, None)[1]
-    assert st["mode"] == "finish" and st["suggested"] == {"name": "Ann", "prefix": "ANN"}
+    assert st["mode"] == "finish" and st["suggested"] == {
+        "name": "Ann", "workspace_name": tmp.work.name, "prefix": "ANN"
+    }  # fmt: skip
     assert "addon:terminals" in st["missing"] and "runner_grant" in st["missing"]
     f.dispatch("POST", "profile", {}, PROF)
     assert f.phase == "review"  # no secrets screen

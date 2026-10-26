@@ -55,7 +55,7 @@ def test_the_review_names_git_init_and_the_repo_it_declares(tmp):
     r = reveal(f)
     post(f, "secrets/confirm", {"words": words_for(r)})
     rv = post(f, "review")[1]
-    assert any(x["id"] == "git" and "git init" in x["text"] and "None of your files" in x["text"] for x in rv["flags"])
+    assert any(x["id"] == "git" and "git init" in x["text"] and "none of your files" in x["text"] for x in rv["flags"])
     settings = next(i for i in rv["items"] if i["id"] == "settings")
     assert settings["type"] == "settings.changed" and settings["fields"]["set"]["repos"] == {
         "work": {"path": str(tmp.work)}
@@ -80,14 +80,18 @@ needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="git is not i
 
 
 @needs_git
-def test_init_repository_makes_an_empty_repository_with_the_ignore_lines_and_commits_nothing(tmp):
+def test_init_repository_makes_an_empty_repository_with_the_ignore_lines_and_one_empty_commit(tmp):
     (tmp.work / "mine.txt").write_text("keep me")
     steps.init_repository(tmp.work)
     assert (tmp.work / ".git").is_dir()
     assert (tmp.work / ".gitignore").read_text().splitlines() == [".orch/", ".orch-work/"]
     assert (tmp.work / "mine.txt").read_text() == "keep me"
-    log = subprocess.run(["git", "-C", str(tmp.work), "log"], capture_output=True, text=True)
-    assert log.returncode != 0  # no commit exists
+    g = lambda *a: subprocess.run(["git", "-C", str(tmp.work), *a], capture_output=True, text=True)  # noqa: E731
+    assert g("rev-parse", "--verify", "HEAD").returncode == 0  # main is born
+    assert g("symbolic-ref", "--short", "HEAD").stdout.strip() == "main"
+    assert g("ls-tree", "-r", "HEAD").stdout == ""  # the empty tree: none of the person's files
+    assert g("log", "-1", "--format=%an <%ae>|%cn").stdout.strip() == "orch <orch@localhost>|orch"
+    assert g("rev-list", "--count", "HEAD").stdout.strip() == "1"
     staged = subprocess.run(["git", "-C", str(tmp.work), "diff", "--cached", "--name-only"], capture_output=True)
     assert staged.stdout == b""  # nothing was added either
 

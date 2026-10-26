@@ -40,6 +40,7 @@ def flow(tmp: Tmp) -> SetupFlow:
 
 PROFILE = {
     "name": "Ann",
+    "workspace_name": "Personal Workspace",
     "prefix": "ANN",
     "addons": ["dashboard", "terminals"],
     "method": "terminal",

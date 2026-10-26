@@ -217,13 +217,22 @@ def test_a_failed_submit_stops_the_chain_and_marks_the_rest_skipped(tmp):
 CLICK = {**PROFILE, "method": "click", "addons": ["dashboard", "worktrees"]}
 
 
-def test_click_path_settings_then_flag_then_conversion_last(tmp):
+def test_click_path_settings_then_conversion_then_flag_last(tmp):
     f, ports, p, rv = run_ok(tmp, CLICK)
     n = names(ports)
     assert p["done"] is True and ports.submits == ["settings.changed", "addon.granted", "addon.granted"]
-    assert n.index("human.submit") < n.index("convenience_on") < n.index("stage") < n.index("finish_conversion")
-    assert n[-1] == "finish_conversion" and "lock" in n and n.index("lock") < n.index("stage")
-    assert [s["id"] for s in p["steps"]][-2:] == ["flags", "custody"]
+    assert n.index("human.submit") < n.index("stage") < n.index("finish_conversion") < n.index("convenience_on")
+    assert n[-1] == "convenience_on" and "lock" in n and n.index("lock") < n.index("stage")
+    assert [s["id"] for s in p["steps"]][-2:] == ["custody", "flags"]
+
+
+def test_flag_last_a_failed_conversion_never_sets_the_flag(tmp):
+    ports = FakePorts()
+    ports.fail_stage = 2
+    f, ports, p, _ = run_ok(tmp, CLICK, ports=ports)
+    assert "convenience_on" not in names(ports)  # key not held: the flag stays off
+    st = {x["id"]: x["status"] for x in p["steps"]}
+    assert st["custody"] == "failed" and st["flags"] == "skipped"
 
 
 def test_r6_conversion_retries_in_process(tmp):

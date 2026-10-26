@@ -427,6 +427,7 @@ def _hosted_bootstrap(
     code: str,
     st: BootstrapState,
     backend_factory: Any = None,
+    workspace_name: str | None = None,
 ) -> None:
     """The ``host.wsk_create`` + ``host.bootstrap`` loop of ``orch setup``
     (``backend_factory`` opens the device key's backend; ``None`` is :func:`open_backend`, which asks the terminal).
@@ -470,6 +471,8 @@ def _hosted_bootstrap(
             "events": [event],
             "peers": {str(os.getuid()): {"class": "person", "person": st.person}},
         }
+        if workspace_name:  # the display name: unsigned, in config.json only
+            request["workspace_name"] = workspace_name
         st.pending = new_idem()
         st.client, st.result, error = _bootstrap(sd, st.client, request, st.pending)
         st.pending = None  # a definite answer

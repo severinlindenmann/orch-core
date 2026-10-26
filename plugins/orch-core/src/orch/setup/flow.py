@@ -169,9 +169,17 @@ class SetupFlow:
         assert self.root is not None or not self.dir
         from . import facts
 
-        sug = facts.suggest(dict(self.e.env), Path(self.dir)) if self.dir else {"name": "", "prefix": ""}
+        sug = (
+            facts.suggest(dict(self.e.env), Path(self.dir))
+            if self.dir
+            else {"name": "", "workspace_name": "", "prefix": ""}
+        )
         if self.facts is not None:
-            sug = {"name": self.facts.name, "prefix": self.facts.prefix}
+            sug = {
+                "name": self.facts.name,
+                "workspace_name": Path(self.dir).name or self.facts.prefix,
+                "prefix": self.facts.prefix,
+            }
         if self.mode != "finish":  # U1: a new workspace starts with "let agents work for you" ticked (3 days)
             sug = {**sug, "agent_hours": facts.DEFAULT_AGENT_HOURS, "agent_grant": True}
             # run 8 (owner): One click is the default where this machine can hold the key; Terminal stays selectable.
@@ -350,7 +358,7 @@ class SetupFlow:
         if any(i.id == "runner_grant" for i in plan.items):
             ids.append("runner_grant")
         if self.profile and self.profile["method"] == "click":
-            ids += ["flags", "custody"]
+            ids += ["custody", "flags"]
         if any(f["id"] == "records" for f in plan.flags):
             ids.append("records")
         return ids

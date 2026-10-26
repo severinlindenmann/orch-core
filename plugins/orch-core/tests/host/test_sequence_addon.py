@@ -490,7 +490,7 @@ def test_the_setup_never_plans_these_add_ons(human):
     from orch.setup.protocol import SetupError
 
     profile = {
-        "name": "x", "prefix": "DEMO", "addons": ["publish"], "method": "terminal", "agent_hours": 8,
+        "name": "x", "workspace_name": "x", "prefix": "DEMO", "addons": ["publish"], "method": "terminal", "agent_hours": 8,
         "agent_grant": False, "relay": False,
     }  # fmt: skip
     info = {

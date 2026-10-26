@@ -279,7 +279,7 @@ class FileStore:
         d = self.root / workspace_id / "devices"
         if create:
             for sub in (self.root, self.root / workspace_id, d):
-                sub.mkdir(exist_ok=True)
+                sub.mkdir(parents=True, exist_ok=True)
                 _restrict_windows(sub, directory=True)
         return d / f"{device}.key"
 

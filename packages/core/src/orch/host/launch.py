@@ -51,7 +51,7 @@ __all__ = [
 HARNESSES = ("claude-code", "codex")
 TERM_HARNESSES = (*HARNESSES, "shell")
 PROGRAMS = {"claude-code": "claude", "codex": "codex"}
-MODES = ("refine", "work", "fix", "continue", "context", "task")
+MODES = ("refine", "work", "fix", "continue", "context", "task", "followup")
 #: what the agent is asked to do in each mode (``Run orch status, then <text> ticket KEY.``)
 MODE_TEXT = {"refine": "refine", "work": "work on", "fix": "fix the requested changes on", "continue": "continue"}
 MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:\[\]/-]{0,63}")
@@ -108,6 +108,17 @@ def prompt(
         return None
     if key is None or not KEY.fullmatch(key):
         raise HostError("launch.invalid", "a mode needs a ticket")
+    if mode == "followup":
+        fu = task.get("followup") if isinstance(task, dict) else None
+        if not isinstance(fu, str) or not re.fullmatch(r"fu_[0-7][0-9A-HJKMNP-TV-Z]{25}", fu):
+            raise HostError("launch.invalid", "mode followup needs a valid follow-up id")
+        from orch.instructions.harness import AGENTS_FILE
+
+        return (
+            f"Run orch status. You were started by follow-up {fu} on ticket {key}. "
+            f"Run orch follow-up show {fu}, then orch show {key}, then claim the ticket and continue the work. "
+            f"Follow {instructions or AGENTS_FILE}."
+        )
     if mode == "task":
         return task_prompt(key, task)
     if mode == "context":

@@ -1,0 +1,37 @@
+"""Read one follow-up from the verified ticket view."""
+
+from orch.ops import followup, views
+from orch.ops._dsl import S, err, operation
+from orch.ops.base import Result
+from orch.ops.runtime import Call
+
+
+def handle(ctx, args):
+    c = Call.of(ctx, "follow_up.show")
+    followup.require_on(c.store.state.workspace.addons)
+    view, rec = followup.find(c, args["id"])
+    data = dict(rec)
+    lines = [f"{name}: {rec.get(name) or '-'}" for name in ("state", "trigger", "due", "deadline")]
+    lines += [f"set by: {rec['person']} ({rec['setter_session']})"]
+    lines += views.fence(rec["brief"], "follow-up brief")
+    lines += [
+        f"outcome: {rec['outcome'] or '-'}",
+        f"reason: {rec['reason'] or '-'}",
+        f"late by: {rec['late_by'] or 0}s",
+    ]
+    return Result(data=data, key=view.key, lines=lines)
+
+
+OP = operation(
+    "follow_up.show",
+    "Read",
+    "Show a follow-up and its brief.",
+    who="read",
+    props={"id": S("follow-up ID")},
+    required=("id",),
+    positional=("id",),
+    text="ok {key} followup {id}",
+    data={"type": "object"},
+    errors=(err("followup.off"), err("not_found")),
+    handler=handle,
+)

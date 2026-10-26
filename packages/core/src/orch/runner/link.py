@@ -186,6 +186,9 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
     (allow-list, ``pass_env``, host-chosen fixed values) and, for an agent, ``ORCH_GRANT`` from the grant store and
     ``ORCH_SESSION``. Raises :class:`SpawnError`."""
     kind = args.get("kind")
+    run_grant = args.get("run_grant", False)
+    if not isinstance(run_grant, bool):
+        raise SpawnError("invalid.input", "spawn: run_grant must be a bool")
     trusted = None
     argv = registry_argv(args.get("argv"), own, config)
     env = build_env(args, own, config.pass_env)
@@ -199,7 +202,9 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
         if grant is None:
             raise SpawnError("launch.no_grant", "spawn: an agent needs its person's runner grant")
         try:
-            env["ORCH_GRANT"] = grants.secret_for(wid, person, grant)
+            env["ORCH_GRANT"] = (
+                grants.secret_for_run(args.get("run"), grant) if run_grant else grants.secret_for(wid, person, grant)
+            )
         except GrantError as exc:
             raise SpawnError(exc.code, exc.message) from None
         env["ORCH_SESSION"] = session
@@ -489,7 +494,7 @@ class HostLink:
         """``attach.end`` runs inline on this (the link) thread: it never blocks (the term socket's ``end`` takes its
         lock, queues and reports), and it must not wait behind ``stop``/``spawn`` in the command pool, or the host's
         5 s confirmation deadline would drop the whole runner session. Every other command goes to the pool."""
-        if item.get("op") in ("attach.end", "grant.put", "grant.drop"):
+        if item.get("op") in ("attach.end", "grant.put", "grant.put_run", "grant.drop"):
             # grant.put and grant.drop run inline too, in arrival order (#466 review round 2): the host sends a forget's
             # drop after the put it follows, so the drop can never overtake that put in the pool (a client that went
             # away or a host timeout releases the host's per-person lock while the put is still in flight)
@@ -560,9 +565,9 @@ class HostLink:
             if args.get("children"):  # P2-2: the delegated children of the run
                 return transcript_children.serve(args, self.sup, self.env)
             return transcript.serve(args, self.sup, self.env)
-        if cmd == "grant.put":  # H11c: the secret arrives here once; it is answered without it
+        if cmd in ("grant.put", "grant.put_run"):  # H11c: the secret arrives here once; it is answered without it
             try:
-                return self.grants.put(args)
+                return self.grants.put_run(args) if cmd == "grant.put_run" else self.grants.put(args)
             except GrantError as exc:
                 raise SpawnError(exc.code, exc.message) from None
         if cmd == "grant.drop":

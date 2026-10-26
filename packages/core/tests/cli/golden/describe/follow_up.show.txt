@@ -1,0 +1,10 @@
+ok describe follow_up.show
+Show a follow-up and its brief.
+usage: orch follow-up show ID
+who: read · emits: -
+args:
+  ID  follow-up ID
+errors:
+  not_found (exit 2): orch list
+  followup.off (exit 3): ask an owner to turn Schedules on in Add-ons | fix: orch addon list
+out: ok {key} followup {id}

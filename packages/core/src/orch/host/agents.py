@@ -309,7 +309,9 @@ def _child_session(hub: RunnerHub, parent: dict[str, Any]) -> str | None:
     return next((f"{base}.{n}" for n in range(1, 10) if f"{base}.{n}" not in used), None)
 
 
-def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool) -> dict[str, Any]:
+def plan(
+    call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool, fu: dict | None = None
+) -> dict[str, Any]:
     """The preview's answer and, under ``_launch``, what start or open sends. ``agent``: ``agent.preview``;
     otherwise ``term.preview`` (a person-run shell or harness: kind ``shell``, ``ORCH_TICKET`` only, no grant)."""
     from orch.runner.config import ConfigError, RunnerConfig, read_config
@@ -321,6 +323,8 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     p = _Plan()
     harness = args.get("harness", "shell")
     mode, model, sub = args.get("mode"), args.get("model"), args.get("subagent_model")
+    if fu is not None and (mode != "followup" or not agent):
+        p.block("launch.invalid", "a follow-up needs an agent in mode followup")
     person = str(call.viewer)
     parent_run = args.get("parent_run")
     policy_in = args.get("policy") if harness == "claude-code" else None  # codex has no delegation limits to store
@@ -406,6 +410,8 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
          "expected": args.get("expected")}
         if mode == "task" else None
     )  # fmt: skip
+    if fu is not None:
+        task = {"followup": fu["id"]}
     delegate = policy["delegate"] if policy is not None else None
     try:
         argv, login, program = launch_argv(harness, mode, argv_model, key, config, task=task, delegate=delegate)
@@ -465,7 +471,9 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         except HostError:
             pass  # the first launch_argv already blocked with the same reason
     grant = None
-    if agent:
+    if fu is not None:
+        grant = {"id": fu["grant"], "until": fu["until"], "scope": fu["scope"]}
+    elif agent:
         cur = hub.grants.current(service.workspace_id, person) if hub is not None else None
         if cur is None:
             p.block("launch.no_grant", "no runner grant for you on this machine: issue one", reason="none")
@@ -506,6 +514,8 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
                     "create": where["create"], "mkdir": where["mkdir"], "ticket": key, "login_shell": login,
                     "grant": grant["id"] if grant else None, "session": child_session},
     }  # fmt: skip
+    if fu is not None:
+        out["_launch"]["run_grant"] = True
     if agent:
         out.update(
             ticket=key,
@@ -630,9 +640,10 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
     hub.require_current()
     launch = data["launch"]
-    cur = hub.grants.current(wid, person)
-    if cur is None or cur["grant"] != launch["grant"]:
-        raise HostError("launch.changed", "the runner grant changed since the preview: preview again")
+    if not launch.get("run_grant"):  # a follow-up run carries its own one-run grant (put_run); the limits below apply
+        cur = hub.grants.current(wid, person)
+        if cur is None or cur["grant"] != launch["grant"]:
+            raise HostError("launch.changed", "the runner grant changed since the preview: preview again")
     live = [r for r in hub.store.records.values() if r.get("state") in runners.LIVE]
     mine = [r for r in live if r.get("person") == person and r.get("kind") == "agent"]
     if sum(1 for r in mine if r.get("workspace_id") == wid) >= AGENTS_PER_WORKSPACE or len(mine) >= AGENTS_PER_PERSON:
@@ -674,6 +685,9 @@ async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
                "env_fixed": launch["env_fixed"], "cwd": launch["cwd"], "cols": data["cols"], "rows": data["rows"],
                "login_shell": launch["login_shell"], "grant": launch["grant"], "session": session,
                "person": person}  # fmt: skip
+    if launch.get("run_grant"):
+        payload["run_grant"] = True
+        payload["workspace_id"] = wid
     await hub.intent(wid, fields, payload, idem=data["idem"], spec=data["spec"])
     hub.grants.watch()
     if launch.get("mkdir"):

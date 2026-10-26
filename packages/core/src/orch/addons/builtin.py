@@ -30,6 +30,7 @@ NAMES = (
     "wiki",
     "quick",
     "focus",
+    "schedules",
 )
 
 

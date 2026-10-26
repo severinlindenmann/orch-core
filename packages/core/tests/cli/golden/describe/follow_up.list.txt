@@ -1,0 +1,12 @@
+ok describe follow_up.list
+List pending follow-ups across visible tickets.
+usage: orch follow-up list [REF] [--all]
+who: read · emits: -
+args:
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+  --all  include completed and cancelled follow-ups from the last 30 days
+errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
+  not_found (exit 2): orch list
+  followup.off (exit 3): ask an owner to turn Schedules on in Add-ons | fix: orch addon list
+out: ok followup.list {total}

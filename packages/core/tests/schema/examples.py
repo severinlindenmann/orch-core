@@ -293,6 +293,18 @@ _SPEC = {
     "visibility.changed": (PERSON, {"visibility": {"restricted": ["p_" + PID]}}, 5),
     "people.changed": (PERSON, {"role": "reviewers", "add": ["p_" + PID2], "remove": []}, 5),
     "policy.changed": (PERSON, {"gates": {"verify": policy(("reviewers",), 2, ("assignees",))}}, 5),
+    "followup.set": (
+        AGENT,
+        {"followup": "fu_" + EID, "trigger": "time", "due": "2026-10-10T09:00:00Z", "brief": "Check backfill"},
+        5,
+    ),
+    "followup.fired": (
+        HOST,
+        {"followup": "fu_" + EID, "grant": "gr_" + EID, "trigger": "time", "secret_hash": H, "run": "r_" + EID},
+        5,
+    ),
+    "followup.outcome": (HOST, {"followup": "fu_" + EID, "outcome": "ran"}, 5),
+    "followup.cancelled": (PERSON, {"followup": "fu_" + EID, "reason": "person"}, 5),
     "claim.taken": (AGENT, {"takeover": {"from_session": "s_" + EID, "reason": "stuck"}}, 5),
     "claim.released": (AGENT, {"session": AGENT["session"], "reason": "handoff"}, 5),
     "task.started": (AGENT, {"task": "T3"}, 5),

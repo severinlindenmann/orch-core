@@ -2,7 +2,7 @@
 
 Status: **draft, 21 Oct 2026** (orch-core #714, #715-#720; orch-relay #81). Written from the Opus design check of
 21 Oct 2026 and the owner decisions of 19 Oct 2026. The pure rules (§3) are built in `orch/model/followups.py`; the
-engine, host, runner and relay parts are not wired yet. The owner answered Q1, Q2, Q5 and Q7 on 21 Oct 2026 (the recommended answers, §9); the numbers are named constants
+engine, ops/CLI (`orch follow-up`), runner one-run grant slot and host runner (time triggers) are built (parts 1 and 2); event/webhook triggers, add-on events, the skill, the dashboard and the relay inbox are not. The owner answered Q1, Q2, Q5 and Q7 on 21 Oct 2026 (the recommended answers, §9); the numbers are named constants
 in the code.
 
 ## 1. What it is
@@ -23,7 +23,7 @@ only**. No new person-signed grant exists; the follow-up grant is derived by the
 | follow-up | `fu_<ULID>`, on one ticket, created by `followup.set` |
 | parent grant | the grant of the agent that appended `followup.set` (a person's grant or an earlier follow-up grant) |
 | root grant | the person-issued grant at the top of that chain of grants |
-| follow-up grant (G') | `fgr_<ULID>`, derived at `followup.fired`; never a `grant.issued` event |
+| follow-up grant (G') | `gr_<ULID>`, derived at `followup.fired`; never a `grant.issued` event |
 | chain | the follow-ups set on a ticket since the last person event on that ticket; a person event resets it |
 | hook | a webhook doorbell, `hk_` plus 128 random bits; only `H(id)` is stored anywhere (label `orch/v2/hook|`) |
 
@@ -65,6 +65,8 @@ the model. Actor classes: P person (signed), A agent or person, G agent with a g
 | `followup.rescheduled` | P | `{id, due?, deadline?}` | changes the times of a pending or `needs_person` follow-up within the same caps. |
 | `webhook.created` | G | `{hook_hash, label, expires}` | records a hook; the id is shown once. |
 | `webhook.revoked` | P or A | `{hook_hash}` | ends a hook. |
+
+The four implemented events use `followup` for the payload follow-up ID (`fu_<ULID>`); the envelope `id` remains a unique event ULID. The `hook` field is not implemented.
 
 A model-derived cancel writes no event; the engine derives it on replay with `derived_cancel_reason`.
 

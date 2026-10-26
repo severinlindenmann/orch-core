@@ -9,7 +9,7 @@ from typing import Any
 
 from orch.canon import gate_hash
 
-from . import claims, gates, generations, needs, policies, questions, source, tasks
+from . import claims, followups, followups_wire, gates, generations, needs, policies, questions, source, tasks
 from .needs import Need
 from .types import GATES, WORKSPACE, Core, TCore, WsCore, ts
 
@@ -136,6 +136,7 @@ class TicketView:
     waiting: bool
     frozen: bool  # an unacknowledged invalid event freezes person decisions on this ticket
     handoff: str | None
+    followups: tuple[Mapping[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -308,6 +309,31 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
         any((n.kind == "question" and n.detail == "blocking") or n.kind == "approve" for n in ns),
         frozen,
         t.handoff,
+        tuple(
+            freeze(
+                {
+                    "id": r.id,
+                    "state": followups_wire.view_state(core, t, r, now)[0],
+                    "trigger": r.trigger,
+                    "due": r.due,
+                    "deadline": r.deadline,
+                    "brief": r.brief,
+                    "set_at": r.set_at,
+                    "fired_at": r.fired_at,
+                    "late_by": followups.late_by(ts(r.fired_at), ts(r.due or r.deadline))
+                    if r.fired_at and (r.due or r.deadline)
+                    else None,
+                    "run": r.run,
+                    "outcome": r.outcome,
+                    "reason": followups_wire.view_state(core, t, r, now)[1] or r.reason,
+                    "grant": r.grant,
+                    "person": r.person,
+                    "setter_session": r.setter_session,
+                    **({"label": r.label} if r.label is not None else {}),
+                }
+            )
+            for r in t.followups.values()
+        ),
     )
 
 
@@ -347,8 +373,8 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
                     g.scope,
                     freeze(g.verbs),
                     g.expires_at,
-                    g.revoked,
-                    not g.revoked and ts(g.expires_at) > now,
+                    g.revoked or g.ended,
+                    not (g.revoked or g.ended) and ts(g.expires_at) > now,
                     g.label,
                     g.issued_at,
                 )

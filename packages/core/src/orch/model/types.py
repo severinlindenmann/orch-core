@@ -116,6 +116,10 @@ class Grant:
     #: C8 (L2-P5-1): the hub whose ``auth: "hub"`` request line this grant answers, else ``None``. Such a grant ends at
     #: that hub's ``hub.left`` (state, no new line). Set by the C10 host-actor ``grant.issued`` that names its request.
     hub_id: str | None = None
+    parent: str | None = None
+    #: a follow-up grant that has served its run (its outcome is recorded): unusable, but not a revocation, so
+    #: later follow-ups set during that run keep a valid chain
+    ended: bool = False
 
 
 @dataclass
@@ -250,6 +254,29 @@ class ArtifactCore:
 
 
 @dataclass
+class FollowupRec:
+    id: str
+    state: str
+    trigger: str
+    set_at: str
+    due: str | None
+    deadline: str | None
+    brief: str
+    setter_session: str
+    person: str
+    parent_grant: str
+    set_event_id: str
+    fired_at: str | None = None
+    grant: str | None = None
+    run: str | None = None
+    outcome: str | None = None
+    reason: str | None = None
+    fallback: str | None = None
+    cancel_reason: str | None = None
+    label: str | None = None
+
+
+@dataclass
 class TCore:
     uid: str
     key: str
@@ -262,6 +289,9 @@ class TCore:
     )
     overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     gates: dict[str, GateCore] = field(default_factory=lambda: {g: GateCore() for g in GATES})
+    followups: dict[str, FollowupRec] = field(default_factory=dict)
+    fu_chain: dict[str, Any] = field(default_factory=dict)
+    fu_sessions: dict[str, str] = field(default_factory=dict)
     claim: ClaimCore | None = None
     takeovers: list[dict[str, Any]] = field(default_factory=list)
     leases: dict[str, Lease] = field(default_factory=dict)

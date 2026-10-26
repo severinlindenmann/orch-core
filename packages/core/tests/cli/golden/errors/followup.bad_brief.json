@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "followup.bad_brief",
+    "message": "brief must be non-empty clean text of at most 4096 bytes",
+    "hint": "provide a brief of 1 to 4096 UTF-8 bytes",
+    "fix": {
+      "argv": [
+        "orch",
+        "follow-up",
+        "--help"
+      ]
+    },
+    "retryable": false
+  }
+}

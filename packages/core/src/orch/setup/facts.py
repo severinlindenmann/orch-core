@@ -64,7 +64,7 @@ DEFAULT_ON = frozenset({"start-agent", "terminals", "worktrees", "quick"})
 DEFAULT_AGENT_HOURS = 72
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
 #: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
-OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "wiki", "focus"})
+OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "wiki", "focus", "schedules"})
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
@@ -125,6 +125,12 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
         "quick": (
             "Quick tasks",
             "Small one-off tasks that skip the usual steps. Off: nobody (you, the CLI or agents) can make new ones.",
+            False,
+            False,
+        ),
+        "schedules": (
+            "Schedules",
+            "Let agents schedule a fresh session on their ticket when work must wait more than an hour.",
             False,
             False,
         ),

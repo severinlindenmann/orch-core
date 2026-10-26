@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "followup.off",
+    "message": "Schedules is switched off in this workspace; an owner can turn it on in Add-ons",
+    "hint": "ask an owner to turn Schedules on in Add-ons",
+    "fix": {
+      "argv": [
+        "orch",
+        "addon",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

@@ -24,6 +24,7 @@ from . import (
     breakglass,
     claims,
     edits,
+    followups_wire,
     gates,
     generations,
     identity,
@@ -186,7 +187,9 @@ def _scratch(core: Core, log: str, e: dict[str, Any]) -> Core:
     unattended = a["kind"] == "agent" and a.get("unattended") is True
     is_ws = log == WORKSPACE
     sc = Core(
-        ws=copy.deepcopy(core.ws) if (is_ws or unattended or "via" in a or _names_users(e)) else core.ws,
+        ws=copy.deepcopy(core.ws)
+        if (is_ws or unattended or "via" in a or _names_users(e) or typ in ("followup.fired", "followup.outcome"))
+        else core.ws,
         tickets=dict(core.tickets),
         keys=dict(core.keys) if typ == "ticket.created" else core.keys,
         created_at=dict(core.created_at) if typ == "ticket.created" else core.created_at,
@@ -211,6 +214,10 @@ def _ticket_handler(core: Core, t: TCore, lc: LogCore, e: dict[str, Any]) -> Ref
         "visibility.changed": lambda: visibility.changed(ws, t, e),
         "people.changed": lambda: lifecycle.people_changed(ws, t, e),
         "policy.changed": lambda: lifecycle.policy_changed(ws, t, e),
+        "followup.set": lambda: followups_wire.set_event(core, t, e),
+        "followup.fired": lambda: followups_wire.fired_event(core, t, e),
+        "followup.outcome": lambda: followups_wire.outcome_event(core, t, e),
+        "followup.cancelled": lambda: followups_wire.cancelled_event(core, t, e),
         "claim.taken": lambda: claims.taken(ws, t, e),
         "claim.released": lambda: claims.released(ws, t, e),
         "handoff.written": lambda: lifecycle.handoff(ws, t, e),
@@ -336,7 +343,10 @@ def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Re
             return workspace.genesis(core, e, ctx.verifier, ctx.expected_genesis)
         return _workspace_handler(core, lc, e, ctx)
     if typ == "ticket.created":
-        return lifecycle.created(core, log, e)
+        result = lifecycle.created(core, log, e)
+        if result is None:
+            followups_wire.note_event(core.tickets[log], e)
+        return result
     assert t is not None
     before = generations.snapshot(ws, t)
     status_before = t.status
@@ -348,6 +358,10 @@ def _apply(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> Re
         return Refusal(Code.AUTH_INVALID_EVENT, f"voided_gates should be {sorted(settled.voided)}")
     if typ in ("gate.approved", "verdict.given"):
         gates.after_decision(ws, t, e)
+    if e["actor"]["kind"] == "agent" and (gid := e["actor"].get("grant")) is not None:
+        if ws.grants[gid].parent is not None:
+            t.fu_sessions.setdefault(gid, e["actor"]["session"].split(".")[0])
+    followups_wire.note_event(t, e)
     claims.touch(ws, t, e)
     _note_workers(t, e)
     t.last_at = max(t.last_at, ts(e["at"]))

@@ -89,6 +89,34 @@
         "summary": "Release your claim without a handoff."
       },
       {
+        "name": "follow_up",
+        "cli": "follow-up",
+        "group": "Lifecycle",
+        "who": "agent",
+        "summary": "Schedule a fresh session, release your claim, then end this session."
+      },
+      {
+        "name": "follow_up.cancel",
+        "cli": "follow-up cancel",
+        "group": "Lifecycle",
+        "who": "agent",
+        "summary": "Cancel a pending follow-up."
+      },
+      {
+        "name": "follow_up.show",
+        "cli": "follow-up show",
+        "group": "Read",
+        "who": "read",
+        "summary": "Show a follow-up and its brief."
+      },
+      {
+        "name": "follow_up.list",
+        "cli": "follow-up list",
+        "group": "Read",
+        "who": "read",
+        "summary": "List pending follow-ups across visible tickets."
+      },
+      {
         "name": "handoff",
         "cli": "handoff",
         "group": "Lifecycle",

@@ -190,7 +190,7 @@ _KEY_NUM = re.compile(r"[A-Z][A-Z0-9]{0,15}-([0-9]+)")
 _HOST_FIELDS = ("seq", "at", "prev", "ws_seq", "host_sig")
 _EMPTY = canon.section_hash("")
 _PLACEHOLDER_SIG = "A" * 85 + "A"
-_TICKET_HOST_EVENTS = frozenset({"edit.external", "projection.repaired"})
+_TICKET_HOST_EVENTS = frozenset({"edit.external", "projection.repaired", "followup.fired", "followup.outcome"})
 _ZERO_ACC = "sha256:" + "0" * 64
 RELAY_BRANCH_MAX = (64 << 20) // 74  # heads: the relay's largest staging set (64 MiB at 74 bytes a head, P3-D20)
 RELAY_CACHE_BYTES = 16 << 20  # the one cached branch, raw digests (64 bytes a head: about 262 000 heads at most)
@@ -1082,6 +1082,13 @@ class Store:
         for e in ws_events:
             if e["type"] == "grant.issued" and e["id"] not in invalid and e["grant"] in ws.grants:
                 self._grant_hashes.setdefault(e["grant"], e["secret_hash"])
+        for uid, events in tickets.items():
+            if uid not in self._state._core.logs:
+                continue
+            invalid = {i.id for i in self._state._core.logs[uid].invalid}
+            for e in events:
+                if e["type"] == "followup.fired" and e["id"] not in invalid and e["grant"] in ws.grants:
+                    self._grant_hashes.setdefault(e["grant"], e["secret_hash"])
         self._json_cache = {}
         try:
             applied = loads(self.fs.read_or_none(self.state_dir / "applied") or b"{}")
@@ -2315,7 +2322,7 @@ class Store:
             self._load()  # replay from here on carries the pin (the State built so far has none)
             if self._pins is not None and new.workspace.genesis:
                 self._pins.pin_genesis(new.workspace.genesis)
-        if typ == "grant.issued":
+        if typ in ("grant.issued", "followup.fired"):
             self._grant_hashes.setdefault(ev["grant"], ev["secret_hash"])
         if self._pins is not None:
             info = self._logs[log]

@@ -1,0 +1,237 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "follow_up",
+    "name": "follow_up",
+    "cli": "orch follow-up",
+    "summary": "Schedule a fresh session, release your claim, then end this session.",
+    "who": "agent",
+    "usage": "orch follow-up [REF] [--in DURATION] [--at WHEN] [--brief-file PATH] [--brief TEXT] [--label LABEL] [--dry-run]",
+    "pre": [],
+    "emits": [
+      "followup.set"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Schedule a fresh session, release your claim, then end this session.",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "ticket REF (DEMO-0043, 43); default: your claim",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        },
+        "in": {
+          "type": "string",
+          "description": "duration: 90m, 36h or 2d",
+          "x-metavar": "DURATION"
+        },
+        "at": {
+          "type": "string",
+          "description": "local time: YYYY-MM-DDTHH:MM[:SS] or +2d 09:00",
+          "x-metavar": "WHEN"
+        },
+        "brief_file": {
+          "type": "string",
+          "description": "read the text from PATH, or - for stdin",
+          "x-metavar": "PATH",
+          "x-file": true
+        },
+        "brief": {
+          "type": "string",
+          "description": "instructions for the fresh session",
+          "x-metavar": "TEXT"
+        },
+        "label": {
+          "type": "string",
+          "description": "optional label",
+          "maxLength": 200
+        }
+      },
+      "x-positional": [
+        "ref"
+      ],
+      "required": [],
+      "oneOf": [
+        {
+          "required": [
+            "in"
+          ]
+        },
+        {
+          "required": [
+            "at"
+          ]
+        }
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": [
+                "brief"
+              ]
+            },
+            {
+              "required": [
+                "brief_file"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "output": {
+      "text": "ok {key} followup.set {id} due={due} state={state}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "due": {
+            "type": "string"
+          },
+          "deadline": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "due",
+          "deadline",
+          "state"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "ambiguous_ref",
+        "exit": 2,
+        "retryable": false,
+        "hint": "name the ticket REF, for example DEMO-0043",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "followup.bad_brief",
+        "exit": 3,
+        "retryable": false,
+        "hint": "provide a brief of 1 to 4096 UTF-8 bytes",
+        "fix": [
+          "orch",
+          "follow-up",
+          "--help"
+        ]
+      },
+      {
+        "code": "followup.denied",
+        "exit": 3,
+        "retryable": false,
+        "hint": "read the denial code and resolve it before retrying",
+        "fix": [
+          "orch",
+          "show"
+        ]
+      },
+      {
+        "code": "followup.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask an owner to turn Schedules on in Add-ons",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
+      },
+      {
+        "code": "followup.too_far",
+        "exit": 3,
+        "retryable": false,
+        "hint": "choose a time within 14 days",
+        "fix": [
+          "orch",
+          "follow-up",
+          "--help"
+        ]
+      },
+      {
+        "code": "followup.too_soon",
+        "exit": 3,
+        "retryable": false,
+        "hint": "wait inside the session",
+        "fix": [
+          "orch",
+          "wait"
+        ]
+      },
+      {
+        "code": "grant.expired",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person for a new grant",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "grant.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask the person to run orch grant, then set ORCH_GRANT",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe follow_up",
+        "fix": [
+          "orch",
+          "describe",
+          "follow_up"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

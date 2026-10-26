@@ -37,10 +37,19 @@ def test_v2_pinned_and_differs_from_v1_only_in_human_only_keys():
 
 def test_v3_adds_only_task_edit_and_the_model_still_reads_v1():
     """R3: ``task.edit`` is a new agent operation. V1 and V2 are untouched, so no replay verdict changes."""
-    assert digest(emits.EMITS_V3) == DIGEST_V3 and emits.CURRENT is emits.EMITS_V3
+    assert digest(emits.EMITS_V3) == DIGEST_V3
     assert {k for k in emits.EMITS_V3 if emits.EMITS_V3[k] != emits.EMITS_V2.get(k)} == {"task.edit"}
     assert emits.EMITS_V3["task.edit"] == {"ticket.updated"} and "task.edit" not in emits.EMITS_V1
     assert "task.edit" not in ops.verb_events()
+
+
+def test_v4_adds_followups():
+    assert emits.CURRENT is emits.EMITS_V4
+    assert digest(emits.EMITS_V4) == "57b5516751706c5ff48da8eefef8ed2de1c5ecb4fdbc2f5e05141422bf9da39d"
+    assert {k for k in emits.EMITS_V4 if emits.EMITS_V4[k] != emits.EMITS_V3.get(k)} == {
+        "follow_up",
+        "follow_up.cancel",
+    }
 
 
 def test_the_live_registry_matches_the_current_table():

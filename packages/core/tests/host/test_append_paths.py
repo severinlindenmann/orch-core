@@ -39,6 +39,10 @@ PATHS: dict[tuple[str, str], tuple[int, str]] = {
         "host's own hub.pinned ledger line and the host-actor grant.issued that answers an admitted grant.requested "
         "(the model admits it only with that request: a grant adds no reader and no convenience event)",
     ),
+    ("host/followups.py", "FollowupRunner._append"): (
+        1,
+        "exempt: the host-actor followup.fired and followup.outcome lines; they add no reader and no convenience event",
+    ),
 }
 
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Collection, Mapping
 from typing import Any
 
-from . import breakglass, hubledger, identity, policies, visibility
+from . import breakglass, claims, hubledger, identity, policies, visibility
 from .codes import Code, Refusal
 from .emits import HUMAN_ONLY
 from .types import WORKSPACE, Core, Device, TCore, WsCore, ts
@@ -31,6 +31,10 @@ ACTOR_RULES: dict[str, str] = {
     "visibility.changed": "P",
     "people.changed": "P",
     "policy.changed": "P",
+    "followup.set": "G",
+    "followup.fired": "H",
+    "followup.outcome": "H",
+    "followup.cancelled": "PA",
     "claim.taken": "G",
     "claim.released": "PAH",
     "task.started": "G",
@@ -302,6 +306,12 @@ def verb_covers(typ: str, verbs: Any, verb_events: Mapping[str, Collection[str]]
     if verbs == "agent":
         return True
     verbs = [v for v in verbs if v not in HUMAN_ONLY]  # a person's own operation is never in a grant (F1 10.1)
+    # V4 introduced these event types: their operation names have no V1 replay verdict to preserve.
+    # Keep judging every pre-existing event with the caller's frozen table.
+    if typ in ("followup.set", "followup.cancelled"):
+        from .emits import EMITS_V4
+
+        return any(typ in EMITS_V4.get(v, ()) for v in verbs)
     if verb_events is None:
         return typ in verbs
     return any(typ in verb_events.get(v, ()) for v in verbs)
@@ -314,9 +324,23 @@ def authorize_agent(
     g = ws.grants.get(a["grant"])
     if g is None:
         return Refusal(Code.GRANT_INVALID, f"unknown grant {a['grant']}")
+    if g.parent is not None:
+        if t is None or t.uid != g.scope:
+            return Refusal(Code.GRANT_SCOPE, "follow-up grants belong to one ticket only")
+        session = t.fu_sessions.get(g.id)
+        if session is not None and not claims.in_family(a["session"], session):
+            return Refusal(Code.GRANT_SCOPE, "follow-up grants belong to one session family")
+        from .followups import chain_valid
+        from .followups_wire import grant_chain
+
+        if not chain_valid(
+            grant_chain(ws, g.id),
+            root_person_active=identity.member_role(ws, g.person) in ("owner", "maintainer", "member"),
+        ):
+            return Refusal(Code.GRANT_INVALID, "the follow-up grant chain is revoked")
     if g.person != a["for"]:
         return Refusal(Code.GRANT_INVALID, "an agent's `for` must be the person who issued the grant")
-    if g.revoked or not (ts(g.issued_at) <= at < ts(g.expires_at)):
+    if g.revoked or g.ended or not (ts(g.issued_at) <= at < ts(g.expires_at)):
         return Refusal(Code.GRANT_INVALID, "the grant was revoked or not valid at this position")
     role = identity.member_role(ws, a["for"])  # full mode: capped by the hub role (#1133)
     if role is None or role == "viewer":

@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "followup.too_far",
+    "message": "follow-up exceeds the scheduling horizon",
+    "hint": "choose a time within 14 days",
+    "fix": {
+      "argv": [
+        "orch",
+        "follow-up",
+        "--help"
+      ]
+    },
+    "retryable": false
+  }
+}

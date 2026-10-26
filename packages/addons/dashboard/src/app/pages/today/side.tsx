@@ -194,6 +194,7 @@ function ActorIcon({ kind, id }: { kind: string; id?: string }) {
 /** What happened lately; closed by default. */
 export function Recently({ recent, now }: { recent: TodayDocument['recent']; now: string }) {
   const [open, setOpen] = useState(false)
+  if (recent.length === 0) return null
   return (
     <section aria-labelledby="recent-h" className="rounded-lg border border-border bg-surface">
       <h2 className="text-[13px]">

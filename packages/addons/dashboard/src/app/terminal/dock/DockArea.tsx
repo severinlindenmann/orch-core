@@ -6,7 +6,6 @@
 import { ChevronLeft, ChevronUp, SquareTerminal } from 'lucide-react'
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { TerminalSessionView } from '@/api/terminals'
-import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline } from '@/addon-ui/addonClasses'
 import { canUsePty } from '@/addon-ui/capabilities'
 import { hasFeature, isRealHost } from '@/api/features'
@@ -186,12 +185,12 @@ function DockBar({ right, open, focus }: { right: boolean; open: () => void; foc
     focus.current = null
     button.current?.focus()
   }, [focus])
-  const label = `Open terminal dock${ticket ? ` for ${ticket}` : ''} (${DOCK_KEYS}) · ${running} running`
+  const count = running === 0 ? 'none open' : `${running} open`
+  const label = `Open terminal dock${ticket ? ` for ${ticket}` : ''} · ${count}`
   return (
     <aside aria-label="Terminal dock" data-addon={DOCK_ADDON} className={cn('flex shrink-0 bg-surface', addonHairline, right ? 'border-l' : 'border-t')} style={right ? { width: DOCK_BAR } : { height: DOCK_BAR }}>
-      <button ref={button} type="button" aria-label={label} aria-expanded={false} title={label} onClick={open}
+      <button ref={button} type="button" aria-label={label} aria-expanded={false} title={`${label} (${DOCK_KEYS})`} onClick={open}
         className={cn('flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-xs text-text-muted outline-none hover:bg-surface-2 hover:text-text focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand', right ? 'flex-col py-2' : 'px-3')}>
-        <AddonBadge name={DOCK_ADDON} title="Terminals" />
         {right ? (
           <>
             <ChevronLeft aria-hidden="true" className="size-3.5" />
@@ -201,12 +200,8 @@ function DockBar({ right, open, focus }: { right: boolean; open: () => void; foc
         ) : (
           <>
             <SquareTerminal aria-hidden="true" className="size-3.5" />
-            <span className="font-medium text-text">Terminal</span>
-            <span className="truncate">
-              {ticket ?? 'Workspace'} · {running} running
-            </span>
+            <span className="font-medium text-text">Terminals · {count}</span>
             <span className="flex-1" />
-            <kbd className="hidden shrink-0 rounded border border-border px-1 font-mono text-[10px] text-text-faint sm:inline">{DOCK_KEYS}</kbd>
             <ChevronUp aria-hidden="true" className="size-3.5" />
           </>
         )}

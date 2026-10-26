@@ -39,7 +39,9 @@ describe('terminal dock: open, collapse, resize, side', () => {
   it('a full-width 32 px bar; Ctrl+` opens with focus on the session strip; Collapse returns focus to the bar', async () => {
     const { user } = renderApp('/', { viewer: 'p_sev' })
     expect((await bar()).closest('aside')).toHaveStyle({ height: '32px' })
-    expect(await bar()).toHaveTextContent('Ctrl+`')
+    expect(await bar()).not.toHaveTextContent('Ctrl+`')
+    expect(await bar()).toHaveAttribute('title', expect.stringContaining('Ctrl+`'))
+    expect(await bar()).toHaveTextContent(/Terminals · (none open|\d+ open)/)
     fireEvent.keyDown(window, { key: '`', code: 'Backquote', ctrlKey: true })
     const d = await dock()
     await waitFor(() => expect(document.activeElement).toHaveAttribute('data-session-strip'), T)

@@ -41,9 +41,9 @@ it('shows the runner expiry and short-grant reminder and opens Extend', async ()
 it('with no agent access at all (also after a reload) the pill offers to let agents work', async () => {
   runner.grant = null
   show()
-  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent('No agent access')
+  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent('Agents off')
   expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Let agents work' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
   expect(screen.getByRole('heading', { name: 'Allow agent access' })).toBeInTheDocument()
   expect(await screen.findByRole('button', { name: 'Complete new grant' })).toBeInTheDocument()
 })

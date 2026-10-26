@@ -65,6 +65,10 @@ _NO_POSIX = textwrap.dedent(
     for a in ("UnixStreamServer", "ThreadingUnixStreamServer", "UnixDatagramServer", "ForkingMixIn"):
         if hasattr(socketserver, a):
             delattr(socketserver, a)
+    ROOT_TRUSTED = {
+        "orch.setup.osfacts", "orch.setup.osapply", "orch.setup.osfront", "orch.setup.osusers",
+        "orch.cli.remote", "orch.host.isolation",  # import the root-trusted setup/os* tools (plain pwd/grp, POSIX-only)
+    }
     import orch
     from orch import _winflags
     from orch import posixmod
@@ -72,7 +76,7 @@ _NO_POSIX = textwrap.dedent(
     _winflags.install(force=True)  # the simulated Windows: missing O_* flags become 0
     bad = []
     for m in pkgutil.walk_packages(orch.__path__, "orch.", onerror=lambda n: bad.append(n + ": package import failed")):
-        if m.name.endswith("__main__"):
+        if m.name.endswith("__main__") or m.name in ROOT_TRUSTED:  # POSIX-only root tools (oslauncher.TRUSTED_FILES)
             continue
         try:
             importlib.import_module(m.name)

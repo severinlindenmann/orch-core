@@ -2,6 +2,11 @@
 
 __version__ = "2.0.0.dev0"
 
-from . import _winflags
+import os as _os
 
-_winflags.install()
+if (
+    _os.name == "nt"
+):  # POSIX imports nothing here: the root-trusted setup tree (setup/oslauncher.TRUSTED_FILES) has only __init__
+    from . import _winflags
+
+    _winflags.install()

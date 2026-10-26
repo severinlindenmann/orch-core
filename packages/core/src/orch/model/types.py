@@ -117,6 +117,9 @@ class Grant:
     #: that hub's ``hub.left`` (state, no new line). Set by the C10 host-actor ``grant.issued`` that names its request.
     hub_id: str | None = None
     parent: str | None = None
+    #: a follow-up grant that has served its run (its outcome is recorded): unusable, but not a revocation, so
+    #: later follow-ups set during that run keep a valid chain
+    ended: bool = False
 
 
 @dataclass

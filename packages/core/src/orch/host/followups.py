@@ -62,7 +62,6 @@ class FollowupRunner:
         host = getattr(store, "_host", None)
         key = getattr(host, "public_key", None)
         ok = key is not None and bool(core.ws.wsk_pub) and crypto.b64u(key) == core.ws.wsk_pub
-        self.service.host_id = core.ws.host_id if ok else None
         return ok
 
     def _read(self, now):
@@ -106,8 +105,10 @@ class FollowupRunner:
                     continue
                 run = records.get(rec.run)
                 if run is None:
-                    # The ledger is authoritative even if the cache write after fired was interrupted.
-                    await self._outcome(uid, rec, "did_not_run", "host_restarted")
+                    # The ledger is authoritative even if the cache write after fired was interrupted. Only settle
+                    # once the runner is connected (its records are synced); until then the row stays fired.
+                    if hub is not None and hub.connected:
+                        await self._outcome(uid, rec, "did_not_run", "host_restarted")
                 elif run.get("state") in LIVE:
                     live += 1
                 else:
@@ -146,7 +147,7 @@ class FollowupRunner:
         for event, _ in self.service.store.events_after(uid, 0, 1 << 30):
             if event["type"] == "followup.fired" and event.get("followup") == rec.id:
                 fired = True
-            elif fired and session and event["actor"].get("session") == session:
+            elif fired and session and claims.in_family(event["actor"].get("session") or "", session):
                 return True
         return False
 
@@ -256,10 +257,15 @@ class FollowupRunner:
             await agents._start(call, hub, data)
             return True
         except Exception as exc:  # noqa: BLE001 - a fired follow-up must settle, never retry
-            code = getattr(exc, "code", "")
+            code = getattr(exc, "code", None) or ""
+            if code == "outcome.unknown" or hub.store.records.get(run) is not None:
+                # the start may have happened: leave the row fired, the next tick settles it from the run record
+                return True
             reason = (
                 "runner_unavailable"
-                if code.startswith("runner.") or code == "outcome.unknown"
+                if code.startswith("runner.")
+                else "budget"
+                if code in ("run.limit", "rate.limited")
                 else "harness_failed"
                 if code.startswith(("harness.", "launch."))
                 else "error"

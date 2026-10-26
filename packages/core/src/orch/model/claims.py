@@ -77,7 +77,12 @@ def taken(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if t.status in ("done", "closed"):
         return Refusal(Code.TICKET_FROZEN, f"claim.taken is refused on {t.status} tickets")
     takeover = e.get("takeover")
-    if t.status in ("open", "backlog") or (t.status == "in_progress" and t.claim is None):
+    # An in_progress ticket whose claim a follow-up released (a follow-up waits on it, or a follow-up session resumes
+    # it) can be claimed without a takeover. Tickets without follow-ups judge exactly as before.
+    g = ws.grants.get(a.get("grant"))
+    waiting = bool(t.followups)  # a follow-up (in any state) released the claim: the ticket is not stranded
+    resumed = t.status == "in_progress" and t.claim is None and (waiting or (g is not None and g.parent is not None))
+    if t.status in ("open", "backlog") or resumed:
         if takeover is not None:
             return Refusal(Code.CLAIM_NOT_LIVE, "nothing to take over")
     elif t.status == "in_progress":

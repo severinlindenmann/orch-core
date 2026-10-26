@@ -72,6 +72,8 @@ def set_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     ws, a, now = core.ws, e["actor"], ts(e["at"])
     if e["followup"] in t.followups:
         return Refusal(Code.FOLLOWUP_DENIED, "duplicate follow-up id")
+    if e["trigger"] != "time":
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: only time follow-ups are built so far")
     pending = [r for r in t.followups.values() if view_state(core, t, r, now)[0] == "pending"]
     ctx = fu.SetContext(
         a["kind"] == "agent",
@@ -174,7 +176,7 @@ def outcome_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     rec.state = rec.outcome = e["outcome"]
     rec.reason = e.get("reason")
     if rec.grant is not None:
-        core.ws.grants[rec.grant].revoked = True
+        core.ws.grants[rec.grant].ended = True
     return None
 
 

@@ -539,7 +539,7 @@ class Host:
             await asyncio.gather(pair[1], return_exceptions=True)
         service = self.services.pop(workspace_id, None)
         if service is not None:
-            if getattr(service, "followups", None) is not None:
+            if getattr(service, "followups", None):
                 await service.followups.close()
             await asyncio.to_thread(service.close)
             await asyncio.to_thread(served_marker, service.entry.root, False, self.state_dir)
@@ -644,9 +644,17 @@ class Host:
 
         if getattr(service, "followups", None) is not None:
             return
-        if await service.call(lambda: service.store is not None and enabled(service.store.state._core.ws)):
-            service.followups = FollowupRunner(service, clock=self.clock, mono=time.monotonic)
-            service.followups.start()
+        service.followups = False  # claimed before the await: a second check must not start a second runner
+        try:
+            on = await service.call(lambda: service.store is not None and enabled(service.store.state._core.ws))
+        except BaseException:
+            service.followups = None
+            raise
+        if not on:
+            service.followups = None
+            return
+        service.followups = FollowupRunner(service, clock=self.clock, mono=time.monotonic)
+        service.followups.start()
 
     async def _check_loop(self) -> None:
         while True:
@@ -710,7 +718,7 @@ class Host:
             await asyncio.gather(pair[1], return_exceptions=True)
         for workspace_id in list(self.services):
             service = self.services.pop(workspace_id)
-            if getattr(service, "followups", None) is not None:
+            if getattr(service, "followups", None):
                 await service.followups.close()
             await asyncio.to_thread(service.close)
         self._release_host_lock()

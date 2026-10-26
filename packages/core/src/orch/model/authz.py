@@ -340,7 +340,7 @@ def authorize_agent(
             return Refusal(Code.GRANT_INVALID, "the follow-up grant chain is revoked")
     if g.person != a["for"]:
         return Refusal(Code.GRANT_INVALID, "an agent's `for` must be the person who issued the grant")
-    if g.revoked or not (ts(g.issued_at) <= at < ts(g.expires_at)):
+    if g.revoked or g.ended or not (ts(g.issued_at) <= at < ts(g.expires_at)):
         return Refusal(Code.GRANT_INVALID, "the grant was revoked or not valid at this position")
     role = identity.member_role(ws, a["for"])  # full mode: capped by the hub role (#1133)
     if role is None or role == "viewer":

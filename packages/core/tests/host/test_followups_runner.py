@@ -255,3 +255,50 @@ def test_harness_comes_from_the_setters_person_not_another_persons_run(env):
     env.tick()
     fired = [r for r in env.hub.store.records.values() if r.get("mode") == "followup"]
     assert fired and fired[0]["harness"] != "codex"
+
+
+def test_one_runner_per_service_even_when_started_twice_at_once(env, monkeypatch):
+    from orch.host import followups as mod
+
+    made = []
+
+    class Counting:
+        def __init__(self, *a, **k):
+            made.append(self)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(mod, "FollowupRunner", Counting)
+    env.w.service.followups = None
+    start = type(env.w.h.host)._start_followups
+
+    async def both():
+        await asyncio.gather(start(env.w.h.host, env.w.service), start(env.w.h.host, env.w.service))
+
+    env.w.h.run(both())
+    assert len(made) == 1
+
+
+def test_the_fired_run_id_reaches_the_record_and_the_spawn(env):
+    uid, fid, due = env.schedule()
+    env.w.lab.ws.clock[0] = due
+    env.tick()
+    fired = env.w.h.run(env.w.service.call(lambda: env.w.service.store.ticket(uid))).followups[-1]
+    spawn = env.hub.commands[1][1]
+    put = env.hub.commands[0][1]
+    assert fired["run"] in env.hub.store.records
+    assert spawn["run"] == put["run"] == fired["run"]
+
+
+def test_a_fired_row_stays_until_the_runner_is_connected(env):
+    uid, _, due = env.schedule()
+    env.w.lab.ws.clock[0] = due
+    env.tick()
+    env.hub.store.records.clear()
+    env.hub.connected = False
+    env.tick()
+    assert env.view(uid)["state"] == "fired"
+    env.hub.connected = True
+    env.tick()
+    assert env.view(uid)["state"] == "did_not_run" and env.view(uid)["reason"] == "host_restarted"

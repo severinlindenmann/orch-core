@@ -114,11 +114,11 @@ def test_fired_derives_and_outcome_consumes_grant(env, tmp_path):
     before = w.state()
     outcome, result = w.try_(uid, "followup.outcome", w.HOST, followup=e["followup"], outcome="ran", run=f["run"])
     assert not hasattr(result, "code"), result
-    assert not before._core.ws.grants[g.id].revoked  # scratch isolation
+    assert not before._core.ws.grants[g.id].ended  # scratch isolation
     incremental = advance(before, outcome, log=uid)
     rebuilt = w.state()
     assert incremental._core == rebuilt._core
-    assert rebuilt._core.ws.grants[g.id].revoked
+    assert rebuilt._core.ws.grants[g.id].ended and not rebuilt._core.ws.grants[g.id].revoked
     assert refused(w, uid, "log.added", runner, text="again") == Code.GRANT_INVALID
     assert w.view(uid).followups[0]["state"] == "ran"
 
@@ -185,3 +185,34 @@ def test_agent_cancel_and_expired_parent_can_fire(env):
     f = fire(w, uid, e)
     g = w.state()._core.ws.grants[f["grant"]]
     assert ts(g.expires_at) - ts(g.issued_at) == 3600
+
+
+def test_a_follow_up_set_during_a_run_fires_after_the_first_outcome(env):
+    w, uid, a = env
+    e1 = set_followup(w, uid, a)
+    f1 = fire(w, uid, e1)
+    runner = w.agent("tom", f1["grant"])
+    w.tev(uid, "claim.taken", runner)  # the fresh session picks the unclaimed ticket up
+    e2 = set_followup(w, uid, runner)
+    w.tev(uid, "followup.outcome", w.HOST, followup=e1["followup"], outcome="ran", run=f1["run"])
+    assert [f["state"] for f in w.view(uid).followups] == ["ran", "pending"]
+    f2 = fire(w, uid, e2)
+    assert w.view(uid).followups[1]["state"] == "fired"
+    assert w.state()._core.ws.grants[f2["grant"]].parent == f1["grant"]
+
+
+def test_claim_verdicts_of_a_ticket_without_follow_ups_are_unchanged(env):
+    w, uid, a = env
+    other = w.agent("tom", w.grant("tom", "workable"))
+    assert refused(w, uid, "claim.taken", other) == Code.CLAIM_EXISTS  # still claimed by a
+    set_followup(w, uid, a)
+    assert refused(w, uid, "claim.taken", other) is None  # released by the set: a waiting ticket may be picked up
+
+
+def test_non_time_triggers_are_refused_until_wired(env):
+    w, uid, a = env
+    _, result = w.try_(
+        uid, "followup.set", a, followup="fu_" + w.nid(), trigger="orch", deadline=stamp(w.clock + timedelta(hours=3)),
+        brief="x",
+    )  # fmt: skip
+    assert result.code == Code.FOLLOWUP_DENIED

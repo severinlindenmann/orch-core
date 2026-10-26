@@ -373,8 +373,8 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
                     g.scope,
                     freeze(g.verbs),
                     g.expires_at,
-                    g.revoked,
-                    not g.revoked and ts(g.expires_at) > now,
+                    g.revoked or g.ended,
+                    not (g.revoked or g.ended) and ts(g.expires_at) > now,
                     g.label,
                     g.issued_at,
                 )

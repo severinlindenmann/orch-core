@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   SetupAPI,
@@ -66,13 +66,15 @@ const rowLines = (lines: string[], hidden: number[] | undefined) =>
 /** The plain summary of what a review signs, from the review core returned and nothing else: the events' own fields,
  * the runner grant, and core's flags. A kind this page does not know is shown by its title (and opens the technical
  * details), never left out. */
-export function summarize(review: Review): { lines: string[]; unknown: boolean } {
+export function summarize(review: Review): { lines: string[]; unknown: boolean; odd: string[] } {
   const lines: string[] = []
+  const oddLines: string[] = []
   let unknown = false
   const addons: string[] = []
   const odd = (title: string) => {
     unknown = true
     lines.push(title)
+    oddLines.push(title)
   }
   for (const item of review.items) {
     const f = item.fields
@@ -100,7 +102,36 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean }
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
-  return { lines, unknown }
+  return { lines, unknown, odd: oddLines }
+}
+type Fact = { icon: string; label: string; value: string | string[] }
+/** The short card of a review (plain words only): from the review's own items and flags, nothing else. What this
+ * mapping cannot describe is added as extra lines by the caller (`summarize().odd`); everything stays in the fold. */
+export function reviewFacts(review: Review): Fact[] {
+  const facts: Fact[] = []
+  const ws = review.workspace
+  if (ws) {
+    facts.push({ icon: '▦', label: 'Workspace', value: `${ws.workspace_name ?? ws.name} (tickets ${ws.prefix}-0001…)` })
+    facts.push({ icon: '☺', label: 'Owner', value: ws.name })
+    facts.push({ icon: '▤', label: 'Folder', value: ws.dir })
+  }
+  const has = (id: string) => review.flags.some((f) => f.id === id)
+  if (has('custody')) facts.push({ icon: '◈', label: 'How you approve', value: 'One click on this computer' })
+  else if (has('terminal') || review.tty_confirm) facts.push({ icon: '◈', label: 'How you approve', value: 'In a terminal, with your passphrase' })
+  let hours: number | undefined
+  for (const item of review.items) {
+    const f = item.fields
+    if (item.id === 'runner_grant' && f && typeof f.hours === 'number') hours = f.hours
+    else if (hours === undefined && item.type === 'settings.changed' && f?.set && typeof f.set === 'object') {
+      const g = (f.set as Record<string, unknown>).grant_hours
+      if (typeof g === 'number') hours = g
+    }
+  }
+  if (hours !== undefined) facts.push({ icon: '✦', label: 'Agents', value: `may work for ${duration(hours)}` })
+  const addons = review.items.filter((i) => i.type === 'addon.granted').map((i) => i.title)
+  if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
+  if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
+  return facts
 }
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
 /** A ticket prefix from a workspace name: first letters, capitals, letters and digits only ("Marketing Department" gives
@@ -616,7 +647,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     !!review &&
     (((state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
-  const summary = review ? summarize(review) : { lines: [], unknown: false }
+  const summary = review ? summarize(review) : { lines: [], unknown: false, odd: [] as string[] }
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
       Continue →
@@ -1017,32 +1048,40 @@ export function Setup({ api }: { api: SetupAPI }) {
           {step === 5 && review && (
             <>
               <h2>Check and create</h2>
-              {review.workspace && (
-                <dl className="current review-facts">
-                  <dt>Workspace</dt>
-                  <dd>
-                    <Raw>{review.workspace.workspace_name ?? review.workspace.name}</Raw>{' '}
-                    <small>
-                      (tickets <Raw>{review.workspace.prefix}</Raw>-0001…)
-                    </small>
-                  </dd>
-                  <dt>Owner</dt>
-                  <dd>
-                    <Raw>{review.workspace.name}</Raw>
-                  </dd>
-                  <dt>Folder</dt>
-                  <dd>
-                    <Raw>{review.workspace.dir}</Raw>
-                  </dd>
-                </dl>
-              )}
-              <ul className="review-summary">
-                {summary.lines.map((line, i) => (
-                  <li key={i}>
-                    <Inline>{line}</Inline>
-                  </li>
+              <dl className="current review-facts review-summary">
+                {reviewFacts(review).map((f) => (
+                  <Fragment key={f.label}>
+                    <dt>
+                      <span aria-hidden="true">{f.icon}</span> {f.label}
+                    </dt>
+                    <dd>
+                      {Array.isArray(f.value) ? (
+                        <span className="addon-chips">
+                          {f.value.map((v) => (
+                            <span className="chip" key={v}>
+                              <Raw>{v}</Raw>
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <Raw>{f.value}</Raw>
+                      )}
+                    </dd>
+                  </Fragment>
                 ))}
-              </ul>
+                {summary.odd.length > 0 && (
+                  <>
+                    <dt>Also</dt>
+                    <dd>
+                      {summary.odd.map((line, i) => (
+                        <p key={i}>
+                          <Inline>{line}</Inline>
+                        </p>
+                      ))}
+                    </dd>
+                  </>
+                )}
+              </dl>
               {(review.risk || review.flags.some((f) => f.id === 'runner' || f.id === 'terminals')) && (
                 <div className="warning">
                   <p>

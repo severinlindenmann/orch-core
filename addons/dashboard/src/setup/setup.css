@@ -434,3 +434,14 @@ body:has(> #root > .setup) {
 .confirm-words summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
 .words-confirmed { margin: 12px 0; font-weight: 600; }
 .confirm-words .word-tiles li bdi { max-width: 100%; font: inherit; }
+.setup .addon-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.setup .addon-chips .chip {
+  padding: 1px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+}

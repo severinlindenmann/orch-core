@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { plainReason, Setup, summarize } from './Setup'
+import { plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -315,7 +315,7 @@ test('long runner access is one plain click after the review; digest and fingerp
   await screen.findByRole('heading', { name: 'Your secret words' })
   await check()
   await screen.findByRole('heading', { name: 'Check and create' })
-  expect(screen.getByText('This computer’s agent runner may work on any ticket you can see, as you, for 3 days')).toBeInTheDocument()
+  expect(document.querySelector('.review-summary')).toHaveTextContent('may work for 3 days')
   expect(screen.queryByText(/scope workable/)).toBeNull() // the raw values are only in the technical details
   expect(screen.getByText(/Return to the terminal window where you started orch setup/)).toBeInTheDocument()
   expect(screen.getByText(/Check that the terminal shows the same words/)).toHaveTextContent('demo not real. If they match, type yes in the terminal and press Enter.')
@@ -759,9 +759,9 @@ test('the summary comes from the review core returned, not from the choices on t
   await check()
   await screen.findByRole('heading', { name: 'Check and create' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('Agents may work for you for up to 1 day')
+  expect(summary).toHaveTextContent('may work for 1 day')
   expect(summary).not.toHaveTextContent('3 days')
-  expect(summary).toHaveTextContent('Every approval asks for your passphrase in a terminal.')
+  expect(summary).toHaveTextContent('In a terminal, with your passphrase')
 })
 
 test('nothing about agents or approval is claimed when the review has none of it', async () => {
@@ -865,7 +865,7 @@ test('the runner line comes from the signed grant item, not from review.runner_g
   await check()
   await screen.findByRole('heading', { name: 'Check and create' })
   const summary = document.querySelector('.review-summary')!
-  expect(summary).toHaveTextContent('may work on any ticket you can see, as you, for 1 day')
+  expect(summary).toHaveTextContent('may work for 1 day')
   expect(summary).not.toHaveTextContent(/7 days|everything/)
 })
 
@@ -1052,4 +1052,20 @@ test('after the terminal confirms, the words are replaced by a matched notice', 
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   expect(await screen.findByText('The three words matched. Your choices are confirmed.')).toBeInTheDocument()
   expect(screen.queryByRole('list', { name: 'Your three words' })).toBeNull()
+})
+
+test('reviewFacts builds the short card in plain words from the review', () => {
+  const review = {
+    review_id: 'r', digest: 'd', fingerprint: null, tty_confirm: false, risk: null, runner_grant: null,
+    workspace: { prefix: 'MD', name: 'Severin', workspace_name: 'Marketing', dir: '/p', lines: [] },
+    flags: [{ id: 'custody', text: 'x' }, { id: 'records', text: 'y' }],
+    items: [
+      { id: 'runner_grant', title: 'Agent access', lines: [], details: [], volatile: [], type: 'grant.issued', fields: { hours: 72 } },
+      { id: 'addon:dashboard', title: 'Dashboard', lines: [], details: [], volatile: [], type: 'addon.granted', fields: {} },
+    ],
+  } as unknown as Review
+  const facts = reviewFacts(review)
+  expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Owner', 'Folder', 'How you approve', 'Agents', 'Add-ons', 'History'])
+  expect(facts.find((f) => f.label === 'Agents')!.value).toBe('may work for 3 days')
+  expect(facts.find((f) => f.label === 'Add-ons')!.value).toEqual(['Dashboard'])
 })

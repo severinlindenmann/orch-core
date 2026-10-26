@@ -1,44 +1,39 @@
-// Settings > Add-ons (R2-2, real host): every add-on with its plain description and whether it is On. A switch is a
+// Built-in add-ons (R2-2, real host), shown in the Built in group of the Add-ons page: every add-on with its plain description and whether it is On. A switch is a
 // signed settings change like the others: it opens the same review and signing step (`addon.grant` to turn on,
 // `addon.disable` to turn off). Nothing is written without a signature. A switch that cannot move says why.
 import { Inline, plain } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { AddonSetup } from './AddonSetup'
-import { HostDevices } from './Devices'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, ChevronDown, ChevronRight, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Smartphone, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
+import { BookOpen, ChevronDown, ChevronRight, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Zap, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import { canChangeSettings } from '@/api/settings'
 import { queries } from '@/api/queries'
 import type { AddOnRow } from '@/api/addOnSwitches'
+import type { AddonSwitchName } from '@/api/handoff'
 import type { Workspace } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Switch } from '@/components/ui/switch'
 import { RunnerSwitch } from '@/components/RunnerSwitch'
-import { Section } from '../../ticket/shared'
 import { OwnerNote } from '../OwnerNote'
 import { PublishServer } from './PublishServer'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { useViewerRole } from './useViewerRole'
 
-type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'wiki'
 /** Add-ons with settings of their own: they open in place, under their row. */
 const WITH_SETTINGS: readonly string[] = ['publish']
-const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'usage', 'estimate', 'explorer', 'wiki']
 
-const ICONS: Record<string, LucideIcon> = { 'start-agent': Rocket, terminals: Terminal, worktrees: GitBranch, publish: Globe, usage: Gauge, estimate: Ruler, explorer: FolderOpen, wiki: BookOpen }
+const ICONS: Record<string, LucideIcon> = { 'start-agent': Rocket, terminals: Terminal, worktrees: GitBranch, publish: Globe, usage: Gauge, estimate: Ruler, explorer: FolderOpen, wiki: BookOpen, quick: Zap }
 
-export function HostAddOns({ workspace }: { workspace: Workspace }) {
+export function BuiltInAddOns({ workspace }: { workspace: Workspace }) {
   const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean } | null>(null)
   const data = useQuery(queries.addOns(workspace.id))
   const role = useViewerRole(workspace)
   const qc = useQueryClient()
   const [open, setOpen] = useState<Record<string, boolean>>({})
-  const [devicesOpen, setDevicesOpen] = useState(false)
   // The row being switched: its switch keeps the old position (nothing is shown before the host confirms) and says what is happening.
   const [busy, setBusy] = useState<{ id: string; turningOn: boolean; stage: 'review' | 'signing' | 'waiting' } | null>(null)
-  const { ask, dialog } = useSettingsHandoff(workspace.id, async () => {
+  const { ask, dialog, inline } = useSettingsHandoff(workspace.id, async () => {
     setBusy((b) => (b ? { ...b, stage: 'waiting' } : b))
     // One read of everything the page and the sidebar are built from; the switch moves when these have answered.
     await Promise.all([
@@ -51,11 +46,12 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
   const owner = canChangeSettings(role)
 
   const flip = (row: AddOnRow) => {
-    if (!SWITCHABLE.includes(row.id)) return
-    const name = row.id as Switchable
+    // The server sends `locked` for a row that has no switch; every other row is switchable and its id is the name the host validates.
+    if (row.locked !== null) return
+    const name = row.id as AddonSwitchName
     const turningOn = row.state !== 'on'
     if (turningOn && row.needs && row.set_up !== true && name === 'publish') {
-      setSetup({ name, enabling: true })
+      setSetup({ name: 'publish', enabling: true })
       return
     }
     const name_ = plain(row.title)
@@ -64,6 +60,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
       title: turningOn ? `Turn on ${name_}` : `Turn off ${name_}`,
       action: { action: turningOn ? 'addon_grant' : 'addon_disable', name },
       autoStart: true,
+      inline: true,
       confirmLabel: turningOn ? 'Sign and turn on' : 'Sign and turn off',
       doneToast: turningOn ? `${name_} is on` : `${name_} is off`,
       onSigning: (signing) => setBusy((b) => (b && signing ? { ...b, stage: 'signing' } : b)),
@@ -79,13 +76,9 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-base font-semibold">Add-ons</h2>
-      <Section title="What this workspace can do">
-        <p className="mb-2 text-[13px] text-text-muted">
-          Add-ons give you and your agents more to work with. Turning one on or off is a change you sign, like the other settings: you see exactly what changes first.
-        </p>
-        {data.isError ? (
+    <div>
+      {
+        data.isError ? (
           <LoadFailed what="add-ons" onRetry={() => void data.refetch()} />
         ) : !data.data ? (
           <p className="text-[13px] text-text-muted">Reading the add-ons…</p>
@@ -124,6 +117,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                         ) : (
                           <span className="font-medium"><Inline>{row.title}</Inline></span>
                         )}
+                        <span className="rounded-full border border-border px-1.5 text-[11px] leading-4 text-text-faint">Built in</span>
                         {fixed && <span className="text-[11px] text-text-faint">Always on</span>}
                         {needsSetup && <span data-testid={`addon-${row.id}-state`} className="rounded-full border border-warning/50 px-1.5 text-[11px] leading-4 text-warning">Needs setup</span>}
                       </div>
@@ -151,6 +145,7 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
                       />
                     )}
                   </div>
+                  {mine && inline && <div data-testid={`addon-${row.id}-accordion`}>{dialog}</div>}
                   {on && open[row.id] && (
                     <div id={`addon-${row.id}-panel`}>
                       {row.id === 'publish' && <PublishServer workspace={workspace} owner={owner} embedded />}
@@ -160,35 +155,10 @@ export function HostAddOns({ workspace }: { workspace: Workspace }) {
               )
             })}
           </ul>
-        )}
-      </Section>
-      <Section title="Phone">
-        <ul aria-label="Phone">
-          <li data-testid="addon-phone" className="py-3 text-[13px]">
-            <div className="flex items-center gap-3">
-              <Smartphone aria-hidden className="size-4 shrink-0 text-text-muted" />
-              <div className="min-w-0 flex-1">
-                <span className="font-medium">Phone</span>
-                <p className="text-text-muted">Pair the orch app on your phone, and see, rename or remove the devices that can approve.</p>
-              </div>
-              <Button size="sm" variant="secondary" data-testid="addon-phone-devices" onClick={() => setDevicesOpen(true)}>Manage devices</Button>
-            </div>
-          </li>
-        </ul>
-      </Section>
-      {devicesOpen && (
-        <Dialog open onOpenChange={(o) => !o && setDevicesOpen(false)}>
-          <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto border-border bg-surface">
-            <DialogHeader>
-              <DialogTitle>Phone and devices</DialogTitle>
-              <DialogDescription>Pairing, and the devices that can approve for this workspace.</DialogDescription>
-            </DialogHeader>
-            <HostDevices key={workspace.id} workspace={workspace} />
-          </DialogContent>
-        </Dialog>
-      )}
+        )
+      }
       {setup && <AddonSetup name={setup.name} enabling={setup.enabling} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, autoStart: true }) }} />}
-      {dialog}
+      {!inline && dialog}
     </div>
   )
 }

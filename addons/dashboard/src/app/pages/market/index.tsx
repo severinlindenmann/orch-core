@@ -26,6 +26,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
+import { BuiltInAddOns } from '../settings/host/AddOns'
 
 const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
 const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
@@ -179,6 +180,15 @@ function Review({
     </Dialog>
   )
 }
+/** The Built in group: switch, tag, no Remove. One accordion under a row opens for a switch at a time. */
+function BuiltInGroup({ ws }: { ws: NonNullable<ReturnType<typeof useWorkspace>['workspace']> }) {
+  return (
+    <section aria-labelledby="built-in-h" className="space-y-1">
+      <h2 id="built-in-h" className="text-sm font-semibold">Built in</h2>
+      <BuiltInAddOns key={ws.id} workspace={ws} />
+    </section>
+  )
+}
 export function MarketPage() {
   const { workspace } = useWorkspace()
   return <MarketWorkspace key={workspace?.id ?? 'loading'} />
@@ -188,12 +198,15 @@ function MarketWorkspace() {
   const { workspace } = useWorkspace()
   const ws = workspace?.id ?? ''
   const role = useRole()
-  const mayWrite = !!ws && canAct(ws) && role === 'owner' && hasFeature('market', ws)
-  const { tab } = useSearch({ from: '/addons' })
+  const market = !!ws && hasFeature('market', ws)
+  const mayWrite = !!ws && canAct(ws) && role === 'owner' && market
+  const { tab: asked } = useSearch({ from: '/addons' })
+  // A host without the market ops has the built-in add-ons only.
+  const tab = market ? asked : 'installed'
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const list = useQuery({ ...queries.marketList(ws), enabled: !!ws && hasFeature('market', ws) })
-  const installed = useQuery({ ...queries.marketInstalled(ws), enabled: !!ws && hasFeature('market', ws) && tab === 'installed' })
+  const list = useQuery({ ...queries.marketList(ws), enabled: market })
+  const installed = useQuery({ ...queries.marketInstalled(ws), enabled: market && tab === 'installed' })
   const [search, setSearch] = useState('')
   const [source, setSource] = useState('')
   const [permission, setPermission] = useState('')
@@ -255,19 +268,20 @@ function MarketWorkspace() {
   }, [unfetched, ws])
   const entries = markets.flatMap((m) => m.addons.map((a) => ({ m, a })))
   const active = tab === 'installed' ? installed : list
-  if (!hasFeature('market', ws)) return <p>Add-ons are not available in this workspace.</p>
   return (
     <div className="@container min-w-0 w-full max-w-5xl space-y-4 break-words">
       <h1 className="text-xl font-semibold">Add-ons</h1>
       <nav aria-label="Add-on tabs" className="flex gap-1 border-b border-border pb-2 @max-[520px]:gap-0">
-        {(['browse', 'installed', 'marketplaces'] as const).map((t) => (
+        {(market ? (['browse', 'installed', 'marketplaces'] as const) : (['installed'] as const)).map((t) => (
           <Button key={t} size="sm" variant={tab === t ? 'secondary' : 'ghost'} onClick={() => void navigate({ to: '/addons', search: { tab: t } })}>
             {t === 'browse' ? 'Browse' : t === 'installed' ? 'Installed' : 'Marketplaces'}
           </Button>
         ))}
       </nav>
       {message && <p role="status">{message}</p>}
-      {active.isError ? (
+      {!market ? (
+        <BuiltInGroup ws={workspace} />
+      ) : active.isError ? (
         <LoadFailed what={tab === 'installed' ? 'installed add-ons' : 'marketplaces'} onRetry={() => void active.refetch()} />
       ) : active.isPending ? (
         <p role="status">Loading add-ons…</p>
@@ -335,7 +349,7 @@ function MarketWorkspace() {
                         ))}
                       </div>
                       <p>{a.revoked ? 'Withdrawn by its publisher' : a.blocked ? 'Blocked by your hub' : stateLabel(a.installed?.state, pending.includes(a.id))}</p>
-                      {a.installed && <p className="text-xs text-text-muted">Installed{a.installed.state === 'disabled' ? ' · Turn on in Settings > Add-ons' : ''}</p>}
+                      {a.installed && <p className="text-xs text-text-muted">Installed{a.installed.state === 'disabled' ? ' · Turn it on under Installed' : ''}</p>}
                       {mayWrite &&
                         !a.revoked &&
                         (a.blocked ? (
@@ -355,8 +369,10 @@ function MarketWorkspace() {
           )}
           {tab === 'installed' && (
             <>
+              {workspace && <BuiltInGroup ws={workspace} />}
+              <h2 className="pt-2 text-sm font-semibold">From marketplaces</h2>
               {!installed.data?.addons.length ? (
-                <p>No add-ons installed yet</p>
+                <p className="text-[13px] text-text-muted">Nothing installed from a marketplace yet. Browse has what is on offer.</p>
               ) : (
                 <Table columns={['Add-on', 'Source', 'Version', 'May', 'Actions']}>
                   {installed.data.addons.map((a) => (
@@ -396,7 +412,7 @@ function MarketWorkspace() {
                             <Button variant="ghost" disabled={busy || a.state !== 'disabled'} onClick={() => setRemove(a)}>
                               Remove
                             </Button>
-                            {a.state !== 'disabled' && <p>Turn it off in Settings &gt; Add-ons first</p>}
+                            {a.state !== 'disabled' && <p>Turn it off first</p>}
                           </div>
                         )}
                       </td>

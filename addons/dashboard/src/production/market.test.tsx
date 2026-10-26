@@ -66,7 +66,7 @@ it('stages the exact source, hands off in a terminal and refreshes after submiss
   act(() => {
     state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001')
   })
-  await screen.findByText('Installed · Turn on in Settings > Add-ons', {}, T)
+  await screen.findByText('Installed · Turn it on under Installed', {}, T)
 })
 it('Cancel deletes the stage', async () => {
   const d = await openReview()
@@ -134,7 +134,7 @@ it('requires turning an active add-on off before Remove', async () => {
   ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
   show('/w/DEMO/addons?tab=installed')
   expect(await screen.findByRole('button', { name: 'Remove' }, T)).toBeDisabled()
-  expect(screen.getByText('Turn it off in Settings > Add-ons first')).toBeInTheDocument()
+  expect(screen.getByText('Turn it off first')).toBeInTheDocument()
 })
 it('with One click on, install is the signer review and one Sign press: no Terminal, no typed word (V3-D38)', async () => {
   ws().click = { custody: 'convenience', enabled: true, available: true }
@@ -194,11 +194,12 @@ it('host refuses marketplace writes for a non-owner even if a caller bypasses co
   expect(result.status).toBe(403)
   expect((await result.json()).error.code).toBe('permission.denied')
 })
-it('hides the permanent route when the host does not serve market', async () => {
-  ws().features = [...READS, 'actions']
+it('a host without the market ops still has the Add-ons page: built-in add-ons only, no marketplace tabs and no market call', async () => {
+  ws().features = [...READS, 'actions', 'settings']
   show('/w/DEMO/addons')
-  await screen.findByRole('link', { name: 'Board' }, T)
-  expect(screen.queryByRole('link', { name: 'Add-ons' })).toBeNull()
+  await screen.findByRole('heading', { name: 'Built in' }, T)
+  expect(screen.queryByRole('button', { name: 'Browse' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Marketplaces' })).toBeNull()
   expect(state.host.calls.some((c) => c.path.endsWith('/market'))).toBe(false)
 })
 it('run-9 feedback: the unfetched official marketplace is fetched on the first visit and shows a GitHub link', async () => {

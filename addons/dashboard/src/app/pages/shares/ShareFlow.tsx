@@ -151,7 +151,7 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 text-[13px]">
-            {data && !data.configured && <p className="text-warning">No publish server is set up yet. Set one up in Settings, Add-ons, then come back.</p>}
+            {data && !data.configured && <p className="text-warning">No publish server is set up yet. Set one up on the Add-ons page, then come back.</p>}
             <fieldset className="space-y-1.5">
               <legend className="mb-1 font-medium">Files</legend>
               {files.length === 0 && <p className="text-text-muted">This ticket has no files yet.</p>}

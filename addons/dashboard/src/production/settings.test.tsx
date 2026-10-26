@@ -18,27 +18,23 @@ it('the Settings link is offered when the host serves it, with only the reduced 
   await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
   expect(await screen.findByText('Advanced', {}, T)).toBeInTheDocument()
   const nav = within(screen.getByRole('navigation', { name: 'Settings' }))
-  expect(nav.getAllByRole('link').map((a) => a.textContent)).toEqual(['General', 'Members', 'Approvals', 'Agent access', 'Add-ons'])
+  expect(nav.getAllByRole('link').map((a) => a.textContent)).toEqual(['General', 'Members', 'Approvals', 'Agent access', 'Devices'])
   expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
   expect(screen.queryByText('Relay & devices')).not.toBeInTheDocument()
 })
 
-it('Devices have one home, the Phone row of Add-ons: pairing is not available yet, and no pairing request is made', async () => {
-  const user = userEvent.setup()
-  show('/w/DEMO/settings/addons')
-  await user.click(await screen.findByTestId('addon-phone-devices', {}, T))
+it('Devices have one home, Settings > Devices (the Phone block moved from Add-ons): pairing is not available yet, and no pairing request is made', async () => {
+  show('/w/DEMO/settings/devices')
+  expect(await screen.findByTestId('addon-phone', {}, T)).toHaveTextContent('Phone')
   expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone comes later. For now you approve on this computer, in the terminal.')
   expect(state.host.calls.filter((c) => /pair|device/.test(c.path))).toEqual([])
   expect(state.host.posts()).toEqual([])
   expect(screen.queryByRole('button', { name: 'Create pairing link' })).toBeNull()
 })
 
-it('/settings/devices is gone: it falls back to General like any unknown tab, and there is no Devices tab', async () => {
-  show('/w/DEMO/settings/devices')
-  const nav = within(await screen.findByRole('navigation', { name: 'Settings' }, T))
-  await waitFor(() => expect(nav.getByRole('link', { name: 'General' })).toHaveAttribute('aria-current', 'page'))
-  expect(screen.queryByTestId('pair-unavailable')).toBeNull()
-  expect(within(screen.getByRole('navigation', { name: 'Settings' })).queryByRole('link', { name: /devices/i })).toBeNull()
+it('the old /settings/addons URL goes to the Add-ons page', async () => {
+  show('/w/DEMO/settings/addons')
+  expect(await screen.findByRole('heading', { name: 'Built in' }, T)).toBeInTheDocument()
 })
 
 it('General shows what the host says, marks defaults and lists repositories with what the host sees on disk', async () => {

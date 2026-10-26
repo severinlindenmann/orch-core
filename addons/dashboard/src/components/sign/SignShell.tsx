@@ -47,6 +47,8 @@ export interface SignShellProps {
   showClose: boolean
   onOpenAutoFocus: (e: Event) => void
   children: ReactNode
+  /** Render in place (an accordion under a row) instead of a popover, sheet or dialog. */
+  inline?: boolean
 }
 
 /** The row with Cancel and the sign button: it stays at the bottom of the scrolling review, so Cancel is always reachable (phone sheet and popover). */
@@ -62,6 +64,15 @@ export function SignShell(p: SignShellProps) {
       <span className="min-w-0">{p.title}</span>
     </div>
   )
+  if (p.inline) {
+    if (!p.open) return null
+    return (
+      <section data-sign-inline aria-label={typeof p.title === 'string' ? p.title : undefined} className="mt-2 grid grid-cols-[minmax(0,1fr)] gap-3 rounded-lg border border-border bg-surface-2 p-3 [&_.sticky]:static [&_.sticky]:m-0 [&_.sticky]:border-t-0 [&_.sticky]:bg-transparent [&_.sticky]:p-0">
+        {heading}
+        {p.children}
+      </section>
+    )
+  }
   if (wide && p.anchor) {
     const anchor = p.anchor
     return (

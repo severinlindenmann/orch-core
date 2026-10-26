@@ -939,7 +939,7 @@ class HubJoin(Action):
 
 
 class HubModeFull(Action):
-    """Run-9 feedback 6: switch the joined hub from selective to full. One click; the card is the one the host pinned."""
+    """Run-9 feedback 6: switch the joined hub from selective to full. One click; the card is the host's pinned one."""
 
     action: Literal["hub_mode_full"]
     hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_HUB_CARD_BYTES)]

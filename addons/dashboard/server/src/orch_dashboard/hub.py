@@ -212,7 +212,8 @@ def status_view(raw) -> dict:
         "log_sync_stuck": isinstance(raw.get("log_sync"), dict) and bool(raw["log_sync"].get("stuck")),
         "groups": counts if snap else None,  # from the hub, not signed
         "snapshot_version": _int(snap.get("version")) if snap else None,
-        "hub_card": json.dumps(raw["hub_card"], separators=(",", ":")) if isinstance(raw.get("hub_card"), dict) else None,
+        "hub_card": json.dumps(raw["hub_card"], separators=(",", ":")) if isinstance(raw.get("hub_card"), dict)
+        else None,
     }  # fmt: skip
 
 

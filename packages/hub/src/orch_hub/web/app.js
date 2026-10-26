@@ -52,6 +52,7 @@ const WORDS = {
   prepared_expired: "Time ran out.",
   unknown_prepared: "This request is no longer valid.",
   channel_revoked: "This browser's key was removed.",
+  not_left: "This workspace must leave before it can be removed.",
   forbidden_role: "Your role does not allow this.",
   too_many_channels: "You have the maximum number of devices. Remove one first.",
   bad_channel_proof: "The signature was not accepted.",

@@ -88,6 +88,23 @@ class Registry:
             r = self._row(ws)
         return None if r is None else json.loads(r[4])
 
+    def unbound_ms(self, ws: str) -> int | None:
+        """The leave time from the signed unbound object, only while unbound."""
+        with self.lock:
+            row = self._db.execute(
+                "SELECT binding_state, binding_obj FROM workspace WHERE workspace_id=?", (ws,)
+            ).fetchone()
+        if row is None or json.loads(row[0]).get("status") != "unbound" or row[1] is None:
+            return None
+        value = json.loads(row[1]).get("o", {}).get("unbound_ms")
+        return value if type(value) is int else None
+
+    def forget(self, ws: str) -> None:
+        """Delete the workspace and owner alias, retaining operation counts."""
+        with self.lock, self._db:
+            self._db.execute("DELETE FROM workspace WHERE workspace_id=?", (ws,))
+            self._db.execute("DELETE FROM owner_alias WHERE workspace_id=?", (ws,))
+
     def mode(self, ws: str) -> str | None:
         """The mode of the live binding; None unless bound."""
         st = self.binding_state(ws)

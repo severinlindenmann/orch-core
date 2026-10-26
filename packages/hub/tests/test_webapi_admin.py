@@ -187,3 +187,31 @@ def test_web_listen_takes_a_private_ip_not_a_wildcard(w):
     for bad in ("0.0.0.0:8100", "8.8.8.8:8100"):
         with pytest.raises(ValueError):
             parse_web_listen(bad, assigned=lambda ip: True)
+
+
+def test_workspace_left_listed(w):
+    left_ms = 1730000000000
+    w.reg.add("cd" * 16, "full", status="unbound", left_ms=left_ms)
+    status, body, _ = w.call("GET", "/admin/workspaces", token=w.login(w.admin))
+    assert status == 200
+    rows = {r["workspace_id"]: r for r in body["workspaces"]}
+    assert rows["cd" * 16]["status"] == "unbound"
+    assert rows["cd" * 16]["left_ms"] == left_ms
+    assert rows[WS]["left_ms"] is None
+
+
+def test_workspace_remove(w):
+    admin, member = w.login(w.admin), w.login(w.ann)
+    path = f"/admin/workspaces/{WS}"
+    assert w.call("DELETE", path, token=admin)[:2] == (409, {"error": "not_left"})
+    assert w.reg.binding_state(WS)["status"] == "bound"
+    assert w.env.acc.grants(WS)
+    w.reg.add(WS, "full", status="unbound", left_ms=1730000000000)
+    w.env.acc.add_group("other")
+    w.env.acc.grant(WS, "other", "read")
+    assert w.call("DELETE", path, token=member)[:2] == (403, {"error": "forbidden_role"})
+    assert w.reg.binding_state(WS)["status"] == "unbound"
+    assert w.call("DELETE", path, token=admin)[:2] == (200, {"ok": True})
+    assert w.env.acc.grants(WS) == []
+    assert w.call("GET", "/admin/workspaces", token=admin)[1]["workspaces"] == []
+    assert w.call("DELETE", path, token=admin)[:2] == (404, {"error": "unknown_workspace"})

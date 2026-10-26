@@ -99,6 +99,7 @@ STATUS = {
     "not_custodial": 403,
     "unknown_op": 404,
     "unknown_workspace": 404,
+    "not_left": 409,
     "unknown_item": 404,
     "unknown_user": 404,
     "unknown_group": 404,
@@ -287,6 +288,13 @@ ROUTES: tuple[Route, ...] = (
     _r("GET", "/admin/grants", "admin", "a_grants", "List workspace grants (optional ?workspace_id=)"),
     _r("PUT", "/admin/grants", "admin", "a_grant", "Grant a group a role in a workspace"),
     _r("POST", "/admin/grants/revoke", "admin", "a_grant_revoke", "Remove a group's grant on a workspace"),
+    _r(
+        "DELETE",
+        "/admin/workspaces/{workspace_id}",
+        "admin",
+        "a_workspace_remove",
+        "Remove a workspace that has left (deletes the hub's record)",
+    ),
     _r("GET", "/admin/workspaces", "admin", "a_workspaces", "List workspaces with mode, binding status and grants"),
     _r("GET", "/admin/channels", "admin", "a_channels", "List every channel (optional ?user_id=)"),
     _r("POST", "/admin/channels/{channel_id}/revoke", "admin", "revoke", "Revoke any channel (permanent)"),
@@ -1089,6 +1097,18 @@ class WebApi:
         self.d.access.revoke(b["workspace_id"], b["group"], actor=c.user_id)
         return 200, {"ok": True}
 
+    def _h_a_workspace_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        reg, ws = self.d.registry, p["workspace_id"]
+        st = reg.binding_state(ws)
+        if st is None:
+            raise ApiError("unknown_workspace")
+        if st["status"] != "unbound":
+            raise ApiError("not_left")
+        for grant in self.d.access.grants(ws):
+            self.d.access.revoke(ws, grant["group"], actor=c.user_id)
+        reg.forget(ws)
+        return 200, {"ok": True}
+
     def _h_a_workspaces(self, c: Ctx, p: dict, q: dict, b: dict | None):
         reg, out = self.d.registry, []
         for ws in sorted(reg.pins()):
@@ -1100,6 +1120,7 @@ class WebApi:
                     "name": P4.render_text(card_name) if type(card_name) is str and card_name else None,
                     "mode": reg.last_mode(ws),
                     "status": st["status"] if st else None,
+                    "left_ms": reg.unbound_ms(ws) if st and st["status"] == "unbound" else None,
                     "owner_alias": reg.owner_alias(ws),
                     "grants": self.d.access.grants(ws),
                 }

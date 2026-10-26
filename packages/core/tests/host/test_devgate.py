@@ -219,6 +219,27 @@ def test_sandbox_workspace_registers_and_is_served_on_a_dev_host(sbx):
         served.close()
 
 
+def test_dev_host_allows_one_click_and_a_real_workspace_still_refuses_a_dev_certificate(sbx, tmp_path):
+    """One click is no longer refused on a dev host (the key file lives under the sandbox state), but a real
+    workspace still refuses the dev host and its dev:true certificates (``not_sandbox``)."""
+    from orch.host import convenience
+
+    served = Served(sbx, dev=sbx.dev())
+    try:
+        convenience.set_enabled(sbx.state, WS, True, UID)  # was dev_host before
+        assert convenience.set_enabled(sbx.state, WS, False, UID) is not None
+    finally:
+        served.close()
+    real = Lab(tmp_path / "real2")
+    try:
+        view = devmode.View(
+            {"prefix": "DEMO", "owner": {"person": real.owner, "name": "Owner"}}, frozenset({real.owner})
+        )
+        assert _refused(lambda: devmode.check_admit(sbx.dev(), WS, real.root, view)) == "not_sandbox"
+    finally:
+        real.close()
+
+
 def test_real_workspace_on_dev_host_refuses_convenience(sbx, tmp_path):
     """Registration refused (the admit check: not_sandbox; through host.register the missing genesis pin refuses
     first); with the registry written directly the start refuses; dev_gate on it is None and a column-R convenience
@@ -480,62 +501,6 @@ def test_stray_workspace_marker_only_narrows(tmp_path):
         lab.close()
 
 
-# --- the click signer on a dev host (17.2 F3, D2) --------------------------------------------------------------------
-
-
-def test_dev_host_refuses_convenience_on_after_start(sbx):
-    from orch.host import convenience
-
-    served = Served(sbx, dev=sbx.dev())
-    try:
-        with pytest.raises(HostError) as e:
-            convenience.set_enabled(sbx.state, WS, True, UID)
-        assert e.value.code == "sign.convenience_unavailable" and e.value.detail["reason"] == "dev_host"
-        convenience.set_enabled(sbx.state, WS, False, UID)  # the way back stays open
-    finally:
-        served.close()
-
-
-def test_dev_host_refuses_convert_to_convenience(sbx):
-    from orch.custody import select
-
-    with pytest.raises(select.DevHostRefused) as e:
-        select.convert_to_convenience(sbx.state, WS)
-    assert e.value.code == "sign.convenience_unavailable" and str(e.value).startswith("dev_host")
-
-
-def test_dev_host_refuses_custody_convenience(sbx, monkeypatch):
-    """``orch keys custody convenience`` against the sandbox state, from any shell environment."""
-    from orch.custody import cli as custody_cli
-
-    monkeypatch.setattr(custody_cli, "has_terminal", lambda: True)
-    with sbx.host(dev=sbx.dev()) as h:
-        ok(sbx.register(h.client()))
-    out, err = io.StringIO(), io.StringIO()
-    code = custody_cli.main(
-        ["custody", "convenience", "--workspace", WS, "--state", str(sbx.state), "--json"],
-        env={"HOME": "/nonexistent-d1"},
-        out=out,
-        err=err,
-    )
-    assert code != 0 and "sign.convenience_unavailable" in out.getvalue() and "dev_host" in out.getvalue()
-
-
-def test_custody_convenience_refused_with_home_under_sandbox_root(tmp_path):
-    """No dev.json in the state directory, but HOME lies under a sandbox root: refused too (D2)."""
-    from orch.devsandbox import click_refusal
-
-    lab = SbxLab(tmp_path, dev_json=False)
-    try:
-        other_state = tmp_path / "elsewhere"
-        other_state.mkdir()
-        assert click_refusal(other_state, {"HOME": str(lab.home)}) == "dev_host"
-        assert click_refusal(other_state, {"HOME": str(tmp_path)}) is None
-        assert click_refusal(lab.state, {"HOME": str(tmp_path)}) is None  # no dev.json: only HOME narrows here
-    finally:
-        lab.close()
-
-
 def test_init_refuses_sbx_for_existing_person(sbx, tmp_path):
     from orch.ops.errors import OrchError
     from orch.ops.workspace_init import check_reserved_prefix
@@ -737,26 +702,6 @@ def test_unit_writers_refuse_dev_flag_prefixes(tmp_path, arg):
     with pytest.raises(HostError):
         runner_service.systemd_unit(py, rel, st, run, extra_args=(arg,))
     units.launchd_plist(py, rel, st, run_dir=run, extra_args=("--x", "--"))  # not a prefix of a dev flag
-
-
-def test_cli_marks_the_dev_process_after_the_proof(sbx, monkeypatch):
-    """After prove() the CLI marks the process: the click signer's refusal is structural in-process too."""
-    from orch.host import cli, release, service
-
-    monkeypatch.setattr(devsandbox, "_PROCESS_DEV_HOST", False)
-    monkeypatch.setattr(release, "preload", lambda: None)
-
-    class FakeHost:
-        def __init__(self, *a: Any, **k: Any) -> None:
-            assert k["dev"] is not None and devsandbox._PROCESS_DEV_HOST is True  # marked before the host exists
-
-        async def run(self) -> None:
-            return None
-
-    monkeypatch.setattr(service, "Host", FakeHost)
-    argv = ["run", "--foreground", "--dev-sim-convenience", "--state", str(sbx.state), "--run", str(sbx.run)]
-    assert cli.main(argv, env=sbx.env(), out=io.StringIO()) == 0
-    assert devsandbox.click_refusal(sbx.tmp / "anywhere", {}) == "dev_host"
 
 
 # --- the pending dev host (V3-D38): one fresh SBX bootstrap, no dev powers, then bind and restart -------------------

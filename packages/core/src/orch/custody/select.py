@@ -49,22 +49,6 @@ SELECTION = "custody.json"
 CUSTODIES = ("convenience", "passphrase")
 
 
-class DevHostRefused(CustodyError):
-    """§11A.17.2 F3, D2: no conversion to convenience custody against a dev-pair sandbox's state or with ``HOME``
-    under a sandbox root (``sign.convenience_unavailable``, reason ``dev_host``). The way back stays open."""
-
-    code = "sign.convenience_unavailable"
-
-
-def refuse_dev_host(state_dir: Path) -> None:
-    from orch.devsandbox import click_refusal
-
-    if click_refusal(state_dir, os.environ) is not None:
-        raise DevHostRefused(
-            "dev_host: this is a Simulator dev host or a dev-pair sandbox; convenience custody is never used here"
-        )
-
-
 def refuse_full_mode(state_dir: Path, workspace_id: str) -> None:
     """V3 C11 (L2-C11d-1): the one custody choke point for entering convenience custody. In a workspace in full hub mode
     (or ``unknown``) the device key stays in passphrase custody, whoever asks (``orch keys custody convenience``, the
@@ -277,7 +261,6 @@ def convert_to_convenience(
     selection left at step ``written`` is finished without asking again. The device id and certificate do not change.
     The dashboard's switch runs the same two steps itself (:func:`stage_convenience`, then :func:`finish_convenience`
     under the flag lock)."""
-    refuse_dev_host(state_dir)  # §11A.17.2: before the key store is opened
     refuse_full_mode(state_dir, workspace_id)  # V3 C11: also before this function opens the store
     store = store if store is not None else _store(state_dir)
     before = read_selection(state_dir, workspace_id)
@@ -310,7 +293,6 @@ def stage_convenience(
     dashboard never resumes."""
     from orch.identity import device_ref
 
-    refuse_dev_host(state_dir)  # §11A.17.2: before the key store or the selection is touched
     refuse_full_mode(state_dir, workspace_id)  # V3 C11: not in full hub mode, before the key store is opened
     store = store if store is not None else _store(state_dir)
     sel = read_selection(state_dir, workspace_id)
@@ -513,7 +495,7 @@ def turn_off_convenience(
     * Without ``passphrase`` and with ``move_key`` the key backend asks on the terminal (``orch host convenience off``).
     * A leftover convenience store key after a finished move (a crash between the selection write and the delete) is
       removed again here, best effort and idempotent.
-    No ``refuse_full_mode`` / ``refuse_dev_host``: turning convenience off is allowed in every mode."""
+    No ``refuse_full_mode`` : turning convenience off is allowed in every mode."""
     from orch.host import convenience as host_convenience
 
     from .strength import check_strength

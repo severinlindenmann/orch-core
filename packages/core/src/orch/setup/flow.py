@@ -464,12 +464,6 @@ def default_env(environ: Mapping[str, str]) -> Env:
         return None
 
     def click() -> tuple[bool, str | None]:
-        from orch.custody.select import DevHostRefused, refuse_dev_host
-
-        try:
-            refuse_dev_host(state)
-        except DevHostRefused:
-            return False, "dev_host"
         return True, None
 
     def read_facts(entry: Any) -> facts_mod.Facts:

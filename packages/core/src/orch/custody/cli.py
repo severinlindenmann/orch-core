@@ -132,13 +132,6 @@ def run(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: Text
     entry = _one(state, args.workspace)
     wid = entry["workspace_id"]
     if args.to == "convenience":
-        from orch.devsandbox import click_refusal
-
-        if click_refusal(state, env) is not None:  # §11A.17.2 F3, D2 (the core function checks again)
-            raise _Fail(
-                "sign.convenience_unavailable",
-                "dev_host: this is a Simulator dev host or a dev-pair sandbox; convenience custody is never used here",
-            )
         if not _enabled(state, entry):
             raise _Fail(
                 "sign.convenience_unavailable",

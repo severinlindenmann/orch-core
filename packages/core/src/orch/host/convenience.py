@@ -74,7 +74,6 @@ __all__ = [
 
 REASONS = ("idle", "disabled", "relay_paired", "other_member", "phone_device", "reader_version")
 #: §11A.17.2 F3: the click signer on a dev host or against a sandbox's state (not a readers reason: never from why)
-DEV_HOST = "dev_host"
 
 AUTH = "convenience"
 
@@ -358,19 +357,7 @@ def refuse_full_mode_entry(state_dir: Path, entry: dict[str, Any], host_uid: int
         store.close()
 
 
-def refuse_dev_host(state_dir: Path, env: Any = None) -> None:
-    """§11A.17.2 F3, D2: the click signer's switches (``orch host convenience on``, the dashboard switch) refuse on
-    a dev host's or a sandbox's state, or with ``HOME`` under a sandbox root (``sign.convenience_unavailable``,
-    reason ``dev_host``). The way back (``off``) never calls it."""
-    from orch.devsandbox import click_refusal
-
-    if click_refusal(state_dir, os.environ if env is None else env) is not None:
-        raise unavailable(DEV_HOST, [])
-
-
 def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> dict[str, Any]:
-    if on:
-        refuse_dev_host(state_dir)
     with _flock(state_dir, "convenience.lock", host_uid):  # one flag file for every workspace: no lost update
         doc = _doc(state_dir, host_uid)
         if on:
@@ -457,8 +444,6 @@ _TEXT = {
     "phone_device": "another device of yours (a phone or another machine) has not declared that it knows them",
     "reader_version": "this host's model does not accept auth convenience; update orch-core",
     "idle": "One click switched itself off after {hours} hours without use. Turn it on again to continue",
-    "dev_host": "this is a Simulator dev host or a dev-pair sandbox: click-to-sign is off here for good (only "
-    "column R's dev gate accepts Simulator answers, orch-v2-host 11A.17)",
 }
 
 
@@ -486,14 +471,12 @@ def unavailable(reason: str, devices: list[str], *, hours: int | None = None) ->
 
 def check(service: Any, person: str, device: str, *, gate: Any = None, removing: frozenset[str] = frozenset()) -> None:
     """Raise ``sign.convenience_unavailable`` (message ``<reason>: …``, detail ``{reason, devices}``) unless the
-    condition holds. §11A.17: on a dev host every path but column R's gate is ``dev_host``; for a column-R event
+    condition holds. §11A.17: for a column-R event
     with a :class:`~orch.host.devmode.DevGate` of this workspace, the gate stands in for the flag (``disabled`` does
     not apply; every other reason does)."""
     from .devmode import DevGate
 
     gated = isinstance(gate, DevGate) and gate.workspace_id == service.workspace_id
-    if getattr(service, "dev", None) is not None and not gated:
-        raise unavailable(DEV_HOST, [])
     found = why(
         service.store, service.state_dir, service.workspace_id, service.host_uid, person, device, gated=gated,
         removing=removing,

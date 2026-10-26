@@ -5,13 +5,16 @@ Any process running as the person can make it sign. That is the accepted phase-1
 running as you, or anything that takes over this dashboard, could sign."); every event it signs declares
 ``auth: "convenience"`` (F1 §5.3, §11.4).
 
-Where the key lives (one key per workspace and device; the value is the 32-byte P-256 scalar):
+Where the key lives (one key per workspace and device; the value is the 32-byte P-256 scalar): on every OS in
+:class:`FileStore`, a file only the person can read on this computer.
 
-* macOS: the traditional login keychain (:mod:`orch.custody.keychain`), service ``io.orch.device-key``, account
-  ``<workspace_id>/<device_id>``. Encrypted at rest; may be in Time Machine backups and migrations.
-* other Unix: :class:`FileStore`, a 0600 file at ``<person state>/person/<ws>/devices/<device>.key`` beneath
-  person-owned 0700 directories, validated through descriptor-relative opens (``O_NOFOLLOW``, ``fstat``).
-* Windows: unsupported in phase 1 (:class:`~orch.custody.base.BackendUnavailable`).
+* Unix (Linux and macOS): a 0600 file at ``<person state>/person/<ws>/devices/<device>.key`` beneath person-owned 0700
+  directories, validated through descriptor-relative opens (``O_NOFOLLOW``, ``fstat``).
+* Windows: the same layout under ``%LOCALAPPDATA%\\orch\\person``, with an owner-only NTFS ACL set by ``icacls``
+  (:func:`_restrict_windows`).
+
+The OS keychains (:class:`KeychainAdapter`) are an optional "Also protect with ..." extra and are never chosen by
+:func:`open_store`.
 
 This module is **never** imported by :mod:`orch.custody`'s package init, by the host (the host audit hook refuses the
 import) or by the dashboard's HTTP process. Only :mod:`orch.custody.select`, ``orch keys`` and the click signer
@@ -24,7 +27,6 @@ import json
 import os
 import re
 import stat
-import sys
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -128,8 +130,6 @@ def secure_dir(root: Path, parts: tuple[str, ...], *, create: bool) -> int:
     """An fd of ``root/parts…``, walked with ``O_NOFOLLOW`` from ``root``: ``root`` and every part are person-owned
     0700 directories (created so when ``create``), and ``root``'s ancestors pass :func:`_check_ancestors`. The caller
     closes the fd."""
-    if os.name == "nt":  # pragma: no cover
-        raise BackendUnavailable("convenience custody is not supported on Windows in phase 1")
     root = Path(os.path.abspath(root))
     _check_ancestors(root.parent)
     if create:
@@ -244,15 +244,44 @@ def unlink_private(dir_fd: int, name: str) -> None:
 # --- stores ----------------------------------------------------------------------------------------------------------
 
 
+def _restrict_windows(path: Path, *, directory: bool) -> None:  # pragma: no cover - runs on Windows only
+    """Owner-only NTFS ACL: drop inherited entries, grant the current user full control. ``icacls`` ships with
+    Windows; no pywin32."""
+    import subprocess
+
+    user = f"{os.environ.get('USERDOMAIN', '')}\\{os.environ['USERNAME']}".lstrip("\\")
+    grant = f"{user}:(OI)(CI)F" if directory else f"{user}:F"
+    r = subprocess.run(
+        ["icacls", str(path), "/inheritance:r", "/grant:r", grant], capture_output=True, text=True, check=False
+    )
+    if r.returncode != 0:
+        raise CustodyError(f"cannot restrict {path.name} to its owner: {r.stdout.strip() or r.stderr.strip()}")
+
+
+def windows_root() -> Path:  # pragma: no cover - runs on Windows only
+    base = os.environ.get("LOCALAPPDATA")
+    if not base:
+        raise BackendUnavailable("LOCALAPPDATA is not set")
+    return Path(base) / "orch" / "person"
+
+
 class FileStore:
-    """Unix: ``<root>/<ws>/devices/<device>.key`` (0600), JSON ``{"v":1,"workspace_id","device","d"}``."""
+    """Every OS: ``<root>/<ws>/devices/<device>.key`` (owner-only), JSON ``{"v":1,"workspace_id","device","d"}``."""
 
     kind = "file"
 
     def __init__(self, root: str | os.PathLike[str]) -> None:
-        if os.name == "nt":  # pragma: no cover
-            raise BackendUnavailable("convenience custody is not supported on Windows in phase 1")
         self.root = Path(os.path.abspath(root))
+        self._nt = os.name == "nt"
+
+    # Windows: plain paths, owner-only ACL on the directories and the file (no descriptor-relative opens there)
+    def _nt_path(self, workspace_id: str, device: str, *, create: bool) -> Path:
+        d = self.root / workspace_id / "devices"
+        if create:
+            for sub in (self.root, self.root / workspace_id, d):
+                sub.mkdir(parents=True, exist_ok=True)
+                _restrict_windows(sub, directory=True)
+        return d / f"{device}.key"
 
     def _dir(self, workspace_id: str, *, create: bool) -> int:
         return secure_dir(self.root, (workspace_id, "devices"), create=create)
@@ -262,6 +291,20 @@ class FileStore:
         if type(secret) is not bytes or len(secret) != SCALAR_LEN:
             raise CustodyError("the secret is a 32-byte scalar")
         doc = {"v": 1, "workspace_id": workspace_id, "device": device, "d": crypto.b64u(secret)}
+        if self._nt:
+            path = self._nt_path(workspace_id, device, create=True)
+            data = json.dumps(doc, sort_keys=True).encode("ascii")
+            tmp = path.with_name(f".{path.name}.tmp{os.getpid()}")
+            tmp.write_bytes(b"")
+            _restrict_windows(tmp, directory=False)  # locked down before the secret is written
+            tmp.write_bytes(data)
+            try:
+                os.link(tmp, path)
+            except FileExistsError:
+                raise KeyExists(path.name) from None
+            finally:
+                tmp.unlink(missing_ok=True)
+            return
         fd = self._dir(workspace_id, create=True)
         try:
             write_private(fd, f"{device}.key", json.dumps(doc, sort_keys=True).encode("ascii"), replace=False)
@@ -270,11 +313,17 @@ class FileStore:
 
     def get(self, workspace_id: str, device: str) -> bytes:
         _check_ids(workspace_id, device)
-        fd = self._dir(workspace_id, create=False)
-        try:
-            raw = read_private(fd, f"{device}.key")
-        finally:
-            os.close(fd)
+        if self._nt:
+            try:
+                raw = self._nt_path(workspace_id, device, create=False).read_bytes()
+            except FileNotFoundError:
+                raise KeyNotFound(device) from None
+        else:
+            fd = self._dir(workspace_id, create=False)
+            try:
+                raw = read_private(fd, f"{device}.key")
+            finally:
+                os.close(fd)
         try:
             doc = json.loads(raw)
             if set(doc) != {"v", "workspace_id", "device", "d"} or doc["v"] != 1:
@@ -287,6 +336,8 @@ class FileStore:
 
     def exists(self, workspace_id: str, device: str) -> bool:
         _check_ids(workspace_id, device)
+        if self._nt:
+            return self._nt_path(workspace_id, device, create=False).is_file()
         try:
             fd = self._dir(workspace_id, create=False)
         except KeyNotFound:
@@ -302,6 +353,12 @@ class FileStore:
     def delete(self, workspace_id: str, device: str) -> None:
         """Best effort: unlinks the managed copy. It does not erase backups, snapshots or copy-on-write blocks."""
         _check_ids(workspace_id, device)
+        if self._nt:
+            try:
+                self._nt_path(workspace_id, device, create=False).unlink()
+            except FileNotFoundError:
+                raise KeyNotFound(device) from None
+            return
         fd = self._dir(workspace_id, create=False)
         try:
             unlink_private(fd, f"{device}.key")
@@ -384,13 +441,11 @@ class FakeStore:
 
 
 def open_store(state_dir: str | os.PathLike[str]) -> Store:
-    """The platform's store: the login keychain on macOS, the 0600 file elsewhere on Unix; Windows is refused. Tests
-    replace this function (``orch.custody.convenience.open_store``) with a :class:`FakeStore` or a :class:`FileStore`
-    or a keychain adapter over a throwaway keychain; nothing in production passes a store."""
+    """The key file on every OS: owner-only (0600 on Unix, an owner-only ACL under ``%LOCALAPPDATA%`` on Windows). No OS
+    keychain is on this path. Tests replace this function (``orch.custody.convenience.open_store``) with a
+    :class:`FakeStore` or a :class:`FileStore`; nothing in production passes a store."""
     if os.name == "nt":  # pragma: no cover
-        raise BackendUnavailable("convenience custody is not supported on Windows in phase 1 (direct mode there)")
-    if sys.platform == "darwin":
-        return KeychainAdapter()
+        return FileStore(windows_root())
     return FileStore(person_root(state_dir))
 
 

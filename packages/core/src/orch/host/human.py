@@ -1527,7 +1527,7 @@ def append_signed(
     The durable ``convenience_seen`` mark (#441) is written here, under the store lock and before the first append,
     when any event carries ``auth: "convenience"``; if it cannot be written nothing is appended (fail closed). On the
     relay path ``signed_by`` refuses convenience events except a dev-gated answer (§11A.17.4, ``dev_gate``), which
-    writes the mark here like any other. On a dev host the person path refuses every convenience event (``dev_host``).
+    writes the mark here like any other.
 
     **Full hub mode (V3 C11, D78/D81)** is enforced here too, under the same lock and before the first append: in
     ``full`` (and ``unknown``, which fails closed as full) every event not in the log yet is refused with
@@ -1550,9 +1550,6 @@ def append_signed(
         refused = _signed_by(events, *signed_by, service=service, gate=dev_gate)
         if refused is not None:
             return [], refused
-    elif getattr(service, "dev", None) is not None and any(e.get("auth") == "convenience" for e in events):
-        # §11A.17.2 F3: a dev host has no click signer; its only convenience path is column R's dev gate
-        return [], convenience.unavailable("dev_host", [])
     store = service.store
     ids = {(log, e["id"]) for e in events}
     landed: list[int] = []

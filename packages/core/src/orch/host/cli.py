@@ -203,9 +203,6 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
 
                 devmode.check_launch(args.foreground, env, run_dir, state)
                 dev = devmode.prove(state, env)
-                from orch import devsandbox
-
-                devsandbox.mark_dev_process()  # the click signer refuses in this process whatever its arguments
             preload()
             host = Host(state, run_dir, dev_runner=args.dev_runner, dev=dev)
             if dev is not None:

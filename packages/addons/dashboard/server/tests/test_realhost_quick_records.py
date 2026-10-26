@@ -33,6 +33,7 @@ SHA = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 
 
 def seeding(ws: Workspace) -> dict:
+    ws.human("addon", "grant", "quick")  # Quick tasks are an add-on, off until an owner turns them on
     ws.agent("quick", "add", "Fix the typo in README")
     ws.agent("quick", "add", "Remove the dead import")
     ws.agent("new", "A normal ticket, not a quick task", "--type", "feature")

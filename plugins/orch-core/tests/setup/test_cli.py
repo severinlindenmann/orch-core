@@ -328,7 +328,6 @@ def test_k2_a_failing_relink_ends_the_setup_with_one_plain_line(tmp, monkeypatch
 
 def _install_ctx(tmp, out, err, parts_seen):
     from orch.install import cli as icli
-
     from tests.install.test_install_cli import FakeRunner
 
     def run(argv, env=None):

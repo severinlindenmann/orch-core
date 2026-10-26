@@ -77,7 +77,7 @@ def test_hub_install_pins_a_ref_starts_it_and_prints_console_and_setup_link(home
     assert install[-1] == "git+https://github.com/severinlindenmann/orch-hub@" + "a" * 40
     argv, _ = ctx.runner.started["hub"]
     assert "--link-listen" in argv and "100.64.1.2:8105" in argv and "--web-listen" in argv
-    assert any(c[1:3] == ["keys", "init"] for c in calls)
+    assert any(c[1] == "keys" and c[-1] == "init" for c in calls)
     st = load(ctx.layout)
     assert st["parts"]["hub"]["port"] == 8100 and st["parts"]["hub"]["version"] == "0.1.0"
     assert str(home) in str(ctx.layout.root)  # state under the temp HOME, never the real config
@@ -145,7 +145,11 @@ def test_role_question(home):
 
 
 def test_detected_addresses_offer_the_netbird_ip():
-    ifc = "lo0: flags=8049\n\tinet 127.0.0.1 netmask 0xff000000\nutun4: flags=8051\n\tinet 100.64.9.9 --> 100.64.9.9 netmask 0xffffffff\nen0: flags=8863\n\tinet 192.168.1.10 netmask 0xffffff00\n"
+    ifc = (
+        "lo0: flags=8049\n\tinet 127.0.0.1 netmask 0xff000000\n"
+        "utun4: flags=8051\n\tinet 100.64.9.9 --> 100.64.9.9 netmask 0xffffffff\n"
+        "en0: flags=8863\n\tinet 192.168.1.10 netmask 0xffffff00\n"
+    )
     got = detect_addresses(lambda argv: ifc if argv == ["ifconfig"] else "")
     assert ("100.64.9.9", "NetBird") in got and ("192.168.1.10", "local network") in got and got[0][0] == "127.0.0.1"
 
@@ -153,3 +157,13 @@ def test_detected_addresses_offer_the_netbird_ip():
 def test_an_agent_is_refused(home):
     out, err = io.StringIO(), io.StringIO()
     assert cli.main(["status"], env={"ORCH_SESSION": "x", "HOME": str(home)}, out=out, err=err) == 3
+
+
+def test_full_server_on_an_overlay_ip_lets_the_hub_dial_publish_and_relay_over_loopback(home):
+    ctx, out, err, _ = make(home)
+    cli.full_server(ctx, ["publish", "relay", "hub"], address="100.64.1.2")
+    pub = ctx.runner.started["publish"][0]
+    assert "0.0.0.0:8102" in pub and "http://100.64.1.2:8102" in pub
+    hub = ctx.runner.started["hub"][0]
+    assert hub[hub.index("--publish-url") + 1] == "http://127.0.0.1:8102"
+    assert hub[hub.index("--relay-url") + 1] == "http://127.0.0.1:8101"

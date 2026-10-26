@@ -160,11 +160,14 @@ def install_part(
     publish_url: str | None = None,
     relay_url: str | None = None,
     dev: bool = False,
+    wildcard: bool = False,
 ) -> dict[str, Any]:
     spec = P.PARTS[part]
     source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
     lay = ctx.layout
     st = load(lay)
+    if part in st["parts"]:
+        ctx.runner.stop(part)  # a re-run replaces the running one (its port is then free again)
     address = choose_address(ctx, address, st)
     if _is_domain(address) and address != "localhost":
         domain, address = address, P.ADDRESS_LOOPBACK  # a domain is only noted; the part listens on this computer
@@ -187,22 +190,44 @@ def install_part(
     pubs = st["parts"].get("publish")
     rels = st["parts"].get("relay")
     if part == "hub":
-        publish_url = publish_url or (pubs and pubs["url"])
-        relay_url = relay_url or (rels and rels["url"])
-        if not (data / "keys").exists() and not any(data.iterdir()):
-            cmd = [str(binary), "keys", "init", "--state", str(data)] + (
+        publish_url = publish_url or (pubs and _dial_url(pubs))
+        relay_url = relay_url or (rels and _dial_url(rels))
+        if relay_url and not _hub_accepts(relay_url):
+            ctx.say(
+                f"  note: the hub accepts only https or loopback http for the relay ({relay_url}): left out, "
+                "push stays off until the hub allows a plain-http IP origin"
+            )
+            relay_url = None
+        if not any(data.iterdir()):
+            cmd = [str(binary), "keys", "--state", str(data), "init"] + (
                 ["--relay-url", relay_url] if relay_url else []
             )
             rc, out = ctx.run(cmd, tool_env)
             if rc != 0:
+                shutil.rmtree(data, ignore_errors=True)  # a half-made key store would refuse the next try
                 raise InstallError(f"orch-hub keys init failed:\n{out.strip()[-600:]}")
     argv = P.command_for(
-        part, binary=binary, data=data, address=bind, port=port, publish_url=publish_url, relay_url=relay_url, dev=dev
+        part,
+        binary=binary,
+        data=data,
+        address=bind,
+        port=port,
+        publish_url=publish_url,
+        relay_url=relay_url,
+        dev=dev,
+        wildcard=wildcard,
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(part, argv, P.env_for(part, data), log)
-    check_host = "127.0.0.1" if part == "hub" else bind
-    if not ctx.health(check_host, port):
+    check_host = "127.0.0.1" if part == "hub" or wildcard else bind
+
+    # a computer often cannot dial its own overlay IP (NetBird): then a held port on that IP and a live process count
+    def answers() -> bool:
+        return ctx.health(check_host, port) or (
+            ctx.runner.info(part)["running"] and not ctx.port_free(port, check_host)
+        )
+
+    if not answers():
         tail = log.read_text()[-500:] if log.exists() else ""
         raise InstallError(f"{part} did not answer on {check_host}:{port}; log {log}\n{tail}")
     url = f"http://{bind}:{port}"
@@ -218,6 +243,7 @@ def install_part(
         "dev": dev,
         "service": started["service"],
         "runner": ctx.runner.kind,
+        "wildcard": wildcard,
         "pid": started.get("pid"),
         "started": int(time.time()),
     }
@@ -238,6 +264,16 @@ def install_part(
         else:
             ctx.say(f"  publish settings: server = share = {url}")
     return rec
+
+
+def _dial_url(rec: dict[str, Any]) -> str:
+    """How the hub on this computer dials a part: loopback when the part also listens there."""
+    return f"http://127.0.0.1:{rec['port']}" if rec.get("wildcard") else rec["url"]
+
+
+def _hub_accepts(url: str) -> bool:
+    """The hub (card and ``--publish-url``) takes https, or http on loopback only."""
+    return url.startswith("https://") or url.split("://", 1)[-1].split(":")[0] in ("127.0.0.1", "localhost")
 
 
 def _version(ctx: Ctx, rec: dict[str, Any], name: str, env: Mapping[str, str]) -> None:
@@ -368,7 +404,12 @@ def full_server(
     address = choose_address(ctx, address, st)
     out = {}
     for p in parts:
-        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev)
+        # the hub dials publish and relay on this computer through loopback (it takes no plain-http IP origin), so
+        # with a non-loopback address they listen on all interfaces; the shown address stays the chosen one
+        wild = "hub" in parts and p != "hub" and _listen_address(address) != P.ADDRESS_LOOPBACK
+        out[p] = install_part(
+            ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev, wildcard=wild
+        )
     return out
 
 

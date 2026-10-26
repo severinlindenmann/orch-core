@@ -36,7 +36,6 @@ OP = operation(
     emits=("question.asked",),
     text="ok {key} question.asked {question} seq={seq}\nnext: {next}",
     data=obj({"question": STR, "blocking": BOOL}),
-    errors=(
-        err("quota.unattended"), err("parse.text"), err("not_found"), err("ambiguous_ref")),
+    errors=(err("quota.unattended"), err("parse.text"), err("not_found"), err("ambiguous_ref")),
     handler=handle,
 )

@@ -306,3 +306,16 @@ def test_the_official_key_list_is_the_only_verifier_input():
     assert "import os" not in plain
     assert inspect.getsource(index.official_keys).count("constants.OFFICIAL_KEYS") == 1
     assert len(constants.OFFICIAL_KEYS) in (0, 2)  # no key yet (index_unsigned) or the current and next key
+
+
+def test_the_preset_first_refresh_keeps_a_persons_commit(served, net):
+    got = ok(person(served, "market.refresh", {"url": H.OFFICIAL, "commit": H.COMMIT_A}))["data"]["markets"][0]
+    assert got["pinned"] and net.calls == [(H.OFFICIAL, H.COMMIT_A)]
+
+
+def test_the_preset_first_refresh_by_an_agent_is_throttled(served, net):
+    net.next = MarketError("market.fetch_failed")
+    assert err(agent(served, "market.refresh", {"url": H.OFFICIAL}))  # a failed fetch still stamps the time
+    net.calls.clear()
+    got = ok(agent(served, "market.refresh", {"url": H.OFFICIAL}))["data"]["markets"][0]
+    assert got["skipped"] == "fresh" and net.calls == []

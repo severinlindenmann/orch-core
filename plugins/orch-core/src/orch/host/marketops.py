@@ -269,10 +269,14 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             cls, keys = plan["classes"][url]
             if cls.startswith("market."):  # the hub no longer lists this one: its row only
                 raise MarketError(cls)
-            if op == "market.add" or (op == "market.refresh" and _preset(op, url) and url not in files.load()):
-                row = _add(
-                    files, url, None if op == "market.refresh" else plan["commit"], service.clock(), cls, tuple(keys)
-                )
+            if op == "market.add":
+                row = _add(files, url, plan["commit"], service.clock(), cls, tuple(keys))
+            elif _preset(op, url) and url not in files.load():
+                last = files.last_fetch(url)
+                if plan["agent"] and last is not None and 0 <= service.clock() - last < AGENT_MIN_INTERVAL:
+                    row = {"url": url, "skipped": "fresh", "moved": False}  # E5: no network at all
+                else:
+                    row = _add(files, url, plan["commit"], service.clock(), cls, tuple(keys))
             else:
                 row = _refresh(files, url, plan["commit"], plan["agent"], service.clock, cls, tuple(keys))
         except MarketError as exc:

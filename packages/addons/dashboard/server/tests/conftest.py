@@ -386,3 +386,16 @@ def worlds(p1, tmp_path, monkeypatch):
         gateway.close()
     for thread in threads:
         thread.join(timeout=3)
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """The nightly realhost job (ORCH_REALHOST_STRICT=1) must not go green on skips: 'the real host cannot start here'
+    is how a stale test or a broken setup hides (#587). Locally the skip stays, for machines without a pty."""
+    outcome = yield
+    report = outcome.get_result()
+    if os.environ.get("ORCH_REALHOST_STRICT") and report.skipped and "cannot start here" in str(report.longrepr):
+        report.outcome = "failed"
+        report.longrepr = (
+            f"strict realhost run: {report.longrepr[2] if isinstance(report.longrepr, tuple) else report.longrepr}"
+        )

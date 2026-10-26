@@ -324,3 +324,50 @@ def test_k2_a_failing_relink_ends_the_setup_with_one_plain_line(tmp, monkeypatch
     )
     assert rc == 1  # returned instead of hanging
     assert "could not make a new link; run orch setup again" in err and "secret detail" not in err
+
+
+def _install_ctx(tmp, out, err, parts_seen):
+    from orch.install import cli as icli
+    from tests.install.test_install_cli import FakeRunner
+
+    def run(argv, env=None):
+        parts_seen.append(argv)
+        return 0, "orch-hub v0.1.0\n" if argv[:3] == ["uv", "tool", "list"] else ""
+
+    return icli.Ctx(
+        env={"HOME": str(tmp.home), "ORCH_STATE_DIR": str(tmp.state)},
+        out=out,
+        err=err,
+        runner=FakeRunner(),
+        run=run,
+        resolve_ref=lambda u, r: "b" * 40,
+        health=lambda h, p: True,
+        detect=lambda: [("127.0.0.1", "x")],
+        port_free=lambda p, h: True,
+    )
+
+
+def test_role_full_installs_the_parts_then_the_workspace_and_a_second_run_takes_the_next_port(tmp):
+    from orch.install.state import load
+
+    seen: list = []
+    out, err = io.StringIO(), io.StringIO()
+    ictx = _install_ctx(tmp, out, err, seen)
+
+    def browser(env, e, launch, **kw):
+        call(str(tmp.root / "run" / "setup.sock"), "POST", "/shutdown", {})
+        return "link"
+
+    rc, _, _ = run_main(tmp, ["--role", "full", "--address", "127.0.0.1"], open_browser=browser, install_ctx=ictx)
+    assert rc == 1  # the workspace itself was not finished here; the parts were installed first
+    assert set(load(ictx.layout)["parts"]) == {"hub", "relay", "publish"}
+    # a server exists: no question, no second install; the next workspace is recorded on 8151, then 8152
+    assert ictx.runner.started.keys() == {"hub", "relay", "publish"}
+    from orch.install import cli as icli
+
+    assert icli.add_workspace(ictx, "/w/a") == 8151 and icli.add_workspace(ictx, "/w/b") == 8152
+
+
+def test_role_argument_is_checked(tmp):
+    assert run_main(tmp, ["--role", "bogus"])[0] == 2
+    assert run_main(tmp, ["--role"])[0] == 2

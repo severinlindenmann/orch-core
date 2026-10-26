@@ -289,6 +289,10 @@ def main(
         from orch.setup.flow import main as setup_main
 
         return setup_main(args[1:], env=env, out=out, err=err)
+    if args[:1] == ["install"]:  # hub, relay and publish as background services of this person (run-9 fb 6)
+        from orch.install.cli import main as install_main
+
+        return install_main(args[1:], env=env, out=out, err=err)
     if args[:1] == ["runner"]:  # dashboard execution and the runner service (orch.runner.cli, H11a): not a registry op
         from orch.runner.cli import main as runner_main
 

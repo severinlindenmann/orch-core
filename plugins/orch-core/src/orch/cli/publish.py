@@ -394,12 +394,6 @@ def _check_setup(a: argparse.Namespace) -> None:
                 f"{what} {value[:80]!r}: use https://host[:port], or http://127.0.0.1:PORT on this computer; no path",
                 5,
             ) from None
-    if a.server == a.share_addr:
-        raise PubError(
-            "invalid.input",
-            "--server and --share must be two different addresses (shared files open on their own address)",
-            5,
-        )
 
 
 def _setup(a: argparse.Namespace, target: Any, env: Mapping[str, str], out: TextIO) -> int:

@@ -64,8 +64,6 @@ def _setting(name: str, key: str, value: Any, bad: type[Exception]) -> Any:
         raise bad("clearing a setting is not turning an add-on on")
     if next(Draft202012Validator(person_ops.SET_SCHEMA).iter_errors({key: value}), None) is not None:
         raise bad(f"the {key} setting is not valid")
-    if key == "publish" and value["server"] == value["share"]:
-        raise bad("publish: the share address must differ from the server address")
     return copy.deepcopy(value)
 
 

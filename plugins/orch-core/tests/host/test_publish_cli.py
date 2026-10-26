@@ -75,9 +75,14 @@ def test_setup_refuses_an_address_that_is_not_allowed_before_any_signature(offli
     assert code == 5 and "error invalid.input" in out and "no path" in out
 
 
-def test_setup_refuses_one_address_for_both(offline):
-    code, out = run(["setup", "--server", "https://pub.example.com", "--share", "https://pub.example.com"], {})
-    assert code == 5 and "two different addresses" in out
+def test_setup_accepts_one_address_for_both_no_domain_single_origin(offline):
+    from types import SimpleNamespace as NS
+
+    from orch.host import seqaddon
+
+    publish._check_setup(NS(server="http://127.0.0.1:8102", share_addr="http://127.0.0.1:8102"))
+    one = {"server": "http://127.0.0.1:8102", "share": "http://127.0.0.1:8102"}
+    assert seqaddon._setting("publish", "publish", one, ValueError) == one
 
 
 def test_setup_and_share_stop_before_anything_when_there_is_no_terminal(monkeypatch):

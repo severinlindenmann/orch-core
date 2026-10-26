@@ -115,7 +115,6 @@ def test_validate_takes_exactly_the_closed_shape(human):
     pub = base
     for settings in (
         {"publish": None},
-        {"publish": {"server": PUBLISH["server"], "share": PUBLISH["server"]}},  # the same address twice
         {"publish": {"server": "http://files.example.com", "share": PUBLISH["share"]}},  # not https, not loopback
         {"publish": {"server": PUBLISH["server"]}},
         {"publish": {**PUBLISH, "x": 1}},

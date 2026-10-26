@@ -369,8 +369,6 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         if server is None:
             ws.settings.pop("publish", None)
         else:
-            if server["server"] == server["share"]:
-                return Refusal(Code.SETTINGS_INVALID, "publish: the share address must differ from the server address")
             ws.settings["publish"] = dict(server)
     if ADDONS_KEY in s:  # G6: the settings of one add-on; replay checks the general shape only, the host the schema
         from orch.addons import settings_value

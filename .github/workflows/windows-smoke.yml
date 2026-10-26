@@ -38,7 +38,7 @@ jobs:
         # INTERNALERROR (first run 40341306947). The shims live outside the repo and only let the collection start.
         run: |
           mkdir -p "$RUNNER_TEMP/shim"
-          printf 'import os\nclass _P:\n    pw_dir = os.path.expanduser("~")\ndef getpwuid(_):\n    return _P()\n' > "$RUNNER_TEMP/shim/pwd.py"
+          printf 'import os\nclass _P:\n    pw_dir = os.path.expanduser("~")\ndef getpwuid(_):\n    return _P()\ndef getpwall():\n    return []\n' > "$RUNNER_TEMP/shim/pwd.py"
           printf 'import os\nfor n in ("getuid", "geteuid", "getgid"):\n    if not hasattr(os, n):\n        setattr(os, n, lambda: 1000)\n' > "$RUNNER_TEMP/shim/sitecustomize.py"
           echo "PYTHONPATH=$(cygpath -w "$RUNNER_TEMP/shim")" >> "$GITHUB_ENV"
       - name: Unit suite

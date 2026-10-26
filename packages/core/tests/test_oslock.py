@@ -55,7 +55,8 @@ _NO_POSIX = textwrap.dedent(
     import os, signal, socketserver
     for a in ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK", "O_NOCTTY", "O_CLOEXEC", "O_SYMLINK", "killpg", "setsid",
               "getpgid", "getuid", "geteuid", "getgid", "getegid", "fork", "chown", "mkfifo", "getpgrp", "setpgid",
-              "openpty", "fchmod", "fchown", "lchown", "getgroups", "initgroups", "setuid", "setgid", "setgroups"):
+              "openpty", "fchmod", "fchown", "lchown", "getgroups", "initgroups", "setuid", "setgid", "setgroups",
+              "register_at_fork"):
         if hasattr(os, a):
             delattr(os, a)
     for a in ("SIGKILL", "SIGHUP", "SIGUSR1", "SIGUSR2", "SIGALRM", "SIGCHLD", "SIGQUIT", "SIGWINCH", "SIGPIPE",

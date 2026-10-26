@@ -425,7 +425,8 @@ class StateDir:
         self.write(name, json.dumps(obj, sort_keys=True, separators=(",", ":")).encode())
 
 
-os.register_at_fork(after_in_child=_after_fork_in_child)
+if hasattr(os, "register_at_fork"):  # not on Windows (no fork)
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 def _ledger_key_ok(kind: str, key: str) -> bool:

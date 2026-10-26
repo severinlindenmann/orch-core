@@ -1,3 +1,4 @@
+import { ARM_MS } from '@/api/click'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
@@ -32,7 +33,7 @@ it('shows a source on every card, states and a permanent nav link', async () => 
   show('/w/DEMO/addons')
   await screen.findByText('Available', {}, T)
   for (const text of ['Off', 'On', 'Waiting for installation approval', 'Withdrawn by its publisher']) expect(screen.getByText(text)).toBeInTheDocument()
-  for (const card of screen.getAllByRole('article')) expect(within(card).getByText('official - demo-example/market - 1.2.0')).toBeInTheDocument()
+  for (const card of screen.getAllByRole('article')) expect(within(card).getByText('official - demo-example/market')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'Add-ons' })).toHaveAttribute('href', '/w/DEMO/addons')
 })
 // Security review (UI provenance): publisher/marketplace text may only appear inside core's AddonFrame, never as bare core-looking UI.
@@ -149,11 +150,14 @@ it.each(['member', 'no-actions'] as const)('hides every write control for %s', a
   expect(screen.queryByRole('button', { name: '+ Add marketplace' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
 })
-it('run 9: an add-on installed from a marketplace has a row switch; with One click on the press itself signs, no second button', async () => {
+it('run 9: an add-on installed from a marketplace has a row switch; with One click on the row opens the review and one press on Turn on signs', async () => {
   ws().click = { custody: 'convenience', enabled: true, available: true }
   ws().features = [...ws().features, 'click']
   show('/w/DEMO/addons?tab=installed')
   await userEvent.click(await screen.findByRole('switch', { name: 'calendar' }, T))
+  const go = await within(await screen.findByTestId('addon-calendar-accordion', {}, T)).findByRole('button', { name: /^Turn on$/ }, T)
+  await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  await userEvent.click(go)
   await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
   expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'addon_grant', name: 'calendar' })
   expect(screen.queryByRole('dialog')).toBeNull() // the review lives under the row

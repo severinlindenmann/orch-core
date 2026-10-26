@@ -19,8 +19,8 @@ it('shows the signed identity tail, host key qualification, task id and before q
   expect(screen.getByRole('listitem')).toHaveTextContent('Check it ⏎ 2. forged task T-3')
   expect(screen.getAllByRole('listitem')).toHaveLength(1)
   expect(screen.getByText('Old').parentElement).toHaveTextContent('Old (per host, not signed) → New')
-  expect(screen.getByText('Host note')).toBeVisible()
-  expect(screen.getByText('Legacy list note')).toBeVisible()
+  expect(screen.getByText('Host note')).not.toBeVisible()
+  expect(screen.getByText('Legacy list note')).not.toBeVisible()
 })
 
 it('marks and indents every block and continuation without creating items or rows', () => {
@@ -45,7 +45,7 @@ it('marks and indents every block and continuation without creating items or row
     expect(line.firstElementChild).toHaveTextContent('|')
   }
   expect(screen.getAllByRole('listitem')).toHaveLength(2)
-  expect(screen.getByText('Single note')).toBeVisible()
+  expect(screen.getByText('Single note')).not.toBeVisible()
 })
 
 it('renders every display string in fully populated content', () => {
@@ -65,6 +65,7 @@ it('renders every display string in fully populated content', () => {
   }
   // The dialog owns the headline; section ids are structural keys, not display values.
   render(<><h2>{content.headline}</h2><SignContent content={content} /></>)
+  document.querySelectorAll('details').forEach(fold => { fold.open = true })
   for (const text of [
     content.headline,
     content.sections[0].title,
@@ -226,12 +227,12 @@ it('leads with the plain summary and still shows every signed line in full, labe
   expect(summary.compareDocumentPosition(exact) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 })
 
-it('without a summary (an odd or unknown value) shows the signed text alone, as before', () => {
+it('without a summary keeps the full signed text in the closed exact fold', () => {
   const odd = SHARE_TEXT.replace('7 days', '7 weeks')
   render(<SignContent content={{ headline: 'Share files', sections: [{ id: 'share', title: 'What will be shared', text: odd }] }} />)
   expect(screen.queryByTestId('sign-summary')).toBeNull()
-  expect(screen.queryByTestId('sign-exact')).toBeNull()
-  expect(screen.getByText(/Works for: 7 weeks from the moment the link is made/)).toBeVisible()
+  expect(screen.getByTestId('sign-exact')).not.toHaveAttribute('open')
+  expect(screen.getByText(/Works for: 7 weeks from the moment the link is made/)).not.toBeVisible()
 })
 
 it('shows hidden characters in a summary line and keeps prose notes out of monospace', () => {
@@ -240,7 +241,7 @@ it('shows hidden characters in a summary line and keeps prose notes out of monos
   expect(screen.getByText('Running agents will stop.')).not.toHaveClass('font-mono')
 })
 
-it('U3: a named person keeps the 12-hex short id in the main view; two people with different names are told apart', () => {
+it('technical details distinguish people by name and id', () => {
   const X = 'p_aaaa1111222233334444555566667777', Y = 'p_bbbb1111222233334444555566667788'
   withMembers([{ person: X, name: 'Sam' }, { person: Y, name: 'Sam Two' }], [{ field: 'owner', before: X, after: Y }])
   expect(row('owner')).toHaveTextContent('Owner: Sam · p_aaaa11112222… → Sam Two · p_bbbb11112222…')
@@ -248,11 +249,11 @@ it('U3: a named person keeps the 12-hex short id in the main view; two people wi
   expect(row('owner')).not.toHaveTextContent(X) // never the whole id in the row
 })
 
-it('U3: a request on an existing ticket keeps "key per host" and the signed id in the main view; a creation folds them away', () => {
+it('existing and new ticket identities both stay in technical details', () => {
   const t = { key: 'DEMO-0001', title: '', uid_tail: 'WJCC73ZJ', key_note: 'key per host, not proven' }
   const { unmount } = render(<SignContent content={{ headline: 'Approve', ticket: { ...t, new: false }, notes: ['x'] }} />)
-  expect(screen.getByTestId('sign-ticket')).toHaveTextContent('DEMO-0001 (key per host) · signed id …WJCC73ZJ')
-  expect(screen.getByTestId('sign-ticket').closest('details')).toBeNull() // not folded away
+  expect(details()).toHaveTextContent('DEMO-0001 (key per host) · signed id …WJCC73ZJ')
+  expect(screen.getByText('WJCC73ZJ')).not.toBeVisible()
   unmount()
   render(<SignContent content={{ headline: 'Create', ticket: { ...t, new: true }, notes: ['x'] }} />)
   expect(screen.queryByTestId('sign-ticket')).toBeNull()
@@ -261,8 +262,8 @@ it('U3: a request on an existing ticket keeps "key per host" and the signed id i
 
 it('U3: the type is shown by a word map; an unmapped value stays exactly as signed', () => {
   render(<SignContent content={{ headline: 'x', fields_changed: [{ field: 'type', before: null, after: 'feature' }, { field: 'type', before: null, after: 'weird-kind' }] }} />)
-  expect(screen.getByText('Feature')).toBeVisible()
-  expect(screen.getByText('weird-kind')).toBeVisible()
+  expect(screen.getByText('Feature')).not.toBeVisible()
+  expect(screen.getByText('weird-kind')).not.toBeVisible()
 })
 
 it('names the cancelled approvals and marks incomplete host context', () => {
@@ -274,16 +275,40 @@ it('names the cancelled approvals and marks incomplete host context', () => {
   expect(block).toHaveTextContent('Requirements approval (Severin)')
   expect(block).toHaveTextContent('(per host, not signed)')
   expect(within(block).getAllByText(/not yet complete/)).toHaveLength(1)
-  expect(screen.getByText('Existing note')).toBeVisible()
+  expect(screen.getByText('Existing note')).not.toBeVisible()
 })
 
 it.each([undefined, [], null, 'bad', {}, [null], [{ gate: 'unknown', people: [SEV], complete: false }], [{ gate: 'plan', people: 'bad', complete: false }], [{ gate: 'plan', people: [SEV], complete: 'yes' }]])('ignores absent or malformed cancellation context: %j', cancels => {
   render(<SignContent content={{ headline: 'Review', cancels: cancels as never, notes: ['Existing note'] }} />)
   expect(screen.queryByText('Signing cancels:')).not.toBeInTheDocument()
-  expect(screen.getByText('Existing note')).toBeVisible()
+  expect(screen.getByText('Existing note')).not.toBeVisible()
 })
 
 it('renders a host manual-acceptance annotation under the criterion', () => {
   render(<SignContent content={{ headline: 'Review result', acceptance: [{ id: 'AC2', text: 'Works', manual: 'AC2: accepted manually by Severin (no automated check)' }] }} />)
   expect(screen.getByRole('listitem')).toHaveTextContent('AC2: accepted manually by Severin (no automated check)')
+})
+
+it('limits the main review to three facts and keeps technical values and extra facts folded', () => {
+  render(<SignContent content={{ headline: 'Update access', summary: { title: 'Update access', lines: ['Agents may read files.', 'Access lasts one day.', 'You can stop access.', 'Existing tasks continue.', 'Device d_0123456789abcdef0123456789abcdef'] }, fields_changed: [{ field: 'device key', before: null, after: 'd_0123456789abcdef0123456789abcdef' }] }} />)
+  const summary = screen.getByTestId('sign-summary')
+  expect(within(summary).getAllByRole('listitem')).toHaveLength(3)
+  expect(summary).not.toHaveTextContent('d_0123456789abcdef')
+  expect(screen.getByText('Existing tasks continue.')).not.toBeVisible()
+  expect(screen.queryByTestId('sign-risk')).toBeNull()
+  expect(screen.getByTestId('sign-exact')).not.toHaveAttribute('open')
+  expect(details()).not.toHaveAttribute('open')
+  expect(details()).toHaveTextContent('d_0123456789abcdef0123456789abcdef')
+})
+
+it('keeps change rows, filler and raw identifiers only in technical details', () => {
+  const hidden = ['Before: passphrase', 'After: one click', 'Change → one click', 'On this computer', 'Review it here, then confirm.', 'Device d_0123456789abcdef0123456789abcdef']
+  render(<SignContent content={{ headline: 'Turn on one click', summary: { title: 'Turn on one click', lines: [...hidden, 'Your key will be saved for one-click approval.'], risk: 'Anyone using this browser could approve for you.' } }} />)
+  expect(screen.getByTestId('sign-summary')).toHaveTextContent('Your key will be saved for one-click approval.')
+  for (const line of hidden) {
+    expect(screen.getByTestId('sign-summary')).not.toHaveTextContent(line)
+    expect(details()).toHaveTextContent(line)
+  }
+  expect(screen.getByTestId('sign-risk')).toBeVisible()
+  expect(screen.queryByRole('heading')).toBeNull()
 })

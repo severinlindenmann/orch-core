@@ -256,12 +256,13 @@ describe('Send answer in the card, one-click custody', () => {
     expect(choice).toHaveTextContent('Your answer')
     expect(choice).toHaveTextContent('DATE (option a)')
     expect(choice).not.toHaveTextContent('Approve deploy')
-    // the choice box comes before any text someone else wrote, and the question is clamped with a way to read it all
+    // The chosen answer stays above the closed review; the complete question remains available inside it.
     const question = strip.querySelector('section[aria-label="Question"]')!
     expect(choice.compareDocumentPosition(question) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(question.querySelector('.max-h-32')).not.toBeNull()
-    expect(screen.getByRole('button', { name: 'Show all' })).toBeInTheDocument()
-    expect(question.textContent).not.toMatch(/\n\s*\n/) // runs of blank lines collapsed on screen
+    expect(choice).toBeVisible()
+    expect(question).not.toBeVisible()
+    expect(question.closest('details')).not.toHaveAttribute('open')
+    expect(question.textContent).toContain(evil)
     expect(send()).toBeInTheDocument()
   })
 })

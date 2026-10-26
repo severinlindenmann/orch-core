@@ -59,18 +59,18 @@ describe('the sign panel shows only the signer’s View', () => {
     expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
     // the custody is a technical fact now (no orange line in the main view); the risk notice lives in Settings
     expect(screen.queryByTestId('click-risk-more')).toBeNull()
-    expect(panel.querySelectorAll('details')).toHaveLength(1)
+    expect(panel.querySelectorAll('details')).toHaveLength(2)
     expect(screen.getByTestId('click-custody')).toHaveTextContent('One click on this computer, no fingerprint/passphrase')
     expect(screen.getByTestId('click-custody')).not.toBeVisible()
     expect(CLICK_RISK).toBe('Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.')
     expect(panel).toHaveTextContent('approve')
-    expect(screen.getByTestId('click-workspace')).toHaveTextContent('id a94c935c')
+    expect(screen.getByTestId('click-workspace')).toHaveTextContent('a94c935c')
     expect(screen.getByTestId('click-workspace')).toHaveTextContent('DEMO')
     expect(screen.getByTestId('click-workspace')).toHaveTextContent('billing')
     expect(screen.getByTestId('click-fingerprint')).toHaveTextContent('abcdef012345')
     expect(screen.getByTestId('click-lines')).toHaveTextContent('Approve the plan of DEMO-0001')
     expect(screen.getByTestId('click-checks')).toHaveTextContent('Repository code: clean, checked by worker')
-    expect(screen.getByTestId('click-artifacts')).toHaveTextContent('did not see the artifact bytes')
+    expect(screen.getByTestId('click-artifacts')).toHaveTextContent('The files could not be checked before signing.')
   })
 
   it('shows the workspace badge before the name, and the name with hidden characters made visible', () => {
@@ -222,7 +222,7 @@ describe('the story around the review', () => {
     mount(answer(), { story: { signLabel: 'Sign requirements', steps: ['You sign.', 'The requirements are locked as shown.'] } })
     expect(screen.getByTestId('what-next')).toHaveTextContent('The requirements are locked as shown.')
     expect(screen.getByRole('button', { name: 'Sign requirements' })).toBeInTheDocument()
-    expect(screen.getByTestId('sign-method')).toHaveTextContent('On this computer')
+    expect(screen.queryByTestId('sign-method')).toBeNull()
     expect(screen.queryByTestId('use-phone')).toBeNull()
     expect(screen.queryByText('Other ways')).toBeNull()
     expect(screen.queryByTestId('click-risk')).toBeNull()
@@ -242,10 +242,10 @@ describe('the other buttons', () => {
 
 it('renders structured content while retaining the full lines in Details', () => {
   mount(answer({ content: { headline: 'Approve requirements', sections: [{ id: 'requirements', title: 'Requirements', text: 'Do the thing' }], acceptance: [{ id: 'AC1', text: 'It works' }], tasks: [{ n: 2, id: 'T-3', title: 'Check it', verify: ['npm test'] }], fields_changed: [{ field: 'title', before: 'Old', after: 'New', before_note: 'per host, not signed' }] } }))
-  expect(screen.getByText('Do the thing')).toBeVisible()
-  expect(screen.getByText('It works')).toBeVisible()
-  expect(screen.getByText('npm test')).toBeVisible()
-  expect(screen.getByText('per host, not signed')).toBeVisible()
+  expect(screen.getByText('Do the thing')).not.toBeVisible()
+  expect(screen.getByText('It works')).not.toBeVisible()
+  expect(screen.getByText('npm test')).not.toBeVisible()
+  expect(screen.getByText('per host, not signed')).not.toBeVisible()
   expect(screen.getByTestId('click-lines').closest('details')).not.toHaveAttribute('open')
 })
 
@@ -263,8 +263,8 @@ it('keeps warnings visible with structured content and technical details collaps
 
 it('shows the full terminal lines when structured content is absent', () => {
   mount(answer({ lines: ['Fallback first line', 'Fallback second line'] }))
-  expect(screen.getByText('Fallback first line')).toBeVisible()
-  expect(screen.getByText('Fallback second line')).toBeVisible()
+  expect(screen.getByText('Fallback first line')).not.toBeVisible()
+  expect(screen.getByText('Fallback second line')).not.toBeVisible()
 })
 
 it('K6: a removed person reads "remove: Severin", never "remove: — → Severin"', () => {

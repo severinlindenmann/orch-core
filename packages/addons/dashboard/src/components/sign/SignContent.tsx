@@ -133,17 +133,6 @@ function cancellationRows(value: unknown): NonNullable<Content['cancels']> {
   return value
 }
 
-/** Someone else's long text, shortened on screen: runs of blank lines collapsed, at most ~6 lines until "Show all". Display only. */
-function ClampedProse({ children }: { children: string }) {
-  const [all, setAll] = useState(false)
-  const flat = children.replace(/\n[ \t]*(\n[ \t]*)+/g, '\n')
-  const long = flat.length > 280 || flat.split('\n').length > 6
-  return <>
-    <div className={!all && long ? 'max-h-32 overflow-hidden' : undefined}><Prose className="font-sans leading-relaxed text-text">{flat}</Prose></div>
-    {long && <button type="button" onClick={() => setAll(a => !a)} className="mt-1 text-[12px] text-text-muted underline underline-offset-4">{all ? 'Show less' : 'Show all'}</button>}
-  </>
-}
-
 /**
  * The fields a compact answer review needs: the ticket (an existing one), the question, the chosen option. Null when any
  * is missing or the host sent a summary: the caller then shows the full review. Never a compact view that hides content.
@@ -213,7 +202,6 @@ function QuickSigned({ typed, also, members, notes = [] }: { typed: QuickTyped; 
   const type = also.rows.find(r => r.label === 'Type')?.text
   const checks = typed.checks
   const details = typed.details.trim()
-  const n = checks.length || 1
   return <>
     <blockquote data-testid="sign-typed" aria-label="What you typed" className="space-y-1.5 rounded-md border-l-2 border-brand bg-surface-2 px-3 py-2 text-text">
       <p className="font-medium"><Inline>{typed.title}</Inline></p>
@@ -224,11 +212,10 @@ function QuickSigned({ typed, also, members, notes = [] }: { typed: QuickTyped; 
       <li data-testid="sign-also-sentence">Counts as approved: what to do and how to check it.</li>
       <li>{type ?? 'Task'}{owner ? <>, owner <Shown plain value={owner.text} members={members} /></> : null}.</li>
     </ul>
-    <details data-testid="sign-also" className="rounded-md border border-border p-3">
-      <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Show exactly what is signed (requirements, plan, {n} {n === 1 ? 'check' : 'checks'}, {n} {n === 1 ? 'task' : 'tasks'})</summary>
+    <div data-testid="sign-also" className="space-y-2">
       <dl className="mt-2 space-y-2">{also.rows.map((r, i) => <SignedRow key={i} label={r.label} text={r.text} members={r.person ? members : undefined} />)}</dl>
       {notes.map((n, i) => <p key={i} className="mt-2 text-text-muted"><Prose inline>{n}</Prose></p>)}
-    </details>
+    </div>
   </>
 }
 
@@ -240,7 +227,6 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
   const summary = content.summary
   // A request on an EXISTING ticket keeps its key (the host's word) and the end of the signed id in the main view; a creation
   // (it signs the key and the title) has them under Technical details only.
-  const ticketLine = content.ticket && content.ticket.new !== true
   const also = quick && !content.summary ? alsoSigned(content, quick) : null
   // core sets fields_title 'Applies under' only on a gate review (signcontent.py _gate): the structural mark, not the headline wording.
   const gate = content.fields_title === 'Applies under' && !!content.sections?.length
@@ -249,14 +235,13 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
   const acceptanceEl = !!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'How we know it is done' : 'Acceptance criteria'}</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>
   const tasksEl = !!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'Steps' : 'Plan tasks'}</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>
   const rest = <>
-    {also && quick && <QuickSigned typed={quick} also={also} members={members} notes={content.notes ?? []} />}
-    {ticketLine && content.ticket && <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
+
     {gate ? <GateText sections={gateSections} approving={/^Approve /.test(content.headline ?? '')} acceptance={acceptanceEl} tasks={tasksEl} others={otherSections} /> : null}
-    {!gate && !also && content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
+    {!gate && !also && content.sections?.map(s => <section key={s.id} aria-label={s.title}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     <Pictures images={content.images} />
     {!gate && !also && acceptanceEl}
     {!gate && !also && tasksEl}
-    {!also && !!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? (content.fields_changed.every(f => f.before == null) ? 'Signed values' : 'Changed fields')}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
+
     {cancels.length > 0 && <section aria-label="Signing cancels">
       <h3 className="text-[13px] font-medium">Signing cancels:</h3>
       <ul>{cancels.map((c, i) => <li key={i}>
@@ -265,47 +250,34 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
       <p className="text-[12px] text-text-muted">(per host, not signed)</p>
     </section>}
     <div className="space-y-2 border-t border-border pt-4 empty:hidden">{[...(also ? [] : content.notes ?? []).filter(n => n !== summary?.risk), ...(Array.isArray(content.note) ? content.note : content.note ? [content.note] : [])].map((note, i) => <p key={i} className="text-[13px] leading-relaxed text-text-muted"><Prose inline>{note}</Prose></p>)}</div>
-    {(content.ticket || ids.length > 0 || technical) && <details className="space-y-3 text-[12px] text-text-muted">
+    {(content.ticket || ids.length > 0 || technical || content.fields_changed?.length || summary) && <details className="space-y-3 text-[12px] text-text-muted">
       <summary className="cursor-pointer">Technical details</summary>
+      {also && quick && <QuickSigned typed={quick} also={also} members={members} notes={content.notes ?? []} />}
       {content.ticket && <div>
-        {!ticketLine && <p><Raw>{content.ticket.key}</Raw> <span className="text-text-muted">(key per host)</span> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
+        {<p><Raw>{content.ticket.key}</Raw> <span className="text-text-muted">(key per host)</span> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
         {content.ticket.title && <Value>{content.ticket.title}</Value>}
         {content.ticket.key_note && <p><Value>{content.ticket.key_note}</Value></p>}
       </div>}
+    {!also && !!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? (content.fields_changed.every(f => f.before == null) ? 'Signed values' : 'Changed fields')}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
       {ids.map(id => <p key={id}><Person parts={personLabel(id, members)!} /> = <Raw>{id}</Raw></p>)}
+      {summary && <ul>{summary.lines.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul>}
       {technical}
     </details>}
   </>
-  // Compact (an answer): the ticket (key and signed id end), the question, the chosen option and the typed note stay in
-  // view without opening anything; the other options and the host's facts are in full under Details. If any expected
-  // field is missing, the full review is shown: a compact view never hides content.
+  // Keep the exact review available, regardless of whether the host provides a summary.
+  const safeFact = (line: string) => !/(?:\b[a-z]+_[a-f0-9]{8,}|\b[a-f0-9]{16,}|sha256:|digest|envelope|key store|Review it here|Sign with one click|^on this computer[.!]?$|^\s*(?:before|after|change)\s*(?::|→|->))/i.test(line)
   const parts = compact ? compactAnswer(content) : null
-  if (parts && ticketLine) {
-    const { choice, question, ticket: tk, notes: note } = parts
-    // Order matters: the ticket, then the choice in a box of its own, BEFORE any text someone else wrote (a question that
-    // ends in "Your answer: …" cannot pass for the real line, and cannot push it off screen). The exact text is under Details.
-    return <div data-testid="sign-compact" className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
-      <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{tk.key}</Raw> (key per host) · signed id …<Raw>{tk.uid_tail}</Raw></p>
-      <div data-testid="sign-choice" className="rounded-md border border-brand bg-brand-soft px-3 py-2"><span className="text-[12px] text-text-muted">Your answer</span><p className="font-medium text-text"><Shown plain value={choice.after} members={members} /></p></div>
-      {note.map(s => <section key={s.id}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{s.title}</Inline></h3><ClampedProse>{s.text}</ClampedProse></section>)}
-      <section aria-label={question.title}><h3 className="mb-1 text-[12px] font-medium text-text-muted"><Inline>{question.title}</Inline></h3><ClampedProse>{question.text}</ClampedProse></section>
-      <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
-        <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Details: all options and facts</summary>
-        <div className="mt-2 max-h-[38vh] min-w-0 space-y-5 overflow-auto pr-3">{rest}</div>
-      </details>
-    </div>
-  }
-  // The popover or sheet scrolls as a whole above its fixed Cancel row: no second scroll area inside the review.
-  return <div className={`min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]`}>
-    {summary ? <>
-      <section data-testid="sign-summary" aria-label={summary.title} className="space-y-2">
-        <ul className="space-y-1.5 text-text">{summary.lines.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul>
-        {summary.risk && <p role="note" data-testid="sign-risk" className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 font-medium text-text"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden /><span><Inline>{summary.risk}</Inline></span></p>}
-      </section>
-      <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
-        <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Show exactly what is signed</summary>
-        <div className="mt-2 min-w-0 space-y-5">{rest}</div>
-      </details>
-    </> : rest}
+  const choice = parts?.choice.after
+  const facts = (summary?.lines ?? []).filter(safeFact).slice(0, choice ? 2 : 3)
+  return <div data-testid={parts ? 'sign-compact' : undefined} className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
+    {choice && safeFact(choice) && <p data-testid="sign-choice">Your answer will be <Inline>{choice}</Inline>.</p>}
+    {facts.length > 0 && <section data-testid="sign-summary"><ul className="space-y-1.5">{facts.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul></section>}
+    {summary?.risk && <p role="note" data-testid="sign-risk" className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 font-medium text-text"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden /><span><Inline>{summary.risk}</Inline></span></p>}
+    <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
+      <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Show exactly what is signed</summary>
+      <div className="mt-2 min-w-0 space-y-5">
+        {rest}
+      </div>
+    </details>
   </div>
 }

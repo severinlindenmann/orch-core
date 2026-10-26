@@ -36,7 +36,7 @@ async function openSwitch() {
 
 async function typeAndSubmit(pw = 'pw') {
   fireEvent.click(await openSwitch())
-  fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: pw } })
+  fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: pw } })
   fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
 }
 
@@ -63,24 +63,25 @@ describe('Sign in the dashboard', () => {
     expect(await screen.findByTestId('signing-state')).toHaveTextContent(/^Off/)
     expect(screen.getByTestId('click-risk')).toBeInTheDocument()
     fireEvent.click(await openSwitch())
-    const field = screen.getByLabelText(/Your passphrase/)
+    const field = screen.getByLabelText(/Enter the passphrase/)
     expect(field).toHaveAttribute('type', 'password')
     expect(screen.getByRole('button', { name: 'Turn on' })).toBeDisabled()
     fireEvent.change(field, { target: { value: 'my passphrase' } })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
     await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: you approve here with one click/))
     expect(sw).toHaveBeenCalledWith(WS, { on: true, passphrase: 'my passphrase' })
-    expect(screen.queryByLabelText(/Your passphrase/)).toBeNull()
+    expect(screen.queryByLabelText(/Enter the passphrase/)).toBeNull()
   })
 
   it('a wrong passphrase says so, keeps it off and clears the field', async () => {
     vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(403, { code: 'custody.wrong_passphrase', message: 'x', retryable: false }))
     mount(OFF)
     fireEvent.click(await openSwitch())
-    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'wrong' } })
+    fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: 'wrong' } })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
     expect(await screen.findByTestId('signing-error')).toHaveTextContent('That passphrase was refused. Nothing changed.')
-    expect(screen.getByLabelText(/Your passphrase/)).toHaveValue('')
+    expect(screen.getByRole('dialog')).toContainElement(screen.getByTestId('signing-error'))
+    expect(screen.getByLabelText(/Enter the passphrase/)).toHaveValue('')
     expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/)
   })
 
@@ -90,7 +91,7 @@ describe('Sign in the dashboard', () => {
     await typeAndSubmit()
     expect(await screen.findByTestId('signing-error')).toHaveTextContent(/off on a dev sandbox host/)
     sw.mockRejectedValue(new ApiError(409, { code: 'host.dev_refused', message: 'x', retryable: false, detail: { reason: 'brand_new_reason' } }))
-    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: 'pw' } })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
     await waitFor(() => expect(screen.getByTestId('signing-error')).not.toHaveTextContent(/brand_new/))
   })
@@ -99,7 +100,7 @@ describe('Sign in the dashboard', () => {
     vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(429, { code: 'rate.limited', message: 'x', retryable: true, retry_after_ms: 600_000 }))
     mount(OFF)
     fireEvent.click(await openSwitch())
-    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'wrong' } })
+    fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: 'wrong' } })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
     expect(await screen.findByTestId('signing-error')).toHaveTextContent('Try again in 10 min')
   })
@@ -109,22 +110,34 @@ describe('Sign in the dashboard', () => {
     const seal = vi.spyOn(sealed, 'seal')
     mount(ON)
     fireEvent.click(await openSwitch())
-    expect(screen.getByTestId('signing-off-explain')).toHaveTextContent(/protect your key with a new passphrase/)
-    expect(screen.getByTestId('signing-off-copies')).toHaveTextContent(/backups or snapshots/)
+    expect(screen.getByRole('dialog', { name: 'Turn off one-click approval' })).toHaveTextContent("You'll type this passphrase each time you approve.")
+    expect(screen.getByText('Sent safely and never saved.')).toBeVisible()
+    expect(screen.getByTestId('signing-off-explain')).toHaveTextContent(/Protect your key with a new passphrase/)
+    expect(screen.getByTestId('signing-off-copies')).toHaveTextContent(/Older backups of this computer may still hold your key/)
     const one = screen.getByLabelText(/^New passphrase \(at least 14/)
     const two = screen.getByLabelText('New passphrase again')
     expect(one).toHaveAttribute('type', 'password')
     const submit = () => screen.getByRole('button', { name: 'Turn off' })
     expect(submit()).toBeDisabled()
+    expect(screen.getByTestId('signing-length-check')).not.toHaveTextContent('✓')
+    expect(screen.getByTestId('signing-match-check')).not.toHaveTextContent('✓')
+    expect(screen.getByTestId('signing-length-check').closest('[data-sign-footer-slot]')).not.toBeNull()
+    expect(screen.getByTestId('signing-match-check').closest('[data-sign-footer-slot]')).not.toBeNull()
+    expect(screen.getByTestId('signing-off-copies')).not.toBeVisible()
     fireEvent.change(one, { target: { value: 'short' } })
     fireEvent.change(two, { target: { value: 'short' } })
     expect(submit()).toBeDisabled() // under 14 characters
-    expect(screen.getByTestId('signing-short')).toHaveTextContent('5 of at least 14 characters so far')
+    expect(screen.getByTestId('signing-length-check')).toHaveTextContent('14+ characters')
+    expect(screen.getByTestId('signing-length-check')).not.toHaveTextContent('✓')
+    expect(screen.getByTestId('signing-match-check')).toHaveTextContent('✓ Both match')
     fireEvent.change(one, { target: { value: 'violet harbour 7 kettles' } })
     fireEvent.change(two, { target: { value: 'violet harbour 7 kettle' } })
-    expect(screen.getByTestId('signing-mismatch')).toBeInTheDocument()
+    expect(screen.getByTestId('signing-length-check')).toHaveTextContent('✓ 14+ characters')
+    expect(screen.getByTestId('signing-match-check')).not.toHaveTextContent('✓')
     expect(submit()).toBeDisabled()
     fireEvent.change(two, { target: { value: 'violet harbour 7 kettles' } })
+    expect(screen.getByTestId('signing-match-check')).toHaveTextContent('✓ Both match')
+    expect(submit()).toBeEnabled()
     fireEvent.click(submit())
     // the fields are empty the moment the click is taken, before anything is sealed or sent
     expect(one).toHaveValue('')
@@ -245,19 +258,25 @@ describe('Sign in the dashboard', () => {
   it('the on form shows what moves where, and the field asks for the current passphrase', async () => {
     mount({ ...OFF, device: 'd_' + '1'.repeat(32) })
     fireEvent.click(await openSwitch())
-    const details = screen.getByTestId('signing-conversion')
-    expect(details).toHaveTextContent('orchestrator (INT)')
-    expect(details).toHaveTextContent('d_' + '1'.repeat(32))
-    expect(details).toHaveTextContent(/moves from passphrase protection to this computer's saved keys/i)
+    expect(screen.getByRole('dialog', { name: 'Turn on one-click approval' })).toHaveTextContent('Your key will be stored on this computer for one-click approval.')
+    const device = screen.getByText('Device key: d_' + '1'.repeat(32))
+    const fold = device.closest('details')!
+    expect(fold).not.toHaveAttribute('open')
+    expect(device).not.toBeVisible()
+    fireEvent.click(screen.getByText('Technical details'))
+    expect(fold).toHaveAttribute('open')
+    expect(device).toBeVisible()
+    expect(screen.queryByText('Workspace')).toBeNull()
+    expect(screen.queryByText('Change')).toBeNull()
     // an existing passphrase is proven: browsers ignore autocomplete=off on password fields (orch-9d L2)
-    expect(screen.getByLabelText(/Your passphrase/)).toHaveAttribute('autocomplete', 'current-password')
+    expect(screen.getByLabelText(/Enter the passphrase/)).toHaveAttribute('autocomplete', 'current-password')
   })
 
   it('the signer asking for the terminal names the command', async () => {
     vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(409, { code: 'custody.terminal_needed', message: 'x', retryable: false }))
     mount(OFF)
     fireEvent.click(await openSwitch())
-    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: 'pw' } })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
     expect(await screen.findByTestId('signing-error')).toHaveTextContent('orch host convenience on --workspace INT')
   })
@@ -305,14 +324,14 @@ describe('Sign in the dashboard', () => {
     const status = vi.mocked(api.clickStatus)
     fireEvent.click(await openSwitch())
     await waitFor(() => expect(status).toHaveBeenCalledTimes(1))
-    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: 'pw' } })
     // the signer now says the key is already in the key store (the reload after the refusal reads this)
     status.mockResolvedValue({ custody: 'convenience', enabled: false, available: false, problem: 'disabled', switchable: true })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
     await waitFor(() => expect(status.mock.calls.length).toBeGreaterThanOrEqual(2))
     // the refetched state replaces the stale form: the terminal-on view, no form, no error
     expect(await screen.findByTestId('signing-terminal-on')).toHaveTextContent('orch host convenience on --workspace INT')
-    expect(screen.queryByLabelText(/Your passphrase/)).toBeNull()
+    expect(screen.queryByLabelText(/Enter the passphrase/)).toBeNull()
     expect(screen.queryByTestId('signing-error')).toBeNull()
   })
 
@@ -324,7 +343,7 @@ describe('Sign in the dashboard', () => {
     expect(await screen.findByTestId('signing-error')).toHaveTextContent(/Reloading the card/)
     // the reload found the same card: the form stays, with its message
     await waitFor(() => expect(status.mock.calls.length).toBeGreaterThanOrEqual(2))
-    expect(screen.getByLabelText(/Your passphrase/)).toHaveValue('')
+    expect(screen.getByLabelText(/Enter the passphrase/)).toHaveValue('')
     expect(screen.getByTestId('signing-error')).toBeInTheDocument()
     // a later reload shows the switch did happen
     status.mockResolvedValue(ON)
@@ -332,7 +351,7 @@ describe('Sign in the dashboard', () => {
       await qcOf.invalidateQueries({ queryKey: ['click-status', WS] })
     })
     await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^On: you approve here with one click/))
-    expect(screen.queryByLabelText(/Your passphrase/)).toBeNull()
+    expect(screen.queryByLabelText(/Enter the passphrase/)).toBeNull()
     expect(screen.queryByTestId('signing-error')).toBeNull()
     expect(screen.queryByText(/Reloading the card/)).toBeNull()
     expect(document.body.innerHTML).not.toContain('never kept')
@@ -354,7 +373,7 @@ describe('Sign in the dashboard', () => {
     mount(OFF)
     await typeAndSubmit()
     expect(await screen.findByTestId('signing-error')).toHaveTextContent(/result is unknown/i)
-    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
+    fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: 'pw' } })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
     await waitFor(() => expect(screen.getByTestId('signing-error')).toHaveTextContent(/result is unknown/i))
   })
@@ -364,7 +383,7 @@ describe('Sign in the dashboard', () => {
     mount(OFF)
     await typeAndSubmit('secret words')
     const err = await screen.findByTestId('signing-error')
-    const field = screen.getByLabelText(/Your passphrase/)
+    const field = screen.getByLabelText(/Enter the passphrase/)
     expect(field).toHaveValue('')
     expect(field.getAttribute('aria-describedby')).toContain(err.id)
     expect(err.id).not.toBe('')
@@ -375,8 +394,8 @@ describe('Sign in the dashboard', () => {
     const sw = vi.spyOn(api, 'switchClick').mockImplementation(() => new Promise((r) => (settle = r)))
     mount(OFF)
     fireEvent.click(await openSwitch())
-    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'pw' } })
-    const form = screen.getByLabelText(/Your passphrase/).closest('form')!
+    fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: 'pw' } })
+    const form = screen.getByLabelText(/Enter the passphrase/).closest('form')!
     // Both submits arrive inside one act(): React has not re-rendered in between, so `busy` is still false for the
     // second one. Only the ref guard stops it (without the guard this sends twice while `busy` still works).
     act(() => {
@@ -385,7 +404,7 @@ describe('Sign in the dashboard', () => {
     })
     expect(sw).toHaveBeenCalledTimes(1)
     // and once `busy` has rendered, the controls are off and a further submit still sends nothing
-    expect(screen.getByLabelText(/Your passphrase/)).toBeDisabled()
+    expect(screen.getByLabelText(/Enter the passphrase/)).toBeDisabled()
     fireEvent.submit(form)
     expect(sw).toHaveBeenCalledTimes(1)
     settle(ON)
@@ -395,26 +414,51 @@ describe('Sign in the dashboard', () => {
   it('the passphrase does not outlive the card (L4)', async () => {
     const first = mount(OFF)
     fireEvent.click(await openSwitch())
-    fireEvent.change(screen.getByLabelText(/Your passphrase/), { target: { value: 'typed then left' } })
+    fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: 'typed then left' } })
     first.unmount()
     mount(OFF)
     fireEvent.click(await openSwitch())
-    expect(screen.getByLabelText(/Your passphrase/)).toHaveValue('')
+    expect(screen.getByLabelText(/Enter the passphrase/)).toHaveValue('')
     expect(document.body.innerHTML).not.toContain('typed then left')
   })
 })
 
 it('says the risk in one plain line and keeps the full notice under Details', async () => {
   mount({ ...ON, risk_ack: null })
-  expect(await screen.findByTestId('click-risk')).toHaveTextContent('anyone using this browser session, and agents running as you, could approve')
+  expect(await screen.findByTestId('click-risk')).toHaveTextContent('anyone using this browser, and agents running as you, could approve')
   expect(screen.getByTestId('click-risk-full')).toHaveTextContent('Convenience signing:')
   await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent('On: you approve here with one click'))
 })
 
-it('shows the ISO risk acknowledgement as a date in Settings', async () => {
-  const at = '2026-10-16T18:30:00Z'
-  mount({ ...ON, risk_ack: at })
-  const notice = await screen.findByText(/Risk notice acknowledged on/)
-  expect(notice.querySelector('time')).toHaveAttribute('datetime', at)
-  expect(notice).toHaveTextContent('16 Oct 18:30') // local zone (UTC in tests), the shared formatter
+it('omits the risk acknowledgement date', async () => {
+  mount({ ...ON, risk_ack: '2026-10-16T18:30:00Z' })
+  await openSwitch()
+  expect(screen.queryByText(/Risk notice acknowledged on/)).toBeNull()
+})
+
+it.each(['on', 'off', 'resume'] as const)('shows the pending target while turning %s, then closes the dialog', async (mode) => {
+  let settle!: (card: ClickCard) => void
+  vi.spyOn(api, 'switchClick').mockImplementation(() => new Promise(resolve => { settle = resolve }))
+  mount(mode === 'off' ? ON : mode === 'on' ? OFF : { ...ON, enabled: false })
+  const toggle = await openSwitch()
+  fireEvent.click(toggle)
+  const action = mode === 'off' ? 'off' : 'on'
+  expect(screen.getByRole('dialog', { name: `Turn ${action} one-click approval` })).toBeInTheDocument()
+  if (mode === 'off') {
+    fireEvent.change(screen.getByLabelText(/^New passphrase \(at least/), { target: { value: 'demo-not-a-real-passphrase' } })
+    fireEvent.change(screen.getByLabelText('New passphrase again'), { target: { value: 'demo-not-a-real-passphrase' } })
+  } else if (mode === 'on') {
+    fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: 'demo-not-a-real-passphrase' } })
+  }
+  const submit = screen.getByRole('button', { name: `Turn ${action}` })
+  expect(submit.closest('[data-sign-scroll]')).toBeNull()
+  expect(submit.closest('[data-sign-footer-slot]')).not.toBeNull()
+  fireEvent.click(submit)
+  expect(screen.getByText(`Turning ${action}...`)).toBeInTheDocument()
+  expect(toggle).toBeDisabled()
+  expect(toggle).toHaveAttribute('aria-checked', String(action === 'on'))
+  await waitFor(() => expect(settle).toBeDefined())
+  await act(async () => settle(action === 'off' ? OFF : ON))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  expect(screen.queryByText(`Turning ${action}...`)).toBeNull()
 })

@@ -528,7 +528,7 @@ it('uses the host content headline and keeps the technical preview collapsed', a
   await mount(PLAN)
   const title = await screen.findByRole('heading', { name: request.content.headline }, T)
   const dialog = title.closest('[role="dialog"]')!
-  expect(within(dialog as HTMLElement).getByText('Do the thing')).toBeVisible()
+  expect(within(dialog as HTMLElement).getByText('Do the thing')).not.toBeVisible()
   expect(dialog.querySelector('details')).not.toHaveAttribute('open')
   expect(dialog.querySelector('[data-handoff-preview]')?.closest('details')).not.toHaveAttribute('open')
 })

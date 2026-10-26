@@ -1,3 +1,4 @@
+import { ARM_MS } from '@/api/click'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
@@ -61,8 +62,7 @@ it('turning one on is a signed hand-off: the typed action opens the review, noth
   const dialog = await screen.findByTestId('addon-worktrees-accordion', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'worktrees' }])
-  expect(dialog).toHaveTextContent('Turn on an add-on')
-  expect(dialog).toHaveTextContent('In your terminal you type worktrees~aaaaaaaa to continue.')
+  expect(dialog).toHaveTextContent('Turn on')
 })
 
 it('feedback 3.3: the Wiki switch opens the sign step (it was missing from the page list)', async () => {
@@ -115,7 +115,7 @@ it('an add-on with settings says what it needs while Off; the toggle still opens
 it('run 9: the Built in group tags every row, Quick tasks is switchable like Wiki, the review opens under the row (no popup)', async () => {
   const user = userEvent.setup()
   await open()
-  expect(within(screen.getByTestId('addon-quick')).getByText('Built in')).toBeInTheDocument()
+  expect(within(screen.getByTestId('addon-quick')).queryByText('Built in')).toBeNull() // the group title says it
   await user.click(screen.getByRole('switch', { name: 'Quick tasks' }))
   const accordion = await screen.findByTestId('addon-quick-accordion', {}, T)
   expect(screen.getByTestId('addon-quick')).toContainElement(accordion)
@@ -123,12 +123,16 @@ it('run 9: the Built in group tags every row, Quick tasks is switchable like Wik
   await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_disable', name: 'quick' }]), T)
 })
 
-it('run 9: with One click on, pressing the switch signs directly (no Sign button, no popup)', async () => {
+it('run 9: with One click on, the switch opens the review under the row; one press on Turn on signs (no popup)', async () => {
   const ws = state.host.workspaces[0]
   ws.click = { custody: 'convenience', enabled: true, available: true }
   ws.features = [...ws.features, 'click']
   await open()
-  await userEvent.setup().click(screen.getByRole('switch', { name: 'Worktrees' }))
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('switch', { name: 'Worktrees' }))
+  const go = await within(await screen.findByTestId('addon-worktrees-accordion', {}, T)).findByRole('button', { name: /^Turn on$/ }, T)
+  await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  await user.click(go)
   await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
   expect(screen.queryByRole('dialog')).toBeNull()
 })

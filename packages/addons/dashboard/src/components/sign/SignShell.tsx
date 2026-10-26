@@ -2,7 +2,8 @@
 // bottom sheet on a phone, and a centred dialog where no button is known (a menu item, the command palette). The content
 // is the same in all three; this file only decides where it sits.
 import { ShieldCheck } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Popover as PopoverPrimitive } from 'radix-ui'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
@@ -43,7 +44,7 @@ export interface SignShellProps {
   onDismiss: () => void
   title: ReactNode
   /** Under the title; may be a workspace line and a sentence. */
-  description: ReactNode
+  description?: ReactNode
   showClose: boolean
   onOpenAutoFocus: (e: Event) => void
   children: ReactNode
@@ -51,18 +52,27 @@ export interface SignShellProps {
   inline?: boolean
 }
 
-/** The row with Cancel and the sign button: it stays at the bottom of the scrolling review, so Cancel is always reachable (phone sheet and popover). */
-export const STICKY_FOOTER = 'sticky -bottom-4 z-10 -mx-4 -mb-4 border-t border-border bg-surface px-4 pb-4 pt-3'
+/** Kept for callers: the footer is a non-scrolling flex item. */
+export const STICKY_FOOTER = 'shrink-0 border-t border-border bg-surface pt-3'
+const FooterTarget = createContext<HTMLElement | null | undefined>(undefined)
 
-const BODY = 'grid max-h-[85dvh] grid-cols-[minmax(0,1fr)] gap-3 overflow-y-auto'
+/** Nested signing panels share the shell's footer, outside its scroll area. */
+export function SignFooter({ children }: { children: ReactNode }) {
+  const target = useContext(FooterTarget)
+  if (target === null) return null
+  return target ? createPortal(children, target) : <>{children}</>
+}
+
+const BODY = 'flex min-h-0 max-h-[85dvh] flex-col gap-3 overflow-hidden'
 
 export function SignShell(p: SignShellProps) {
   const wide = useWide()
+  const [footer, setFooter] = useState<HTMLDivElement | null>(null)
   const heading = (
-    <div className="flex items-center gap-2 text-[15px] font-semibold leading-snug">
+    <h2 className="flex items-center gap-2 text-[15px] font-semibold leading-snug">
       <ShieldCheck className="size-4 shrink-0 text-brand" aria-hidden />
       <span className="min-w-0">{p.title}</span>
-    </div>
+    </h2>
   )
   if (p.inline) {
     return (
@@ -89,38 +99,45 @@ export function SignShell(p: SignShellProps) {
             aria-label={typeof p.title === 'string' ? p.title : undefined}
             className="z-50 w-[min(32rem,calc(100vw-1.5rem))] rounded-lg border border-border bg-surface p-0 text-text shadow-xl outline-none data-[state=open]:animate-in data-[state=open]:fade-in-0"
           >
-            <div className={cn(BODY, 'p-4 max-h-[min(80dvh,var(--radix-popover-content-available-height))]')}>
+            <FooterTarget.Provider value={footer}><div className={cn(BODY, 'p-4 max-h-[min(80dvh,var(--radix-popover-content-available-height))]')}>
+              <div data-sign-scroll className="min-h-0 space-y-3 overflow-y-auto">
               <header className="space-y-1">
                 {heading}
-                <div className="text-[13px] text-text-muted">{p.description}</div>
+                {p.description && <div className="text-[13px] text-text-muted">{p.description}</div>}
               </header>
               {p.children}
-            </div>
+              </div>
+              <div ref={setFooter} data-sign-footer-slot className="shrink-0 empty:hidden" />
+            </div></FooterTarget.Provider>
           </PopoverPrimitive.Content>
         </PopoverPrimitive.Portal>
       </PopoverPrimitive.Root>
     )
   }
   return (
-    <Dialog open={p.open} onOpenChange={(o) => !o && p.onDismiss()}>
+    <FooterTarget.Provider value={footer}><Dialog open={p.open} onOpenChange={(o) => !o && p.onDismiss()}>
       <DialogContent
-        showCloseButton={p.showClose}
+        showCloseButton={false}
+        aria-describedby={undefined}
         data-handoff-dialog
         data-sign-sheet
         className={cn(BODY, 'gap-4 border-border bg-surface p-4 max-sm:top-auto max-sm:bottom-0 max-sm:max-w-full max-sm:translate-y-0 max-sm:rounded-b-none sm:max-w-lg')}
         onOpenAutoFocus={p.onOpenAutoFocus}
       >
+        <div data-sign-scroll className="min-h-0 space-y-3 overflow-y-auto">
         <header className="space-y-1">
-          <DialogTitle className="flex items-center gap-2 pr-8">
+          <DialogTitle className="flex items-center gap-2">
             <ShieldCheck className="size-4 text-brand" aria-hidden />
             {p.title}
           </DialogTitle>
-          <DialogDescription asChild>
+          {p.description && <DialogDescription asChild>
             <div className="text-[13px] text-text-muted">{p.description}</div>
-          </DialogDescription>
+          </DialogDescription>}
         </header>
         {p.children}
+        </div>
+        <div ref={setFooter} data-sign-footer-slot className="shrink-0 empty:hidden" />
       </DialogContent>
-    </Dialog>
+    </Dialog></FooterTarget.Provider>
   )
 }

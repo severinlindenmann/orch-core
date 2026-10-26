@@ -1,4 +1,4 @@
-"""The shared origin vectors (same file in orch-hub, orch-publish, orch-relay): stored-origin and card relay_url rule."""
+"""The shared origin vectors (same file in hub, publish, relay): stored-origin and card relay_url rule."""
 
 import json
 import pathlib

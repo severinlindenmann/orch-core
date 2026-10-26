@@ -44,7 +44,7 @@ export function ReaderLevels({ ws }: { ws: string }) {
   return (
     <section className="space-y-3" aria-labelledby="readers-heading" data-testid="reader-levels">
       <h2 id="readers-heading" className="text-base font-semibold">
-        Reader levels
+        Phone and devices
       </h2>
       {!served || readers.data?.available === false ? (
         <p data-testid="readers-unavailable" className="text-[13px] text-text-muted">

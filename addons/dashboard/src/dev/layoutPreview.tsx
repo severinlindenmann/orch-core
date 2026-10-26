@@ -99,6 +99,7 @@ export const LAYOUT_SCENARIOS = [
   'pair-devices',
   // Core H12d-2: Settings → Devices with reader levels, and every click-to-sign refusal sentence.
   'readers-devices',
+  'readers-solo',
   'convenience-refusals',
   // The Settings → General signing card ("Sign in the dashboard"): the five states of #578, with a long name, prefix and device.
   'signing-on',
@@ -825,7 +826,7 @@ function install() {
     if (current === 'dev-status-failed') throw new ApiError(502, { code: 'host.unavailable', message: 'fixture: no answer', retryable: true })
     return hostInfoFor(current)
   })
-  set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : original.clickStatus(...args)))
+  set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : current === 'readers-solo' ? { custody: 'convenience', enabled: true, available: true, device: 'd_00112233445566778899aabbccddeeff' } : original.clickStatus(...args)))
   // The sealed new passphrase (C12): the fixture's workspace id is not a real one (the seal binds a 32-hex id), so the
   // preview shows the refusal a remote dashboard gets; the real seal is covered by SigningCard.test.tsx.
   set('custodySeal', async (...args: never[]) => {
@@ -884,7 +885,7 @@ function install() {
   // H12d-2: `/members` and `/readers` in the real shape. The pair scenarios read the pair fixture's members.
   set('getRoster', async () => rosterFor(current))
   set('listHostGrants', async (_ws: string, active: boolean) => accessGrants(current).filter((g) => !active || (!g.revoked && Date.parse(g.expires_at) > Date.now())))
-  set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' || current === 'settings-members' ? 1 : 0))
+  set('getReaders', async () => current === 'readers-solo' ? { available: true, required_reader: 1, readers: [{ device: 'd_00112233445566778899aabbccddeeff', person: 'p_me', reader: 0, level: 0 }] } : readersOf(rosterFor(current), current === 'readers-devices' || current === 'settings-members' ? 1 : 0))
   set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: opOf.get(id) ?? 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
@@ -971,7 +972,7 @@ export function LayoutPreview({ name }: { name: string }) {
         </div>
       </section>
     )
-  if (scenario.startsWith('pair-') || scenario === 'readers-devices')
+  if (scenario.startsWith('pair-') || scenario === 'readers-devices' || scenario === 'readers-solo')
     return (
       <SettingsFrame current="devices" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
         <HostDevices workspace={workspace} />

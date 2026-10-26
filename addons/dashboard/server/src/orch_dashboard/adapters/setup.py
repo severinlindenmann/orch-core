@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from ..hostlink import check_uid
 
 MAX_BODY = 64 * 1024
+_SERVICE_LOGIN = re.compile(r"http://[0-9A-Za-z.:-]{1,64}/#launch=[A-Za-z0-9_-]{20,100}&to=%2F")
 ROUTES = {
     "state": "GET",
     "profile": "POST",
@@ -232,12 +233,20 @@ def register(app, auth, proxy, port):
                 conn.close()
             # The new workspace's id is the one thing kept: the page selects it before it opens the dashboard (otherwise
             # the dashboard would open the workspace that was selected before). Anything but a plain id is dropped.
+            core_url = None
             try:
-                wid = json.loads(data).get("workspace_id")
+                body = json.loads(data)
+                wid = body.get("workspace_id")
+                core_url = body.get("url")
             except Exception:
                 wid = None
             if not (isinstance(wid, str) and re.fullmatch(r"[0-9A-Za-z_-]{1,64}", wid)):
                 wid = None
+            if isinstance(core_url, str) and _SERVICE_LOGIN.fullmatch(core_url):
+                # this page's own origin stops with `orch setup`: the core sent a single-use login link on the running
+                # dashboard service (another port); that link is the destination
+                out = {"url": core_url, **({"workspace_id": wid} if wid else {})}
+                return JSONResponse(out, headers={"Cache-Control": "no-store"})
             fragment = urllib.parse.urlencode({"launch": auth.launch(port)["code"], "to": "/"})
             out = {"url": f"/#{fragment}", **({"workspace_id": wid} if wid else {})}
             return JSONResponse(out, headers={"Cache-Control": "no-store"})

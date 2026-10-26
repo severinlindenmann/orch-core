@@ -18,6 +18,7 @@ _JS = "text/javascript; charset=utf-8"
 #: url path -> (file name, content type). The ONLY things the console origin serves besides ``/api/v1``.
 FILES: dict[str, tuple[str, str]] = {
     "/": ("index.html", "text/html; charset=utf-8"),
+    "/c": ("connect.html", "text/html; charset=utf-8"),
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", _JS),
     "/channel.js": ("channel.js", _JS),

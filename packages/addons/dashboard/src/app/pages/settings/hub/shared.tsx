@@ -45,7 +45,7 @@ export function StrictNeeds({ testId }: { testId?: string }) {
 export function NoOneClick({ state, what, children }: { state: OneClick; what: string; children?: ReactNode }) {
   if (state === 'checking') return <p role="status">Checking whether One click is on…</p>
   return <Panel title={state === 'off' ? 'One click is off' : 'One click is not available'} tone="border-warning/40 bg-warning-soft" >
-    <p data-testid="hub-no-one-click">{state === 'off' ? `${what} here is signed with one click, and One click is off in this workspace.` : 'Could not tell whether One click is on.'} Turn it on in <SettingsLink>Settings</SettingsLink>, or do it in a terminal.</p>
+    <p data-testid="hub-no-one-click">{state === 'off' ? `${what} here is signed with one click, and One click is off in this workspace.` : 'Could not tell whether One click is on.'} Turn it on in <SettingsLink>Settings</SettingsLink>.</p>
     {children}
   </Panel>
 }
@@ -66,7 +66,8 @@ export function Field({ label, value, onChange, hint, testId }: { label: string;
 }
 export function Flow({ title, onClose, children, finish = 'terminal' }: { title: string; onClose: () => void; children: ReactNode; finish?: 'terminal' | 'here' }) {
   return <Dialog open onOpenChange={open => !open && onClose()}><DialogContent showCloseButton={false} className="data-[state=open]:animate-none data-[state=closed]:animate-none max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-    <div className="flex items-start justify-between gap-3"><DialogTitle>{title}</DialogTitle><Action id="hub-flow-close" onClick={onClose}>Close</Action></div><DialogDescription>{finish === 'here' ? 'Review it here, then confirm with one click.' : 'Review here. Finish in a terminal on your computer.'}</DialogDescription>
-    <div className="min-w-0 space-y-4 text-sm [overflow-wrap:anywhere]">{children}</div>
+    <DialogTitle>{title}</DialogTitle><DialogDescription className="sr-only">Review the hub change before confirming.</DialogDescription>
+    <div className="min-w-0 space-y-4 text-sm break-words">{children}</div>
+    {finish === 'terminal' && <div className="flex justify-end"><Action id="hub-flow-cancel" onClick={onClose}>Cancel</Action></div>}
   </DialogContent></Dialog>
 }

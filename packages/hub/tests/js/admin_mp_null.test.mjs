@@ -33,7 +33,7 @@ async function mount(pol, { api } = {}) {
     say: (c) => c,
     api: api ?? (async (method, path) => ({ status: 200, body: b[path.replace("/admin/", "").split("?")[0]] })),
   };
-  const [, , , tabs, panels] = adminView(d);
+  const [, , tabs, panels] = adminView(d);
   for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
   return { tabs, panels, d };
 }

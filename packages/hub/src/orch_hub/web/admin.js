@@ -160,23 +160,36 @@ export function adminView(d) {
       if (r.status !== 200) { connectBox.replaceChildren(h("div", { class: "banner bad", role: "alert", text: d.say(r.body?.error ?? "unavailable") })); return; }
       const { link, code, endpoint, hub_id: hubId, expires_ms: expires } = r.body;
       const input = h("input", { readonly: true, value: link, id: "connect-link", "aria-label": "Connect link", onfocus: (ev) => ev.target.select() });
-      const copied = h("span", { class: "small muted", "aria-live": "polite" });
+      let copyTimer;
+      const copyHint = h("span", { class: "small muted", "aria-live": "polite" });
       const copy = h("button", { type: "button", class: "pri", text: "Copy link", onclick: async () => {
-        try { await navigator.clipboard.writeText(link); copied.textContent = "Copied"; } catch { input.focus(); input.select(); copied.textContent = "Press Ctrl+C / Cmd+C to copy"; }
+        try {
+          await navigator.clipboard.writeText(link);
+          clearTimeout(copyTimer);
+          copyHint.textContent = "";
+          copy.textContent = "Copied ✓";
+          copyTimer = setTimeout(() => { copy.textContent = "Copy link"; }, 2000);
+        } catch {
+          clearTimeout(copyTimer);
+          copy.textContent = "Copy link";
+          input.focus(); input.select();
+          copyHint.textContent = "Press Ctrl+C / Cmd+C to copy";
+        }
       } });
       const fp = hubId.match(/.{4}/g).join(" ");
       connectBox.replaceChildren(h("section", { class: "card", id: "connect-panel" },
         h("h3", { text: "Connect a workspace" }),
         p("Send this link to the person who runs the workspace. It works once."),
         field("Link", input),
-        h("div", { class: "row" }, copy, copied),
+        h("div", { class: "row" }, copy, copyHint),
         p("Valid until " + new Date(expires).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " (30 minutes), one use."),
         h("div", { class: "row" },
-          h("button", { type: "button", text: "Make a new one", onclick: (ev) => void mintLink(ev.target) }),
+          h("button", { type: "button", text: "Make a new link", onclick: (ev) => void mintLink(ev.target) }),
           h("button", { type: "button", text: "Done", onclick: () => connectBox.replaceChildren() })),
         h("details", {}, h("summary", { text: "Technical details" }),
-          p("Hub key fingerprint " + fp + " is part of the link, so nobody has to read it out."),
-          p("Prefer two fields? Hub address " + (endpoint ?? "(this hub)") + " and code " + code + " work too."))));
+          p("Hub key fingerprint: " + fp),
+          p("Hub address: " + (endpoint ?? "(this hub)")),
+          p("Code: " + code))));
       input.focus(); input.select();
     } catch { connectBox.replaceChildren(h("div", { class: "banner bad", role: "alert", text: d.say("unavailable") })); }
     finally { button.disabled = false; }
@@ -405,5 +418,5 @@ export function adminView(d) {
     }, view())));
   }
   void load();
-  return [h("h1", { text: "Admin" }), p("Groups managed here; external sync not configured"), message, tabs, panels];
+  return [h("h1", { text: "Admin" }), message, tabs, panels];
 }

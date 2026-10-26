@@ -13,6 +13,7 @@ from orch.ops.workflows import WORKFLOWS
 # Format doc 10.3, one registry operation per command (subcommands are separate operations).
 SECTION_10_3 = [
     *"status describe help show list search next inbox new claim release handoff submit ask wait set".split(),
+    "follow-up", "follow-up cancel", "follow-up show", "follow-up list",
     "section set", "ac add", "ac edit",
     *(f"task {v}" for v in "list next add edit start done skip block reopen".split()),
     *(f"artifact {v}" for v in "add replace list".split()),

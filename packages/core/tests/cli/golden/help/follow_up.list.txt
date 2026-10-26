@@ -1,0 +1,5 @@
+List pending follow-ups across visible tickets.
+usage: orch follow-up list [REF] [--all]
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+  --all  include completed and cancelled follow-ups from the last 30 days
+more: orch describe follow_up.list

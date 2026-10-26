@@ -75,6 +75,7 @@ PERSON_AGENT_OPS = frozenset(
         "ask",
         "artifact.add",
         "artifact.replace",
+        "follow_up.cancel",
     }
 )
 #: person ops of the host contract (§0.8 ``move``, ``policy.set``, ``settings.set``; H0 records them as ops). Each emits

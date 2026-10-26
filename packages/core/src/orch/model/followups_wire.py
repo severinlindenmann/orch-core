@@ -113,6 +113,7 @@ def set_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         a["grant"],
         e["id"],
     )
+    rec.label = e.get("label")
     t.followups[rec.id] = rec
     t.claim = None
     claims.release_leases(t)
@@ -181,6 +182,14 @@ def cancelled_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     rec = t.followups.get(e["followup"])
     if rec is None or view_state(core, t, rec, ts(e["at"]))[0] not in ("pending", "needs_person"):
         return Refusal(Code.FOLLOWUP_DENIED, "only pending or needs_person follow-ups can be cancelled")
+    a = e["actor"]
+    if a["kind"] == "agent":
+        if not claims.in_family(a["session"], rec.setter_session) or a["for"] != rec.person or e["reason"] != "agent":
+            return Refusal(Code.FOLLOWUP_DENIED, "an agent may cancel only its own session family's follow-up")
+    elif a["kind"] == "person" and a["id"] != rec.person and not claims.signer_manages(core.ws, t, e):
+        return Refusal(Code.FOLLOWUP_DENIED, "only the follow-up's person or a manager may cancel it")
+    if e["reason"] == "run_now" and view_state(core, t, rec, ts(e["at"]))[0] != "needs_person":
+        return Refusal(Code.FOLLOWUP_DENIED, "run_now applies to a follow-up that needs a person")
     rec.state, rec.cancel_reason = "cancelled", e["reason"]
     return None
 

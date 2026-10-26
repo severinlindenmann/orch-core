@@ -306,6 +306,12 @@ def verb_covers(typ: str, verbs: Any, verb_events: Mapping[str, Collection[str]]
     if verbs == "agent":
         return True
     verbs = [v for v in verbs if v not in HUMAN_ONLY]  # a person's own operation is never in a grant (F1 10.1)
+    # V4 introduced these event types: their operation names have no V1 replay verdict to preserve.
+    # Keep judging every pre-existing event with the caller's frozen table.
+    if typ in ("followup.set", "followup.cancelled"):
+        from .emits import EMITS_V4
+
+        return any(typ in EMITS_V4.get(v, ()) for v in verbs)
     if verb_events is None:
         return typ in verbs
     return any(typ in verb_events.get(v, ()) for v in verbs)

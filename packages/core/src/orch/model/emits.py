@@ -115,8 +115,8 @@ EMITS_V3: dict[str, frozenset[str]] = {**EMITS_V2, "task.edit": frozenset({"tick
 
 EMITS_V4: dict[str, frozenset[str]] = {
     **EMITS_V3,
-    "follow-up.set": frozenset({"followup.set"}),
-    "follow-up.cancel": frozenset({"followup.cancelled"}),
+    "follow_up": frozenset({"followup.set"}),
+    "follow_up.cancel": frozenset({"followup.cancelled"}),
 }
 
 CURRENT = EMITS_V4

@@ -328,6 +328,8 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
                     "reason": followups_wire.view_state(core, t, r, now)[1] or r.reason,
                     "grant": r.grant,
                     "person": r.person,
+                    "setter_session": r.setter_session,
+                    **({"label": r.label} if r.label is not None else {}),
                 }
             )
             for r in t.followups.values()

@@ -50,6 +50,51 @@ def _e(code: str, exit_: int, retryable: bool, message: str, hint: str, fix: lis
 
 
 _SPECS = [
+    _e(
+        "followup.too_soon",
+        3,
+        False,
+        "follow-up is less than one hour ahead",
+        "wait inside the session",
+        ["orch", "wait"],
+        "follow-up is less than one hour ahead",
+    ),
+    _e(
+        "followup.too_far",
+        3,
+        False,
+        "follow-up exceeds the scheduling horizon",
+        "choose a time within 14 days",
+        ["orch", "follow-up", "--help"],
+        "follow-up exceeds the scheduling horizon",
+    ),
+    _e(
+        "followup.bad_brief",
+        3,
+        False,
+        "brief must be non-empty clean text of at most 4096 bytes",
+        "provide a brief of 1 to 4096 UTF-8 bytes",
+        ["orch", "follow-up", "--help"],
+        "brief must be non-empty clean text of at most 4096 bytes",
+    ),
+    _e(
+        "followup.off",
+        3,
+        False,
+        "Schedules is switched off in this workspace; an owner can turn it on in Add-ons",
+        "ask an owner to turn Schedules on in Add-ons",
+        ["orch", "addon", "list"],
+        "Schedules is switched off in this workspace; an owner can turn it on in Add-ons",
+    ),
+    _e(
+        "followup.denied",
+        3,
+        False,
+        "the model refused the follow-up",
+        "read the denial code and resolve it before retrying",
+        ["orch", "show"],
+        "the model refused the follow-up",
+    ),
     # 1 internal
     _e(
         "internal",

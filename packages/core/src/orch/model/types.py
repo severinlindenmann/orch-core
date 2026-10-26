@@ -270,6 +270,7 @@ class FollowupRec:
     reason: str | None = None
     fallback: str | None = None
     cancel_reason: str | None = None
+    label: str | None = None
 
 
 @dataclass

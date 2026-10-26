@@ -1,0 +1,64 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "follow_up.show",
+    "name": "follow_up.show",
+    "cli": "orch follow-up show",
+    "summary": "Show a follow-up and its brief.",
+    "who": "read",
+    "usage": "orch follow-up show ID",
+    "pre": [],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "Show a follow-up and its brief.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "follow-up ID"
+        }
+      },
+      "x-positional": [
+        "id"
+      ],
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} followup {id}",
+      "json": {
+        "type": "object"
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "followup.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask an owner to turn Schedules on in Add-ons",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

@@ -1,0 +1,10 @@
+Schedule a fresh session, release your claim, then end this session.
+usage: orch follow-up [REF] [--in DURATION] [--at WHEN] [--brief-file PATH] [--brief TEXT] [--label LABEL] [--dry-run]
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+  --in DURATION  duration: 90m, 36h or 2d
+  --at WHEN  local time: YYYY-MM-DDTHH:MM[:SS] or +2d 09:00
+  --brief-file PATH  read the text from PATH, or - for stdin
+  --brief TEXT  instructions for the fresh session
+  --label LABEL  optional label
+  --dry-run  say what would happen, append nothing
+more: orch describe follow_up

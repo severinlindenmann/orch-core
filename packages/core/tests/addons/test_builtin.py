@@ -25,6 +25,7 @@ def test_the_built_in_names_are_the_tech_agnostic_ones():
         "start-agent", "terminals", "worktrees", "dashboard", "publish", "usage", "estimate", "explorer", "wiki",
         "quick",
         "focus",
+        "schedules",
     )  # fmt: skip
     for name in MOVED:
         with pytest.raises(ValueError):

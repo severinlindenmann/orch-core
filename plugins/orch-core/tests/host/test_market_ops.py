@@ -82,7 +82,8 @@ def test_the_official_index_is_unsigned_today_so_add_fails_closed(served, monkey
     monkeypatch.setenv("ORCH_OFFICIAL_KEY", H.KEY_B64)
     monkeypatch.setattr(constants, "OFFICIAL_KEYS", ())  # the fail-closed case, whatever this release pins
     assert err(person(served, "market.add", {"url": H.OFFICIAL})) == "market.index_unsigned"
-    assert ok(person(served, "market.list"))["data"]["markets"] == []  # nothing stored on a refusal
+    rows = ok(person(served, "market.list"))["data"]["markets"]
+    assert [r["cache"] for r in rows] == ["not_fetched"]  # only the unfetched preset: nothing stored on a refusal
 
 
 @pytest.mark.parametrize(
@@ -216,10 +217,20 @@ def test_E5_an_agent_refresh_inside_the_interval_makes_no_network_access_a_perso
 
 
 def test_an_agent_may_list_and_refresh_but_not_add_a_new_target(served, net):
-    assert ok(agent(served, "market.list"))["data"]["markets"] == []
-    assert ok(agent(served, "market.refresh"))["data"]["markets"] == []  # nothing added: nothing to fetch
-    assert err(agent(served, "market.refresh", {"url": H.OFFICIAL})) == "not_found"
+    assert [r["cache"] for r in ok(agent(served, "market.list"))["data"]["markets"]] == ["not_fetched"]  # the preset
+    assert ok(agent(served, "market.refresh"))["data"]["markets"] == []  # nothing recorded: nothing to fetch
+    other = {"url": "https://github.com/someone/else"}
+    assert err(agent(served, "market.refresh", other)) == "market.community_unisolated"
     assert net.calls == [] and net.dns == []
+
+
+def test_the_official_marketplace_is_in_every_workspace_and_the_first_refresh_records_it(served, net):
+    row = ok(person(served, "market.list", {"entries": True}))["data"]["markets"][0]
+    assert (row["url"], row["class"], row["preset"], row["cache"]) == (H.OFFICIAL, "official", True, "not_fetched")
+    got = ok(agent(served, "market.refresh", {"url": H.OFFICIAL}))["data"]["markets"][0]
+    assert got["url"] == H.OFFICIAL and got["verified"]
+    rows = ok(person(served, "market.list"))["data"]["markets"]
+    assert [(r["url"], r["cache"]) for r in rows] == [(H.OFFICIAL, "ok")]
 
 
 def test_E6_the_cache_is_reparsed_and_a_tampered_one_is_never_trusted(served, net):

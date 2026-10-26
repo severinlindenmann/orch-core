@@ -37,15 +37,17 @@
           "type": "array",
           "items": {
             "type": "string",
-            "pattern": "^[a-z][a-z0-9_]*$"
+            "minLength": 1,
+            "maxLength": 60,
+            "pattern": "[A-Za-z0-9]"
           },
-          "description": "answer option keys, comma separated",
+          "description": "answer options in plain words, comma separated (a title with a comma: repeat the flag)",
           "x-metavar": "A,B",
           "x-split": ","
         },
         "rec": {
           "type": "string",
-          "description": "the recommended option key",
+          "description": "the recommended option (its title or key)",
           "x-metavar": "KEY"
         },
         "to": {

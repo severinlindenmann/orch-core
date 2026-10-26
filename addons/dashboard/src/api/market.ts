@@ -16,7 +16,9 @@ export interface Market {
   pinned: boolean
   index_commit: string
   last_fetch: number | null
-  cache: 'ok' | 'invalid'
+  cache: 'ok' | 'invalid' | 'not_fetched'
+  /** The official marketplace every workspace has: fetched on the first visit, never removable. */
+  preset?: boolean
   version: number
   verified: boolean
   stale: boolean

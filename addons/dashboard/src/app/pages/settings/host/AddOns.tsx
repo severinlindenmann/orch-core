@@ -7,7 +7,7 @@ import { AddonSetup } from './AddonSetup'
 import { HostDevices } from './Devices'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Smartphone, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
+import { BookOpen, ChevronDown, ChevronRight, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Smartphone, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
 import { useState } from 'react'
 import { canChangeSettings } from '@/api/settings'
 import { queries } from '@/api/queries'
@@ -22,12 +22,12 @@ import { PublishServer } from './PublishServer'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { useViewerRole } from './useViewerRole'
 
-type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer'
+type Switchable = 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' | 'wiki'
 /** Add-ons with settings of their own: they open in place, under their row. */
 const WITH_SETTINGS: readonly string[] = ['publish']
-const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'usage', 'estimate', 'explorer']
+const SWITCHABLE: readonly string[] = ['start-agent', 'terminals', 'worktrees', 'publish', 'usage', 'estimate', 'explorer', 'wiki']
 
-const ICONS: Record<string, LucideIcon> = { 'start-agent': Rocket, terminals: Terminal, worktrees: GitBranch, publish: Globe, usage: Gauge, estimate: Ruler, explorer: FolderOpen }
+const ICONS: Record<string, LucideIcon> = { 'start-agent': Rocket, terminals: Terminal, worktrees: GitBranch, publish: Globe, usage: Gauge, estimate: Ruler, explorer: FolderOpen, wiki: BookOpen }
 
 export function HostAddOns({ workspace }: { workspace: Workspace }) {
   const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean } | null>(null)

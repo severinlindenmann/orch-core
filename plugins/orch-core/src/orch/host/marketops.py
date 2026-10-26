@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
-from orch.market import ADDONS, MarketError, fetch, index
+from orch.market import ADDONS, MarketError, constants, fetch, index
 from orch.market.constants import AGENT_MIN_INTERVAL
 from orch.market.install import semver
 from orch.ops.errors import ERRORS
@@ -196,7 +196,7 @@ def _serve_checked(call: Call, op: str, args: dict[str, Any], fresh: str | None 
             urls = [args["url"]]
         elif "url" in args:
             classes = {args["url"]: marketinstall.market_class(service, args["url"], pol)}
-            if args["url"] not in records:
+            if args["url"] not in records and not _preset(op, args["url"]):
                 raise HostError("not_found", "that marketplace was not added: orch market list")
             urls = [args["url"]]
         else:
@@ -210,6 +210,12 @@ def _serve_checked(call: Call, op: str, args: dict[str, Any], fresh: str | None 
             "all": op == "market.refresh" and "url" not in args, "classes": classes,
         }
     }  # fmt: skip
+
+
+def _preset(op: str, url: str) -> bool:
+    """The official marketplace is in every workspace (run-9 feedback): a refresh of its constant URL creates the record
+    on the first successful fetch. Any other URL still needs ``market.add``."""
+    return op == "market.refresh" and url == constants.OFFICIAL_URL
 
 
 def _class_or_error(service: WorkspaceService, url: str, pol: Any) -> Any:
@@ -265,6 +271,12 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 raise MarketError(cls)
             if op == "market.add":
                 row = _add(files, url, plan["commit"], service.clock(), cls, tuple(keys))
+            elif _preset(op, url) and url not in files.load():
+                last = files.last_fetch(url)
+                if plan["agent"] and last is not None and 0 <= service.clock() - last < AGENT_MIN_INTERVAL:
+                    row = {"url": url, "skipped": "fresh", "moved": False}  # E5: no network at all
+                else:
+                    row = _add(files, url, plan["commit"], service.clock(), cls, tuple(keys))
             else:
                 row = _refresh(files, url, plan["commit"], plan["agent"], service.clock, cls, tuple(keys))
         except MarketError as exc:
@@ -391,6 +403,18 @@ def _update_available(rec: dict[str, Any] | None, url: str, entry: dict[str, Any
     return semver(entry["version"]) > semver(rec["version"])
 
 
+def _preset_row(service: WorkspaceService, entries: bool) -> dict[str, Any]:
+    """The official marketplace before its first fetch: present in every workspace, nothing cached yet."""
+    row: dict[str, Any] = {
+        "url": constants.OFFICIAL_URL, "class": "official", "preset": True, "added_by": "orch", "pinned": False,
+        "index_commit": None, "last_fetch": None, "cache": "not_fetched", "entries": 0, "revoked": 0,
+        "from_marketplace": {"name": "orch-marketplace", "title": "Official marketplace"},
+    }  # fmt: skip
+    if entries:
+        row[ADDONS] = []
+    return row
+
+
 def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any]:
     files = _files(service)
     try:
@@ -441,4 +465,6 @@ def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any
                 for e in doc[ADDONS]
             ]
         rows.append(row)
+    if constants.OFFICIAL_URL not in records:
+        rows.append(_preset_row(service, entries))
     return {"markets": rows}

@@ -55,7 +55,6 @@ __all__ = [
     "WS_MARKER",
     "SandboxRefused",
     "check_manifest",
-    "click_refusal",
     "dev_state",
     "find_sandbox_root",
     "manifest_at",
@@ -280,27 +279,6 @@ def dev_state(state_dir: str | os.PathLike[str]) -> bool:
         and _pair(dev["root"]) == (st.st_dev, st.st_ino)
         and (here.st_dev, here.st_ino) == (mine.st_dev, mine.st_ino)
     )
-
-
-#: set by a host process whose dev start-up proof passed (orch.host.devmode): the click signer is refused in it
-_PROCESS_DEV_HOST = False
-
-
-def mark_dev_process() -> None:
-    global _PROCESS_DEV_HOST
-    _PROCESS_DEV_HOST = True
-
-
-def click_refusal(state_dir: str | os.PathLike[str], env: Mapping[str, str]) -> str | None:
-    """``"dev_host"`` when the click signer (``orch host convenience on``, ``select.convert_to_convenience``,
-    ``orch keys custody convenience``) must refuse (§11A.17.2, F3, D2): in a dev host process, against a sandbox's
-    state (:func:`dev_state`, independent of the environment), or with ``HOME`` under a sandbox root. Else ``None``."""
-    if _PROCESS_DEV_HOST or dev_state(state_dir):
-        return "dev_host"
-    home = env.get("HOME")
-    if home and find_sandbox_root(home) is not None:
-        return "dev_host"
-    return None
 
 
 def marker_present(ws_root: str | os.PathLike[str]) -> bool:

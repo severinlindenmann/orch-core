@@ -258,7 +258,32 @@ def test_an_old_reader_refuses_a_convenience_event_and_the_new_one_accepts_it():
     assert Draft202012Validator(common["$defs"]["auth"]).is_valid("convenience")
 
 
-# --- the macOS keychain store, on a throwaway keychain ----------------------------------------------------------------
+# --- the key file is the store on every OS --------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX modes")
+def test_open_store_is_the_owner_only_key_file_on_every_os(tmp_path):
+    from orch.custody.convenience import FileStore, open_store
+
+    store = open_store(tmp_path)
+    assert isinstance(store, FileStore) and store.kind == "file"
+    scalar, pub, dev = _key()
+    store.put(WS, dev, scalar, prefix="DEMO")
+    path = tmp_path / "person" / WS / "devices" / f"{dev}.key"
+    assert path.stat().st_mode & 0o777 == 0o600
+    b = ConvenienceBackend(store, WS, dev, pub)
+    assert crypto.verify(pub, b.sign("dk", _payload(), action="x"), _payload())
+
+
+def test_open_store_never_picks_the_keychain(tmp_path, monkeypatch):
+    from orch.custody import convenience
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(convenience, "KeychainAdapter", lambda *a, **k: pytest.fail("keychain on the core path"))
+    assert convenience.open_store(tmp_path).kind == "file"
+
+
+# --- the macOS keychain store (optional extra), on a throwaway keychain ---------------------------
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="macOS keychain")

@@ -1,0 +1,47 @@
+name: orch-core-os
+# One click keeps its key in a key file on every OS (owner-only), so the custody, setup and host convenience unit tests
+# run on macOS and Windows too: on PRs into develop that touch core (native path filter) and nightly. Ubuntu stays in
+# orch-core.yml on every PR.
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'packages/core/**'
+      - '.github/workflows/orch-core-os.yml'
+  schedule:
+    - cron: '17 3 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: orch-core-os-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+defaults:
+  run:
+    working-directory: packages/core
+    shell: bash
+jobs:
+  custody:
+    name: ${{ matrix.os }} custody and convenience
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: packages/core/uv.lock
+      - run: uv sync --locked
+      - name: Required set, every OS (the key file)
+        run: uv run pytest tests/custody/test_convenience.py -q -m "not slow" -p no:cacheprovider
+      - name: Custody, setup and host convenience tests (not required on Windows)
+        continue-on-error: ${{ runner.os == 'Windows' }}
+        run: |
+          uv run pytest -q -m "not slow" -p no:cacheprovider tests/custody
+          uv run pytest -q -m "not slow" -p no:cacheprovider tests/setup tests/host -k convenience

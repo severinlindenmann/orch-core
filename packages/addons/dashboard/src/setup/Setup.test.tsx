@@ -264,19 +264,11 @@ test('one click disables relay with its named reason and never shows a passphras
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ method: 'click', relay: false })
 })
 
-test('1236: a dev host greys out One click with a plain sentence, never the raw code', async () => {
-  render(<Setup api={fake({ clickOff: 'dev_host' }).api} />)
-  await approval()
-  expect(screen.getByLabelText(/One click on this computer/)).toBeDisabled()
-  expect(screen.getByText('One click is off on this test computer; you approve in your terminal.')).toBeInTheDocument()
-  expect(screen.queryByText(/dev_host/)).not.toBeInTheDocument()
-})
-
 test('1236: an unknown or empty One click reason gets a generic plain sentence, never the raw code', async () => {
-  render(<Setup api={fake({ clickOff: 'no_keychain' }).api} />)
+  render(<Setup api={fake({ clickOff: 'some_reason' }).api} />)
   await approval()
   expect(screen.getByText('One click is not available on this computer; you approve in your terminal.')).toBeInTheDocument()
-  expect(screen.queryByText(/no_keychain/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/some_reason/)).not.toBeInTheDocument()
 })
 
 test('run 8: One click is the default where core suggests it, with the risk sentence before Continue; Terminal stays selectable', async () => {

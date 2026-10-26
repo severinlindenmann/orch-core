@@ -378,7 +378,7 @@ def test_a_crash_after_the_selection_write_leaves_a_scalar_that_off_sweeps(switc
     assert not store.exists(WS, device)
 
 
-def test_off_works_in_full_hub_mode_and_on_a_dev_host(switch, monkeypatch):
+def test_off_works_in_full_hub_mode(switch, monkeypatch):
     """Opus B: the way back is never refused by the entry refusals."""
     signer, state, provider, *_ = switch
     on(signer, provider.passphrase)
@@ -387,7 +387,6 @@ def test_off_works_in_full_hub_mode_and_on_a_dev_host(switch, monkeypatch):
         raise AssertionError("turning convenience off must not call an entry refusal")
 
     monkeypatch.setattr(select, "refuse_full_mode", refuse)
-    monkeypatch.setattr(select, "refuse_dev_host", refuse)
     assert off(signer, passphrase=STRONG)["custody"] == "passphrase"
 
 
@@ -772,19 +771,6 @@ def test_c17_resume_goes_through_the_readers_rule(switch, monkeypatch):
     monkeypatch.setattr(convenience, "refuse_turn_on", refuse)
     err = refused(lambda: resume(signer), "sign.convenience_unavailable")
     assert err.reason == "other_member" and not flag(state)
-
-
-def test_c17_resume_refuses_on_a_dev_host(switch, monkeypatch):
-    signer, state, provider, *_ = switch
-    on(signer, provider.passphrase)
-    off(signer)
-    monkeypatch.setattr(
-        convenience,
-        "refuse_dev_host",
-        lambda s, env=None: (_ for _ in ()).throw(convenience.unavailable("dev_host", [])),
-    )
-    refused(lambda: resume(signer), "sign.convenience_unavailable")
-    assert not flag(state)
 
 
 def test_c17_resume_needs_the_key_in_convenience_custody_and_no_passphrase(switch):

@@ -853,9 +853,42 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
                     f"click-to-sign is off, but the key could not be moved back: {exc}",
                     hint=f"orch keys custody passphrase --workspace {match[0].get('prefix') or wid} --in-place",
                 )
+        staged = before = None
+        if args.switch == "on":
+            # one command does the whole job: a key still under its passphrase moves into click custody first (the
+            # passphrase is typed on /dev/tty), then the flag; flag-on and key-held always end together
+            from orch.custody import cli as custody_cli
+            from orch.custody import select
+            from orch.custody.base import CustodyError
+
+            try:
+                st = select.status(state, wid)
+                if st.get("custody") != "convenience" or st.get("transition"):
+                    if not custody_cli.has_terminal():
+                        return write_error(
+                            out,
+                            False,
+                            "custody.terminal_needed",
+                            "the key of this workspace is under its passphrase: switching click-to-sign on moves it, "
+                            "and the passphrase is typed in a terminal",
+                            hint=f"orch host convenience on --workspace {match[0].get('prefix') or wid}",
+                        )
+                    before = select.read_selection(state, wid)
+                    staged = select.stage_convenience(state, wid, prefix=str(match[0].get("prefix") or ""))
+            except CustodyError as exc:
+                return write_error(out, False, "custody.unavailable", str(exc))
         with convenience.workspace_lock(state, wid, uid) if args.switch == "on" else contextlib.nullcontext():
             if args.switch == "on":
-                convenience.set_enabled(state, wid, True, uid)
+                try:
+                    if staged is not None:
+                        select.finish_convenience(state, wid, staged)
+                    convenience.set_enabled(state, wid, True, uid)
+                except HostError:
+                    if staged is not None and select.read_selection(state, wid) == staged:
+                        select.undo_staged(state, wid, staged, before)
+                    raise
+                except CustodyError as exc:
+                    return write_error(out, False, "custody.unavailable", str(exc))
     except HostError as exc:  # lock.busy (a lock is held), custody.unsafe_mode (a lock or flag file is not private)
         return write_error(out, False, exc.code, exc.message, hint=exc.hint)
     word = "on" if args.switch == "on" else "off"
@@ -880,10 +913,6 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     if args.switch == "on":
         out.write(
             "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.\n"
-        )
-        out.write(
-            "Every other reader (another device, another member's core, a relay link) must declare reader level 1 "
-            "first: until then each convenience signature is refused and names it (orch keys reader declare).\n"
         )
     return 0
 

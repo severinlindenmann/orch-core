@@ -28,6 +28,7 @@ import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
 import { BuiltInAddOns } from '../settings/host/AddOns'
 import { InstalledGroup } from './InstalledGroup'
+import { RemoveSheet } from './RemoveSheet'
 
 const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
 const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
@@ -523,35 +524,7 @@ function MarketWorkspace() {
           }}
         />
       )}
-      {mayWrite && remove && (
-        <Dialog open onOpenChange={(open) => !open && setRemove(null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Remove add-on?</DialogTitle>
-              <DialogDescription>Its data stays until you purge it.</DialogDescription>
-            </DialogHeader>
-            <Inline>{remove.name}</Inline>
-            {message && <p role="alert">{message}</p>}
-            <DialogFooter className="sticky -bottom-6 -mx-6 -mb-6 border-t border-border bg-surface px-6 py-4">
-              <Button variant="ghost" onClick={() => setRemove(null)}>
-                Cancel
-              </Button>
-              <Button
-                disabled={busy}
-                onClick={() =>
-                  void write(async () => {
-                    await api.marketUninstall(ws, remove.name)
-                    setRemove(null)
-                    await refresh()
-                  })
-                }
-              >
-                Remove
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+      {mayWrite && remove && <RemoveSheet ws={ws} addon={remove} onClose={() => setRemove(null)} onRemoved={(name) => { setRemove(null); setMessage(`${name} removed. Install it again from Browse.`) }} />}
     </div>
   )
 }

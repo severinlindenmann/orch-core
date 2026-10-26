@@ -66,6 +66,8 @@ export type HandoffAction =
   /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
   | { action: 'addon_grant'; name: AddonSwitchName }
   | { action: 'addon_disable'; name: AddonSwitchName }
+  /** The remove sheet's "Also delete its data" (`addon.purge`). */
+  | { action: 'addon_purge'; name: AddonSwitchName }
   /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence). Publish: terminal only. */
   | { action: 'addon_enable'; name: 'publish'; publish: { server: string; share: string } }
   /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */

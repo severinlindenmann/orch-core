@@ -785,6 +785,13 @@ class AddonDisable(Action):
     name: AddonName
 
 
+class AddonPurge(Action):
+    """`addon.purge {name}`: delete the add-on's data (the remove sheet's "Also delete its data"). Signed."""
+
+    action: Literal["addon_purge"]
+    name: AddonName
+
+
 #: core `publishOrigin` (schemas/common.json): https, or http on this computer only; no path, lower case
 Origin = Annotated[
     str,
@@ -982,6 +989,7 @@ PrepareBody = Annotated[
     | AddonGrant
     | MarketGrant
     | AddonDisable
+    | AddonPurge
     | PublishSetup
     | AddonEnable
     | PublishShare
@@ -1158,6 +1166,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "addon.grant", {"name": action.name, "staged": action.staged}
         case AddonDisable():
             return "addon.disable", {"name": action.name}
+        case AddonPurge():
+            return "addon.purge", {"name": action.name}
         case GrantRevoke():
             return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
         case RunnerGrant():
@@ -1193,6 +1203,7 @@ WORKSPACE_OPS = (
     "move",
     "addon.grant",
     "addon.disable",
+    "addon.purge",
 )
 
 
@@ -1305,6 +1316,8 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "addon.granted", name=action.name)
         case AddonDisable():
             return lambda ev: one(ev, "addon.disabled", name=action.name)
+        case AddonPurge():
+            return lambda ev: one(ev, "addon.purged", name=action.name)
         case GrantRevoke():
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
         case RunnerGrant():

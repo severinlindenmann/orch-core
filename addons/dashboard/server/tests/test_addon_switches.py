@@ -239,3 +239,11 @@ def test_clean_version_accepts_versions_and_nothing_else():
         assert clean_version(good) == good
     for bad in ("", " 1.0", "1.0\n", "v" * 41, "1.0 <b>", None, 3, "‮1.0", "../x"):
         assert clean_version(bad) is None
+
+
+def test_deleting_an_addons_data_is_a_typed_signed_action():
+    purge = parse({"action": "addon_purge", "name": "calendar"})
+    assert host_call(purge) == ("addon.purge", {"name": "calendar"})
+    assert expected(purge)([{"type": "addon.purged", "name": "calendar"}])
+    with pytest.raises(ValidationError):
+        parse({"action": "addon_purge", "name": "dashboard"})

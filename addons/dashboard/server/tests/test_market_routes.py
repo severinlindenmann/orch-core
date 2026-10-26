@@ -175,7 +175,9 @@ def test_the_shipped_addon_grant_still_takes_a_name_only():
     assert isinstance(parse({"action": "addon_grant", "name": "terminals"}), AddonGrant)
     with pytest.raises(ValidationError):
         parse({"action": "addon_grant", "name": "terminals", "staged": STAGE})
-    assert parse({"action": "addon_grant", "name": "echo"}).name == "echo"  # an installed add-on switches the same way (run 9)
+    assert (
+        parse({"action": "addon_grant", "name": "echo"}).name == "echo"
+    )  # an installed add-on switches the same way (run 9)
     with pytest.raises(ValidationError):
         parse({"action": "addon_grant", "name": "dashboard"})
 

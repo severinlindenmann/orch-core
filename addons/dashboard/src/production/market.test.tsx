@@ -192,7 +192,8 @@ it('removes a disabled package only after confirmation', async () => {
   show('/w/DEMO/addons?tab=installed')
   await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
   const d = screen.getByRole('dialog')
-  expect(within(d).getByText('Its data stays until you purge it.')).toBeInTheDocument()
+  expect(within(d).getByText(/Its saved settings and data stay on this computer/)).toBeInTheDocument()
+  expect(within(d).getByRole('checkbox', { name: 'Also delete its data' })).not.toBeChecked()
   expect(state.host.calls.some((c) => c.path.endsWith('/market/uninstall'))).toBe(false)
   await userEvent.click(within(d).getByRole('button', { name: 'Remove' }))
   await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/uninstall'))?.body).toEqual({ name: 'calendar' }))
@@ -220,4 +221,18 @@ it('run-9 feedback: the unfetched official marketplace is fetched on the first v
   expect(link).toHaveAttribute('target', '_blank')
   await waitFor(() => expect(state.host.calls.filter((c) => c.path.endsWith('/market/refresh')).map((c) => c.body)).toEqual([{ url: preset.url }]), T)
   expect(screen.queryByRole('button', { name: /Remove/ })).toBeNull()
+})
+
+it('run 9 remove sheet: an On add-on says it is turned off first, then Turn off and remove signs the off step and removes it', async () => {
+  ws().click = { custody: 'convenience', enabled: true, available: true }
+  ws().features = [...ws().features, 'click']
+  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
+  const d = screen.getByTestId('remove-sheet')
+  expect(d).toHaveTextContent('we will turn it off first')
+  await userEvent.click(within(d).getByRole('button', { name: 'Turn off and remove' }))
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'addon_disable', name: 'calendar' }), T)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/uninstall'))?.body).toEqual({ name: 'calendar' }), T)
 })

@@ -78,6 +78,7 @@ WRITE_OPS = (
     "grant.revoke",
     "addon.grant",
     "addon.disable",
+    "addon.purge",
 )
 
 

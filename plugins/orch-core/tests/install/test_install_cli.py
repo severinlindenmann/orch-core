@@ -225,3 +225,51 @@ def test_default_ref_is_develop_override_works_and_status_shows_sha(home):
     out.truncate(0), out.seek(0)
     cli.main(["status"], env=ctx.env, out=out, err=err, ctx=ctx)
     assert "b" * 12 in out.getvalue()
+
+
+def _phone_ctx(home, address="100.64.1.2", users=None, qr=None):
+    users = [{"user_id": "ab" * 16, "name": "Alice", "groups": ["hub-admin"]}] if users is None else users
+    ctx, out, err, calls = make(home, qr=lambda link: qr)
+    assert cli.main(["hub", "--address", address], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    out.truncate(0), out.seek(0)
+    base = ctx.run
+
+    def run(argv, env=None):
+        calls.append(list(argv))
+        if "users" in argv:
+            return 0, json.dumps(users)
+        if "pair-code" in argv:
+            return 0, "note\n" + json.dumps({"code": "c0de", "link": "orch://hub-pair/x#h1.h.u.c0de"})
+        return base(argv, env)
+
+    ctx.run = run
+    return ctx, out, err, calls
+
+
+def test_phone_prints_link_with_advertised_origin_and_the_single_admin(home):
+    ctx, out, err, calls = _phone_ctx(home, qr="[QR]")
+    assert cli.main(["phone"], env=ctx.env, out=out, err=err, ctx=ctx) == 0, err.getvalue()
+    assert "orch://hub-pair/x#h1.h.u.c0de" in out.getvalue() and "[QR]" in out.getvalue()
+    pc = next(c for c in calls if "pair-code" in c)
+    assert pc[pc.index("--user") + 1] == "ab" * 16
+    assert pc[pc.index("--api-origin") + 1] == "http://100.64.1.2:8100"
+    assert not any("orch://hub-pair" in p.read_text() for p in home.rglob("*") if p.is_file() and p.stat().st_size < 10**6)
+
+
+def test_phone_without_qrencode_hints_brew(home):
+    ctx, out, err, _ = _phone_ctx(home)
+    assert cli.main(["phone", "--user", "dd"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    assert "brew install qrencode" in out.getvalue()
+
+
+def test_phone_refuses_loopback_none_installed_and_many_admins(home):
+    ctx, out, err, _ = _phone_ctx(home, address="127.0.0.1")
+    assert cli.main(["phone"], env=ctx.env, out=out, err=err, ctx=ctx) == 1
+    assert "cannot reach" in err.getvalue()
+    ctx2, out2, err2, _ = make(home / "none")
+    assert cli.main(["phone"], env=ctx2.env, out=out2, err=err2, ctx=ctx2) == 1
+    assert "no hub is installed" in err2.getvalue()
+    two = [{"user_id": u, "name": u, "groups": ["hub-admin"]} for u in ("aa", "bb")]
+    ctx3, out3, err3, _ = _phone_ctx(home / "two", users=two)
+    assert cli.main(["phone"], env=ctx3.env, out=out3, err=err3, ctx=ctx3) == 1
+    assert "--user" in err3.getvalue()

@@ -3,6 +3,7 @@ rules the section 0.8.6 item 7 puts on this process. The signer is faked here (a
 runs in test_realhost_click.py."""
 
 import base64
+import json
 import logging
 import re
 import secrets
@@ -3242,24 +3243,36 @@ def test_c16_the_contract_refusal_is_in_plain_words(client, token, stub, script,
 
 
 def test_hub_steps_get_a_fresh_idem_once_the_hub_state_moved(client, token, stub, backup, monkeypatch):
-    """B10: join, leave, join again with the same card is a new request; a repeat with no event in between is not."""
+    """B10/B13: leave, join, mode full, leave is a new request each time; a repeat with no change is not."""
     from orch_dashboard import handoff
 
-    head = {"v": "e1"}
-    monkeypatch.setattr(handoff, "hub_base", lambda link: {"hub_head": head["v"]})
+    state = {"joined": True, "mode": "selective", "binding_seq": 1, "hub_id": HUB_ID, "binding": "bound"}
+    monkeypatch.setattr(handoff, "hub_base", lambda link: {"hub": dict(state)})
+    leave = {"action": "hub_leave"}
+    assert prepare(client, token, stub, leave).status_code == 200
+    prepare(client, token, stub, leave)  # a double click: the same request
+    state.update(joined=False)
     assert prepare(client, token, stub, hub_join()).status_code == 200
-    prepare(client, token, stub, hub_join())
-    head["v"] = "e3"  # a join and a leave happened since
-    assert prepare(client, token, stub, hub_join()).status_code == 200
+    state.update(joined=True, binding_seq=2)
+    state.update(mode="full")
+    assert prepare(client, token, stub, leave).status_code == 200
     keys = [a["idem"] for op, a in sent_of(backup, "prepare")]
-    assert keys[0] == keys[1] and keys[2] != keys[0]
+    assert keys[0] == keys[1] and keys[3] != keys[0]
 
 
-def test_hub_base_is_the_latest_hub_event():
+def test_hub_base_is_the_log_head_and_the_hub_state():
+    from orch.host.journal import CURSOR_PREFIX
+
     from orch_dashboard.handoff import hub_base
+
+    body = base64.urlsafe_b64encode(json.dumps({"e": "E", "j": 7, "p": "P", "r": "R9", "w": "W"}).encode())
+    cursor = CURSOR_PREFIX + body.decode().rstrip("=") + ".mac"
 
     class L:
         def call(self, op, args=None):
-            return {"items": [{"type": "hub.left", "id": "ev9"}, {"type": "hub.joined", "id": "ev3"}]}
+            if op == "activity.list":
+                return {"items": [], "sub_cursor": cursor}
+            return {"joined": True, "mode": "full", "binding_seq": 4, "hub_id": "ab", "binding": "bound", "x": 1}
 
-    assert hub_base(L()) == {"hub_head": "ev9"}
+    want = {"joined": True, "hub_id": "ab", "mode": "full", "binding_seq": 4, "binding": "bound"}
+    assert hub_base(L()) == {"head": {"e": "E", "j": 7, "r": "R9"}, "hub": want}

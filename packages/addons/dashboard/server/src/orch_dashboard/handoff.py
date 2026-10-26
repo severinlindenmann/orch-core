@@ -1536,14 +1536,25 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
 
 
 def hub_base(link) -> dict:
-    """B10: the latest `hub.*` event is part of a hub step's intent, so join, leave, join again with the same
-    card is a new request each time; a double click (no event in between) is still one."""
-    types = ["hub.joined", "hub.left"]
-    data = link.call("activity.list", {"scope": "workspace", "types": types, "order": "desc", "limit": 10})
-    for item in data.get("items") or []:
-        if isinstance(item, dict) and item.get("type") in types and isinstance(item.get("id"), str):
-            return {"hub_head": item["id"]}
-    return {"hub_head": None}
+    """B10/B13/B14: the workspace log head (the journal position and entry of the latest event of any kind or source,
+    read fresh) and the host's hub state are part of every hub step's intent. Hub events are not in `activity.list`,
+    but its `sub_cursor` names the head. So a change from the terminal or a click makes a new request; a double click
+    (nothing happened in between) is still one."""
+    from orch.host.journal import peek_cursor
+
+    head = None
+    try:
+        page = link.call("activity.list", {"scope": "workspace", "limit": 1, "order": "desc"})
+        body = peek_cursor(page.get("sub_cursor")) or {}
+        head = {k: body.get(k) for k in ("e", "j", "r")}
+    except HostError:
+        pass
+    try:
+        st = link.call("hub.status")
+    except HostError:
+        return {"head": head, "hub": None}
+    keys = ("joined", "hub_id", "mode", "binding_seq", "binding")
+    return {"head": head, "hub": {k: st.get(k) for k in keys}}
 
 
 #: How many earlier ENDED (cancelled, expired) attempts of one action a single press steps past. The cap bounds the

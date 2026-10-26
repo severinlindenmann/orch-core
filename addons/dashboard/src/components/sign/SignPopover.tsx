@@ -113,6 +113,8 @@ export interface SignPopoverProps {
   onClose: () => void
   /** Show the review in place, under the row that asked (an accordion), not as a popover. */
   inline?: boolean
+  /** The press that opened this review was the deliberate gesture (a switch with One click on): sign as soon as the View is on screen, without the arming wait. Click-to-sign only; the terminal path is unchanged. */
+  autoSign?: boolean
   initialFocus?: () => HTMLElement | null
 }
 
@@ -214,6 +216,14 @@ export function SignPopover(p: SignPopoverProps) {
     if (click.phase === 'done' || phase === 'done') p.onClose()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [click.phase, phase])
+
+  const autoSigned = useRef(false)
+  useEffect(() => {
+    if (!p.autoSign || method !== 'click' || click.phase !== 'ready' || autoSigned.current) return
+    autoSigned.current = true
+    void click.sign()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.autoSign, method, click.phase])
 
   const clickLive = ['preparing', 'viewing', 'ready', 'signing', 'settling'].includes(click.phase)
   const open = phase === 'preparing' || phase === 'waiting' || clickLive

@@ -110,6 +110,30 @@ def test_a_real_workspace_refuses_it_even_when_the_host_carries_the_entry(tmp_pa
         lab.close()
 
 
+def test_the_picker_offers_the_test_marketplace_until_it_is_added_and_a_normal_host_offers_nothing(tmp_path, fakes):
+    lab = sandbox(tmp_path)
+    try:
+        served = Served(lab, dev=lab.dev())
+        try:
+            assert ok(person(served, "market.list", {}))["data"]["offered"] == [{"url": URL, "class": "dev"}]
+            fakes.add("hello", "1.0.0")
+            ok(person(served, "market.add", {"url": URL}))
+            assert ok(person(served, "market.list", {}))["data"]["offered"] == []
+        finally:
+            served.close()
+    finally:
+        lab.close()
+    real = Lab(tmp_path / "real")
+    try:
+        served = Served(real)
+        try:
+            assert ok(person(served, "market.list", {}))["data"]["offered"] == []
+        finally:
+            served.close()
+    finally:
+        real.close()
+
+
 def test_a_normal_host_has_no_dev_class(tmp_path, fakes):
     real = Lab(tmp_path)
     try:

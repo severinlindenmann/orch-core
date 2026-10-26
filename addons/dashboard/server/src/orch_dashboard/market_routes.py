@@ -9,9 +9,10 @@ The host is the authority for who may do what; this module only fixes the op, cl
 | POST   /market/stage                   | market.stage       | P, owner, human only (agent: market.actor_refused) |
 | DELETE /market/stage/{stage}           | market.unstage     | P, owner, human only                              |
 | POST   /market/uninstall               | market.uninstall   | P, owner, human only                              |
+| POST   /market/add                     | market.add         | P, owner, human only; the host decides the class |
 | POST   /market/refresh                 | market.refresh     | P and G; no `commit` argument (human only) |
 
-`market.add` is not served until "Add marketplace" ships.
+`market.add` is the picker's Add (a source the host offers; the policy gate refuses every other address).
 
 Nothing here signs. Installing is the signature of `addon.grant {name, staged}` (`MarketGrant` in handoff.py): one
 click where click-to-sign is on (V3-D38), the terminal hand-off where it is off. All text the host returns about a
@@ -55,6 +56,11 @@ class UninstallBody(BaseModel):
     name: MarketName
 
 
+class AddBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    url: Url
+
+
 class RefreshBody(BaseModel):
     """No `commit`: pinning a commit is human only at the host, and the page never needs it."""
 
@@ -88,6 +94,10 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     @app.post("/api/w/{ws}/market/uninstall")
     def uninstall(body: UninstallBody, ws: str = Depends(reads.workspace)):
         return write(ws, "market.uninstall", {"name": body.name})
+
+    @app.post("/api/w/{ws}/market/add")
+    def add(body: AddBody, ws: str = Depends(reads.workspace)):
+        return write(ws, "market.add", {"url": body.url})
 
     @app.post("/api/w/{ws}/market/refresh")
     def refresh(body: RefreshBody, ws: str = Depends(reads.workspace)):

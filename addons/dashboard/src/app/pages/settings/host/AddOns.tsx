@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { AddonSetup } from './AddonSetup'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { BookOpen, ChevronDown, ChevronRight, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Zap, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { canChangeSettings } from '@/api/settings'
 import { queries } from '@/api/queries'
 import type { AddOnRow } from '@/api/addOnSwitches'
@@ -25,9 +25,23 @@ const WITH_SETTINGS: readonly string[] = ['publish']
 
 const ICONS: Record<string, LucideIcon> = { 'start-agent': Rocket, terminals: Terminal, worktrees: GitBranch, publish: Globe, usage: Gauge, estimate: Ruler, explorer: FolderOpen, wiki: BookOpen, quick: Zap }
 
-export function BuiltInAddOns({ workspace }: { workspace: Workspace }) {
+export interface AddOnListProps {
+  workspace: Workspace
+  /** Rows to show instead of the host's built-in list (add-ons installed from marketplaces). */
+  rows?: AddOnRow[]
+  /** The small tag next to the name. */
+  tag?: string
+  /** What else a row offers (Settings, Update, Remove). */
+  actions?: (row: AddOnRow, ctx: { owner: boolean; busy: boolean }) => ReactNode
+  /** Said under the list when it has no rows. */
+  empty?: string
+  label?: string
+}
+
+export function BuiltInAddOns({ workspace, rows, tag = 'Built in', actions, empty, label = 'Add-ons' }: AddOnListProps) {
   const [setup, setSetup] = useState<{ name: 'publish'; enabling: boolean } | null>(null)
-  const data = useQuery(queries.addOns(workspace.id))
+  const data = useQuery({ ...queries.addOns(workspace.id), enabled: !rows })
+  const list = rows ? { available: true, add_ons: rows } : data.data
   const role = useViewerRole(workspace)
   const qc = useQueryClient()
   const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -38,6 +52,7 @@ export function BuiltInAddOns({ workspace }: { workspace: Workspace }) {
     // One read of everything the page and the sidebar are built from; the switch moves when these have answered.
     await Promise.all([
       qc.invalidateQueries({ queryKey: ['add-ons', workspace.id] }),
+      qc.invalidateQueries({ queryKey: ['market', workspace.id] }),
       qc.invalidateQueries({ queryKey: ['workspaces'] }),
       qc.invalidateQueries({ queryKey: ['workspace-addons', workspace.id] }),
       qc.invalidateQueries({ queryKey: queries.hostSettings(workspace.id).queryKey }),
@@ -61,6 +76,7 @@ export function BuiltInAddOns({ workspace }: { workspace: Workspace }) {
       action: { action: turningOn ? 'addon_grant' : 'addon_disable', name },
       autoStart: true,
       inline: true,
+      autoSign: true,
       confirmLabel: turningOn ? 'Sign and turn on' : 'Sign and turn off',
       doneToast: turningOn ? `${name_} is on` : `${name_} is off`,
       onSigning: (signing) => setBusy((b) => (b && signing ? { ...b, stage: 'signing' } : b)),
@@ -78,15 +94,17 @@ export function BuiltInAddOns({ workspace }: { workspace: Workspace }) {
   return (
     <div>
       {
-        data.isError ? (
+        !rows && data.isError ? (
           <LoadFailed what="add-ons" onRetry={() => void data.refetch()} />
-        ) : !data.data ? (
+        ) : !list ? (
           <p className="text-[13px] text-text-muted">Reading the add-ons…</p>
-        ) : !data.data.available ? (
+        ) : !list.add_ons.length && empty ? (
+          <p className="text-[13px] text-text-muted">{empty}</p>
+        ) : !list.available ? (
           <p className="text-[13px] text-text-muted">This host does not say which add-ons there are.</p>
         ) : (
-          <ul aria-label="Add-ons" className="divide-y divide-border">
-            {data.data.add_ons.map((row) => {
+          <ul aria-label={label} className="divide-y divide-border">
+            {list.add_ons.map((row) => {
               const fixed = row.locked !== null
               const why = fixed ? null : !owner ? 'Only owners can change add-ons.' : row.blocked
               // Off and blocked: greyed. On and blocked (work is running): cannot be turned off now.
@@ -117,7 +135,7 @@ export function BuiltInAddOns({ workspace }: { workspace: Workspace }) {
                         ) : (
                           <span className="font-medium"><Inline>{row.title}</Inline></span>
                         )}
-                        <span className="rounded-full border border-border px-1.5 text-[11px] leading-4 text-text-faint">Built in</span>
+                        <span className="rounded-full border border-border px-1.5 text-[11px] leading-4 text-text-faint">{tag}</span>
                         {fixed && <span className="text-[11px] text-text-faint">Always on</span>}
                         {needsSetup && <span data-testid={`addon-${row.id}-state`} className="rounded-full border border-warning/50 px-1.5 text-[11px] leading-4 text-warning">Needs setup</span>}
                       </div>
@@ -134,6 +152,7 @@ export function BuiltInAddOns({ workspace }: { workspace: Workspace }) {
                         <Loader2 className="size-3.5 animate-spin" aria-hidden /> {mine.turningOn ? 'Turning on…' : 'Turning off…'}
                       </span>
                     )}
+                    {actions?.(row, { owner, busy: !!busy })}
                     {!fixed && (
                       <Switch
                         aria-label={`${plain(row.title)}`}

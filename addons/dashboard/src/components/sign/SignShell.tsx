@@ -65,7 +65,6 @@ export function SignShell(p: SignShellProps) {
     </div>
   )
   if (p.inline) {
-    if (!p.open) return null
     return (
       <section data-sign-inline aria-label={typeof p.title === 'string' ? p.title : undefined} className="mt-2 grid grid-cols-[minmax(0,1fr)] gap-3 rounded-lg border border-border bg-surface-2 p-3 [&_.sticky]:static [&_.sticky]:m-0 [&_.sticky]:border-t-0 [&_.sticky]:bg-transparent [&_.sticky]:p-0">
         {heading}

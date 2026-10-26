@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
 import { market, stage, installedAddon, updateStage } from '@/test/fixtures/market'
-import { EXTERNAL_HELP } from '@/api/market'
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
 vi.mock('@/api/useLiveUpdates', async (original) => ({
@@ -111,8 +110,28 @@ it('marketplaces explain each publisher state and hub refusal', async () => {
   for (const text of ['Unsigned', 'First use - key will be remembered', 'Key changed - review required']) expect(screen.getByText(text)).toBeInTheDocument()
   const add = screen.getByRole('button', { name: '+ Add marketplace' })
   expect(add).toBeDisabled()
-  expect(add).toHaveAccessibleDescription(/external marketplaces aren't available in this workspace yet/i)
-  expect(screen.getByText(EXTERNAL_HELP)).toBeInTheDocument()
+  expect(add).toHaveAccessibleDescription(/only allows the official marketplace/i)
+  expect(screen.getByRole('link', { name: 'View workspace admins' })).toBeInTheDocument()
+})
+it('run 9 picker: an offered source is one Add click then one Approve click; the address fold exists only when the policy allows any source', async () => {
+  ws().market = { markets: [market()], offered: [{ url: 'https://github.com/acme/orch-dev-test', class: 'dev' }] }
+  show('/w/DEMO/addons?tab=marketplaces')
+  await userEvent.click(await screen.findByRole('button', { name: '+ Add marketplace' }, T))
+  const sheet = screen.getByTestId('add-market-sheet')
+  expect(within(sheet).getByText('Dev test marketplace')).toBeInTheDocument()
+  expect(within(sheet).getByText('Already added')).toBeInTheDocument()
+  expect(within(sheet).queryByTestId('add-market-address')).toBeNull()
+  await userEvent.click(within(sheet).getByRole('button', { name: 'Add' }))
+  expect(state.host.calls.some((c) => c.path.endsWith('/market/add'))).toBe(false) // review first
+  await userEvent.click(within(sheet).getByRole('button', { name: 'Approve' }))
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/add'))?.body).toEqual({ url: 'https://github.com/acme/orch-dev-test' }), T)
+})
+it('run 9 picker: Add by address is a closed fold, shown only when the host says any source is allowed', async () => {
+  ws().market = { markets: [market()], open_address: true }
+  show('/w/DEMO/addons?tab=marketplaces')
+  await userEvent.click(await screen.findByRole('button', { name: '+ Add marketplace' }, T))
+  const fold = screen.getByTestId('add-market-address')
+  expect(fold).not.toHaveAttribute('open')
 })
 it.each(['member', 'no-actions'] as const)('hides every write control for %s', async (mode) => {
   if (mode === 'member') {
@@ -130,11 +149,20 @@ it.each(['member', 'no-actions'] as const)('hides every write control for %s', a
   expect(screen.queryByRole('button', { name: '+ Add marketplace' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
 })
-it('requires turning an active add-on off before Remove', async () => {
-  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+it('run 9: an add-on installed from a marketplace has a row switch; with One click on the press itself signs, no second button', async () => {
+  ws().click = { custody: 'convenience', enabled: true, available: true }
+  ws().features = [...ws().features, 'click']
   show('/w/DEMO/addons?tab=installed')
-  expect(await screen.findByRole('button', { name: 'Remove' }, T)).toBeDisabled()
-  expect(screen.getByText('Turn it off first')).toBeInTheDocument()
+  await userEvent.click(await screen.findByRole('switch', { name: 'calendar' }, T))
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'addon_grant', name: 'calendar' })
+  expect(screen.queryByRole('dialog')).toBeNull() // the review lives under the row
+})
+it('with One click off, the marketplace add-on switch opens the terminal steps under its row', async () => {
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('switch', { name: 'calendar' }, T))
+  expect(await screen.findByTestId('addon-calendar-accordion', {}, T)).toBeInTheDocument()
+  await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'calendar' }]), T)
 })
 it('with One click on, install is the signer review and one Sign press: no Terminal, no typed word (V3-D38)', async () => {
   ws().click = { custody: 'convenience', enabled: true, available: true }
@@ -183,7 +211,8 @@ it('removes a disabled package only after confirmation', async () => {
   show('/w/DEMO/addons?tab=installed')
   await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
   const d = screen.getByRole('dialog')
-  expect(within(d).getByText('Its data stays until you purge it.')).toBeInTheDocument()
+  expect(within(d).getByText(/Its saved settings and data stay on this computer/)).toBeInTheDocument()
+  expect(within(d).getByRole('checkbox', { name: 'Also delete its data' })).not.toBeChecked()
   expect(state.host.calls.some((c) => c.path.endsWith('/market/uninstall'))).toBe(false)
   await userEvent.click(within(d).getByRole('button', { name: 'Remove' }))
   await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/uninstall'))?.body).toEqual({ name: 'calendar' }))
@@ -211,4 +240,41 @@ it('run-9 feedback: the unfetched official marketplace is fetched on the first v
   expect(link).toHaveAttribute('target', '_blank')
   await waitFor(() => expect(state.host.calls.filter((c) => c.path.endsWith('/market/refresh')).map((c) => c.body)).toEqual([{ url: preset.url }]), T)
   expect(screen.queryByRole('button', { name: /Remove/ })).toBeNull()
+})
+
+it('run 9 remove sheet: an On add-on says it is turned off first, then Turn off and remove signs the off step and removes it', async () => {
+  ws().click = { custody: 'convenience', enabled: true, available: true }
+  ws().features = [...ws().features, 'click']
+  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('button', { name: 'Remove' }, T))
+  const d = screen.getByTestId('remove-sheet')
+  expect(d).toHaveTextContent('we will turn it off first')
+  await userEvent.click(within(d).getByRole('button', { name: 'Turn off and remove' }))
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'addon_disable', name: 'calendar' }), T)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/uninstall'))?.body).toEqual({ name: 'calendar' }), T)
+})
+
+it('run 9 side panel: Settings opens a panel beside the list with controls from the schema; Save is one press with One click on', async () => {
+  ws().click = { custody: 'convenience', enabled: true, available: true }
+  ws().features = [...ws().features, 'click']
+  ws().marketInstalled = { addons: [installedAddon({ state: 'active' })] }
+  ws().addonSettings = {
+    calendar: {
+      name: 'calendar',
+      title: 'Calendar',
+      schema: { type: 'object', properties: { mode: { type: 'string', title: 'Mode', enum: ['day', 'week'] }, limit: { type: 'integer', title: 'Limit', minimum: 100, maximum: 1000, multipleOf: 100 } } },
+      value: { mode: 'day', limit: 200 },
+    },
+  }
+  show('/w/DEMO/addons?tab=installed')
+  await userEvent.click(await screen.findByRole('button', { name: 'Settings' }, T))
+  const sheet = await screen.findByTestId('settings-sheet', {}, T)
+  expect(within(sheet).getByRole('button', { name: 'Save' })).toBeDisabled() // unchanged
+  await userEvent.click(await within(sheet).findByRole('radio', { name: 'week' }, T))
+  await userEvent.click(within(sheet).getByRole('button', { name: 'More Limit' }))
+  await userEvent.click(within(sheet).getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'addon_settings', name: 'calendar', value: { mode: 'week', limit: 300 } }), T)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
 })

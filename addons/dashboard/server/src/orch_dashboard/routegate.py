@@ -68,6 +68,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/grants"): (ALLOWED, ""),
     (GET, W + "/versions"): (ALLOWED, ""),
     (GET, W + "/add-ons"): (ALLOWED, ""),
+    (GET, W + "/add-ons/{name}/settings"): (ALLOWED, ""),
     (GET, W + "/quick"): (ALLOWED, ""),
     (GET, W + "/activity"): (ALLOWED, ""),
     (GET, W + "/usage"): (ALLOWED, ""),
@@ -164,6 +165,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/market/stage"): (ALLOWED, "admin action, plain click"),
     (DELETE, W + "/market/stage/{stage_id}"): (ALLOWED, ""),
     (POST, W + "/market/uninstall"): (ALLOWED, "turning off"),
+    (POST, W + "/market/add"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/market/refresh"): (ALLOWED, ""),
     # --- runs, agents, terminals
     (GET, W + "/runs"): (ALLOWED, ""),

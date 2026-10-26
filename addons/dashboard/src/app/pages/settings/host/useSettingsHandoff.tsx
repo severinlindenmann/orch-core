@@ -23,6 +23,8 @@ export interface HandoffSpec {
   onEnd?: (signed: boolean) => void
   /** Show the review under the row (an accordion) instead of a popover. */
   inline?: boolean
+  /** The press was the deliberate gesture: with One click on, sign directly. */
+  autoSign?: boolean
 }
 
 export function useSettingsHandoff(ws: string | undefined, onSettled?: () => void | Promise<unknown>): { ask: (spec: HandoffSpec) => void; dialog: ReactNode; inline: boolean } {
@@ -39,6 +41,7 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       hint={spec.hint}
       summary={spec.summary}
       inline={spec.inline}
+      autoSign={spec.autoSign}
       doneToast={spec.doneToast}
       onSigning={spec.onSigning}
       onSettled={(phase) => {

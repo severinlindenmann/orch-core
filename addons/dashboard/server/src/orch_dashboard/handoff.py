@@ -20,7 +20,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Request
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
@@ -742,10 +742,15 @@ class DeviceRemove(Action):
     device: DeviceId
 
 
-# the dashboard add-on is always on; no other package is offered here
-AddonName = Literal[
-    "start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki", "quick"
-]
+# a shipped add-on or one installed from a marketplace: the host knows the installed list and refuses any other name;
+# the dashboard add-on is always on and never named here
+def _not_dashboard(name: str) -> str:
+    if name == "dashboard":
+        raise ValueError("the dashboard add-on is always on")
+    return name
+
+
+AddonName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,39}$"), AfterValidator(_not_dashboard)]
 
 
 class AddonGrant(Action):
@@ -777,6 +782,28 @@ class AddonDisable(Action):
     """`addon.disable {name}`: turn it off. Its data stays; refused while its work is running."""
 
     action: Literal["addon_disable"]
+    name: AddonName
+
+
+class AddonSettings(Action):
+    """`settings.set {set: {addons: {name: value}}}`: one add-on's settings (the side panel's Save). Signed. The host
+    checks the value against the schema of the manifest that was granted; ``null`` removes the settings."""
+
+    action: Literal["addon_settings"]
+    name: AddonName
+    value: dict[str, Any] | None
+
+    @model_validator(mode="after")
+    def small(self):
+        if len(json.dumps(self.value, separators=(",", ":"))) > 8192:
+            raise ValueError("the settings are too large")
+        return self
+
+
+class AddonPurge(Action):
+    """`addon.purge {name}`: delete the add-on's data (the remove sheet's "Also delete its data"). Signed."""
+
+    action: Literal["addon_purge"]
     name: AddonName
 
 
@@ -990,6 +1017,8 @@ PrepareBody = Annotated[
     | AddonGrant
     | MarketGrant
     | AddonDisable
+    | AddonPurge
+    | AddonSettings
     | PublishSetup
     | AddonEnable
     | PublishShare
@@ -1167,6 +1196,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "addon.grant", {"name": action.name, "staged": action.staged}
         case AddonDisable():
             return "addon.disable", {"name": action.name}
+        case AddonPurge():
+            return "addon.purge", {"name": action.name}
+        case AddonSettings():
+            return "settings.set", {"set": {"addons": {action.name: action.value}}}
         case GrantRevoke():
             return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
         case RunnerGrant():
@@ -1204,6 +1237,7 @@ WORKSPACE_OPS = (
     "move",
     "addon.grant",
     "addon.disable",
+    "addon.purge",
 )
 
 
@@ -1262,7 +1296,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
+        case SettingsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable() | AddonSettings():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PublishShare():
@@ -1316,6 +1350,8 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "addon.granted", name=action.name)
         case AddonDisable():
             return lambda ev: one(ev, "addon.disabled", name=action.name)
+        case AddonPurge():
+            return lambda ev: one(ev, "addon.purged", name=action.name)
         case GrantRevoke():
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
         case RunnerGrant():

@@ -35,7 +35,6 @@ const active = 'bg-surface-2 text-text'
 function HostPhone({ workspace }: { workspace: Workspace }) {
   return (
     <div className="space-y-4">
-      <h2 className="text-base font-semibold">Devices</h2>
       <section aria-label="Phone" data-testid="addon-phone" className="space-y-1">
         <div className="flex items-center gap-3 text-[13px]">
           <Smartphone aria-hidden className="size-4 shrink-0 text-text-muted" />

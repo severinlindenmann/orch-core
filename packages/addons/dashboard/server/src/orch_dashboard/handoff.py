@@ -1526,11 +1526,24 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         digest = sequence.digest_of(ws, person, intent)
         meta = {"step": 0, "of": 2, "digest": digest, "intent": intent}
         base = {"sequence": digest, "addon": switch_base}
+    if isinstance(body, HubJoin | HubModeFull | HubLeave):
+        base = hub_base(link)  # join, leave, join again with the same card is a new request each time
     if isinstance(body, AgentAccess):
         base = {
             "reveal_key": body.reveal_key
         }  # a new page key is a new request: one key, one grant (the idem keeps it)
     return Plan(op, args, host_files(body), base, person, meta)
+
+
+def hub_base(link) -> dict:
+    """B10: the latest `hub.*` event is part of a hub step's intent, so join, leave, join again with the same
+    card is a new request each time; a double click (no event in between) is still one."""
+    types = ["hub.joined", "hub.left"]
+    data = link.call("activity.list", {"scope": "workspace", "types": types, "order": "desc", "limit": 10})
+    for item in data.get("items") or []:
+        if isinstance(item, dict) and item.get("type") in types and isinstance(item.get("id"), str):
+            return {"hub_head": item["id"]}
+    return {"hub_head": None}
 
 
 #: How many earlier ENDED (cancelled, expired) attempts of one action a single press steps past. The cap bounds the

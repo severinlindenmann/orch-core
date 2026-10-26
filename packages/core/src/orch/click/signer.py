@@ -76,10 +76,11 @@ HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "
 
 
 #: the readers-condition reasons that mean "a reader is below level 1" (§0.8.6 item 9.9): ``status`` shows
-#: ``readers_old`` for the workspace until a call succeeds again (H12d-2, 9.11)
+#: ``readers_old`` for the workspace until a call succeeds again or its TTL expires (H12d-2, 9.11)
 #: read-only ops: safe to resend once on a fresh connection when a reused socket turns out dead (never a write)
 RETRY_READS = frozenset({"human.get", "human.pending", "ticket.get", "addon.list", "grant.deposit_status"})
 READERS_OLD = frozenset({"relay_paired", "other_member", "phone_device"})
+READERS_OLD_TTL = 5.0
 
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 
@@ -238,6 +239,7 @@ class ClickSigner:
         self.stepups = stepups if stepups is not None else Stepups(self.state, mono)
         #: the last connection or custody problem per workspace, for ``status`` (it loads no key and connects nowhere)
         self.problems: dict[str, str] = {}
+        self.problem_at: dict[str, float] = {}
 
     # -- seams ---------------------------------------------------------------------------------------------------------
     def _default_workspaces(self) -> list[dict[str, Any]]:
@@ -366,14 +368,16 @@ class ClickSigner:
             res = conn.call(op, args, **kw)
             if self.problems.get(wid) == "readers_old":
                 self.problems.pop(wid, None)
+                self.problem_at.pop(wid, None)
             return res
         except HostError as exc:
             reason = None
             if exc.code == "sign.convenience_unavailable":
                 head = exc.message.split(":", 1)[0]
                 reason = head if head in REASONS else None
-                if reason in READERS_OLD:  # H12d-2 (§0.8.6 item 9.11): status names it until a call succeeds
+                if reason in READERS_OLD:  # H12d-2 (§0.8.6 item 9.11): status briefly names the refusal
                     self.problems[wid] = "readers_old"
+                    self.problem_at[wid] = time.monotonic()
             # #517: the host's detail only for the two convenience codes, re-validated whole by ClickError
             raise ClickError(exc.code, exc.message, reason=reason, retryable=exc.retryable, detail=exc.detail) from None
         except (OSError, ConnectionError) as exc:
@@ -1388,6 +1392,9 @@ class ClickSigner:
             "enabled": bool(self._enabled(e)),
             "risk_ack": self._risk_ack(e),
         }
+        if self.problems.get(wid) == "readers_old" and time.monotonic() - self.problem_at[wid] > READERS_OLD_TTL:
+            self.problems.pop(wid, None)
+            self.problem_at.pop(wid, None)
         problem = st.get("problem") or self.problems.get(wid)
         if problem is None and st["custody"] != "convenience":
             problem = "not_convenience"

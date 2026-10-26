@@ -1469,6 +1469,42 @@ def test_failed_submit_state_never_reports_signed(client, token, stub, script, h
     assert response.json()["error"]["reason"] == "gate.stale"
 
 
+@pytest.mark.parametrize("retry", [0, 3])
+def test_failed_prepare_bumps_idem_for_next_attempt(client, token, stub, script, host_check, monkeypatch, retry):
+    body = {**approve(), "retry": retry}
+    first = prepare(client, token, stub, body)
+    assert first.status_code == 200, first.text
+    rid = first.json()["request_id"]
+    script.states[rid] = "submitted"
+    original = host_check.human
+
+    def failed(ws, op, args, **kw):
+        if op == "human.pending" and args.get("request_id") == rid:
+            return {
+                "requests": [
+                    {"id": rid, "state": "submitted", "seq": None, "error": {"code": "gate.stale"}}
+                ]
+            }
+        return original(ws, op, args, **kw)
+
+    monkeypatch.setattr(client.app.state, "human", failed)
+    response = prepare(client, token, stub, body)
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "intent.failed"
+    assert response.json()["error"]["reason"] == "gate.stale"
+
+    again = prepare(client, token, stub, body)
+    assert again.status_code == 200, again.text
+    assert again.json()["request_id"] != rid
+    pending = prepare(client, token, stub, body)
+    assert pending.status_code == 200 and pending.json() == again.json()
+    keys = [args["idem"] for op, args in script.clients[0].calls if op == "prepare"]
+    assert keys[0] == keys[1]
+    assert keys[2] != keys[0]
+    assert keys[3] == keys[2]
+    assert script.prepared == 2
+
+
 def test_concurrent_uncertain_sign_remarks_after_definite_failure(client, token, stub, script, monkeypatch):
     prepare(client, token, stub, comment(1))
     handoffs = client.app.state.handoffs
@@ -3207,3 +3243,27 @@ def test_c16_the_contract_refusal_is_in_plain_words(client, token, stub, script,
     res = client.post(url(stub, "github/seal"), json={}, headers=hdr(token))
     msg = res.json()["error"]["message"]
     assert "needs an update" in msg and "signing helper" not in msg and "orch-core" not in msg
+
+
+def test_hub_steps_get_a_fresh_idem_once_the_hub_state_moved(client, token, stub, backup, monkeypatch):
+    """B10: join, leave, join again with the same card is a new request; a repeat with no event in between is not."""
+    from orch_dashboard import handoff
+
+    head = {"v": "e1"}
+    monkeypatch.setattr(handoff, "hub_base", lambda link: {"hub_head": head["v"]})
+    assert prepare(client, token, stub, hub_join()).status_code == 200
+    prepare(client, token, stub, hub_join())
+    head["v"] = "e3"  # a join and a leave happened since
+    assert prepare(client, token, stub, hub_join()).status_code == 200
+    keys = [a["idem"] for op, a in sent_of(backup, "prepare")]
+    assert keys[0] == keys[1] and keys[2] != keys[0]
+
+
+def test_hub_base_is_the_latest_hub_event():
+    from orch_dashboard.handoff import hub_base
+
+    class L:
+        def call(self, op, args=None):
+            return {"items": [{"type": "hub.left", "id": "ev9"}, {"type": "hub.joined", "id": "ev3"}]}
+
+    assert hub_base(L()) == {"hub_head": "ev9"}

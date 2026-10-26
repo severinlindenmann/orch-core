@@ -117,6 +117,16 @@ def test_delegation_codex_children_are_found_by_the_parent_thread_link(tmp_path)
     assert transcript_children.codex_child_path(parent, "agent-01a1-other", env) is None
 
 
+def test_delegation_codex_child_lookup_refuses_a_parent_without_an_id(tmp_path):
+    parent, _child = codex_tree(tmp_path)
+    lines = parent.read_text().splitlines()
+    first = json.loads(lines[0])
+    first["payload"].pop("id", None)
+    parent.write_text("\n".join([json.dumps(first), *lines[1:]]) + "\n")
+    env = {"CODEX_HOME": str(tmp_path / "codex")}
+    assert transcript_children.codex_child_path(parent, "agent-01a1-child", env) is None
+
+
 class Table(dict):
     def update(self, run, **kw):  # pragma: no cover - not used
         self[run].update(kw)

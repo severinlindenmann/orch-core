@@ -176,13 +176,16 @@ def codex_child_path(parent: Path, child: str, env: Mapping[str, str]) -> Path |
     """The rollout of Codex child ``agent-<thread id>`` of the parent rollout ``parent``, or ``None``."""
     thread = child.removeprefix("agent-")
     pid = _meta(parent).get("id")
+    if not (isinstance(pid, str) and pid):
+        return None
     try:
         since = parent.stat().st_mtime - 86400
     except OSError:
         return None
     for cand in _codex_rollouts(env, since):
         meta = _meta(cand)
-        if meta.get("id") == thread and _spawn_of(meta).get("parent_thread_id") == pid:
+        spawn = _spawn_of(meta)
+        if meta.get("id") == thread and spawn and spawn.get("parent_thread_id") == pid:
             return cand
     return None
 

@@ -64,7 +64,13 @@ def test_today_has_no_write_method(client, token, stub):
 
 def _rows():
     return [
-        {"key": "DEMO-0001", "uid": "u1", "title": "A ticket", "updated_at": "2026-10-26T09:00:00Z", "status": "in_progress"}
+        {
+            "key": "DEMO-0001",
+            "uid": "u1",
+            "title": "A ticket",
+            "updated_at": "2026-10-26T09:00:00Z",
+            "status": "in_progress",
+        }
     ]
 
 

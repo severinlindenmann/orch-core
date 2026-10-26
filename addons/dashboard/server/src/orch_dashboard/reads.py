@@ -399,7 +399,15 @@ def register(app: FastAPI, gateway: Gateway):
 
         sign = "hub" if mode_of(gateway, ws) in HUB_ONLY else None  # V3 C11: full hub mode, approved elsewhere
         return adapters.today(
-            data, rows, ws, last.get("as_of") or "", who, role, recent_activity(gateway, ws), closed, sign,
+            data,
+            rows,
+            ws,
+            last.get("as_of") or "",
+            who,
+            role,
+            recent_activity(gateway, ws),
+            closed,
+            sign,
             waiting_runs(gateway, ws),
         )
 

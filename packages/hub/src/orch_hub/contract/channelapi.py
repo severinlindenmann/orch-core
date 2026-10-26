@@ -12,6 +12,7 @@ Pure reference functions, no I/O and no clock:
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import struct
 from collections.abc import Mapping
@@ -43,6 +44,29 @@ PAIR_MAX = 512
 _HOST = r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"
 _AUTHORITY = re.compile(rf"(?P<host>{_HOST}|\[::1\])(?::(?P<port>[1-9][0-9]{{0,4}}))?")
 _LOOPBACK = ("localhost", "127.0.0.1", "[::1]")
+_NETS = tuple(
+    ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10")
+)  # private + CGNAT: plain http like the stored-origin rule (vectors/origin_http.json)
+_IPV4 = re.compile(r"(?:0|[1-9][0-9]{0,2})(?:\.(?:0|[1-9][0-9]{0,2})){3}")
+
+
+def _origin_host(origin: str) -> str:
+    rest = origin[len("http://") :]
+    return rest.split("]")[0] + "]" if rest.startswith("[") else rest.split(":")[0]
+
+
+def _plain_http_host(host: str) -> bool:
+    if host in _LOOPBACK:
+        return True
+    if _IPV4.fullmatch(host) is None:
+        return False
+    try:
+        ip = ipaddress.IPv4Address(host)
+    except ValueError:
+        return False
+    return any(ip in n for n in _NETS)
+
+
 _FRAGMENT = re.compile(
     r"h1\.(?P<hub>[0-9a-f]{32})\.(?P<user>[0-9a-f]{32})\.(?P<code>[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4})"
 )
@@ -51,8 +75,8 @@ _FRAGMENT = re.compile(
 def parse_pair_link(text: Any, *, dev_mode: bool) -> dict[str, str]:
     """``orch://hub-pair/<authority>#h1.<hub_id>.<user_id>.<code>`` → ``{api, hub_id, user_id, code}``.
 
-    Strict: ASCII, at most 512 bytes, lower-case host (``https://`` is implied; a loopback host means plain
-    ``http://`` and is accepted only by a dev verifier, ``dev_mode``: a real build is https only), an optional port 1–65535 without leading zero, no userinfo, path, query or second ``#``; the fragment
+    Strict: ASCII, at most 512 bytes, lower-case host (``https://`` is implied; a loopback host is plain ``http://`` and accepted only by a dev
+    verifier, ``dev_mode``; a private or CGNAT IPv4 host (10/8, 172.16/12, 192.168/16, 100.64/10) is plain ``http://`` too), an optional port 1–65535 without leading zero, no userinfo, path, query or second ``#``; the fragment
     exactly ``h1`` and lower-case hex ids and the hub's 12-hex pairing code. Anything else is ``malformed``. The
     ``hub_id`` is the pin (§6.4): the app verifies the card it fetches from ``api`` against it."""
     if type(text) is not str or not text.isascii() or len(text) > PAIR_MAX or not text.startswith(PAIR_PREFIX):
@@ -70,7 +94,7 @@ def parse_pair_link(text: Any, *, dev_mode: bool) -> dict[str, str]:
         raise Refused("malformed")
     if a["host"] in _LOOPBACK and dev_mode is not True:
         raise Refused("malformed")
-    scheme = "http://" if a["host"] in _LOOPBACK else "https://"
+    scheme = "http://" if _plain_http_host(a["host"]) else "https://"
     return {"api": scheme + authority, "hub_id": f["hub"], "user_id": f["user"], "code": f["code"]}
 
 
@@ -97,7 +121,7 @@ def verify_api_origin(
     o = _under_card(signed, "hub.api_origin", held, dev_mode, revoked_op_certs)
     if o["issued_ms"] > now_ms + CLOCK_SKEW_MS:
         raise Refused("cert_invalid")
-    if o["origin"].startswith("http://") and dev_mode is not True:
+    if o["origin"].startswith("http://") and dev_mode is not True and _origin_host(o["origin"]) in _LOOPBACK:
         raise Refused("malformed")
     if o["origin"] != link_api:
         raise Refused("other_origin")

@@ -77,6 +77,8 @@ HUMAN_OPS_V1 = ("human.prepare", "human.get", "human.submit", "human.pending", "
 
 #: the readers-condition reasons that mean "a reader is below level 1" (§0.8.6 item 9.9): ``status`` shows
 #: ``readers_old`` for the workspace until a call succeeds again (H12d-2, 9.11)
+#: read-only ops: safe to resend once on a fresh connection when a reused socket turns out dead (never a write)
+RETRY_READS = frozenset({"human.get", "human.pending", "ticket.get", "addon.list", "grant.deposit_status"})
 READERS_OLD = frozenset({"relay_paired", "other_member", "phone_device"})
 
 GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
@@ -357,8 +359,9 @@ class ClickSigner:
     def _call(self, entry: dict[str, Any], op: str, args: dict[str, Any], **kw: Any) -> dict[str, Any]:
         from orch.host.errors import HostError
 
-        conn = self._conn(entry)
         wid = entry["workspace_id"]
+        reused = wid in self.conns
+        conn = self._conn(entry)
         try:
             res = conn.call(op, args, **kw)
             if self.problems.get(wid) == "readers_old":
@@ -379,6 +382,8 @@ class ClickSigner:
                 conn.close()
             except Exception:  # noqa: BLE001
                 pass
+            if reused and op in RETRY_READS:  # a socket that went stale while idle: one fresh connection, then give up
+                return self._call(entry, op, args, **kw)
             raise ClickError("host.unavailable", f"the workspace connection broke: {type(exc).__name__}") from None
 
     def _convenience(self, entry: dict[str, Any]) -> tuple[Any, Any]:

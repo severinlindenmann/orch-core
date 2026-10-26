@@ -374,6 +374,21 @@ def test_a_lost_submit_answer_is_retried_with_the_identical_events_and_idem(clic
     assert [e["text"] for e in logged(served, key) if e["type"] == "log.added"] == ["x"]
 
 
+def test_a_stale_reused_connection_is_retried_once_for_reads_only(click, served, human):
+    _, key = human.ticket()
+    click.signer._call(click.entry, "ticket.get", {"ref": key})  # connects and caches
+    first = click.signer.conns[served.wid]
+
+    def dead(op, args, **kw):
+        raise BrokenPipeError("idle socket closed")
+
+    first.call = dead
+    assert click.signer._call(click.entry, "ticket.get", {"ref": key})["data"]  # fresh connection, no error
+    assert click.signer.conns[served.wid] is not first
+    click.signer.conns[served.wid].call = dead
+    refused(lambda: click.signer._call(click.entry, "human.cancel", {"request_id": "x"}), "host.unavailable")
+
+
 def test_view_digest_ignores_the_check_times_only():
     v = {"risk": RISK, "lines": ["a"], "checks": [{"repo": "r", "clean": True, "attested_by": "worker", "at": "1"}]}
     w = json.loads(json.dumps(v))

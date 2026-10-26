@@ -68,8 +68,8 @@ def stripped(event: dict) -> dict:
         out["actor"] = {k: v for k, v in out["actor"].items() if k != "device"}
     if out.get("type") == "grant.issued":
         out.pop("secret_hash", None)
-    if out.get("type") in OWNER_PROOF_TYPES:
-        out.pop("owner_proof", None)
+    if out.get("type") in OWNER_PROOF_TYPES and out.get("owner_proof") is None:
+        out.pop("owner_proof", None)  # only the host's null placeholder; a filled value stays and fails the review
     return out
 
 
@@ -117,7 +117,7 @@ def review_matches(material: dict, events: list) -> bool:
         return False
     for block, event in zip(reviews, events, strict=True):
         skip = ENVELOPE + (("gate_gen",) if event.get("type") in GATE_EVENTS else ())
-        if event.get("type") in OWNER_PROOF_TYPES:
+        if event.get("type") in OWNER_PROOF_TYPES and event.get("owner_proof") is None:
             skip += ("owner_proof",)
         payload = {k: v for k, v in event.items() if k not in skip}
         if (

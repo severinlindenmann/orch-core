@@ -208,7 +208,8 @@ def test_module_never_names_a_hub_write():
 
     src = Path(hub.__file__).read_text()
     calls = re.findall(r"\.call\(\s*\"([a-z_.]+)\"", src)
-    allowed = {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link"}  # connect: C11's one write
+    # connect: C11's one write; addon.list: a read (the join-pause check)
+    allowed = {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link", "addon.list"}
     assert set(calls) <= allowed
     assert src.count("write=True") == 1
     assert "hubclient" not in src and "import orch" not in src
@@ -263,6 +264,21 @@ class PausedGw:
         return self._link
 
 
+def test_connect_is_still_refused_when_the_add_on_is_simply_disabled():
+    """Only the fresh-join pause is waived, not a dashboard that is off for another reason."""
+    link = Link({
+        "hub.connect": {"mode": "selective"},
+        "addon.list": {"addons": [{"name": "dashboard", "state": "disabled"}]},
+    })
+
+    class Off(PausedGw):
+        pass
+
+    got = connect(connect_client(link, gw=Off))
+    assert got.status_code != 200 and got.json()["error"]["code"] == "addon.disabled"
+    assert not any(c[0] == "hub.connect" for c in link.calls)
+
+
 def connect_client(link, kind="local", gw=Gw):
     app = FastAPI()
     app.state.auth = Auth(kind)
@@ -300,10 +316,13 @@ def test_connect_relays_the_invite_and_card_to_the_host_as_one_write():
 
 def test_connect_works_while_the_dashboard_add_on_is_paused_by_the_join():
     """e2e-4: join by click signs hub.join, the host pauses all add-ons, and only then the page calls hub/connect."""
-    link = Link({"hub.connect": {"hub_id": HUB32, "status": "bound", "mode": "selective", "binding_seq": 1}})
+    link = Link({
+        "hub.connect": {"hub_id": HUB32, "status": "bound", "mode": "selective", "binding_seq": 1},
+        "addon.list": {"addons": [{"name": "dashboard", "state": "paused", "paused": {"cause": "unverified"}}]},
+    })
     got = connect(connect_client(link, gw=PausedGw))
     assert got.status_code == 200 and got.json() == {"connected": True, "mode": "selective"}
-    assert link.calls and link.calls[0][0] == "hub.connect"
+    assert [c[0] for c in link.calls] == ["addon.list", "hub.connect"]
 
 
 def test_connect_strips_the_hub_id_of_a_full_invite_and_refuses_another_hubs():

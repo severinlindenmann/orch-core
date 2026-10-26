@@ -763,6 +763,10 @@ def _server_installed(ictx: Any) -> bool:
     return bool(load(ictx.layout)["parts"])
 
 
+ENABLE_TRIES = 3
+ENABLE_RETRY_WAIT = 2.0
+
+
 def _ensure_host(environ: Mapping[str, str], err: Any) -> None:
     """``host enable`` if no host answers (idempotent); a dev checkout is refused by it."""
     import io
@@ -777,9 +781,20 @@ def _ensure_host(environ: Mapping[str, str], err: Any) -> None:
         return
     except Exception:  # noqa: BLE001 - nobody answers: enable it
         pass
+    # right after the parts' services were installed (orch setup --role full) the first start can lose against the
+    # service manager still settling: try a few times and say what the last attempt answered.
     buf = io.StringIO()
-    if host_cli.main(["enable"], env=environ, out=buf) != 0:
-        raise SetupError("host.unavailable", "the orch host could not be started (orch host enable)", 500)
+    for attempt in range(ENABLE_TRIES):
+        buf = io.StringIO()
+        if host_cli.main(["enable"], env=environ, out=buf) == 0:
+            break
+        if attempt + 1 < ENABLE_TRIES:
+            time.sleep(ENABLE_RETRY_WAIT)
+    else:
+        why = (buf.getvalue().strip().splitlines() or [""])[0][:200]
+        raise SetupError(
+            "host.unavailable", "the orch host could not be started (orch host enable)" + (f": {why}" if why else ""), 500
+        )
     for _ in range(40):
         try:
             wi.connect_host(state).close()

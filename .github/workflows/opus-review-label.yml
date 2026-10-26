@@ -1,0 +1,54 @@
+name: opus-review-label
+# Labels a PR `needs-opus-review` when it changes a path listed in .github/security-paths.txt (crypto, keys, custody, auth,
+# protocol, pairing, guard, permits, charter). Informational in prototype mode: this job never fails the PR; the review it
+# asks for becomes a hardening issue instead of a merge gate. Same-repository PRs only (forks get a read-only token).
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+concurrency:
+  group: opus-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  label:
+    name: needs-opus-review label
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # the list comes from the base branch, so a PR cannot weaken the rule it is judged by (the PR that adds it uses its own)
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          label=needs-opus-review
+          list=.github/security-paths.txt
+          if [ ! -f "$list" ]; then  # the PR that introduces the list: no base copy yet, take the PR's own
+            list="$RUNNER_TEMP/security-paths.txt"
+            gh api "repos/$REPO/contents/.github/security-paths.txt?ref=$HEAD_SHA" -H 'Accept: application/vnd.github.raw' > "$list" \
+              || { echo "no path list (informational)"; exit 0; }
+          fi
+          grep -Ev '^[[:space:]]*(#|$)' "$list" > "$RUNNER_TEMP/patterns"
+          files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')" || { echo "cannot list files"; exit 0; }
+          hits="$(grep -E -f "$RUNNER_TEMP/patterns" <<<"$files" || true)"
+          has="$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name' | grep -Fx "$label" || true)"
+          if [ -n "$hits" ]; then
+            echo "security-relevant files changed:"; echo "$hits" | head -50
+            gh label create "$label" --repo "$REPO" --color B60205 --description "Touches crypto, keys, custody, auth, protocol, pairing, guard, permits or charter paths" 2>/dev/null || true
+            [ -n "$has" ] || gh pr edit "$PR" --repo "$REPO" --add-label "$label" || echo "could not label (informational)"
+          else
+            echo "no security-relevant file changed"
+            [ -z "$has" ] || gh pr edit "$PR" --repo "$REPO" --remove-label "$label" || true
+          fi
+          exit 0

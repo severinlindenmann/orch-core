@@ -12,8 +12,8 @@ here needs a hub.
   Dependencies are allowed from v1, as lockfiles with pinned hashes, inside the digest, installed at grant time. 4.
   Community marketplaces only after per-add-on OS-user isolation (#287). 5. With a hub, only hub-allowed marketplaces.
   6. Publisher signatures are optional, the key is remembered on first use.
-- **Contract files:** schema `plugins/orch-core/src/orch/addons/schemas/market.v1.json`, vectors
-  `plugins/orch-core/tests/addons/vectors_market.json`, reference checker `tests/addons/market_ref.py` (test code),
+- **Contract files:** schema `packages/core/src/orch/addons/schemas/market.v1.json`, vectors
+  `packages/core/tests/addons/vectors_market.json`, reference checker `tests/addons/market_ref.py` (test code),
   tests `tests/addons/test_market_vectors.py`. Where the checker and this document disagree, this document wins.
 - **Concept draft** (screens, not binding): [`docs/vision/marketplace/index.html`](../vision/marketplace/index.html).
 - **Not in this task:** any product code. `orch market`, `orch addon install/update` (G2, G3), lockfile install (G4),
@@ -493,7 +493,7 @@ dependencies is the host's act, not available to the add-on.
 
 With a hub joined, the workspace host MUST ask the hub's policy before any marketplace use. The hub side (D14) is built:
 the policy is one hub-wide object that the hub admin edits in the hub's admin console and that `HK_op` signs inside
-**every `hub.snapshot`** as the required field `market_policy` (orch-hub `docs/protocol.md` 7.1; there is no snapshot
+**every `hub.snapshot`** as the required field `market_policy` (`contracts/hub/protocol.md` 7.1; there is no snapshot
 without it and no older shape, V3-D36). Core reads it only from a verified, pinned snapshot (`orch.hubclient.snapshot.hub_market_policy`,
 a read-only accessor that verifies again on every read: `None` only when the host is not hub-joined, `HubRefused` for every joined-but-unverifiable state) and can only refuse by it.
 The vectors are `vectors_hub_policy.json` (`policy` and `evaluate` cases); hub and core run the same file.

@@ -1,0 +1,55 @@
+name: hub
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review]  # a draft is not tested until it is ready
+  push:
+    branches: [develop]
+permissions:
+  contents: read
+  pull-requests: read
+concurrency:
+  group: hub-${{ github.ref }}-${{ github.event.pull_request.draft && 'draft' || 'full' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  changes:
+    name: hub changes
+    uses: ./.github/workflows/_changes.yml
+    with:
+      pattern: '^(packages/hub/|packages/core/src/|contracts/|\.github/workflows/(hub|_changes)\.yml$)'
+  tests:
+    name: hub tests
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: packages/hub
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: packages/hub/uv.lock
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
+      - run: uv build --wheel
+  gate:
+    # the one check a ruleset can require: it reports on every PR, also when the jobs above are skipped
+    name: hub gate
+    if: always()
+    needs: [changes, tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          case " $RESULTS " in *" failure "*|*" cancelled "*) exit 1 ;; esac  # skipped (draft, nothing relevant) is fine

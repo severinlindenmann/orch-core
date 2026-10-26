@@ -1,0 +1,122 @@
+{
+  "about": "H7 cross-version fixtures: frames of the clients of the previous contract (v1.4), replayed against the current host. Written by hand from those clients' sources, not captured off a socket: the hello frames are copied from the client code at the commits named in `source`, the requests are in the exact shape orch.host.client.Connection.call builds. Placeholders: $GRANT, $SESSION, $IDEM (a fresh a_<ULID>), $KEY (the ticket the setup created). `expect` is checked by tests/host/test_cross_version.py; `shape` lists the keys (with their JSON type) the old client reads, which the current host must still send with the same type (v1.4 and v1.5 only add keys, §0.4).",
+  "clients": {
+    "cli-v1.4": {
+      "source": "orch.host.client.Connection of the thin CLI (H4b #409, b1926bf1; unchanged until H7): no ops member, so every op is assumed at version 1",
+      "hello": {"t": "hello", "proto": [1], "client": "orch cli", "caps": []}
+    },
+    "dashboard-v1.4": {
+      "source": "packages/addons/dashboard/server/src/orch_dashboard/hostlink.py at 8873a4f8 (adapters on contract v1.4)",
+      "hello": {
+        "t": "hello",
+        "proto": [1],
+        "client": "orch-dashboard/0.1.0",
+        "caps": ["ops/1", "query/1", "sub/1", "human/1", "diff/1", "outcome/1", "control/1", "read_ext/1", "activity/1"],
+        "ops": {
+          "host.list": 1, "whoami": 1, "workspace.show": 1, "host.status": 1, "member.list": 1, "addon.list": 1,
+          "needs": 1, "activity.list": 1, "ticket.query": 1, "ticket.get": 1, "diff": 1, "artifact.get": 1,
+          "grant.list": 1, "human.get": 1, "human.pending": 1, "human.prepare": 1, "human.submit": 1,
+          "human.cancel": 1, "sub.open": 1, "sub.close": 1, "outcome.get": 1
+        }
+      }
+    },
+    "proto-2-only": {
+      "source": "a client that speaks only a later major version",
+      "hello": {"t": "hello", "proto": [2], "client": "orch cli", "caps": []}
+    },
+    "proto-1-and-2": {
+      "source": "a client that speaks both majors",
+      "hello": {"t": "hello", "proto": [2, 1], "client": "orch cli", "caps": []}
+    },
+    "unknown-cap": {
+      "source": "a client listing a cap this host never had (caps in hello are informational)",
+      "hello": {"t": "hello", "proto": [1], "client": "orch cli", "caps": ["legacy/1"]}
+    },
+    "show-at-2": {
+      "source": "a client that expects show at a version the host does not serve",
+      "hello": {"t": "hello", "proto": [1], "client": "orch cli", "caps": [], "ops": {"show": 2}}
+    }
+  },
+  "handshakes": [
+    {"client": "proto-2-only", "expect": {"fatal": "host.version_mismatch"}},
+    {"client": "proto-1-and-2", "expect": {"proto": 1}},
+    {"client": "unknown-cap", "expect": {"proto": 1}},
+    {"client": "cli-v1.4", "expect": {"proto": 1, "ops_at": {"task.done": 2, "show": 1}}},
+    {"client": "dashboard-v1.4", "expect": {"proto": 1}}
+  ],
+  "cases": [
+    {
+      "name": "an old CLI's whoami keeps its shape",
+      "client": "cli-v1.4",
+      "req": {"t": "req", "id": "c1", "op": "whoami", "args": {}, "auth": {"grant": "$GRANT", "session": "$SESSION"}},
+      "expect": {"ok": true, "data_shape": {"peer": "object", "person": "string", "tier": "string", "grant": "object", "session": "string"}}
+    },
+    {
+      "name": "an old CLI's write still works (every op it calls is at version 1)",
+      "client": "cli-v1.4",
+      "req": {"t": "req", "id": "c1", "op": "new", "args": {"title": "From an older CLI"}, "auth": {"grant": "$GRANT", "session": "$SESSION"}, "opts": {"idem": "$IDEM"}},
+      "expect": {"ok": true, "shape": {"data": "object", "key": "string", "seq": "integer", "cursor": "integer", "hints": "array", "lines": "array", "duplicate": "boolean", "exit": "integer"}}
+    },
+    {
+      "name": "an old CLI's task.done (contract 1) is refused, never run as contract 2",
+      "client": "cli-v1.4",
+      "req": {"t": "req", "id": "c1", "op": "task.done", "args": {"task": "$KEY/T1", "message": "done"}, "auth": {"grant": "$GRANT", "session": "$SESSION"}, "opts": {"idem": "$IDEM"}},
+      "expect": {"ok": false, "code": "op.unsupported", "appends": 0}
+    },
+    {
+      "name": "an old CLI's task.done --run (contract 1: the host would run verify.cmd) is refused the same way",
+      "client": "cli-v1.4",
+      "req": {"t": "req", "id": "c1", "op": "task.done", "args": {"task": "$KEY/T1", "run": true}, "auth": {"grant": "$GRANT", "session": "$SESSION"}, "opts": {"idem": "$IDEM"}},
+      "expect": {"ok": false, "code": "op.unsupported", "appends": 0}
+    },
+    {
+      "name": "after the refusal the same connection keeps working",
+      "client": "cli-v1.4",
+      "after": "task.done",
+      "req": {"t": "req", "id": "c2", "op": "show", "args": {"ref": "$KEY"}, "auth": {"grant": "$GRANT", "session": "$SESSION"}},
+      "expect": {"ok": true, "shape": {"key": "string", "seq": "integer"}}
+    },
+    {
+      "name": "a client expecting another version of an op gets op.unsupported for that op only",
+      "client": "show-at-2",
+      "req": {"t": "req", "id": "c1", "op": "show", "args": {"ref": "$KEY"}, "auth": {"grant": "$GRANT", "session": "$SESSION"}},
+      "expect": {"ok": false, "code": "op.unsupported", "appends": 0}
+    },
+    {
+      "name": "a draft-shape request (grant beside auth) is req.invalid, never served without its auth",
+      "client": "cli-v1.4",
+      "req": {"t": "req", "id": "c1", "op": "status", "args": {}, "grant": "$GRANT"},
+      "expect": {"ok": false, "code": "req.invalid"}
+    },
+    {
+      "name": "the old dashboard's workspace.show keeps its shape",
+      "client": "dashboard-v1.4",
+      "req": {"t": "req", "id": "q1", "op": "workspace.show", "args": {}},
+      "expect": {"ok": true, "data_shape": {"id": "string", "prefix": "string", "name": "string", "genesis": "string", "epoch": "integer", "wsk_fingerprint": "string", "members_v": "integer", "state": "string"}}
+    },
+    {
+      "name": "the old dashboard's host.status keeps its shape",
+      "client": "dashboard-v1.4",
+      "req": {"t": "req", "id": "q1", "op": "host.status", "args": {}},
+      "expect": {"ok": true, "data_shape": {"version": "string", "tier": "string"}}
+    },
+    {
+      "name": "the old dashboard's ticket.query rows keep the v1.4 keys and types",
+      "client": "dashboard-v1.4",
+      "req": {"t": "req", "id": "q1", "op": "ticket.query", "args": {"limit": 5}},
+      "expect": {"ok": true, "data_shape": {"rows": "array", "total": "integer", "next_page": "null"}, "row_shape": {"key": "string", "uid": "string", "title": "string", "status": "string", "type": "string", "labels": "array", "assignees": "array", "needs": "array", "updated_at": "string", "head_seq": "integer"}}
+    },
+    {
+      "name": "the old dashboard's member.list keeps its shape",
+      "client": "dashboard-v1.4",
+      "req": {"t": "req", "id": "q1", "op": "member.list", "args": {}},
+      "expect": {"ok": true, "data_shape": {"members": "array"}}
+    },
+    {
+      "name": "the old dashboard sees grant.list with the v1.4 keys and types (v1.5 only adds keys beside them)",
+      "client": "dashboard-v1.4",
+      "req": {"t": "req", "id": "q1", "op": "grant.list", "args": {}},
+      "expect": {"ok": true, "data_shape": {"grants": "array"}, "grant_shape": {"id": "string", "person": "string", "scope": "string", "issued_at": "string", "expires_at": "string", "revoked_at": "null", "sessions": "integer"}}
+    }
+  ]
+}

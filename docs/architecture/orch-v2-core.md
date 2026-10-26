@@ -26,7 +26,7 @@ Everything in the format is real in the core, not just stubbed (A5). Two excepti
 The core is rebuilt fresh on `develop` (D36). v1 on `main` stays the reference for behaviour and tests.
 
 ```
-plugins/orch-core/src/orch/
+packages/core/src/orch/
 ├── schema/        JSON Schemas: ticket, body sections, event, workspace, addon manifest, operation I/O
 ├── canon/         JCS (RFC 8785), NFC/LF text normalisation, hash helpers (hash_v)
 ├── crypto/        the suite (P-256 per D46), sealing, signatures, domain labels

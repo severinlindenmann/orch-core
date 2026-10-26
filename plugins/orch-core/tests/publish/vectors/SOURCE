@@ -1,4 +1,0 @@
-file: publish_v2.json
-origin: orch-publish tests/vectors/publish_v2.json (PR orch-publish#7, branch feat/v2-pubsrv-auth, head 7ce7dfb), written by P1
-derived from: orch-relay tests/vectors_v2.json suite 2 (the "source" key inside the file names its sha256), by scripts/extract_publish_vectors.py
-sha256: 1a02a0792a47049c806cd50c602dae0abb4dc3cdc2289e8cf1565789cc7cc2ae

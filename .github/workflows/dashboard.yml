@@ -13,38 +13,12 @@ concurrency:  # draft-event and full runs never cancel each other
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   changes:
-    # the workflow runs for every PR to develop (a ruleset needs its gate to report each time); the jobs below run only
-    # when a file they cover changed
+    # the workflow runs for every PR to develop (the ruleset needs "dashboard gate" on each); the jobs run only when a
+    # file they cover changed
     name: dashboard changes
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      relevant: ${{ steps.files.outputs.relevant }}
-      heavy: ${{ steps.files.outputs.heavy }}
-    steps:
-      - id: files
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          EVENT: ${{ github.event_name }}
-          PR: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT" = pull_request ]; then
-            files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
-          else
-            files="$(gh api --paginate "repos/$REPO/commits/$SHA" --jq '.files[].filename')"
-          fi
-          if grep -Eq '^(addons/dashboard/|plugins/orch-core/|docs/architecture/orch-v2-host\.md$|\.github/workflows/dashboard\.yml$)' <<<"$files"; then
-            relevant=true
-          else
-            relevant=false
-          fi
-          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
-          heavy=true  # the PR's LIVE draft state, not the payload (push and `gh pr ready` can race)
-          if [ "$EVENT" = pull_request ] && [ "$(gh api "repos/$REPO/pulls/$PR" --jq .draft)" = true ]; then heavy=false; fi
-          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+    uses: ./.github/workflows/_changes.yml
+    with:
+      pattern: '^(packages/addons/dashboard/|packages/core/|contracts/core/|docs/architecture/orch-v2-host\.md$|\.github/workflows/(dashboard|_changes)\.yml$)'
   vitest:
     name: vitest (shard ${{ matrix.shard }}/3)
     needs: changes
@@ -57,7 +31,7 @@ jobs:
         shard: [1, 2, 3]
     defaults:
       run:
-        working-directory: addons/dashboard
+        working-directory: packages/addons/dashboard
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -66,7 +40,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: addons/dashboard/package-lock.json
+          cache-dependency-path: packages/addons/dashboard/package-lock.json
       - run: npm ci
       - run: npx vitest run --maxWorkers=3 --shard=${{ matrix.shard }}/3
   node:
@@ -77,7 +51,7 @@ jobs:
     timeout-minutes: 20
     defaults:
       run:
-        working-directory: addons/dashboard
+        working-directory: packages/addons/dashboard
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -86,7 +60,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
-          cache-dependency-path: addons/dashboard/package-lock.json
+          cache-dependency-path: packages/addons/dashboard/package-lock.json
       - run: npm ci
       - run: node --test scripts/layout-startup.check.mjs
       - run: npm run typecheck
@@ -99,7 +73,7 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: addons/dashboard/server
+        working-directory: packages/addons/dashboard/server
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -108,7 +82,7 @@ jobs:
         with:
           python-version: '3.14'
           enable-cache: true
-          cache-dependency-glob: addons/dashboard/server/uv.lock
+          cache-dependency-glob: packages/addons/dashboard/server/uv.lock
       - run: uv sync --locked
       - run: uv run ruff check .
       # The realhost module starts a real orch host and a pty-driven signer: run it locally (see server/README.md).

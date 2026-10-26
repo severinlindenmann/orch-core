@@ -1,0 +1,132 @@
+name: Orch
+options:
+  minimumXcodeGenVersion: 2.46.0
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+packages:
+  OrchKit:
+    path: OrchKit
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    DEVELOPMENT_TEAM: 77D4THRYUN
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Orch:
+    type: application
+    platform: iOS
+    sources:
+      - App
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.severin.orch
+        CODE_SIGN_ENTITLEMENTS: App/Orch.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        TARGETED_DEVICE_FAMILY: "1"
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: orch
+        # Export compliance (owner decision 2026-10-11, decisions.md T4): all crypto goes through Apple CryptoKit.
+        ITSAppUsesNonExemptEncryption: false
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        OrchAppIdentifierPrefix: $(AppIdentifierPrefix)
+        UILaunchScreen: {}
+        # The `orch://hub-pair/...` hub pairing link. An open only ever lands on the hub pairing screen, never on a workspace.
+        CFBundleURLTypes:
+          - CFBundleURLName: io.severin.orch.pair
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes: [orch]
+        NSCameraUsageDescription: orch uses the camera only to scan the hub pairing QR code.
+        NSFaceIDUsageDescription: orch asks for Face ID to confirm it is you before it sends a signature request from your hub.
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+    dependencies:
+      - package: OrchKit
+        products: [OrchProtocol, OrchCustody, OrchCoordination, OrchPush, OrchClient, OrchFakeHost, OrchUI]
+      - target: OrchNotify
+        embed: true
+  OrchNotify:
+    type: app-extension
+    platform: iOS
+    sources: [NotificationService]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.severin.orch.notify
+        CODE_SIGN_ENTITLEMENTS: NotificationService/OrchNotify.entitlements
+        TARGETED_DEVICE_FAMILY: "1"
+        APPLICATION_EXTENSION_API_ONLY: YES
+    info:
+      path: NotificationService/Info.plist
+      properties:
+        CFBundleDisplayName: orch notifications
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        OrchAppIdentifierPrefix: $(AppIdentifierPrefix)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    dependencies:
+      - package: OrchKit
+        product: OrchPush
+  OrchTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - AppTests
+    dependencies:
+      - target: Orch
+      - package: OrchKit
+        products: [OrchProtocol, OrchCustody, OrchPush, OrchCoordination]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.severin.orch.tests
+        GENERATE_INFOPLIST_FILE: YES
+  OrchUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    dependencies:
+      - target: Orch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.severin.orch.uitests
+        GENERATE_INFOPLIST_FILE: YES
+  # The hub Simulator lane (B7): pairs the real app with a real local hub, lists, signs with the Simulator's Face ID. Skipped unless
+  # TEST_RUNNER_ORCH_E2E_HUB_LINK is set (scripts/e2e/hub-s6.sh, kit scenario hub-S6). Its own scheme: no CI job runs it.
+  OrchHubE2ETests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [HubE2ETests]
+    dependencies:
+      - target: Orch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.severin.orch.hube2e.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  OrchHubE2E:
+    build:
+      targets:
+        Orch: all
+    test:
+      config: Debug
+      targets: [OrchHubE2ETests]
+      parallelizeBuild: false
+      randomExecutionOrder: false
+  Orch:
+    build:
+      targets:
+        Orch: all
+    test:
+      targets: [OrchTests, OrchUITests]
+      parallelizeBuild: false
+      randomExecutionOrder: false

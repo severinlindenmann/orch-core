@@ -2848,7 +2848,7 @@ expires_ms, dev}` signed by the person key `PK` (derived once from the owner's r
 under the domain `orch/v2/sig/hub-owner-proof|`, bound to the host request and to the event payload without its
 `owner_proof` member, valid at most 10 minutes; `hub.joined` and `hub.left` record it so the hub and readers can check
 it. The hub card gains a signed `reader` level that never goes down; a card below the workspace's `required_reader`
-is `hub_too_old`. Contract and vectors: orch-hub `docs/protocol.md` §5 and §9.6, core side
+is `hub_too_old`. Contract and vectors: `contracts/hub/protocol.md` §5 and §9.6, core side
 `orch.hubclient.wire` (`build_owner_proof`, `check_owner_proof`, `check_hub_reader`). *Enforced by the host from C9
 (`check_hub_proof` at binding and submit); until then the rules above hold.*
 
@@ -3844,7 +3844,7 @@ apply on loopback, where the person is at the machine or behind the SSH tunnel.
   are plain: they sign and reveal nothing, and the touch comes at the step that acts, when the review and its digest
   exist.
 
-**10.6 WebAuthn verification contract (`orch.click.passkeys`, vectors `addons/dashboard/server/tests/vectors/webauthn_*.json`).**
+**10.6 WebAuthn verification contract (`orch.click.passkeys`, vectors `packages/addons/dashboard/server/tests/vectors/webauthn_*.json`).**
 An own small verifier on `cryptography` (already a core dependency), not the `webauthn` PyPI package: it would add
 `cbor2`, `asn1crypto` and every attestation format (TPM, Android, Apple, packed with x5c) to an internet-facing pre-login
 path, and its defaults (user verification preferred, RSA allowed) would have to be overridden at every call. The verifier
@@ -4242,7 +4242,7 @@ The dashboard sees `seq` 20 through its subscription, or polls `human.pending {r
 `quota.host` remains request-scoped except at connect. Bound host-wide connections and default per-UID connection
 attempts to 20/s, burst 40. Runtime binding uses per-thread cwd on macOS or `/proc/self/fd` on Linux (orch-52).
 
-**v1.3.2 → v1.4 (provisional).** Requested by the dashboard stream (addons/dashboard HANDOVER, "P2 server (M2 reads)").
+**v1.3.2 → v1.4 (provisional).** Requested by the dashboard stream (packages/addons/dashboard HANDOVER, "P2 server (M2 reads)").
 Every change is an optional key or a new op, so no existing op changes its version.
 
 1. **`ticket.query` rows** gain `restricted`, `tasks` and `criteria` counts, `blocking_questions`, a richer `claim`
@@ -4272,7 +4272,7 @@ Every change is an optional key or a new op, so no existing op changes its versi
    metadata; `_more` and `_cut` flags; a scan budget for the feed; `who` and `eligible` limited to persons who can see the
    ticket; accepted risks recorded in §7.
 
-**v1.4 → v1.5 (provisional draft).** Answers §9 item 8 (the dashboard stream's list and its comment on #378; addons/dashboard
+**v1.4 → v1.5 (provisional draft).** Answers §9 item 8 (the dashboard stream's list and its comment on #378; packages/addons/dashboard
 HANDOVER "Still not served"), amended after the Codex challenge and the dashboard check of #390 (decided by orch-52).
 Additive: new ops under new caps, optional keys under `read_ext/2`, new arguments behind caps; no op changes its version
 (§0.4).
@@ -5868,13 +5868,13 @@ Status: **decided 13 Oct 2026 by orch-52 (see PR #435 comment)**; drafted 12 Oct
 independent Codex challenge and an Opus tie-break, recorded in 11A.13. Section 11 lists what the host owes the relay; this section is the design of the
 core-side client that pays it: the code that makes a served workspace reachable through orch-relay. It is numbered 11A
 so that the §12 references stay valid. Ground truth for the relay side is orch-relay `develop` @ `772d7b0`
-(`docs/protocol-v2.md` §8, §12.2, §13, §19; `docs/p3-relay-design.md` §3, §9, §10 "G4 as built", P3-D1 to P3-D37;
+(`contracts/relay/protocol-v2.md` §8, §12.2, §13, §19; `docs/p3-relay-design.md` §3, §9, §10 "G4 as built", P3-D1 to P3-D37;
 P3-D37 merged in relay PR #62, `7c0406a`). Where the relay and core disagree, the text says so; §11A.12 collects those
 points. "MUST" is normative for the implementation groups below.
 
 ### 11A.1 Scope, layout and groups
 
-Package `orch.relay` (`plugins/orch-core/src/orch/relay/`), tests under `plugins/orch-core/tests/relay/`. The relay
+Package `orch.relay` (`packages/core/src/orch/relay/`), tests under `packages/core/tests/relay/`. The relay
 corpus is vendored under `tests/relay/vectors/` (11A.10).
 
 | Module | Contents |
@@ -7359,7 +7359,7 @@ store API exists for it to degrade the host itself (gap, below). The store passe
   `checkpoints.py` `completeness` (`missing` lists every index) and `publish` (`unpublished_refs`): P15.
 - 11A.3 `publish.json` and `published/` (this file, the 11A.3 table) vs `relay/state.py` `_NAME` (flat names) and
   `MAX_FILE` (1 MiB; a restore record is up to about 4.7 MiB): P2, P3.
-- 11A.5 "The relay does not announce it" (Maximum publication size) and orch-relay `docs/protocol-v2.md` §19.8 ("The
+- 11A.5 "The relay does not announce it" (Maximum publication size) and `contracts/relay/protocol-v2.md` §19.8 ("The
   relay does not advertise its maximum yet") vs `relay_info.py` at `438b719` (it does; 11A.12 already says so).
 - 11A.5 startup classification table vs §11 "A mismatch with an entry still in the outbox": the queued-restore row
   is missing (P5).
@@ -9357,7 +9357,7 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
 
 #### 11A.15.11 Deliverable: the scripted dev path (one command)
 
-`plugins/orch-core/scripts/dev-pair` (Python, stdlib only, run with `uv run`) sets up a **throwaway** host, workspace and
+`packages/core/scripts/dev-pair` (Python, stdlib only, run with `uv run`) sets up a **throwaway** host, workspace and
 primary, links them to a relay, and emits a pairing link.
 
 **Who uses which relay (orch-f1 B3, corrected).** The first draft claimed a Simulator end-to-end against a local
@@ -10645,7 +10645,7 @@ the routes stay off until then. The other marks:
 Ground truth:
 - orch-relay `develop` `docs/p3-relay-design.md` §14: P3-D39 items 1 to 12, P3-D40 items 1 to 9, amendment A1, and the
   host questions Q-H1 to Q-H7 of §14.9;
-- orch-relay `docs/protocol-v2.md` §9, §10, §19.9 and §19.10;
+- `contracts/relay/protocol-v2.md` §9, §10, §19.9 and §19.10;
 - orch-core `develop` @ `58c365a4` (R2, R3, R5 and H12b merged);
 - R6a PR #554;
 - orch-mobile `develop` @ `2cf4de2`: the Drop client of #75, the NSE, and the bridge ops `drop_claim` and `drop_rewrap`.
@@ -11768,7 +11768,7 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
   nothing else), **this `orch setup` run generates the recovery code itself** (never a typed, restored or imported
   code; DECIDED (orch-07), D1), **and** the owner name is exactly `orch dev sandbox <id8>`, with `id8` = the first 8 characters of the manifest id (the manifest id is 8 or more lowercase hex characters, `^[0-9a-f]{8,}$`; DECIDED (orch-07), D4).
   Otherwise `invalid.input` (`detail.prefix`, "SBX is reserved for dev-pair sandboxes"). An `SBX` genesis therefore
-  always belongs to a throwaway person. **Existing use (grep of `docs/` and `plugins/orch-core/tests/` on 15 Oct 2026):**
+  always belongs to a throwaway person. **Existing use (grep of `docs/` and `packages/core/tests/` on 15 Oct 2026):**
   no workspace, vector, fixture or test uses the prefix `SBX`; the only matches are two base64 signature substrings
   in `tests/vectors/f1/restore.json` and `checkpoint.json`. The release notes of D1 tell any v2 user that an existing
   `SBX` workspace would be refused on a normal host. Tests `init_refuses_sbx_for_existing_person`,

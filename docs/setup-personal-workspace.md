@@ -49,8 +49,8 @@ This guide was checked with `268838a1e46dedf5d0ae88ea1875c5bf9c48a58f`.
 PIN=268838a1e46dedf5d0ae88ea1875c5bf9c48a58f
 G=git+https://github.com/severinlindenmann/orch-core@$PIN
 uv tool install \
-  --with "orch-dashboard @ $G#subdirectory=addons/dashboard/server" \
-  "$G#subdirectory=plugins/orch-core"
+  --with "orch-dashboard @ $G#subdirectory=packages/addons/dashboard/server" \
+  "$G#subdirectory=packages/core"
 uv tool update-shell
 ```
 

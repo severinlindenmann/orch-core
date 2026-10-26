@@ -1,8 +1,8 @@
 # The sealed field (secrets between the browser and the click signer)
 
 Contract for #1198 C5 (core side) and C6 (browser side). Written by the Opus security reviewer, 24 Oct 2026, from
-`design-dashboard-first.md` §3 and `design-r1-remote-dashboard.md` §5. Code: `plugins/orch-core/src/orch/click/sealed.py`.
-Vectors: `plugins/orch-core/tests/click_sealed_vectors.json` (both sides run the same file). Wiring into the signer
+`design-dashboard-first.md` §3 and `design-r1-remote-dashboard.md` §5. Code: `packages/core/src/orch/click/sealed.py`.
+Vectors: `packages/core/tests/click_sealed_vectors.json` (both sides run the same file). Wiring into the signer
 and the pages is C7 (grant reveal), C10 (hub backup key), C12 (passphrase), C13 (recovery code), C16 (GitHub token).
 
 ## 1. What it is for
@@ -163,7 +163,7 @@ only the garbage collector releases; in the browser, overwrite the `Uint8Array` 
 
 ## 8. Test vectors
 
-`plugins/orch-core/tests/click_sealed_vectors.json`, format `orch.sealed-vectors/1`, deterministic (all keys come from
+`packages/core/tests/click_sealed_vectors.json`, format `orch.sealed-vectors/1`, deterministic (all keys come from
 fixed seeds). Keys are JWK (`kty`, `crv`, `d`, `x`, `y`).
 
 - `seal`: one case per purpose (and a UTF-8 passphrase, 254- and 255-byte boundaries). With `ephemeral_jwk` fixed,
@@ -179,6 +179,6 @@ fixed seeds). Keys are JWK (`kty`, `crv`, `d`, `x`, `y`).
   algorithm; padded and standard base64; swapped purposes; a purpose of the other direction; four bad paddings.
 - Replay and the view-digest pin are stateful and are tested in code, not in the file.
 
-Regenerate only on a contract change: `uv run python tests/host/test_click_sealed.py` (from `plugins/orch-core`). The
+Regenerate only on a contract change: `uv run python tests/host/test_click_sealed.py` (from `packages/core`). The
 Python test fails while the file and the code disagree. The construction was cross-checked against Node's WebCrypto
 (every seal vector and every `out` open vector) when the vectors were written.

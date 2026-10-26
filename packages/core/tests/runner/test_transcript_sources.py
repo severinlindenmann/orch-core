@@ -19,7 +19,8 @@ def test_claude_sources_are_deduped_newest_first_and_inside_the_cwd():
     got = transcript_sources.sources(FIX / "claude_research.jsonl", "claude-code", CWD)
     by_kind = {(s["kind"], s.get("url") or s.get("query") or s.get("path")): s for s in got}
     assert set(by_kind) == {
-        ("web", "https://www.example.org/rfc/6585#section-4"), ("search", "redis rate limit counter"),
+        ("web", "https://www.example.org/rfc/6585#section-4"),
+        ("search", "redis rate limit counter"),
         ("file", "docs/api/invites.md"),
     }  # fmt: skip  (/etc/hosts is outside the cwd, the failed fetch is dropped, the repeats are merged)
     web = by_kind[("web", "https://www.example.org/rfc/6585#section-4")]

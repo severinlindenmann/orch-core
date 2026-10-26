@@ -130,7 +130,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   // Model routing: the closed list of models for this agent (from core); the choice is a name of that list, never free text.
   const routing = hasFeature('model_routing', ws)
   const choices = useQuery({ ...routingQueries.choices(ws), enabled: routing })
-  const models = choices.data?.harnesses.find((h) => h.id === harness)?.models ?? []
+  const models = choices.data?.harnesses?.find((h) => h.id === harness)?.models ?? []
   const failing = useQuery({ ...queries.ticket(ws, ticket ?? ''), enabled: routing && !!ticket })
   const strong = (STRONG_MODELS[harness] ?? []).find((id) => models.some((m) => m.id === id))
   const checkFailing = !!failing.data?.tasks_state?.some((t) => t.state !== 'done' && t.state !== 'skipped' && t.receipt !== null && t.receipt.exit !== 0)

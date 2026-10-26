@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { blockedText } from '@/api/agents'
 import { delegateApi, type DelegateArgs } from '@/api/focus'
-import { hasFeature } from '@/api/features'
+import { hasFeature, isRealHost } from '@/api/features'
 import { modelLabel, routingQueries } from '@/api/modelRouting'
 import { newIdem, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
@@ -26,7 +26,7 @@ export function DelegateSheet({ ws, ticket, parent, used, max, onClose }: { ws: 
   const [error, setError] = useState('')
   const routing = hasFeature('model_routing', ws)
   const choices = useQuery({ ...routingQueries.choices(ws), enabled: routing })
-  const models = choices.data?.harnesses.find((h) => h.id === harness)?.models ?? []
+  const models = choices.data?.harnesses?.find((h) => h.id === harness)?.models ?? []
   const full = max !== null && used >= max
   const args: DelegateArgs = {
     ticket, harness, mode: 'task', parent_run: parent.run, label: title.trim(), worktree: true,
@@ -34,6 +34,7 @@ export function DelegateSheet({ ws, ticket, parent, used, max, onClose }: { ws: 
   }
   const send = useMutation({
     mutationFn: async () => {
+      if (!isRealHost()) throw new Error('Delegating a task is unavailable in this demo.')
       const pre = await delegateApi.preview(ws, args)
       if (pre.blocked) throw new Error(blockedText(pre.blocked) ?? pre.blocked.message ?? 'The task could not be started.')
       if (!pre.spec) throw new Error('The task could not be previewed.')

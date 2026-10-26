@@ -18,7 +18,7 @@ vi.mock('@/components/sign/SignPopover', () => ({
 
 it('keeps the signed create flow in Focus after creation succeeds', async () => {
   const { user, router } = renderApp('/focus', { setup: (store) => installAndGrant(store, store.workspaces[0].id, 'focus') })
-  await user.click(await screen.findByRole('button', { name: 'New ticket with me' }))
+  await user.click(await screen.findByRole('button', { name: /^New ticket.*together/ }))
   const dialog = await screen.findByRole('dialog', { name: 'New ticket' })
   await user.type(await within(dialog).findByLabelText('Title'), 'Signed focus ticket')
   await user.type(within(dialog).getByLabelText(/^What should be true/), 'Keep this session in focus')

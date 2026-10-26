@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { isRealHost } from '@/api/features'
+import { demoTranscript, isDemoRun } from '@/mocks/addons/focus/demo'
 import { appendItems, focusApi, focusQueries, type ChatItem } from '@/api/focus'
 import type { Run } from '@/api/runs'
 import { Button } from '@/components/ui/button'
@@ -15,7 +17,7 @@ export function useTranscript(ws: string, run: Run, child?: string) {
   return useQuery({
     queryKey: focusQueries.transcriptKey(ws, run.run, child),
     queryFn: async (): Promise<Feed> => {
-      const got = await focusApi.transcript(ws, run.run, { after: feed.current.next, child })
+      const got = !isRealHost() && isDemoRun(run.run) ? demoTranscript() : await focusApi.transcript(ws, run.run, { after: feed.current.next, child })
       feed.current = {
         items: appendItems(feed.current.items, got.items),
         next: got.next ?? feed.current.next, available: got.available, reason: got.reason, eof: got.eof,
@@ -31,9 +33,9 @@ const time = (ts: string | null) => (ts ? new Date(ts).toLocaleTimeString([], { 
 
 function Item({ item }: { item: ChatItem }) {
   const text = item.text ?? ''
-  if (item.kind === 'status') return <p className="text-center text-xs text-text-faint">{text}</p>
-  if (item.kind === 'tool') return <p className="font-mono text-xs text-text-muted" data-kind="tool">{'> '}{text}{item.files?.length ? <span className="text-text-faint"> ({item.files.length} {item.files.length === 1 ? 'file' : 'files'})</span> : null}</p>
-  if (item.kind === 'result') return <p className={`truncate font-mono text-xs ${item.error ? 'text-danger' : 'text-text-faint'}`} data-kind="result" title={text}>{item.error ? 'Error: ' : ''}{text.split('\n')[0]}</p>
+  if (item.kind === 'status') return <p className="text-center text-xs text-text-muted">{text}</p>
+  if (item.kind === 'tool') return <p className="font-mono text-xs text-text-muted" data-kind="tool">{'> '}{text}{item.files?.length ? <span className="text-text-muted"> ({item.files.length} {item.files.length === 1 ? 'file' : 'files'})</span> : null}</p>
+  if (item.kind === 'result') return <p className={`truncate font-mono text-xs ${item.error ? 'text-danger' : 'text-text-muted'}`} data-kind="result" title={text}>{item.error ? 'Error: ' : ''}{text.split('\n')[0]}</p>
   if (item.kind === 'question') return <div className="rounded-lg border border-brand/30 bg-brand-soft p-3 text-sm" data-kind="question">
     <p className="text-xs font-medium text-brand">Question for you</p>
     <p className="whitespace-pre-wrap">{text}</p>
@@ -42,7 +44,7 @@ function Item({ item }: { item: ChatItem }) {
   const mine = item.role === 'user'
   return <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
     <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${mine ? 'bg-brand-soft' : 'bg-surface'}`}>
-      <p className="text-xs text-text-faint">{mine ? 'You' : 'Agent'} {time(item.ts)}</p>
+      <p className="text-xs text-text-muted">{mine ? 'You' : 'Agent'} {time(item.ts)}</p>
       <p className="whitespace-pre-wrap break-words">{text}{item.truncated ? ' ...' : ''}</p>
     </div>
   </div>

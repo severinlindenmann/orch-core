@@ -13,8 +13,9 @@ it('renders the ticket key and title with slots and a collapsible tab panel', as
   await waitFor(() => expect(chip).toHaveTextContent(mockStore.ticket('DEMO-0042')!.title))
   expect(chip).toHaveTextContent('DEMO-0042')
   expect(screen.getByTestId('focus-conversation')).toBeInTheDocument()
-  expect(screen.getByTestId('focus-tasks-list')).toBeInTheDocument()
+  expect(screen.queryByTestId('focus-tasks-list')).toBeNull() // Tasks open from the chip, not as a second list
   expect(screen.getByRole('button', { name: 'Stop all' })).toBeDisabled()
+  expect(screen.getByRole('status')).toHaveTextContent('No agent running')
   for (const tab of ['Changes', 'Artifacts', 'Decisions', 'Context']) {
     await user.click(screen.getByRole('tab', { name: tab }))
     expect(screen.getByRole('tabpanel')).toBeInTheDocument()
@@ -30,7 +31,7 @@ it('renders the ticket key and title with slots and a collapsible tab panel', as
 it('renders scratch with No ticket and opens the existing create form', async () => {
   const { user } = renderApp('/focus?scratch=1', { setup })
   const root = await screen.findByTestId('focus-root')
-  expect(within(root).getByText('No ticket')).toBeInTheDocument()
+  expect(within(root).getByText('Scratch session')).toBeInTheDocument()
   expect(screen.queryByTestId('focus-start')).toBeNull()
   expect(screen.getByTestId('focus-conversation')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Create ticket from this' }))

@@ -12,9 +12,9 @@ it('shows all three choices inline and starts scratch', async () => {
   const { user, router } = renderApp('/focus', { setup })
   const start = await screen.findByTestId('focus-start')
   expect(within(start).getByRole('heading', { name: 'Start focus session' })).toBeInTheDocument()
-  expect(within(start).getByRole('button', { name: 'New ticket with me' })).toBeInTheDocument()
-  expect(within(start).getByRole('button', { name: 'Existing ticket' })).toBeInTheDocument()
-  await user.click(within(start).getByRole('button', { name: 'No ticket, just work' }))
+  expect(within(start).getByRole('button', { name: /^New ticket.*together/ })).toBeInTheDocument()
+  expect(within(start).getByRole('button', { name: /^Existing ticket/ })).toBeInTheDocument()
+  await user.click(within(start).getByRole('button', { name: /^Scratch session/ }))
   await waitFor(() => expect(router.state.location.search).toMatchObject({ scratch: 1 }))
   expect(await screen.findByTestId('focus-conversation')).toBeInTheDocument()
   expect(screen.queryByTestId('focus-start')).toBeNull()
@@ -22,7 +22,7 @@ it('shows all three choices inline and starts scratch', async () => {
 
 it('picks an open ticket and navigates to its session', async () => {
   const { user, router } = renderApp('/focus', { setup })
-  await user.click(await screen.findByRole('button', { name: 'Existing ticket' }))
+  await user.click(await screen.findByRole('button', { name: /^Existing ticket/ }))
   const picker = await screen.findByRole('combobox', { name: 'Open tickets' })
   for (const option of within(picker).getAllByRole('option')) {
     const key = (option as HTMLOptionElement).value
@@ -35,7 +35,7 @@ it('picks an open ticket and navigates to its session', async () => {
 
 it('creates a ticket through the existing form then opens its focus session', async () => {
   const { user, router } = renderApp('/focus', { setup })
-  await user.click(await screen.findByRole('button', { name: 'New ticket with me' }))
+  await user.click(await screen.findByRole('button', { name: /^New ticket.*together/ }))
   const dialog = await screen.findByRole('dialog', { name: 'New ticket' })
   await user.type(await within(dialog).findByLabelText('Title'), 'Focus entry ticket')
   await user.type(within(dialog).getByLabelText(/^What should be true/), 'Keep the work in focus')
@@ -55,7 +55,7 @@ it('on a real host "No ticket" previews and opens a person-run Claude terminal, 
   const open = vi.spyOn(runsApi, 'open').mockResolvedValue({ run: { run: 'r_SCRATCH1' } as Run })
   vi.spyOn(runsApi, 'list').mockResolvedValue({ runs: [], runner: null, truncated: false })
   const { user, router } = renderApp('/focus', { setup })
-  await user.click(await screen.findByRole('button', { name: 'No ticket, just work' }))
+  await user.click(await screen.findByRole('button', { name: /^Scratch session/ }))
   expect(await screen.findByTestId('focus-scratch-preview')).toHaveTextContent('Starts Claude as you')
   expect(prev).toHaveBeenCalledWith(mockStore.workspaces[0].id, { harness: 'claude-code', cwd: { kind: 'workspace' } })
   expect(open).not.toHaveBeenCalled()
@@ -70,7 +70,7 @@ it('a blocked preview cannot be started', async () => {
   vi.spyOn(runsApi, 'preview').mockResolvedValue(preview({ blocked: { code: 'runner.disabled', message: 'Terminals are off here.' } }))
   const open = vi.spyOn(runsApi, 'open')
   const { user } = renderApp('/focus', { setup })
-  await user.click(await screen.findByRole('button', { name: 'No ticket, just work' }))
+  await user.click(await screen.findByRole('button', { name: /^Scratch session/ }))
   expect(await screen.findByRole('alert')).toHaveTextContent('Terminals are off here.')
   expect(within(screen.getByTestId('focus-scratch-preview')).getByRole('button', { name: 'Start' })).toBeDisabled()
   expect(open).not.toHaveBeenCalled()

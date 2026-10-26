@@ -263,7 +263,7 @@ export function Sidebar() {
             </RailTip>
           ))}
 
-          {navItems.length > 0 && (
+          {(navItems.length > 0 || hasFeature('focus', workspace?.id)) && (
             <div className="mt-4 space-y-0.5">
               {collapsed ? (
                 <div className="mx-2 mb-1 border-t border-border" />
@@ -284,6 +284,17 @@ export function Sidebar() {
                   </Link>
                 </RailTip>
               ))}
+              {hasFeature('focus', workspace?.id) && (
+                <RailTip label="Focus mode · from addon focus">
+                  <Link to="/focus" className={link} activeProps={activeProps} activeOptions={{ exact: false, includeSearch: false }} aria-label="Focus">
+                    <span className="relative">
+                      <Focus className="size-4" />
+                      {collapsed && <AddonBadge name="focus" className="absolute -right-1.5 -top-1.5 size-2.5 rounded-[3px] text-[7px]" />}
+                    </span>
+                    {!collapsed && (<><span className="flex-1 truncate">Focus</span><AddonBadge name="focus" /></>)}
+                  </Link>
+                </RailTip>
+              )}
               {navItems.length > 0 && (
                 <Popover open={moreOpen} onOpenChange={setMoreOpen}>
                   <RailTip label={moreLabel}>
@@ -467,7 +478,6 @@ const CORE_NAV = [
   { to: '/addons', label: 'Add-ons', icon: Puzzle, feature: 'settings', real: true },
   /** Shares (Publish add-on): listed only while the add-on is ON for this workspace (the server adds `publish` then). */
   { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
-  { to: '/focus', label: 'Focus', icon: Focus, feature: 'focus' },
   /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */
   { to: '/usage', label: 'Usage', icon: Gauge, feature: 'usage', real: true },
   /** Wiki (add-on): pages of the project's wiki folder; listed only while the add-on is ON (the server adds `wiki` then). */

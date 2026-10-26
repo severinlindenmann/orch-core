@@ -36,6 +36,6 @@ it('passes a written answer into the existing signing dialog', async () => {
   await user.click(await screen.findByRole('tab', { name: 'Decisions' }))
   const input = await screen.findByRole('textbox', { name: /Your answer to/ })
   await user.type(input, 'Use the monthly export.')
-  await user.click(screen.getByRole('button', { name: 'Send written answer' }))
+  await user.click(screen.getByRole('button', { name: 'Send answer' }))
   expect(await screen.findByRole('dialog')).toHaveTextContent('Use the monthly export.')
 })

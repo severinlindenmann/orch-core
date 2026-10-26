@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
+import * as features from '@/api/features'
 import { delegateApi } from '@/api/focus'
 import type { AgentPreview } from '@/api/agents'
 import type { Run } from '@/api/runs'
@@ -12,7 +13,8 @@ const SPEC = 'a'.repeat(64)
 const preview = (over: Partial<AgentPreview> = {}): AgentPreview => ({ spec: SPEC, ticket: 'DEMO-1', display: 'x', display_hidden: false, cwd: { kind: 'worktree' }, cwd_path: '/w', cwd_path_hidden: false, will_create_worktree: false, login_shell: false, env: [], grant: null, blocked: null, warnings: [], ...over })
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
-function mount(props: Partial<React.ComponentProps<typeof DelegateSheet>> = {}) {
+function mount(props: Partial<React.ComponentProps<typeof DelegateSheet>> = {}, real = true) {
+  vi.spyOn(features, 'isRealHost').mockReturnValue(real)
   const onClose = vi.fn()
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={client}><DelegateSheet ws="w1" ticket="DEMO-1" parent={parent} used={1} max={3} onClose={onClose} {...props} /></QueryClientProvider>)
@@ -50,4 +52,13 @@ it('shows why the host refused and starts nothing', async () => {
 it('disables the button at the delegation limit', async () => {
   mount({ used: 3, max: 3 })
   expect(screen.getByRole('button', { name: 'Delegate' })).toBeDisabled()
+})
+
+it('says it is unavailable in the demo and calls no host', async () => {
+  const pre = vi.spyOn(delegateApi, 'preview')
+  const { user } = mount({}, false)
+  await user.type(screen.getByLabelText('Task title'), 'Task')
+  await user.click(screen.getByRole('button', { name: 'Delegate' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('unavailable in this demo')
+  expect(pre).not.toHaveBeenCalled()
 })

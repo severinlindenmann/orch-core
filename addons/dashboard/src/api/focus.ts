@@ -2,7 +2,9 @@
 // Transcript text is untrusted (it is whatever the agent printed or read): the page draws it as plain text.
 
 import type { AgentPreview } from './agents'
-import { call, type Run } from './runs'
+import { isRealHost } from './features'
+import { call, runQueries, runsApi, type Run } from './runs'
+import { demoRunList } from '@/mocks/addons/focus/demo'
 
 export interface ChatItem {
   id: string
@@ -176,4 +178,10 @@ export const delegateApi = {
   preview: (ws: string, args: DelegateArgs) => call<AgentPreview>('POST', `${w(ws)}/agents/preview`, args),
   start: (ws: string, args: DelegateArgs, spec: string, idem: string) =>
     call<{ run: Run }>('POST', `${w(ws)}/agents/start`, { ...args, spec, idem }),
+}
+
+/** The runs of the workspace. The mock host has no runner: it answers with the demo run of DEMO-0043 (mocks/addons/focus/demo.ts). */
+export const focusRunQueries = {
+  // The demo list never changes: once read, every observer reuses it (a real host's list is read again on mount).
+  list: (ws: string) => ({ ...runQueries.list(ws), ...(isRealHost() ? {} : { staleTime: Infinity }), queryFn: () => (isRealHost() ? runsApi.list(ws) : Promise.resolve(demoRunList())) }),
 }

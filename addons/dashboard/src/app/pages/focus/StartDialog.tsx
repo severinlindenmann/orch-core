@@ -76,6 +76,12 @@ function ScratchStart({ ws, onCancel }: { ws: string; onCancel: () => void }) {
   </div>
 }
 
+function ChoiceCard({ title, hint, onClick, expanded }: { title: string; hint: string; onClick: () => void; expanded?: boolean }) {
+  return <Button variant="outline" className="h-auto flex-col items-start gap-1 whitespace-normal p-4 text-left" aria-expanded={expanded} onClick={onClick}>
+    <span className="text-sm font-medium">{title}</span><span className="text-xs font-normal text-text-muted">{hint}</span>
+  </Button>
+}
+
 export function StartDialog() {
   const { workspace } = useWorkspace()
   const navigate = useNavigate()
@@ -85,11 +91,11 @@ export function StartDialog() {
   return (
     <section data-testid="focus-start" aria-labelledby="focus-start-title" className="mx-auto w-full max-w-xl space-y-4 p-6">
       <h1 id="focus-start-title" className="text-xl font-semibold">Start focus session</h1>
-      <p className="text-sm text-text-muted">Choose a ticket or start with a blank workspace.</p>
+      <p className="text-sm text-text-muted">Choose how to start.</p>
       <div className="grid gap-3">
-        <Button variant="outline" onClick={() => setChoice('new')}>New ticket with me</Button>
-        <Button variant="outline" onClick={() => setChoice('existing')} aria-expanded={choice === 'existing'}>Existing ticket</Button>
-        <Button variant="outline" onClick={() => { if (isRealHost()) setChoice('scratch'); else void navigate({ to: '/focus', search: { scratch: 1 } }) }}>No ticket, just work</Button>
+        <ChoiceCard title="New ticket" hint="Write a ticket together with an agent, then work on it here." onClick={() => setChoice('new')} />
+        <ChoiceCard title="Existing ticket" hint="Pick an open ticket and continue with its agent." expanded={choice === 'existing'} onClick={() => setChoice('existing')} />
+        <ChoiceCard title="Scratch session" hint="Work in the workspace folder without a ticket. Create one later." onClick={() => { if (isRealHost()) setChoice('scratch'); else void navigate({ to: '/focus', search: { scratch: 1 } }) }} />
       </div>
       {choice === 'existing' && <div className="space-y-2">
         <label htmlFor="focus-ticket" className="text-sm">Open tickets</label>

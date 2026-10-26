@@ -6,7 +6,7 @@ import { Empty, usePanelTicket } from './data'
 export function Artifacts({ ticket }: { ticket?: string }) {
   const { data, workspace, isError } = usePanelTicket(ticket)
   const [selected, select] = useState<string | null>(null)
-  if (!ticket) return <Empty>No ticket yet. Artifacts will appear here.</Empty>
+  if (!ticket) return <Empty>Create a ticket to collect artifacts here.</Empty>
   if (isError) return <Empty>Could not load artifacts.</Empty>
   if (!data) return <Empty>Loading artifacts…</Empty>
   if (!data.artifacts.length) return <Empty>No artifacts yet.</Empty>

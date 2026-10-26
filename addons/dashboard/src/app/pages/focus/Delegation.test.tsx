@@ -34,7 +34,7 @@ afterEach(() => vi.restoreAllMocks())
 
 it('counts tasks and needs-you tasks and opens the task list', async () => {
   const { user } = show()
-  const chip = await screen.findByRole('button', { name: '1 tasks · 1 need you' })
+  const chip = await screen.findByRole('button', { name: '1 task, 1 needs you' })
   await user.click(chip)
   expect(within(screen.getByRole('dialog')).getByRole('heading', { name: 'Tasks' })).toBeInTheDocument()
 })
@@ -47,13 +47,14 @@ it('expands a collapsed row with model and state', async () => {
   await user.click(title)
   expect(row.open).toBe(true)
   expect(within(row).getByText('test-model')).toBeVisible()
-  expect(within(row).getByText('Result: needs you')).toBeVisible()
+  expect(within(row).queryByText(/^Result:/)).toBeNull() // it repeats the status shown on the row
+  expect(within(row).getByRole('button', { name: 'Stop' })).toBeEnabled()
   expect(within(row).getByText('Requested by you')).toBeVisible()
 })
 
 it('shows limited visibility without a zero count when runs are unavailable', async () => {
   show([], true)
-  expect((await screen.findAllByText('Delegation visibility is limited in this version')).length).toBeGreaterThan(0)
+  expect((await screen.findAllByText('Task details unavailable')).length).toBeGreaterThan(0)
   expect(screen.queryByText(/0 tasks/)).toBeNull()
   expect(screen.getByRole('button', { name: 'Stop all' })).toBeDisabled()
 })
@@ -86,10 +87,10 @@ it('lists agent-spawned children from the host with files and no stop button act
   await user.click(title)
   const row = title.closest('details')!
   expect(within(row).getByText('Spawned by main agent')).toBeVisible()
-  expect(within(row).getByText('Result: done')).toBeVisible()
+  expect(within(row).queryByText(/^Result:/)).toBeNull()
   expect(within(row).getByTestId('focus-task-files')).toHaveTextContent('tests/test_invite.py')
-  expect(within(row).getByRole('button', { name: 'Stop' })).toBeDisabled()
-  expect(within(list).getByText('This task stops with the main session.')).toBeInTheDocument()
+  expect(within(row).queryByRole('button', { name: 'Stop' })).toBeNull() // a finished task has nothing to stop
+  expect(within(row).getByText(/^Ended /)).toBeVisible()
   expect(screen.getByRole('button', { name: 'Stop all' })).toBeDisabled()
   expect(list.textContent).not.toContain('s_main')
 })
@@ -106,7 +107,7 @@ it('merges a human-requested child with its run and does not list it twice', asy
 
 it('is limited when the host does not support the delegation list or hides a harness', async () => {
   show([run('main')], false, 'DEMO-0042', { ...none, supported: false })
-  expect((await screen.findAllByText('Delegation visibility is limited in this version')).length).toBeGreaterThan(0)
+  expect((await screen.findAllByText('Task details unavailable')).length).toBeGreaterThan(0)
 })
 
 it('offers "Delegate a task" for a live main run and disables it at the policy limit', async () => {

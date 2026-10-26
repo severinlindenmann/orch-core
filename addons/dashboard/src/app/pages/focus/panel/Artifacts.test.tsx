@@ -17,7 +17,7 @@ it('lists artifacts with a count and opens the existing preview', async () => {
 it('shows an empty state for scratch', async () => {
   const { user } = renderApp('/focus?scratch=1', { setup })
   await user.click(await screen.findByRole('tab', { name: 'Artifacts' }))
-  expect(screen.getByText('No ticket yet. Artifacts will appear here.')).toBeInTheDocument()
+  expect(screen.getByText('Create a ticket to collect artifacts here.')).toBeInTheDocument()
 })
 it('shows an empty artifact list for a ticket with no artifacts', async () => {
   const { user } = renderApp('/focus/DEMO-0042', { setup })

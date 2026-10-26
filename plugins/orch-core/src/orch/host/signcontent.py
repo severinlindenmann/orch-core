@@ -1267,7 +1267,7 @@ def _event(
             out.setdefault("notes", []).append(
                 f"Agents may get access for up to {span(ev['set']['grant_hours'])} (members; the runner too)."
             )
-            if set(ev["set"]) == {"grant_hours"} and type(ev["set"]["grant_hours"]) is int:  # run-9 feedback 3.5: compact
+            if set(ev["set"]) == {"grant_hours"} and type(ev["set"]["grant_hours"]) is int:
                 now, was = ev["set"]["grant_hours"], before.get("grant_hours")
                 move = f"{span(was)} \u2192 {span(now)}" if type(was) is int and was != now else span(now)
                 out["title"] = "Change the longest agent access"

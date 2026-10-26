@@ -310,3 +310,9 @@ def test_selective_chain_f1_only_for_the_owner_alias(w):
         404,
         {"error": "unknown_workspace"},
     )
+
+
+def test_web_server_accept_queue_holds_a_burst():
+    from orch_hub.webapi.server import _BoundedServer
+
+    assert _BoundedServer.request_queue_size >= 128  # the Admin page opens 7 connections at once

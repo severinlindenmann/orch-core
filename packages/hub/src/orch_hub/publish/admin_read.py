@@ -19,6 +19,7 @@ from ..contract import hub as H
 from ..contract.canon import b64u
 from ..contract.hub import Refused
 from ..contract.keystore import OpSigner
+from ..localdial import dialling_locally
 from .forwarder import _endpoint
 
 _HEX32 = re.compile(r"[0-9a-f]{32}")
@@ -67,7 +68,7 @@ class AdminReadClient:
             raise AdminReadError("malformed") from None
         headers = {"Orch-Hub": self._hub, "Orch-Hub-Ts": str(ts), "Orch-Hub-Signature": b64u(sig)}
         cls = http.client.HTTPSConnection if self._scheme == "https" else http.client.HTTPConnection
-        conn = cls(self._host, self._port, timeout=self._timeout)
+        conn = dialling_locally(cls(self._host, self._port, timeout=self._timeout))
         try:
             conn.request("GET", target, headers=headers)
             resp = conn.getresponse()  # a redirect is an unexpected answer, never followed

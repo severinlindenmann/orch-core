@@ -22,6 +22,7 @@ from typing import Any
 
 from ..contract import relayroutes as RR
 from ..contract.canon import CanonError, b64u, cj, loads_strict
+from ..localdial import dialling_locally
 
 #: how long a hint's mailbox copy stays for the phone's catch-up (§10.8.1 bounds 60 s .. 7 d)
 MAILBOX_HINT_TTL_S = 86_400
@@ -49,7 +50,7 @@ def http_transport(scheme: str, host: str, port: int) -> Transport:
     cls = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
 
     def send(method: str, target: str, headers: Mapping[str, str], body: bytes, timeout: float):
-        conn = cls(host, port, timeout=timeout)
+        conn = dialling_locally(cls(host, port, timeout=timeout))
         try:
             conn.request(method, target, body=body if body or method != "GET" else None, headers=dict(headers))
             r = conn.getresponse()

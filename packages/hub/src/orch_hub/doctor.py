@@ -31,6 +31,7 @@ from .colocation import Accounts, BindRefused, check_bind_allowed, parse_link_li
 from .keys import HubKeys, KeysError
 from .keys.fsutil import StateError, check_dir
 from .link import tls
+from .localdial import dialling_locally
 from .publish.forwarder import _endpoint
 from .serve import REGISTRY_FILE, parse_listen
 
@@ -379,7 +380,7 @@ def check_publish(url: str) -> None:
     except ValueError as e:
         raise Check(str(e)) from None
     cls = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
-    conn = cls(host, port, timeout=10)
+    conn = dialling_locally(cls(host, port, timeout=10))
     try:
         conn.request("PUT", "/v2/hub/card", body=b"{}", headers={"Content-Type": "application/json"})
         resp = conn.getresponse()

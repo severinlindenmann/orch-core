@@ -20,6 +20,7 @@ from ..contract.canon import b64u, cj
 from ..contract.hub import Refused, hub_path_signed_bytes
 from ..contract.keystore import KeyUseError, OpSigner
 from ..keys.store import HubKeys
+from ..localdial import dialling_locally
 from . import request as R
 from .sync import PublishSync, PublishSyncError
 
@@ -252,7 +253,7 @@ class HubPublish:
         left = deadline - time.monotonic()
         if left <= 0:
             raise Refused("unavailable")
-        conn = cls(self._host, self._port, timeout=min(self._cfg.timeout_s, left))
+        conn = dialling_locally(cls(self._host, self._port, timeout=min(self._cfg.timeout_s, left)))
         try:
             conn.request(p.method, p.target, body=p.body or None, headers=dict(headers))
             resp = conn.getresponse()  # a 3xx is returned as is: nothing here follows a redirect

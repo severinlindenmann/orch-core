@@ -85,6 +85,11 @@ def test_host_or_agent_users_refuse_without_the_flag(acc):
         check_bind_allowed(acc, hub_user="orch-hub-split", card_dev=True, dev_shared_machine=False)
 
 
+def test_a_real_hub_on_a_machine_with_workspace_users_only_warns():
+    warn = check_bind_allowed(_acc(), hub_user="orch-hub-split", card_dev=False, dev_shared_machine=False)
+    assert warn and "weaker isolation" in warn
+
+
 def test_dev_flag_with_a_non_dev_card_is_a_hard_error():
     with pytest.raises(BindRefused, match="dev: true"):
         check_bind_allowed(_acc(), hub_user="orch-hub-split", card_dev=False, dev_shared_machine=True)
@@ -170,11 +175,8 @@ def test_serve_refuses_a_loopback_flag_value_on_listen_and_a_wildcard_on_link_li
 def test_serve_refuses_host_users_and_dev_flag_on_a_non_dev_card(state, tmp_path, monkeypatch):
     with pytest.raises(BindRefused, match="split layout"):
         _serve(state, link_listen="10.1.2.3:8106", assigned=ALWAYS, accounts=_acc())
-    from orch_hub.keys import store
-
-    monkeypatch.setattr(store, "DEV", False)  # V3 hubs are all dev; a prod card is made by flipping the one constant
     nondev = tmp_path / "prod"
-    HubKeys.init(nondev)
+    HubKeys.init(nondev, real=True)
     with pytest.raises(BindRefused, match="dev: true"):
         _serve(nondev, link_listen="10.1.2.3:8106", assigned=ALWAYS, accounts=_acc(), dev_shared_machine=True)
 
@@ -230,3 +232,44 @@ def test_root_is_refused_even_on_a_clean_machine(monkeypatch):
         check_bind_allowed(acc, hub_user="root", card_dev=True, dev_shared_machine=False)
     with pytest.raises(BindRefused, match="does not run as root"):
         check_bind_allowed(_acc(), hub_user="root", card_dev=True, dev_shared_machine=True)
+
+
+def test_real_hub_card_is_not_dev_and_survives_reopen(tmp_path):
+    real = tmp_path / "real"
+    HubKeys.init(real, real=True)
+    k = HubKeys.open(real)
+    assert k.dev is False and k.card()["o"]["dev"] is False
+    assert HubKeys.open(HubKeys.init(tmp_path / "d").state).card()["o"]["dev"] is True
+
+
+def test_bind_all_listens_on_every_interface_and_keeps_the_address(state):
+    ip = _private_local_ip()
+    if ip is None:
+        pytest.skip("no private local address on this machine")
+    stop, out = threading.Event(), io.StringIO()
+    port = _free_port(ip)
+    t = threading.Thread(
+        target=lambda: serve(
+            state,
+            None,
+            "http://127.0.0.1:9",
+            [],
+            link_listen=f"{ip}:{port}",
+            bind_all=True,
+            accounts=Accounts({"orch-hub": (986, 980)}, {}),
+            stop=stop,
+            out=out,
+        ),
+        daemon=True,
+    )
+    t.start()
+    end = time.monotonic() + 10
+    while "orch-hub ready" not in out.getvalue() and time.monotonic() < end:
+        time.sleep(0.05)
+    try:
+        assert "orch-hub ready" in out.getvalue(), out.getvalue()
+        with socket.create_connection(("127.0.0.1", port), timeout=3):  # reachable on loopback too
+            pass
+    finally:
+        stop.set()
+        t.join(15)

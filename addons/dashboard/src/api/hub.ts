@@ -70,7 +70,10 @@ export type HubCommandRequest =
   | { kind: 'share_revoke'; ref: string }
 
 /** `POST /hub/connect` (#1198 C11): tell the hub about a join just signed by click. `idem` is `a_` + a ULID-shaped id. */
-export interface HubConnectRequest { idem: string; invite: string; hub_card: string }
+export interface HubConnectRequest { idem: string; invite: string; hub_card: string; addr?: string }
+/** `POST /hub/link` (run-9 feedback 6): the host read the connect link (fetched the hub card, checked it against the
+ * link's hub id). `hub_card` is the card as text, to hand back to the join; nothing is signed or kept by this read. */
+export interface HubLinkInfo { hub_id: string; name: string; code: string; endpoint: string | null; dev: boolean; hub_card: string }
 export interface HubConnected { connected: true; mode: HubMode | null }
 
 export interface HubCommand {

@@ -39,7 +39,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
 }
 export function StandalonePage({ onJoin }: { onJoin: () => void }) {
   return <><Panel title="Hub"><p><strong>Not connected.</strong> This workspace works on its own. Connect a hub to use your phone, publish files and hand work to other workspaces.</p>
-    <p className="text-text-muted">You need the hub card file from a hub admin and your backup key from setup. You confirm the connection here with one click.</p>
+    <p className="text-text-muted">You need the connect link from a hub admin and your backup key from setup. You confirm the connection here with one click.</p>
     <Action id="hub-connect" onClick={onJoin}>Connect a hub</Action>
   </Panel><Panel title="What stays the same"><p>Your tickets, agents and keys stay on this computer.</p><p>You can leave the hub at any time and keep working.</p></Panel></>
 }

@@ -177,6 +177,13 @@ export function registerHubClickRoutes(r: MockRouter) {
     open.delete(id)
     return ok({ id, state: 'cancelled' })
   })
+  r.add('POST', '/api/w/:ws/hub/link', (_s, c) => {
+    const link = (c.body as { link?: string } | null)?.link ?? ''
+    const m = /^https?:\/\/([^/]+)\/c#h1\.([0-9a-f]{32})\.([A-Za-z0-9_-]{1,64})(?:\.(.+))?$/.exec(link)
+    if (!m) return fail(400, 'invalid.input', 'That is not a connect link.')
+    const card = JSON.stringify({ o: { hub_id: m[2] }, sig: 'x' })
+    return ok({ hub_id: m[2], name: m[1], code: m[3], endpoint: m[4] ?? null, dev: true, hub_card: card })
+  })
   r.add('POST', '/api/w/:ws/hub/connect', (_s, c) => {
     const b = c.body as { invite?: string; hub_card?: string } | null
     if (!b?.invite || !b.hub_card) return fail(400, 'invalid.input', 'Needs an invite and a card.')

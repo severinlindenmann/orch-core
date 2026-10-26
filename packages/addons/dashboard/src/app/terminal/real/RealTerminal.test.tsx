@@ -3,7 +3,8 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runsApi, type Run } from '@/api/runs'
-import { RealTerminal } from './RealTerminal'
+import { createRef } from 'react'
+import { RealTerminal, type RealTerminalHandle } from './RealTerminal'
 import type { TermConnection, TermHandlers } from './termProtocol'
 
 const WS = 'a'.repeat(32)
@@ -33,6 +34,33 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers() })
 
 const flush = () => act(async () => { await new Promise((r) => setTimeout(r, 0)) })
 const ready = (writer: boolean) => ({ start: 0, offset: 0, cols: 80, rows: 24, writer, state: 'running' as const })
+
+describe('the chat composer handle', () => {
+  it('writes a bracketed paste and Enter only while this tab holds the lease', async () => {
+    const handle = createRef<RealTerminalHandle>()
+    const leases: string[] = []
+    render(<RealTerminal ws={WS} run={run()} initial="write" connect={connect} handle={handle} onLease={(l) => leases.push(l)} />)
+    await flush()
+    expect(handle.current?.sendInput('hi')).toBe(false)
+    act(() => sockets[0].h.ready(ready(false)))
+    expect(handle.current?.sendInput('hi')).toBe(false)
+    expect(sockets[0].c.sendInput).not.toHaveBeenCalled()
+    act(() => sockets[0].h.ready(ready(true)))
+    expect(leases.at(-1)).toBe('writing')
+    expect(handle.current?.sendInput('two\nlines')).toBe(true)
+    const [tag, bytes] = (sockets[0].c.sendInput as unknown as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(tag).toBe(0)
+    expect(new TextDecoder().decode(bytes)).toBe('\x1b[200~two\nlines\x1b[201~\r')
+  })
+  it('take() asks for the lease with take:true', async () => {
+    const handle = createRef<RealTerminalHandle>()
+    render(<RealTerminal ws={WS} run={run()} initial="read" connect={connect} handle={handle} />)
+    await flush()
+    act(() => handle.current?.take())
+    await flush()
+    expect(tickets[1]).toEqual({ mode: 'write', take: true })
+  })
+})
 
 describe('lease and reconnect', () => {
   it('K7: the tab that just opened the terminal takes keyboard focus; a read-only one does not', async () => {

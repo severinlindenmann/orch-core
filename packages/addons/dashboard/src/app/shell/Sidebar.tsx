@@ -7,6 +7,7 @@ import {
   ChevronsUpDown,
   Ellipsis,
   Files,
+  Focus,
   History,
   LayoutDashboard,
   ListChecks,
@@ -262,7 +263,7 @@ export function Sidebar() {
             </RailTip>
           ))}
 
-          {navItems.length > 0 && (
+          {(navItems.length > 0 || hasFeature('focus', workspace?.id)) && (
             <div className="mt-4 space-y-0.5">
               {collapsed ? (
                 <div className="mx-2 mb-1 border-t border-border" />
@@ -283,6 +284,17 @@ export function Sidebar() {
                   </Link>
                 </RailTip>
               ))}
+              {hasFeature('focus', workspace?.id) && (
+                <RailTip label="Focus mode · from addon focus">
+                  <Link to="/focus" className={link} activeProps={activeProps} activeOptions={{ exact: false, includeSearch: false }} aria-label="Focus">
+                    <span className="relative">
+                      <Focus className="size-4" />
+                      {collapsed && <AddonBadge name="focus" className="absolute -right-1.5 -top-1.5 size-2.5 rounded-[3px] text-[7px]" />}
+                    </span>
+                    {!collapsed && (<><span className="flex-1 truncate">Focus</span><AddonBadge name="focus" /></>)}
+                  </Link>
+                </RailTip>
+              )}
               {navItems.length > 0 && (
                 <Popover open={moreOpen} onOpenChange={setMoreOpen}>
                   <RailTip label={moreLabel}>

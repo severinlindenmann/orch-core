@@ -5,7 +5,7 @@ import { Inline, plain } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 import { AddonSetup } from './AddonSetup'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, ChevronDown, ChevronRight, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Zap, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
+import { Focus, BookOpen, ChevronDown, ChevronRight, FolderOpen, GitBranch, Globe, Loader2, Puzzle, Zap, Rocket, Ruler, Terminal, Gauge, type LucideIcon } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { canChangeSettings } from '@/api/settings'
 import { queries } from '@/api/queries'
@@ -23,7 +23,7 @@ import { useViewerRole } from './useViewerRole'
 /** Add-ons with settings of their own: they open in place, under their row. */
 const WITH_SETTINGS: readonly string[] = ['publish']
 
-const ICONS: Record<string, LucideIcon> = { 'start-agent': Rocket, terminals: Terminal, worktrees: GitBranch, publish: Globe, usage: Gauge, estimate: Ruler, explorer: FolderOpen, wiki: BookOpen, quick: Zap }
+const ICONS: Record<string, LucideIcon> = { 'start-agent': Rocket, terminals: Terminal, worktrees: GitBranch, publish: Globe, usage: Gauge, estimate: Ruler, explorer: FolderOpen, wiki: BookOpen, quick: Zap, focus: Focus }
 
 export interface AddOnListProps {
   workspace: Workspace

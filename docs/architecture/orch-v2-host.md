@@ -225,7 +225,8 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `control/1` | `host.list`, `host.register`, `host.unregister`, `host.wsk_create`, `host.bootstrap`, `host.restart` (1) | control |
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
-| `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
+| `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7); `worktree.diff` (1) (focus mode phase 2, §12.3.5; column P only) | workspace |
+| `focus/1` | `run.transcript`, `delegation.list`, `run.sources`, `run.link`, `run.detach` (1) (focus mode phase 2, §12.3.4; column P only) | workspace |
 | `workdir/1` | `workdir.get`, `workdir.delete` (1) (r3 part C, §12.4.4; column P only) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
@@ -12155,19 +12156,106 @@ valid mapping to a member, and that the grant is that person's own `label:"runne
 | `worktree/1` | `worktree.list` | ✓ | ✓ grant scope | — | read |
 | `worktree/1` | `worktree.create` | ✓ visible ticket | ✓ own claimed ticket | — | idem create |
 | `worktree/1` | `worktree.remove` | ✓ (`force` too) | ✓ own claimed ticket, no `force` | — | side effect |
+| `worktree/1` | `worktree.diff` | ✓ visible ticket | — | — | read |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` | ✓ owner, maintainer | — | — | read / side effect |
 | `reader/1` | `reader.declare` | ✓ own current devices | — | — | side effect, idem (column R, H12d-3: the requesting device's own declaration, kind `device_signed`, no idem, exempt from `rd`) |
 | `reader/1` | `reader.list` | ✓ | — | — | read (column R too, trimmed to `{device, person, reader, level}`) |
 | `quick/1` | `quick.list` | ✓ | ✓ | ✓ (workspace tickets only) | read |
+| `focus/1` | `run.transcript` | ✓ own runs | — | — | read |
+| `focus/1` | `delegation.list` | ✓ own runs | — | — | read |
+| `focus/1` | `run.sources` | ✓ own runs | — | — | read |
+| `focus/1` | `run.link`, `run.detach` | ✓ own runs | — | — | write, no idem (naturally idempotent), no dry run |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |
 
 Writes and resizes on a terminal are not host ops: they travel on the term socket (§12.6) under the capability.
+
+#### 12.3.4 `focus/1`: transcripts (focus mode phase 2)
+
+Prototype addition (26 Oct 2026), additive: no new error code, no new event kind, no signed shape. `run.transcript {run,
+after?, limit?, child?}` (column P, the run must be the caller's own and its ticket visible to them; N5: otherwise
+`not_found`) returns a run's harness transcript as normalized chat items. The runner reads the files (they live in the
+home of the account that runs the agents, which may be another UID than the host); the host forwards the read as the
+runner command `transcript` (15 s). Claude Code runs are launched with `--session-id <uuid5(ORCH_NS, run)>` (the argv
+carries the placeholder `@orch-session-id`, which the runner replaces); a Codex run is bound by cwd and start time.
+
+```
+TranscriptItem = {id, role:"user"|"assistant"|"tool"|"system", kind:"text"|"tool"|"result"|"question"|"status",
+                  text:str (<= 4 KiB, truncated:true if cut), ts, tool?:{name,call}, files?:[relpath], options?:[str],
+                  error?:bool}
+run.transcript -> {run, harness, available:bool, reason?, items:[TranscriptItem] (<= 200), next:"o:<n>"|null, eof:bool}
+```
+
+`after` is the `next` of a previous answer (a byte offset; the reader never returns a partial line). Unavailability is
+data: `available: false` with a `reason` (no transcript yet, a shell run, Codex rollout not found). `child` is a Claude
+Code sub-agent id `agent-<id>`; for Codex it is `agent-<thread id>` of a child rollout.
+
+`delegation.list {ticket}` (column P, a visible ticket) returns, for each agent run of the caller on the ticket, the
+children the runner finds in the harness files plus the caller's runs whose record names it as `parent_run`:
+
+```
+DelegationChild = {id:"cc:agent-<id>"|"cx:agent-<thread>"|"run:<run>", parent_run, title, spawned_by:"agent"|"human"|"promoted",
+                   harness, model?, depth, state:"running"|"done"|"failed", started_at?, ended_at?, run?:str|null,
+                   transcript:{run, child?}, files:[relpath]}
+delegation.list -> {ticket, sessions:[{run, session?, harness, model?, state, policy?, files:[relpath],
+                   visibility:{available:bool, reason?}, children:[DelegationChild]}]}
+```
+
+Claude Code children are the files `<uuid>/subagents/agent-<id>.{jsonl,meta.json}` next to the parent transcript (state from
+`meta.finished` and the parent's `toolUseResult.status`). A Codex child rollout names its parent in
+`session_meta.source.subagent.thread_spawn.parent_thread_id` (spike 26 Oct 2026, codex-cli 0.163). A runner that cannot
+answer gives `visibility.available:false` with a `reason`, never an error. The runner command is `transcript {run,
+children:true}`.
+
+`run.sources {run, child?, source?}` (P2-4, column P, own runs) lists what the run read, from the same transcript:
+`{run, harness, available, reason?, sources:[{id, kind:"web"|"search"|"file", read_at, url?, host?, title?,
+has_extract?, query?, results?:[{title,url}], path?}]}`. Claude Code: `WebFetch` (url), `WebSearch` (query, hits) and
+`Read` of a file inside the run's folder; Codex: `web_search_call`. Deduped by url, query or path, newest first; `id` is a
+short hash of that key. With `source` the answer is the text the agent got for one web source, `{id, url, extract,
+truncated}` (64 KiB cap); an unknown source is `not_found`. Nothing is fetched by the runner, host or browser. The runner
+command is `transcript {run, sources:true, source?}`.
+
+`run.link {run, ticket}` and `run.detach {run}` (P2-6, column P, own runs; plain writes, no idem, no `dry_run`) change
+the unsigned run record only; no event, no signed shape. `run.link` sets `ticket` on a run that has none (a *scratch
+session*: a person-run `claude-code`/`codex` terminal opened with `term.open` and no ticket) once the person created the
+ticket the normal signed way; the ticket must be visible to the caller (`not_found` otherwise), the same ticket again is
+a no-op, another ticket is `invalid.input`. `run.detach` clears `parent_run` and sets `spawned_by:"promoted"` on a live
+or ended run the person delegated (`spawned_by:"human"`), so a stop of the parent no longer stops it and it is listed as
+a session of its own by `delegation.list`; any other run is `invalid.input`. Both answer `{run: <run view>}`.
+
+`agent.preview` / `agent.start` take four optional keys and one more mode (P2-3, same cap, no new op, error code or signed
+shape): `policy {delegate?:bool, max_children?:0..9, models?:[Model]<=1}` (claude-code only; Codex stores nothing),
+`mode:"task"` with `parent_run:RunId`, `brief` (<= 4000) and `expected` (<= 400); the child's title is `label`. `policy` and
+the task fields are in the spec digest. `delegate:false` adds `--disallowedTools=Agent,Task` to the Claude Code argv (one
+element: a variadic flag would swallow the prompt); `delegate:true` with a model sets `CLAUDE_CODE_SUBAGENT_MODEL`. A
+`task` start needs `parent_run` to be the caller's live agent run on the same ticket (`not_found` otherwise,
+`launch.invalid` for a dead parent, another ticket, nine children or more than three levels). The child gets the session
+`<parent session>.<n>` (next free n <= 9; the `launch.claimed` check passes when the claim is the parent's session or a prefix
+of it), the parent's working folder (shared: the preview warns) and the prompt `Run orch status. You are a delegated task of
+session S on ticket KEY. Task: <label>. Brief: <brief> Expected output: <expected> Ask the parent, not the person; log your
+result with orch log, then stop.` The run record gains `policy`, `parent_run` and `spawned_by:"human"` (unsigned, never in
+`run.list`; `delegation.list` reads them). `run.stop` of a parent also stops the live runs whose `parent_run` is it. The
+budget (`max_children`) is shown and checked by the dashboard, not enforced by the host.
+
+#### 12.3.5 `worktree.diff`: the live diff of a ticket worktree (focus mode phase 2)
+
+Prototype addition (26 Oct 2026), additive, cap `worktree/1`, no new error code or signed shape. `worktree.diff {ticket,
+repo?}` (column P, a visible ticket) returns the uncommitted changes of the ticket's registered worktree. The reader
+(profile `worktree`, request `worktree_diff`) takes the changed paths from the same `tree.check` the clean-tree check
+uses, reads each working file through the pinned working-copy fd (`O_NOFOLLOW`) and the `HEAD` side from the object
+store, and builds the hunks with its own Myers diff; no git process. A symlink, a non-regular file, a binary file or one
+over 1 MiB is listed without hunks. Caps: 200 files, 256 KiB of unified text (`truncated:true` past either). A ticket
+without a linked repo, an unregistered or unpinned worktree, or a worktree that moved is data, not an error.
+
+```
+worktree.diff {ticket:Ref, repo?:RepoName} -> {ticket, repo, available:bool, reason?, path_label, branch, head, checked_at,
+  truncated:bool, files:[{path, status:"M"|"A"|"D"|"?", added, removed, binary, too_large?}]{0..200}, unified:str}
+```
 
 #### 12.3.2 Schemas
 
 ```
 Harness   = "claude-code"|"codex"                 TermHarness = Harness | "shell"
-Mode      = "refine"|"work"|"fix"|"continue"|"context"
+Mode      = "refine"|"work"|"fix"|"continue"|"context"|"task"   (task: P2-3, with parent_run)
 Model     = str/[A-Za-z0-9][A-Za-z0-9._:\[\]\/-]{0,63}/          (never starts with "-")
 RunId     = str/r_[0-7][0-9A-HJKMNP-TV-Z]{25}/                     AttId = str/at_[0-7][0-9A-HJKMNP-TV-Z]{25}/
 Gen       = str/[0-9a-f]{32}/                                      (a runner generation, drawn at runner start)

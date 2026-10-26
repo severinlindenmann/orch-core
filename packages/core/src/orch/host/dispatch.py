@@ -111,6 +111,7 @@ from .shareops import SHARE_OPS, SHARE_READS
 from .spaceops import NETWORK_OPS as SPACE_NETWORK_OPS
 from .spaceops import SPACE_OPS, SPACE_READS
 from .terms import TERM_CAPS, TERM_OPS
+from .transcripts import LINK_OPS, TRANSCRIPT_CAPS, TRANSCRIPT_OPS
 from .visibility import Viewer
 from .workdirs import CAPS as WORKDIR_CAPS
 from .workdirs import WORKDIR_OPS
@@ -235,6 +236,7 @@ def served_ops() -> dict[str, int]:
     out.update(TERM_OPS)  # H11b: term.preview, term.open, term.attach, attach.cancel
     out.update(WORKDIR_OPS)  # r3 part C: workdir.get, workdir.delete (P only)
     out.update(WORKTREE_OPS)  # H11d: worktree.list, worktree.create, worktree.remove
+    out.update(TRANSCRIPT_OPS)  # focus/1: run.transcript
     out.update(PUBLISH_OPS)  # P5: publish.prepare, .send, .revoke, .list, .discard, .register
     out.update(HUB_OPS)  # V3 C2a: hub.connect, hub.unbind, hub.status
     out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
@@ -286,6 +288,12 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_write", "write")
     if name in RUN_OPS:  # H11a: P and G only (§0.5, D-P2-26)
         return ("pg_read", "read")
+    if name in LINK_OPS:  # focus/1 P2-6: run.link, run.detach: column P only, plain writes
+        return ("person_write", "write")
+    if name in TRANSCRIPT_OPS:  # focus/1: column P only (the person in the dashboard)
+        return ("person_read", "read")
+    if name == "worktree.diff":  # focus/1 P2-5: column P only (the person in the dashboard)
+        return ("person_read", "read")
     if name in WORKTREE_OPS:  # H11d: P and G (G only on its claimed ticket, checked by the op), never N
         return ("pg_read", "read") if name == "worktree.list" else ("pg_write", "write")
     if name in PUBLISH_OPS:  # P5: prepare and discard P and G (G on its claimed ticket); send, revoke, register P only
@@ -437,7 +445,7 @@ class RegistryBackend:
         base = ["ops/1", "outcome/1", "sub/1", "blob/1", "diff/1", "diff_ext/1", "quick/1", "human/1"]
         return [
             *base, *READ_CAPS, *records_ops.CAPS, *(["sub_ext/1"] if SUB_EXT else []), *RUN_CAPS, *TERM_CAPS,
-            *WORKDIR_CAPS, *WORKTREE_CAPS, *PUBLISH_CAPS, *readerops.CAPS, *phonehints.CAPS,
+            *WORKDIR_CAPS, *WORKTREE_CAPS, *TRANSCRIPT_CAPS, *PUBLISH_CAPS, *readerops.CAPS, *phonehints.CAPS,
         ]  # fmt: skip
 
     #: §0.6 step 10 is checked here, after the args (8) and the replay (9)
@@ -479,6 +487,10 @@ class RegistryBackend:
             return await self._register_runs(call, result)
         if op in TERM_OPS or op == "run.stop":
             return await terms.complete(call, result)
+        if op in TRANSCRIPT_OPS:  # focus/1: the runner reads the transcript
+            from . import transcripts
+
+            return await transcripts.complete(call, result)
         if op in AGENT_OPS:  # H11c: the launch intent, the worktree, the spawn
             from . import agents
 
@@ -487,7 +499,7 @@ class RegistryBackend:
             from . import runnergrants
 
             return await runnergrants.complete(call, result)
-        if op in WORKTREE_OPS and op != "worktree.list":  # H11d: the runner's git, then the registration
+        if op in WORKTREE_OPS and op not in ("worktree.list", "worktree.diff"):  # H11d: runner git, then registration
             from . import worktrees
 
             return await worktrees.execute(call, result)
@@ -695,6 +707,10 @@ class RegistryBackend:
                 from . import runners
 
                 result = runners.serve(call)
+            elif op in TRANSCRIPT_OPS:
+                from . import transcripts
+
+                result = transcripts.serve(call)
             elif op in WORKTREE_OPS:
                 from . import worktrees
 

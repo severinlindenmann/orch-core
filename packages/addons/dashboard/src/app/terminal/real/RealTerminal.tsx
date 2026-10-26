@@ -4,7 +4,7 @@
 // started this run (`initial: 'write'`, B12A N5): nobody else can hold a run that was created a moment ago, so that tab
 // asks for the lease outright instead of showing "Read only". Retry is decided by the close code alone.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { ApiError } from '@/api/types'
 import { markNoReplay, runsApi, type Run } from '@/api/runs'
 import { Inline } from '@/components/sign/visible'
@@ -24,13 +24,23 @@ export interface AttachRequest {
 
 export type LeaseState = 'reading' | 'writing' | 'busy' | 'lost'
 
-export function RealTerminal({ ws, run, initial, connect = termTransport.connect }: {
+/** What a chat composer can do with the terminal: write a message into the TUI, or ask for the write lease. */
+export interface RealTerminalHandle {
+  /** Bracketed paste plus Enter, through the lease this tab holds. False when it does not hold it (nothing is sent). */
+  sendInput(text: string): boolean
+  take(): void
+}
+
+export function RealTerminal({ ws, run, initial, connect = termTransport.connect, handle, onLease }: {
   ws: string
   run: Run
   /** The first attach of this mount: read, except right after this tab started the shell (write, and it takes the lease). */
   initial: 'read' | 'write'
   /** Tests pass a fake socket. */
   connect?: typeof connectTerm
+  /** Focus mode's chat view writes through this terminal (design phase 2, decision 7). */
+  handle?: Ref<RealTerminalHandle>
+  onLease?: (lease: LeaseState) => void
 }) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<TermView | null>(null)
@@ -50,6 +60,18 @@ export function RealTerminal({ ws, run, initial, connect = termTransport.connect
   const focused = useRef(false)
   const runRef = useRef(run)
   runRef.current = run
+  const leaseRef = useRef<LeaseState>('reading')
+  leaseRef.current = lease
+  useEffect(() => { onLease?.(lease) }, [lease, onLease])
+  useImperativeHandle(handle, () => ({
+    sendInput(text) {
+      const c = conn.current
+      if (!c || leaseRef.current !== 'writing') return false
+      c.sendInput(0, new TextEncoder().encode(`\x1b[200~${text}\x1b[201~\r`))
+      return true
+    },
+    take: () => setReq((r) => ({ mode: 'write', take: true, n: r.n + 1 })),
+  }), [])
 
   // xterm: one per mount of this run.
   useEffect(() => {

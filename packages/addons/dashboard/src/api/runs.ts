@@ -40,6 +40,8 @@ export interface Run {
   /** M7b, agents: `ended` once the runner grant ended (the host refuses its writes; Stop is offered). Not a run state. */
   grant_state?: 'ok' | 'ended' | null
   subagent_model?: string | null
+  /** Focus mode: the run a person delegated this one from (a child task), else null. The main session has none. */
+  parent_run?: string | null
 }
 
 export interface RunnerInfo {
@@ -72,7 +74,7 @@ export interface TermPreview {
 
 export interface TermArgs {
   cwd?: { kind: 'workspace' | 'repo' | 'worktree'; repo?: string; ticket?: string }
-  harness?: 'shell'
+  harness?: 'shell' | 'claude-code' | 'codex'
   ticket?: string
   label?: string
 }

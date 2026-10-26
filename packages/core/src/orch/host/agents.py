@@ -64,11 +64,24 @@ _FREE = {"type": "string", "maxLength": 200}  # checked by the registry (launch.
 _PREVIEW = {
     "ticket": _KEY,
     "harness": {"enum": ["claude-code", "codex"]},
-    "mode": {"enum": ["refine", "work", "fix", "continue", "context"]},
+    "mode": {"enum": ["refine", "work", "fix", "continue", "context", "task"]},
     "model": _FREE,
     "subagent_model": _FREE,
     "label": {"type": "string", "minLength": 1, "maxLength": 40},
     "worktree": {"type": "boolean"},
+    # P2-3: the spawn policy of a main session (claude-code only) and the human-delegated child (mode "task")
+    "policy": {
+        "type": "object",
+        "properties": {
+            "delegate": {"type": "boolean"},
+            "max_children": {"type": "integer", "minimum": 0, "maximum": 9},
+            "models": {"type": "array", "maxItems": 1, "items": _FREE},
+        },
+        "additionalProperties": False,
+    },
+    "parent_run": {"type": "string", "pattern": "^r_[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+    "brief": {"type": "string", "maxLength": 4000},
+    "expected": {"type": "string", "maxLength": 400},
 }
 _SCHEMAS = {
     "agent.preview": {"type": "object", "properties": _PREVIEW, "required": ["ticket", "harness", "mode"],
@@ -266,6 +279,36 @@ def _cwd(call: Call, view: Any, cwd_arg: dict[str, Any] | None, *, agent: bool, 
     return out
 
 
+MAX_DEPTH = 3
+
+
+def _parent(hub: RunnerHub | None, call: Call, run: str, key: str | None, p: _Plan) -> dict[str, Any] | None:
+    """P2-3: the parent of a human-delegated child must be the caller's live agent run on the same ticket."""
+    from .runners import LIVE
+
+    rec = hub.store.records.get(run) if hub is not None else None
+    if rec is None or rec.get("workspace_id") != call.service.workspace_id or rec.get("person") != str(call.viewer):
+        p.block("not_found", "no such parent run")
+        return None
+    if rec.get("kind") != "agent" or rec.get("state") not in LIVE:
+        p.block("launch.invalid", "the parent is not a live agent run")
+        return None
+    if key is not None and rec.get("ticket") != key:
+        p.block("launch.invalid", "the parent works on another ticket")
+        return None
+    if str(rec.get("session") or "").count(".") >= MAX_DEPTH:
+        p.block("launch.invalid", "delegated tasks nest at most three levels deep")
+        return None
+    return rec
+
+
+def _child_session(hub: RunnerHub, parent: dict[str, Any]) -> str | None:
+    """``<parent session>.<n>``: the next free n (1-9) among the parent's children."""
+    base = str(parent.get("session") or "")
+    used = {str(r.get("session")) for r in hub.store.records.values() if r.get("parent_run") == parent["run"]}
+    return next((f"{base}.{n}" for n in range(1, 10) if f"{base}.{n}" not in used), None)
+
+
 def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool) -> dict[str, Any]:
     """The preview's answer and, under ``_launch``, what start or open sends. ``agent``: ``agent.preview``;
     otherwise ``term.preview`` (a person-run shell or harness: kind ``shell``, ``ORCH_TICKET`` only, no grant)."""
@@ -279,6 +322,22 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
     harness = args.get("harness", "shell")
     mode, model, sub = args.get("mode"), args.get("model"), args.get("subagent_model")
     person = str(call.viewer)
+    parent_run = args.get("parent_run")
+    policy_in = args.get("policy") if harness == "claude-code" else None  # codex has no delegation limits to store
+    policy = (
+        {"delegate": bool(policy_in.get("delegate", False)), "max_children": int(policy_in.get("max_children", 3)),
+         "models": list(policy_in.get("models") or [])}
+        if isinstance(policy_in, dict) else None
+    )  # fmt: skip
+    if policy is not None and policy["models"]:
+        bad = check_model("policy.models", policy["models"][0], "claude-code")
+        if bad:
+            policy = None
+            sub_bad = bad
+        else:
+            sub_bad = None
+    else:
+        sub_bad = None
     view = None
     if args.get("ticket"):
         try:
@@ -286,6 +345,18 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         except HostError as exc:
             p.block(exc.code, exc.message)
     key = view.key if view is not None else None
+    if (mode == "task") != (parent_run is not None):
+        p.block("launch.invalid", "mode task goes with a parent run, and a parent run with mode task")
+    parent = _parent(hub, call, parent_run, key, p) if parent_run is not None and agent else None
+    if parent_run is not None and not agent:
+        p.block("launch.invalid", "a parent run is for agent starts")
+    child_session = None
+    if parent is not None and hub is not None:
+        child_session = _child_session(hub, parent)
+        if child_session is None:
+            p.block("launch.invalid", "the parent has nine delegated tasks already")
+    if sub_bad:
+        p.block("launch.invalid", sub_bad)
     if hub is None:
         p.block("runner.unavailable", "this host serves no runner")
     else:
@@ -299,7 +370,10 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
                 hub.require_current()
             except HostError as exc:
                 p.block(exc.code, exc.message)
-    if agent and view is not None and view.claim is not None and view.claim.live:
+    held = view.claim.session if view is not None and view.claim is not None else None
+    psess = str((parent or {}).get("session") or "")
+    mine_claim = parent is not None and held is not None and (psess == held or psess.startswith(held + "."))
+    if agent and view is not None and view.claim is not None and view.claim.live and not mine_claim:
         p.block("launch.claimed", f"{view.key} is claimed by a live session; the agent could not claim it")
     try:
         config = read_config(hub.host.state_dir if hub is not None else service.state_dir, service.host_uid)
@@ -327,8 +401,14 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         p.block("launch.invalid", f"mode {mode} needs a ticket")
     argv_model = model if not check_model("model", model, harness) else None  # never an unchecked name in an argv
     argv, login, program = ["$SHELL", "-l"], False, None
+    task = (
+        {"session": (parent or {}).get("session"), "title": args.get("label"), "brief": args.get("brief"),
+         "expected": args.get("expected")}
+        if mode == "task" else None
+    )  # fmt: skip
+    delegate = policy["delegate"] if policy is not None else None
     try:
-        argv, login, program = launch_argv(harness, mode, argv_model, key, config)
+        argv, login, program = launch_argv(harness, mode, argv_model, key, config, task=task, delegate=delegate)
     except HostError as exc:
         p.block(exc.code, exc.message)
     if login and not _shell_ok():
@@ -339,6 +419,10 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         p.warnings.append(LOGIN_NOTICE)
     want_worktree = bool(args.get("worktree", True)) if agent else True
     where = _cwd(call, view, None if agent else args.get("cwd"), agent=agent, want_worktree=want_worktree, p=p)
+    if parent is not None:  # a child works in its parent's folder: it never creates one
+        if where["create"] is not None or where.get("mkdir"):
+            p.block("launch.invalid", "the parent's working folder does not exist yet")
+        p.warnings.append("shared worktree: the parent session and this task work in the same folder")
     env_names = sorted(ENV_FROM_RUNNER | set(config.pass_env))
     env_fixed: dict[str, str] = {}
     if key is not None:
@@ -361,8 +445,11 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             pairs.append(f"{repo}={path}")
         if pairs:
             env_fixed["ORCH_WORKTREES"] = ":".join(pairs)
-        if sub is not None and harness == "claude-code" and not check_model("subagent_model", sub, "claude-code"):
-            env_fixed["CLAUDE_CODE_SUBAGENT_MODEL"] = sub
+        helper = sub
+        if helper is None and policy is not None and policy["delegate"] and policy["models"]:
+            helper = policy["models"][0]  # P2-3: the allowed helper model when delegation is on
+        if helper is not None and harness == "claude-code" and not check_model("subagent_model", helper, "claude-code"):
+            env_fixed["CLAUDE_CODE_SUBAGENT_MODEL"] = helper
     if agent and mode is not None and where["cwd"]["kind"] != "workspace":
         # AGENTS.orch.md lives in the project's store, not in the worktree: the prompt names it by absolute path
         try:
@@ -373,7 +460,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             argv, login, program = launch_argv(
                 harness, mode, argv_model, key, config,
                 instructions=at if at.isascii() and at.isprintable() else None,
-                workdir=where["cwd"]["kind"] == "workdir",
+                workdir=where["cwd"]["kind"] == "workdir", task=task, delegate=delegate,
             )  # fmt: skip
         except HostError:
             pass  # the first launch_argv already blocked with the same reason
@@ -402,7 +489,7 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
             {"v": 2, "kind": "agent" if agent else "shell", "harness": harness, "mode": mode, "model": model,
              "model_source": source, "routed_by": routed_by, "subagent_model": sub, "argv": argv, "login_shell": login,
              "cwd": where["cwd"], "pin": pin_view, "gen": where.get("gen"), "env_names": env_names,
-             "env_fixed": env_fixed,
+             "env_fixed": env_fixed, "policy": policy, "parent_run": parent_run, "task": task,
              "grant": grant["id"] if grant else None, "as_person": not agent},
             sort_keys=True, separators=(",", ":"),
         ).encode()
@@ -417,10 +504,17 @@ def plan(call: Call, args: dict[str, Any], hub: RunnerHub | None, *, agent: bool
         "env": shown_env, "blocked": p.blocked, "warnings": p.warnings[:8],
         "_launch": {"argv": argv, "env_names": env_names, "env_fixed": env_fixed, "cwd": where["pin"],
                     "create": where["create"], "mkdir": where["mkdir"], "ticket": key, "login_shell": login,
-                    "grant": grant["id"] if grant else None},
+                    "grant": grant["id"] if grant else None, "session": child_session},
     }  # fmt: skip
     if agent:
-        out.update(ticket=key, will_create_worktree=where["create"] is not None, grant=grant)
+        out.update(
+            ticket=key,
+            will_create_worktree=where["create"] is not None,
+            grant=grant,
+            policy=policy,
+            parent_run=parent_run,
+            session=child_session,
+        )
         if where.get("workdir") is not None:  # a new ticket's folder must be new or empty for an unattended start
             out["workdir"] = where["workdir"]
     else:
@@ -470,6 +564,7 @@ def serve(call: Call) -> dict[str, Any]:
         "run": run, "idem": str(idem), "spec": found["spec"], "launch": found["_launch"], "person": person,
         "harness": args["harness"], "mode": args["mode"], "model": found["model"],
         "subagent_model": args.get("subagent_model"), "label": args.get("label"), "cwd": found["cwd"],
+        "policy": found["policy"], "parent_run": args.get("parent_run"),
         "cols": args.get("cols", 120), "rows": args.get("rows", 40),
     })  # fmt: skip
 
@@ -568,11 +663,13 @@ async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
 
     wid, person, run = call.service.workspace_id, data["person"], data["run"]
     launch = data["launch"]
-    session = "s_" + runners.new_ulid()
+    session = launch.get("session") or "s_" + runners.new_ulid()  # a delegated child: <parent session>.<n>
     fields = {"run": run, "kind": "agent", "person": person, "ticket": launch["ticket"], "harness": data["harness"],
               "mode": data["mode"], "model": data["model"], "subagent_model": data["subagent_model"],
               "label": data["label"], "session": session, "grant": launch["grant"], "grant_state": "ok",
-              "as_person": False, "cwd": data["cwd"]}  # fmt: skip
+              "as_person": False, "cwd": data["cwd"], "policy": data.get("policy"),
+              "parent_run": data.get("parent_run"),
+              "spawned_by": "human" if data.get("parent_run") else None}  # fmt: skip
     payload = {"kind": "agent", "argv": launch["argv"], "env_names": launch["env_names"],
                "env_fixed": launch["env_fixed"], "cwd": launch["cwd"], "cols": data["cols"], "rows": data["rows"],
                "login_shell": launch["login_shell"], "grant": launch["grant"], "session": session,

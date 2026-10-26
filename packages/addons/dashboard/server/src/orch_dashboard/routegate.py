@@ -170,6 +170,13 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     # --- runs, agents, terminals
     (GET, W + "/runs"): (ALLOWED, ""),
     (POST, W + "/runs/{run}/stop"): (ALLOWED, "turning off"),
+    (GET, W + "/runs/{run}/transcript"): (ALLOWED, "focus mode: the chat view of a run, read only"),
+    (POST, W + "/runs/{run}/link"): (ALLOWED, "focus mode: attach a scratch session to a ticket"),
+    (POST, W + "/runs/{run}/detach"): (ALLOWED, "focus mode: make a delegated session a separate one"),
+    (GET, W + "/runs/{run}/sources"): (ALLOWED, "focus mode: what the agent read, text only, read only"),
+    (GET, W + "/runs/{run}/sources/{source_id}"): (ALLOWED, "focus mode: the text the agent got for one source"),
+    (GET, W + "/tickets/{key}/delegations"): (ALLOWED, "focus mode: the delegation tree of a ticket, read only"),
+    (GET, W + "/tickets/{key}/worktree-diff"): (ALLOWED, "focus mode: live worktree diff, read only"),
     (POST, W + "/runs/{run}/attach"): (TERMINALS, "a terminal is a shell on the server"),
     (POST, W + "/terminals/open"): (TERMINALS, "a terminal is a shell on the server"),
     (POST, W + "/terminals/preview"): (TERMINALS, "a terminal is a shell on the server"),

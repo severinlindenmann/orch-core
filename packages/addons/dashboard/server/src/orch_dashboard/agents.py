@@ -22,7 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from . import reads
 from .adapters import runs as project
 from .gateway import Gateway
-from .terminals import Idem, Label, Model
+from .terminals import Idem, Label, Model, RunId
 
 GrantId = Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 DepositId = Annotated[str, StringConstraints(pattern=r"^[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
@@ -43,20 +43,44 @@ DEPOSIT_REASONS = (
 HARNESS_WORDS = {"claude-code": "Claude", "codex": "Codex"}
 
 
+class SpawnPolicy(BaseModel):
+    """P2-3: what a main session may delegate (claude-code only; fixed for the run)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    delegate: bool = False
+    max_children: int = Field(default=3, ge=0, le=9)
+    models: list[Model] = Field(default_factory=list, max_length=1)
+
+
 class AgentPreviewBody(BaseModel):
     """`agent.preview`'s arguments (section 12.3). A model of its own: `term.preview`'s `mode` is `context` only."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
     ticket: reads.Key  # required by the host (section 12.3); a run always belongs to a ticket
     harness: Literal["claude-code", "codex"]
-    mode: Literal["refine", "work", "fix", "continue", "context"]
+    mode: Literal["refine", "work", "fix", "continue", "context", "task"]
     model: Model | None = None
     subagent_model: Model | None = None
     label: Label | None = None
     worktree: bool = True
+    policy: SpawnPolicy | None = None  # P2-3
+    parent_run: RunId | None = None  # P2-3: mode "task" (the Delegate sheet) names the live main run
+    brief: Annotated[str, StringConstraints(max_length=4000)] | None = None
+    expected: Annotated[str, StringConstraints(max_length=400)] | None = None
 
     def host_args(self) -> dict:
-        fields = {"ticket", "harness", "mode", "model", "subagent_model", "label"}
+        fields = {
+            "ticket",
+            "harness",
+            "mode",
+            "model",
+            "subagent_model",
+            "label",
+            "policy",
+            "parent_run",
+            "brief",
+            "expected",
+        }
         args = self.model_dump(exclude_none=True, include=fields)
         args["worktree"] = self.worktree
         return args

@@ -50,7 +50,7 @@ const message = (e: unknown) => (e instanceof ApiError ? e.message : 'The dashbo
 const clock = fmtDateTime
 
 /** The form's values as `agent.preview`'s arguments: empty optionals left out; the subagent model is Claude Code's only. */
-function argsOf(f: { ticket?: string; harness: Harness; mode: AgentMode; model: string; subagent: string; label: string; worktree: boolean }): AgentArgs {
+function argsOf(f: { ticket?: string; harness: Harness; mode: AgentMode; model: string; subagent: string; label: string; worktree: boolean; delegate: boolean; maxChildren: number }): AgentArgs {
   return {
     ...(f.ticket ? { ticket: f.ticket } : {}),
     harness: f.harness,
@@ -59,6 +59,8 @@ function argsOf(f: { ticket?: string; harness: Harness; mode: AgentMode; model: 
     ...(f.harness === 'claude-code' && f.subagent ? { subagent_model: f.subagent } : {}),
     ...(f.label ? { label: f.label } : {}),
     worktree: f.worktree,
+    // P2-3: Codex has no delegation limits to set; Claude Code gets the policy of the block (off unless asked)
+    ...(f.harness === 'claude-code' ? { policy: { delegate: f.delegate, max_children: f.maxChildren } } : {}),
   }
 }
 
@@ -109,8 +111,10 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   const [subagent, setSubagent] = useState('')
   const [label, setLabel] = useState('')
   const [worktree, setWorktree] = useState(true)
+  const [delegate, setDelegate] = useState(false)
+  const [maxChildren, setMaxChildren] = useState(3)
   const [moreOpen, setMoreOpen] = useState(!!initial?.model)
-  const form = argsOf({ ticket, harness, mode, model, subagent, label, worktree })
+  const form = argsOf({ ticket, harness, mode, model, subagent, label, worktree, delegate, maxChildren })
   const [shown, setShown] = useState<{ args: AgentArgs; data: AgentPreview } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -126,7 +130,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   // Model routing: the closed list of models for this agent (from core); the choice is a name of that list, never free text.
   const routing = hasFeature('model_routing', ws)
   const choices = useQuery({ ...routingQueries.choices(ws), enabled: routing })
-  const models = choices.data?.harnesses.find((h) => h.id === harness)?.models ?? []
+  const models = choices.data?.harnesses?.find((h) => h.id === harness)?.models ?? []
   const failing = useQuery({ ...queries.ticket(ws, ticket ?? ''), enabled: routing && !!ticket })
   const strong = (STRONG_MODELS[harness] ?? []).find((id) => models.some((m) => m.id === id))
   const checkFailing = !!failing.data?.tasks_state?.some((t) => t.state !== 'done' && t.state !== 'skipped' && t.receipt !== null && t.receipt.exit !== 0)
@@ -382,6 +386,15 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
                 <button type="button" className="underline" onClick={() => setModel(strong)}>Use {modelLabel(choices.data, harness, strong)}</button>
               </p>
             </>)}
+            <span className="text-text-muted">Delegation</span>
+            {harness === 'claude-code' ? (
+              <div className="space-y-1" data-testid="agent-policy">
+                <label className="flex items-start gap-2 [&>input]:mt-1 [&>input]:shrink-0"><input type="checkbox" checked={delegate} onChange={(e) => setDelegate(e.target.checked)} /> Let the main agent delegate</label>
+                {delegate && <label className="flex items-center gap-2 text-xs text-text-muted">Up to
+                  <select aria-label="Most delegated tasks" className="h-7 rounded border border-border bg-bg px-2" value={maxChildren} onChange={(e) => setMaxChildren(Number(e.target.value))}>{[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => <option key={n} value={n}>{n}</option>)}</select> tasks</label>}
+                <p className="text-xs text-text-muted">Applies at the next start. Off means the agent starts no helper agents.</p>
+              </div>
+            ) : <p className="text-xs text-text-muted" data-testid="agent-policy">Codex: delegation limits not available</p>}
             {harness === 'claude-code' && models.length > 0 && (<>
               <Label htmlFor="agent-subagent" className="text-xs text-text-muted">Model for helper agents</Label>
               <select id="agent-subagent" className="h-9 min-w-0 rounded border border-border bg-bg px-2 sm:h-7" value={subagent} onChange={(e) => setSubagent(e.target.value)}>

@@ -6,7 +6,7 @@ export type TourPerson = 'p_sev' | 'p_mara' | 'p_tom'
 export type TourDataset = 'normal' | 'busy'
 
 export interface TourGo {
-  /** A route of the app, e.g. `/settings/addons` or `/ticket/DEMO-0043`. */
+  /** A route of the app, e.g. `/ticket/DEMO-0043`. The `/settings/addons` stops are the demo (mock) Addons manager; on a real host that URL redirects to /addons. */
   path: string
   /** Who you look at it as (default Severin, the owner). */
   viewer?: TourPerson

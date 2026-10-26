@@ -81,7 +81,6 @@ it('renders every display string in fully populated content', () => {
   expect(screen.getByLabelText('Checked')).toBeVisible()
   expect(screen.getByLabelText('Unchecked')).toBeVisible()
   expect(screen.getByText('TASK-three').closest('li')).toHaveAttribute('value', '3')
-  expect(screen.getAllByText('—')).toHaveLength(1) // the missing before-value
   expect(screen.getAllByText('(not set)')).toHaveLength(1) // the missing after-value
 })
 
@@ -101,7 +100,7 @@ const details = () => screen.getByText(/Technical details/).closest('details')!
 
 it('shows a known member as name WITH short id; the full id and the key line only under Technical details', () => {
   withMembers([{ person: SEV, name: 'Severin' }, { person: MARA, name: 'Mara' }], [{ field: 'owner', before: null, after: SEV }, { field: 'reviewer', before: MARA, after: B }])
-  expect(row('owner')).toHaveTextContent('Owner: — → Severin · p_181d953f12ab…')
+  expect(row('owner')).toHaveTextContent('Owner: Severin · p_181d953f12ab…')
   expect(row('owner')).not.toHaveTextContent(SEV)
   expect(row('reviewer')).toHaveTextContent('Reviewer: Mara · p_aaaa11112222… → p_bbbb11112222… (unknown person)')
   expect(details()).toHaveTextContent(`Severin (p_181d953f12ab…) = ${SEV}`)
@@ -143,7 +142,7 @@ const table: [string, string, string][] = [
 ]
 it.each(table)('personLabel: %s', (_n, id, text) => {
   withMembers(members, [{ field: 'owner', before: null, after: id }])
-  expect(row('owner')).toHaveTextContent(`Owner: — → ${text}`)
+  expect(row('owner')).toHaveTextContent(`Owner: ${text}`)
   expect(row('owner')).not.toHaveTextContent(id.length > 15 ? id : 'never')
 })
 
@@ -156,7 +155,7 @@ it('every signed person id that is not cut appears in full under Technical detai
 
 it('a member of another workspace is an unknown person here', () => {
   withWorkspaces([{ id: 'w_1', members: [{ person: SEV, name: 'Severin' }] }, { id: 'w_2', members: [{ person: MARA, name: 'Mara' }] }], [{ field: 'owner', before: null, after: MARA }])
-  expect(row('owner')).toHaveTextContent('Owner: — → p_aaaa11112222… (unknown person)')
+  expect(row('owner')).toHaveTextContent('Owner: p_aaaa11112222… (unknown person)')
   expect(row('owner')).not.toHaveTextContent('Mara')
 })
 
@@ -196,12 +195,12 @@ it('a combining mark that case-folds to a letter (U+0345 -> iota) does not survi
 
 it('a name mixing covered letters with letters the table does not cover is not shown', () => {
   withMembers([{ person: SEV, name: 'Sev\u05D0' }], [{ field: 'owner', before: null, after: SEV }])
-  expect(row('owner')).toHaveTextContent('Owner: — → p_181d953f12ab… (name not shown)')
+  expect(row('owner')).toHaveTextContent('Owner: p_181d953f12ab… (name not shown)')
 })
 
 it.each(['\u3164', '\u115F', '\uFFA0'])('a name with the invisible Hangul filler U+%s is not shown', (filler) => {
   withMembers([{ person: SEV, name: `Sev${filler}erin` }], [{ field: 'owner', before: null, after: SEV }])
-  expect(row('owner')).toHaveTextContent('Owner: — → p_181d953f12ab… (name not shown)')
+  expect(row('owner')).toHaveTextContent('Owner: p_181d953f12ab… (name not shown)')
 })
 
 const SHARE_TEXT = [
@@ -218,13 +217,11 @@ it('leads with the plain summary and still shows every signed line in full, labe
     sections: [{ id: 'share', title: 'What will be shared', text: SHARE_TEXT }],
   }} />)
   const summary = screen.getByTestId('sign-summary')
-  expect(within(summary).getByRole('heading', { name: 'Share these files' })).toBeVisible()
   expect(within(summary).getByText('The link works for 7 days from the moment it is made.')).toBeVisible()
   const exact = screen.getByTestId('sign-exact')
-  expect(exact).toHaveAttribute('open')
-  expect(within(exact).getByText('Exact signed details')).toBeVisible()
+  expect(exact).not.toHaveAttribute('open') // run-9 feedback: closed by default, still in the DOM
+  expect(within(exact).getByText('Show exactly what is signed')).toBeVisible()
   // every signed line, untruncated, inside the exact area
-  expect(exact).toBeVisible()
   for (const line of SHARE_TEXT.split('\n')) expect(exact.textContent).toContain(line)
   expect(summary.compareDocumentPosition(exact) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 })

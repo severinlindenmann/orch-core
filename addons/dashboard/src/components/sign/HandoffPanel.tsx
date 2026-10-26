@@ -1,6 +1,7 @@
 // The hand-off panel (design 4.1): where the dashboard stops and the terminal begins. The dashboard is not where you
 // sign. It shows the command to run, the fingerprint to compare, and an informational preview rendered ONLY from the
 // host's `material` (never from a cached ticket) through visible.tsx, so every value is exact and nothing is hidden.
+import type { QuickTyped } from './alsoSigned'
 import { SignContent, SignDetails } from './SignContent'
 import { Check, Copy, Terminal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -206,7 +207,7 @@ export function ExactCommandLine({ command, testId = 'handoff-command' }: { comm
 }
 
 /** The open request: command, fingerprint, content hash, countdown and the preview. Cancel lives in the dialog footer. */
-export function HandoffPanel({ request, workspace = null, why, whyAction }: { request: HandoffRequest; workspace?: { prefix: string; id: string } | null; /** Why this is signed in the terminal and not with one click: the operation is terminal-only, or One click is off here. */ why?: 'terminal_only' | 'click_off'; /** What the person can do about it (a link to the setting). */ whyAction?: ReactNode }) {
+export function HandoffPanel({ request, workspace = null, why, whyAction, quick }: { /** A quick task's typed values: the review folds the derived rows when they match. */ quick?: QuickTyped; request: HandoffRequest; workspace?: { prefix: string; id: string } | null; /** Why this is signed in the terminal and not with one click: the operation is terminal-only, or One click is off here. */ why?: 'terminal_only' | 'click_off'; /** What the person can do about it (a link to the setting). */ whyAction?: ReactNode }) {
   const remaining = useRemaining(request.expires_at)
   const { material } = request
   const word = material.ticket ? (sequenceWord(material) ?? confirmWord(material.ticket.key, material.ticket.uid)) : workspaceConfirmWord(request, workspace)
@@ -260,7 +261,7 @@ export function HandoffPanel({ request, workspace = null, why, whyAction }: { re
   )
   return (
     <div data-handoff-panel className="space-y-3">
-      {request.content && <SignContent content={request.content} ws={workspace?.id} technical={technical} />}
+      {request.content && <SignContent content={request.content} ws={workspace?.id} technical={technical} quick={quick} />}
       <p data-testid="terminal-why" className="text-[13px] font-medium text-text">
         {why === 'terminal_only' ? 'One click can\u2019t approve this one. Approve it in a terminal on this computer.' : why === 'click_off' ? 'One click is off, so sign in a terminal on this computer.' : 'Sign in your terminal.'}
         {why === 'click_off' && whyAction && <span className="ml-2 font-normal">{whyAction}</span>}

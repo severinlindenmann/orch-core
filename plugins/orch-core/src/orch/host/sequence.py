@@ -1321,8 +1321,7 @@ def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str
     if intent["kind"] != QUICK:
         return []
     out = [
-        "Approves the requirements as written above, and the plan as written above "
-        "(the signer checks that each approval covers exactly this text).",
+        "Approves the requirements as written above, and the plan as written above.",
         "The task still ends with your own verdict: nothing closes it for you.",
     ]
     if intent["agent"] is not None:

@@ -1,0 +1,450 @@
+"""``orch install hub|relay|publish|status|remove`` and the pieces ``orch setup`` uses for "Full server"."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import secrets
+import shutil
+import socket
+import subprocess
+import sys
+import time
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, TextIO
+
+from . import parts as P
+from .parts import InstallError
+from .service import Runner, pick_runner
+from .state import Layout, load, save
+
+__all__ = ["Ctx", "main", "add_workspace", "choose_role", "full_server", "default_ctx"]
+
+USAGE = (
+    "usage: orch install {hub|relay|publish} [--address A] [--port N] [--domain D] [--source PATH] [--ref REF]\n"
+    "                    [--publish-url U] [--relay-url U] [--dev] [--yes] | status [--json] | remove PART [--purge]\n"
+)
+AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
+
+
+def _run(argv: Sequence[str], env: Mapping[str, str] | None = None) -> tuple[int, str]:
+    r = subprocess.run(list(argv), env=dict(env) if env else None, capture_output=True, text=True)
+    return r.returncode, (r.stdout + r.stderr)
+
+
+def _resolve_ref(url: str, ref: str) -> str:
+    rc, out = _run(["git", "ls-remote", url, ref])
+    line = out.splitlines()[0] if rc == 0 and out.strip() else ""
+    if not line:
+        raise InstallError(f"cannot resolve {ref} of {url} (is it reachable? use --source PATH for a local checkout)")
+    return line.split()[0]
+
+
+def _health(host: str, port: int, timeout: float = 30.0) -> bool:
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            with socket.create_connection((host, port), timeout=1):
+                return True
+        except OSError:
+            time.sleep(0.3)
+    return False
+
+
+@dataclass
+class Ctx:
+    """Everything that touches the machine, as seams (the tests replace them)."""
+
+    env: Mapping[str, str]
+    out: TextIO
+    err: TextIO
+    interactive: bool = False
+    ask: Callable[[str, str], str] = lambda prompt, default: default
+    run: Callable[..., tuple[int, str]] = _run
+    resolve_ref: Callable[[str, str], str] = _resolve_ref
+    health: Callable[[str, int], bool] = _health
+    detect: Callable[[], list[tuple[str, str]]] = P.detect_addresses
+    port_free: Callable[[int, str], bool] = P.port_free
+    runner: Runner | None = None
+    token: Callable[[], str] = lambda: secrets.token_urlsafe(18)
+    publish_setup: Callable[[str], str | None] = lambda url: None  # configure the workspace; returns a hint on failure
+    layout: Layout = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.layout = Layout(self.env)
+        if self.runner is None:
+            self.runner = pick_runner(self.layout, self.env)
+
+    def say(self, line: str = "") -> None:
+        self.out.write(line + "\n")
+
+
+def default_ctx(env: Mapping[str, str], out: TextIO, err: TextIO) -> Ctx:
+    tty = sys.stdin.isatty()
+    return Ctx(
+        env=env,
+        out=out,
+        err=err,
+        interactive=tty,
+        ask=lambda prompt, default: (input(f"{prompt} [{default}]: ").strip() or default) if tty else default,
+        publish_setup=_publish_setup,
+    )
+
+
+def _publish_setup(url: str) -> str | None:
+    """Sign the workspace's publish settings (server = share = the part's address): the person's terminal signs."""
+    rc, out = _run([sys.executable, "-m", "orch", "publish", "setup", "--server", url, "--share", url])
+    return None if rc == 0 else (out.strip().splitlines() or ["failed"])[-1]
+
+
+# ---------------------------------------------------------------------------------------------------- address / port
+
+
+def choose_address(ctx: Ctx, given: str | None, st: dict[str, Any]) -> str:
+    if given:
+        return given
+    if st.get("address"):
+        return st["address"]
+    found = ctx.detect()
+    if not ctx.interactive or len(found) == 1:
+        return found[0][0]
+    ctx.say("Which address should the parts listen on?")
+    for i, (ip, label) in enumerate(found, 1):
+        ctx.say(f"  {i}  {ip}   ({label})")
+    ctx.say("  or type your own address (an IP; a domain is only noted)")
+    ans = ctx.ask("address", "1")
+    return found[int(ans) - 1][0] if ans.isdigit() and 1 <= int(ans) <= len(found) else ans
+
+
+def _taken(st: dict[str, Any], skip: str = "") -> set[int]:
+    t = {p["port"] for n, p in st["parts"].items() if n != skip}
+    t |= {p["link_port"] for p in st["parts"].values() if p.get("link_port")}
+    return t | {w["port"] for w in st["workspaces"]}
+
+
+def choose_port(ctx: Ctx, part: str, given: int | None, st: dict[str, Any], address: str) -> int:
+    if given is not None:
+        port = P.valid_port(given)
+        if port in _taken(st, part):
+            raise InstallError(f"port {port} is already used by another part of this install")
+        return port
+    if part in st["parts"]:
+        return st["parts"][part]["port"]
+    start = P.DEFAULT_PORTS[part]
+    host = address if address not in ("localhost",) else "127.0.0.1"
+    return P.free_port(start, _taken(st), lambda p: ctx.port_free(p, host if not _is_domain(host) else "127.0.0.1"))
+
+
+def _is_domain(a: str) -> bool:
+    return not a.replace(".", "").isdigit()
+
+
+def _listen_address(address: str) -> str:
+    return P.ADDRESS_LOOPBACK if address == "localhost" or _is_domain(address) else address
+
+
+# ------------------------------------------------------------------------------------------------------------ install
+
+
+def install_part(
+    ctx: Ctx,
+    part: str,
+    *,
+    address: str | None = None,
+    port: int | None = None,
+    domain: str | None = None,
+    source: str | None = None,
+    ref: str = "main",
+    publish_url: str | None = None,
+    relay_url: str | None = None,
+    dev: bool = False,
+) -> dict[str, Any]:
+    spec = P.PARTS[part]
+    source = source or ctx.env.get(f"ORCH_INSTALL_SOURCE_{part.upper()}")  # a local checkout (dev machines, tests)
+    lay = ctx.layout
+    st = load(lay)
+    address = choose_address(ctx, address, st)
+    if _is_domain(address) and address != "localhost":
+        domain, address = address, P.ADDRESS_LOOPBACK  # a domain is only noted; the part listens on this computer
+    bind = _listen_address(address)
+    port = choose_port(ctx, part, port, st, bind)
+    lay.ensure()
+    tool_env = {**ctx.env, "UV_TOOL_DIR": str(lay.tools), "UV_TOOL_BIN_DIR": str(lay.bin)}
+    if source:
+        pkg, sha = str(Path(source).resolve()), "local:" + str(Path(source).resolve())
+    else:
+        sha = ctx.resolve_ref(spec.repo, ref)
+        pkg = f"git+{spec.repo}@{sha}"
+    ctx.say(f"orch install {part}: installing {spec.binary} ({sha[:12] if not source else 'local checkout'}) ...")
+    rc, out = ctx.run(["uv", "tool", "install", "--force", "--python", "3.14", pkg], tool_env)
+    if rc != 0:
+        raise InstallError(f"uv tool install failed:\n{out.strip()[-600:]}")
+    binary = lay.bin / spec.binary
+    data = lay.data(part)
+    data.mkdir(parents=True, exist_ok=True, mode=0o700)
+    pubs = st["parts"].get("publish")
+    rels = st["parts"].get("relay")
+    if part == "hub":
+        publish_url = publish_url or (pubs and pubs["url"])
+        relay_url = relay_url or (rels and rels["url"])
+        if not (data / "keys").exists() and not any(data.iterdir()):
+            cmd = [str(binary), "keys", "init", "--state", str(data)] + (
+                ["--relay-url", relay_url] if relay_url else []
+            )
+            rc, out = ctx.run(cmd, tool_env)
+            if rc != 0:
+                raise InstallError(f"orch-hub keys init failed:\n{out.strip()[-600:]}")
+    argv = P.command_for(
+        part, binary=binary, data=data, address=bind, port=port, publish_url=publish_url, relay_url=relay_url, dev=dev
+    )
+    log = lay.logs / f"{part}.log"
+    started = ctx.runner.start(part, argv, P.env_for(part, data), log)
+    check_host = "127.0.0.1" if part == "hub" else bind
+    if not ctx.health(check_host, port):
+        tail = log.read_text()[-500:] if log.exists() else ""
+        raise InstallError(f"{part} did not answer on {check_host}:{port}; log {log}\n{tail}")
+    url = f"http://{bind}:{port}"
+    rec: dict[str, Any] = {
+        "port": port,
+        "address": address,
+        "bind": bind,
+        "url": url,
+        "domain": domain,
+        "ref": sha,
+        "source": source,
+        "binary": str(binary),
+        "dev": dev,
+        "service": started["service"],
+        "runner": ctx.runner.kind,
+        "pid": started.get("pid"),
+        "started": int(time.time()),
+    }
+    if part == "hub":
+        rec["link_port"] = P.HUB_LINK_PORT
+        rec["setup_token"] = (st["parts"].get("hub") or {}).get("setup_token") or ctx.token()
+    st = load(lay)
+    st["address"], st["domain"] = address, domain or st.get("domain")
+    st["parts"][part] = rec
+    save(lay, st)
+    _version(ctx, rec, spec.binary, tool_env)
+    save(lay, {**st, "parts": {**st["parts"], part: rec}})
+    _report(ctx, part, rec)
+    if part == "publish":
+        hint = ctx.publish_setup(url)
+        if hint:
+            ctx.say(f"  publish settings: not set yet ({hint}); run: orch publish setup --server {url} --share {url}")
+        else:
+            ctx.say(f"  publish settings: server = share = {url}")
+    return rec
+
+
+def _version(ctx: Ctx, rec: dict[str, Any], name: str, env: Mapping[str, str]) -> None:
+    rc, out = ctx.run(["uv", "tool", "list"], env)
+    rec["version"] = "unknown"
+    for line in out.splitlines():
+        if line.startswith(name + " "):
+            rec["version"] = line.split()[1].lstrip("v")
+
+
+def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
+    ctx.say(f"installed {part} {rec['version']} at {rec['url']}  ({rec['runner']}: {rec['service']})")
+    if part == "hub":
+        ctx.say(f"  hub console:  {hub_console_url(rec)}")
+        ctx.say(f"  first admin:  {hub_console_url(rec)}#setup={rec['setup_token']}")
+        if rec["bind"] != P.ADDRESS_LOOPBACK:
+            ctx.say(f"  the console listens on this computer only (the hub has no web bind to {rec['bind']} yet);")
+            ctx.say(f"  from another computer: ssh -L {rec['port']}:127.0.0.1:{rec['port']} <this computer>")
+        ctx.say(f"  workspaces connect to the hub link at {rec['bind']}:{rec['link_port']}")
+    if rec.get("domain"):
+        ctx.say(
+            f"  domain {rec['domain']}: point its DNS at this computer yourself and put your own TLS in front of "
+            f"{rec['bind']}:{rec['port']}; orch does not do that for you."
+        )
+
+
+def hub_console_url(rec: dict[str, Any]) -> str:
+    return f"http://127.0.0.1:{rec['port']}/"
+
+
+# ------------------------------------------------------------------------------------------------------------ status
+
+
+def status(ctx: Ctx, as_json: bool) -> int:
+    st = load(ctx.layout)
+    rows = []
+    for name in P.PARTS:
+        rec = st["parts"].get(name)
+        if rec is None:
+            rows.append({"part": name, "state": "not installed"})
+            continue
+        info = ctx.runner.info(name)
+        rows.append(
+            {
+                "part": name,
+                "state": "running" if info["running"] else "stopped",
+                "version": rec.get("version"),
+                "url": rec["url"],
+                "service": rec["service"],
+                "pid": info.get("pid"),
+            }
+        )
+    for w in st["workspaces"]:
+        rows.append(
+            {"part": "workspace", "state": "registered", "url": f"http://{_ws_host(st)}:{w['port']}", "dir": w["dir"]}
+        )
+    if as_json:
+        ctx.say(json.dumps({"address": st.get("address"), "parts": rows}, indent=2))
+        return 0
+    ctx.say(f"{'part':<10}{'state':<15}{'version':<12}{'address':<28}{'service'}")
+    for r in rows:
+        where = r.get("service") or r.get("dir") or ""
+        ctx.say(f"{r['part']:<10}{r['state']:<15}{(r.get('version') or '-'):<12}{(r.get('url') or '-'):<28}{where}")
+    return 0
+
+
+def _ws_host(st: dict[str, Any]) -> str:
+    return st.get("address") or P.ADDRESS_LOOPBACK
+
+
+def remove(ctx: Ctx, part: str, purge: bool) -> int:
+    st = load(ctx.layout)
+    if part not in P.PARTS:
+        raise InstallError(f"unknown part {part!r}: hub, relay or publish")
+    if part not in st["parts"]:
+        ctx.say(f"{part} is not installed")
+        return 0
+    ctx.runner.stop(part)
+    env = {**ctx.env, "UV_TOOL_DIR": str(ctx.layout.tools), "UV_TOOL_BIN_DIR": str(ctx.layout.bin)}
+    ctx.run(["uv", "tool", "uninstall", P.PARTS[part].binary], env)
+    del st["parts"][part]
+    save(ctx.layout, st)
+    if purge:
+        shutil.rmtree(ctx.layout.root / "parts" / part, ignore_errors=True)
+        ctx.say(f"removed {part} and its data")
+    else:
+        ctx.say(f"removed {part}; its data is kept in {ctx.layout.data(part)} (--purge deletes it)")
+    return 0
+
+
+# ------------------------------------------------------------------------------------------------- setup integration
+
+
+def choose_role(ctx: Ctx, given: str | None) -> tuple[str, list[str]]:
+    """``(role, parts)``: role is workspace | full | pick; parts are the server parts to install."""
+    if given:
+        role = given
+    elif not ctx.interactive:
+        role = "workspace"
+    else:
+        ctx.say("What should this computer be?")
+        ctx.say("  1  Workspace only      one workspace, nothing else (the default)")
+        ctx.say("  2  Full server         hub + relay + publish + this workspace")
+        ctx.say("  3  Pick parts          choose which of them to install")
+        role = {"1": "workspace", "2": "full", "3": "pick"}.get(ctx.ask("choice", "1"), "workspace")
+    if role == "full":
+        return role, ["publish", "relay", "hub"]
+    if role == "pick":
+        chosen = [
+            p
+            for p in ("publish", "relay", "hub")
+            if ctx.ask(f"install {P.PARTS[p].what}? (y/n)", "n").lower().startswith("y")
+        ]
+        return role, chosen
+    return "workspace", []
+
+
+def full_server(
+    ctx: Ctx,
+    parts: Sequence[str],
+    *,
+    address: str | None = None,
+    source_for: Mapping[str, str] | None = None,
+    ref: str = "main",
+    dev: bool = False,
+) -> dict[str, dict[str, Any]]:
+    st = load(ctx.layout)
+    address = choose_address(ctx, address, st)
+    out = {}
+    for p in parts:
+        out[p] = install_part(ctx, p, address=address, source=(source_for or {}).get(p), ref=ref, dev=dev)
+    return out
+
+
+def add_workspace(ctx: Ctx, directory: str) -> int | None:
+    """Record a new workspace on the next free port (8151, 8152, ...). Only on a machine with an install state."""
+    st = load(ctx.layout)
+    if not st["parts"] and not st["workspaces"] and not ctx.layout.file.exists():
+        return None
+    for w in st["workspaces"]:
+        if w["dir"] == directory:
+            return w["port"]
+    host = _listen_address(st.get("address") or P.ADDRESS_LOOPBACK)
+    port = P.free_port(P.WORKSPACE_FIRST_PORT, _taken(st), lambda p: ctx.port_free(p, host))
+    st["workspaces"].append({"dir": directory, "port": port})
+    save(ctx.layout, st)
+    return port
+
+
+def workspace_port_preview(ctx: Ctx) -> int:
+    st = load(ctx.layout)
+    return P.free_port(P.WORKSPACE_FIRST_PORT, _taken(st), lambda p: ctx.port_free(p, "127.0.0.1"))
+
+
+# ----------------------------------------------------------------------------------------------------------- command
+
+
+def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextIO, ctx: Ctx | None = None) -> int:
+    if any(env.get(k) for k in AGENT_ENV):
+        err.write("orch install: installing parts is a person's job; an agent never does it\n")
+        return 3
+    p = argparse.ArgumentParser(prog="orch install", add_help=False)
+    p.add_argument("cmd", choices=("hub", "relay", "publish", "status", "remove"))
+    p.add_argument("rest", nargs="*")
+    p.add_argument("--address")
+    p.add_argument("--port", type=int)
+    p.add_argument("--domain")
+    p.add_argument("--source")
+    p.add_argument("--ref", default="main")
+    p.add_argument("--publish-url")
+    p.add_argument("--relay-url")
+    p.add_argument("--dev", action="store_true")
+    p.add_argument("--yes", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--purge", action="store_true")
+    try:
+        a = p.parse_args(list(argv))
+    except SystemExit:
+        err.write(USAGE)
+        return 2
+    ctx = ctx or default_ctx(env, out, err)
+    if a.yes:
+        ctx.interactive = False
+    try:
+        if a.cmd == "status":
+            return status(ctx, a.json)
+        if a.cmd == "remove":
+            if len(a.rest) != 1:
+                err.write(USAGE)
+                return 2
+            return remove(ctx, a.rest[0], a.purge)
+        if a.rest:
+            err.write(USAGE)
+            return 2
+        address = a.address or a.domain
+        install_part(
+            ctx,
+            a.cmd,
+            address=address,
+            port=a.port,
+            source=a.source,
+            ref=a.ref,
+            publish_url=a.publish_url,
+            relay_url=a.relay_url,
+            dev=a.dev,
+        )
+        return 0
+    except InstallError as e:
+        err.write(f"orch install: {e}\n")
+        return 1

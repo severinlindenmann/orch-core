@@ -10,8 +10,19 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-__all__ = ["ADDRESS_LOOPBACK", "DEFAULT_PORTS", "PARTS", "Part", "InstallError", "classify", "detect_addresses",
-           "free_port", "port_free", "valid_port", "WORKSPACE_FIRST_PORT"]
+__all__ = [
+    "ADDRESS_LOOPBACK",
+    "DEFAULT_PORTS",
+    "PARTS",
+    "Part",
+    "InstallError",
+    "classify",
+    "detect_addresses",
+    "free_port",
+    "port_free",
+    "valid_port",
+    "WORKSPACE_FIRST_PORT",
+]
 
 ADDRESS_LOOPBACK = "127.0.0.1"
 WORKSPACE_FIRST_PORT = 8151
@@ -33,9 +44,19 @@ class Part:
 
 
 PARTS = {
-    "hub": Part("hub", "https://github.com/severinlindenmann/orch-hub", "orch-hub", 8100, "hub (console and link server)"),
-    "relay": Part("relay", "https://github.com/severinlindenmann/orch-relay", "orch-relay", 8101, "relay (phone push and mailboxes)"),
-    "publish": Part("publish", "https://github.com/severinlindenmann/orch-publish", "orch-publish", 8102, "publish (shares)"),
+    "hub": Part(
+        "hub", "https://github.com/severinlindenmann/orch-hub", "orch-hub", 8100, "hub (console and link server)"
+    ),
+    "relay": Part(
+        "relay",
+        "https://github.com/severinlindenmann/orch-relay",
+        "orch-relay",
+        8101,
+        "relay (phone push and mailboxes)",
+    ),
+    "publish": Part(
+        "publish", "https://github.com/severinlindenmann/orch-publish", "orch-publish", 8102, "publish (shares)"
+    ),
 }
 
 
@@ -111,21 +132,52 @@ def hub_link_port() -> int:
     return HUB_LINK_PORT
 
 
-def command_for(part: str, *, binary: Path, data: Path, address: str, port: int, publish_url: str | None,
-                relay_url: str | None, dev: bool) -> list[str]:
+def command_for(
+    part: str,
+    *,
+    binary: Path,
+    data: Path,
+    address: str,
+    port: int,
+    publish_url: str | None,
+    relay_url: str | None,
+    dev: bool,
+) -> list[str]:
     """The ``serve`` command line of a part (argv; environment is :func:`env_for`)."""
     bind = address if address else ADDRESS_LOOPBACK
     if part == "hub":
         loop = bind in (ADDRESS_LOOPBACK, "localhost")
-        link = ["--listen", f"127.0.0.1:{HUB_LINK_PORT}"] if loop else ["--link-listen", f"{bind}:{HUB_LINK_PORT}", "--dev-shared-machine"]
-        cmd = [str(binary), "serve", "--state", str(data), *link, "--web-listen", f"127.0.0.1:{port}",
-               "--publish-url", publish_url or f"http://127.0.0.1:{DEFAULT_PORTS['publish']}"]
+        link = (
+            ["--listen", f"127.0.0.1:{HUB_LINK_PORT}"]
+            if loop
+            else ["--link-listen", f"{bind}:{HUB_LINK_PORT}", "--dev-shared-machine"]
+        )
+        cmd = [
+            str(binary),
+            "serve",
+            "--state",
+            str(data),
+            *link,
+            "--web-listen",
+            f"127.0.0.1:{port}",
+            "--publish-url",
+            publish_url or f"http://127.0.0.1:{DEFAULT_PORTS['publish']}",
+        ]
         if relay_url:
             cmd += ["--relay-url", relay_url]
         return cmd
     if part == "relay":
         return [str(binary), "serve", "--host", bind, "--port", str(port)]
-    cmd = [str(binary), "serve", "--data", str(data), "--bind", f"{bind}:{port}", "--api-host", f"{bind}:{port}"]
+    cmd = [
+        str(binary),
+        "run",
+        "--data",
+        str(data),
+        "--listen",
+        f"{bind}:{port}",
+        "--public-origin",
+        f"http://{bind}:{port}",
+    ]
     return cmd + (["--dev-mode"] if dev else [])
 
 

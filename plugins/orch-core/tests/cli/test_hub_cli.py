@@ -108,6 +108,27 @@ def test_join_signs_then_connects(host, card_file):
     assert host.called == [("hub.connect", {"invite": "inv-1", "hub_card": CARD})]
 
 
+def test_join_with_a_link_reads_it_on_the_host_then_signs_and_connects(host):
+    host.reply["hub.link"] = {"hub_id": HUB, "hub_card": CARD, "code": "inv-1", "endpoint": "10.0.0.5:8105"}
+    host.reply["hub.connect"] = {"hub_id": HUB, "status": "bound", "binding_seq": 1}
+    link = f"http://h:1/c#h1.{HUB}.inv-1.10.0.0.5:8105"
+    code, out = run(["join", "--link", link], {})
+    assert code == 0 and "ok hub joined" in out
+    ((op, args),) = host.signed
+    assert op == "hub.join" and args["hub_card"] == CARD and args["hub_id"] == HUB and args["mode"] == "selective"
+    assert host.called == [
+        ("hub.link", {"link": link}),
+        ("hub.connect", {"invite": "inv-1", "hub_card": CARD, "addr": "10.0.0.5:8105"}),
+    ]
+
+
+def test_a_link_takes_no_invite_or_card(offline, card_file):
+    for argv in (["join", "x", "--link", "http://h/c#x"], ["join", "--link", "http://h/c#x", "--hub-card", card_file],
+                 ["leave", "--link", "http://h/c#x"]):  # fmt: skip
+        code, out = run(argv, {})
+        assert code != 0 and "--link belongs to" in out
+
+
 def test_a_bare_code_needs_hub_id_and_the_hub_only_ever_sees_the_code(host, card_file):
     host.reply["hub.connect"] = {"hub_id": HUB, "status": "bound", "binding_seq": 1}
     code, out = run(["join", "inv-1", "--hub-card", card_file], {})

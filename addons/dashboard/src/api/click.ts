@@ -132,11 +132,12 @@ export type RunnerGrantAction = Extract<HandoffAction, { action: 'runner_grant' 
 export type AgentAccessAction = { action: 'agent_access'; hours: number; scope: 'workable' | 'all'; label?: string; reveal_key: string }
 
 /** #1198 C10: join a hub (selective only; a full join is the Terminal's) or leave it, with the backup key sealed to the signer. */
-export type HubJoinAction = { action: 'hub_join'; hub_card: string; hub_id: string; mode?: 'selective' }
+export type HubJoinAction = { action: 'hub_join'; hub_card: string; hub_id: string; mode?: 'selective' | 'full' }
+export type HubModeFullAction = { action: 'hub_mode_full'; hub_card: string; hub_id: string }
 export type HubLeaveAction = { action: 'hub_leave' }
 
 /** Every typed action a click request may carry. */
-export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction | HubJoinAction | HubLeaveAction
+export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction | HubJoinAction | HubModeFullAction | HubLeaveAction
 
 /** Core's constant (orch.click.protocol DEPOSIT_LINE): a deposit View must carry it, or Sign is not offered. */
 export const DEPOSIT_LINE = 'The secret goes to your orch runner on this machine and is never shown'
@@ -171,6 +172,10 @@ export const revealViewOk = async (view: ClickView, ws: string, publicKeyB64: st
 export const BACKUP_KEY_LINE = 'This step also needs your backup key. You type it once here; orch does not keep it'
 
 /** A hub View gets the backup-key field only when it asks for exactly `hub.backup_key` with the signer's key, carries the backup-key line (`BACKUP_KEY_LINE`, in `lines` and as `backup_key_line`) and is of this workspace. */
+/** Run-9 feedback 6: a hub step whose person key the signer kept asks for nothing sealed: no seal, no backup-key line. */
+export const plainHubViewOk = (view: ClickView, ws: string): boolean =>
+  view.workspace?.id === ws && view.confirm.kind === 'click' && view.deposit !== true && !view.seal && !view.backup_key_line
+
 export const backupViewOk = (view: ClickView, ws: string): boolean =>
   view.workspace?.id === ws && view.confirm.kind === 'click' && view.deposit !== true &&
   view.seal?.purposes?.length === 1 && view.seal.purposes[0] === 'hub.backup_key' && typeof view.seal.pk === 'string' && view.seal.pk.length === 87 &&
@@ -211,7 +216,7 @@ export const clickReady = (w: Pick<Workspace, 'click'> | undefined | null): bool
 const CLICK_ACTIONS: ReadonlySet<string> = new Set<ClickAction['action']>([
   'accept_criterion', 'withdraw_acceptance', 'mark_task_done',
   'approve', 'request_changes', 'verdict', 'answer', 'comment', 'label', 'close', 'reopen', 'move', 'new', 'new_sequence', 'edit_sequence', 'quick_start', 'details', 'section',
-  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'addon_disable', 'addon_enable', 'publish_setup', 'publish_share',
+  'settings_set', 'icon_set', 'repo_set', 'repo_remove', 'policy_set', 'member_add', 'member_role', 'member_remove', 'device_remove', 'grant_revoke', 'runner_grant', 'agent_access', 'hub_join', 'hub_leave', 'addon_grant', 'market_grant', 'addon_disable', 'addon_purge', 'addon_settings', 'addon_enable', 'publish_setup', 'publish_share',
 ])
 export const clickEligible = (a: ClickAction | null): boolean => !!a && CLICK_ACTIONS.has(a.action)
 

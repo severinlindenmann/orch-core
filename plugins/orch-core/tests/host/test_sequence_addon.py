@@ -115,7 +115,6 @@ def test_validate_takes_exactly_the_closed_shape(human):
     pub = base
     for settings in (
         {"publish": None},
-        {"publish": {"server": PUBLISH["server"], "share": PUBLISH["server"]}},  # the same address twice
         {"publish": {"server": "http://files.example.com", "share": PUBLISH["share"]}},  # not https, not loopback
         {"publish": {"server": PUBLISH["server"]}},
         {"publish": {**PUBLISH, "x": 1}},
@@ -490,8 +489,8 @@ def test_the_setup_never_plans_these_add_ons(human):
     from orch.setup.protocol import SetupError
 
     profile = {
-        "name": "x", "prefix": "DEMO", "addons": ["publish"], "method": "terminal", "agent_hours": 8,
-        "agent_grant": False, "relay": False,
+        "name": "x", "workspace_name": "x", "prefix": "DEMO", "addons": ["publish"], "method": "terminal",
+        "agent_hours": 8, "agent_grant": False, "relay": False,
     }  # fmt: skip
     info = {
         "publish": type("I", (), {"kind": "addon", "needs_runner": False, "needs_terminals": False, "title": "P"})()

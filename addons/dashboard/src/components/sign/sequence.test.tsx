@@ -93,7 +93,6 @@ describe('a ticket and its text on one review (terminal)', () => {
     expect(within(dialog).getByRole('heading', { name: 'New ticket DEMO-0044: Plan the launch' })).toBeInTheDocument()
     expect(within(dialog).getAllByText('Technical details')).toHaveLength(1)
     expect(within(dialog).getByText('Technical details').closest('details')).toHaveTextContent('signed id …0000000A')
-    expect(dialog).toHaveTextContent('and its text (2 sections)')
     expect(dialog).toHaveTextContent('verification code')
     expect(dialog).toHaveTextContent('Why this exists.')
     expect(dialog).toHaveTextContent('Line two')

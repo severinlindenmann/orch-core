@@ -295,7 +295,6 @@ def test_off_with_a_new_passphrase_moves_the_key_back_under_it(switch):
     assert select.status(state, WS)["custody"] == "passphrase" and "problem" not in select.status(state, WS)
     text = repr(log.lines) + repr(row)
     assert STRONG not in text and provider.passphrase not in text  # G: never logged or echoed
-    refused(lambda: on(signer, STRONG), TERMINAL)  # but the dashboard's own choice is no proof for the dashboard
 
 
 def test_off_with_a_weak_passphrase_changes_nothing_and_the_flag_stays_on(switch):
@@ -338,22 +337,14 @@ def test_a_corrupt_selection_still_leaves_the_flag_off(switch, monkeypatch):
     assert not flag(state)
 
 
-def test_a_dashboard_chosen_passphrase_cannot_turn_signing_back_on(switch):
-    """Review of #1062: the dashboard picks P in off(P); on(P) must not then "prove" it. Only the terminal converts
-    again (it bumps the generation, which ends the refusal)."""
+def test_off_then_on_from_the_dashboard_with_the_passphrase_ends_held(switch):
+    """Run 9 feedback 3.1/3.7: after a dashboard Off, the passphrase in the dialog turns one click on again."""
     signer, state, provider, store, _, _ = switch
     on(signer, provider.passphrase)
     off(signer, passphrase=STRONG)
-    err = refused(lambda: on(signer, STRONG), TERMINAL)
-    assert "orch keys custody convenience" in err.message
-    assert not flag(state) and select.status(state, WS)["custody"] == "passphrase" and legacy_file(state).exists()
-    # the person converts in the terminal (their own prompt), after which the dashboard works as before
-    backend = lambda d: PassphraseBackend(d, _passphrase_provider=lambda r: STRONG, _kdf=KDF)  # noqa: E731
-    import orch.ops.human as h
-
-    h.open_backend = backend  # the fixture's monkeypatch restores it
-    select.convert_to_convenience(state, WS, store=store)
-    assert select.status(state, WS)["custody"] == "convenience"
+    row = on(signer, STRONG)
+    assert row["enabled"] is True and row["custody"] == "convenience"
+    assert flag(state) and select.status(state, WS)["custody"] == "convenience"
 
 
 def test_a_terminal_move_back_does_not_block_the_dashboard(switch):

@@ -79,10 +79,10 @@ describe('the quick review', () => {
     expect(within(visible).getByText('Rename the team photo folder')).toBeVisible()
     expect(within(visible).getByText('Use the 2026 naming.')).toBeVisible()
     expect(visible).toHaveTextContent('Links still work (checked by npm run links)')
-    expect(screen.getByTestId('sign-also-sentence')).toHaveTextContent('This also approves its requirements and plan, made from these checks.')
+    expect(screen.getByTestId('sign-also-sentence')).toHaveTextContent('Counts as approved: what to do and how to check it.')
     const fold = screen.getByTestId('sign-also')
     expect(fold).not.toHaveAttribute('open')
-    expect(fold.querySelector('summary')).toHaveTextContent('Also signed (7)')
+    expect(fold.querySelector('summary')).toHaveTextContent('Show exactly what is signed (requirements, plan, 2 checks, 2 tasks)')
     // Every derived row is in the fold (rendered, only collapsed).
     for (const t of ['Requirements', 'Plan', 'Acceptance checks', 'Tasks', 'Type', 'Owner', 'Labels', 'Chore', 'quick', SIGNER.slice(0, 14), 'Links still work (proves AC2) (checked by npm run links)']) expect(fold).toHaveTextContent(t)
   })
@@ -102,5 +102,30 @@ describe('the quick review', () => {
     render(<SignContent content={{ ...hostContent(), fields_title: 'Details', sections: [...hostContent().sections!, { id: 'x', title: 'Extra', text: 'surprise text' }] }} quick={typed} />)
     expect(screen.queryByTestId('sign-also')).toBeNull()
     expect(document.body).toHaveTextContent('surprise text')
+  })
+})
+
+describe('run-9 feedback 3.8: the terminal path folds the quick task too', () => {
+  it('HandoffPanel hands the typed values to the review (it used to show the long fallback)', async () => {
+    const { HandoffPanel } = await import('./HandoffPanel')
+    const { fakeRequest } = await import('@/test/handoffHarness')
+    render(<HandoffPanel request={{ ...fakeRequest(), content: hostContent() }} quick={typed} />)
+    expect(screen.getByTestId('sign-also')).not.toHaveAttribute('open')
+    expect(screen.queryByText('Plan tasks')).toBeNull()
+  })
+})
+
+describe('the compact summary layout', () => {
+  it('shows facts and the risk line, keeps the exact values in a closed fold, and no arrow table', () => {
+    render(<SignContent content={{
+      headline: 'Turn on Usage',
+      summary: { title: 'Turn on Usage', lines: ['It declares no capabilities.', 'Version 0.1.0. Runs on this computer.'], risk: 'Add-ons run their own code.' },
+      fields_changed: [{ field: 'add-on', before: null, after: 'usage' }],
+    }} />)
+    expect(screen.getByTestId('sign-risk')).toHaveTextContent('Add-ons run their own code.')
+    const fold = screen.getByTestId('sign-exact')
+    expect(fold).not.toHaveAttribute('open')
+    expect(fold).toHaveTextContent('Add-on: usage')
+    expect(document.body).not.toHaveTextContent('→')
   })
 })

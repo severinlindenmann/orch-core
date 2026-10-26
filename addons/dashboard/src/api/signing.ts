@@ -5,7 +5,7 @@ export interface SignContent {
   /** U3: the headline a person reads (no host-key / signed-id qualifier; those are in `ticket`, under Technical details). */
   title?: string
   /** V4: a plain lead worked out by core from the SIGNED values only; the exact values always follow in full. */
-  summary?: { title: string; lines: string[] }
+  summary?: { title: string; lines: string[]; /** One sentence, only when there is a real risk (amber). */ risk?: string }
   /** B11: the second line under the headline ("and its text (3 sections)"), core's words. */
   subline?: string
   ticket?: { key: string; title: string; uid_tail: string; key_note: string; /** This review creates the ticket (U3): its signed id is then only a technical detail. */ new?: boolean }

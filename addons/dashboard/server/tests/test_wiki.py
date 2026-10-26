@@ -521,3 +521,50 @@ def test_a_ticket_that_left_the_persons_list_leaves_the_answer_at_once(world, ge
 def test_pages_stay_readable_when_the_host_cannot_list_tickets(world, get):
     world.link.fail_query = True
     assert get().status_code == 200 and get("/page", slug="hello").json()["tickets"] == []
+
+
+@pytest.fixture
+def post(world, client, token):
+    def call():
+        return client.post(
+            f"/api/w/{world.ws}/wiki/create", json={}, headers={"Authorization": f"Bearer {token}", "Origin": ORIGIN}
+        )
+
+    return call
+
+
+def _no_wiki_repo(world, tmp_path, monkeypatch):
+    folder = tmp_path / "nowiki"
+    folder.mkdir()
+    git(folder, "init", "-q", "-b", "main")
+    (folder / "notes.txt").write_text("x\n")
+    git(folder, "add", ".")
+    git(folder, "commit", "-qm", "first")
+    monkeypatch.setattr(world.gateway, "workspace_folder", lambda ws: (folder, folder / ".orch"))
+    browse._confirmed.clear()
+    return folder
+
+
+def test_create_the_wiki_folder_commits_only_the_readme(world, get, post, tmp_path, monkeypatch):
+    folder = _no_wiki_repo(world, tmp_path, monkeypatch)
+    world.link.role = "owner"
+    (folder / "staged.txt").write_text("staged\n")
+    git(folder, "add", "staged.txt")  # the person's own staged work must stay out of the commit
+    assert get().json()["state"] == "no_folder"
+    res = post()
+    assert res.status_code == 200, res.text
+    assert res.json() == {"created": True, "path": "wiki/readme.md"}
+    assert (folder / "wiki/readme.md").read_text() == "# Wiki\n"
+    shown = git(folder, "show", "--stat", "--format=%an <%ae>", "HEAD")
+    assert "orch <orch@localhost>" in shown and "wiki/readme.md" in shown and "staged.txt" not in shown
+    assert "staged.txt" in git(folder, "diff", "--cached", "--name-only")
+    listed = get().json()
+    assert listed["state"] == "ok" and [p["slug"] for p in listed["pages"]] == ["readme"]
+    assert post().status_code == 409  # a second time: already there
+
+
+def test_create_is_for_owners_and_maintainers(world, post, tmp_path, monkeypatch):
+    folder = _no_wiki_repo(world, tmp_path, monkeypatch)
+    world.link.role = "member"
+    assert post().status_code == 403
+    assert not (folder / "wiki").exists()

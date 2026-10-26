@@ -5,7 +5,7 @@ addons/needs.py 1
 addons/runner.py 1
 addons/settings_value.py 1
 canon/hashing.py 2
-cli/quick.py 2
+cli/quick.py 3
 click/records.py 6
 click/signer.py 4
 click/view.py 3

@@ -157,6 +157,8 @@ class Approval:
     #: #1198 C10: the signer's per-request key that opens the typed secret of an op in ``SEALED_OPS`` (the hub backup
     #: key); its public half is in the View. Closed (private key dropped) when the approval ends. Never logged
     seal: sealed.Recipient | None = None
+    #: run-9 feedback 6: the person key is kept for hub steps (orch.custody.pkvault): no backup key is asked for
+    vault: bool = False
     deposit_result: dict[str, Any] | None = None
     #: R3 part B: the bytes of the pasted screenshots of a sequence by name, held HERE (verified against the intent)
     images: dict[str, bytes] | None = None
@@ -567,6 +569,7 @@ class ClickSigner:
                 seal=sealed.Recipient("in", workspace_id=entry["workspace_id"], request_id=rid)
                 if op in SEALED_OPS
                 else None,
+                vault=op in SEALED_OPS and self._vault(entry),
                 images=images or None,
                 image_digests=tuple(sorted({canon.artifact_digest(b) for b in images.values()})) if images else (),
             )
@@ -755,7 +758,9 @@ class ClickSigner:
             artifacts=artifacts,
             deposit=approval.deposit,
             reveal=approval.reveal_pk,
-            seal_in=None if approval.seal is None else (approval.seal.public, SEALED_OPS[approval.op]),
+            seal_in=None
+            if approval.seal is None or approval.vault
+            else (approval.seal.public, SEALED_OPS[approval.op]),
         )
 
     def sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
@@ -828,8 +833,10 @@ class ClickSigner:
         self._key_ready(entry, backend)  # before every claim, on every sign path (single, sequence, deposit, reveal)
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
         proof = None
-        if envelopes is not None:  # #1198 C10: the owner proof, before any claim: a wrong key signs nothing
-            proof = self._owner_proof(entry, approval, prepared, envelopes["hub.backup_key"])
+        if envelopes is not None or approval.vault:  # #1198 C10: the owner proof, before any claim
+            proof = self._owner_proof(
+                entry, approval, prepared, None if envelopes is None else envelopes["hub.backup_key"]
+            )
             self._fetch(entry, approval, sel["device"], proof)  # human.get checks the proof at the bind
         if (stored.get("material") or {}).get("sequence") is not None:
             return self._sign_sequence(entry, approval, backend, sel, stored)
@@ -1083,7 +1090,7 @@ class ClickSigner:
         """``sealed`` of a sign call: absent for a review that asks for none; for one that does, an object whose keys
         are exactly the View's purposes, each an object (the envelope; opened later, by the recipient only).
         Anything else is refused before anything is opened."""
-        want = () if approval.seal is None else SEALED_OPS[approval.op]
+        want = () if approval.seal is None or approval.vault else SEALED_OPS[approval.op]
         have = args.get("sealed")
         if not want:
             if "sealed" in args:
@@ -1093,8 +1100,16 @@ class ClickSigner:
             raise ClickError("invalid.input", "this review needs the backup key sealed for this request")
         return have
 
+    def _vault(self, entry: dict[str, Any]) -> bool:
+        from orch.custody import pkvault
+
+        try:
+            return pkvault.has(self.state, entry["workspace_id"], self._person(entry))
+        except Exception:  # noqa: BLE001 - no kept key: the backup key is typed as before
+            return False
+
     def _owner_proof(
-        self, entry: dict[str, Any], approval: Approval, prepared: Mapping[str, Any], envelope: dict[str, Any]
+        self, entry: dict[str, Any], approval: Approval, prepared: Mapping[str, Any], envelope: dict[str, Any] | None
     ) -> dict[str, Any]:
         """Open the sealed backup key (recipient bound to this workspace, request and review), derive the person key
         ``PK``, check it is this person's, sign the owner proof over the reviewed payload and nothing else, then wipe
@@ -1103,6 +1118,23 @@ class ClickSigner:
         from orch.custody.personkey import PersonMismatch, TypedCodeSource
         from orch.host import signer as host_signer
 
+        if envelope is None:  # the person key kept by setup (run-9 feedback 6): no backup key typed
+            from orch.custody import pkvault
+            from orch.custody.base import CustodyError
+            from orch.host import signer as host_signer
+
+            try:
+                return host_signer.terminal_owner_proof(
+                    prepared, approval.request_id, workspace_id=approval.workspace_id, person=self._person(entry),
+                    now_ms=lambda: int(self.wall() * 1000),
+                    pk_factory=lambda **kw: pkvault.VaultSource(
+                        self.state, approval.workspace_id, self._person(entry), **kw
+                    ),
+                )  # fmt: skip
+            except CustodyError as exc:
+                raise refused("check_failed", f"{exc}; nothing was signed") from None
+            except host_signer.SignerRefused as exc:
+                raise refused("check_failed", str(exc)) from None
         assert approval.seal is not None and approval.view_digest is not None
         ctx = sealed.Context("hub.backup_key", approval.workspace_id, approval.request_id, approval.view_digest)
         try:

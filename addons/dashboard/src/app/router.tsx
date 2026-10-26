@@ -36,6 +36,7 @@ const ExplorerPage = lazyPage(() => import('./pages/explorer'), 'ExplorerPage')
 const TerminalsPage = lazyPage(() => import('./pages/terminals'), 'TerminalsPage')
 const ActivityPage = lazyPage(() => import('./pages/activity'), 'ActivityPage')
 const UsagePage = lazyPage(() => import('./pages/usage'), 'UsagePage')
+const WikiPage = lazyPage(() => import('./pages/wiki'), 'WikiPage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
 // The real-host-only pages (quick tasks, records, runner) drawn from fixtures so the layout guard sees them (src/dev).
 // `import.meta.env.DEV` is false in a build, so the import, its chunk and the fixtures are not in the production bundle.
@@ -204,7 +205,8 @@ const marketRoute = createRoute({
   validateSearch: (s: Record<string, unknown>): { tab: 'browse' | 'installed' | 'marketplaces' } => ({ tab: s.tab === 'installed' || s.tab === 'marketplaces' ? s.tab : 'browse' }),
   beforeLoad: () => {
     if (!isRealHost()) throw redirect({ to: '/' })
-    serves('market')()
+    // The page also serves a host without the market ops: it then shows the built-in add-ons only.
+    serves('settings')()
   },
   loader: pageLoader(({ qc, ws }) => hasFeature('market', ws.id) ? [qc.ensureQueryData(queries.marketList(ws.id))] : [], [MarketPage.preload]),
   component: MarketPage,
@@ -240,6 +242,17 @@ const usageRoute = createRoute({
   },
   loader: pageLoader(() => [], [UsagePage.preload]),
   component: UsagePage,
+})
+/** Wiki of a real host (add-on): listed only while the add-on is ON for this workspace (the server adds `wiki` then). */
+const wikiRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'wiki',
+  beforeLoad: () => {
+    if (!isRealHost()) throw redirect({ to: '/' })
+    serves('wiki')()
+  },
+  loader: pageLoader(() => [], [WikiPage.preload]),
+  component: WikiPage,
 })
 const layoutPreviewRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -278,6 +291,8 @@ const settingsTabRoute = createRoute({
   // An unknown tab (or /settings/addon without a name) would render only the sub-nav: go to General instead.
   beforeLoad: ({ params }) => {
     serves('settings')()
+    // Add-ons live on the Add-ons page now (the old Settings tab is gone).
+    if (isRealHost() && params.tab === 'addons') throw redirect({ to: '/addons', search: { tab: 'installed' } })
     if (!knownSettingsTab(params.tab)) throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
   },
   loader: ({ context, params }) => pageLoader(settingsData(params.tab), [SettingsPage.preload])({ context }),
@@ -293,7 +308,7 @@ const settingsAddonRoute = createRoute({
   beforeLoad: () => {
     serves('settings')()
     // An addon's own settings are not on a real host yet (the reduced settings have General, Members, Gates, Grants).
-    if (isRealHost()) throw redirect({ to: '/settings/$tab', params: { tab: 'general' } })
+    if (isRealHost()) throw redirect({ to: '/addons', search: { tab: 'installed' } })
   },
   loader: ({ context, params }) => pageLoader(settingsData('addons', params.name), [SettingsPage.preload, addonNodes])({ context }),
   pendingComponent: SettingsSkeleton,
@@ -322,7 +337,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, wikiRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

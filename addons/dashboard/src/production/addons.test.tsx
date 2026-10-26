@@ -17,16 +17,18 @@ const ROWS = [
   row({ id: 'start-agent', title: 'Start agents', state: 'on' }),
   row({ id: 'terminals', title: 'Terminals', state: 'off', blocked: 'Needs dashboard execution first. Turn it on here, then switch this on.', runner_switch: true }),
   row({ id: 'worktrees', title: 'Worktrees', state: 'off' }),
+  row({ id: 'wiki', title: 'Wiki', state: 'off' }),
+  row({ id: 'quick', title: 'Quick tasks', state: 'on' }),
 ]
 const state = useFakeHost(() => [workspace({ id: ID, addOns: data(ROWS) })])
 const open = async () => {
-  show('/w/DEMO/settings/addons')
+  show('/w/DEMO/addons')
   return await screen.findByRole('list', { name: 'Add-ons' }, T)
 }
 
 it('lists every add-on with its description and On or Off; the dashboard is always on and has no switch', async () => {
   const list = await open()
-  expect(within(list).getAllByRole('listitem')).toHaveLength(4)
+  expect(within(list).getAllByRole('listitem')).toHaveLength(6)
   expect(within(screen.getByTestId('addon-dashboard')).getByText('Always on')).toBeInTheDocument()
   expect(within(screen.getByTestId('addon-dashboard')).queryByRole('switch')).toBeNull()
   expect(screen.queryByTestId('addon-start-agent-state')).toBeNull() // no state chip: the switch says it
@@ -56,18 +58,27 @@ it('turning one on is a signed hand-off: the typed action opens the review, noth
   const user = userEvent.setup()
   await open()
   await user.click(screen.getByRole('switch', { name: 'Worktrees' }))
-  const dialog = await screen.findByRole('dialog', {}, T)
+  const dialog = await screen.findByTestId('addon-worktrees-accordion', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'worktrees' }])
   expect(dialog).toHaveTextContent('Turn on an add-on')
   expect(dialog).toHaveTextContent('In your terminal you type worktrees~aaaaaaaa to continue.')
 })
 
+it('feedback 3.3: the Wiki switch opens the sign step (it was missing from the page list)', async () => {
+  const user = userEvent.setup()
+  await open()
+  await user.click(screen.getByRole('switch', { name: 'Wiki' }))
+  const dialog = await screen.findByTestId('addon-wiki-accordion', {}, T)
+  await within(dialog).findByTestId('handoff-command', {}, T)
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'wiki' }])
+})
+
 it('turning one off is a signed hand-off too', async () => {
   const user = userEvent.setup()
   await open()
   await user.click(screen.getByRole('switch', { name: 'Start agents' }))
-  const dialog = await screen.findByRole('dialog', {}, T)
+  const dialog = await screen.findByTestId('addon-start-agent-accordion', {}, T)
   await within(dialog).findByTestId('handoff-command', {}, T)
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_disable', name: 'start-agent' }])
   expect(dialog).toHaveTextContent('Turn off an add-on')
@@ -99,4 +110,25 @@ it('an add-on with settings says what it needs while Off; the toggle still opens
   expect(screen.queryByTestId('addon-publish-expand')).toBeNull() // nothing to open while Off
   await userEvent.setup().click(screen.getByRole('switch', { name: 'Publish' }))
   await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'publish' }]), T)
+})
+
+it('run 9: the Built in group tags every row, Quick tasks is switchable like Wiki, the review opens under the row (no popup)', async () => {
+  const user = userEvent.setup()
+  await open()
+  expect(within(screen.getByTestId('addon-quick')).getByText('Built in')).toBeInTheDocument()
+  await user.click(screen.getByRole('switch', { name: 'Quick tasks' }))
+  const accordion = await screen.findByTestId('addon-quick-accordion', {}, T)
+  expect(screen.getByTestId('addon-quick')).toContainElement(accordion)
+  expect(screen.queryByRole('dialog')).toBeNull()
+  await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_disable', name: 'quick' }]), T)
+})
+
+it('run 9: with One click on, pressing the switch signs directly (no Sign button, no popup)', async () => {
+  const ws = state.host.workspaces[0]
+  ws.click = { custody: 'convenience', enabled: true, available: true }
+  ws.features = [...ws.features, 'click']
+  await open()
+  await userEvent.setup().click(screen.getByRole('switch', { name: 'Worktrees' }))
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  expect(screen.queryByRole('dialog')).toBeNull()
 })

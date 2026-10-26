@@ -75,9 +75,14 @@ def test_setup_refuses_an_address_that_is_not_allowed_before_any_signature(offli
     assert code == 5 and "error invalid.input" in out and "no path" in out
 
 
-def test_setup_refuses_one_address_for_both(offline):
-    code, out = run(["setup", "--server", "https://pub.example.com", "--share", "https://pub.example.com"], {})
-    assert code == 5 and "two different addresses" in out
+def test_setup_accepts_one_address_for_both_no_domain_single_origin(offline):
+    from types import SimpleNamespace as NS
+
+    from orch.host import seqaddon
+
+    publish._check_setup(NS(server="http://127.0.0.1:8102", share_addr="http://127.0.0.1:8102"))
+    one = {"server": "http://127.0.0.1:8102", "share": "http://127.0.0.1:8102"}
+    assert seqaddon._setting("publish", "publish", one, ValueError) == one
 
 
 def test_setup_and_share_stop_before_anything_when_there_is_no_terminal(monkeypatch):
@@ -240,12 +245,50 @@ def test_an_unknown_workspace_prints_what_the_admin_must_run(monkeypatch):
 
     monkeypatch.setattr(publish, "_target", lambda env: SimpleNamespace())
     monkeypatch.setattr(publish, "_call", call)
+    monkeypatch.setattr(
+        publish, "_allow_on_local_server", lambda info, env: False
+    )  # no publish server on this computer
     code, out = run(["register"], {})
     assert code == 3 and calls == ["publish.register", "publish.list"]
     assert f"orch-publish admin --data DATA_DIR owners add {'2' * 32}" in out
     assert f"orch-publish admin --data DATA_DIR ws allow {'1' * 32} {'2' * 32}" in out
     assert "Then run: orch publish register" in out
     assert f"--owner {'2' * 32} --workspace {'1' * 32}={'2' * 32}" in out
+
+
+def test_register_allows_the_workspace_on_the_publish_server_installed_here(monkeypatch, tmp_path):
+    import json
+    import os
+
+    from orch.install.state import Layout, save
+    from orch.ops.errors import OrchError
+
+    env = {"HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path / "cfg")}
+    lay = Layout(env)
+    log = tmp_path / "admin.log"
+    tool = tmp_path / "orch-publish"
+    tool.write_text(f'#!/bin/sh\necho "$@" >> {log}\n')
+    os.chmod(tool, 0o755)
+    save(lay, {"v": 1, "address": None, "domain": None, "workspaces": [], "parts": {"publish": {"binary": str(tool)}}})
+    seen = []
+
+    def call(target, op, args, env):
+        seen.append(op)
+        if op == "publish.register" and seen.count(op) == 1:
+            raise OrchError("publish.server_refused", "the server no longer knows this workspace; ask its admin")
+        return {"workspace": "1" * 32, "owner": "2" * 32, "result": "registered"}
+
+    monkeypatch.setattr(publish, "_target", lambda env: SimpleNamespace())
+    monkeypatch.setattr(publish, "_call", call)
+    code, out = run(["register"], env)
+    assert code == 0 and "ok publish register" in out, out
+    lines = log.read_text().splitlines()
+    data = str(lay.data("publish"))
+    assert lines == [
+        f"admin --data {data} owners add {'2' * 32}",
+        f"admin --data {data} ws allow {'1' * 32} {'2' * 32}",
+    ]
+    assert json.loads(lay.file.read_text())  # state untouched
 
 
 def test_register_without_a_hub_says_join_a_hub(monkeypatch):

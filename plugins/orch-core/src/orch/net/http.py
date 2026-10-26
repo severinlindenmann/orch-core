@@ -38,6 +38,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from orch.wsproto import wire
+from orch.wsproto.localdial import dial_host
 
 __all__ = ["RedirectRefused", "RelayConn", "Response", "Transport", "TransportError", "tls_context"]
 
@@ -216,6 +217,7 @@ class RelayConn:
         number; ``shutdown`` on the dup ends the TCP connection itself, TLS handshake included. The hostname stays
         http.client's, so TLS still checks it (SNI and certificate)."""
         host, port = address
+        host = dial_host(host)  # a computer cannot dial its own overlay address: loopback instead (Host/TLS name stay)
         err: OSError | None = None
         for af, kind, proto, _canon, sa in self._lookup(host, port):
             sock = socket.socket(af, kind, proto)

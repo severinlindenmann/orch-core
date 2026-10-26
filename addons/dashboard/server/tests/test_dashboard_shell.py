@@ -82,6 +82,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/worktrees/remove",
         "/api/w/{ws}/wiki",
         "/api/w/{ws}/wiki/page",
+        "/api/w/{ws}/wiki/create",
         "/api/w/{ws}/wiki/search",
         "/api/w/{ws}/wiki/backlinks",
         "/api/w/{ws}/explorer",
@@ -127,6 +128,9 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/market/stage/{stage_id}",
         "/api/w/{ws}/market/uninstall",
         "/api/w/{ws}/market/refresh",
+        "/api/w/{ws}/market/add",
+        "/api/w/{ws}/add-ons/{name}/settings",
+        "/api/w/{ws}/hub/link",  # run-9 feedback 6: read a connect link
         "/api/w/{ws}/runner",
         "/api/w/{ws}/runner/deposits/{deposit_id}",
         "/api/w/{ws}/runner/forget",

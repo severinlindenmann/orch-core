@@ -19,8 +19,8 @@ export const HOST_TABS = [
   { id: 'gates', label: 'Approvals' },
   /** The access given to agents (grants). */
   { id: 'grants', label: 'Agent access' },
-  /** Switch the shipped add-ons on and off (each change is signed). */
-  { id: 'addons', label: 'Add-ons' },
+  /** Phone pairing and the devices that can approve. */
+  { id: 'devices', label: 'Devices' },
   /** Only while a hub is connected. */
   { id: 'hub', label: 'Hub', feature: 'hub' },
 ] as const
@@ -29,5 +29,5 @@ export const HOST_TABS = [
 export const settingsTabs = (workspace?: string): readonly { id: string; label: string; preview?: boolean }[] =>
   isRealHost() ? HOST_TABS.filter((t) => !('feature' in t) || hasFeature(t.feature, workspace)) : TABS
 
-/** The known /settings/$tab values on this build; anything else (also the old /settings/devices and /settings/records) redirects to General. Devices and phone pairing live on the Phone row of Add-ons, records in General > Advanced. */
+/** The known /settings/$tab values on this build; anything else (also the old /settings/devices and /settings/records) redirects to General. Devices and phone pairing live in Settings > Devices, add-ons on the Add-ons page, records in General > Advanced. */
 export const knownSettingsTab = (tab: string): boolean => (isRealHost() ? HOST_TABS.map((t) => t.id) : TABS.map((t) => t.id)).some((id) => id === tab)

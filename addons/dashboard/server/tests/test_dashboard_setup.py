@@ -339,3 +339,36 @@ def test_real_core_claim_and_proxy(tmp_path):
                 assert client.get("/api/setup/state", headers=headers).status_code == 401
         finally:
             core.stop()
+
+
+SERVICE_URL = "http://192.168.64.4:8151/#launch=" + "a" * 43 + "&to=%2F"
+
+
+def test_real_core_finish_keeps_service_login_url(tmp_path):
+    from orch.setup.server import SetupServer
+
+    class Flow:
+        busy = False
+        finished = False
+
+        def launch(self, directory):
+            pass
+
+        def end(self, why):
+            pass
+
+        def dispatch(self, method, route, query, body):
+            return 200, {"url": SERVICE_URL, "workspace_id": "8f1c2d3e-0000-4000-8000-00000000aaaa"}
+
+    with tempfile.TemporaryDirectory(prefix="b9-core-", dir="/tmp") as directory:
+        core = SetupServer(Path(directory) / "setup.sock", Flow())
+        core.start()
+        try:
+            core.launch(str(tmp_path))
+            app = create_app(PORT, auth=Auth(), setup_proxy=SetupProxy(core.path))
+            with TestClient(app, base_url=ORIGIN) as client:
+                headers = claim(client)
+                done = client.post("/api/setup/finish", json={}, headers=headers).json()
+                assert done.get("url") == SERVICE_URL, done
+        finally:
+            core.stop()

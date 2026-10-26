@@ -13,13 +13,16 @@ def parse(body):
     return TypeAdapter(PrepareBody).validate_python(body)
 
 
-def test_turning_an_addon_on_or_off_is_a_typed_action_for_the_shipped_addons_only():
+def test_turning_an_addon_on_or_off_is_a_typed_action_for_any_installed_addon_but_never_the_dashboard():
     on = parse({"action": "addon_grant", "name": "terminals"})
     off = parse({"action": "addon_disable", "name": "worktrees"})
     assert isinstance(on, AddonGrant) and isinstance(off, AddonDisable)
     assert host_call(on) == ("addon.grant", {"name": "terminals"})
     assert host_call(off) == ("addon.disable", {"name": "worktrees"})
-    for bad in ("dashboard", "../x", "echo", "", "Terminals"):  # the dashboard stays on; no other package is offered
+    assert (
+        parse({"action": "addon_grant", "name": "calendar"}).name == "calendar"
+    )  # installed from a marketplace (run 9)
+    for bad in ("dashboard", "../x", "", "Terminals", "a" * 41):  # the dashboard stays on; odd names are shape errors
         with pytest.raises(ValidationError):
             parse({"action": "addon_grant", "name": bad})
         with pytest.raises(ValidationError):
@@ -212,7 +215,8 @@ def test_each_addon_row_carries_the_manifest_version_and_odd_ones_are_dropped(
     assert rows["worktrees"]["version"] == "1.2.3"
     assert rows["publish"]["version"] is None and rows["usage"]["version"] is None
     assert rows["estimate"]["version"] is None  # not listed by the host
-    assert rows["dashboard"]["version"] and rows["quick"]["version"]  # the install's own packages
+    assert rows["dashboard"]["version"]  # the install's own package; quick is a switchable add-on now (run 9)
+    assert rows["quick"]["locked"] is None and rows["quick"]["state"] == "off"
 
 
 def test_c14_rows_offer_the_switch_only_where_dashboard_execution_is_what_is_missing(
@@ -235,3 +239,20 @@ def test_clean_version_accepts_versions_and_nothing_else():
         assert clean_version(good) == good
     for bad in ("", " 1.0", "1.0\n", "v" * 41, "1.0 <b>", None, 3, "‮1.0", "../x"):
         assert clean_version(bad) is None
+
+
+def test_deleting_an_addons_data_is_a_typed_signed_action():
+    purge = parse({"action": "addon_purge", "name": "calendar"})
+    assert host_call(purge) == ("addon.purge", {"name": "calendar"})
+    assert expected(purge)([{"type": "addon.purged", "name": "calendar"}])
+    with pytest.raises(ValidationError):
+        parse({"action": "addon_purge", "name": "dashboard"})
+
+
+def test_saving_an_addons_settings_is_one_settings_set_of_exactly_that_add_on():
+    save = parse({"action": "addon_settings", "name": "model-routing", "value": {"work": "opus"}})
+    assert host_call(save) == ("settings.set", {"set": {"addons": {"model-routing": {"work": "opus"}}}})
+    assert expected(save)([{"type": "settings.changed", "set": {"addons": {"model-routing": {"work": "opus"}}}}])
+    assert not expected(save)([{"type": "settings.changed", "set": {"addons": {"model-routing": {"work": "sonnet"}}}}])
+    with pytest.raises(ValidationError):
+        parse({"action": "addon_settings", "name": "model-routing", "value": {"x": "y" * 9000}})

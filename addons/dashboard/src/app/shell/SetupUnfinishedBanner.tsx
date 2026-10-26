@@ -21,26 +21,24 @@ export function SetupUnfinishedBanner() {
 export function SetupUnfinishedLine() {
   const [open, setOpen] = useState(false)
   return (
-    <div role="region" aria-label="Setup unfinished" data-testid="setup-unfinished-banner" className="flex min-h-9 shrink-0 items-start gap-2 border-b border-border bg-surface px-4 py-2 text-[13px]">
+    <div role="region" aria-label="Finish turning on" data-testid="setup-unfinished-banner" className="flex min-h-9 shrink-0 items-start gap-2 border-b border-border bg-surface px-4 py-2 text-[13px]">
       <Info className="mt-0.5 size-4 shrink-0 text-text-muted" aria-hidden />
-      <span className="min-w-0 flex-1 whitespace-normal text-text">Setup unfinished: one-click is not on yet. Until then you approve in the terminal.</span>
+      <span className="min-w-0 flex-1 whitespace-normal text-text">One click needs one more step. Finish on this computer to approve with one click again.</span>
       <Button size="xs" variant="outline" className="shrink-0" onClick={() => setOpen(true)}>
-        Finish setup
+        Finish turning on
       </Button>
       {open && (
         <Dialog open onOpenChange={(o) => !o && setOpen(false)}>
           <DialogContent className="max-w-md gap-4 border-border bg-surface">
             <DialogHeader>
-              <DialogTitle>Finish setup</DialogTitle>
+              <DialogTitle>Finish turning on</DialogTitle>
               <DialogDescription>
-                One-click could not be set up when this workspace was created, so your key stays under its passphrase and you approve in the terminal.
+                One click is switched on, but your key is still under its passphrase, so you approve in the terminal. One quick step on this computer fixes that.
               </DialogDescription>
             </DialogHeader>
             <ol className="list-decimal space-y-1 pl-5 text-[13px] text-text">
-              <li>Open a terminal in this workspace’s project folder.</li>
-              <li>
-                Run <code className="rounded bg-surface-2 px-1">orch setup</code>. It offers the missing step, and asks for your passphrase on the terminal.
-              </li>
+              <li>Open Settings, General.</li>
+              <li>Switch One click on and type your passphrase in the dialog.</li>
             </ol>
             <DialogFooter>
               <Button onClick={() => setOpen(false)}>Close</Button>

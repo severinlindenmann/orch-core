@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -260,24 +259,6 @@ def left(person="p_o", device="d_o", **kw):
     return fake_event("hub.left", person=person, device=device, **kw)
 
 
-def test_break_glass_signer_rules():
-    ws = ws_model()
-    ok = hubsign.break_glass_allowed
-    assert ok(ws, left(), None)  # the owner's passphrase device key
-    assert not ok(ws, left(auth="convenience"), None)  # never click-to-sign
-    assert not ok(ws, left(auth="secure-enclave-unlocked"), None)  # nor a phone key
-    assert not ok(ws, left(auth="hub"), None)
-    assert not ok(ws, left(), ("p_o", "d_o"))  # not over the relay
-    assert not ok(ws, left(person="p_m", device="d_m"), None)  # not a non-owner
-    assert not ok(ws, left(device="d_m"), None)  # not a device that is not the owner's
-    assert not ok(ws, left(person="p_unknown", device="d_u"), None)
-    ev = left()
-    ev["actor"] = {**ev["actor"], "via": "c_1"}
-    assert not ok(ws, ev, None)  # not a hub channel
-    assert not ok(ws, fake_event("hub.joined", person="p_o", device="d_o"), None)  # a second join is a repin: refused
-    assert not ok(ws, fake_event("gate.approved", person="p_o", device="d_o"), None)
-
-
 def test_the_recovery_key_recovers_a_device_and_never_signs_anything_else():
     """L2-C8i-1: ``device.recover`` is the one ``pk`` row (the D50 ``device.added`` shape: the new device signs with the
     recovery certificate, the owner has no valid device); a plain device key or any other label never recovers."""
@@ -353,25 +334,6 @@ def test_a_second_hub_joined_is_refused_in_full_mode(human, served):
 # -- I8: join in full leaves convenience off -------------------------------------------------------------------------
 
 
-def test_a_full_join_needs_click_to_sign_off_first(human, served):
-    convenience.set_enabled(served.lab.state, served.wid, True, UID)
-    assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "sign.hub_only"
-    human.prepare("hub.join", join_args())  # selective is unchanged
-
-
-def test_a_full_connect_needs_click_to_sign_off_and_convenience_on_is_refused_in_full_mode(
-    human, served, stub, keystore
-):
-    full_joined(human, served)
-    convenience.set_enabled(served.lab.state, served.wid, True, UID)
-    assert err(served.client().req("hub.connect", connect_args(), idem=True)) == "sign.hub_only"
-    convenience.set_enabled(served.lab.state, served.wid, False, UID)
-    entry = {"workspace_id": served.wid, "root": served.lab.root}
-    with pytest.raises(HostError) as ei:
-        convenience.refuse_turn_on(served.lab.state, entry, UID, person=served.lab.owner)
-    assert ei.value.code == "sign.hub_only"
-
-
 # -- I11: the unsigned safety verbs ----------------------------------------------------------------------------------
 
 
@@ -438,47 +400,6 @@ def convenience_custody(monkeypatch):
     monkeypatch.setattr(select, "read_selection", lambda state, wid: {"custody": "convenience", "transition": None})
 
 
-def test_a_full_join_needs_passphrase_custody_not_just_the_flag_off(human, served, convenience_custody):
-    assert not convenience.enabled(served.lab.state, served.wid, UID)  # the flag is off
-    assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "sign.hub_only"
-    human.prepare("hub.join", join_args())  # selective is unchanged
-
-
-def test_hub_mode_to_full_needs_passphrase_custody(human, served, monkeypatch):
-    human.run("hub.join", join_args())
-    from orch.custody import select
-
-    monkeypatch.setattr(select, "read_selection", lambda state, wid: {"custody": "convenience", "transition": None})
-    assert err(human.prepare_res("hub.mode", {"hub_card": copy.deepcopy(CARD), "mode": "full"})) == "sign.hub_only"
-
-
-def test_a_full_connect_needs_passphrase_custody(human, served, stub, keystore, monkeypatch):
-    full_joined(human, served)
-    from orch.custody import select
-
-    monkeypatch.setattr(select, "read_selection", lambda state, wid: {"custody": "convenience", "transition": None})
-    assert err(served.client().req("hub.connect", connect_args(), idem=True)) == "sign.hub_only"
-
-
-def test_an_unreadable_custody_setting_counts_as_convenience(human, served, monkeypatch):
-    from orch.custody import select
-
-    def boom(state, wid):
-        raise OSError("unreadable")
-
-    monkeypatch.setattr(select, "read_selection", boom)
-    assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "sign.hub_only"
-
-
-def test_a_transition_to_convenience_counts_as_convenience(human, served, monkeypatch):
-    from orch.custody import select
-
-    monkeypatch.setattr(
-        select, "read_selection", lambda state, wid: {"custody": "passphrase", "transition": {"to": "convenience"}}
-    )
-    assert err(human.prepare_res("hub.join", join_args(mode="full"))) == "sign.hub_only"
-
-
 def test_moving_the_key_into_convenience_custody_is_refused_in_full_mode(human, served, stub, keystore):
     entry = {"workspace_id": served.wid, "root": served.lab.root}
     convenience.refuse_full_mode_entry(served.lab.state, entry, UID)  # standalone: allowed
@@ -486,19 +407,6 @@ def test_moving_the_key_into_convenience_custody_is_refused_in_full_mode(human, 
     with pytest.raises(HostError) as ei:
         convenience.refuse_full_mode_entry(served.lab.state, entry, UID)
     assert ei.value.code == "sign.hub_only"
-
-
-def test_break_glass_is_refused_while_custody_is_convenience(human, served, stub, keystore, monkeypatch):
-    full_joined(human, served)
-    from orch.custody import select
-
-    monkeypatch.setattr(select, "read_selection", lambda state, wid: {"custody": "convenience", "transition": None})
-    # any process of the owner's UID could sign a leave labelled passphrase: refused at the choke point
-    before = log_len(served)
-    landed, error = append(served, [owner_event(served, "hub.left")])
-    assert landed == [] and error.code == "sign.hub_only" and "convenience custody" in error.message
-    assert err(human.prepare_res("hub.leave", {})) == "sign.hub_only"
-    assert log_len(served) == before
 
 
 def test_direct_mode_refuses_break_glass_while_custody_is_convenience(convenience_custody, tmp_path):

@@ -1151,6 +1151,20 @@ def _payload(
                 ("WIDENED: " if diff.get("widened") is True else "not widened: ")
                 + "; ".join(one(x) for x in diff["lines"]),
             )
+    if isinstance(out.get("summary"), dict) and out["summary"].get("risk"):
+        # the compact add-on view keeps every warning in sight, not only in the fold
+        warns = []
+        if isinstance(market, Mapping):
+            if market.get("stale") is True:
+                warns.append("The marketplace index is past its expiry.")
+            if market.get("class") == "dev-folder":
+                warns.append("This is a local folder, not a marketplace package.")
+            if isinstance(market.get("publisher"), Mapping) and market["publisher"].get("tofu") == "new":
+                warns.append("First use of this publisher key.")
+        if isinstance(deps, Mapping) and isinstance(deps.get("diff"), Mapping) and deps["diff"].get("widened") is True:
+            warns.append("Its dependencies widened.")
+        if warns:
+            out["summary"]["risk"] += " " + " ".join(warns)
     issued = [ev.get("grant") for ev in events if ev.get("type") == "grant.issued"]
     revoked = [ev.get("grant") for ev in events if ev.get("type") == "grant.revoked"]
     if issued and revoked:  # an Extend: the access it replaces must be another one than the new access
@@ -1267,6 +1281,14 @@ def _event(
             out.setdefault("notes", []).append(
                 f"Agents may get access for up to {span(ev['set']['grant_hours'])} (members; the runner too)."
             )
+            if set(ev["set"]) == {"grant_hours"} and type(ev["set"]["grant_hours"]) is int:
+                now, was = ev["set"]["grant_hours"], before.get("grant_hours")
+                move = f"{span(was)} \u2192 {span(now)}" if type(was) is int and was != now else span(now)
+                out["title"] = "Change the longest agent access"
+                out["summary"] = {
+                    "title": "Change the longest agent access",
+                    "lines": [f"Longest agent access: {move}, in this workspace."],
+                }
         return "Change the workspace settings"
     if typ == "hub.joined":  # V3 C2a/C2b: the words say what the hub does and does not get
         hub = _short(ev.get("hub_id"))
@@ -1463,11 +1485,20 @@ def _addon(typ: str, ev: Mapping[str, Any], out: dict[str, Any]) -> str:
             _row(out, "it lets owners", EXPLORER_ROW)
         else:
             _row(out, "it says it will", words or "(declares no capabilities)")
-        notes = out.setdefault("notes", [])
-        notes.append(ADDON_TRUST)
-        notes.append("The package digest and the exact capability names are in the technical details.")
+        out.setdefault("notes", []).append(ADDON_TRUST)
         if explorer:
             return EXPLORER_HEADLINE
+        # The dashboard's compact view (run-9 feedback 3.5): the plain name as the headline, two facts, the trust risk.
+        # The rows above stay the exact signed values (the fold); the terminal keeps the long headline.
+        out["title"] = f"Turn on {nice}"
+        out["summary"] = {
+            "title": f"Turn on {nice}",
+            "lines": [
+                f"It says it will {words}." if words else "It declares no capabilities.",
+                f"Version {version}. Runs on this computer.",
+            ],
+            "risk": ADDON_TRUST,
+        }
         return f"Turn on {nice}: " + (f"it says it will {words}" if words else "it declares no capabilities")
     _row(out, "version", ev.get("version"))
     _row(out, "package digest", _short(ev.get("package_sha256")))

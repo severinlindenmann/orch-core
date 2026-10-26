@@ -1,11 +1,10 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { api } from '@/api/client'
 import { canAct, hasFeature } from '@/api/features'
 import { queries } from '@/api/queries'
 import {
-  EXTERNAL_HELP,
   marketError,
   permissionEffect,
   publisherWording,
@@ -26,6 +25,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
+import { BuiltInAddOns } from '../settings/host/AddOns'
+import { InstalledGroup } from './InstalledGroup'
+import { RemoveSheet } from './RemoveSheet'
+import { AddMarketplace } from './AddMarketplace'
+import { SettingsSheet } from './SettingsSheet'
 
 const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
 const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
@@ -179,6 +183,15 @@ function Review({
     </Dialog>
   )
 }
+/** The Built in group: switch, tag, no Remove. One accordion under a row opens for a switch at a time. */
+function BuiltInGroup({ ws }: { ws: NonNullable<ReturnType<typeof useWorkspace>['workspace']> }) {
+  return (
+    <section aria-labelledby="built-in-h" className="space-y-1">
+      <h2 id="built-in-h" className="text-sm font-semibold">Built in</h2>
+      <BuiltInAddOns key={ws.id} workspace={ws} />
+    </section>
+  )
+}
 export function MarketPage() {
   const { workspace } = useWorkspace()
   return <MarketWorkspace key={workspace?.id ?? 'loading'} />
@@ -188,12 +201,15 @@ function MarketWorkspace() {
   const { workspace } = useWorkspace()
   const ws = workspace?.id ?? ''
   const role = useRole()
-  const mayWrite = !!ws && canAct(ws) && role === 'owner' && hasFeature('market', ws)
-  const { tab } = useSearch({ from: '/addons' })
+  const market = !!ws && hasFeature('market', ws)
+  const mayWrite = !!ws && canAct(ws) && role === 'owner' && market
+  const { tab: asked } = useSearch({ from: '/addons' })
+  // A host without the market ops has the built-in add-ons only.
+  const tab = market ? asked : 'installed'
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const list = useQuery({ ...queries.marketList(ws), enabled: !!ws && hasFeature('market', ws) })
-  const installed = useQuery({ ...queries.marketInstalled(ws), enabled: !!ws && hasFeature('market', ws) && tab === 'installed' })
+  const list = useQuery({ ...queries.marketList(ws), enabled: market })
+  const installed = useQuery({ ...queries.marketInstalled(ws), enabled: market && tab === 'installed' })
   const [search, setSearch] = useState('')
   const [source, setSource] = useState('')
   const [permission, setPermission] = useState('')
@@ -204,6 +220,7 @@ function MarketWorkspace() {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [remove, setRemove] = useState<InstalledAddon | null>(null)
+  const [settingsOf, setSettingsOf] = useState<string | null>(null)
   const refresh = async () => {
     await Promise.all([qc.invalidateQueries({ queryKey: queries.marketList(ws).queryKey }), qc.invalidateQueries({ queryKey: queries.marketInstalled(ws).queryKey })])
   }
@@ -238,21 +255,37 @@ function MarketWorkspace() {
       setStage(null)
     })
   const markets = list.data?.markets ?? []
+  // The official marketplace is in every workspace: its first fetch happens on the first visit of this page.
+  const unfetched = markets.find((m) => m.preset && m.cache === 'not_fetched')?.url
+  const fetching = useRef(false)
+  useEffect(() => {
+    if (!unfetched || fetching.current) return
+    fetching.current = true
+    api
+      .marketRefresh(ws, { url: unfetched })
+      .then(() => refresh())
+      .catch(() => setMessage('We could not reach the official marketplace. Press Refresh to try again.'))
+      .finally(() => {
+        fetching.current = false
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unfetched, ws])
   const entries = markets.flatMap((m) => m.addons.map((a) => ({ m, a })))
   const active = tab === 'installed' ? installed : list
-  if (!hasFeature('market', ws)) return <p>Add-ons are not available in this workspace.</p>
   return (
     <div className="@container min-w-0 w-full max-w-5xl space-y-4 break-words">
       <h1 className="text-xl font-semibold">Add-ons</h1>
       <nav aria-label="Add-on tabs" className="flex gap-1 border-b border-border pb-2 @max-[520px]:gap-0">
-        {(['browse', 'installed', 'marketplaces'] as const).map((t) => (
+        {(market ? (['browse', 'installed', 'marketplaces'] as const) : (['installed'] as const)).map((t) => (
           <Button key={t} size="sm" variant={tab === t ? 'secondary' : 'ghost'} onClick={() => void navigate({ to: '/addons', search: { tab: t } })}>
             {t === 'browse' ? 'Browse' : t === 'installed' ? 'Installed' : 'Marketplaces'}
           </Button>
         ))}
       </nav>
       {message && <p role="status">{message}</p>}
-      {active.isError ? (
+      {!market ? (
+        workspace && <BuiltInGroup ws={workspace} />
+      ) : active.isError ? (
         <LoadFailed what={tab === 'installed' ? 'installed add-ons' : 'marketplaces'} onRetry={() => void active.refetch()} />
       ) : active.isPending ? (
         <p role="status">Loading add-ons…</p>
@@ -285,6 +318,7 @@ function MarketWorkspace() {
                 </select>
               </div>
               {!markets.length && <p>No marketplaces added yet</p>}
+              {unfetched && !message && <p role="status">Reading the official marketplace…</p>}
               <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))] gap-3">
                 {entries
                   .filter(
@@ -319,7 +353,7 @@ function MarketWorkspace() {
                         ))}
                       </div>
                       <p>{a.revoked ? 'Withdrawn by its publisher' : a.blocked ? 'Blocked by your hub' : stateLabel(a.installed?.state, pending.includes(a.id))}</p>
-                      {a.installed && <p className="text-xs text-text-muted">Installed{a.installed.state === 'disabled' ? ' · Turn on in Settings > Add-ons' : ''}</p>}
+                      {a.installed && <p className="text-xs text-text-muted">Installed{a.installed.state === 'disabled' ? ' · Turn it on under Installed' : ''}</p>}
                       {mayWrite &&
                         !a.revoked &&
                         (a.blocked ? (
@@ -339,54 +373,19 @@ function MarketWorkspace() {
           )}
           {tab === 'installed' && (
             <>
-              {!installed.data?.addons.length ? (
-                <p>No add-ons installed yet</p>
-              ) : (
-                <Table columns={['Add-on', 'Source', 'Version', 'May', 'Actions']}>
-                  {installed.data.addons.map((a) => (
-                    <tr key={a.name} className="@max-[800px]:block @max-[800px]:py-3">
-                      <td className={cell} data-label="Add-on">
-                        <Inline>{a.name}</Inline>
-                        <p>{stateLabel(a.state)}</p>
-                      </td>
-                      <td className={cell} data-label="Source">
-                        <Inline>{a.origin ?? 'Built in'}</Inline>
-                      </td>
-                      <td className={cell} data-label="Version">
-                        <Inline>{a.version}</Inline>
-                        {a.available && (
-                          <p>
-                            <Inline>{a.available.version}</Inline> ready
-                          </p>
-                        )}
-                      </td>
-                      <td className={cell} data-label="May">
-                        {entries
-                          .find(({ a: entry }) => entry.id === a.name)
-                          ?.a.capabilities.map((p) => (
-                            <p key={p}>
-                              <Inline>{permissionEffect(p)}</Inline>
-                            </p>
-                          )) ?? 'See package review'}
-                      </td>
-                      <td className={cell} data-label="Actions">
-                        {mayWrite && a.origin && (
-                          <div className="flex flex-wrap gap-2">
-                            {a.available && !a.available.revoked && (
-                              <Button disabled={busy} onClick={() => prepare({ id: a.name, update: true })}>
-                                Update...
-                              </Button>
-                            )}
-                            <Button variant="ghost" disabled={busy || a.state !== 'disabled'} onClick={() => setRemove(a)}>
-                              Remove
-                            </Button>
-                            {a.state !== 'disabled' && <p>Turn it off in Settings &gt; Add-ons first</p>}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+              {workspace && <BuiltInGroup ws={workspace} />}
+              <h2 className="pt-2 text-sm font-semibold">From marketplaces</h2>
+              {workspace && (
+                <InstalledGroup
+                  workspace={workspace}
+                  addons={installed.data?.addons ?? []}
+                  summaryOf={(name) => entries.find(({ a }) => a.id === name)?.a.from_marketplace.summary}
+                  mayWrite={mayWrite}
+                  busy={busy}
+                  onUpdate={(a) => prepare({ id: a.name, update: true })}
+                  onSettings={(a) => setSettingsOf(a.name)}
+                  onRemove={setRemove}
+                />
               )}
             </>
           )}
@@ -402,7 +401,21 @@ function MarketWorkspace() {
                         <AddonFrame addon="marketplace" title="From the marketplace" compact>
                           <Inline>{m.from_marketplace.title || m.from_marketplace.name}</Inline>
                         </AddonFrame>
-                        {m.cache === 'invalid' ? <p>Needs refresh</p> : m.stale && <p>Out of date - refresh</p>}
+                        {m.class === 'official' && (
+                          <a
+                            href={m.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Open on GitHub"
+                            className="ml-2 inline-flex items-center gap-1 text-xs text-text-muted hover:text-text"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+                            </svg>
+                            GitHub
+                          </a>
+                        )}
+                        {m.cache === 'invalid' ? <p>Needs refresh</p> : m.cache === 'not_fetched' ? <p>Not read yet</p> : m.stale && <p>Out of date - refresh</p>}
                       </td>
                       <td className={`${cell} font-mono text-xs`} data-label="Repo">
                         <Inline>{m.url.replace(/^https:\/\/github\.com\//, '')}</Inline>
@@ -443,17 +456,7 @@ function MarketWorkspace() {
                 </Table>
               )}
               <p className="text-xs text-text-muted">Allowed by, added by and publisher signature: shown by this computer, not covered by your approval.</p>
-              <p>{EXTERNAL_HELP}</p>
-              {mayWrite && (
-                <div className="space-y-1">
-                  <Button disabled aria-describedby="add-market-why">
-                    + Add marketplace
-                  </Button>
-                  <p id="add-market-why" className="text-xs text-text-muted">
-                    Not available: {EXTERNAL_HELP.charAt(0).toLowerCase() + EXTERNAL_HELP.slice(1)}.
-                  </p>
-                </div>
-              )}
+              {mayWrite && <AddMarketplace ws={ws} list={list.data} markets={markets} onAdded={() => setMessage('Marketplace added. Its add-ons are in Browse.')} />}
             </>
           )}
         </>
@@ -514,35 +517,8 @@ function MarketWorkspace() {
           }}
         />
       )}
-      {mayWrite && remove && (
-        <Dialog open onOpenChange={(open) => !open && setRemove(null)}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Remove add-on?</DialogTitle>
-              <DialogDescription>Its data stays until you purge it.</DialogDescription>
-            </DialogHeader>
-            <Inline>{remove.name}</Inline>
-            {message && <p role="alert">{message}</p>}
-            <DialogFooter className="sticky -bottom-6 -mx-6 -mb-6 border-t border-border bg-surface px-6 py-4">
-              <Button variant="ghost" onClick={() => setRemove(null)}>
-                Cancel
-              </Button>
-              <Button
-                disabled={busy}
-                onClick={() =>
-                  void write(async () => {
-                    await api.marketUninstall(ws, remove.name)
-                    setRemove(null)
-                    await refresh()
-                  })
-                }
-              >
-                Remove
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
+      {mayWrite && workspace && settingsOf && <SettingsSheet workspace={workspace} name={settingsOf} onClose={() => setSettingsOf(null)} />}
+      {mayWrite && remove && <RemoveSheet ws={ws} addon={remove} onClose={() => setRemove(null)} onRemoved={(name) => { setRemove(null); setMessage(`${name} removed. Install it again from Browse.`) }} />}
     </div>
   )
 }

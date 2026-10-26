@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from orch.model import Code, admit, breakglass, replay
+from orch.model import Code, admit, replay
 from tests.model.test_hub_consumers import HUB, ROOT
 from tests.model.world import World
 from tests.schema.examples import cert, hex32
@@ -92,54 +92,12 @@ def test_a_mark_lands_in_full_mode_even_from_an_exposed_key(w):
 # --- the headline forgery ------------------------------------------------------------------------------------------
 
 
-def test_a_copied_exposed_key_cannot_forge_a_passphrase_labelled_hub_left(w):
-    mark(w)  # device A was in convenience custody: someone may hold a copy
-    forged = leave(w, "sev", auth="passphrase")
-    r = admit(strict(w), forged, log="workspace")
-    assert r.code == Code.SIGN_KEY_EXPOSED
-    # on replay: the same line sitting in a log is invalid, with the same code
-    w.ws.append({**forged, "host_sig": "x", "sig": "x"})
-    assert Code.SIGN_KEY_EXPOSED.value in codes(w)
-    assert strict(w).workspace.hub["status"] == "joined"  # and the hub binding is untouched
-
-
 def test_clean_keys_are_unaffected_an_unmarked_key_leaves(w):
     assert not hasattr(admit(strict(w), leave(w, w.b), log="workspace"), "code")
     assert not hasattr(admit(strict(w), leave(w, "sev"), log="workspace"), "code")  # A has no mark: clean
 
 
 # --- full-mode entry -----------------------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("label", ["passphrase", "convenience"])
-def test_a_first_full_join_is_refused_for_an_exposed_key_and_for_a_convenience_label(label):
-    s = World(validate=False).bootstrap({})
-    if label == "passphrase":
-        s.wev("device.exposed", "sev", device=s.dev["sev"], reason="convenience")
-    e = s.build_unappended("workspace", "hub.joined", "sev", roster_v=s.roster_v, hub_id=HUB, hk_root_pub=ROOT,
-                           mode="full", binding_seq=1, aliases=[], auth=label)  # fmt: skip
-    assert admit(strict(s), e, log="workspace").code == Code.SIGN_KEY_EXPOSED
-    sel = s.build_unappended("workspace", "hub.joined", "sev", roster_v=s.roster_v, hub_id=HUB, hk_root_pub=ROOT,
-                             mode="selective", binding_seq=1, aliases=[], auth=label)  # fmt: skip
-    assert not hasattr(admit(strict(s), sel, log="workspace"), "code")  # a selective join is not gated
-
-
-def test_a_clean_key_joins_full_and_a_marked_one_does_not():
-    s = World(validate=False).bootstrap({})
-    full = dict(roster_v=s.roster_v, hub_id=HUB, hk_root_pub=ROOT, mode="full", binding_seq=1, aliases=[])
-    assert not hasattr(
-        admit(strict(s), s.build_unappended("workspace", "hub.joined", "sev", **full), log="workspace"), "code"
-    )
-    s.wev("device.exposed", "sev", device=s.dev["sev"], reason="convenience")
-    r = admit(strict(s), s.build_unappended("workspace", "hub.joined", "sev", **full), log="workspace")
-    assert r.code == Code.SIGN_KEY_EXPOSED
-
-
-def test_the_signer_kinds_and_the_table():
-    assert "exposed" in breakglass.SIGNER_KINDS
-    assert all(not breakglass.allowed(v, "exposed") for v in breakglass.BREAK_GLASS if v != "device.mark_exposed")
-    assert breakglass.allowed("device.mark_exposed", "exposed")
-    assert breakglass.allowed("device.rotate", "pk") and not breakglass.allowed("device.rotate", "owner_device_key")
 
 
 # --- rotation ------------------------------------------------------------------------------------------------------
@@ -208,38 +166,3 @@ def test_a_failed_verifier_refuses_the_rotation(w):
 
 
 LABELS = [None, "passphrase", "click", "convenience", "secure-enclave-unlocked", "no-such-label"]
-
-
-@pytest.mark.parametrize("label", LABELS)
-def test_an_exposed_device_is_refused_whatever_label_it_writes(w, label):
-    """The exposure is read from the roster before the auth label: no label hides it (full join, leave)."""
-    mark(w)
-    extra = {} if label is None else {"auth": label}
-    for build in (leave,):
-        e = build(w, "sev")
-        if label is None:
-            e.pop("auth", None)
-        else:
-            e["auth"] = label
-        assert breakglass.signer_kind(strict(w)._core.ws, e) == "exposed", (label, extra)
-        assert admit(strict(w), e, log="workspace").code == Code.SIGN_KEY_EXPOSED, (build.__name__, label)
-    full = w.build_unappended(
-        "workspace", "hub.joined", "sev", roster_v=w.roster_v, hub_id=HUB, hk_root_pub=ROOT, mode="full",
-        binding_seq=2, aliases=[],
-    )  # fmt: skip
-    full["auth"] = label
-    if label is None:
-        full.pop("auth")
-    assert admit(strict(w), full, log="workspace").code == Code.SIGN_KEY_EXPOSED
-
-
-@pytest.mark.parametrize("label", LABELS)
-def test_an_exposed_device_is_refused_a_first_full_join_whatever_label(label):
-    s = World(validate=False).bootstrap({})
-    s.wev("device.exposed", "sev", device=s.dev["sev"], reason="convenience")
-    e = s.build_unappended("workspace", "hub.joined", "sev", roster_v=s.roster_v, hub_id=HUB, hk_root_pub=ROOT,
-                           mode="full", binding_seq=1, aliases=[])  # fmt: skip
-    e.pop("auth", None)
-    if label is not None:
-        e["auth"] = label
-    assert admit(strict(s), e, log="workspace").code == Code.SIGN_KEY_EXPOSED

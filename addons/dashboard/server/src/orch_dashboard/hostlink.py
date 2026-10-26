@@ -41,7 +41,7 @@ CAPS = [
     "publish/1",
 ]
 MARKET_READS = ("market.list", "market.installed")
-MARKET_WRITES = ("market.stage", "market.unstage", "market.uninstall", "market.refresh")
+MARKET_WRITES = ("market.stage", "market.unstage", "market.uninstall", "market.refresh", "market.add")
 MARKET_OPS = (*MARKET_READS, *MARKET_WRITES)
 OPS = {
     name: 1
@@ -115,6 +115,7 @@ OPS = {
         # command the person runs in their Terminal (hub.py); this process never sends hub.join/mode/leave/connect.
         "hub.status",
         "hub.handoff",
+        "hub.link",  # run-9 feedback 6: reads the connect link (a read; without it call() demanded an idem)
         "share.rules",
         "share.preview",
         # V3 A10 (design-g3 4.2): the Add-ons page. Reads: market.list, market.installed. Person writes (owner role, the

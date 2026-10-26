@@ -117,9 +117,9 @@ def test_each_skill_is_small(skill: Skill):
 # The text of each built-in skill is pinned to its skill_version: change a SKILL.md and this fails until the version in
 # its orch.skill.json is raised and the hash below is updated, so installed copies are reported as old, not "edited".
 PINNED = {
-    "orch-tickets": ("1.0.1", "dbe84ef3ba5e874f"),
-    "orch-work-on-ticket": ("1.0.4", "25e96256979f5fc9"),
-    "orch-refine-ticket": ("1.0.2", "cdd256685bc7004e"),
+    "orch-tickets": ("1.0.2", "aba26b31bdaa0d3f"),
+    "orch-work-on-ticket": ("1.0.5", "e35b63167bea8f00"),
+    "orch-refine-ticket": ("1.0.3", "da9d160285d125ca"),
 }
 
 

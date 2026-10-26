@@ -83,6 +83,23 @@ function Row({ row, state, canAct, onStart, onClose, onNormal }: { row: QuickRow
 const placeholder = (key: string, title: string): QuickRow =>
   ({ key, uid: '', title, type: 'chore', priority: null, size: null, status: 'open', labels: [QUICK_LABEL], parent: null, owner: null, assignees: [], claim: null, turn: null, progress: null, open_questions: 0, blocking_questions: null, restricted: null, awaiting_gate: null, addons: {}, updated_at: '', quick: null }) as unknown as QuickRow
 
+/** Quick tasks switched off in this workspace: the whole page is this one explanation (the tickets stay readable). */
+function QuickOff() {
+  return (
+    <div className="max-w-2xl space-y-3" data-testid="quick-off">
+      <h1 className="text-xl font-semibold tracking-tight">Quick tasks is off</h1>
+      <p className="text-[13px] text-text-muted">
+        Nobody in this workspace can make a new quick task while it is off, not from the dashboard, the command line or an
+        agent. The quick tasks you already have stay as ordinary tickets and you can still open them.
+      </p>
+      <p className="text-[13px] text-text-muted">An owner can switch it on again on the Add-ons page.</p>
+      <Button asChild variant="outline" size="sm">
+        <Link to="/addons" search={{ tab: 'installed' }}>Open Add-ons</Link>
+      </Button>
+    </div>
+  )
+}
+
 export function QuickPage() {
   usePageHeader('Quick tasks')
   const { workspace } = useWorkspace()
@@ -128,6 +145,7 @@ export function QuickPage() {
       </div>
     )
   }
+  if (hasFeature('quick', ws) && !hasFeature('quick_on', ws)) return <QuickOff />
   if (list.isError) return <LoadFailed what="quick tasks" onRetry={() => void list.refetch()} />
   const listed = list.data?.rows ?? []
   // A task this page just created is in the list at once (optimistic), until the host's own list has it.

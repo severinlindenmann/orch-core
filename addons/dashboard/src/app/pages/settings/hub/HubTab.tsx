@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import type { Workspace } from '@/api/types'
 import { hubQueries, hubServed, type HubStatus } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
-import { Action, Panel, StrictNeeds, useFullAllowed, useHub, violet } from './shared'
+import { Action, Panel, useFullAllowed, useHub, violet } from './shared'
 import { JoinFlow } from './JoinFlow'
 import { FullSwitch } from './FullSwitch'
 import { LeaveFlow } from './LeaveFlow'
@@ -39,11 +39,11 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
 }
 export function StandalonePage({ onJoin }: { onJoin: () => void }) {
   return <><Panel title="Hub"><p><strong>Not connected.</strong> This workspace works on its own. Connect a hub to use your phone, publish files and hand work to other workspaces.</p>
-    <p className="text-text-muted">You need the hub card file from a hub admin and your backup key from setup. You confirm the connection here with one click.</p>
+    <p className="text-text-muted">You need the connect link from a hub admin and your backup key from setup. You confirm the connection here with one click.</p>
     <Action id="hub-connect" onClick={onJoin}>Connect a hub</Action>
   </Panel><Panel title="What stays the same"><p>Your tickets, agents and keys stay on this computer.</p><p>You can leave the hub at any time and keep working.</p></Panel></>
 }
-export function SelectivePage({ ws, fullAllowed, onShare, onFull, onLeave }: { ws: string; fullAllowed: boolean; onShare: () => void; onFull: () => void; onLeave: () => void }) {
+export function SelectivePage({ ws, fullAllowed: _fullAllowed, onShare, onFull, onLeave }: { ws: string; fullAllowed: boolean; onShare: () => void; onFull: () => void; onLeave: () => void }) {
   const share = useQuery(hubQueries.share(ws))
   return <><Panel title="Connected · Hub sees only what you share" tone={violet}><p>You keep signing locally. Needs-you notes (items that need your attention) and full questions are always shared; the hub sees nothing else unless you choose it.</p></Panel>
     <Panel title="What the hub can see">
@@ -55,9 +55,7 @@ export function SelectivePage({ ws, fullAllowed, onShare, onFull, onLeave }: { w
       {share.data?.available !== false && <Action id="hub-choose-share" onClick={onShare}>Choose what to share</Action>}
     </Panel>
     <Panel title="Let the hub read everything"><p>The hub will read every ticket, file and note. Hub admins become admins here. Going back requires leaving and rejoining.</p>
-      {fullAllowed
-        ? <><p>You review the change here and confirm it in your terminal.</p><Action id="hub-full-switch" onClick={onFull}>Let the hub read everything</Action></>
-        : <StrictNeeds testId="hub-full-blocked" />}
+      <p>You review the change here and confirm it with one click.</p><Action id="hub-full-switch" onClick={onFull}>Let the hub read everything</Action>
     </Panel>
     <Panel title="Leave the hub"><p>Keep working locally. Phone access, publishing and handoffs through the hub stop. You confirm here with one click and your backup key.</p><Action id="hub-leave" onClick={onLeave}>Leave the hub</Action></Panel>
   </>

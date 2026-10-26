@@ -27,6 +27,9 @@ def run(*argv, env=None):
 
 def test_the_flag_is_switched_per_workspace_by_the_host_cli(served, monkeypatch):
     monkeypatch.setattr(convenience, "_own_device", lambda state, wid: served.lab.ws.owner.device)
+    from orch.custody import select
+
+    monkeypatch.setattr(select, "status", lambda st, wid: {"custody": "convenience", "device": "d", "gen": 1})
     state = str(served.lab.state)
     assert not convenience.enabled(served.lab.state, served.wid, UID)
     code, out, _ = run("host", "convenience", "on", "--workspace", served.service.entry.prefix, "--state", state)
@@ -41,6 +44,30 @@ def test_the_flag_is_switched_per_workspace_by_the_host_cli(served, monkeypatch)
         "host", "convenience", "on", "--workspace", served.wid, "--state", state, env={"ORCH_GRANT": "x"}
     )
     assert code == 3 and "human_only" in out
+
+
+def test_host_convenience_on_moves_a_passphrase_key_into_click_custody(served, monkeypatch):
+    """Run 9 feedback 3.7: `on` used to set the flag only and leave "on, not held". Now one command ends consistent."""
+    from orch.custody import cli as keys_cli
+    from orch.custody import exposure, select
+
+    state = served.lab.state
+    provider = Provider()
+    monkeypatch.setattr(human, "open_backend", lambda d: PassphraseBackend(d, _passphrase_provider=provider, _kdf=KDF))
+    human.open_backend(human.keys_dir(state, served.wid)).create("dk", role="device", passphrase=provider.passphrase)
+    store = FakeStore()
+    monkeypatch.setattr(conv, "open_store", lambda s: store)
+    monkeypatch.setattr(exposure, "mark_before_move", lambda *a, **k: None)
+    monkeypatch.setattr(convenience, "_own_device", lambda st, wid: served.lab.ws.owner.device)
+    base = ("host", "convenience", "on", "--workspace", served.wid, "--state", str(state))
+    monkeypatch.setattr(keys_cli, "has_terminal", lambda: False)
+    code, out, _ = run(*base)
+    assert code != 0 and "terminal" in out and not convenience.enabled(state, served.wid, UID)
+    monkeypatch.setattr(keys_cli, "has_terminal", lambda: True)
+    code, out, _ = run(*base)
+    assert code == 0, out
+    assert convenience.enabled(state, served.wid, UID) and select.status(state, served.wid)["custody"] == "convenience"
+    assert "reader level" not in out  # no foreign reader: no reader warning
 
 
 def test_convenience_defaults_to_the_workspace_of_the_current_folder(served, monkeypatch):

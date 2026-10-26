@@ -2665,7 +2665,7 @@ def test_a_hub_join_prepares_the_hub_op_and_the_card_only(client, token, stub, b
 @pytest.mark.parametrize(
     "body",
     [
-        hub_join(mode="full"),  # a full join needs the key in passphrase custody: the terminal's
+        hub_join(mode="maybe"),
         hub_join(hub_id="XYZ"),
         hub_join(hub_card="not json"),
         hub_join(hub_card="[]"),
@@ -2747,7 +2747,6 @@ def test_the_sealed_backup_key_is_relayed_as_it_came_and_not_kept(client, token,
 @pytest.mark.parametrize(
     "sealed",
     [
-        None,
         {},
         {"hub.backup_key": {**BACKUP_ENV, "extra": 1}},
         {"hub.backup_key": {**BACKUP_ENV, "v": 2}},

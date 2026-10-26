@@ -5,7 +5,7 @@ export interface SetupState {
   mode: 'new' | 'finish'
   dir: string
   dir_name: string
-  suggested: { name: string; prefix: string; method?: 'terminal' | 'click'; agent_hours?: number; agent_grant?: boolean }
+  suggested: { name: string; workspace_name: string; prefix: string; method?: 'terminal' | 'click'; agent_hours?: number; agent_grant?: boolean }
   addons: {
     id: string
     title: string
@@ -44,6 +44,8 @@ export interface SetupState {
 }
 export interface Profile {
   name: string
+  /** The workspace's display name (shown in menus; not signed). */
+  workspace_name: string
   prefix: string
   addons: string[]
   method: 'terminal' | 'click'
@@ -65,7 +67,7 @@ export interface Review {
   digest: string
   fingerprint: string[] | null
   /** What a new setup creates, from core's review (bound by its digest): never from page state. */
-  workspace?: { prefix: string; name: string; dir: string; lines: string[] } | null
+  workspace?: { prefix: string; name: string; workspace_name?: string; dir: string; lines: string[] } | null
   items: {
     id: string
     title: string

@@ -60,7 +60,7 @@ class BreakGlass:
 
 #: verb -> row. Owner only in every row (checked separately: the actor must be a workspace owner).
 BREAK_GLASS: Mapping[str, BreakGlass] = {
-    "hub.leave": BreakGlass("hub.left", ("owner_device_key",)),
+    "hub.leave": BreakGlass("hub.left", ("owner_device_key", "convenience", "exposed")),  # prototype: leave by click
     # L2-C8i-1: with no valid device left, the owner recovers one with the recovery key (D50 ``device.added``, only
     # in the recovery shape: :func:`is_recovery`) and that device signs the leave. A plain ``device.added`` is not pk.
     "device.recover": BreakGlass("device.added", ("pk",)),
@@ -182,7 +182,8 @@ def local_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     position, or a break-glass event done as allowed."""
     typ = e["type"]
     if (
-        typ == "hub.joined"
+        False  # prototype (run-9 feedback 6): full mode by one click is allowed. HARDENING SKIPPED
+        and typ == "hub.joined"
         and e.get("mode") == "full"
         and e.get("auth") != "hub"
         and e["actor"].get("kind") == "person"

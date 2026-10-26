@@ -271,7 +271,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
           'orch-publish dev --data /tmp/pub-dev --api 127.0.0.1:8103 --share 127.0.0.1:8104 --owner OWNER --workspace WS=OWNER',
           'orch publish register',
         ],
-        see: 'A review with both addresses (files are sent to, links open at). After you sign, the Terminal says ok publish setup, then the "does not know this workspace yet" lines with your ids. After the restart, "orch publish register" succeeds. In Settings, Add-ons the same two addresses show under "Publish: where files go". For a server on the edge host, ask the lead: the server needs BOTH `ws allow` and `owners add` (owner id = 32 hex characters without "p_"); the lead has already done this, so do not run them yourself.',
+        see: 'A review with both addresses (files are sent to, links open at). After you sign, the Terminal says ok publish setup, then the "does not know this workspace yet" lines with your ids. After the restart, "orch publish register" succeeds. On the Add-ons page the same two addresses show under "Publish: where files go". For a server on the edge host, ask the lead: the server needs BOTH `ws allow` and `owners add` (owner id = 32 hex characters without "p_"); the lead has already done this, so do not run them yourself.',
       },
       {
         id: 'N3',
@@ -321,7 +321,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'N10',
         title: 'The server does not know the workspace',
-        text: 'Start the server without --workspace, then in Settings, Add-ons press "Check now".',
+        text: 'Start the server without --workspace, then on the Add-ons page press "Check now".',
         see: 'A plain message: ask the server\'s admin to allow this workspace. Under Technical details the command orch-publish admin ws allow ... with the ids. On a server that is not started with --owner/--workspace (a real or dev server), the admin needs BOTH commands: "orch-publish admin --data DIR ws allow WS OWNER" and "orch-publish admin --data DIR owners add OWNER"; WS and OWNER are the 32 hex characters without the p_ prefix (with p_ the command says "expected 32 lower-case hex characters"). "orch publish register" keeps saying the server does not know the workspace until both are done.',
       },
     ],
@@ -365,7 +365,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'O6',
         title: 'List view and switching off',
-        text: 'Open Tickets as a list: the Points column. Then switch Estimate off in Settings, Add-ons.',
+        text: 'Open Tickets as a list: the Points column. Then switch Estimate off on the Add-ons page.',
         see: 'The list has a Points column that shows 1 to 8 (or – for a ticket without an estimate). After switching off, the Points column, chips, totals and the Estimate box are gone and the plain Size comes back; the sizes stay on the tickets.',
       },
     ],
@@ -539,7 +539,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'W1',
         title: 'Typed word, on and off',
-        text: 'In Settings, Add-ons turn an add-on on. The dialog shows a word: type exactly that word in the Terminal. Then turn the same add-on off.',
+        text: 'On the Add-ons page turn an add-on on. The dialog shows a word: type exactly that word in the Terminal. Then turn the same add-on off.',
         see: 'It signs. The off dialog shows a word too, and the Terminal asks for the same one.',
       },
       {
@@ -612,7 +612,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'W13',
         title: 'Plain Terminal reviews',
-        text: 'Settings, Add-ons: turn on Terminals (or Worktrees) and press Sign in Terminal. Then create a new ticket and sign in the Terminal.',
+        text: 'On the Add-ons page: turn on Terminals (or Worktrees) and press Sign in Terminal. Then create a new ticket and sign in the Terminal.',
         see: 'The review starts "Turn on Terminals: it says it will open terminals on this computer, as you", then the version. No digest, no "fields: {}" (press d to see the package digest and raw capabilities). A new ticket says "owner: your name" and never a long raw p_ id.',
       },
       {
@@ -863,7 +863,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'S2',
         title: 'Turn on Publish in one review',
-        text: 'Settings, Add-ons: switch on "Publish". It first asks for the two addresses (where files are sent, where links open). Press "Turn on".',
+        text: 'On the Add-ons page: switch on "Publish". It first asks for the two addresses (where files are sent, where links open). Press "Turn on".',
         see: 'The dashboard tells you to sign in the Terminal (`orch sign CODE`); a click is refused. In the Terminal the review shows both addresses and the grant, one word, one passphrase, "signed settings.set (2 signatures)". Publish shows "On". The publish server must know you and the workspace: it needs BOTH `ws allow` and `owners add` (owner id = 32 hex characters without "p_"). The lead does this on the edge host: if sharing is refused later, ask the lead (it is already done by the lead for this run).',
       },
       {
@@ -875,7 +875,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'S5',
         title: 'Publish that was On from before',
-        text: 'Open Settings, Add-ons in a workspace where Publish was already On with no addresses saved.',
+        text: 'Open the Add-ons page in a workspace where Publish was already On with no addresses saved.',
         see: 'A "Set up" box instead of a plain "On"; saving the addresses signs only the settings.',
       },
       {
@@ -888,7 +888,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'S7',
         title: 'Open and close add-on settings',
-        text: 'Settings, Add-ons, with Publish On: click the arrow beside the name. Click again.',
+        text: 'On the Add-ons page, with Publish On: click the arrow beside the name. Click again.',
         see: 'Its settings open under the row and close again.',
       },
       {
@@ -936,7 +936,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'S17',
         title: 'Publish addresses in words',
-        text: 'Settings, Add-ons, Publish.',
+        text: 'On the Add-ons page: Publish.',
         see: 'With a local-only address it says "Local test link: opens only on this computer". With one public and one local address it says which side other people can reach.',
       },
       {
@@ -1016,7 +1016,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'T10',
         title: 'Versions',
-        text: 'Open Settings, General and look for the "Versions" box. Then open Settings, Add-ons.',
+        text: 'Open Settings, General and look for the "Versions" box. Then open the Add-ons page.',
         see: 'orch core with a version (like v2.0.1) and a "release" of 12 letters/digits, and the Dashboard version. Nothing to click or sign. In Add-ons a small grey version (like v1.2.3) follows the name of each add-on that has one.',
       },
       {

@@ -468,7 +468,7 @@ def _walk(ws, post, get, fail, thread, box, pty_run, rules, fp, problems, deadli
     token = post("/claim", {"code": code, "port": port})["token"]
     api = "/api/setup/"
     profile = {
-        "name": ws.owner, "prefix": ws.prefix, "addons": [], "method": "terminal",
+        "name": ws.owner, "workspace_name": ws.owner, "prefix": ws.prefix, "addons": [], "method": "terminal",
         "agent_hours": 8, "agent_grant": False, "relay": False,
     }  # fmt: skip
     post(api + "profile", profile, token)

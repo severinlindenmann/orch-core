@@ -164,6 +164,7 @@ const listWorkspaces = async () => {
   return rows.map(workspace)
 }
 
+import type { AddonSettingsData } from './addOnSwitches'
 export async function logout() {
   const result = await createFetchTransport('', getToken).request('POST', '/auth/logout')
   if (result.status >= 400 && result.status !== 401) throw new Error('Logout failed; please try again')
@@ -215,6 +216,7 @@ const reads = {
   // Reduced workspace settings (M4): what the host gives this person, nothing more.
   getHostSettings: (ws: string) => call<HostSettings>(`${w(ws)}/settings`),
   getRoster: (ws: string) => call<RosterMember[]>(`${w(ws)}/members`),
+  addonSettings: (ws: string, name: string) => call<AddonSettingsData>(`${w(ws)}/add-ons/${name}/settings`),
   getAddOns: (ws: string) => call<import('./addOnSwitches').AddOnsData>(`${w(ws)}/add-ons`),
   getReaders: (ws: string) => call<HostReaders>(`${w(ws)}/readers`),
   listHostGrants: (ws: string, active = true) => call<HostGrant[]>(`${w(ws)}/grants?active=${active}`),
@@ -231,6 +233,7 @@ const reads = {
   marketStage: (ws: string, input: StageInput) => call<StageResult>(`${w(ws)}/market/stage`, 'POST', input),
   marketUnstage: (ws: string, stage: string) => call<{ removed: boolean }>(`${w(ws)}/market/stage/${encodeURIComponent(stage)}`, 'DELETE'),
   marketUninstall: (ws: string, name: string) => call<{ name: string; removed: boolean }>(`${w(ws)}/market/uninstall`, 'POST', { name }),
+  marketAdd: (ws: string, url: string) => call<unknown>(`${w(ws)}/market/add`, 'POST', { url }),
   marketRefresh: (ws: string, input: { url?: string } = {}) => call<unknown>(`${w(ws)}/market/refresh`, 'POST', input),
   getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>(`${w(ws)}/activity?${activityQuery(p)}`),
   getRecordsCurrent: (ws: string) => call<RecordsStatus>(`${w(ws)}/records/current`),
@@ -303,6 +306,7 @@ const click = {
   getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
     call<import('./hub').HubPreview>(`${w(ws)}/hub/share/preview`, 'POST', body),
   getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>(`${w(ws)}/hub/command`, 'POST', body),
+  getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>(`${w(ws)}/hub/link`, 'POST', { link }),
   connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
   // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so

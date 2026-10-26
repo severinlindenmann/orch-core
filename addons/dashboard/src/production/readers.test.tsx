@@ -1,6 +1,6 @@
 // Core H12d-2 in the production app on a fake server: the signer's `readers_old` on Settings → General, a terminal
 // hand-off refused with `sign.convenience_readers` (its reason in plain words, its device by name, never by id), and
-// the Phone row of Add-ons (Manage devices) reading `/readers`.
+// Settings > Devices reading `/readers`.
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
@@ -60,8 +60,7 @@ it('Settings → Devices reads /readers: levels, required_reader and the device 
           ],
         })
       : undefined
-  show('/w/DEMO/settings/addons')
-  await userEvent.setup().click(await screen.findByTestId('addon-phone-devices', {}, T))
+  show('/w/DEMO/settings/devices')
   const rows = await screen.findAllByTestId('reader-row', {}, T)
   expect(rows.map((r) => r.dataset.below)).toEqual(['true', 'false'])
   expect(rows[0]).toHaveTextContent('Mara’s device (unnamed)')

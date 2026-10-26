@@ -427,6 +427,7 @@ def _hosted_bootstrap(
     code: str,
     st: BootstrapState,
     backend_factory: Any = None,
+    workspace_name: str | None = None,
 ) -> None:
     """The ``host.wsk_create`` + ``host.bootstrap`` loop of ``orch setup``
     (``backend_factory`` opens the device key's backend; ``None`` is :func:`open_backend`, which asks the terminal).
@@ -470,6 +471,8 @@ def _hosted_bootstrap(
             "events": [event],
             "peers": {str(os.getuid()): {"class": "person", "person": st.person}},
         }
+        if workspace_name:  # the display name: unsigned, in config.json only
+            request["workspace_name"] = workspace_name
         st.pending = new_idem()
         st.client, st.result, error = _bootstrap(sd, st.client, request, st.pending)
         st.pending = None  # a definite answer
@@ -544,6 +547,9 @@ def _signed_genesis(
     delegation = identity_certs.make_delegation(
         pk_pub, pk_sign, workspace_id=wid, wsk_pub=wsk_pub, client_hosted=False, issued_ms=now_ms
     )
+    from orch.custody import pkvault  # prototype (run-9 feedback 6): hub steps by one click
+
+    pkvault.put(sd, wid, pk_pub, pk_scalar)
     pk = pk_scalar = None  # the person key is not needed again
     event: dict[str, Any] = {
         "v": 2,

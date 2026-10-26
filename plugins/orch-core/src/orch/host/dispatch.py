@@ -293,7 +293,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
             return ("pg_read", "read")
         return ("pg_write", "write") if name in ("publish.prepare", "publish.discard") else ("person_write", "write")
     if name in HUB_OPS:  # V3 C2a: column P only (the op checks the owner role)
-        return ("person_read", "read") if name in ("hub.status", "hub.handoff") else ("person_write", "write")
+        reads = ("hub.status", "hub.handoff", "hub.link")
+        return ("person_read", "read") if name in reads else ("person_write", "write")
     if name in PEER_OPS:  # V3 C12: reads for P and G (an agent reads its inbox); writes P only, owner role
         return ("pg_read", "read") if name in PEER_READS else ("person_write", "write")
     if name in SHARE_OPS:  # V3 C6: column P only (the op checks the owner role)

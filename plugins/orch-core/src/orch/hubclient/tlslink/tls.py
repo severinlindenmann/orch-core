@@ -21,6 +21,7 @@ from OpenSSL import SSL
 
 from orch import fdwait
 from orch.crypto.encoding import EncodingError, b64u, unb64u
+from orch.wsproto.localdial import dial_host
 
 __all__ = [
     "EXPORTER_LABEL",
@@ -153,7 +154,7 @@ def _dial(host: str, port: int, deadline: float) -> socket.socket:
 
     def work() -> None:
         try:
-            infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+            infos = socket.getaddrinfo(dial_host(host), port, type=socket.SOCK_STREAM)  # pin, not name, is the trust
             err: BaseException = OSError("no address")
             for fam, typ, proto, _, addr in infos:
                 left = deadline - time.monotonic()

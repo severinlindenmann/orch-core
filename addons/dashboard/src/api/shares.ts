@@ -145,7 +145,7 @@ export const REASON_TEXT: Record<string, string> = {
 }
 
 const CODE_TEXT: Record<string, string> = {
-  'publish.not_configured': 'No publish server is set up yet. Set one up in Settings, Add-ons.',
+  'publish.not_configured': 'No publish server is set up yet. Set one up on the Add-ons page.',
   'publish.not_approved': 'A signature for exactly these files and this server is missing or too old. Sign it again.',
   'publish.changed': 'The prepared copy changed or is gone. Prepare the share again.',
   'publish.unreachable': 'The publish server could not be reached. Nothing was shared.',

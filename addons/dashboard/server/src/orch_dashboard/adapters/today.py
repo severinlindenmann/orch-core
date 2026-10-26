@@ -1,5 +1,7 @@
 """`needs` and the ticket rows as the UI's TodayDocument."""
 
+from datetime import datetime
+
 from .tickets import summary, ui_actor
 
 KIND = {
@@ -74,6 +76,45 @@ def item(n: dict, titles: dict[str, str], sign: str | None = None) -> dict:
     return out
 
 
+TERMINAL_WAIT = "Agent may need you: check its terminal"
+
+
+def _at(value) -> float | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except (AttributeError, ValueError):
+        return None
+
+
+def terminal_waits(runs: list[dict], rows: list[dict], mine: dict[str, list[dict]]) -> list[dict]:
+    """Run-9 feedback 3.6: an agent run the host marks `waiting` (Notification hook, else a quiet terminal) on a ticket
+    where nothing is open for the person and no event came after the marker. Local and display only; it is not a need
+    (never counted). `ref` is the run id: "Open terminal" attaches to it."""
+    by_key = {r["key"]: r for r in rows if "key" in r}
+    out = []
+    for r in runs:
+        w = r.get("waiting")
+        row = by_key.get(r.get("ticket") or "")
+        if not isinstance(w, dict) or row is None or mine.get(row.get("uid")):
+            continue
+        since, updated = _at(w.get("since")), _at(row.get("updated_at"))
+        if since is None or (updated is not None and updated > since):
+            continue  # a new event: the agent has moved on
+        out.append(
+            {
+                "kind": "terminal_wait",
+                "ticket": row["key"],
+                "uid": row["uid"],
+                "title": row["title"],
+                "text": TERMINAL_WAIT,
+                "ref": r["run"],
+                "since": w["since"],
+                "blocking": False,
+            }
+        )
+    return out
+
+
 def recent_row(a: dict) -> dict:
     """One activity item as a Today row. `jpos`, `ws_seq`, `log` and `uid` never reach the browser."""
     return {
@@ -98,6 +139,7 @@ def today(
     recent: list[dict] | None = None,
     closed: list[dict] | None = None,
     sign: str | None = None,
+    runs: list[dict] | None = None,
 ) -> dict:
     titles = {r["uid"]: r["title"] for r in [*rows, *(closed or [])]}
     mine = {}
@@ -105,6 +147,7 @@ def today(
         if n.get("uid"):
             mine.setdefault(n["uid"], []).append(n)
     items = [item(n, titles, sign) for n in needs["items"]]
+    waits = terminal_waits(runs or [], rows, mine)
     counts: dict[str, int] = {}
     for r in rows:
         status = r["status"].replace("_", "-")
@@ -114,7 +157,7 @@ def today(
     return {
         "now": now,
         "workspace": ws,
-        "needs_you": [] if viewer_role else items,
+        "needs_you": [] if viewer_role else [*items, *waits],
         "read_only_open": items if viewer_role else [],
         "waiting_on_others": {"count": len(waiting), "people": []},
         "working": [summary(r, viewer, mine) for r in rows if r["status"] == "in_progress"],

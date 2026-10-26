@@ -24,6 +24,10 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             sets[f"ticket.{k}"] = args[k]
     if args.get("label"):
         sets["ticket.labels"] = sorted(set(args["label"]))
+        from orch.ops import quick
+
+        if quick.LABEL in sets["ticket.labels"]:
+            quick.require_on(c.store.state.workspace.addons)
     if args.get("parent"):
         parent = c.store.normalise_ref(args["parent"])
         pv = c.store.ticket(parent)
@@ -133,6 +137,6 @@ OP = operation(
     emits=("ticket.created",),
     text="ok {key} ticket.created {ticket_type} seq={seq}\nnext: {next}",
     data=obj({"title": STR, "ticket_type": STR}),
-    errors=(err("not_found", "the parent does not exist", ["orch", "list"]), err("parse.text")),
+    errors=(err("not_found", "the parent does not exist", ["orch", "list"]), err("parse.text"), err("quick.off")),
     handler=handle,
 )

@@ -5,7 +5,26 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from tests.ops.test_diff_core import LINKS
+
+
+@pytest.fixture(autouse=True)
+def _quick_on(ws):
+    """Quick tasks is a built-in add-on: a workspace without its grant is Off."""
+    s = ws.other()
+    try:
+        ws.tick()
+        s.append(
+            ws.person_event(
+                ws.owner, "workspace", "addon.granted", name="quick", version="0.1.0",
+                package_sha256="sha256:" + "0" * 64, capabilities=[], fields={}, sections=[], artifact_kinds=[],
+            ),
+            log="workspace",
+        )  # fmt: skip
+    finally:
+        s.close()
 
 
 def rows(cli, *args):

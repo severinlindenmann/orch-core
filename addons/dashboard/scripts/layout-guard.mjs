@@ -540,6 +540,7 @@ async function run(send, close) {
               ['real-host-agent-grant', 'agent-grant', [['the access length', '[data-testid="agent-access"]'], ['the sign-and-start button', '[data-testid="agent-start"]']]],
               // Pair a phone (proposed pair/1): Settings → Devices from the fixture pairing api.
               ['real-host-pair-unavailable', 'pair-unavailable', [['the not-available line', '[data-testid="pair-unavailable"]']]],
+              ['real-host-pair-unavailable-click', 'pair-unavailable-click', [['the not-available line', '[data-testid="pair-unavailable"]']]],
               ['real-host-pair-blocked-convenience', 'pair-blocked-convenience', [['the convenience explanation', '[data-testid="pair-blocked-convenience"]']]],
               ['real-host-pair-offer', 'pair-offer', [['the warnings', '[data-testid="pair-warnings"]'], ['the device list', '[data-testid="device-row"]']]],
               ['real-host-pair-pending', 'pair-pending', [['the code entry', '#pair-sas'], ['the label', '[data-testid="pair-label"]']]],

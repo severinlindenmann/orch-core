@@ -296,7 +296,7 @@ describe('people in the content are named from the View\'s own workspace', () =>
   }
   it('uses view.workspace, not the dialog\'s workspace', () => {
     const row = named('w_other')
-    expect(row).toHaveTextContent('Owner: — → Severin')
+    expect(row).toHaveTextContent('Owner: Severin')
     expect(row).not.toHaveTextContent('Impostor')
   })
 })

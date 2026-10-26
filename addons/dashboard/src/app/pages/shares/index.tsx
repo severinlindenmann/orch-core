@@ -75,7 +75,7 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
       <div className="max-w-2xl space-y-2">
         <h1 className="text-xl font-semibold tracking-tight">Shares</h1>
         <p data-testid="shares-unavailable" className="text-[13px] text-text-muted">
-          Publish is not on for this workspace, so there is nothing to list here. Turn it on in Settings, Add-ons.
+          Publish is not on for this workspace, so there is nothing to list here. Turn it on on the Add-ons page.
         </p>
       </div>
     )
@@ -93,7 +93,7 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
       </p>
       {data && !data.configured && (
         <p data-testid="shares-not-configured" role="status" className="rounded-lg border border-warning/40 px-3 py-2 text-[13px]">
-          Publish needs a publish server. <Link to="/settings/$tab" params={{ tab: 'addons' }} className="text-brand hover:underline">Set it in Settings, Add-ons, Publish</Link>.
+          Publish needs a publish server. <Link to="/addons" search={{ tab: 'installed' }} className="text-brand hover:underline">Set it in Add-ons, Publish</Link>.
         </p>
       )}
       {data && data.configured && !data.live && (
@@ -104,7 +104,7 @@ function SharesBody({ onRevoke, onSign }: { onRevoke: (s: Share) => void; onSign
               It runs on this computer: start it in a terminal with <code className="font-mono">orch-publish dev</code>.
             </>
           ) : (
-            <>Check that the server is up and that its address is right in Settings, Add-ons, Publish.</>
+            <>Check that the server is up and that its address is right in Add-ons, Publish.</>
           )}
         </p>
       )}

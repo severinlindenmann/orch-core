@@ -20,7 +20,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Request
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
@@ -742,8 +742,15 @@ class DeviceRemove(Action):
     device: DeviceId
 
 
-# the dashboard add-on is always on; no other package is offered here
-AddonName = Literal["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki"]
+# a shipped add-on or one installed from a marketplace: the host knows the installed list and refuses any other name;
+# the dashboard add-on is always on and never named here
+def _not_dashboard(name: str) -> str:
+    if name == "dashboard":
+        raise ValueError("the dashboard add-on is always on")
+    return name
+
+
+AddonName = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9-]{0,39}$"), AfterValidator(_not_dashboard)]
 
 
 class AddonGrant(Action):
@@ -778,13 +785,35 @@ class AddonDisable(Action):
     name: AddonName
 
 
+class AddonSettings(Action):
+    """`settings.set {set: {addons: {name: value}}}`: one add-on's settings (the side panel's Save). Signed. The host
+    checks the value against the schema of the manifest that was granted; ``null`` removes the settings."""
+
+    action: Literal["addon_settings"]
+    name: AddonName
+    value: dict[str, Any] | None
+
+    @model_validator(mode="after")
+    def small(self):
+        if len(json.dumps(self.value, separators=(",", ":"))) > 8192:
+            raise ValueError("the settings are too large")
+        return self
+
+
+class AddonPurge(Action):
+    """`addon.purge {name}`: delete the add-on's data (the remove sheet's "Also delete its data"). Signed."""
+
+    action: Literal["addon_purge"]
+    name: AddonName
+
+
 #: core `publishOrigin` (schemas/common.json): https, or http on this computer only; no path, lower case
 Origin = Annotated[
     str,
     StringConstraints(
         max_length=300,
         pattern=r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
-        r"|http://(?:localhost|127\.0\.0\.1)(?::[1-9][0-9]{0,4})?)$",
+        r"|http://(?:localhost|127\.0\.0\.1|10\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|172\.(?:1[6-9]|2[0-9]|3[01])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|192\.168\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]))(?::[1-9][0-9]{0,4})?)$",
     ),
 ]
 
@@ -930,7 +959,20 @@ class HubJoin(Action):
     action: Literal["hub_join"]
     hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_HUB_CARD_BYTES)]
     hub_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,64}$")]
-    mode: Literal["selective"] = "selective"
+    mode: Literal["selective", "full"] = "selective"
+
+    @model_validator(mode="after")
+    def check_card(self):
+        _strict_json_object(self.hub_card)
+        return self
+
+
+class HubModeFull(Action):
+    """Run-9 feedback 6: switch the joined hub from selective to full. One click; the card is the host's pinned one."""
+
+    action: Literal["hub_mode_full"]
+    hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_HUB_CARD_BYTES)]
+    hub_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,64}$")]
 
     @model_validator(mode="after")
     def check_card(self):
@@ -975,6 +1017,8 @@ PrepareBody = Annotated[
     | AddonGrant
     | MarketGrant
     | AddonDisable
+    | AddonPurge
+    | AddonSettings
     | PublishSetup
     | AddonEnable
     | PublishShare
@@ -982,6 +1026,7 @@ PrepareBody = Annotated[
     | RunnerGrant
     | AgentAccess
     | HubJoin
+    | HubModeFull
     | HubLeave,
     Field(discriminator="action"),
 ]
@@ -1151,6 +1196,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "addon.grant", {"name": action.name, "staged": action.staged}
         case AddonDisable():
             return "addon.disable", {"name": action.name}
+        case AddonPurge():
+            return "addon.purge", {"name": action.name}
+        case AddonSettings():
+            return "settings.set", {"set": {"addons": {action.name: action.value}}}
         case GrantRevoke():
             return "grant.revoke", {"grant": action.grant} | ({"reason": action.reason} if action.reason else {})
         case RunnerGrant():
@@ -1165,8 +1214,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "hub.join", {
                 "hub_card": _strict_json_object(action.hub_card),
                 "hub_id": action.hub_id,
-                "mode": "selective",
+                "mode": action.mode,
             }
+        case HubModeFull():
+            return "hub.mode", {"hub_card": _strict_json_object(action.hub_card), "mode": "full"}
         case HubLeave():
             return "hub.leave", {}
     raise AssertionError("closed allowlist")  # pragma: no cover
@@ -1186,6 +1237,7 @@ WORKSPACE_OPS = (
     "move",
     "addon.grant",
     "addon.disable",
+    "addon.purge",
 )
 
 
@@ -1244,7 +1296,7 @@ def expected(action: Action, person: str | None = None):
         return all(adapters.handoff.cj(events[0].get(k)) == adapters.handoff.cj(v) for k, v in fields.items())
 
     match action:
-        case SettingsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable():
+        case SettingsSet() | IconSet() | RepoSet() | RepoRemove() | PublishSetup() | AddonEnable() | AddonSettings():
             _, args = host_call(action)
             return lambda ev: one(ev, "settings.changed", set=args["set"])
         case PublishShare():
@@ -1298,6 +1350,8 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "addon.granted", name=action.name)
         case AddonDisable():
             return lambda ev: one(ev, "addon.disabled", name=action.name)
+        case AddonPurge():
+            return lambda ev: one(ev, "addon.purged", name=action.name)
         case GrantRevoke():
             return lambda ev: one(ev, "grant.revoked", grant=action.grant) and ev[0].get("reason") == action.reason
         case RunnerGrant():
@@ -1350,7 +1404,15 @@ def expected(action: Action, person: str | None = None):
         case HubJoin():
             # exactly one `hub.joined`: a selective binding to the hub the person was told, the caller as its person
             return lambda ev: (
-                one(ev, "hub.joined", mode="selective", hub_id=action.hub_id)
+                one(ev, "hub.joined", mode=action.mode, hub_id=action.hub_id)
+                and person is not None
+                and isinstance(ev[0].get("actor"), dict)
+                and ev[0]["actor"].get("kind") == "person"
+                and ev[0]["actor"].get("id") == person
+            )
+        case HubModeFull():
+            return lambda ev: (
+                one(ev, "hub.joined", mode="full", hub_id=action.hub_id)
                 and person is not None
                 and isinstance(ev[0].get("actor"), dict)
                 and ev[0]["actor"].get("kind") == "person"
@@ -1835,10 +1897,12 @@ def register(app: FastAPI, gateway: Gateway):
                     "Agent access with a shown secret is signed with one click in the dashboard.",
                     exit=1,
                 )
-            if isinstance(body, HubJoin | HubLeave):  # the backup key is typed in the page and sealed: a click only
+            if isinstance(
+                body, HubJoin | HubModeFull | HubLeave
+            ):  # the backup key is typed in the page and sealed: a click only
                 raise fail(
                     "invalid.input",
-                    "A hub step is signed with one click in the dashboard, with your backup key.",
+                    "A hub step is signed with one click in the dashboard.",
                     exit=1,
                 )
             planned = plan(gateway, ws, body)

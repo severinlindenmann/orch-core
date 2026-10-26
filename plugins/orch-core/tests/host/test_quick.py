@@ -28,6 +28,18 @@ pytestmark = pytest.mark.slow  # a host and git reader children
 LINKS = 'links={"repos":["proj"],"branches":{"proj":"feat/x"}}'
 
 
+def grant_quick(ws) -> None:
+    """The Quick tasks add-on granted (it is off in a workspace without the grant)."""
+    ws.tick()
+    ws.store.append(
+        ws.person_event(
+            ws.owner, "workspace", "addon.granted", name="quick", version="0.1.0",
+            package_sha256="sha256:" + "0" * 64, capabilities=[], fields={}, sections=[], artifact_kinds=[],
+        ),
+        log="workspace",
+    )  # fmt: skip
+
+
 @pytest.fixture
 def world(tmp_path):
     lab = Lab(tmp_path.resolve())
@@ -46,6 +58,7 @@ def world(tmp_path):
         ws.store.append(
             ws.person_event(ws.owner, "workspace", "settings.changed", set={"repos": repos}), log="workspace"
         )
+        grant_quick(ws)
     finally:
         ws.store.close()
         ws.store = None
@@ -338,12 +351,18 @@ def test_quick_add_never_labels_another_persons_chore_in_host_mode(tmp_path):
     lab = Lab(tmp_path.resolve())
     served = None
     try:
+        lab.ws.store = lab.ws.other()
+        grant_quick(lab.ws)
+        lab.ws.store.close()
+        lab.ws.store = None
         served = World(lab)
         quinn_grant = served.grant_for(served.quinn)
         mine = hcli(lab)
         theirs = Cli(lab.ws, ORCH_HOST_RUN_DIR=str(lab.run), ORCH_GRANT=quinn_grant)
         assert theirs("new", "same", "--type", "chore").code == 0
-        doc = json.loads(mine("quick", "add", "same", "--json").out)
+        r = mine("quick", "add", "same", "--json")
+        doc = json.loads(r.out or r.err)
+        assert "data" in doc, doc
         assert doc["data"]["created"] is True and doc["data"]["key"] == "DEMO-0002"
         assert mine("show", "1", "--json").out.count('"labels":[]') == 1  # quinn's ticket stays unlabelled
         assert theirs("new", "other", "--type", "chore").code == 0
@@ -354,4 +373,24 @@ def test_quick_add_never_labels_another_persons_chore_in_host_mode(tmp_path):
     finally:
         if served is not None:
             served.close()
+        lab.close()
+
+
+def test_quick_label_is_refused_when_the_addon_is_off(tmp_path):
+    lab = Lab(tmp_path.resolve())
+    try:
+        served = World(lab)
+    except OSError as exc:  # pragma: no cover
+        lab.close()
+        if exc.errno == errno.EPERM:
+            pytest.skip("Sandbox forbids AF_UNIX bind (EPERM)")
+        raise
+    try:
+        c = served.client()
+        uid, key = served.ticket("no grant")
+        res = err(c.req("set", {"ref": key, "pairs": ["labels=quick"]}, grant=served.grant, session=SESSION, idem=True))
+        assert res == "quick.off"
+        ok(c.req("set", {"ref": key, "pairs": ["labels=other"]}, grant=served.grant, session=SESSION, idem=True))
+    finally:
+        served.close()
         lab.close()

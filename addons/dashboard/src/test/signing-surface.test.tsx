@@ -832,7 +832,7 @@ it('setup Create posts the review digest shown with core rows and terminal finge
   fireEvent.click(screen.getByRole('button',{name:'Continue →'}))
   await screen.findByRole('heading',{name:'Review your setup'})
   expect(screen.getByText('Agents: 8 hours')).not.toBeVisible() // collapsed, but in the page
-  fireEvent.click(screen.getByText('Show technical details'))
+  fireEvent.click(screen.getByText(/^Everything you approve \(/))
   expect(screen.getByText('Agents: 8 hours')).toBeVisible()
   expect(screen.getByText((_, el) => !!el?.classList.contains('words') && el.textContent === 'demo not real')).toBeVisible()
   fireEvent.click(screen.getByRole('button',{name:'Finish setup'}))

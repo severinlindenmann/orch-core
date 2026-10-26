@@ -14,7 +14,16 @@ from .harness import (
     workspace_files,
     write_workspace_files,
 )
-from .hooks import PRE_COMPACT_MAX_LINES, SESSION_START_MAX_LINES, pre_compact_lines, session_start_lines
+from .hooks import (
+    PRE_COMPACT_MAX_LINES,
+    SESSION_START_MAX_LINES,
+    WAITING_TTL_SECONDS,
+    marker_doc,
+    marker_path,
+    pre_compact_lines,
+    read_marker,
+    session_start_lines,
+)
 from .skills import SKILL_MAX_CHARS, Skill, builtin_skills, check_sidecar, parse_frontmatter
 from .stale import stale_findings
 
@@ -24,6 +33,10 @@ __all__ = [
     "PRE_COMPACT_MAX_LINES",
     "SESSION_START_MAX_LINES",
     "SKILL_MAX_CHARS",
+    "WAITING_TTL_SECONDS",
+    "marker_doc",
+    "marker_path",
+    "read_marker",
     "Skill",
     "UnsafePath",
     "check_targets",

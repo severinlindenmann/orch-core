@@ -107,8 +107,8 @@ it('Publish on but no server set up: the Shares page says what is missing and wh
   configured = false
   show('/w/DEMO/shares')
   const note = await screen.findByTestId('shares-not-configured', {}, T)
-  expect(note).toHaveTextContent('Publish needs a publish server. Set it in Settings, Add-ons, Publish.')
-  expect(within(note).getByRole('link', { name: /Settings, Add-ons, Publish/ })).toHaveAttribute('href', expect.stringContaining('/settings/addons'))
+  expect(note).toHaveTextContent('Publish needs a publish server. Set it in Add-ons, Publish.')
+  expect(within(note).getByRole('link', { name: /Add-ons, Publish/ })).toHaveAttribute('href', expect.stringContaining('/addons'))
   expect(screen.queryByText(/Could not load/)).toBeNull()
   expect(screen.queryByTestId('shares-empty')).toBeNull()
 })
@@ -128,7 +128,7 @@ it('a failed load names the reason in plain words (here: no server set up), Sett
   listRefusal = { code: 'publish.not_configured' }
   show('/w/DEMO/shares')
   const alert = await screen.findByRole('alert', {}, T)
-  expect(alert).toHaveTextContent('No publish server is set up yet. Set one up in Settings, Add-ons.')
+  expect(alert).toHaveTextContent('No publish server is set up yet. Set one up on the Add-ons page.')
   expect(alert).not.toHaveTextContent('Something went wrong')
 })
 
@@ -281,7 +281,7 @@ it('Settings: the addresses in words, and the registration message when the serv
   route()
   registerRefusal = { code: 'publish.server_refused', reason: 'unknown_workspace' }
   const user = userEvent.setup()
-  show('/w/DEMO/settings/addons')
+  show('/w/DEMO/addons')
   await user.click(await screen.findByTestId('addon-publish-expand', {}, T))
   const box = await screen.findByTestId('publish-server', {}, T)
   expect(box).toHaveTextContent('http://127.0.0.1:8103')
@@ -311,7 +311,7 @@ it('Settings: the addresses in words, and the registration message when the serv
 it('Settings: the Publish row says what it needs; Check connection is a read-only probe with honest states; Open Shares links on', async () => {
   route()
   const user = userEvent.setup()
-  show('/w/DEMO/settings/addons')
+  show('/w/DEMO/addons')
   const box = await openPublish()
   expect(within(box).getByText('Not checked.')).toBeInTheDocument()
   serverUp = false
@@ -328,7 +328,7 @@ it('Settings: the Publish row says what it needs; Check connection is a read-onl
 it('Settings: an unconfigured Publish says it needs a server address', async () => {
   route()
   configured = false
-  show('/w/DEMO/settings/addons')
+  show('/w/DEMO/addons')
   const box = await openPublish()
   expect(within(box).getByRole('button', { name: 'Set up' })).toBeInTheDocument()
 })
@@ -424,7 +424,7 @@ it('on the Shares page the link also stays until Done when the list then fails t
 
 it('PL: the link dialog has no dead X, announces a copy, and the Settings note says a local link is local', async () => {
   route()
-  show('/w/DEMO/settings/addons')
+  show('/w/DEMO/addons')
   const box = await openPublish()
   expect(within(box).getByTestId('publish-local-note')).toHaveTextContent('opens only on this computer')
 })

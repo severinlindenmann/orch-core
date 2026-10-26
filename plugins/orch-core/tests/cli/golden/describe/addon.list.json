@@ -48,6 +48,25 @@
                 "credential": {
                   "type": "string"
                 },
+                "settings": {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "schema": {
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "schema"
+                  ],
+                  "additionalProperties": false
+                },
                 "capabilities": {
                   "type": "array",
                   "items": {

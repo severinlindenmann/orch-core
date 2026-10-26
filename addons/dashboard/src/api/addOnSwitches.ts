@@ -26,3 +26,21 @@ export interface AddOnsData {
   available: boolean
   add_ons: AddOnRow[]
 }
+
+/** What the settings side panel needs: the schema an On add-on declares and the value the workspace holds. */
+export interface AddonSettingsData {
+  name: string
+  title: string | null
+  schema: { type?: string; properties?: Record<string, SchemaProp>; required?: string[] }
+  value: Record<string, unknown> | null
+}
+export interface SchemaProp {
+  type?: string
+  title?: string
+  description?: string
+  enum?: (string | number)[]
+  default?: unknown
+  minimum?: number
+  maximum?: number
+  multipleOf?: number
+}

@@ -1,4 +1,5 @@
 import { QueryClientContext } from '@tanstack/react-query'
+import { ShieldAlert } from 'lucide-react'
 import { useContext, useState, type ReactNode } from 'react'
 import type { Workspace } from '@/api/types'
 import type { SignContent as Content } from '@/api/signing'
@@ -207,20 +208,26 @@ function SignedRow({ label, text, members }: { label: string; text: string; /** 
  * The quick task: what was typed once, the sentence that more is approved, and the derived rows folded under a count.
  * Only used when the whole review is exactly the derived one (alsoSigned); otherwise the caller shows the full review.
  */
-function QuickSigned({ typed, also, members }: { typed: QuickTyped; also: AlsoSigned; members: Member[] }) {
+function QuickSigned({ typed, also, members, notes = [] }: { typed: QuickTyped; also: AlsoSigned; members: Member[]; /** The host's own sentences: kept, but inside the fold. */ notes?: string[] }) {
+  const owner = also.rows.find(r => r.person)
+  const type = also.rows.find(r => r.label === 'Type')?.text
+  const checks = typed.checks
+  const details = typed.details.trim()
+  const n = checks.length || 1
   return <>
-    <section data-testid="sign-typed" aria-label="What you sign" className="space-y-2">
-      <h3 className="text-[13px] font-medium text-text">What you sign</h3>
-      <dl className="space-y-2">
-        <SignedRow label="Title" text={typed.title} />
-        {typed.details.trim() && <SignedRow label="Details" text={typed.details.trim()} />}
-        {typed.checks.length > 0 && <SignedRow label={typed.checks.length === 1 ? 'Check' : 'Checks'} text={typed.checks.map((c, i) => `${typed.checks.length > 1 ? `${i + 1}. ` : ''}${c.text}${c.cmd ? ` (checked by ${c.cmd})` : ''}`).join('\n')} />}
-      </dl>
-    </section>
-    <p data-testid="sign-also-sentence" className="text-[13px] text-text">This also approves its requirements and plan, made from these checks.</p>
+    <blockquote data-testid="sign-typed" aria-label="What you typed" className="space-y-1.5 rounded-md border-l-2 border-brand bg-surface-2 px-3 py-2 text-text">
+      <p className="font-medium"><Inline>{typed.title}</Inline></p>
+      {details && details !== typed.title && <Prose className="font-sans leading-relaxed text-text">{details}</Prose>}
+      {checks.length > 0 && <ul className="space-y-0.5 text-text-muted">{checks.map((c, i) => <li key={i}>Check: <Inline>{c.text}</Inline>{c.cmd ? <> (checked by <Inline>{c.cmd}</Inline>)</> : null}</li>)}</ul>}
+    </blockquote>
+    <ul className="space-y-1 text-text">
+      <li data-testid="sign-also-sentence">Counts as approved: what to do and how to check it.</li>
+      <li>{type ?? 'Task'}{owner ? <>, owner <Shown plain value={owner.text} members={members} /></> : null}.</li>
+    </ul>
     <details data-testid="sign-also" className="rounded-md border border-border p-3">
-      <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Also signed ({also.rows.length})</summary>
+      <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Show exactly what is signed (requirements, plan, {n} {n === 1 ? 'check' : 'checks'}, {n} {n === 1 ? 'task' : 'tasks'})</summary>
       <dl className="mt-2 space-y-2">{also.rows.map((r, i) => <SignedRow key={i} label={r.label} text={r.text} members={r.person ? members : undefined} />)}</dl>
+      {notes.map((n, i) => <p key={i} className="mt-2 text-text-muted"><Prose inline>{n}</Prose></p>)}
     </details>
   </>
 }
@@ -242,14 +249,14 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
   const acceptanceEl = !!content.acceptance?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'How we know it is done' : 'Acceptance criteria'}</h3><ul className="space-y-2 leading-relaxed">{content.acceptance.map(a => <li key={a.id}><span aria-label={a.checked ? 'Checked' : 'Unchecked'}>{a.checked ? '☑' : '☐'}</span> <Inline>{a.text}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{a.id}</Raw></span>{a.manual && <p className="text-[12px] text-text-muted"><Inline>{a.manual}</Inline></p>}</li>)}</ul></section>
   const tasksEl = !!content.tasks?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text">{gate ? 'Steps' : 'Plan tasks'}</h3><ol className="list-decimal space-y-3 pl-5 leading-relaxed">{content.tasks.map(t => <li key={t.n} value={t.n}><Inline>{t.title}</Inline> <span className="text-[12px] text-text-muted [&_bdi]:text-text-muted"><Raw>{t.id}</Raw></span>{t.verify?.map((v,i) => <p key={i} className="mt-1 font-mono text-[12px] leading-relaxed text-text-muted [&_bdi]:text-text-muted">Verify: <Value>{v}</Value></p>)}</li>)}</ol></section>
   const rest = <>
-    {also && quick && <QuickSigned typed={quick} also={also} members={members} />}
+    {also && quick && <QuickSigned typed={quick} also={also} members={members} notes={content.notes ?? []} />}
     {ticketLine && content.ticket && <p data-testid="sign-ticket" className="text-[12px] text-text-muted"><Raw>{content.ticket.key}</Raw> (key per host) · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
     {gate ? <GateText sections={gateSections} approving={/^Approve /.test(content.headline ?? '')} acceptance={acceptanceEl} tasks={tasksEl} others={otherSections} /> : null}
     {!gate && !also && content.sections?.map(s => <section key={s.id}><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{s.title}</Inline></h3><Prose className="font-sans leading-relaxed text-text">{s.text}</Prose></section>)}
     <Pictures images={content.images} />
     {!gate && !also && acceptanceEl}
     {!gate && !also && tasksEl}
-    {!also && !!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? 'Changed fields'}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{(content.fields_title || /: (add|remove)$/.test(f.field) || / \(unchanged, per host\)$/.test(f.field)) && f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
+    {!also && !!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? (content.fields_changed.every(f => f.before == null) ? 'Signed values' : 'Changed fields')}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
     {cancels.length > 0 && <section aria-label="Signing cancels">
       <h3 className="text-[13px] font-medium">Signing cancels:</h3>
       <ul>{cancels.map((c, i) => <li key={i}>
@@ -257,7 +264,7 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
       </li>)}</ul>
       <p className="text-[12px] text-text-muted">(per host, not signed)</p>
     </section>}
-    <div className="space-y-2 border-t border-border pt-4 empty:hidden">{[...(content.notes ?? []), ...(Array.isArray(content.note) ? content.note : content.note ? [content.note] : [])].map((note, i) => <p key={i} className="text-[13px] leading-relaxed text-text-muted"><Prose inline>{note}</Prose></p>)}</div>
+    <div className="space-y-2 border-t border-border pt-4 empty:hidden">{[...(also ? [] : content.notes ?? []).filter(n => n !== summary?.risk), ...(Array.isArray(content.note) ? content.note : content.note ? [content.note] : [])].map((note, i) => <p key={i} className="text-[13px] leading-relaxed text-text-muted"><Prose inline>{note}</Prose></p>)}</div>
     {(content.ticket || ids.length > 0 || technical) && <details className="space-y-3 text-[12px] text-text-muted">
       <summary className="cursor-pointer">Technical details</summary>
       {content.ticket && <div>
@@ -289,15 +296,14 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
     </div>
   }
   // The popover or sheet scrolls as a whole above its fixed Cancel row: no second scroll area inside the review.
-  return <div className={`min-w-0 space-y-5 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]`}>
+  return <div className={`min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]`}>
     {summary ? <>
       <section data-testid="sign-summary" aria-label={summary.title} className="space-y-2">
-        <h3 className="text-[13px] font-medium text-text"><Inline>{summary.title}</Inline></h3>
-        <ul className="list-disc space-y-2 pl-5 text-text">{summary.lines.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul>
-        <p className="text-[12px] text-text-muted">This summary is worked out from the signed values below. Those exact values are what you sign, and they are shown in full.</p>
+        <ul className="space-y-1.5 text-text">{summary.lines.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul>
+        {summary.risk && <p role="note" data-testid="sign-risk" className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 font-medium text-text"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden /><span><Inline>{summary.risk}</Inline></span></p>}
       </section>
-      <details open data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3 sm:p-4">
-        <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Exact signed details</summary>
+      <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
+        <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Show exactly what is signed</summary>
         <div className="mt-2 min-w-0 space-y-5">{rest}</div>
       </details>
     </> : rest}

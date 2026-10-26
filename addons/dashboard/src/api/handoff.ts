@@ -9,6 +9,8 @@
 // recompute is never shown as valid.
 import { sha256Hex } from './sha256'
 
+/** An add-on a person can switch: built in or installed from a marketplace (the server checks the shape, the host knows the installed list). */
+export type AddonSwitchName = string
 export type HandoffAction =
   | { action: 'market_grant'; name: string; staged: string }
   | { action: 'accept_criterion'; key: string; ac: string; note?: string }
@@ -62,8 +64,12 @@ export type HandoffAction =
   | { action: 'device_remove'; device: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
   /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
-  | { action: 'addon_grant'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' }
-  | { action: 'addon_disable'; name: 'start-agent' | 'terminals' | 'worktrees' | 'publish' | 'usage' | 'estimate' | 'explorer' }
+  | { action: 'addon_grant'; name: AddonSwitchName }
+  | { action: 'addon_disable'; name: AddonSwitchName }
+  /** The remove sheet's "Also delete its data" (`addon.purge`). */
+  | { action: 'addon_purge'; name: AddonSwitchName }
+  /** One add-on's settings (`settings.set {addons: {name: value}}`); `null` removes them. */
+  | { action: 'addon_settings'; name: AddonSwitchName; value: Record<string, unknown> | null }
   /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence). Publish: terminal only. */
   | { action: 'addon_enable'; name: 'publish'; publish: { server: string; share: string } }
   /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */

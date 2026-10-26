@@ -144,6 +144,8 @@ export interface PairingApi {
 }
 
 export const PAIR_UNAVAILABLE = 'Pairing a phone comes later. For now you approve on this computer, in the terminal.'
+/** Same line where One click is on: the owner approves with a click, not in the terminal. */
+export const PAIR_UNAVAILABLE_CLICK = 'Pairing a phone comes later. For now you approve on this computer, with One click.'
 
 const unavailable = (): Promise<never> =>
   Promise.reject(new ApiError(404, { code: 'pair.unavailable', message: PAIR_UNAVAILABLE, retryable: false }))

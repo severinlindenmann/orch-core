@@ -253,7 +253,7 @@ def plan(
             {
                 "id": "git",
                 "text": "Make this folder a git repository (git init), and keep .orch/ and .orch-work/ out of it. "
-                "None of your files is committed.",
+                "It gets one empty first commit, none of your files.",
             }
         )
     if profile.get("records") and facts is None:  # a new workspace only
@@ -291,14 +291,17 @@ def _workspace(profile: Mapping[str, Any], directory: str) -> dict[str, Any]:
     """The new workspace in words: values come from the profile that core holds and the genesis signs, cleaned by the
     same rule as every signing review."""
     prefix, name = _clean(profile["prefix"]), _clean(profile["name"])
+    wname = _clean(profile["workspace_name"])
     folder = _clean(directory)
     return {
         "prefix": prefix,
         "name": name,
+        "workspace_name": wname,
         "dir": folder,
         "lines": [
-            f"Workspace {prefix} for {name}",
-            f"Short name: {prefix}",
+            f"Workspace {wname} ({prefix}) for {name}",
+            f"Workspace name: {wname} (shown in menus, not signed)",
+            f"Ticket prefix: {prefix}",
             f"Person: {name}",
             f"Folder: {folder}",
         ],
@@ -306,7 +309,7 @@ def _workspace(profile: Mapping[str, Any], directory: str) -> dict[str, Any]:
 
 
 def _canon_profile(profile: Mapping[str, Any], directory: str) -> dict[str, Any]:
-    keys = ("name", "prefix", "addons", "method", "agent_hours", "agent_grant", "relay")
+    keys = ("name", "workspace_name", "prefix", "addons", "method", "agent_hours", "agent_grant", "relay")
     out = {k: profile[k] for k in keys}
     out["git_init"] = bool(profile.get("git_init"))
     out["records"] = bool(profile.get("records"))

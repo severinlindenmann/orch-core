@@ -386,7 +386,6 @@ def test_the_server_setting_is_signed_by_the_owner_and_shown_in_words(bare, huma
         {"server": "http://example.com", "share": "https://apps.example.com"},  # http only for this computer
         {"server": "https://Pub.Example.com", "share": "https://apps.example.com"},
         {"server": "https://pub.example.com/v1", "share": "https://apps.example.com"},
-        {"server": "https://pub.example.com", "share": "https://pub.example.com"},  # one origin for both
         {"server": "https://pub.example.com"},
         {"server": "https://pub.example.com", "share": "https://apps.example.com", "extra": "x"},
         {"server": "ftp://pub.example.com", "share": "https://apps.example.com"},

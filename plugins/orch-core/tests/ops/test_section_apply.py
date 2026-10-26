@@ -145,7 +145,7 @@ def test_set_changes_fields_and_none_clears(ws, cli):
 def test_an_empty_label_set_drops_every_label(ws, cli):
     """``labels=`` (nothing after ``=``) is the empty set: how a person drops the ``quick`` label."""
     claimed(cli)
-    assert cli("set", "1", "labels=quick").code == 0 and ws.ticket_json("1")["labels"] == ["quick"]
+    assert cli("set", "1", "labels=quick-ish").code == 0 and ws.ticket_json("1")["labels"] == ["quick-ish"]
     r = cli.j("set", "1", "labels=")
     assert r.code == 0 and r.data == {"fields": ["labels"]}
     assert ws.ticket_json("1")["labels"] == []

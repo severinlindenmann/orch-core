@@ -13,7 +13,6 @@ import { ApiError } from '@/api/types'
 import { SettingsFrame } from '@/app/pages/settings'
 import { HostGeneral } from '@/app/pages/settings/host/General'
 import { RecordsBlock } from '@/app/pages/settings/host/Records'
-import { HostAddOns } from '@/app/pages/settings/host/AddOns'
 import { HostGates } from '@/app/pages/settings/host/Gates'
 import { HostGrants } from '@/app/pages/settings/host/Grants'
 import { HostMembers } from '@/app/pages/settings/host/Members'
@@ -25,6 +24,7 @@ import { DropErrorLine, DropView, type DropPreviewStart } from '@/app/pages/drop
 import { AGENT, PHONE_SHARE, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
+import { WikiPage } from '@/app/pages/wiki'
 import { useWorkspace } from '@/app/workspace'
 import { runsApi, type Run, type RunList } from '@/api/runs'
 import { TerminalsPage } from '@/app/pages/terminals'
@@ -57,6 +57,9 @@ export const LAYOUT_SCENARIOS = [
   'quick-normal',
   'quick-many',
   'quick-add',
+  'quick-off',
+  'wiki-empty',
+  'wiki-created',
   'records-ok',
   'records-hidden-url',
   'records-first',
@@ -91,6 +94,7 @@ export const LAYOUT_SCENARIOS = [
   'setup-words',
   // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
   'pair-unavailable',
+  'pair-unavailable-click',
   'pair-blocked-convenience',
   'pair-offer',
   'pair-pending',
@@ -99,6 +103,7 @@ export const LAYOUT_SCENARIOS = [
   'pair-devices',
   // Core H12d-2: Settings → Devices with reader levels, and every click-to-sign refusal sentence.
   'readers-devices',
+  'readers-solo',
   'convenience-refusals',
   // The Settings → General signing card ("Sign in the dashboard"): the five states of #578, with a long name, prefix and device.
   'signing-on',
@@ -382,7 +387,7 @@ function quickRequest(action: Record<string, unknown>): HandoffRequest {
         { field: 'labels', before: null, after: 'quick' },
       ],
       notes: [
-        'Approves the requirements as written above, and the plan as written above (the signer checks that each approval covers exactly this text).',
+        'Approves the requirements as written above, and the plan as written above.',
         'The task still ends with your own verdict: nothing closes it for you.',
         ...(agent ? [`Agents may work on all workable tickets, not only this one, until about ${until}. The grant is signed last; its secret goes to your orch runner or your own terminal, never to the dashboard.`] : []),
         `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,
@@ -590,6 +595,7 @@ const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
   const members = member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { reader: null, label: 'Work phone\nsecond line' }), pairDevice(9, { label: '' })])
   switch (scenario) {
     case 'pair-unavailable':
+    case 'pair-unavailable-click':
       return { served: false }
     case 'pair-blocked-convenience':
       return {
@@ -825,7 +831,7 @@ function install() {
     if (current === 'dev-status-failed') throw new ApiError(502, { code: 'host.unavailable', message: 'fixture: no answer', retryable: true })
     return hostInfoFor(current)
   })
-  set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : original.clickStatus(...args)))
+  set('clickStatus', async (...args: never[]) => (current.startsWith('signing-') ? signingCard(current) : current === 'readers-solo' ? { custody: 'convenience', enabled: true, available: true, device: 'd_00112233445566778899aabbccddeeff' } : original.clickStatus(...args)))
   // The sealed new passphrase (C12): the fixture's workspace id is not a real one (the seal binds a 32-hex id), so the
   // preview shows the refusal a remote dashboard gets; the real seal is covered by SigningCard.test.tsx.
   set('custodySeal', async (...args: never[]) => {
@@ -884,9 +890,29 @@ function install() {
   // H12d-2: `/members` and `/readers` in the real shape. The pair scenarios read the pair fixture's members.
   set('getRoster', async () => rosterFor(current))
   set('listHostGrants', async (_ws: string, active: boolean) => accessGrants(current).filter((g) => !active || (!g.revoked && Date.parse(g.expires_at) > Date.now())))
-  set('getReaders', async () => readersOf(rosterFor(current), current === 'readers-devices' || current === 'settings-members' ? 1 : 0))
+  set('getReaders', async () => current === 'readers-solo' ? { available: true, required_reader: 1, readers: [{ device: 'd_00112233445566778899aabbccddeeff', person: 'p_me', reader: 0, level: 0 }] } : readersOf(rosterFor(current), current === 'readers-devices' || current === 'settings-members' ? 1 : 0))
   set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: opOf.get(id) ?? 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
+}
+
+/** The Wiki page with a faked server: no wiki folder (`wiki-empty`), or the folder just created (`wiki-created`). */
+function WikiPreview({ created }: { created: boolean }) {
+  const [ready] = useState(() => {
+    setFeatures({ features: ['today', 'tickets', 'board', 'ticket', 'wiki'] })
+    const real = window.fetch.bind(window)
+    let made = created
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (!url.includes('/wiki')) return real(input, init)
+      if ((init?.method ?? 'GET') === 'POST') made = true
+      const body = made
+        ? { available: true, state: 'ok', message: null, total: 1, cut: false, pages: [{ slug: 'readme', title: 'Wiki', updated: null, by: null, tickets: [], links: 0, too_large: false }] }
+        : { available: true, state: 'no_folder', message: 'No wiki folder in this project yet.', total: 0, cut: false, pages: [] }
+      return new Response(JSON.stringify((init?.method ?? 'GET') === 'POST' ? { created: true, path: 'wiki/readme.md' } : body), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
+    return true
+  })
+  return ready ? <WikiPage /> : null
 }
 
 export function LayoutPreview({ name }: { name: string }) {
@@ -914,6 +940,12 @@ export function LayoutPreview({ name }: { name: string }) {
   })
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
   if (!workspace) return null
+  if (scenario === 'quick-off') {
+    // The host serves quick tasks, the add-on is off: the page says so (features `quick` without `quick_on`).
+    setFeatures({ features: ['today', 'tickets', 'board', 'ticket', 'quick'] })
+    return <QuickPage />
+  }
+  if (scenario.startsWith('wiki-')) return <WikiPreview created={scenario === 'wiki-created'} />
   if (scenario.startsWith('quick-')) return <QuickPage />
   if (scenario.startsWith('terminals-page')) return <TerminalsPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />
@@ -971,17 +1003,10 @@ export function LayoutPreview({ name }: { name: string }) {
         </div>
       </section>
     )
-  if (scenario.startsWith('pair-') || scenario === 'readers-devices')
+  if (scenario.startsWith('pair-') || scenario === 'readers-devices' || scenario === 'readers-solo')
     return (
       <SettingsFrame current="devices" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-        <HostDevices workspace={workspace} />
-      </SettingsFrame>
-    )
-  if (scenario.startsWith('addons-'))
-    return (
-      <SettingsFrame current="addons" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-        <HostAddOns workspace={workspace} />
-        {scenario.endsWith('-open') && <OpenAddOnPanel />}
+        <HostDevices workspace={scenario === 'pair-unavailable-click' ? { ...workspace, click: { custody: 'convenience', enabled: true, available: true } } : workspace} />
       </SettingsFrame>
     )
   if (scenario === 'settings-general') return <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGeneral workspace={{ ...workspace, click: signingCard('signing-off'), icon_known: true }} /></SettingsFrame>
@@ -1105,15 +1130,3 @@ function SignBPreview({ scenario, ws }: { scenario: string; ws: string }) {
   return <div className="mx-auto max-w-lg space-y-4 rounded-lg border border-border bg-surface p-4"><h2 className="text-base font-semibold">{content.title}</h2><ClickSignPanel ws={ws} answer={answer} problem={null} signing={false} onSign={() => {}} onCancel={() => {}} story={storyOf(action)} /></div>
 }
 
-/** Preview only: opens the one add-on that is On (the person's click on its title). */
-function OpenAddOnPanel() {
-  useEffect(() => {
-    const t = setInterval(() => {
-      const expand = document.querySelector<HTMLButtonElement>('[data-testid$="-expand"][aria-expanded="false"]')
-      if (expand) return void expand.click()
-      if (document.querySelector('[data-testid="publish-server"]')) clearInterval(t)
-    }, 100)
-    return () => clearInterval(t)
-  }, [])
-  return null
-}

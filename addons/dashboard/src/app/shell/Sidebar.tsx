@@ -24,6 +24,7 @@ import {
   PackageOpen,
   FolderGit2,
   FolderTree,
+  BookText,
   Gauge,
   Puzzle,
   Share2,
@@ -452,7 +453,7 @@ const CORE_NAV = [
   { to: '/artifacts', label: 'Artifacts', icon: Files, feature: 'artifacts' },
   { to: '/agents', label: 'Agents', icon: Bot, feature: 'agents' },
   /** `real`: a real host's page (M6); the mock has quick tasks as an addon. */
-  { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick', real: true },
+  { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick_on', real: true },
   /** Drop (proposed `drop/1`): listed where the host serves it; the page itself says when it is not available. */
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
   /** Worktrees (H11d): one folder per ticket; the mock has it as an addon page. */
@@ -461,12 +462,14 @@ const CORE_NAV = [
   { to: '/terminals', label: 'Terminals', icon: SquareTerminal, feature: 'terminals_page', real: true },
   /** Files (File Explorer add-on): owners only, listed only while the add-on is ON (the server adds `explorer` then). */
   { to: '/explorer', label: 'Files', icon: FolderTree, feature: 'explorer', real: true },
-  /** Add-ons (marketplace): listed only when the host serves the market ops (the server adds `market`). */
-  { to: '/addons', label: 'Add-ons', icon: Puzzle, feature: 'market', real: true },
+  /** Add-ons (marketplace): built-in add-ons always; the marketplace tabs need the market ops. */
+  { to: '/addons', label: 'Add-ons', icon: Puzzle, feature: 'settings', real: true },
   /** Shares (Publish add-on): listed only while the add-on is ON for this workspace (the server adds `publish` then). */
   { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
   /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */
   { to: '/usage', label: 'Usage', icon: Gauge, feature: 'usage', real: true },
+  /** Wiki (add-on): pages of the project's wiki folder; listed only while the add-on is ON (the server adds `wiki` then). */
+  { to: '/wiki', label: 'Wiki', icon: BookText, feature: 'wiki', real: true },
   /** Activity (#595): who did what; listed where the host serves `activity/1`. */
   { to: '/activity', label: 'Activity', icon: History, feature: 'activity', real: true },
   /** The guide of a real host: fixed pages in the bundle, so any host serves it. */

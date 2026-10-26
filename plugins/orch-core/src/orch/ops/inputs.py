@@ -38,4 +38,9 @@ def check_input(op: Any, args: dict[str, Any], clean: Callable[[str], str] = lam
     """``invalid.input`` for the first schema error of ``args`` (``clean`` redacts and cuts the message)."""
     errors = sorted(Draft202012Validator(op.input).iter_errors(args), key=lambda e: (list(map(str, e.path)), e.message))
     if errors:
-        raise OrchError("invalid.input", clean(f"{op.cli}: {short_error(errors[0])}"))
+        msg = clean(f"{op.cli}: {short_error(errors[0])}")
+        if op.name == "ask":  # a mistake in the call, with the fix in the hint (the agent must not give up)
+            from orch.ops.plans import ASK_HINT
+
+            raise OrchError("invalid.input", msg, hint=ASK_HINT, retryable=True)
+        raise OrchError("invalid.input", msg)

@@ -45,8 +45,13 @@ def test_finish_state_has_current_values_and_words_and_never_custody(tmp):
     assert st["current"]["agent_hours"] == 72 and st["current"]["addons_on"] == ["dashboard", "start-agent"]
     assert st["current"]["runner"] == {"enabled": True, "terminals": False} and st["current"]["method"] == "terminal"
     assert "custody" not in st["missing"] and "settings" not in st["missing"] and "runner" not in st["missing"]
-    assert st["missing"] == ["addon:terminals", "addon:worktrees", "runner_grant"]
-    assert st["missing_words"] == ["Terminals add-on", "Worktrees add-on", "Agent access for this computer's runner"]
+    assert st["missing"] == ["addon:terminals", "addon:worktrees", "addon:quick", "runner_grant"]
+    assert st["missing_words"] == [
+        "Terminals add-on",
+        "Worktrees add-on",
+        "Quick tasks add-on",
+        "Agent access for this computer's runner",
+    ]
     assert st["labels"]["runner_grant"] == "Agent access for this computer's runner"
     assert not any(w.startswith(("addon:", "runner_")) for w in st["missing_words"])
 

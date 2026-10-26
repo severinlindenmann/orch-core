@@ -305,12 +305,28 @@ def test_the_typed_code_source_wipes_the_code_refuses_other_labels_and_agents(mo
     assert set(agent) == {0}
 
 
-def test_a_click_hub_mode_and_a_click_full_join_are_refused_at_prepare_while_one_click_is_on(click, served):
-    """D78/D81: full hub mode needs the key in passphrase custody. `hub.mode` stays a sealed op in core on purpose
-    (the C11 mode UI), but with One click on it never gets past prepare."""
-    e = refused(lambda: click.prepare("hub.join", join_args(mode="full")), "sign.hub_only")
-    assert "passphrase custody" in e.message
+def keep_person_key(click, served, code=CODE):
+    """What ``orch setup`` now does: keep the person key for hub steps (run-9 feedback 6)."""
+    from orch import crypto
+    from orch.custody import pkvault
+
+    pk = rec._key_at(code, FAST)
+    pkvault.put(click.signer.state, served.wid, crypto.public_bytes(pk), crypto.private_scalar(pk))
+
+
+def test_with_the_person_key_kept_join_full_and_leave_are_one_click_with_no_backup_key(click, served):
+    keep_person_key(click, served)
+    p, v = flow(click, args=join_args(mode="full"))
+    assert "seal" not in v["view"] and "backup_key_line" not in v["view"]
+    click.sign(p["request_id"], v["view_digest"])  # nothing sealed, One click on, full mode
+    hub = hub_state(served)
+    assert hub["mode"] == "full" and hub["owner_proof"]["o"]["op"] == "hub.join"
+    p2, v2 = flow(click, "hub.leave", {})
+    click.sign(p2["request_id"], v2["view_digest"])
+    assert hub_state(served)["status"] == "left"
+
+
+def test_a_kept_key_of_another_person_falls_back_to_the_backup_key(click, served):
+    keep_person_key(click, served, OTHER)
     p, v = flow(click)
-    click.sign(p["request_id"], v["view_digest"], sealed=seal_for(v, served, p["request_id"]))
-    refused(lambda: click.prepare("hub.mode", {"hub_card": copy.deepcopy(CARD), "mode": "full"}), "sign.hub_only")
-    assert click.signatures == 1
+    assert v["view"]["seal"]["purposes"] == ["hub.backup_key"]

@@ -46,6 +46,7 @@ import type { HostGrant, HostReaders, HostSettings, RosterMember } from './setti
 import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
+import type { AddonSettingsData } from './addOnSwitches'
 export interface ListTicketsParams {
   repo?: string
   status?: Status | Status[]
@@ -149,6 +150,7 @@ export function createApi(transport: Transport) {
     getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
       call<import('./hub').HubPreview>('POST', `/api/w/${ws}/hub/share/preview`, body),
     getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>('POST', `/api/w/${ws}/hub/command`, body),
+    getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>('POST', `/api/w/${ws}/hub/link`, { link }),
     connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>('POST', `/api/w/${ws}/hub/connect`, body),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
     clickStatus: (ws: string) => call<ClickCard>('GET', `/api/w/${ws}/click/status`),
@@ -172,6 +174,7 @@ export function createApi(transport: Transport) {
     putSignDefault: (ws: string, body: { method: import('./signing').SignMethod; fallback?: import('./signing').SignMethod }) => call<import('./signing').SignDefault>('PUT', `/api/w/${ws}/me/sign_default`, body),
     getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),
     getRoster: (ws: string) => call<RosterMember[]>('GET', `/api/w/${ws}/members`),
+    addonSettings: (ws: string, name: string) => call<AddonSettingsData>('GET', `/api/w/${ws}/add-ons/${name}/settings`),
     getAddOns: (ws: string) => call<import('./addOnSwitches').AddOnsData>('GET', `/api/w/${ws}/add-ons`),
     /** H12d-2: every device's reader level and the workspace's `required_reader` (real host only). */
     getReaders: (ws: string) => call<HostReaders>('GET', `/api/w/${ws}/readers`),
@@ -185,6 +188,7 @@ export function createApi(transport: Transport) {
     marketStage: (ws: string, input: StageInput) => call<StageResult>('POST', `/api/w/${ws}/market/stage`, input),
     marketUnstage: (ws: string, stage: string) => call<{ removed: boolean }>('DELETE', `/api/w/${ws}/market/stage/${encodeURIComponent(stage)}`),
     marketUninstall: (ws: string, name: string) => call<{ name: string; removed: boolean }>('POST', `/api/w/${ws}/market/uninstall`, { name }),
+    marketAdd: (ws: string, url: string) => call<unknown>('POST', `/api/w/${ws}/market/add`, { url }),
     marketRefresh: (ws: string, input: { url?: string } = {}) => call<unknown>('POST', `/api/w/${ws}/market/refresh`, input),
     /** The Activity page of a real host: `available: false` without `activity/1`. */
     getActivity: (ws: string, p: ActivityParams = {}) => call<ActivityPage>('GET', `/api/w/${ws}/activity?${activityQuery(p)}`),

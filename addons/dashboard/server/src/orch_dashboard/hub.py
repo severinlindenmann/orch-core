@@ -25,6 +25,7 @@ Host text is display-only: hidden characters are withheld, never repaired.
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from typing import Annotated, Literal
@@ -64,13 +65,27 @@ class ConnectBody(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
     idem: Idem
-    invite: Annotated[str, StringConstraints(min_length=4, max_length=512)]
+    invite: Annotated[str, StringConstraints(min_length=4, max_length=512)] | None = None  # none: a mode switch
     hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_CARD_BYTES)]
+    addr: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9\[][A-Za-z0-9.:\]-]{2,299}$")] | None = None
 
     @model_validator(mode="after")
     def shape(self):
-        if hidden(self.invite) or self.invite != self.invite.strip():
+        if self.invite is not None and (hidden(self.invite) or self.invite != self.invite.strip()):
             raise ValueError("the invite is plain text")
+        return self
+
+
+class LinkBody(BaseModel):
+    """A workspace connect link the hub admin gave the person (`<origin>/c#h1.<hub_id>.<code>[.<endpoint>]`)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    link: Annotated[str, StringConstraints(min_length=8, max_length=1024)]
+
+    @model_validator(mode="after")
+    def shape(self):
+        if hidden(self.link) or self.link != self.link.strip():
+            raise ValueError("the link is plain text")
         return self
 
 
@@ -197,6 +212,8 @@ def status_view(raw) -> dict:
         "log_sync_stuck": isinstance(raw.get("log_sync"), dict) and bool(raw["log_sync"].get("stuck")),
         "groups": counts if snap else None,  # from the hub, not signed
         "snapshot_version": _int(snap.get("version")) if snap else None,
+        "hub_card": json.dumps(raw["hub_card"], separators=(",", ":")) if isinstance(raw.get("hub_card"), dict)
+        else None,
     }  # fmt: skip
 
 
@@ -301,6 +318,23 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("op.unsupported", "This host cannot preview sharing yet.", exit=1)
         return preview_view(link.call("share.preview", args))
 
+    @app.post("/api/w/{ws}/hub/link")
+    def hub_link(body: LinkBody, ws: str = Depends(reads.workspace)):
+        """Run-9 feedback 6: the host reads the link (fetches the hub card, checks it against the link's hub id) and
+        this route relays what the person needs to see: which hub, and the pieces of the join. Signs nothing."""
+        got = link_for(ws, "hub.link").call("hub.link", {"link": body.link})
+        if not isinstance(got, dict) or not isinstance(got.get("hub_card"), dict):
+            raise fail("invalid.input", "That link did not give a hub card.", exit=1)
+
+        def text(k: str) -> str | None:
+            v = got.get(k)
+            return display(v) if isinstance(v, str) else None
+
+        return {
+            "hub_id": text("hub_id"), "name": text("name"), "code": text("code"), "endpoint": text("endpoint"),
+            "dev": got.get("dev") is True, "hub_card": json.dumps(got["hub_card"], separators=(",", ":")),
+        }  # fmt: skip
+
     @app.post("/api/w/{ws}/hub/connect")
     def hub_connect(body: ConnectBody, request: Request, ws: str = Depends(reads.workspace)):
         """Tell the hub about a join the person just signed (#1198 C11). A remote session needs a passkey step-up
@@ -314,12 +348,15 @@ def register(app: FastAPI, gateway: Gateway):
         except ValueError:
             raise fail("invalid.input", "That is not a hub card.", exit=1) from None
         invite = body.invite
-        if m := INVITE_PREFIX.fullmatch(invite):  # the hub id in an invite must be the card's own, or nothing is sent
+        if invite is not None and (
+            m := INVITE_PREFIX.fullmatch(invite)
+        ):  # the hub id in an invite must be the card's own, or nothing is sent
             if m.group(1) != (card.get("o") or {}).get("hub_id"):
                 raise fail("invalid.input", "The invite is for another hub than this card.", exit=1)
             invite = m.group(2)
         link = link_for(ws, "hub.connect")
-        got = link.call("hub.connect", {"hub_card": card, "invite": invite}, write=True, idem=body.idem)
+        args = {"hub_card": card} | ({"invite": invite} if invite else {}) | ({"addr": body.addr} if body.addr else {})
+        got = link.call("hub.connect", args, write=True, idem=body.idem)
         mode = got.get("mode") if isinstance(got, dict) else None
         return {"connected": True, "mode": mode if mode in MODES else None}
 

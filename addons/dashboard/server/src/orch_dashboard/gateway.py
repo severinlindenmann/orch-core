@@ -78,6 +78,7 @@ WRITE_OPS = (
     "grant.revoke",
     "addon.grant",
     "addon.disable",
+    "addon.purge",
 )
 
 
@@ -89,6 +90,7 @@ MARKET_PAGE_OPS = (
     "market.unstage",
     "market.uninstall",
     "market.refresh",
+    "market.add",
 )
 #: the host ops the Publish page and box need (shares.py); all under cap `publish/1`
 PUBLISH_FEATURE_OPS = (
@@ -360,6 +362,8 @@ class Gateway:
             features.append("usage")
         if self.addon_on(link, "wiki"):
             features.append("wiki")
+        if "quick" in features and self.addon_on(link, "quick"):
+            features.append("quick_on")  # the menu entry and the page's controls; Off: the page says so
         if self.addon_on(link, "estimate"):
             # Estimate: points on tickets (the ticket's size), shown and set only while the add-on is ON here.
             features.append("estimate")

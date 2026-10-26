@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime
 import os
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -108,19 +109,80 @@ def _next_id(prefix: str, existing: list[str]) -> str:
     return f"{prefix}{max((int(x[len(prefix) :]) for x in existing), default=0) + 1}"
 
 
+_UMLAUT = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "ae", "Ö": "oe", "Ü": "ue"})
+ASK_HINT = (
+    "orch ask 'Question?' --options 'First,Second' --rec 'First'  "
+    "(2 to 6 options in plain words, each up to 60 characters, comma separated)"
+)
+
+
+def _ask_retry(message: str) -> OrchError:
+    """A mistake in the call of ``orch ask``: retryable, with the fixed command as the hint."""
+    return OrchError("invalid.input", message, hint=ASK_HINT, retryable=True)
+
+
+def option_slug(title: str) -> str:
+    """The option key for a plain-words title: ``^[a-z][a-z0-9_]{0,31}$`` (transliterate, ``_``, ``o_`` prefix)."""
+    t = title.translate(_UMLAUT).replace("ß", "ss")
+    t = "".join(ch for ch in unicodedata.normalize("NFKD", t) if not unicodedata.combining(ch)).lower()
+    t = re.sub(r"[^a-z0-9]+", "_", t).strip("_")
+    if not t or not t[0].isalpha():
+        t = "o_" + t
+    return _cut_key(t)
+
+
+def _cut_key(t: str, limit: int = 32) -> str:
+    if len(t) <= limit:
+        return t.rstrip("_")
+    cut = t[:limit]
+    if "_" in cut and t[limit] != "_":
+        cut = cut[: cut.rindex("_")]
+    return cut.rstrip("_") or t[:limit]
+
+
+def option_keys(titles: list[str]) -> list[str]:
+    keys: list[str] = []
+    for t in titles:
+        base = option_slug(t)
+        key, n = base, 1
+        while key in keys:
+            n += 1
+            suffix = f"_{n}"
+            key = _cut_key(base, 32 - len(suffix)) + suffix
+        keys.append(key)
+    return keys
+
+
+def _resolve_rec(rec: str, titles: list[str], keys: list[str]) -> str:
+    if rec in keys:
+        return rec
+    low = rec.strip().casefold()
+    for t, k in zip(titles, keys, strict=True):
+        if t.casefold() == low:
+            return k
+    slug = option_slug(rec)
+    hits = [k for t, k in zip(titles, keys, strict=True) if option_slug(t) == slug]
+    if len(hits) == 1:
+        return hits[0]
+    if hits:
+        raise _ask_retry("--rec matches more than one option; use one of: " + ", ".join(keys))
+    raise _ask_retry("--rec must be one of --options (" + ", ".join(titles) + ")")
+
+
 def ask(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     text = c.text(args["text"], what="question")
-    opts = list(args.get("options") or [])
-    if len(set(opts)) != len(opts):
-        raise OrchError("invalid.input", "an option key is given twice")
+    titles = [str(t).strip() for t in (args.get("options") or [])]
+    if any(not t or not re.search(r"[A-Za-z0-9]", t) for t in titles):
+        raise _ask_retry("an option is empty or has no letters or digits")
+    keys = option_keys(titles)
     rec = args.get("rec")
-    if rec is not None and rec not in opts:
-        raise OrchError("invalid.input", "--rec must be one of --options")
+    if rec is not None:
+        rec = _resolve_rec(rec, titles, keys)
     to = args.get("to") or "ticket_owner"
     if to not in TO_ROLES and not _PERSON.fullmatch(to):
-        raise OrchError("invalid.input", "--to is a person id or one of " + ", ".join(TO_ROLES))
+        raise _ask_retry("--to is a person id or one of " + ", ".join(TO_ROLES))
     qid_n = _next_id("Q", [q["id"] for q in p.last_view.fields["questions"]])
-    options = [{"key": k, "label": k} for k in opts]
+    options = [{"key": k, "label": t} for k, t in zip(keys, titles, strict=True)]
     q: dict[str, Any] = {"id": qid_n, "to": to, "text": text, "blocking": not args.get("non_blocking")}
     q["kind"] = "choice" if options else "text"  # no options: an open question (kind text)
     if args.get("why"):
@@ -132,7 +194,7 @@ def ask(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     try:
         canon.validate_question(q)
     except canon.QuestionError as e:
-        raise OrchError("invalid.input", str(e)) from None
+        raise _ask_retry(str(e)) from None
     wid = c.store.state.workspace.workspace_id
     qid = canon.question_id(wid, p.uid, qid_n)
     p.add({"type": "question.asked", "question": q, "qid": qid, "hash": canon.question_hash(qid, p.uid, q)})
@@ -263,6 +325,10 @@ def set_fields(c: Call, p: Projection, args: dict[str, Any]) -> Out:
         if f"ticket.{key}" in sets:
             raise OrchError("invalid.input", f"{key} is given twice")
         sets[f"ticket.{key}"] = parse_pair(c, p, key, raw)
+    from orch.ops import quick
+
+    if quick.LABEL in (sets.get("ticket.labels") or ()) and quick.LABEL not in (p.last_view.fields.get("labels") or ()):
+        quick.require_on(c.store.state.workspace.addons)  # a NEW quick task needs the add-on; existing ones stay
     p.add({"type": "ticket.updated", "base_rev": {path: p.base(path) for path in sets}, "set": sets})
     return Out({"fields": [k[len("ticket.") :] for k in sets]})
 

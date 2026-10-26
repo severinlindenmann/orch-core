@@ -146,6 +146,17 @@
         ]
       },
       {
+        "code": "quick.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask an owner to turn Quick tasks on in Settings, Add-ons",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
+      },
+      {
         "code": "lock.busy",
         "exit": 4,
         "retryable": true,

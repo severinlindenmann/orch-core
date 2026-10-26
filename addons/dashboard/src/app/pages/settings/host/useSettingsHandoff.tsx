@@ -21,9 +21,13 @@ export interface HandoffSpec {
   onSigning?: (signing: boolean) => void
   /** The review ended: signed (true) or not (false: cancelled, closed, refused). */
   onEnd?: (signed: boolean) => void
+  /** Show the review under the row (an accordion) instead of a popover. */
+  inline?: boolean
+  /** The press was the deliberate gesture: with One click on, sign directly. */
+  autoSign?: boolean
 }
 
-export function useSettingsHandoff(ws: string | undefined, onSettled?: () => void | Promise<unknown>): { ask: (spec: HandoffSpec) => void; dialog: ReactNode } {
+export function useSettingsHandoff(ws: string | undefined, onSettled?: () => void | Promise<unknown>): { ask: (spec: HandoffSpec) => void; dialog: ReactNode; inline: boolean } {
   const [spec, setSpec] = useState<(HandoffSpec & { n: number }) | null>(null)
   const signed = useRef(false)
   const dialog = spec && (
@@ -36,6 +40,8 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       confirmLabel={spec.confirmLabel}
       hint={spec.hint}
       summary={spec.summary}
+      inline={spec.inline}
+      autoSign={spec.autoSign}
       doneToast={spec.doneToast}
       onSigning={spec.onSigning}
       onSettled={(phase) => {
@@ -53,5 +59,5 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       {spec.form}
     </SignPopover>
   )
-  return { ask: (s) => setSpec((old) => ({ ...s, n: (old?.n ?? 0) + 1 })), dialog }
+  return { ask: (s) => setSpec((old) => ({ ...s, n: (old?.n ?? 0) + 1 })), dialog, inline: !!spec?.inline }
 }

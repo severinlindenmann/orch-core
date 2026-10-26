@@ -240,3 +240,18 @@ def test_run8_terminal_is_suggested_when_this_machine_cannot_hold_a_click_key(tm
     f.launch(str(tmp.work))
     assert get(f, "state")[1]["suggested"]["method"] == "terminal"
     assert post(f, "profile", {**PROFILE, "method": "terminal"})[1] == {"ok": True}  # Terminal stays selectable
+
+
+def test_workspace_name_is_required_and_cleaned():
+    from orch.setup.protocol import SetupError, validate_profile
+    from tests.setup.conftest import PROFILE
+
+    known = frozenset(PROFILE["addons"])
+    ok = validate_profile({**PROFILE, "workspace_name": "  Marketing   Department "}, known_addons=known)
+    assert ok["workspace_name"] == "Marketing Department"
+    for bad in ("", "x" * 81, "a\x00b"):
+        with pytest.raises(SetupError):
+            validate_profile({**PROFILE, "workspace_name": bad}, known_addons=frozenset(PROFILE["addons"]))
+    without = {k: v for k, v in PROFILE.items() if k != "workspace_name"}
+    with pytest.raises(SetupError):
+        validate_profile(without, known_addons=frozenset(PROFILE["addons"]))

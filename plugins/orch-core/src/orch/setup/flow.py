@@ -169,9 +169,17 @@ class SetupFlow:
         assert self.root is not None or not self.dir
         from . import facts
 
-        sug = facts.suggest(dict(self.e.env), Path(self.dir)) if self.dir else {"name": "", "prefix": ""}
+        sug = (
+            facts.suggest(dict(self.e.env), Path(self.dir))
+            if self.dir
+            else {"name": "", "workspace_name": "", "prefix": ""}
+        )
         if self.facts is not None:
-            sug = {"name": self.facts.name, "prefix": self.facts.prefix}
+            sug = {
+                "name": self.facts.name,
+                "workspace_name": Path(self.dir).name or self.facts.prefix,
+                "prefix": self.facts.prefix,
+            }
         if self.mode != "finish":  # U1: a new workspace starts with "let agents work for you" ticked (3 days)
             sug = {**sug, "agent_hours": facts.DEFAULT_AGENT_HOURS, "agent_grant": True}
             # run 8 (owner): One click is the default where this machine can hold the key; Terminal stays selectable.
@@ -350,7 +358,7 @@ class SetupFlow:
         if any(i.id == "runner_grant" for i in plan.items):
             ids.append("runner_grant")
         if self.profile and self.profile["method"] == "click":
-            ids += ["flags", "custody"]
+            ids += ["custody", "flags"]
         if any(f["id"] == "records" for f in plan.flags):
             ids.append("records")
         return ids
@@ -514,7 +522,10 @@ def default_env(environ: Mapping[str, str]) -> Env:
 
 
 _LINK = re.compile(r"http://127\.0\.0\.1:\d{1,5}/#launch=[A-Za-z0-9_-]{20,100}&to=%2Fsetup")
-USAGE = "usage: orch setup [--no-browser]   (run it in the folder you want to make a workspace; it opens the page)\n"
+USAGE = (
+    "usage: orch setup [--no-browser] [--role workspace|full|pick] [--address ADDRESS]\n"
+    "  (run it in the folder you want to make a workspace; it asks what this computer should be, then opens the page)\n"
+)
 
 
 def _open_browser(environ: Mapping[str, str], err: Any, launch: dict[str, Any], *, no_browser: bool = False) -> Any:
@@ -591,6 +602,7 @@ def main(
     server_options: Mapping[str, Any] | None = None,
     run_dir: Path | None = None,
     cwd: str | None = None,
+    install_ctx: Any = None,
 ) -> int:
     """``orch setup``: the SETUP PROCESS. A person's command: refused under an agent's environment and without a
     terminal; needs the host (``host enable`` once, dev checkouts refused there); stays running until the page is done,
@@ -602,10 +614,22 @@ def main(
     from .server import SetupServer
     from .steps import set_no_core_dumps
 
-    no_browser = argv == ["--no-browser"]
-    if argv and not no_browser:
-        err.write(USAGE)
-        return 2
+    no_browser, role_arg, address_arg = False, None, None
+    rest = list(argv)
+    while rest:
+        flag = rest.pop(0)
+        if flag == "--no-browser":
+            no_browser = True
+        elif (
+            flag in ("--role", "--address") and rest and (flag != "--role" or rest[0] in ("workspace", "full", "pick"))
+        ):
+            if flag == "--role":
+                role_arg = rest.pop(0)
+            else:
+                address_arg = rest.pop(0)
+        else:
+            err.write(USAGE)
+            return 2
     if "ORCH_GRANT" in env or env.get("ORCH_SESSION"):
         err.write("orch setup: setting up a workspace is a person's job; an agent never does it\n")
         return 3
@@ -613,7 +637,27 @@ def main(
         err.write("orch setup: needs your own terminal (/dev/tty)\n")
         return 3
     set_no_core_dumps()
+    ictx = install_ctx or _install_ctx(env, out, err, ask=role_arg is None)
+    if ictx is not None and (role_arg is not None or ictx.interactive) and not _server_installed(ictx):
+        from orch.install import cli as icli
+        from orch.install.parts import InstallError
+
+        role, server_parts = icli.choose_role(ictx, role_arg)
+        try:
+            icli.full_server(ictx, server_parts, address=address_arg)
+        except InstallError as e:
+            err.write(f"orch setup: {e}\n")
+            return 1
+        if server_parts:
+            out.write(f"orch setup: {role}: {', '.join(server_parts)} installed; now this workspace\n")
     denv = (make_env or default_env)(env)
+    if ictx is not None and denv.workspace_url is Env.workspace_url:
+        from orch.install import cli as icli
+
+        folder = cwd if cwd is not None else os.path.realpath(os.getcwd())
+        # the page's own origin (the setup server) stops with this command: send "Open your workspace" to the running
+        # dashboard service instead, with a fresh login; the page's relative "/" stays the fallback
+        denv.workspace_url = lambda wid: icli.workspace_login_url(ictx, folder) or "/"
     try:
         (ensure_host or _ensure_host)(env, err)
     except SetupError as e:
@@ -685,12 +729,49 @@ def main(
     finally:
         server.stop()
     ok = flow.phase == "done" or (flow._closed and (flow.ready or flow.complete))
+    if ok and ictx is not None:
+        from orch.install import cli as icli
+
+        wsport = icli.add_workspace(ictx, flow.dir)
+        if wsport is not None:
+            dash = icli.load(ictx.layout).get("dashboard")
+            if dash:
+                out.write(f"workspace dashboard: {dash['url']}  (login link: {icli.dashboard_login_hint(dash)})\n")
+            else:
+                out.write(f"workspace dashboard port {wsport}: orch dashboard serve --port {wsport}\n")
     if ok and flow.run is not None:
         ws = flow.run.workspace or {}
         out.write(f"workspace {ws.get('prefix', '')} set up in {flow.dir}\n")
     elif ok and flow.facts is not None:
         out.write(f"workspace {flow.facts.prefix} is already set up in {flow.dir}\n")
     return 0 if ok else 1
+
+
+def _install_ctx(env: Mapping[str, str], out: Any, err: Any, *, ask: bool) -> Any:
+    """The seams of ``orch install`` for the role question and the workspace port; ``None`` when this machine has no
+    state directory to put them in (nothing asked then)."""
+    import sys
+
+    from orch.install import cli as icli
+
+    try:
+        ctx = icli.default_ctx(env, out, err)
+    except Exception:  # noqa: BLE001 - no HOME / state dir: a plain workspace setup
+        return None
+    if not ask:
+        ctx.interactive = sys.stdin.isatty()
+    return ctx
+
+
+def _server_installed(ictx: Any) -> bool:
+    """A full server already exists here: running ``orch setup`` again only adds a workspace."""
+    from orch.install.state import load
+
+    return bool(load(ictx.layout)["parts"])
+
+
+ENABLE_TRIES = 3
+ENABLE_RETRY_WAIT = 2.0
 
 
 def _ensure_host(environ: Mapping[str, str], err: Any) -> None:
@@ -707,9 +788,22 @@ def _ensure_host(environ: Mapping[str, str], err: Any) -> None:
         return
     except Exception:  # noqa: BLE001 - nobody answers: enable it
         pass
+    # right after the parts' services were installed (orch setup --role full) the first start can lose against the
+    # service manager still settling: try a few times and say what the last attempt answered.
     buf = io.StringIO()
-    if host_cli.main(["enable"], env=environ, out=buf) != 0:
-        raise SetupError("host.unavailable", "the orch host could not be started (orch host enable)", 500)
+    for attempt in range(ENABLE_TRIES):
+        buf = io.StringIO()
+        if host_cli.main(["enable"], env=environ, out=buf) == 0:
+            break
+        if attempt + 1 < ENABLE_TRIES:
+            time.sleep(ENABLE_RETRY_WAIT)
+    else:
+        why = (buf.getvalue().strip().splitlines() or [""])[0][:200]
+        raise SetupError(
+            "host.unavailable",
+            "the orch host could not be started (orch host enable)" + (f": {why}" if why else ""),
+            500,
+        )
     for _ in range(40):
         try:
             wi.connect_host(state).close()

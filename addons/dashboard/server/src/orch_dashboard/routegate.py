@@ -68,6 +68,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/grants"): (ALLOWED, ""),
     (GET, W + "/versions"): (ALLOWED, ""),
     (GET, W + "/add-ons"): (ALLOWED, ""),
+    (GET, W + "/add-ons/{name}/settings"): (ALLOWED, ""),
     (GET, W + "/quick"): (ALLOWED, ""),
     (GET, W + "/activity"): (ALLOWED, ""),
     (GET, W + "/usage"): (ALLOWED, ""),
@@ -83,6 +84,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/explorer/ticket/{key}"): (ALLOWED, ""),
     (GET, W + "/wiki"): (ALLOWED, ""),
     (GET, W + "/wiki/page"): (ALLOWED, ""),
+    (POST, W + "/wiki/create"): (ALLOWED, "admin action, plain click"),
     (GET, W + "/wiki/search"): (ALLOWED, ""),
     (GET, W + "/wiki/backlinks"): (ALLOWED, ""),
     (GET, W + "/widgets/catalog"): (ALLOWED, ""),
@@ -129,6 +131,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/hub"): (ALLOWED, ""),
     (GET, W + "/hub/share"): (ALLOWED, ""),
     (POST, W + "/hub/share/preview"): (ALLOWED, "a read-only preview"),
+    (POST, W + "/hub/link"): (ALLOWED, "reads the link's hub card; nothing is signed or kept"),
     (POST, W + "/hub/connect"): (STEP_UP, "the second half of a hub join"),
     (POST, W + "/hub/command"): (ALLOWED, "returns text only"),
     # --- the passkey step-up ceremony and the passkey store (R1-6)
@@ -162,6 +165,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/market/stage"): (ALLOWED, "admin action, plain click"),
     (DELETE, W + "/market/stage/{stage_id}"): (ALLOWED, ""),
     (POST, W + "/market/uninstall"): (ALLOWED, "turning off"),
+    (POST, W + "/market/add"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/market/refresh"): (ALLOWED, ""),
     # --- runs, agents, terminals
     (GET, W + "/runs"): (ALLOWED, ""),

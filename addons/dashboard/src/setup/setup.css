@@ -234,8 +234,42 @@
   list-style: none;
 }
 .setup .progress li {
-  padding: 12px 0;
+  padding: 15px 0;
   border-bottom: 1px solid var(--border);
+}
+.setup .progress .status {
+  flex: none;
+  min-width: 92px;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text-muted, #9aa3ad);
+}
+.setup .progress .status.done {
+  color: #4ade80;
+}
+.setup .progress .status.doing {
+  color: #fbbf24;
+}
+.setup .progress .status.failed {
+  color: #f87171;
+}
+.setup .open-workspace {
+  margin-top: 32px;
+}
+.setup .ticket-preview {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 16px;
+}
+.setup .ticket-preview .chip {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+}
+.setup .review-facts dd small {
+  color: var(--text-muted);
 }
 .setup .cancel {
   margin-top: 24px;
@@ -400,3 +434,14 @@ body:has(> #root > .setup) {
 .confirm-words summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
 .words-confirmed { margin: 12px 0; font-weight: 600; }
 .confirm-words .word-tiles li bdi { max-width: 100%; font: inherit; }
+.setup .addon-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.setup .addon-chips .chip {
+  padding: 1px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+}

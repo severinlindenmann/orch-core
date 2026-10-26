@@ -26,6 +26,19 @@ def _credential(c: Call, name: str, state: str, capabilities: Any) -> str | None
         return "unsafe"
 
 
+def _settings_spec(root: Any, name: str) -> dict[str, Any] | None:
+    """``{title, schema}`` of the installed manifest's ``settings`` (addon-api 1.1), or ``None``: none declared, or the
+    package cannot be read here (then the row simply has no settings panel)."""
+    try:
+        mf = install.read_installed(root, name)[1]
+    except (PackageError, ManifestError, OSError):
+        return None
+    spec = mf.settings
+    if not isinstance(spec, dict) or not isinstance(spec.get("schema"), dict):
+        return None
+    return {"title": spec.get("title"), "schema": spec["schema"]}
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     """Granted addons (with their state: active, disabled, purged, changed since the grant, missing, paused by the
     hub policy) and packages that are installed but not granted (``not_granted``). ``enabled`` is true only for an
@@ -52,6 +65,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             row["capabilities"] = sorted(granted[name].capabilities)  # the grant's own, for a capability gate
         if pause is not None:
             row["paused"] = {k: v for k, v in pause.items() if v is not None}
+        if state == "active" and (spec := _settings_spec(root, name)) is not None:
+            row["settings"] = spec  # what the person can configure: title and schema
         held = _credential(c, name, state, granted[name].capabilities)
         if held is not None:
             row["credential"] = held
@@ -95,10 +110,11 @@ OP = operation(
                         "enabled": BOOL,
                         "state": STR,
                         "credential": STR,
+                        "settings": obj({"title": {"type": ["string", "null"]}, "schema": {"type": "object"}}),
                         "capabilities": arr(STR),
                         "paused": obj({"code": STR, "cause": STR, "reconnect": STR}, optional=("reconnect",)),
                     },
-                    optional=("credential", "capabilities", "paused"),
+                    optional=("credential", "settings", "capabilities", "paused"),
                 )
             ),
         }

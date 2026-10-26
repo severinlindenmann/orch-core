@@ -22,7 +22,7 @@ OP = operation(
         "options": L(
             "answer options in plain words, comma separated (a title with a comma: repeat the flag)",
             split=True,
-            items={"type": "string", "minLength": 1, "maxLength": 60},
+            items={"type": "string", "minLength": 1, "maxLength": 60, "pattern": "[A-Za-z0-9]"},
             **{"x-metavar": "A,B"},
         ),
         "rec": S("the recommended option (its title or key)", **{"x-metavar": "KEY"}),

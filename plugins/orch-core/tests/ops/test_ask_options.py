@@ -60,4 +60,5 @@ def test_ask_plain_keys_unchanged(ws, cli: Cli):
     cli("new", "A ticket")
     cli("claim", "1")
     cli("ask", "Which?", "--options", "csv,api", "--rec", "csv")
-    assert ws.ticket_json("1")["questions"][-1]["options"] == [{"key": "csv", "label": "csv"}, {"key": "api", "label": "api"}]
+    opts = ws.ticket_json("1")["questions"][-1]["options"]
+    assert opts == [{"key": "csv", "label": "csv"}, {"key": "api", "label": "api"}]

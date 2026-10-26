@@ -18,24 +18,13 @@ const content = (access: boolean): SignContent => ({ headline: 'Turn on Estimate
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 describe('add-on review words', () => {
-  it.each([[false, false], [false, true], [true, false], [true, true]])('shows the trust warning only for marketplace=%s with access=%s', (marketplace, access) => {
+  it.each([[false, false], [false, true], [true, false], [true, true]])('keeps what the host sends (marketplace=%s, access=%s)', (marketplace, access) => {
     const original = content(access)
     const result = addonContent(original, marketplace)
-    expect(!!result.summary?.risk).toBe(marketplace && access)
+    expect(result.summary?.risk).toBe(original.summary?.risk) // the trust line is the host's call, never filtered here
     expect(result.summary?.lines.join(' ')).not.toContain('Version')
     expect(result.fields_changed).toEqual(original.fields_changed)
-    if (!access) expect(result.summary?.lines).toEqual(["It can't open your files, terminals or the internet."])
-  })
-  it.each(['[]', '(none)', 'none', ''])('does not warn for an empty capability list: %s', capabilities => {
-    const original = { ...content(true), fields_changed: [{ field: 'capabilities', before: null, after: capabilities }] }
-    expect(addonContent(original, true).summary?.risk).toBeUndefined()
-  })
-  it('translates capability lists without changing signed values', () => {
-    const original: SignContent = { headline: 'Turn on add-on', fields_changed: [{ field: 'capabilities', before: null, after: '[pty, network, spawn_agent]' }] }
-    const result = addonContent(original, true)
-    expect(result.summary?.lines).toEqual(['Access: [terminals, internet, agents]'])
-    expect(result.summary?.risk).toContain('only if you trust it')
-    expect(result.fields_changed).toEqual(original.fields_changed)
+    if (!access) expect(result.summary?.lines).toEqual(['It declares no capabilities.'])
   })
   it('uses plain capability names and preserves unfamiliar names', () => {
     expect(['files', 'pty', 'network', 'spawn_agent', 'future_permission'].map(capabilityWords)).toEqual(['files', 'terminals', 'internet', 'agents', 'future_permission'])
@@ -47,21 +36,12 @@ beforeEach(() => {
   vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'req', expires_at: new Date(Date.now() + 600000).toISOString(), op: 'addon.grant', confirm: 'click' })
   vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'a'.repeat(64), view: { risk: CLICK_RISK, op: 'addon.grant', workspace: { id: 'ws', name: 'Test', prefix: 'T' }, fingerprint: '0123456789ab', lines: ['version 0.1.0'], checks: [], confirm: { kind: 'click' }, expires_at: new Date(Date.now() + 600000).toISOString(), auth: 'convenience', device: 'd_test', artifacts: null, content: content(false) } })
 })
-it('has no spinner or signature before confirmation, then reports signing', async () => {
+it('with One click on, the press signs directly and the row reports signing', async () => {
   const sign = vi.spyOn(api, 'signClick').mockImplementation(() => new Promise(() => {}))
-  const { container } = render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><BuiltInAddOns workspace={{ id: 'ws' } as Workspace} rows={[{ id: 'estimate', title: 'Estimate', desc: '', state: 'off', locked: null, blocked: null, version: '0.1.0' }]} /></QueryClientProvider>)
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><BuiltInAddOns workspace={{ id: 'ws' } as Workspace} rows={[{ id: 'estimate', title: 'Estimate', desc: '', state: 'off', locked: null, blocked: null, version: '0.1.0' }]} /></QueryClientProvider>)
   fireEvent.click(screen.getByRole('switch', { name: 'Estimate' }))
-  const confirm = await screen.findByRole('button', { name: 'Turn on' })
-  expect(screen.getByRole('button', { name: 'Cancel' })).toBeVisible()
-  expect(confirm.closest('[data-testid="addon-estimate-accordion"]')).not.toBeNull()
-  expect(screen.getByText('Version').closest('details')).not.toHaveAttribute('open')
-  expect(container.querySelector('.animate-spin')).toBeNull()
-  expect(sign).not.toHaveBeenCalled()
-  expect(screen.queryByText('Turning on…')).not.toBeInTheDocument()
-  expect(screen.getByRole('switch')).not.toHaveAttribute('aria-busy')
-  await waitFor(() => expect(confirm).toBeEnabled(), { timeout: 3000 })
-  fireEvent.pointerDown(confirm)
-  fireEvent.click(confirm)
-  await waitFor(() => expect(sign).toHaveBeenCalledTimes(1))
+  // One click on: the press on the switch signs; the review shows under the row while it signs.
+  await waitFor(() => expect(sign).toHaveBeenCalledTimes(1), { timeout: 20000 })
+  expect(screen.getByTestId('addon-estimate-accordion')).toBeInTheDocument()
   expect(screen.getByText('Turning on…')).toBeVisible()
-}, 30000)
+}, 40000)

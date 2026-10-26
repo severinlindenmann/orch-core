@@ -260,24 +260,22 @@ export function SignContent({ content, ws, technical, compact = false, quick }: 
       </div>}
     {!also && !!content.fields_changed?.length && <section><h3 className="mb-2 text-[13px] font-medium text-text"><Inline>{content.fields_title ?? (content.fields_changed.every(f => f.before == null) ? 'Signed values' : 'Changed fields')}</Inline></h3><dl className="space-y-3">{content.fields_changed.map(f => <div key={f.field} className="grid min-w-0 grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-[7rem_minmax(0,1fr)]"><dt className="text-text-muted"><Inline>{`${cap(f.field)}:`}</Inline></dt> <dd className="min-w-0 text-text [&_bdi]:font-sans [&_bdi]:text-[13px]">{f.before == null ? null : <><Shown plain value={f.before} members={members} />{f.before_note && <span className="text-text-muted"> (<Raw>{f.before_note}</Raw>)</span>} → </>}<Shown plain value={f.field === 'type' && f.after ? (TYPE_WORDS[f.after] ?? f.after) : f.after} members={members} empty="(not set)" /></dd></div>)}</dl></section>}
       {ids.map(id => <p key={id}><Person parts={personLabel(id, members)!} /> = <Raw>{id}</Raw></p>)}
-      {summary && <ul>{summary.lines.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul>}
       {technical}
     </details>}
   </>
-  // Keep the exact review available, regardless of whether the host provides a summary.
-  const safeFact = (line: string) => !/(?:\b[a-z]+_[a-f0-9]{8,}|\b[a-f0-9]{16,}|sha256:|digest|envelope|key store|Review it here|Sign with one click|^on this computer[.!]?$|^\s*(?:before|after|change)\s*(?::|→|->))/i.test(line)
   const parts = compact ? compactAnswer(content) : null
   const choice = parts?.choice.after
-  const facts = (summary?.lines ?? []).filter(safeFact).slice(0, choice ? 2 : 3)
+  const facts = summary?.lines ?? []
   return <div data-testid={parts ? 'sign-compact' : undefined} className="min-w-0 space-y-3 font-sans text-[13px] leading-relaxed text-text [overflow-wrap:anywhere]">
-    {choice && safeFact(choice) && <p data-testid="sign-choice">Your answer will be <Inline>{choice}</Inline>.</p>}
+    {choice && <p data-testid="sign-choice">Your answer will be <Inline>{choice}</Inline>.</p>}
     {facts.length > 0 && <section data-testid="sign-summary"><ul className="space-y-1.5">{facts.map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}</ul></section>}
+    {summary && content.ticket && <p data-testid="sign-ticket"><Raw>{content.ticket.key}</Raw> · signed id …<Raw>{content.ticket.uid_tail}</Raw></p>}
     {summary?.risk && <p role="note" data-testid="sign-risk" className="flex items-start gap-2 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 font-medium text-text"><ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden /><span><Inline>{summary.risk}</Inline></span></p>}
-    <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
+    {!summary ? <div data-testid="sign-exact" className="min-w-0 space-y-5">{rest}</div> : <details data-testid="sign-exact" className="space-y-3 rounded-md border border-border p-3">
       <summary className="cursor-pointer text-[12px] font-medium text-text-muted">Show exactly what is signed</summary>
       <div className="mt-2 min-w-0 space-y-5">
         {rest}
       </div>
-    </details>
+    </details>}
   </div>
 }

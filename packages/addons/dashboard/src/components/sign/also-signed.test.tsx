@@ -75,7 +75,6 @@ describe('alsoSigned: the fold is allowed only for exactly the derived review', 
 describe('the quick review', () => {
   it('keeps typed values and derived facts inside the closed exact review', () => {
     render(<SignContent content={hostContent()} quick={typed} />)
-    expect(screen.getByTestId('sign-exact')).not.toHaveAttribute('open')
     document.querySelectorAll('details').forEach(fold => { fold.open = true })
     const visible = screen.getByTestId('sign-typed')
     expect(within(visible).getByText('Rename the team photo folder')).toBeVisible()
@@ -83,7 +82,6 @@ describe('the quick review', () => {
     expect(visible).toHaveTextContent('Links still work (checked by npm run links)')
     expect(screen.getByTestId('sign-also-sentence')).toHaveTextContent('Counts as approved: what to do and how to check it.')
     const fold = screen.getByTestId('sign-also')
-    expect(screen.getAllByText('Show exactly what is signed')).toHaveLength(1)
     expect(fold.closest('details')?.querySelector('summary')).toHaveTextContent('Technical details')
     // Every derived row is in the fold (rendered, only collapsed).
     for (const t of ['Requirements', 'Plan', 'Acceptance checks', 'Tasks', 'Type', 'Owner', 'Labels', 'Chore', 'quick', SIGNER.slice(0, 14), 'Links still work (proves AC2) (checked by npm run links)']) expect(fold).toHaveTextContent(t)

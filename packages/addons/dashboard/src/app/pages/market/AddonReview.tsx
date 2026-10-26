@@ -13,23 +13,15 @@ import { SignPopover } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 
-const TRUST = 'An add-on runs its own code on this computer as you; turn it on only if you trust it.'
-const NO_ACCESS = "It can't open your files, terminals or the internet."
+/** Presentation only: the host's lines, notes and risk are shown as sent (the trust-line rule lives in the host's signcontent.py). */
 export function capabilityWords(value: string): string {
   const names: Record<string, string> = { files: 'files', filesystem: 'files', read_files: 'read files', write_files: 'change files', pty: 'terminals', network: 'internet', spawn_agent: 'agents', serve_http: 'web pages', git_push: 'push code', choose_model: 'choose agent models', credential: 'saved sign-in keys', secrets: 'service tokens' }
   return names[value] ?? value
 }
 
-/** Change presentation prose only; exact fields and the signed View digest remain intact. */
-export function addonContent(content: SignContent, marketplace: boolean): SignContent {
-  const capabilities = content.fields_changed?.find(f => f.field === 'capabilities')?.after
-  const noCapabilities = (value: string) => ['[]', '(none)', 'none', ''].includes(value.trim())
-  const access = capabilities !== undefined && capabilities !== null
-    ? !noCapabilities(capabilities)
-    : !!content.summary?.lines.some(l => l.startsWith('It says it will '))
-  const lines = content.summary?.lines.filter(l => !l.startsWith('Version ')).map(l => l === 'It declares no capabilities.' ? NO_ACCESS : l.startsWith('It says it will ') ? l.replace(/\b[a-z][a-z_]+\b/g, capabilityWords) : l)
-    ?? (capabilities ? [noCapabilities(capabilities) ? NO_ACCESS : `Access: ${capabilities.replace(/[a-z][a-z_]+/g, capabilityWords)}`] : [])
-  return { ...content, notes: content.notes?.filter(n => n !== TRUST), summary: { title: content.summary?.title ?? content.title ?? content.headline, lines, ...(marketplace && access ? { risk: TRUST } : {}) } }
+export function addonContent(content: SignContent, _marketplace?: boolean): SignContent {
+  const lines = content.summary?.lines.filter(l => !l.startsWith('Version ')).map(l => l.startsWith('It says it will ') ? l.replace(/\b[a-z][a-z_]+\b/g, capabilityWords) : l)
+  return content.summary && lines ? { ...content, summary: { ...content.summary, lines } } : content
 }
 
 export function AddonReview({ workspace, row, marketplace, onBusy, onDone, onClose }: {
@@ -50,6 +42,13 @@ export function AddonReview({ workspace, row, marketplace, onBusy, onDone, onClo
     if (viaClick) void click.start(action)
     else void terminal.prepare(action)
   })
+  // One click on: the press on the switch is the approval; the review shows under the row while it signs (owner). Off: the person confirms.
+  const autoSigned = useRef(false)
+  useEffect(() => {
+    if (!viaClick || click.phase !== 'ready' || autoSigned.current) return
+    autoSigned.current = true
+    void click.sign()
+  }, [viaClick, click.phase, click.sign])
   const signing = click.phase === 'signing' || click.phase === 'settling'
   useEffect(() => { onBusy(signing) }, [signing, onBusy])
   const [waitUntil, setWaitUntil] = useState(0)
@@ -61,7 +60,7 @@ export function AddonReview({ workspace, row, marketplace, onBusy, onDone, onClo
   return <div ref={panel} className="mt-2 space-y-2 rounded-lg border border-border bg-surface p-3 [&_[data-testid=sign-exact]]:max-h-[30vh] [&_[data-testid=sign-exact]]:overflow-auto" aria-label={`${label} ${row.title}`}>
     <p className="font-medium">{label} <Inline>{row.title}</Inline></p>
     {row.version && <details className="text-xs text-text-muted"><summary className="cursor-pointer">Technical details</summary><p>Version <Inline>{row.version}</Inline></p></details>}
-    {viaClick && click.view ? <ClickSignPanel answer={{ ...click.view, view: { ...click.view.view, content: click.view.view.content && addonContent(click.view.view.content, marketplace) } }} ws={workspace.id} problem={click.problem} signing={signing} ready={click.phase === 'ready'} waitUntil={waitUntil} extra={click.phase === 'failed' && click.problem?.next !== 'check' ? <Button onClick={() => void (click.problem?.next === 'review' ? click.review() : click.again(action))}>Review again</Button> : undefined} label={label} onSign={() => void click.sign()} onCancel={() => void close()} /> : terminal.request && terminal.phase === 'waiting' ? <>
+    {viaClick && click.view ? <ClickSignPanel answer={{ ...click.view, view: { ...click.view.view, content: click.view.view.content && addonContent(click.view.view.content, marketplace) } }} ws={workspace.id} problem={click.problem} signing={signing} ready={click.phase === 'ready'} waitUntil={waitUntil} extra={click.phase === 'failed' && click.problem?.next !== 'check' ? <Button onClick={() => void (click.problem?.next === 'review' ? click.review() : click.again(action))}>Review again</Button> : undefined} label={`Approve and ${label.toLowerCase()}`} onSign={() => void click.sign()} onCancel={() => void close()} /> : terminal.request && terminal.phase === 'waiting' ? <>
       <HandoffPanel request={{ ...terminal.request, content: terminal.request.content && addonContent(terminal.request.content, marketplace) }} />
       <Button variant="ghost" onClick={() => void close()}>Cancel</Button>
     </> : <>

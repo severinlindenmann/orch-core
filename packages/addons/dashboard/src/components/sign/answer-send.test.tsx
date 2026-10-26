@@ -260,8 +260,7 @@ describe('Send answer in the card, one-click custody', () => {
     const question = strip.querySelector('section[aria-label="Question"]')!
     expect(choice.compareDocumentPosition(question) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(choice).toBeVisible()
-    expect(question).not.toBeVisible()
-    expect(question.closest('details')).not.toHaveAttribute('open')
+    expect(question).toBeVisible()
     expect(question.textContent).toContain(evil)
     expect(send()).toBeInTheDocument()
   })

@@ -240,7 +240,7 @@ describe('answering a question in one-click mode', () => {
     const { dialog } = await open(ANSWER)
     await within(dialog).findByTestId('click-panel', {}, T)
     expect(within(dialog).queryByTestId('sign-compact')).toBeNull()
-    expect(within(dialog).getByText('Which date should the report use?')).not.toBeVisible()
+    expect(within(dialog).getByText('Which date should the report use?')).toBeVisible()
     expect(within(dialog).getByText('TIMESTAMP')).not.toBeVisible()
   })
 })

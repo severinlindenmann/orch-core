@@ -242,9 +242,9 @@ describe('the other buttons', () => {
 
 it('renders structured content while retaining the full lines in Details', () => {
   mount(answer({ content: { headline: 'Approve requirements', sections: [{ id: 'requirements', title: 'Requirements', text: 'Do the thing' }], acceptance: [{ id: 'AC1', text: 'It works' }], tasks: [{ n: 2, id: 'T-3', title: 'Check it', verify: ['npm test'] }], fields_changed: [{ field: 'title', before: 'Old', after: 'New', before_note: 'per host, not signed' }] } }))
-  expect(screen.getByText('Do the thing')).not.toBeVisible()
-  expect(screen.getByText('It works')).not.toBeVisible()
-  expect(screen.getByText('npm test')).not.toBeVisible()
+  expect(screen.getByText('Do the thing')).toBeVisible()
+  expect(screen.getByText('It works')).toBeVisible()
+  expect(screen.getByText('npm test')).toBeVisible()
   expect(screen.getByText('per host, not signed')).not.toBeVisible()
   expect(screen.getByTestId('click-lines').closest('details')).not.toHaveAttribute('open')
 })

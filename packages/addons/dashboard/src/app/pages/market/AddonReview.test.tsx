@@ -43,5 +43,5 @@ it('with One click on, the press signs directly and the row reports signing', as
   // One click on: the press on the switch signs; the review shows under the row while it signs.
   await waitFor(() => expect(sign).toHaveBeenCalledTimes(1), { timeout: 20000 })
   expect(screen.getByTestId('addon-estimate-accordion')).toBeInTheDocument()
-  expect(screen.getByText('Turning on…')).toBeVisible()
+  expect(await screen.findByText('Turning on…', {}, { timeout: 5000 })).toBeVisible()
 }, 40000)

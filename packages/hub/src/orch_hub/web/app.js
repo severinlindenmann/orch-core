@@ -77,6 +77,28 @@ function loginView(err) {
   show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, form);
 }
 
+// First admin (prototype): the installer's one-time link opens this page; the hub shows the authenticator secret once.
+function setupView(token, err) {
+  const name = h("input", { id: "name", autocomplete: "name", required: true, value: "Admin" });
+  const pw = h("input", { id: "pw", type: "password", autocomplete: "new-password", required: true, minlength: 10 });
+  const form = h("form", {
+    onsubmit: async (ev) => {
+      ev.preventDefault();
+      const r = await api("POST", "/setup", { token, name: name.value.trim(), password: pw.value });
+      pw.value = "";
+      if (r.status !== 200) return setupView(token, r.body.error === "bad_credentials" ? "This setup link was already used or is wrong." : say(r.body.error));
+      history.replaceState(null, "", location.pathname);
+      show(
+        h("h1", { text: "Admin created" }),
+        banner("ok", "Write these down", "They are shown once."),
+        h("dl", { class: "facts" }, h("dt", { text: "User id" }), h("dd", { class: "fp", id: "new-user-id", text: r.body.user_id }), h("dt", { text: "Authenticator secret (add it to your authenticator app)" }), h("dd", { class: "fp", id: "new-totp", text: r.body.totp_secret })),
+        h("div", { class: "row top" }, h("button", { class: "pri", text: "Continue to sign in", onclick: () => loginView() })),
+      );
+    },
+  }, field("Your name", name), field("Choose a password (10 or more characters)", pw), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Create the admin" })));
+  show(h("h1", { text: "Set up your hub" }), err ? banner("bad", "Not created", err) : null, h("p", { class: "muted", text: "This creates the first admin, with a password and an authenticator code." }), form);
+}
+
 async function refresh() {
   const [who, chans] = await Promise.all([api("GET", "/session"), api("GET", "/me/channels")]);
   if (who.status !== 200) return false;
@@ -323,5 +345,7 @@ function promptView(me, p, digest, d) {
 
 // --- start -------------------------------------------------------------------------------------------------------------
 (async () => {
+  const m = /^#setup=([\w-]+)$/.exec(location.hash);
+  if (m) return setupView(m[1]);
   try { if (!(await refresh())) return loginView(); await home(); } catch { loginView("Something went wrong."); }
 })();

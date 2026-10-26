@@ -98,6 +98,9 @@ class FixedInvites:
             self._codes.discard(invite)
 
 
+SETUP_TOKEN_FILE = "setup-token"  # written by `orch install hub`; consumed by the console's first-admin page
+
+
 def invite_line(hub_id: str, code: str) -> str:
     """The workspace invite form ``<hub_id>:<code>`` (protocol §5), printed wherever the hub shows an invite."""
     return f"invite {hub_id}:{code}"
@@ -112,6 +115,17 @@ def parse_listen(value: str) -> tuple[str, int]:
     if not ok:
         raise ValueError("--listen must be a loopback host:port (dev only), e.g. 127.0.0.1:0")
     return host.strip("[]"), int(port)
+
+
+def parse_web_listen(value: str, *, assigned: Callable[[str], bool] = CO.locally_assigned) -> tuple[str, int]:
+    """The console bind: loopback, or (prototype, no TLS) one literal private/NetBird IP of this computer."""
+    host, _, _port = value.rpartition(":")
+    try:
+        if ipaddress.ip_address(host.strip("[]")).is_loopback:
+            return parse_listen(value)
+    except ValueError:
+        pass
+    return CO.parse_link_listen(value, assigned=assigned)
 
 
 def serve(
@@ -241,10 +255,11 @@ def serve(
                 invites=gate,
                 link_endpoint=lambda: f"{host}:{server.address[1]}",
                 push=notifier,
+                setup_token_file=state / SETUP_TOKEN_FILE,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )
         )
-        web = WebServer.from_listen(api, cfg.web_listen)  # loopback only; the edge fronts it (no public listener)
+        web = WebServer.from_listen(api, cfg.web_listen)  # loopback, or one private IP (dev, plain http)
         if not cfg.allowed_origins:  # loopback dev: the console is served from this very address
             api.allow_loopback_origin(f"http://{web.address[0]}:{web.address[1]}")
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))

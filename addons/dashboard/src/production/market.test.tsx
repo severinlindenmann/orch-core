@@ -201,3 +201,13 @@ it('hides the permanent route when the host does not serve market', async () => 
   expect(screen.queryByRole('link', { name: 'Add-ons' })).toBeNull()
   expect(state.host.calls.some((c) => c.path.endsWith('/market'))).toBe(false)
 })
+it('run-9 feedback: the unfetched official marketplace is fetched on the first visit and shows a GitHub link', async () => {
+  const preset = market({ preset: true, cache: 'not_fetched', addons: [], entries: 0, last_fetch: null, index_commit: '' as never })
+  ws().market = { markets: [preset] }
+  show('/w/DEMO/addons?tab=marketplaces')
+  const link = await screen.findByRole('link', { name: /GitHub/ }, T)
+  expect(link).toHaveAttribute('href', preset.url)
+  expect(link).toHaveAttribute('target', '_blank')
+  await waitFor(() => expect(state.host.calls.filter((c) => c.path.endsWith('/market/refresh')).map((c) => c.body)).toEqual([{ url: preset.url }]), T)
+  expect(screen.queryByRole('button', { name: /Remove/ })).toBeNull()
+})

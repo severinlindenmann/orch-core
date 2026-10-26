@@ -37,6 +37,11 @@ const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
   if (path === 'secrets/reveal') r = { passphrase: null, recovery_words: Array.from({ length: 24 }, (_, i) => `word-${i + 1}`), check_positions: [8, 17, 23] }
   if (path === 'secrets/confirm') r = { ok: true }
   if (path === 'review') r = review
+  if (path === 'create') r = { run_id: 'x' }
+  if (path.startsWith('progress')) {
+    const ids = [['keys','Creating your key'],['genesis','Saving your approval'],['register','Starting orch in the background'],['git','Making the folder a git repository'],['runner','Letting the dashboard run agents'],['settings','Saving the workspace settings'],['addon:quick','Quick tasks'],['flags','Turning on one-click approval'],['runner_grant','Letting agents start on this computer'],['custody','Storing your key for one-click approval']]
+    r = { done: true, error: null, retry: [], waiting: null, steps: ids.map(([id,label]) => ({ id, label, status: 'done' })) }
+  }
   void body
   return new Response(JSON.stringify(r), { status: 200 })
 }

@@ -113,6 +113,7 @@ class PassphraseRequest:
     action: str
     digest: str  # first 32 hex characters of sha256(payload), "" for create
     fields: tuple[tuple[str, str], ...] = ()
+    existing: bool = False  # create: an existing key moves under a passphrase again (not a new key)
 
 
 PassphraseProvider = Callable[[PassphraseRequest], str]
@@ -185,7 +186,9 @@ def render_prompt(request: PassphraseRequest) -> str:
         return "\n".join(lines) + "\n"
     lines = ["", "=== orch: passphrase ===", f"sha256: {digest}", f"key: {_value(request.key_id, 64)}"]
     if request.kind == "create":
-        lines.append("action: create this key")
+        lines.append(
+            "action: protect your key with a passphrase again" if request.existing else "action: create this key"
+        )
     else:
         for name, value in request.fields:
             lines += _field_lines(name, value)
@@ -540,7 +543,7 @@ class PassphraseBackend:
             key = crypto.private_key_from_scalar(int.from_bytes(secret, "big"))
         pub = crypto.public_bytes(key)
         if passphrase is None:
-            passphrase = self._provider(PassphraseRequest("create", key_id, "", ""))
+            passphrase = self._provider(PassphraseRequest("create", key_id, "", "", existing=secret is not None))
         pw = _passphrase_bytes(passphrase)
         check_strength(passphrase)
         salt, nonce = secrets.token_bytes(16), secrets.token_bytes(12)

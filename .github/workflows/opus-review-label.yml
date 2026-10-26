@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      # the list comes from the base branch, so a PR cannot weaken the rule it is judged by
+      # the list comes from the base branch, so a PR cannot weaken the rule it is judged by (the PR that adds it uses its own)
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.event.pull_request.base.sha }}
@@ -29,10 +29,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -uo pipefail
           label=needs-opus-review
-          grep -Ev '^[[:space:]]*(#|$)' .github/security-paths.txt > "$RUNNER_TEMP/patterns"
+          list=.github/security-paths.txt
+          if [ ! -f "$list" ]; then  # the PR that introduces the list: no base copy yet, take the PR's own
+            list="$RUNNER_TEMP/security-paths.txt"
+            gh api "repos/$REPO/contents/.github/security-paths.txt?ref=$HEAD_SHA" -H 'Accept: application/vnd.github.raw' > "$list" \
+              || { echo "no path list (informational)"; exit 0; }
+          fi
+          grep -Ev '^[[:space:]]*(#|$)' "$list" > "$RUNNER_TEMP/patterns"
           files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')" || { echo "cannot list files"; exit 0; }
           hits="$(grep -E -f "$RUNNER_TEMP/patterns" <<<"$files" || true)"
           has="$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name' | grep -Fx "$label" || true)"

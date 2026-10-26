@@ -8,8 +8,8 @@ import functools
 import getpass
 import hashlib
 import hmac
-import ipaddress
 import html
+import ipaddress
 import json
 import math
 import os

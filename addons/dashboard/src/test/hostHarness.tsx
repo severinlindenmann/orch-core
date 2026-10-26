@@ -270,6 +270,7 @@ export class FakeHost {
     if (rest === 'market/stage' && method === 'POST') return json(ws.marketStage)
     if (rest.startsWith('market/stage/') && method === 'DELETE') return json({ removed: true })
     if (rest === 'market/uninstall') return json({ name: body?.name, removed: true })
+    if (rest === 'market/add') return json({ url: body?.url, class: 'dev', added: true })
     if (rest === 'market/refresh') return json({ refreshed: true })
     if (rest === 'today') return json(today)
     if (rest === 'board' || rest === 'tickets') return json({ ...board, next_page: null })

@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
 import { market, stage, installedAddon, updateStage } from '@/test/fixtures/market'
-import { EXTERNAL_HELP } from '@/api/market'
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
 vi.mock('@/api/useLiveUpdates', async (original) => ({
@@ -111,8 +110,28 @@ it('marketplaces explain each publisher state and hub refusal', async () => {
   for (const text of ['Unsigned', 'First use - key will be remembered', 'Key changed - review required']) expect(screen.getByText(text)).toBeInTheDocument()
   const add = screen.getByRole('button', { name: '+ Add marketplace' })
   expect(add).toBeDisabled()
-  expect(add).toHaveAccessibleDescription(/external marketplaces aren't available in this workspace yet/i)
-  expect(screen.getByText(EXTERNAL_HELP)).toBeInTheDocument()
+  expect(add).toHaveAccessibleDescription(/only allows the official marketplace/i)
+  expect(screen.getByRole('link', { name: 'View workspace admins' })).toBeInTheDocument()
+})
+it('run 9 picker: an offered source is one Add click then one Approve click; the address fold exists only when the policy allows any source', async () => {
+  ws().market = { markets: [market()], offered: [{ url: 'https://github.com/acme/orch-dev-test', class: 'dev' }] }
+  show('/w/DEMO/addons?tab=marketplaces')
+  await userEvent.click(await screen.findByRole('button', { name: '+ Add marketplace' }, T))
+  const sheet = screen.getByTestId('add-market-sheet')
+  expect(within(sheet).getByText('Dev test marketplace')).toBeInTheDocument()
+  expect(within(sheet).getByText('Already added')).toBeInTheDocument()
+  expect(within(sheet).queryByTestId('add-market-address')).toBeNull()
+  await userEvent.click(within(sheet).getByRole('button', { name: 'Add' }))
+  expect(state.host.calls.some((c) => c.path.endsWith('/market/add'))).toBe(false) // review first
+  await userEvent.click(within(sheet).getByRole('button', { name: 'Approve' }))
+  await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/add'))?.body).toEqual({ url: 'https://github.com/acme/orch-dev-test' }), T)
+})
+it('run 9 picker: Add by address is a closed fold, shown only when the host says any source is allowed', async () => {
+  ws().market = { markets: [market()], open_address: true }
+  show('/w/DEMO/addons?tab=marketplaces')
+  await userEvent.click(await screen.findByRole('button', { name: '+ Add marketplace' }, T))
+  const fold = screen.getByTestId('add-market-address')
+  expect(fold).not.toHaveAttribute('open')
 })
 it.each(['member', 'no-actions'] as const)('hides every write control for %s', async (mode) => {
   if (mode === 'member') {

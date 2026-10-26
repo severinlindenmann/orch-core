@@ -162,6 +162,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/market/stage"): (ALLOWED, "admin action, plain click"),
     (DELETE, W + "/market/stage/{stage_id}"): (ALLOWED, ""),
     (POST, W + "/market/uninstall"): (ALLOWED, "turning off"),
+    (POST, W + "/market/add"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/market/refresh"): (ALLOWED, ""),
     # --- runs, agents, terminals
     (GET, W + "/runs"): (ALLOWED, ""),

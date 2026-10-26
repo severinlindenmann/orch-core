@@ -5,7 +5,6 @@ import { api } from '@/api/client'
 import { canAct, hasFeature } from '@/api/features'
 import { queries } from '@/api/queries'
 import {
-  EXTERNAL_HELP,
   marketError,
   permissionEffect,
   publisherWording,
@@ -29,6 +28,7 @@ import { useRole } from '@/app/useRole'
 import { BuiltInAddOns } from '../settings/host/AddOns'
 import { InstalledGroup } from './InstalledGroup'
 import { RemoveSheet } from './RemoveSheet'
+import { AddMarketplace } from './AddMarketplace'
 
 const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
 const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
@@ -453,17 +453,7 @@ function MarketWorkspace() {
                 </Table>
               )}
               <p className="text-xs text-text-muted">Allowed by, added by and publisher signature: shown by this computer, not covered by your approval.</p>
-              <p>{EXTERNAL_HELP}</p>
-              {mayWrite && (
-                <div className="space-y-1">
-                  <Button disabled aria-describedby="add-market-why">
-                    + Add marketplace
-                  </Button>
-                  <p id="add-market-why" className="text-xs text-text-muted">
-                    Not available: {EXTERNAL_HELP.charAt(0).toLowerCase() + EXTERNAL_HELP.slice(1)}.
-                  </p>
-                </div>
-              )}
+              {mayWrite && <AddMarketplace ws={ws} list={list.data} markets={markets} onAdded={() => setMessage('Marketplace added. Its add-ons are in Browse.')} />}
             </>
           )}
         </>

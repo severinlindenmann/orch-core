@@ -90,6 +90,7 @@ MARKET_PAGE_OPS = (
     "market.unstage",
     "market.uninstall",
     "market.refresh",
+    "market.add",
 )
 #: the host ops the Publish page and box need (shares.py); all under cap `publish/1`
 PUBLISH_FEATURE_OPS = (

@@ -415,6 +415,17 @@ def _preset_row(service: WorkspaceService, entries: bool) -> dict[str, Any]:
     return row
 
 
+def _offered(service: WorkspaceService, records: dict[str, Any]) -> list[dict[str, Any]]:
+    """Marketplaces this workspace may add and has not yet (run 9, the picker): the sandbox's test marketplace of a dev
+    host. Nothing else is ever offered here: any other source is refused by the policy gate (``market.add`` decides)."""
+    from . import devmode
+
+    dev = devmode.test_market(service)
+    if dev is None or dev[0] in records:
+        return []
+    return [{"url": dev[0], "class": "dev"}]
+
+
 def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any]:
     files = _files(service)
     try:
@@ -467,4 +478,4 @@ def _list(service: WorkspaceService, entries: bool, now: float) -> dict[str, Any
         rows.append(row)
     if constants.OFFICIAL_URL not in records:
         rows.append(_preset_row(service, entries))
-    return {"markets": rows}
+    return {"markets": rows, "offered": _offered(service, records)}

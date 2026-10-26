@@ -69,6 +69,7 @@ WRITES = [
     ),
     ("delete", f"/stage/{STAGE}", None, "market.unstage", {"stage": STAGE}),
     ("post", "/uninstall", {"name": "echo"}, "market.uninstall", {"name": "echo"}),
+    ("post", "/add", {"url": "https://x.test/m"}, "market.add", {"url": "https://x.test/m"}),
     ("post", "/refresh", {}, "market.refresh", {}),
     ("post", "/refresh", {"url": "https://x.test/m"}, "market.refresh", {"url": "https://x.test/m"}),
 ]
@@ -131,8 +132,7 @@ def test_routes_need_a_session_and_same_origin_writes(client, token, stub, host)
 
 def test_the_market_feature_needs_every_page_op():
     assert set(gateway_module.MARKET_PAGE_OPS) <= set(hostlink.OPS)
-    assert "market.add" not in hostlink.OPS  # until "Add marketplace" ships
-    assert client_has_no_add_route()
+    assert "market.add" in hostlink.OPS  # the picker's Add (run 9)
 
 
 def test_the_market_feature_flag_is_on_only_when_the_host_serves_the_ops(client, token, stub, gateway):
@@ -202,9 +202,3 @@ def test_plan_is_one_intent_per_stage_and_skips_the_switch_state_check():
     other = plan(gateway, ws, parse({"action": "market_grant", "name": "echo", "staged": "st_" + "1" * 32}))
     assert (one.op, one.args) == ("addon.grant", {"name": "echo", "staged": STAGE})
     assert one.idem(ws) == again.idem(ws) != other.idem(ws)
-
-
-def client_has_no_add_route():
-    from orch_dashboard.app import create_app
-
-    return not any("market/add" in getattr(r, "path", "") for r in create_app(1).routes)

@@ -41,7 +41,7 @@ CAPS = [
     "publish/1",
 ]
 MARKET_READS = ("market.list", "market.installed")
-MARKET_WRITES = ("market.stage", "market.unstage", "market.uninstall", "market.refresh")
+MARKET_WRITES = ("market.stage", "market.unstage", "market.uninstall", "market.refresh", "market.add")
 MARKET_OPS = (*MARKET_READS, *MARKET_WRITES)
 OPS = {
     name: 1

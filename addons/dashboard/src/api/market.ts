@@ -73,7 +73,8 @@ export interface MarketStage {
 }
 export type StageInput = { id: string; url?: string; update?: boolean }
 export type StageResult = MarketStage | { up_to_date: true; name: string; version: string }
-export type MarketList = { markets: Market[] }
+/** `offered`: sources the host would let this workspace add and that are not added yet (the picker's list). */
+export type MarketList = { markets: Market[]; offered?: { url: string; class: string }[]; open_address?: boolean }
 export type MarketInstalled = { addons: InstalledAddon[] }
 export const EXTERNAL_HELP = "External marketplaces aren't available in this workspace yet"
 export function stateLabel(state?: string, pending = false): string {

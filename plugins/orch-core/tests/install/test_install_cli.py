@@ -253,7 +253,8 @@ def test_phone_prints_link_with_advertised_origin_and_the_single_admin(home):
     pc = next(c for c in calls if "pair-code" in c)
     assert pc[pc.index("--user") + 1] == "ab" * 16
     assert pc[pc.index("--api-origin") + 1] == "http://100.64.1.2:8100"
-    assert not any("orch://hub-pair" in p.read_text() for p in home.rglob("*") if p.is_file() and p.stat().st_size < 10**6)
+    files = [p for p in home.rglob("*") if p.is_file() and p.stat().st_size < 10**6]
+    assert not any("orch://hub-pair" in p.read_text(errors="replace") for p in files)
 
 
 def test_phone_without_qrencode_hints_brew(home):

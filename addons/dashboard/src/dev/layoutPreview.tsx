@@ -25,6 +25,7 @@ import { DropErrorLine, DropView, type DropPreviewStart } from '@/app/pages/drop
 import { AGENT, PHONE_SHARE, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
+import { WikiPage } from '@/app/pages/wiki'
 import { useWorkspace } from '@/app/workspace'
 import { runsApi, type Run, type RunList } from '@/api/runs'
 import { TerminalsPage } from '@/app/pages/terminals'
@@ -57,6 +58,9 @@ export const LAYOUT_SCENARIOS = [
   'quick-normal',
   'quick-many',
   'quick-add',
+  'quick-off',
+  'wiki-empty',
+  'wiki-created',
   'records-ok',
   'records-hidden-url',
   'records-first',
@@ -890,6 +894,26 @@ function install() {
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
 
+/** The Wiki page with a faked server: no wiki folder (`wiki-empty`), or the folder just created (`wiki-created`). */
+function WikiPreview({ created }: { created: boolean }) {
+  const [ready] = useState(() => {
+    setFeatures({ features: ['today', 'tickets', 'board', 'ticket', 'wiki'] })
+    const real = window.fetch.bind(window)
+    let made = created
+    window.fetch = async (input, init) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (!url.includes('/wiki')) return real(input, init)
+      if ((init?.method ?? 'GET') === 'POST') made = true
+      const body = made
+        ? { available: true, state: 'ok', message: null, total: 1, cut: false, pages: [{ slug: 'readme', title: 'Wiki', updated: null, by: null, tickets: [], links: 0, too_large: false }] }
+        : { available: true, state: 'no_folder', message: 'No wiki folder in this project yet.', total: 0, cut: false, pages: [] }
+      return new Response(JSON.stringify((init?.method ?? 'GET') === 'POST' ? { created: true, path: 'wiki/readme.md' } : body), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
+    return true
+  })
+  return ready ? <WikiPage /> : null
+}
+
 export function LayoutPreview({ name }: { name: string }) {
   const qc = useQueryClient()
   const { workspace } = useWorkspace()
@@ -915,6 +939,12 @@ export function LayoutPreview({ name }: { name: string }) {
   })
   if (!scenario) return <p role="alert">Unknown layout scenario {name}.</p>
   if (!workspace) return null
+  if (scenario === 'quick-off') {
+    // The host serves quick tasks, the add-on is off: the page says so (features `quick` without `quick_on`).
+    setFeatures({ features: ['today', 'tickets', 'board', 'ticket', 'quick'] })
+    return <QuickPage />
+  }
+  if (scenario.startsWith('wiki-')) return <WikiPreview created={scenario === 'wiki-created'} />
   if (scenario.startsWith('quick-')) return <QuickPage />
   if (scenario.startsWith('terminals-page')) return <TerminalsPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />

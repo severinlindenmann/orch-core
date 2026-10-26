@@ -5,7 +5,10 @@ arguments) raise ``NotImplementedError`` when called."""
 from __future__ import annotations
 
 import importlib
+import os
 from typing import Any
+
+WINDOWS = os.name == "nt"  # the test that simulates Windows on POSIX sets this
 
 
 class _Missing:
@@ -30,4 +33,6 @@ def posixmod(name: str) -> Any:
     try:
         return importlib.import_module(name)
     except ImportError:
+        if not WINDOWS:  # on POSIX a missing module is a real error
+            raise
         return _Missing(name)

@@ -49,7 +49,6 @@ _NO_POSIX = textwrap.dedent(
     import importlib, pkgutil, sys
     for name in ("pwd", "grp", "termios", "resource", "tty"):
         sys.modules[name] = None  # import raises ImportError, as on Windows
-    sys.modules["fcntl"] = None  # (orch.oslock picks its Windows branch by os.name, which stays "posix" here)
     import types
     sys.modules["fcntl"] = types.SimpleNamespace(LOCK_SH=1, LOCK_EX=2, LOCK_NB=4, LOCK_UN=8, flock=None)
     import os, signal, socketserver
@@ -66,7 +65,11 @@ _NO_POSIX = textwrap.dedent(
     for a in ("UnixStreamServer", "ThreadingUnixStreamServer", "UnixDatagramServer", "ForkingMixIn"):
         if hasattr(socketserver, a):
             delattr(socketserver, a)
-    import orch  # installs the missing O_* flags as 0 (orch._winflags)
+    import orch
+    from orch import _winflags
+    from orch import posixmod
+    posixmod.WINDOWS = True
+    _winflags.install(force=True)  # the simulated Windows: missing O_* flags become 0
     bad = []
     for m in pkgutil.walk_packages(orch.__path__, "orch.", onerror=lambda n: bad.append(n + ": package import failed")):
         if m.name.endswith("__main__"):

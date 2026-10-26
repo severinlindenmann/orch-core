@@ -13,7 +13,9 @@ import os
 _FLAGS = ("O_NOFOLLOW", "O_DIRECTORY", "O_NONBLOCK", "O_NOCTTY", "O_CLOEXEC", "O_SYMLINK")
 
 
-def install() -> None:
+def install(*, force: bool = False) -> None:
+    if os.name != "nt" and not force:  # POSIX: never touch the os module (hasattr checks stay true to the platform)
+        return
     for name in _FLAGS:
         if not hasattr(os, name):
             setattr(os, name, 0)

@@ -29,6 +29,7 @@ else:  # pragma: no cover - exercised by the Windows smoke job
     _LOCKFILE_EXCLUSIVE_LOCK = 0x2
     _ERROR_LOCK_VIOLATION = 33
     _ERROR_IO_PENDING = 997
+    _ERROR_NOT_LOCKED = 158
 
     class _Overlapped(ctypes.Structure):
         _fields_ = [
@@ -60,10 +61,15 @@ else:  # pragma: no cover - exercised by the Windows smoke job
 
     def flock(fd: int, op: int) -> None:
         handle = msvcrt.get_osfhandle(fd)
+        # One byte far past EOF (offset 2**63 - 2**31 region): a mandatory byte-range lock must not block reads of the
+        # file's real content (the pid in host/service.py, ownership.holders()). Lock and unlock use the same range.
         ov = _Overlapped()
+        ov.Offset, ov.OffsetHigh = 0, 0x80000000
         if op & LOCK_UN:
             if not _k32.UnlockFileEx(handle, 0, 1, 0, ctypes.byref(ov)):
-                raise ctypes.WinError(ctypes.get_last_error())
+                err = ctypes.get_last_error()
+                if err != _ERROR_NOT_LOCKED:  # POSIX LOCK_UN on an unlocked fd succeeds
+                    raise ctypes.WinError(err)
             return
         flags = _LOCKFILE_EXCLUSIVE_LOCK if op & LOCK_EX else 0
         if op & LOCK_NB:

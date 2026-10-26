@@ -45,7 +45,7 @@ jobs:
         id: tests
         continue-on-error: true
         run: |
-          uv run --with pytest-timeout pytest -q -m "not slow" -n 4 -p no:cacheprovider -rfE --timeout=60 --continue-on-collection-errors --junitxml=junit-windows.xml 2>&1 | tee pytest.log
+          uv run --with pytest-timeout --with pytest-xdist pytest -q -m "not slow" -n 4 -p no:cacheprovider -rfE --timeout=60 --continue-on-collection-errors --junitxml=junit-windows.xml 2>&1 | tee pytest.log
       - name: Summary
         if: always()
         run: |

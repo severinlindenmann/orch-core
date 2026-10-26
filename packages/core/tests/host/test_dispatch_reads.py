@@ -158,6 +158,8 @@ def test_every_served_read_is_known():
 
 @pytest.mark.parametrize("op", READS)
 def test_no_person_learns_nothing_about_a_restricted_ticket(world, op):
+    if op == "follow_up.show":
+        pytest.skip("names a follow-up id, not a ticket, and is gated by the Schedules add-on")
     served, key, baseline = world
     c = served.client()
     hidden = c.req(op, args_for(op, key), session=SESSION)

@@ -491,7 +491,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `people.changed` | P | `role`: `owner`, `assignees`, `reviewers` or `watchers`; `add`: [person id]; `remove`: [person id] | For `owner`, `add` has exactly one id and the old owner is removed. On `done`/`closed` refused for roles a gate policy names. |
 | `policy.changed` | P | `gates`: {gate: policy} | In the ticket log: an override, intersected with the workspace policy (§5.7). |
 | `claim.taken` | A | `takeover?`: {`from_session`: session id, `reason`: str} | Agents only. One claim per ticket. Refused on `done`/`closed`. |
-| `followup.set` | A | `followup`: fu_ ULID; `trigger`: time, orch, addon or webhook; `due?`: timestamp; `deadline?`: timestamp; `brief`: str, at most 4096 bytes | Agents only. Creates a follow-up and releases the claim; see orch-v2-followups FU1–FU16. |
+| `followup.set` | A | `followup`: fu_ ULID; `trigger`: time, orch, addon or webhook; `due?`: timestamp; `deadline?`: timestamp; `brief`: str, at most 4096 bytes; `label?`: line | Agents only. Creates a follow-up and releases the claim; see orch-v2-followups FU1–FU16. |
 | `followup.fired` | H | `followup`: fu_ ULID; `grant`: grant id; `trigger`: time, orch, addon, webhook or deadline; `fallback?`: no_event, no_ring or addon_silent; `secret_hash`: hash; `run`: r_ ULID | Derives a one-run grant scoped to this ticket. |
 | `followup.outcome` | H | `followup`: fu_ ULID; `outcome`: ran, failed or did_not_run; `reason?`: follow-up outcome reason; `run?`: r_ ULID | Ends the run grant. |
 | `followup.cancelled` | A | `followup`: fu_ ULID; `reason`: person, agent, run_now or dismissed | Cancels a pending or needs_person follow-up. |

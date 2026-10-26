@@ -27,6 +27,7 @@ SWITCHABLE = (
     "estimate",
     "explorer",
     "wiki",
+    "focus",
 )
 #: what the dashboard cannot turn off or on at all
 LOCKED = {

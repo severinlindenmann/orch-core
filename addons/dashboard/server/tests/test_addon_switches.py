@@ -13,6 +13,18 @@ def parse(body):
     return TypeAdapter(PrepareBody).validate_python(body)
 
 
+@pytest.mark.parametrize(
+    "name",
+    ["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki", "focus"],
+)
+def test_every_switchable_addon_has_typed_actions(name):
+    from orch_dashboard.addon_switches import SWITCHABLE
+
+    assert name in SWITCHABLE
+    assert host_call(parse({"action": "addon_grant", "name": name})) == ("addon.grant", {"name": name})
+    assert host_call(parse({"action": "addon_disable", "name": name})) == ("addon.disable", {"name": name})
+
+
 def test_turning_an_addon_on_or_off_is_a_typed_action_for_the_shipped_addons_only():
     on = parse({"action": "addon_grant", "name": "terminals"})
     off = parse({"action": "addon_disable", "name": "worktrees"})
@@ -235,3 +247,10 @@ def test_clean_version_accepts_versions_and_nothing_else():
         assert clean_version(good) == good
     for bad in ("", " 1.0", "1.0\n", "v" * 41, "1.0 <b>", None, 3, "‮1.0", "../x"):
         assert clean_version(bad) is None
+
+
+@pytest.mark.parametrize("on", [False, True])
+def test_focus_feature_follows_its_grant(gateway, stub, monkeypatch, on):
+    original = gateway.addon_on
+    monkeypatch.setattr(gateway, "addon_on", lambda link, name: on if name == "focus" else original(link, name))
+    assert ("focus" in gateway.workspaces()[0].features) is on

@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parents[4]
 def test_the_built_in_names_are_the_tech_agnostic_ones():
     assert builtin.NAMES == (
         "start-agent", "terminals", "worktrees", "dashboard", "publish", "usage", "estimate", "explorer", "wiki",
+        "focus",
     )  # fmt: skip
     for name in MOVED:
         with pytest.raises(ValueError):

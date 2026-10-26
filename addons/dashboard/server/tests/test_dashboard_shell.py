@@ -215,6 +215,8 @@ def test_shell_p1_reads(client, token, stub):
         "/w/DEMO/quick",
         "/w/DEMO/activity",
         "/w/DEMO/usage",
+        "/w/DEMO/focus",
+        "/w/DEMO/focus/DEMO-0001",
         "/w/DEMO/ticket/DEMO-0001",
         "/ticket/DEMO-0001",
     ],
@@ -358,7 +360,7 @@ def test_fastapi_telemetry_is_off_even_when_the_environment_asks_for_it(monkeypa
 ROUTER = Path(__file__).resolve().parents[2] / "src" / "app" / "router.tsx"
 TABS_TS = Path(__file__).resolve().parents[2] / "src" / "app" / "pages" / "settings" / "tabs.ts"
 NOT_SERVED = {"__layout/$name"}  # the mockup's layout preview: never on a real host
-SAMPLE = {"$key": "DEMO-0001", "$tab": "general", "$name": "guide", "$page": "main"}
+SAMPLE = {"$key": "DEMO-0001", "$ticket": "DEMO-0001", "$tab": "general", "$name": "guide", "$page": "main"}
 
 
 def _client_routes():

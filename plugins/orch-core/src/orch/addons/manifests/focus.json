@@ -1,0 +1,14 @@
+{
+  "schema": "orch.addon/2",
+  "name": "focus",
+  "version": "0.1.0",
+  "title": "Focus mode",
+  "entry": {
+    "cmd": [
+      "orch-focus",
+      "serve"
+    ]
+  },
+  "capabilities": [],
+  "agents_md": "Focus mode: the owner may work on this ticket in the focus view. Questions you ask with orch ask appear there; keep answers short and name the file you touched."
+}

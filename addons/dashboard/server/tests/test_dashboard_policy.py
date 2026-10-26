@@ -286,6 +286,9 @@ ALLOWED = [
     "/ticket/ABC-12",
     "/checklist",
     "/w/ws_1/settings/addon/wiki",
+    "/w/ws_1/settings/addon/focus",
+    "/w/ws_1/focus",
+    "/w/ws_1/focus/ABC-12",
 ]
 REFUSED = [
     "",

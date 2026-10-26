@@ -64,7 +64,7 @@ DEFAULT_ON = frozenset({"start-agent", "terminals", "worktrees"})
 DEFAULT_AGENT_HOURS = 72
 #: add-ons that are not an "Agents may" choice: the wizard and Finish setup never list or nag about them; Settings,
 #: Add-ons lists them (``catalog(optional=True)``) so a person can switch them on later
-OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "wiki"})
+OPTIONAL = frozenset({"publish", "usage", "estimate", "explorer", "wiki", "focus"})
 
 
 def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = False) -> list[AddonInfo]:
@@ -121,6 +121,12 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
             "Keep team notes as pages in your project's wiki folder. Read and search them in the dashboard.",
             False,
             False,
+        ),
+        "focus": (
+            "Focus mode",
+            "Work on one ticket in a full page: the agent, its files, its questions and decisions in one place.",
+            False,
+            True,
         ),
         "dashboard": ("Dashboard", "This workspace's dashboard (locked on).", False, False),
     }

@@ -102,6 +102,16 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
   return { lines, unknown }
 }
+const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
+/** A ticket prefix from a workspace name: first letters, capitals, letters and digits only ("Marketing Department" gives
+ * MARK, "Personal Workspace" gives PW); empty or unusable names fall back to PW. */
+export function suggestPrefix(name: string): string {
+  const words = name.toUpperCase().match(/[A-Z0-9]+/g) ?? []
+  const p = (words.length >= 2 ? words.map((w) => w[0]).join('') : (words[0] ?? '').slice(0, 4)).slice(0, 8)
+  return prefixOk(p) ? p : 'PW'
+}
+const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
+const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
 function duration(hours: number): string {
   if (hours > 8 && hours % 24 === 0) return `${hours / 24} ${hours === 24 ? 'day' : 'days'}`
   return `${hours} hours`
@@ -306,7 +316,8 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
     name: '',
-    prefix: '',
+    workspace_name: 'Personal Workspace',
+    prefix: 'PW',
     addons: [],
     method: 'terminal',
     agent_hours: 8,
@@ -315,6 +326,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     records: true,
   })
   const [step, setStep] = useState(0)
+  const [prefixEdited, setPrefixEdited] = useState(false)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
   const [words, setWords] = useState<Record<string, string>>({})
   const [review, setReview] = useState<Review>()
@@ -377,7 +389,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       } else
         setError(
           code === 'invalid.input'
-            ? 'Check your name and short name. Use 2–8 capital letters or digits for the short name, starting with a letter. Core will also check reserved names.'
+            ? 'Check your name, workspace name and ticket prefix. Use 2–8 capital letters or digits for the prefix, starting with a letter.'
             : code === 'review.changed'
               ? 'Your choices changed. Review them again before creating your workspace.'
               : 'We could not complete this step. Check your terminal, then try again.',
@@ -417,6 +429,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             setProfile((p) => ({
               ...p,
               name: c.name,
+              workspace_name: s.suggested.workspace_name,
               prefix: c.prefix,
               addons: s.addons.filter((a) => a.required || (a.kind === 'addon' && c.addons_on.includes(a.id))).map((a) => a.id),
               method: c.method,
@@ -704,15 +717,40 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <input autoComplete="name" value={profile.name} onChange={(e) => update({ name: e.target.value })} />
               </label>
               <label>
-                Workspace short name
-                <input value={profile.prefix} onChange={(e) => update({ prefix: e.target.value })} />
+                Workspace name
+                <input
+                  value={profile.workspace_name}
+                  onChange={(e) => {
+                    const workspace_name = e.target.value
+                    update(prefixEdited ? { workspace_name } : { workspace_name, prefix: suggestPrefix(workspace_name) })
+                  }}
+                />
+                <small>What people see in menus, e.g. Marketing Department.</small>
               </label>
-              <p>Used in ticket names, like {profile.prefix.trim() || 'TST'}-0001.</p>
+              <label>
+                Ticket prefix
+                <input
+                  value={profile.prefix}
+                  aria-invalid={!prefixOk(profile.prefix) || undefined}
+                  onChange={(e) => {
+                    setPrefixEdited(true)
+                    update({ prefix: e.target.value.toUpperCase() })
+                  }}
+                />
+                <small>{prefixOk(profile.prefix) ? 'Tickets are numbered with it.' : 'Use 2–8 capital letters or digits, starting with a letter.'}</small>
+              </label>
+              <div className="ticket-preview" aria-label="Ticket number preview">
+                {[1, 2, 3].map((n) => (
+                  <span className="chip" key={n}>
+                    {profile.prefix.trim() || 'PW'}-{String(n).padStart(4, '0')}
+                  </span>
+                ))}
+              </div>
               <footer>
                 <button onClick={() => setStep(0)}>Back</button>
                 <button
                   className="primary"
-                  disabled={!profile.name.trim() || !profile.prefix.trim()}
+                  disabled={!profile.name.trim() || !profile.workspace_name.trim() || !prefixOk(profile.prefix)}
                   onClick={() => setStep(2)}
                 >
                   Continue →
@@ -978,31 +1016,26 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 5 && review && (
             <>
+              <h2>Check and create</h2>
               {review.workspace && (
-                <div className="inset review-workspace">
-                  <small>New workspace</small>
-                  <p>
-                    <strong>
-                      <Inline>{review.workspace.lines[0]}</Inline>
-                    </strong>
-                  </p>
-                  <dl className="current">
-                    <dt>Short name</dt>
-                    <dd>
-                      <Raw>{review.workspace.prefix}</Raw>
-                    </dd>
-                    <dt>Person</dt>
-                    <dd>
-                      <Raw>{review.workspace.name}</Raw>
-                    </dd>
-                    <dt>Folder</dt>
-                    <dd>
-                      <Raw>{review.workspace.dir}</Raw>
-                    </dd>
-                  </dl>
-                </div>
+                <dl className="current review-facts">
+                  <dt>Workspace</dt>
+                  <dd>
+                    <Raw>{review.workspace.workspace_name ?? review.workspace.name}</Raw>{' '}
+                    <small>
+                      (tickets <Raw>{review.workspace.prefix}</Raw>-0001…)
+                    </small>
+                  </dd>
+                  <dt>Owner</dt>
+                  <dd>
+                    <Raw>{review.workspace.name}</Raw>
+                  </dd>
+                  <dt>Folder</dt>
+                  <dd>
+                    <Raw>{review.workspace.dir}</Raw>
+                  </dd>
+                </dl>
               )}
-              <h2>You are about to approve</h2>
               <ul className="review-summary">
                 {summary.lines.map((line, i) => (
                   <li key={i}>
@@ -1033,8 +1066,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </details>
                 </div>
               )}
-              <details className="review-technical" open={summary.unknown || undefined}>
-                <summary>Show technical details</summary>
+              <details className="review-technical">
+                <summary>Everything you approve ({review.items.length + (review.workspace ? 1 : 0)} items)</summary>
                 <p>Times and IDs are filled in when you sign.</p>
                 {review.workspace && (
                   <section className="review-item">
@@ -1096,7 +1129,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
               <p>
-                Clicking {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves the choices shown above
+                Clicking {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves everything listed above
                 {review.tty_confirm ? ' and starts the final check.' : ' and starts creating your workspace.'}
               </p>
               <footer>
@@ -1147,8 +1180,8 @@ export function Setup({ api }: { api: SetupAPI }) {
             {progress?.steps.map((s) => (
               <li key={s.id}>
                 <span>{s.label}</span>
-                <strong>
-                  {{ todo: 'Waiting', doing: 'Working…', done: 'Done', failed: 'Failed', skipped: 'Skipped' }[s.status]}
+                <strong className={`status ${s.status}`} aria-label={`${s.label}: ${statusWord[s.status]}`}>
+                  <span aria-hidden="true">{statusIcon[s.status]}</span> {statusWord[s.status]}
                 </strong>
               </li>
             ))}
@@ -1184,7 +1217,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             </>
           )}
           {progress?.done && !progress.error && (
-            <button className="primary" disabled={busy} onClick={() => void act(finish)}>
+            <button className="primary open-workspace" disabled={busy} onClick={() => void act(finish)}>
               Open your workspace →
             </button>
           )}

@@ -11,9 +11,10 @@ test('unfinished means the flag is on and the key is not in one-click custody', 
   expect(oneClickUnfinished(undefined)).toBe(false)
 })
 
-test('the banner says what is unfinished and Finish setup names the command', async () => {
+test('the banner says "Finish turning on" and the dialog points to the passphrase switch, not orch setup', async () => {
   render(<SetupUnfinishedLine />)
-  expect(screen.getByTestId('setup-unfinished-banner')).toHaveTextContent('Setup unfinished: one-click is not on yet')
-  await userEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
-  expect(await screen.findByText('orch setup')).toBeInTheDocument()
+  expect(screen.getByTestId('setup-unfinished-banner')).toHaveTextContent('One click needs one more step')
+  await userEvent.click(screen.getByRole('button', { name: 'Finish turning on' }))
+  expect(await screen.findByText(/type your passphrase in the dialog/)).toBeInTheDocument()
+  expect(screen.queryByText('orch setup')).toBeNull()
 })

@@ -314,12 +314,6 @@ def stage_convenience(
     refuse_full_mode(state_dir, workspace_id)  # V3 C11: not in full hub mode, before the key store is opened
     store = store if store is not None else _store(state_dir)
     sel = read_selection(state_dir, workspace_id)
-    if passphrase is not None and _dashboard_rekeyed(state_dir, workspace_id, sel):
-        # V3-D31: a factor the dashboard chose proves nothing to the dashboard. Only the terminal converts again.
-        raise TerminalNeeded(
-            "this key's passphrase was set from the dashboard, so the dashboard cannot use it as proof; switch "
-            "signing on in the terminal: orch keys custody convenience, then orch host convenience on"
-        )
     if sel is not None and sel["custody"] == "convenience" and sel["transition"] is None:
         raise KeyExists("this workspace's device key is already in convenience custody")
     if sel is not None and sel["transition"] is not None:

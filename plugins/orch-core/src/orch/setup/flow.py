@@ -727,7 +727,11 @@ def main(
 
         wsport = icli.add_workspace(ictx, flow.dir)
         if wsport is not None:
-            out.write(f"workspace dashboard port {wsport}: orch dashboard serve --port {wsport}\n")
+            dash = icli.load(ictx.layout).get("dashboard")
+            if dash:
+                out.write(f"workspace dashboard: {dash['url']}  (login link: {icli.dashboard_login_hint(dash)})\n")
+            else:
+                out.write(f"workspace dashboard port {wsport}: orch dashboard serve --port {wsport}\n")
     if ok and flow.run is not None:
         ws = flow.run.workspace or {}
         out.write(f"workspace {ws.get('prefix', '')} set up in {flow.dir}\n")

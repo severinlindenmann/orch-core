@@ -68,10 +68,12 @@ class ListenerPolicy:
     extra_headers: tuple = ()
     # Hosts that also answer on the setup page and the public assets (the first-run page may be opened by name).
     asset_hosts: tuple = ()
+    # Further Hosts that always answer (the dev network address ``serve --listen``; plain http, prototype).
+    alt_hosts: tuple = ()
 
     # -- Host and Origin --
     def hosts_for(self, setup_host: bool) -> tuple[str, ...]:
-        return (self.host, *self.asset_hosts) if setup_host else (self.host,)
+        return (self.host, *self.alt_hosts, *self.asset_hosts) if setup_host else (self.host, *self.alt_hosts)
 
     def origin_for(self, host: str) -> str:
         return f"{self.scheme}://{host}"
@@ -123,7 +125,7 @@ class ListenerPolicy:
         return self.session_kinds is None or kind in self.session_kinds
 
 
-def loopback_policy(port: int) -> ListenerPolicy:
+def loopback_policy(port: int, alt_hosts: tuple = ()) -> ListenerPolicy:
     """The 127.0.0.1 listener, exactly as it behaved before the policy object."""
     return ListenerPolicy(
         name=LOOPBACK,
@@ -138,6 +140,7 @@ def loopback_policy(port: int) -> ListenerPolicy:
         route_gate=False,
         session_kinds=None,  # any: the loopback behaviour is unchanged (click routes apply their own kind rule)
         asset_hosts=(f"localhost:{port}",),
+        alt_hosts=tuple(alt_hosts),
     )
 
 

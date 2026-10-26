@@ -156,12 +156,14 @@ def command_for(
             str(data),
             *link,
             "--web-listen",
-            f"127.0.0.1:{port}",
+            f"{bind}:{port}",
             "--publish-url",
             publish_url or f"http://127.0.0.1:{DEFAULT_PORTS['publish']}",
         ]
         if relay_url:
             cmd += ["--relay-url", relay_url]
+        if dev and not loop:  # one user on one dev machine: the hub allows its link on a network address
+            cmd += ["--dev-shared-machine"]
         return cmd
     listen = "0.0.0.0" if wildcard else bind  # noqa: S104 - the hub on this computer can only dial a loopback http URL
     if part == "relay":
@@ -177,6 +179,12 @@ def command_for(
         f"http://{bind}:{port}",
     ]
     return cmd + (["--dev-mode"] if dev else [])
+
+
+def dashboard_command(entry: list[str], *, address: str, port: int) -> list[str]:
+    """``orch-dashboard serve``: loopback on ``port``; with a network ``address`` also listening on it (same port)."""
+    cmd = [*entry, "serve", "--port", str(port)]
+    return cmd if address in (ADDRESS_LOOPBACK, "localhost") else [*cmd, "--listen", address]
 
 
 def env_for(part: str, data: Path) -> dict[str, str]:

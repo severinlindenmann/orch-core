@@ -522,3 +522,23 @@ def test_loopback_listener_refuses_the_public_name():
     client = TestClient(Security(_app, auth, LOOPBACK), base_url=ORIGIN)
     assert client.get("/", headers={"host": NAME}).status_code == 421
     assert client.get("/").status_code == 200
+
+
+def test_network_host_answers_beside_loopback():
+    from orch_dashboard.policy import loopback_policy
+
+    p = loopback_policy(8151, ("100.71.14.98:8151",))
+    assert p.hosts_for(False) == ("127.0.0.1:8151", "100.71.14.98:8151")
+    assert p.origin_for("100.71.14.98:8151") == "http://100.71.14.98:8151"
+    assert loopback_policy(8151).hosts_for(False) == ("127.0.0.1:8151",)
+
+
+def test_listen_takes_one_literal_ip_and_a_port():
+    import pytest
+
+    from orch_dashboard.__main__ import network_address
+
+    assert network_address("100.71.14.98", 8151) == "100.71.14.98"
+    for addr, port in (("0.0.0.0", 8151), ("example.org", 8151), ("100.71.14.98", 0)):
+        with pytest.raises(RuntimeError):
+            network_address(addr, port)

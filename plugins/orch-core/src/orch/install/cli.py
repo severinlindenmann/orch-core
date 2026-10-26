@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import secrets
 import shutil
 import socket
@@ -69,6 +70,7 @@ class Ctx:
     port_free: Callable[[int, str], bool] = P.port_free
     runner: Runner | None = None
     token: Callable[[], str] = lambda: secrets.token_urlsafe(18)
+    dashboard_entry: Callable[[], list[str] | None] = lambda: _dashboard_entry()
     publish_setup: Callable[[str], str | None] = lambda url: None  # configure the workspace; returns a hint on failure
     layout: Layout = field(init=False)
 
@@ -79,6 +81,12 @@ class Ctx:
 
     def say(self, line: str = "") -> None:
         self.out.write(line + "\n")
+
+
+def _dashboard_entry() -> list[str] | None:
+    from orch.cli.dashboard import find_entry_point
+
+    return find_entry_point(os.environ)
 
 
 def default_ctx(env: Mapping[str, str], out: TextIO, err: TextIO) -> Ctx:
@@ -198,7 +206,8 @@ def install_part(
                 "push stays off until the hub allows a plain-http IP origin"
             )
             relay_url = None
-        if not any(data.iterdir()):
+        fresh = not any(data.iterdir())
+        if fresh:
             cmd = [str(binary), "keys", "--state", str(data), "init"] + (
                 ["--relay-url", relay_url] if relay_url else []
             )
@@ -206,6 +215,11 @@ def install_part(
             if rc != 0:
                 shutil.rmtree(data, ignore_errors=True)  # a half-made key store would refuse the next try
                 raise InstallError(f"orch-hub keys init failed:\n{out.strip()[-600:]}")
+        token = (st["parts"].get("hub") or {}).get("setup_token") or ctx.token()
+        if fresh:  # the hub's console reads this file once: the first-admin page consumes it
+            tf = data / "setup-token"
+            tf.write_text(token + "\n")
+            tf.chmod(0o600)
     argv = P.command_for(
         part,
         binary=binary,
@@ -219,7 +233,7 @@ def install_part(
     )
     log = lay.logs / f"{part}.log"
     started = ctx.runner.start(part, argv, P.env_for(part, data), log)
-    check_host = "127.0.0.1" if part == "hub" or wildcard else bind
+    check_host = "127.0.0.1" if wildcard else bind
 
     # a computer often cannot dial its own overlay IP (NetBird): then a held port on that IP and a live process count
     def answers() -> bool:
@@ -249,7 +263,7 @@ def install_part(
     }
     if part == "hub":
         rec["link_port"] = P.HUB_LINK_PORT
-        rec["setup_token"] = (st["parts"].get("hub") or {}).get("setup_token") or ctx.token()
+        rec["setup_token"] = token
     st = load(lay)
     st["address"], st["domain"] = address, domain or st.get("domain")
     st["parts"][part] = rec
@@ -289,9 +303,6 @@ def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
     if part == "hub":
         ctx.say(f"  hub console:  {hub_console_url(rec)}")
         ctx.say(f"  first admin:  {hub_console_url(rec)}#setup={rec['setup_token']}")
-        if rec["bind"] != P.ADDRESS_LOOPBACK:
-            ctx.say(f"  the console listens on this computer only (the hub has no web bind to {rec['bind']} yet);")
-            ctx.say(f"  from another computer: ssh -L {rec['port']}:127.0.0.1:{rec['port']} <this computer>")
         ctx.say(f"  workspaces connect to the hub link at {rec['bind']}:{rec['link_port']}")
     if rec.get("domain"):
         ctx.say(
@@ -301,7 +312,7 @@ def _report(ctx: Ctx, part: str, rec: dict[str, Any]) -> None:
 
 
 def hub_console_url(rec: dict[str, Any]) -> str:
-    return f"http://127.0.0.1:{rec['port']}/"
+    return f"http://{rec['bind']}:{rec['port']}/"
 
 
 # ------------------------------------------------------------------------------------------------------------ status
@@ -326,9 +337,18 @@ def status(ctx: Ctx, as_json: bool) -> int:
                 "pid": info.get("pid"),
             }
         )
+    dash = st.get("dashboard")
     for w in st["workspaces"]:
         rows.append(
-            {"part": "workspace", "state": "registered", "url": f"http://{_ws_host(st)}:{w['port']}", "dir": w["dir"]}
+            {
+                "part": "workspace",
+                "state": ("running" if ctx.runner.info("dashboard")["running"] else "stopped")
+                if dash
+                else "registered",
+                "url": dash["url"] if dash else f"http://{_ws_host(st)}:{w['port']}/",
+                "service": dash["service"] if dash else None,
+                "dir": w["dir"],
+            }
         )
     if as_json:
         ctx.say(json.dumps({"address": st.get("address"), "parts": rows}, indent=2))
@@ -337,6 +357,8 @@ def status(ctx: Ctx, as_json: bool) -> int:
     for r in rows:
         where = r.get("service") or r.get("dir") or ""
         ctx.say(f"{r['part']:<10}{r['state']:<15}{(r.get('version') or '-'):<12}{(r.get('url') or '-'):<28}{where}")
+    if dash:
+        ctx.say(f"workspace dashboard login link (single use, 5 min):  {dashboard_login_hint(dash)}")
     return 0
 
 
@@ -346,8 +368,14 @@ def _ws_host(st: dict[str, Any]) -> str:
 
 def remove(ctx: Ctx, part: str, purge: bool) -> int:
     st = load(ctx.layout)
+    if part == "dashboard":
+        ctx.runner.stop("dashboard")
+        st.pop("dashboard", None)
+        save(ctx.layout, st)
+        ctx.say("removed the workspace dashboard service")
+        return 0
     if part not in P.PARTS:
-        raise InstallError(f"unknown part {part!r}: hub, relay or publish")
+        raise InstallError(f"unknown part {part!r}: hub, relay, publish or dashboard")
     if part not in st["parts"]:
         ctx.say(f"{part} is not installed")
         return 0
@@ -422,10 +450,49 @@ def add_workspace(ctx: Ctx, directory: str) -> int | None:
         if w["dir"] == directory:
             return w["port"]
     host = _listen_address(st.get("address") or P.ADDRESS_LOOPBACK)
-    port = P.free_port(P.WORKSPACE_FIRST_PORT, _taken(st), lambda p: ctx.port_free(p, host))
+    # one dashboard per person serves every workspace (it lists them all): the first workspace picks its port
+    dash = st.get("dashboard")
+    port = dash["port"] if dash else P.free_port(P.WORKSPACE_FIRST_PORT, _taken(st), lambda p: ctx.port_free(p, host))
     st["workspaces"].append({"dir": directory, "port": port})
     save(ctx.layout, st)
+    if not dash:
+        start_dashboard(ctx, host, port)
     return port
+
+
+def start_dashboard(ctx: Ctx, bind: str, port: int) -> dict[str, Any] | None:
+    """Run ``orch-dashboard serve`` as a user service on ``bind:port`` (a network address adds its listener to the
+    loopback one, same port). Prototype: plain http; the link to log in comes from ``orch dashboard open --network``."""
+    entry = ctx.dashboard_entry()
+    if not entry:
+        ctx.say("  the dashboard add-on is not installed: no dashboard service started (see: orch dashboard)")
+        return None
+    lay = ctx.layout
+    lay.ensure()
+    env = {"HOME": str(lay.home), "PATH": ctx.env.get("PATH", os.defpath), "ORCH_STATE_DIR": str(lay.root.parent)}
+    started = ctx.runner.start(
+        "dashboard", P.dashboard_command(entry, address=bind, port=port), env, lay.logs / "dashboard.log"
+    )
+    check = "127.0.0.1"
+    if not ctx.health(check, port) and not (ctx.runner.info("dashboard")["running"] and not ctx.port_free(port, check)):
+        ctx.say(f"  the dashboard did not answer on {bind}:{port}; log {lay.logs / 'dashboard.log'}")
+    rec = {
+        "port": port,
+        "bind": bind,
+        "url": f"http://{bind}:{port}/",
+        "service": started["service"],
+        "runner": ctx.runner.kind,
+        "pid": started.get("pid"),
+        "started": int(time.time()),
+    }
+    st = load(lay)
+    st["dashboard"] = rec
+    save(lay, st)
+    return rec
+
+
+def dashboard_login_hint(rec: dict[str, Any]) -> str:
+    return "orch dashboard open --print-url" + ("" if rec["bind"] == P.ADDRESS_LOOPBACK else " --network")
 
 
 def workspace_port_preview(ctx: Ctx) -> int:

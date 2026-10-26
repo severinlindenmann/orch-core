@@ -26,8 +26,23 @@ class FakeRegistry:
     def __init__(self) -> None:
         self.ws: dict[str, dict[str, Any]] = {}
 
-    def add(self, ws: str, mode: str, owner: str | None = None, status: str = "bound", name: str | None = None) -> None:
-        self.ws[ws] = {"mode": mode, "owner": owner, "status": status, "name": name}
+    def add(
+        self,
+        ws: str,
+        mode: str,
+        owner: str | None = None,
+        status: str = "bound",
+        name: str | None = None,
+        left_ms: int | None = None,
+    ) -> None:
+        self.ws[ws] = {"mode": mode, "owner": owner, "status": status, "name": name, "left_ms": left_ms}
+
+    def unbound_ms(self, ws):
+        r = self.ws.get(ws)
+        return r["left_ms"] if r and r["status"] == "unbound" else None
+
+    def forget(self, ws):
+        self.ws.pop(ws, None)
 
     def pins(self):
         return {w: {} for w in self.ws}

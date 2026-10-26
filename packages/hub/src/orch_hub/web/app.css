@@ -132,3 +132,5 @@ label.check input { display:inline-block; width:20px; height:20px; min-height:0;
 .mp-form { grid-template-columns:minmax(0,2fr) minmax(0,1.3fr) minmax(0,1.3fr) auto; }
 .mp-keys { grid-template-columns:minmax(0,1.5fr) minmax(0,1.5fr) auto auto; }
 @media (max-width:760px) { .mp-form, .mp-keys { grid-template-columns:1fr; } .mp-form button, .mp-keys button { width:100%; } }
+
+.card.left { opacity: .6 }

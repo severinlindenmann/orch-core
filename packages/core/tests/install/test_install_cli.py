@@ -76,7 +76,7 @@ def test_hub_install_pins_a_ref_starts_it_and_prints_console_and_setup_link(home
     assert "http://100.64.1.2:8100/#setup=TOKEN" in text and "100.64.1.2:8105" in text
     assert (ctx.layout.data("hub") / "setup-token").read_text() == "TOKEN\n"
     install = next(c for c in calls if c[:3] == ["uv", "tool", "install"])
-    assert install[-1] == "git+https://github.com/severinlindenmann/orch-hub@" + "a" * 40
+    assert install[-1] == "git+https://github.com/severinlindenmann/orch-core@" + "a" * 40 + "#subdirectory=packages/hub"
     argv, _ = ctx.runner.started["hub"]
     assert "--link-listen" in argv and "100.64.1.2:8105" in argv
     assert argv[argv.index("--web-listen") + 1] == "100.64.1.2:8100"

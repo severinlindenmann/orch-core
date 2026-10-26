@@ -51,7 +51,7 @@ def test_the_default_comes_from_the_id_with_pinned_vectors():
     )
     icon, colour = default_icon("6f1c0d2e-8b4a-4e1f-9c3d-2a7b5e9f0c11")
     assert icon in ICON_LABELS and colour in COLOUR_LABELS
-    # vectors the dashboard test repeats (addons/dashboard/src/app/workspaceIcon.test.tsx)
+    # vectors the dashboard test repeats (packages/addons/dashboard/src/app/workspaceIcon.test.tsx)
     assert default_icon("w1") == VECTORS["w1"] and default_icon("ws-demo-1") == VECTORS["ws-demo-1"]
 
 

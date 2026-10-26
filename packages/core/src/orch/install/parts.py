@@ -15,6 +15,7 @@ __all__ = [
     "ADDRESS_LOOPBACK",
     "DEFAULT_PORTS",
     "PARTS",
+    "REPO_URL",
     "Part",
     "InstallError",
     "classify",
@@ -36,29 +37,31 @@ class InstallError(Exception):
     """A refusal with a plain message (printed as ``orch install: <message>``)."""
 
 
+#: The one repository every part is installed from (pinned to a ref at install time); a part lives in
+#: ``packages/<name>`` of it.
+REPO_URL = "https://github.com/severinlindenmann/orch-core"
+
+
 @dataclass(frozen=True)
 class Part:
     name: str
-    repo: str  # https clone URL (pinned to a ref at install time)
     binary: str
     port: int
     what: str
 
+    @property
+    def subdirectory(self) -> str:
+        return f"packages/{self.name}"
+
+    def package_url(self, sha: str) -> str:
+        """The pip/uv requirement of this part at commit ``sha``."""
+        return f"git+{REPO_URL}@{sha}#subdirectory={self.subdirectory}"
+
 
 PARTS = {
-    "hub": Part(
-        "hub", "https://github.com/severinlindenmann/orch-hub", "orch-hub", 8100, "hub (console and link server)"
-    ),
-    "relay": Part(
-        "relay",
-        "https://github.com/severinlindenmann/orch-relay",
-        "orch-relay",
-        8101,
-        "relay (phone push and mailboxes)",
-    ),
-    "publish": Part(
-        "publish", "https://github.com/severinlindenmann/orch-publish", "orch-publish", 8102, "publish (shares)"
-    ),
+    "hub": Part("hub", "orch-hub", 8100, "hub (console and link server)"),
+    "relay": Part("relay", "orch-relay", 8101, "relay (phone push and mailboxes)"),
+    "publish": Part("publish", "orch-publish", 8102, "publish (shares)"),
 }
 
 

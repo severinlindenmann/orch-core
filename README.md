@@ -102,10 +102,10 @@ For bigger requests, sign a charter instead of every single gate. You set the li
 
 | Piece | What it does | Where |
 |---|---|---|
-| **`orch` CLI** | Agent-first commands with terse output: `new`, `claim`, `task`, `ask`, `artifact`, `submit`. Any agent with a shell can use it. | [`plugins/orch-core`](plugins/orch-core) |
+| **`orch` CLI** | Agent-first commands with terse output: `new`, `claim`, `task`, `ask`, `artifact`, `submit`. Any agent with a shell can use it. | [`packages/core`](packages/core) |
 | **Workspace** | Plain files: `config.json`, `keys.jsonl` and, per ticket, `ticket.json`, `body.md`, `events.jsonl` and `artifacts/`. Every change is an appended, signed event. | your repo or folder |
-| **Host** (`orch serve`, `orch host`) | The only process that loads keys (OS keychain or Secure Enclave). It enforces gates, roles and policies, and agents reach it through a narrow local socket. | [`plugins/orch-core`](plugins/orch-core) |
-| **Mission Control** | The desktop dashboard. It's an addon itself. | [`addons/dashboard`](addons/dashboard) |
+| **Host** (`orch serve`, `orch host`) | The only process that loads keys (OS keychain or Secure Enclave). It enforces gates, roles and policies, and agents reach it through a narrow local socket. | [`packages/core`](packages/core) |
+| **Mission Control** | The desktop dashboard. It's an addon itself. | [`packages/addons/dashboard`](packages/addons/dashboard) |
 | **Addons** | GitHub reviews and issues, Databricks, wiki, terminals, schedules, quick tasks, or your own. Each one runs only after you trust that exact version. | [`addons/`](addons) |
 | **orch-relay** | Directory, relay, Drop (files) and push. It stores and forwards ciphertext only, and runs as a public instance or self-hosted inside a company. | [orch-relay](https://github.com/severinlindenmann/orch-relay) |
 | **orch mobile** | iPhone app: questions, approvals and verdicts signed with Face ID, push notifications and Drop. | [orch-mobile](https://github.com/severinlindenmann/orch-mobile) |
@@ -136,7 +136,7 @@ claude plugin marketplace add severinlindenmann/orch-core
 claude plugin install orch-core@orch-core
 
 # Codex and any other agent with a shell
-uv tool install "git+https://github.com/severinlindenmann/orch-core#subdirectory=plugins/orch-core"
+uv tool install "git+https://github.com/severinlindenmann/orch-core#subdirectory=packages/core"
 
 # then, in your project
 orch setup          # starts the host that holds the keys, creates the workspace and writes AGENTS.orch.md
@@ -151,11 +151,11 @@ On a Mac and not sure where to start? Follow [Set up a personal workspace](docs/
 - [The minimal core](docs/architecture/orch-v2-core.md) and the [ticket format](docs/architecture/orch-v2-ticket-format.md)
 - [Host process](docs/architecture/orch-v2-host.md): socket API, signing, custody and worker isolation
 - [Harnesses and enforcement tiers](docs/architecture/orch-v2-harnesses.md)
-- [Dashboard addon](addons/dashboard/README.md)
+- [Dashboard addon](packages/addons/dashboard/README.md)
 
 ## Development
 
-From `plugins/orch-core`:
+From `packages/core`:
 
 ```bash
 uv sync

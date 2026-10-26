@@ -232,8 +232,8 @@ def install_part(
     if source:
         pkg, sha = str(Path(source).resolve()), "local:" + str(Path(source).resolve())
     else:
-        sha = ctx.resolve_ref(spec.repo, ref)
-        pkg = f"git+{spec.repo}@{sha}"
+        sha = ctx.resolve_ref(P.REPO_URL, ref)
+        pkg = spec.package_url(sha)
     ctx.say(f"orch install {part}: installing {spec.binary} ({sha[:12] if not source else 'local checkout'}) ...")
     rc, out = ctx.run(["uv", "tool", "install", "--force", "--python", "3.14", pkg], tool_env)
     if rc != 0:

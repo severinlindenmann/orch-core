@@ -21,7 +21,7 @@ first.
   someone grants it again**.
 - Capabilities form a closed list: `serve_http`, `spawn_agent`, `pty`, `network`, `git_push`, and since addon-api 1.1 `choose_model`, `credential` (`manifest.py`).
 - The 11 first-party add-ons are **manifest-only** (D-P2-36). Their behaviour is core code (ops) plus dashboard code:
-  the UI in `addons/dashboard/src/…` and server modules in `orch_dashboard/` (`wiki/`, `explorer/`, `terminals.py`,
+  the UI in `packages/addons/dashboard/src/…` and server modules in `orch_dashboard/` (`wiki/`, `explorer/`, `terminals.py`,
   `worktrees.py`, `usage.py`, …). D-P2-20: add-on code runs only under the worker UID, which tier A does not have.
 - One precedent for safe third-party UI: Widgets (`orch_dashboard/widget_frame.py`). Its templates are pinned by
   digest and run in an opaque-origin, network-less sandboxed iframe that gets its data through `postMessage`.
@@ -219,7 +219,7 @@ vitest for the Versions view and the copy card, a Playwright check of the add-on
 `e2e/run.sh addon-update` (a test-channel catalog: stage wiki 0.2.0 → review → sign → active on the new digest; the
 old version keeps running before the signature).
 
-## 11. Tasks (about 30 min each; T0 in `plugins/orch-core` unless noted)
+## 11. Tasks (about 30 min each; T0 in `packages/core` unless noted)
 
 | # | When | Task | T0 |
 |---|---|---|---|
@@ -230,8 +230,8 @@ old version keeps running before the signature).
 | A5 | now | Review diff (capabilities ±, changelog label) in CLI and Settings → Add-ons | `uv run pytest tests/addons/test_review_lines.py -x -q` |
 | A6 | now | `orch update addon` / `orch addon install`, core preflight | `uv run pytest tests/update/test_addon_update.py -x -q` |
 | A7 | now | Host fetch and cache on request (`versions.check`, rate-limited), `versions.get`, the signed `updates.auto_check` setting (off by default) and the 6-hour timer | `uv run pytest tests/host/test_versions_op.py -x -q` |
-| A8 | now | Dashboard Settings → Versions, "Check now", the auto-check switch (signed), copy card, update → stage → existing review | `cd addons/dashboard && npx vitest run src/app/settings/versions.test.tsx` |
-| A9 | now | Declarative UI v1 schema plus renderer; port estimate, model-routing, usage | `cd addons/dashboard && npx vitest run src/app/addons/declarative.test.tsx` |
+| A8 | now | Dashboard Settings → Versions, "Check now", the auto-check switch (signed), copy card, update → stage → existing review | `cd packages/addons/dashboard && npx vitest run src/app/settings/versions.test.tsx` |
+| A9 | now | Declarative UI v1 schema plus renderer; port estimate, model-routing, usage | `cd packages/addons/dashboard && npx vitest run src/app/addons/declarative.test.tsx` |
 | A10 | later | Add-on frames and the `postMessage` bridge (Opus design review first) | (later) |
 | A11 | later | Runner-side add-on code under tier B; waves 2 and 3 | (later) |
 

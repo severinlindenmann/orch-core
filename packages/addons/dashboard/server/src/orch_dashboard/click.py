@@ -157,7 +157,7 @@ def deposit_view_ok(view: dict, ws: str) -> bool:
 
 def key_fingerprint(key: str) -> str:
     """Core's `view.key_fingerprint`: the full SHA-256 (64 hex) of the key's base64url text (golden vectors shared
-    with core and the page: `plugins/orch-core/tests/click_reveal_fingerprint.json`)."""
+    with core and the page: `packages/core/tests/click_reveal_fingerprint.json`)."""
     return hashlib.sha256(key.encode()).hexdigest()
 
 

@@ -6,7 +6,7 @@
 iteration 3, on simulated data, then test the whole app for UX and UI quality so the owner can validate it in one
 sitting.
 
-**Architecture:** Everything stays in `addons/dashboard`. The in-process mock API (`src/mocks/`) grows a
+**Architecture:** Everything stays in `packages/addons/dashboard`. The in-process mock API (`src/mocks/`) grows a
 workspace-level event log, ticket creation, an addon-module registry with per-addon state and a small live
 simulator that plays scripted agent runs. Pages talk only to `src/api/client.ts`, so swapping in
 `createFetchTransport` later needs no component changes. Addons keep describing their UI as declarative JSON nodes
@@ -16,16 +16,16 @@ rendered by core; the node set gains a few closed types (item actions, `alert`, 
 Query, zod, cmdk, dnd-kit, recharts, shiki, rjsf, vitest + testing-library. New in this plan: `@xterm/xterm` (Task 21)
 and `axe-core` as a dev dependency (Task 31).
 
-**Spec:** `addons/dashboard/HANDOVER.md` (decisions, iteration scope) and, on `main`,
+**Spec:** `packages/addons/dashboard/HANDOVER.md` (decisions, iteration scope) and, on `main`,
 `docs/architecture/orch-v2-ticket-format.md` (§3 ticket.json, §4 body sections per type, §5 events, §8 addons,
 §9 visibility, §10 agent interface), `orch-v2.md` and `orch-v2-carryover.md`. Read a spec file with
 `git show origin/main:docs/architecture/<file>`. v1 behaviour of the iteration-3 addons is on `main` under
-`plugins/orch-core/docs/` (quick-tasks.md, schedules.md, widgets.md, factory.md) and
-`plugins/orch-core/addons/model-routing/README.md`.
+`packages/core/docs/` (quick-tasks.md, schedules.md, widgets.md, factory.md) and
+`packages/core/addons/model-routing/README.md`.
 
 ## Global Constraints
 
-- All work under `addons/dashboard/`. Commit only `addons/dashboard` paths. Never commit `.design-drafts/`.
+- All work under `packages/addons/dashboard/`. Commit only `packages/addons/dashboard` paths. Never commit `.design-drafts/`.
 - Branch `feat/dashboard-mockup`; one commit per task; push at the end of each phase (updates the draft PR).
 - Desktop only, ≥ 1024 px. No mobile layouts.
 - **Dark only.** No light theme, no theme toggle.
@@ -45,7 +45,7 @@ and `axe-core` as a dev dependency (Task 31).
   `npm run build` only at the end of a phase.
 - Working rules: Opus manager, Sonnet implementers, Opus reviewer only for tasks marked **[security review]**.
 - **Autonomous run:** the owner is away. Do not stop to ask. Make the call, and record every non-trivial product
-  decision in `addons/dashboard/DECISIONS-LOG.md` (date, decision, why, how to revert) for the owner's review.
+  decision in `packages/addons/dashboard/DECISIONS-LOG.md` (date, decision, why, how to revert) for the owner's review.
   Decisions in the HANDOVER table are not reopened.
 
 ## Review Focus
@@ -1414,7 +1414,7 @@ Both start in the catalog and carry a **"Preview"** chip next to the badge (they
 
 Use the Playwright MCP tools (`mcp__plugin_playwright_playwright__*`) against `npm run dev`. Run each scenario at
 **1024×768 (rail auto)** and **1440×900 (wide)**. Save screenshots to
-`addons/dashboard/.ux/<scenario>/<step>-<width>.png` (add `.ux/` to `.gitignore`: screenshots stay local).
+`packages/addons/dashboard/.ux/<scenario>/<step>-<width>.png` (add `.ux/` to `.gitignore`: screenshots stay local).
 
 Scenarios (each a numbered step list in `REVIEW.md`, written first, then executed):
 1. **Owner morning:** Today → answer Q2 on DEMO-0043 → approve the plan gate (sign) → decide the publish decision →
@@ -1441,7 +1441,7 @@ wording (one name per thing: "Ticket", "Grant", "Approve").
 Also run `lighthouse_audit` (chrome-devtools MCP, accessibility category) on Today, Ticket, Settings → Addons and one
 addon page. Target ≥ 95, with contrast included this time.
 
-Write every finding to `addons/dashboard/.ux/findings.md` as `[severity] scenario/step — what — expected — screenshot`.
+Write every finding to `packages/addons/dashboard/.ux/findings.md` as `[severity] scenario/step — what — expected — screenshot`.
 Severity: **blocker** (cannot finish the task), **major** (confusing or wrong), **minor** (polish).
 
 ### Task 33: Heuristic review

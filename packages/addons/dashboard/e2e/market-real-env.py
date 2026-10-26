@@ -7,7 +7,7 @@ from pathlib import Path
 CORE = Path(os.environ["ORCH_CORE_DIR"]).resolve()
 
 STATE = Path.home() / "orch-dev/state/s13"
-for p in (CORE / "addons/dashboard/server/tests", CORE / "addons/dashboard/server/src", CORE / "plugins/orch-core", CORE / "plugins/orch-core/src"):
+for p in (CORE / "packages/addons/dashboard/server/tests", CORE / "packages/addons/dashboard/server/src", CORE / "packages/core", CORE / "packages/core/src"):
     sys.path.insert(0, str(p))
 from orch import devsandbox  # noqa: E402
 from realhost_kit import ADDON, Pty, Workspace  # noqa: E402

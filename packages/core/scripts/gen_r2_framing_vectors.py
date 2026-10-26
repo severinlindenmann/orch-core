@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generate ``tests/relay/r2_vectors/r2_framing.json``: the R2 framing sheet as data, for orch-mobile (orch-f1).
+"""Generate ``contracts/core/r2_framing.json``: the R2 framing sheet as data, for orch-mobile (orch-f1).
 
-Run from ``plugins/orch-core``: ``uv run python scripts/gen_r2_framing_vectors.py``. Never edit the output by hand;
+Run from ``packages/core``: ``uv run python scripts/gen_r2_framing_vectors.py``. Never edit the output by hand;
 ``tests/relay/test_r2_vectors.py`` checks that the file is consistent with the code (the tables are equal, every
 request opens and verifies, the host answers it as recorded, every response chunk verifies and opens).
 
@@ -24,7 +24,7 @@ from tests.relay.bridgekit import T0, World, apply_setup, open_chunk, ulid  # no
 
 from orch import crypto  # noqa: E402
 
-OUT = ROOT / "tests" / "relay" / "r2_vectors" / "r2_framing.json"
+OUT = ROOT.parent.parent / "contracts" / "core" / "r2_framing.json"
 SEED = b"r2-framing-vectors-v1"
 
 

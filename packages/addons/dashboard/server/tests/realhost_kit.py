@@ -28,7 +28,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-CORE = Path(__file__).resolve().parents[4] / "plugins" / "orch-core"
+CORE = Path(__file__).resolve().parents[4] / "core"
 ADDON = Path(__file__).resolve().parents[2]
 SESSION = "s_01M4QWK11VJHV7YX18VRQSZ1CA"
 

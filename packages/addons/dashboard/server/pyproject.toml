@@ -12,7 +12,7 @@ orch-dashboard = "orch_dashboard.__main__:main"
 dev = ["pytest==9.1.1", "httpx==0.28.1", "ruff==0.11.8", "pytest-xdist>=3.6"]
 
 [tool.uv.sources]
-orch-core = { path = "../../../plugins/orch-core", editable = true }
+orch-core = { path = "../../../core", editable = true }
 
 [build-system]
 requires = ["hatchling==1.27.0"]
@@ -31,7 +31,7 @@ markers = ["realhost: runs a real orch host (core) as a subprocess; skipped when
 # `-n auto` in CI: tests marked xdist_group("wheel-build") share one worker, so two `uv build --wheel` runs never write the
 # UI assets in the source tree (src/orch_dashboard/static) at the same time.
 addopts = "--dist loadgroup"
-pythonpath = ["..", "../../../plugins/orch-core"]
+pythonpath = ["..", "../../../core"]
 
 [tool.ruff]
 line-length = 120

@@ -21,7 +21,7 @@ from tests.host.lifecycle_helpers import UID
 from tests.identity.helpers import Person
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
-VECTOR = Path(__file__).resolve().parents[1] / "vectors" / "f1" / "reader_kat_1.json"
+VECTOR = Path(__file__).resolve().parents[2] / "src" / "orch" / "identity" / "reader_kat_1.json"
 WS = "705d40abbb8c1c90354a1acaa94c935c"
 
 

@@ -11,9 +11,9 @@ from orch.hubclient import HubRefused
 from orch.hubclient import marketpolicy as MP
 from orch.market.constants import OFFICIAL_URL
 
-from .vec import VECTORS_DIR
+from .vec import CONTRACT_DIR
 
-DOC = json.loads((VECTORS_DIR / "vectors_hub_policy.json").read_text())
+DOC = json.loads((CONTRACT_DIR / "vectors_hub_policy.json").read_text())
 POLICY = [c for c in DOC["cases"] if c["check"] == "policy"]
 
 

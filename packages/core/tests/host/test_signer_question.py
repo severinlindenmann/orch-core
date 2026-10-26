@@ -11,7 +11,7 @@ import pytest
 from orch import canon
 from orch.host.signer import SignerRefused, _question
 
-F = json.loads((Path(__file__).parent.parent / "vectors" / "f1" / "hashes.json").read_text(encoding="utf-8"))
+F = json.loads((Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1" / "hashes.json").read_text(encoding="utf-8"))
 FULL = next(v for v in F["question_hash"] if v["name"] == "choice_full")
 WS = "0123456789abcdef0123456789abcdef"
 UID = FULL["ticket"]
@@ -68,7 +68,7 @@ from orch.host import signer  # noqa: E402
 from tests.host import human_helpers  # noqa: E402
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
-QS = json.loads((Path(__file__).parent.parent / "vectors" / "f1" / "questions.json").read_text(encoding="utf-8"))
+QS = json.loads((Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1" / "questions.json").read_text(encoding="utf-8"))
 SHOWN_WS = lambda w: ("Acme", "DEMO")  # noqa: E731
 
 

@@ -258,7 +258,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'N1',
         title: 'Switch Publish on',
         text: 'First install the local publish server (it is not part of the A1 install). Then open Settings, then Add-ons, and switch Publish on.',
-        commands: ['uv tool install "git+https://github.com/severinlindenmann/orch-publish@develop"', 'orch-publish --help'],
+        commands: ['uv tool install "git+https://github.com/severinlindenmann/orch-core@develop#subdirectory=packages/publish"', 'orch-publish --help'],
         see: 'The install ends with "Installed 1 executable: orch-publish" and the help lists dev and admin (if not found: uv tool update-shell, then a new Terminal). The review says Publish may send files to a server you choose. After you sign, it shows On and a Shares entry appears in the sidebar.',
       },
       {

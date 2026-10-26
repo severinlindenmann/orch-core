@@ -29,7 +29,7 @@ def test_the_built_in_names_are_the_tech_agnostic_ones():
         with pytest.raises(ValueError):
             builtin.manifest_bytes(name)
         assert not (Path(builtin.__file__).parent / "manifests" / f"{name}.json").exists()
-        assert not (REPO / "addons" / name).exists()
+        assert not (REPO / "packages" / "addons" / name).exists()
 
 
 @pytest.mark.parametrize("name", MOVED)

@@ -13,7 +13,7 @@ from orch.model import policies
 
 from . import oracle_f1_gate as og
 
-DIR = Path(__file__).parent.parent / "vectors" / "f1"
+DIR = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1"
 CASES = json.loads((DIR / "gate_hash.json").read_text(encoding="utf-8"))["gate_hash"]
 GATES = ("requirements", "plan", "verify", "code")
 ids = [c["name"] for c in CASES]

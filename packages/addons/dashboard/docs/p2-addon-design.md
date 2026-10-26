@@ -9,7 +9,7 @@ addon needs from stream A is collected in §13.
 Sources: orch-v2.md (§4, §5.5, §13, §16, §23, D33–D62), orch-v2-core.md (§1–§4, §7), orch-v2-portable-custody.md
 (D63–D66), orch-v2-ticket-format.md (§5.2–§5.9, §7, §8, §9, §10.3–§10.4, §10.8), orch-v2-carryover.md (D01–D22),
 stream A's host design v1 (contract v1 §0, D-P2-1…22, H0–H10), `HANDOVER.md` (mock backend contract),
-`plugins/orch-core/src/orch/ops` (the P1 operations).
+`packages/core/src/orch/ops` (the P1 operations).
 
 ## 1. Goal and scope
 
@@ -62,7 +62,7 @@ Trusted signers (outside the browser):  `orch sign CODE` in the person's termina
   prefix. The dashboard never proxies requests for another principal (D-P2-6).
 - **Started by `orch dashboard`** in the person's terminal (§3.1). The host does not spawn it (D-P2-7). On a VPS the
   host runs as `orch-host-<ws>`, and the dashboard is desktop only (§13 P2).
-- It is packaged as an **addon** (`addons/dashboard/orch-addon.json`, capability `serve_http`). The host cannot tell
+- It is packaged as an **addon** (`packages/addons/dashboard/orch-addon.json`, capability `serve_http`). The host cannot tell
   the dashboard from the person's CLI (both are `person` class), so `serve_http` is **not a host-enforced boundary**.
   The server itself refuses to serve a workspace where the `dashboard` addon is disabled. That is a policy switch,
   not security, and the person's signing authority does not depend on it. Format §8.1's "enforced by the P2 host"
@@ -453,7 +453,7 @@ retryable, retry_after_ms?}`. The server passes `code`, `message`, `hint`, `retr
 ## 9. Packaging, dev host and layout
 
 ```
-addons/dashboard/
+packages/addons/dashboard/
 ├── orch-addon.json          name "dashboard", entry {cmd: ["orch-dashboard", "serve"]}, capabilities ["serve_http"]
 ├── pyproject.toml, uv.lock  package "orch-dashboard": fastapi, uvicorn (exact pins); orch-core as a uv path source
 ├── server/
@@ -486,7 +486,7 @@ addons/dashboard/
   (H5a/H5b). It runs only on workspaces marked dev and only with `ORCH_DEV=1`, it is not in the wheel, and the server has
   no setting that selects it; it is reached through `ORCH_HOST_SOCKET` like any host. Stubs of reserved ops are listed
   in one file and deleted when the real host serves them. No issue is closed on stub-only tests.
-- **CI** (new `dashboard.yml` on `addons/dashboard/**`, PRs into `develop`): node job (`npm ci`, typecheck,
+- **CI** (new `dashboard.yml` on `packages/addons/dashboard/**`, PRs into `develop`): node job (`npm ci`, typecheck,
   `npx vitest run`, build) and python job (`uv sync --locked`, ruff, `pytest -q`). Real-browser e2e runs in the
   orch-dev-kit harness (T2, D32).
 

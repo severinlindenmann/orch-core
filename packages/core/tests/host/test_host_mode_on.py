@@ -36,7 +36,7 @@ from tests.host.lifecycle_helpers import UID, HostThread, remove_tree, short_dir
 from tests.instructions.conftest import FakeTerminal, Passphrases
 
 REPO = Path(__file__).resolve().parents[4]
-DASHBOARD = REPO / "addons" / "dashboard" / "server"
+DASHBOARD = REPO / "packages" / "addons" / "dashboard" / "server"
 SESSION = "s_01J9ZP0000000000000000000S"
 
 

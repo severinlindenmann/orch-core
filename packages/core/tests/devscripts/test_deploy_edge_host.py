@@ -64,7 +64,7 @@ def test_unpushed_head_is_refused(clone):
 
 
 def test_pushed_clean_head_passes_the_checks(clone):
-    # no plugins/orch-core in the fixture: the build step (after the checks) is what stops it
+    # no packages/core in the fixture: the build step (after the checks) is what stops it
     r = _run(clone)
     assert "dirty" not in r.stderr
     assert "not on any origin branch" not in r.stderr

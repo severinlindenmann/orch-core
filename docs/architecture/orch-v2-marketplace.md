@@ -12,8 +12,8 @@ here needs a hub.
   Dependencies are allowed from v1, as lockfiles with pinned hashes, inside the digest, installed at grant time. 4.
   Community marketplaces only after per-add-on OS-user isolation (#287). 5. With a hub, only hub-allowed marketplaces.
   6. Publisher signatures are optional, the key is remembered on first use.
-- **Contract files:** schema `plugins/orch-core/src/orch/addons/schemas/market.v1.json`, vectors
-  `plugins/orch-core/tests/addons/vectors_market.json`, reference checker `tests/addons/market_ref.py` (test code),
+- **Contract files:** schema `packages/core/src/orch/addons/schemas/market.v1.json`, vectors
+  `packages/core/tests/addons/vectors_market.json`, reference checker `tests/addons/market_ref.py` (test code),
   tests `tests/addons/test_market_vectors.py`. Where the checker and this document disagree, this document wins.
 - **Concept draft** (screens, not binding): [`docs/vision/marketplace/index.html`](../vision/marketplace/index.html).
 - **Not in this task:** any product code. `orch market`, `orch addon install/update` (G2, G3), lockfile install (G4),

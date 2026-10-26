@@ -353,7 +353,6 @@
   }
  },
  "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
- "hub_vectors": "hub_repo: orch-hub\nhub_commit: 5c6f551a2eb0b859372da92ecccfb1e6439d0c34\nvectors_hub_sha256: 3de1086e22c5156c2a4309e60c5e39dab095a62d0a5d617e1d725418a497f806\nvectors_hub_policy_sha256: 317a4dcb3e03eacd90d3b69c14cb529f0f4f68ab8d9311acf41c97e62de8065a",
  "lines": {
   "custodial_gate_approved": {
    "event": {

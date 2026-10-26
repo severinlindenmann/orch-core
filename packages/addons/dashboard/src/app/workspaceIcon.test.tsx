@@ -5,7 +5,7 @@ import { mockStore } from '@/api/client'
 import { COLOUR_IDS, ICON_IDS, defaultWorkspaceIcon, fnv1a, lookAlike, workspaceIconOf } from '@/api/wsIcons'
 import { renderApp } from '@/test/renderApp'
 
-const CORE = `${process.cwd()}/../../plugins/orch-core/src/orch`
+const CORE = `${process.cwd()}/../../core/src/orch`
 
 describe('workspace icon lists', () => {
   it('equal core: the schemas, the python constant and these ids', () => {

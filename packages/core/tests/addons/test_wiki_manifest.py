@@ -50,7 +50,7 @@ def test_the_link_field_is_bounded_text():
 def test_the_repo_copy_equals_the_package_copy():
     from pathlib import Path
 
-    repo = Path(__file__).resolve().parents[4] / "addons" / "wiki" / "orch-addon.json"
+    repo = Path(__file__).resolve().parents[4] / "packages" / "addons" / "wiki" / "orch-addon.json"
     assert repo.read_bytes() == builtin.manifest_bytes("wiki")
     assert json.loads(repo.read_bytes())["entry"]["cmd"] == ["orch-wiki", "serve"]
 

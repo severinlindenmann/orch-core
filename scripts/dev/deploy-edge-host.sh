@@ -37,14 +37,14 @@ if [ -z "$dirty" ]; then
     fi
 fi
 
-rm -rf plugins/orch-core/dist
-(cd plugins/orch-core && uv build --wheel)
-wheel="$(ls plugins/orch-core/dist/orch_core-*.whl)"
+rm -rf packages/core/dist
+(cd packages/core && uv build --wheel)
+wheel="$(ls packages/core/dist/orch_core-*.whl)"
 wheel_name="$(basename "$wheel")"
 version="$(printf '%s' "$wheel_name" | cut -d- -f2)"
 wheel_sha="$(shasum -a 256 "$wheel" | cut -d' ' -f1)"
-(cd plugins/orch-core && uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file dist/requirements.txt >/dev/null)
-grep -q -- '--hash=sha256:' plugins/orch-core/dist/requirements.txt || { echo "uv export produced no hashes" >&2; exit 1; }
+(cd packages/core && uv export --frozen --no-dev --no-emit-project --format requirements-txt --output-file dist/requirements.txt >/dev/null)
+grep -q -- '--hash=sha256:' packages/core/dist/requirements.txt || { echo "uv export produced no hashes" >&2; exit 1; }
 if [ -n "$dirty" ]; then
     release="core-${version}-dirty-${wheel_sha:0:8}"
 else
@@ -89,4 +89,4 @@ ls -1dt "$base"/releases/core-* | tail -n +"$((keep + 1))" | while read -r old; 
 done
 '
 args="$(printf '%q ' "$rdir" "$wheel_name" "$wheel_sha" "$BASE" "$KEEP" "$version")"
-tar -c -C plugins/orch-core/dist "$wheel_name" requirements.txt | ssh "$HOST" "bash -c $(printf '%q' "$remote") -- ${args}"
+tar -c -C packages/core/dist "$wheel_name" requirements.txt | ssh "$HOST" "bash -c $(printf '%q' "$remote") -- ${args}"

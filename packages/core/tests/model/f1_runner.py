@@ -22,7 +22,7 @@ from orch.model.codes import Code
 from orch.model.engine import CHAIN_CODES
 from orch.store import Store, StoreError
 
-DIR = Path(__file__).parent.parent / "vectors" / "f1"
+DIR = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1"
 
 # §5.5 "Reading": a line whose person ``sig`` does not verify under the certificate of ``actor.device`` breaks the chain
 # at that line (on replay it is a chain error, not an authorization failure).

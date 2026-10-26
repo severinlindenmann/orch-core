@@ -13,7 +13,7 @@ import pytest
 from orch.market import MarketError, policy
 from tests.addons import market_ref as ref
 
-VEC = json.loads((Path(__file__).parents[1] / "hub/vectors/vectors_hub_policy.json").read_text())
+VEC = json.loads((Path(__file__).resolve().parents[4] / "contracts/hub/vectors_hub_policy.json").read_text())
 CASES = [c for c in VEC["cases"] if c["check"] == "evaluate"]
 OFFICIAL = VEC["official_url"]
 

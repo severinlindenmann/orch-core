@@ -19,7 +19,7 @@ import pytest
 from orch import canon
 from orch.identity import reader
 
-KAT = json.loads((Path(__file__).parent.parent / "vectors" / "f1" / "reader_kat_1.json").read_text(encoding="utf-8"))
+KAT = json.loads((Path(__file__).resolve().parents[2] / "src" / "orch" / "identity" / "reader_kat_1.json").read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("surface", reader.SURFACES)

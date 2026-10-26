@@ -30,8 +30,8 @@ MODULE = "orch_dashboard"
 INSTALL_HINT = (
     "the dashboard addon is not installed: install it into the same uv tool environment as orch: "
     'uv tool install --force --with "orch-dashboard @ git+https://github.com/severinlindenmann/orch-core@develop'
-    '#subdirectory=addons/dashboard/server" '
-    '"git+https://github.com/severinlindenmann/orch-core@develop#subdirectory=plugins/orch-core"'
+    '#subdirectory=packages/addons/dashboard/server" '
+    '"git+https://github.com/severinlindenmann/orch-core@develop#subdirectory=packages/core"'
 )
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 REFUSAL = (

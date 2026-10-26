@@ -1,12 +1,10 @@
-"""The hub contract vectors (orch-hub ``vectors/vectors_hub.json``, vendored) against core-side checks (V3-D8).
+"""The hub contract vectors (``contracts/hub/vectors_hub.json``) against core-side checks (V3-D8).
 
 Every case of a check core or the fake hub runs must give exactly its ``expect``. Skipped on purpose (listed in
 ``vec.SKIPPED_CHECKS``): ``custodial`` (phase 4, C3) and ``publish`` (orch-publish verifies section 11.2).
 """
 
 from __future__ import annotations
-
-import hashlib
 
 import pytest
 
@@ -15,17 +13,12 @@ from orch.crypto import suite as S
 from orch.crypto.encoding import b64u, unb64u
 
 from . import contract as H
-from .vec import PENDING_VECTORS, RUN_CHECKS, SKIPPED_CHECKS, VECTORS_DIR, V, outcome, pub
+from .vec import PENDING_VECTORS, RUN_CHECKS, SKIPPED_CHECKS, V, outcome, pub
 
 CASES = [c for c in V["cases"] if c["check"] in RUN_CHECKS]
 
 
-def test_source_file_matches_the_vendored_vectors():
-    src = dict(line.split(": ", 1) for line in (VECTORS_DIR / "SOURCE").read_text().splitlines())
-    assert src["hub_repo"] == "orch-hub" and len(src["hub_commit"]) == 40
-    assert src["vectors_hub_sha256"] == hashlib.sha256((VECTORS_DIR / "vectors_hub.json").read_bytes()).hexdigest()
-    pol = hashlib.sha256((VECTORS_DIR / "vectors_hub_policy.json").read_bytes()).hexdigest()
-    assert src["vectors_hub_policy_sha256"] == pol
+def test_the_contract_header_is_the_one_core_speaks():
     assert V["contract"] == "orch.hub/0" and V["hv"] == 0 and V["suite"] == 2
 
 

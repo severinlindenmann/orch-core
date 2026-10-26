@@ -1,5 +1,5 @@
 // The widget catalog: every type core draws and every template the mock ships, each with a working example, what it
-// shows and where it is allowed. Names and shapes follow orch.widgets.v1 (plugins/orch-core/docs/widgets.md), shared
+// shows and where it is allowed. Names and shapes follow orch.widgets.v1 (packages/core/docs/widgets.md), shared
 // with the Python renderer; entries marked `proposed` are this mockup's proposals and not in v1 yet. Pure data, part of
 // the API contract: the widgets addon builds its gallery from it, demo tickets and the busy day reuse the examples,
 // and a test parses every example with the same strict parser the ticket page uses.

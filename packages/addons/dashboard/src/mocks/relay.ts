@@ -1,4 +1,4 @@
-// Relay & devices (orch v2, docs/architecture/orch-v2.md §5.4, §6, §7; plugins/orch-core/docs/remote.md), simulated.
+// Relay & devices (orch v2, docs/architecture/orch-v2.md §5.4, §6, §7; packages/core/docs/remote.md), simulated.
 // Nothing here talks to a relay. What is real in the product and what this mock does instead:
 //  - the link (off / connecting / online / reconnecting / stopped): turned on and off by the owner (workspace events
 //    relay.connected / relay.stopped); "connecting" lasts 2 s of the mock clock, a simulated drop 4 s of "reconnecting";

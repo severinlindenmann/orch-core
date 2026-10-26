@@ -10,7 +10,7 @@ import pytest
 
 from orch.host import signer
 
-SHARED = Path(__file__).resolve().parents[4] / "addons" / "dashboard" / "src" / "test" / "confirm-words.json"
+SHARED = Path(__file__).resolve().parents[4] / "packages" / "addons" / "dashboard" / "src" / "test" / "confirm-words.json"
 DATA = json.loads(SHARED.read_text())
 WS = DATA["workspace"]
 

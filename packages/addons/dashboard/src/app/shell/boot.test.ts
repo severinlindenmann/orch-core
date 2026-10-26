@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
 
-// vitest runs from the package root (addons/dashboard)
+// vitest runs from the package root (packages/addons/dashboard)
 const read = (p: string) => readFileSync(join(process.cwd(), p), 'utf8')
 
 it('index.html paints a loading shell before any script, without inline styles (the CSP blocks them)', () => {

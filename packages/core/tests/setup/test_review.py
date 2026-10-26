@@ -262,7 +262,7 @@ def test_the_builtin_dashboard_manifest_is_the_dashboards_own_file():
 
     from orch.addons import builtin
 
-    own = Path(__file__).resolve().parents[4] / "addons" / "dashboard" / "orch-addon.json"
+    own = Path(__file__).resolve().parents[4] / "packages" / "addons" / "dashboard" / "orch-addon.json"
     if not own.is_file():
         pytest.skip("not in the monorepo checkout")
     assert builtin.manifest_bytes("dashboard") == own.read_bytes()

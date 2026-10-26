@@ -424,7 +424,7 @@ the same view after a reload or pasted into a new tab. **The host serves `index.
 ## How to run, test and preview
 
 ```
-cd addons/dashboard
+cd packages/addons/dashboard
 npm install
 npm run dev                      # dev server (the session uses 5180 live and 5181 as a stable snapshot)
 npx vitest run <path>            # targeted tests after each change
@@ -447,7 +447,7 @@ Options: `--quick` (one configuration), `--docks min,max`, `--dataset busy`, `--
 `--selftest` (plants overflow and breaks steps on purpose to prove it fails). Last run: 0 failing.
 
 **Working rules** (the owner's): Opus manager, Sonnet implementers, Opus review for security-relevant work. Targeted
-tests after each small change; full suite, typecheck and build at the end of a group. Commit only `addons/dashboard`
+tests after each small change; full suite, typecheck and build at the end of a group. Commit only `packages/addons/dashboard`
 paths; never commit `.design-drafts/`. No realistic-looking secrets in seeds (GitHub push protection).
 
 **Preview for the owner.** Local: http://127.0.0.1:5180/ (live) and http://127.0.0.1:5181/ (stable snapshot). The

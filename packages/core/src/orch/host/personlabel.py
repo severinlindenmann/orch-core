@@ -1,5 +1,5 @@
 """A person id as a person reads it: the terminal side of the dashboard's ``personLabel``
-(``addons/dashboard/src/components/sign/SignContent.tsx``). The rules are the same on purpose and
+(``packages/addons/dashboard/src/components/sign/SignContent.tsx``). The rules are the same on purpose and
 ``tests/host/test_personlabel.py`` replays the dashboard's table:
 
 * the 12-hex id is the identity, a name is only a hint and is shown only when it is unambiguous;

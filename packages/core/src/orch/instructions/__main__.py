@@ -1,5 +1,5 @@
 """``python -m orch.instructions write-plugin DIR``: regenerate the plugin layout (skills, hooks) below ``DIR``; the
-repository copy under ``plugins/orch-core/`` is checked against it by a test."""
+repository copy under ``packages/core/`` is checked against it by a test."""
 
 from __future__ import annotations
 

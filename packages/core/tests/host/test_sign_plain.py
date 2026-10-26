@@ -1319,7 +1319,7 @@ def test_g2_the_size_scale_matches_the_schema_and_the_dashboard():
     schema = json.loads((Path(signcontent.__file__).parents[1] / "schema/schemas/ticket.json").read_text())
     enum = next(_find_enum(schema))["enum"]
     assert set(enum) == set(signcontent._SIZE_POINTS)
-    ts = Path(__file__).parents[4] / "addons/dashboard/src/api/estimate.ts"
+    ts = Path(__file__).parents[4] / "packages/addons/dashboard/src/api/estimate.ts"
     if ts.exists():
         pairs = re.findall(r"size: '(\w+)', points: (\d+)", ts.read_text())
         assert {k: int(v) for k, v in pairs} == signcontent._SIZE_POINTS

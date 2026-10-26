@@ -123,12 +123,12 @@ def test_a_visible_linked_diff_equals_direct_mode(world):
 
 
 def test_the_dashboard_adapter_reads_the_served_shape(world):
-    """``addons/dashboard``'s Changes tab calls ``diff {ref, context, repo?}`` and hands the result to its
+    """``packages/addons/dashboard``'s Changes tab calls ``diff {ref, context, repo?}`` and hands the result to its
     ``adapters.changes``: the real adapter, loaded from the addon's source, reads the served result."""
     import importlib.util
     from pathlib import Path
 
-    src = Path(__file__).resolve().parents[4] / "addons/dashboard/server/src/orch_dashboard/adapters/changes.py"
+    src = Path(__file__).resolve().parents[4] / "packages/addons/dashboard/server/src/orch_dashboard/adapters/changes.py"
     spec = importlib.util.spec_from_file_location("dashboard_changes", src)
     adapter = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(adapter)

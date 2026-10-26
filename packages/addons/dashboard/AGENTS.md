@@ -5,7 +5,7 @@
 Develop Mission Control, the orch v2 dashboard mockup. The owner reviews locally with
 `npm run dev`. The hosted claude.ai preview is frozen and unmaintained; do not publish to it.
 Keep the in-process mock backend: no MSW, service worker or live backend is needed.
-Paths below are relative to `addons/dashboard/` unless explicitly called repository paths.
+Paths below are relative to `packages/addons/dashboard/` unless explicitly called repository paths.
 
 ## Run & check
 
@@ -14,7 +14,7 @@ Check the active runtime in this directory; a shell may select an older Node her
 From the repository root:
 
 ```sh
-cd addons/dashboard
+cd packages/addons/dashboard
 npm ci
 npm run dev
 ```
@@ -160,7 +160,7 @@ and Review tour for repeatable manual checks. Mock time starts at `2026-10-09T11
 - Work in one git worktree per task. From the repository root, the pattern is
   `git worktree add ../orch-core-<x> -b <branch> origin/develop` (replace placeholders).
   If assigned an existing worktree/branch, stay on it. Use your own dev port.
-- Change and commit only repository paths under `addons/dashboard/**`. Never commit
+- Change and commit only repository paths under `packages/addons/dashboard/**`. Never commit
   `.superpowers/` or `.design-drafts/`. Check the diff and commit early in coherent units.
 - Give every decision a dated `DECISIONS-LOG.md` entry with **Decision / Why / Revert**.
   Respect the settled owner decisions in `HANDOVER.md`.

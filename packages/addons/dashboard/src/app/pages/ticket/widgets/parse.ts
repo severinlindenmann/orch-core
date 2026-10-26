@@ -1,4 +1,4 @@
-// Ticket widgets, format orch.widgets.v1 (plugins/orch-core/docs/widgets.md): a fenced block whose info string is exactly
+// Ticket widgets, format orch.widgets.v1 (packages/core/docs/widgets.md): a fenced block whose info string is exactly
 // `orch`, holding one strict JSON object with exactly one of `type` (core type), `widget` (template name@version) or
 // `html` (a ticket artifact plus its sha256). This file is pure: it finds the blocks, parses them strictly and applies
 // the ticket-wide rules (placement, unique ids, the 40-block cap). A block that breaks any rule keeps its raw text and

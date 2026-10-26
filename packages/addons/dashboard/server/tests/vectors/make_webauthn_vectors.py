@@ -1,6 +1,6 @@
 """Writes tests/vectors/webauthn_*.json (host spec §0.8.6 item 10.6, #1198 R1-2).
 
-Run from addons/dashboard/server: `uv run python tests/vectors/make_webauthn_vectors.py`. Independent of
+Run from packages/addons/dashboard/server: `uv run python tests/vectors/make_webauthn_vectors.py`. Independent of
 `orch.click.passkeys`: its own CBOR encoder and fixed keys, so a verifier bug does not shape the vectors. ES256
 signatures are deterministic (RFC 6979), so a rerun gives the same files. Every case names the reason the verifier must
 give (`"ok"` for a valid one).

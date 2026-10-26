@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Stamp a build: ``stamp.py VERSION CHANNEL COMMIT``.
 
-Rewrites the version in plugins/orch-core/pyproject.toml and src/orch/__init__.py, writes src/orch/_build.json, and
-sets addons/dashboard/server/pyproject.toml to the same version with the exact pin ``orch-core==VERSION``. Every
+Rewrites the version in packages/core/pyproject.toml and src/orch/__init__.py, writes src/orch/_build.json, and
+sets packages/addons/dashboard/server/pyproject.toml to the same version with the exact pin ``orch-core==VERSION``. Every
 rewrite must match exactly one line, otherwise nothing is written. Run before ``uv build``; never commit the result.
 """
 
@@ -15,8 +15,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CORE = ROOT / "plugins" / "orch-core"
-DASHBOARD = ROOT / "addons" / "dashboard" / "server"
+CORE = ROOT / "packages" / "core"
+DASHBOARD = ROOT / "packages" / "addons" / "dashboard" / "server"
 VERSION = re.compile(r"2\.\d+\.\d+(\.dev\d+)?")
 CHANNEL = re.compile(r"(main|develop|test-[a-z0-9][a-z0-9-]{0,30})")
 COMMIT = re.compile(r"[0-9a-f]{7,40}")

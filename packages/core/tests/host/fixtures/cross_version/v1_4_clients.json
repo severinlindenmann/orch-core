@@ -6,7 +6,7 @@
       "hello": {"t": "hello", "proto": [1], "client": "orch cli", "caps": []}
     },
     "dashboard-v1.4": {
-      "source": "addons/dashboard/server/src/orch_dashboard/hostlink.py at 8873a4f8 (adapters on contract v1.4)",
+      "source": "packages/addons/dashboard/server/src/orch_dashboard/hostlink.py at 8873a4f8 (adapters on contract v1.4)",
       "hello": {
         "t": "hello",
         "proto": [1],

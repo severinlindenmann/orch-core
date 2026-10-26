@@ -15,13 +15,13 @@ from orch.instructions import UnsafePath, check_targets, plugin_files, workspace
 from orch.instructions.harness import AGENTS_BLOCK, CLAUDE_IMPORT, COPY_HEADER
 from orch.instructions.skills import SKILL_NAMES
 
-PLUGIN = Path(__file__).resolve().parents[2]  # plugins/orch-core
+PLUGIN = Path(__file__).resolve().parents[2]  # packages/core
 
 
 def test_the_plugin_layout_in_the_repository_is_what_the_generator_writes():
     """``scripts/sync-plugin.sh`` regenerates ``skills/`` and ``hooks/hooks.json``; a hand edit fails."""
     for rel, text in plugin_files().items():
-        assert (PLUGIN / rel).read_text() == text, f"{rel} is stale: run plugins/orch-core/scripts/sync-plugin.sh"
+        assert (PLUGIN / rel).read_text() == text, f"{rel} is stale: run packages/core/scripts/sync-plugin.sh"
     on_disk = {p.relative_to(PLUGIN).as_posix() for p in (PLUGIN / "skills").rglob("*") if p.is_file()}
     on_disk |= {p.relative_to(PLUGIN).as_posix() for p in (PLUGIN / "hooks").rglob("*") if p.is_file()}
     assert on_disk == set(plugin_files())

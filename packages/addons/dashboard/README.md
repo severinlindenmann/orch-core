@@ -10,10 +10,10 @@ Read [AGENTS.md](AGENTS.md) before changing this app. The owner reviews locally;
 Use Node 24.15+ on the 24.x line for the locked dependencies. From the repository root:
 
 ```
-cd addons/dashboard
+cd packages/addons/dashboard
 npm ci
 npm run dev      # open the localhost address printed by Vite
-# In another terminal, in addons/dashboard:
+# In another terminal, in packages/addons/dashboard:
 npx vitest run --maxWorkers=3
 npm run typecheck
 npm run build    # dist/, base '/', assets served from /assets/

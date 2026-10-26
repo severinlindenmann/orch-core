@@ -66,7 +66,7 @@ _MEMBER_OPS = frozenset({"member.add", "member.remove", "member.role"})
 _ADDON_OPS = frozenset({"addon.grant", "addon.disable", "addon.purge"})
 #: the addon ops whose typed word is ``<name>~<WS8>``: the ONE definition, shared by the terminal (``orch sign``), the
 #: click view (:func:`orch.click.view.word` delegates here) and the dashboard's hand-off page
-#: (addons/dashboard/src/test/confirm-words.json pins all three)
+#: (packages/addons/dashboard/src/test/confirm-words.json pins all three)
 _ADDON_WS_OPS = frozenset({"addon.grant", "addon.purge"})
 
 

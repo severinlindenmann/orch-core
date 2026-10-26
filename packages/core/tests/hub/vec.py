@@ -16,8 +16,9 @@ from orch.hubclient.errors import HubRefused
 
 from . import contract as H
 
-VECTORS_DIR = Path(__file__).resolve().parent / "vectors"
-V: dict[str, Any] = json.loads((VECTORS_DIR / "vectors_hub.json").read_text())
+VECTORS_DIR = Path(__file__).resolve().parent / "vectors"  # core's own (c3b_ledger.json)
+CONTRACT_DIR = Path(__file__).resolve().parents[4] / "contracts" / "hub"  # the shared hub contract vectors
+V: dict[str, Any] = json.loads((CONTRACT_DIR / "vectors_hub.json").read_text())
 
 #: Checks core (host side) and the fake hub run. The rest is skipped on purpose.
 RUN_CHECKS = frozenset(

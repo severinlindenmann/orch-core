@@ -8,7 +8,7 @@ are in. Branch `feat/dashboard-mockup`. Everything runs on simulated data in the
 
 - Local dev server: http://127.0.0.1:5180/ (live; it may be stale for a minute while branches are merged)
 - Stable snapshot: http://127.0.0.1:5181/ (refreshed after each tested merge; use this one for a calm review)
-- On your own machine: `cd addons/dashboard && npm install && npm run dev`, then open the address it prints.
+- On your own machine: `cd packages/addons/dashboard && npm install && npm run dev`, then open the address it prints.
 - The hosted claude.ai preview (https://claude.ai/artifact/QvyFVD1JtFPyb3MegNXjgT) is frozen at commit 98151971,
   before permanent URLs; builds since then do not load there (your decision: the local setup is the target).
 
@@ -420,8 +420,8 @@ touch "$ORCH_STATE_DIR/.orch-dev" "$ORCH_WORKSPACE/.orch-dev"
 
 # From the checkout root, install/grant the dashboard package in the disposable workspace.
 mkdir -p "$ORCH_WORKSPACE/.orch/addons/dashboard"
-cp addons/dashboard/orch-addon.json "$ORCH_WORKSPACE/.orch/addons/dashboard/orch-addon.json"
-cd addons/dashboard/server
+cp packages/addons/dashboard/orch-addon.json "$ORCH_WORKSPACE/.orch/addons/dashboard/orch-addon.json"
+cd packages/addons/dashboard/server
 uv sync --locked
 uv run orch addon grant dashboard
 cd ..
@@ -430,7 +430,7 @@ npm run build
 server/.venv/bin/python -m devhost "$ORCH_WORKSPACE" --person p_YOUR_PERSON_ID
 ```
 
-In terminal 2, export the same four variables, then from `addons/dashboard/server`:
+In terminal 2, export the same four variables, then from `packages/addons/dashboard/server`:
 
 ```sh
 uv run orch-dashboard open /w/DEMO/tickets
@@ -438,7 +438,7 @@ uv run orch-dashboard open /w/DEMO/tickets
 uv run orch-dashboard open /w/DEMO/tickets --print-url
 ```
 
-In terminal 3, export the same variables, then from `addons/dashboard/server` append a real
+In terminal 3, export the same variables, then from `packages/addons/dashboard/server` append a real
 P1 unattended log note (replace `DEMO-0001` with a workspace-visible ticket's key):
 
 ```sh
@@ -497,7 +497,7 @@ browser console shows no CSP error (sonner's styles are in the built CSS).
 
 1. Prepare a disposable dev workspace whose person key is in the passphrase backend (`<state>/hosts/<ws>/person`), the dashboard addon granted, `.orch-dev` in workspace and state, and the WSK under `<state>/hosts/<ws>/keys`. Start the stub and the server as in `server/README.md` and open a ticket with a waiting gate.
 2. Press "Approve requirements": the dialog shows the command `orch sign XXXX-XXXX`, a fingerprint, an expiry countdown and a preview from the host.
-3. In a terminal with the same `ORCH_DEV=1 ORCH_STATE_DIR=...` run `python -m devhost sign XXXX-XXXX` (from `addons/dashboard`). Compare the fingerprint, type the ticket key, then the passphrase. The dialog turns to "Signed".
+3. In a terminal with the same `ORCH_DEV=1 ORCH_STATE_DIR=...` run `python -m devhost sign XXXX-XXXX` (from `packages/addons/dashboard`). Compare the fingerprint, type the ticket key, then the passphrase. The dialog turns to "Signed".
 4. Try Cancel, waiting past 10 minutes (Expired), approving twice (Already done), changing the ticket while the code is open (the warning), Comment/Add label/Close/Reopen from the command palette, and New ticket (title and type). Move, Ask and the quick ticket are absent.
 
 ## Try P2 M4 settings and the switcher (dev stub, own terminals)
@@ -516,7 +516,7 @@ browser console shows no CSP error (sonner's styles are in the built CSS).
 
 ## Try the dashboard on a REAL host (RH)
 
-1. From `addons/dashboard`: `npm run build`, then `cd server && uv sync --locked`. Make a disposable demo with the real CLI and host:
+1. From `packages/addons/dashboard`: `npm run build`, then `cd server && uv sync --locked`. Make a disposable demo with the real CLI and host:
    `.venv/bin/python tests/realhost_kit.py up ~/orch-rh-demo` (creates a workspace with `orch init` in a pty, seeds tickets in every status,
    starts `orch host run --foreground`; about 20 s; state and HOME stay under that folder, never `~/.config/orch`).
 2. `.venv/bin/python tests/realhost_kit.py open ~/orch-rh-demo` prints a single-use link (30 s): open it. Walk Today, Board, Tickets, a ticket
@@ -567,7 +567,7 @@ M6 follow-up (2026-10-14): In the disposable workspace, open Commit and push and
 ## Try terminals (M7a, real host, own terminal)
 
 The end-to-end check is in-process (a subprocess host admits only the runner unit's main PID, and `orch runner enable` installs a
-launchd/systemd unit, which must not happen on this shared laptop): `cd addons/dashboard/server && uv run pytest -m realhost
+launchd/systemd unit, which must not happen on this shared laptop): `cd packages/addons/dashboard/server && uv run pytest -m realhost
 tests/test_realhost_terminals.py` (core's host and runner in this process, a real `/bin/sh`). On a disposable real host
 (`tests/realhost_kit.py up BASE`) with the `terminals` addon granted but no runner, the dock shows (feature `terminals`) and
 **New terminal** shows the host's preview with its `blocked` reason; nothing starts. With a runner, what you should see: the preview
@@ -578,7 +578,7 @@ when cleanup was incomplete); an ended run whose output is gone says "Output no 
 
 ## Try start agent (M7b, real host, own terminal)
 
-In-process end to end (core's host, runner and click signer, a fake `codex`): `cd addons/dashboard/server && uv run pytest -m realhost
+In-process end to end (core's host, runner and click signer, a fake `codex`): `cd packages/addons/dashboard/server && uv run pytest -m realhost
 tests/test_realhost_agents.py`. On a disposable real host with `start-agent` granted, dashboard execution on and a runner: the dock's
 **New terminal → Start agent on KEY** (or the ticket's **Actions → Start agent**) opens core's dialog. What you should see: the D-P2-31
 line; the host's preview (command, "A worktree for KEY in REPO will be created at …" or "the repository's shared working copy (not a

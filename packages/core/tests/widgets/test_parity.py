@@ -8,7 +8,7 @@ import pytest
 
 from orch.widgets import clip_reason, parse_block, parse_section, resolve_ticket_widgets, segments_to_json, spec_to_json
 
-PATH = Path(__file__).resolve().parents[4] / "addons/dashboard/src/app/pages/ticket/widgets/parity-fixtures.json"
+PATH = Path(__file__).resolve().parents[4] / "packages/addons/dashboard/src/app/pages/ticket/widgets/parity-fixtures.json"
 if not PATH.exists():
     if os.environ.get("CI"):
         raise RuntimeError(f"Shared widget parity fixtures are required in CI: {PATH}")

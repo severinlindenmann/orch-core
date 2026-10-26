@@ -32,7 +32,7 @@ owner's nor the primary's. Both print JSON on stdout and never a secret (the gra
 
 The owner's side (account, primary certificate, cert-request queue) and the reference phone are the test tree's
 (``tests/relay/owner.py``, ``tests/relay/phone.py``); this script imports the owner from there, so it runs from a
-checkout (``plugins/orch-core``), never from a packaged install.
+checkout (``packages/core``), never from a packaged install.
 """
 
 from __future__ import annotations
@@ -881,7 +881,7 @@ def step_setup(ctx: Ctx, prefix: str, name: str) -> None:
     link = None
     while link is None:
         if time.monotonic() > deadline or not thread.is_alive():
-            raise Refused("orch setup printed no link (is the dashboard add-on installed? uv sync in addons/dashboard/server)")
+            raise Refused("orch setup printed no link (is the dashboard add-on installed? uv sync in packages/addons/dashboard/server)")
         link = _LINK.search(seen["text"].replace("\n", ""))
         time.sleep(0.2)
     port = int(link.group(1))
@@ -962,22 +962,10 @@ def pinned_path() -> tuple[str, str, str]:
 
 
 def relay_checkout() -> Path:
-    """The orch-relay checkout named by ``ORCH_RELAY_DIR`` (this script's own environment: the one variable it reads
-    for that), which must be at the commit pinned in ``tests/wsproto/vectors/SOURCE``."""
-    val = os.environ.get("ORCH_RELAY_DIR", "")
-    if not val:
-        raise Refused("--relay local needs ORCH_RELAY_DIR: a checkout of orch-relay at the pinned commit")
-    d = Path(val).resolve()
+    """The relay package of this repository (``packages/relay``): one repository, so it is always the same commit."""
+    d = PLUGIN.parent / "relay"
     if not (d / "src" / "orch_relay" / "cli.py").is_file():
-        raise Refused(f"ORCH_RELAY_DIR={val} is not an orch-relay checkout")
-    pin = None
-    for line in (PLUGIN / "tests" / "relay" / "vectors" / "SOURCE").read_text().splitlines():
-        if line.startswith("relay_commit:"):
-            pin = line.split(":", 1)[1].strip()
-    git = shutil.which("git")
-    head = _run([git, "-C", str(d), "rev-parse", "HEAD"], 30) if git else None
-    if not pin or head is None or head.strip() != pin:
-        raise Refused(f"ORCH_RELAY_DIR is at {(head or '?').strip()[:12]}, SOURCE pins {(pin or '?')[:12]}")
+        raise Refused(f"{d} is not the relay package")
     return d
 
 

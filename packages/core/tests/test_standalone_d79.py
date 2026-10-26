@@ -30,7 +30,7 @@ DYNAMIC_IMPORTERS = {"import_module", "__import__"}
 
 
 def python_files() -> list[Path]:
-    roots = [CORE / "src", REPO / "addons"]
+    roots = [CORE / "src", REPO / "packages" / "addons"]
     found = []
     for root in roots:
         for p in root.rglob("*.py"):

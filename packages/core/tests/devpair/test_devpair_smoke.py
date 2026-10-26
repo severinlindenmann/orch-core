@@ -50,9 +50,9 @@ def test_setup_host_and_down(dp, base, sim, capsys):
     """V3-D38: the host first (a PENDING dev host under ``--sim-convenience``), ``orch setup`` through the setup
     socket and the pseudo-terminal, then for a sandbox: stop, bind person, workspace row and marker, start the full
     dev host."""
-    dash = Path(__file__).resolve().parents[4] / "addons" / "dashboard" / "server" / ".venv" / "bin" / "orch-dashboard"
+    dash = Path(__file__).resolve().parents[4] / "packages" / "addons" / "dashboard" / "server" / ".venv" / "bin" / "orch-dashboard"
     if not dash.is_file():
-        pytest.skip("orch setup needs the dashboard add-on (uv sync --locked in addons/dashboard/server)")
+        pytest.skip("orch setup needs the dashboard add-on (uv sync --locked in packages/addons/dashboard/server)")
     ctx = make_ctx(dp, base, sim=sim)
     root = ctx.root
     try:

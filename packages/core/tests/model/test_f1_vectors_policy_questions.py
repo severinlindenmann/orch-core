@@ -10,7 +10,7 @@ from orch.model import policies
 
 from .f1_runner import load
 
-DIR = Path(__file__).parent.parent / "vectors" / "f1"
+DIR = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1"
 
 
 @pytest.mark.parametrize("c", load("effective_policy.json")["cases"], ids=lambda c: c["name"])

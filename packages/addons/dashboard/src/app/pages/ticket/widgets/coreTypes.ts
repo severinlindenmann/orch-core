@@ -1,5 +1,5 @@
 // The catalog's core types beyond the first four (bars, table, checks, kv live in parse.ts). Names and shapes follow
-// orch.widgets.v1 (plugins/orch-core/docs/widgets.md, "Core types"), which the Python renderer shares: stats, gates,
+// orch.widgets.v1 (packages/core/docs/widgets.md, "Core types"), which the Python renderer shares: stats, gates,
 // series, spark, diff, callout. Two more are proposals of this mockup and not in v1 yet: timeline and progress
 // (PROPOSED_TYPES; the gallery marks them). Each is a strict check over a block that strictJson already parsed into
 // prototype-free objects: unknown keys are refused at every level, every field is read as an own key, and a check

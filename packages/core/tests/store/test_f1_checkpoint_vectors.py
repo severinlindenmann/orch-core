@@ -14,7 +14,7 @@ from orch.store.logs import WORKSPACE, LogInfo
 from tests.model.f1_runner import run_scenario
 from tests.store.helpers import Env
 
-DIR = Path(__file__).parent.parent / "vectors" / "f1"
+DIR = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1"
 C = json.loads((DIR / "checkpoint.json").read_text(encoding="utf-8"))
 W = C["workspace_id"]
 WSK = crypto.unb64u(C["wsk_pub"], crypto.PUB_LEN)

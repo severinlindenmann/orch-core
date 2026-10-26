@@ -12,7 +12,7 @@ from orch.identity import CryptoVerifier, members
 from orch.identity.errors import Refused
 from orch.model import SigContext
 
-DIR = Path(__file__).parent.parent / "vectors" / "f1"
+DIR = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1"
 V = CryptoVerifier()
 
 

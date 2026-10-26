@@ -7,7 +7,7 @@ import { importKeyPair, revealKeyFromPair, sealWithEphemeral } from './sealed.te
 type Jwk = { x: string; y: string; d: string }
 type SealVector = { name: string; context: SealedContext; ephemeral_jwk: Jwk; recipient_jwk: Jwk; recipient_public: string; plaintext: string; envelope: { v: 1; alg: string; epk: string; ct: string } }
 type OpenVector = { bound: { workspace_id: string; request_id: string }; name: string; direction: 'in' | 'out'; context: SealedContext; envelope: unknown; expect: string; recipient_jwk: Jwk; base: string }
-const V = JSON.parse(readFileSync(resolve(process.cwd(), '../../plugins/orch-core/tests/click_sealed_vectors.json'), 'utf8')) as { seal: SealVector[]; open: OpenVector[] }
+const V = JSON.parse(readFileSync(resolve(process.cwd(), '../../core/tests/click_sealed_vectors.json'), 'utf8')) as { seal: SealVector[]; open: OpenVector[] }
 
 const reason = async (p: Promise<unknown>) => {
   try {

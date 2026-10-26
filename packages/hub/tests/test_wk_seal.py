@@ -220,13 +220,13 @@ def test_real_core_wrap_is_accepted(fhub, seals):
     root = os.environ.get("ORCH_CORE_SRC")
     if not root:
         pytest.skip("ORCH_CORE_SRC not set")
-    src = os.path.join(root, "plugins/orch-core/src")
+    src = os.path.join(root, "packages/core/src")
     code = (
         "import sys,base64;sys.path.insert(0,sys.argv[1]);from orch.identity import memberlist as M;"
         "w=M.seal_wk(bytes.fromhex(sys.argv[2]),sys.argv[3],sys.argv[4],int(sys.argv[5]),b'k'*32);"
         "print(base64.urlsafe_b64encode(w).decode().rstrip('='))"
     )
-    py = os.path.join(root, "plugins/orch-core/.venv/bin/python")
+    py = os.path.join(root, "packages/core/.venv/bin/python")
     if not os.path.exists(py):
         py = sys.executable
     out = subprocess.run(

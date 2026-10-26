@@ -12,7 +12,7 @@ from ..wsproto import corpus
 from . import oracle_f1 as oracle
 from . import oracle_f1_gate as oracle_gate
 
-DIR = Path(__file__).parent.parent / "vectors" / "f1"
+DIR = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1"
 PROTOCOL_LABELS = corpus.VECTORS["labels"]  # the one vendored copy (tests/wsproto/vectors, xz-compressed)
 
 

@@ -1,5 +1,5 @@
 {
- "_": "Computed by addons/dashboard/devhost/review.py (orch.canon.jcs.dumps), the code `orch sign` shares its maths with.",
+ "_": "Computed by packages/addons/dashboard/devhost/review.py (orch.canon.jcs.dumps), the code `orch sign` shares its maths with.",
  "material": {
   "kind": "gate",
   "gate": "plan",

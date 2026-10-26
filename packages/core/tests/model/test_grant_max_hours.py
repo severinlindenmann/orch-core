@@ -30,17 +30,17 @@ def test_the_schemas_agree():
 @pytest.mark.parametrize(
     ("rel", "pattern"),
     [
-        ("addons/dashboard/devhost/settingsops.py", r'"grant_hours": \(1, (\d+)\)'),
-        ("addons/dashboard/server/src/orch_dashboard/adapters/settings.py", r'"grant_hours": \(1, (\d+)\)'),
+        ("packages/addons/dashboard/devhost/settingsops.py", r'"grant_hours": \(1, (\d+)\)'),
+        ("packages/addons/dashboard/server/src/orch_dashboard/adapters/settings.py", r'"grant_hours": \(1, (\d+)\)'),
         (
-            "addons/dashboard/server/src/orch_dashboard/handoff.py",
+            "packages/addons/dashboard/server/src/orch_dashboard/handoff.py",
             r"grant_hours: Annotated\[int, Field\(ge=1, le=(\d+)\)",
         ),
         (
-            "addons/dashboard/server/src/orch_dashboard/handoff.py",
+            "packages/addons/dashboard/server/src/orch_dashboard/handoff.py",
             r"hours: Annotated\[int, Field\(ge=1, le=(\d+)\)\] = 8",
         ),
-        ("addons/dashboard/src/api/grants.ts", r"GRANT_MAX_HOURS = (\d+)"),
+        ("packages/addons/dashboard/src/api/grants.ts", r"GRANT_MAX_HOURS = (\d+)"),
     ],
 )
 def test_the_dashboard_copies_agree(rel, pattern):

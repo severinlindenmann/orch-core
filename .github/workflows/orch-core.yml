@@ -13,7 +13,7 @@ concurrency:  # a newer push to the same PR cancels the run still going; draft-e
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 defaults:
   run:
-    working-directory: plugins/orch-core
+    working-directory: packages/core
 jobs:
   mode:
     # Decides from the PR's LIVE draft state, not the event payload: a push and `gh pr ready` can race, and the payload
@@ -52,7 +52,7 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-          cache-dependency-glob: plugins/orch-core/uv.lock
+          cache-dependency-glob: packages/core/uv.lock
       - run: uv sync --locked
       - name: Pinned Caddy for tests/setup/test_caddy_validate.py
         # Every slice, not one: the slices hold whole modules, so the module may land in any of them, and in CI a
@@ -87,7 +87,7 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-          cache-dependency-glob: plugins/orch-core/uv.lock
+          cache-dependency-glob: packages/core/uv.lock
       - run: uv sync --locked
       - run: uv run pytest tests/test_standalone_d79.py -q -m ""
   perf-schema:
@@ -104,7 +104,7 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-          cache-dependency-glob: plugins/orch-core/uv.lock
+          cache-dependency-glob: packages/core/uv.lock
       - run: uv sync --locked
       - run: uv run pytest -q -m slow -n auto --deselect tests/ops/test_perf.py --deselect tests/store/test_perf.py --deselect tests/model/test_perf.py
         env:
@@ -122,7 +122,7 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-          cache-dependency-glob: plugins/orch-core/uv.lock
+          cache-dependency-glob: packages/core/uv.lock
       - run: uv sync --locked
       - run: uv run pytest -q -m slow -p no:xdist tests/ops/test_perf.py tests/store/test_perf.py tests/model/test_perf.py
   gate:
@@ -134,7 +134,7 @@ jobs:
     timeout-minutes: 5
     defaults:
       run:
-        working-directory: .  # the workflow default is plugins/orch-core, which this job never checks out
+        working-directory: .  # the workflow default is packages/core, which this job never checks out
     steps:
       - env:
           RESULTS: ${{ join(needs.*.result, ' ') }}

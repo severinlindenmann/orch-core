@@ -1,6 +1,6 @@
 """Independent check with orch-core's own primitives (canonical JSON, suite-2 verify, b64u, F1 signing bytes, the live
 label table). Read-only import from an orch-core checkout; skipped when none is present (GitHub CI). Path:
-$ORCH_CORE_SRC, else ~/orch-dev/orch-core/plugins/orch-core/src."""
+$ORCH_CORE_SRC, else ~/orch-dev/orch-core/packages/core/src."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-SRC = Path(os.environ.get("ORCH_CORE_SRC", Path.home() / "orch-dev/orch-core/plugins/orch-core/src"))
+SRC = Path(os.environ.get("ORCH_CORE_SRC", Path.home() / "orch-dev/orch-core/packages/core/src"))
 if not (SRC / "orch" / "crypto" / "suite.py").is_file():
     pytest.skip("orch-core source not present", allow_module_level=True)
 sys.path.insert(0, str(SRC))

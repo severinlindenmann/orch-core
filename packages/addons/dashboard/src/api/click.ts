@@ -156,7 +156,7 @@ export const depositViewOk = (view: ClickView, ws: string): boolean =>
 export const REVEAL_LINE = 'The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it'
 export const REVEAL_RISK = 'The secret will be shown once in this browser. Anyone who controls this dashboard could read it.'
 
-/** The page key as the signer's View names it: the full SHA-256 (64 hex) of its base64url text (golden vectors: plugins/orch-core/tests/click_reveal_fingerprint.json). */
+/** The page key as the signer's View names it: the full SHA-256 (64 hex) of its base64url text (golden vectors: packages/core/tests/click_reveal_fingerprint.json). */
 export async function keyFingerprint(publicKeyB64: string): Promise<string> {
   const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(publicKeyB64)))
   return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('')

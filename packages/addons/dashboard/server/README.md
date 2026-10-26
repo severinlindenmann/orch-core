@@ -20,7 +20,7 @@ The real host lists `human.*` ops without the `human/1` cap and serves no `diff`
 From the checkout (Node 24, uv, Python 3.14+):
 
 ```sh
-cd addons/dashboard
+cd packages/addons/dashboard
 npm ci
 npm run build
 cd server
@@ -51,7 +51,7 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
    In the workspace, run P1 `orch addon grant dashboard` in your terminal. It signs the real
    `serve_http` policy grant. The server refuses absent, disabled, changed or ungranted packages.
 3. Find your person id in the workspace roster (the owner id printed by init); do not use a
-   device/key filename as an identity. Start the stub, from `addons/dashboard`:
+   device/key filename as an identity. Start the stub, from `packages/addons/dashboard`:
 
    ```sh
    export ORCH_DEV=1
@@ -73,7 +73,7 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
 4. In another terminal, launch the server and browser:
 
    ```sh
-   cd addons/dashboard/server
+   cd packages/addons/dashboard/server
    uv run python -m orch_dashboard open
    # Equivalent: uv run orch-dashboard open
    # Reopen a copied link after a server restart:
@@ -89,11 +89,11 @@ workspace prepared by the dev-kit). The terminal handles its signing factors.
    Launch URLs/tokens are not printed by default. If the browser cannot open the redirect file,
    use `uv run orch-dashboard open --print-url` in an interactive terminal. The opt-in link
    is single-use and expires after 30 seconds; redirected output is refused. `orch dashboard` is the intended host CLI integration;
-   M0 deliberately adds no command to `plugins/orch-core`.
+   M0 deliberately adds no command to `packages/core`.
 5. For UI development start Vite in another terminal:
 
    ```sh
-   cd addons/dashboard
+   cd packages/addons/dashboard
    npm run dev -- --port 5204 --strictPort
    ```
 
@@ -233,12 +233,12 @@ Dev stub boundaries for stream A:
 ## Checks
 
 ```sh
-# addons/dashboard
+# packages/addons/dashboard
 npx vitest run --maxWorkers=3
 node --test scripts/layout-startup.check.mjs
 npm run typecheck
 npm run build
-# addons/dashboard/server
+# packages/addons/dashboard/server
 uv run pytest -q
 uv run ruff check .
 ```
@@ -255,7 +255,7 @@ dashboard server only prepares, reads and cancels; the person signs with the **d
 excluded from the wheel:
 
 ```sh
-cd addons/dashboard
+cd packages/addons/dashboard
 ORCH_DEV=1 ORCH_STATE_DIR=/path/to/dev-state server/.venv/bin/python -m devhost sign 7F3K-Q2MA
 ```
 
@@ -279,7 +279,7 @@ With core already installed in the same venv, install the dashboard from a revis
 this packaging fix (use `develop` after merge):
 
 ```sh
-python -m pip install "orch-dashboard @ git+https://github.com/severinlindenmann/orch-core.git@develop#subdirectory=addons/dashboard/server"
+python -m pip install "orch-dashboard @ git+https://github.com/severinlindenmann/orch-core.git@develop#subdirectory=packages/addons/dashboard/server"
 orch-dashboard addon-manifest --write /absolute/path/to/workspace
 cd /absolute/path/to/workspace
 orch addon grant dashboard
@@ -295,7 +295,7 @@ sources; build the UI before creating an sdist to carry its static output, or bu
 directly from the checkout. `ORCH_DASHBOARD_SKIP_UI=1` explicitly permits UI-less development
 builds; do not use it for deployment. The manual build instructions above remain supported.
 
-The manifest is included from the repository's single `addons/dashboard/orch-addon.json`.
+The manifest is included from the repository's single `packages/addons/dashboard/orch-addon.json`.
 `orch-dashboard addon-manifest` prints its JSON; `--write` replaces the runbook's manual copy
 into `<workspace>/addons/dashboard/orch-addon.json`. Identical files are left alone; different
 files require `--force`. Symlinks anywhere in the destination path are refused (on macOS use

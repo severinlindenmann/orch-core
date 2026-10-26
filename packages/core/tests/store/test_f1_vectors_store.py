@@ -11,7 +11,7 @@ import pytest
 from orch import canon
 from orch.store import observe, render
 
-DIR = Path(__file__).parent.parent / "vectors" / "f1"
+DIR = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1"
 
 
 def load(name):

@@ -70,7 +70,7 @@ cd ~/src/orch-core
 
 # install core first, then the dashboard (non-editable: no -e). Node 24 + npm must be on PATH: the dashboard's
 # hatch build hook (server/hatch_build.py) runs `npm ci && npm run build` and puts the UI into the wheel.
-~/orch-venv/bin/pip install ./plugins/orch-core ./addons/dashboard/server
+~/orch-venv/bin/pip install ./packages/core ./addons/dashboard/server
 ~/orch-venv/bin/pip list | grep -i orch               # orch-core 2.0.0.dev0, orch-dashboard 0.1.0
 ```
 
@@ -162,12 +162,12 @@ mode on").
 
 ```sh
 cd ~/orch/test
-orch-dashboard addon-manifest --write .       # writes addons/dashboard/orch-addon.json from the installed wheel
+orch-dashboard addon-manifest --write .       # writes packages/addons/dashboard/orch-addon.json from the installed wheel
 orch addon grant dashboard                    # review; type "dashboard" + Enter; then the passphrase
 orch addon list                               # dashboard 0.1.0 active
 ```
 
-`addon-manifest` without `--write` prints the manifest; `--write WORKSPACE` creates `addons/dashboard/` and the file (it
+`addon-manifest` without `--write` prints the manifest; `--write WORKSPACE` creates `packages/addons/dashboard/` and the file (it
 refuses to replace a different file without `--force`, and never follows symlinks). Verified: a second identical run is
 a no-op; `orch addon list` shows `not granted` before and `active` after the grant. The grant is signed with your passphrase; it records the manifest hash and the single capability `serve_http`.
 If the manifest changes (a dashboard update), grant again.
@@ -298,7 +298,7 @@ workspace itself (tickets, config) is the folder you ran `orch setup` in.
 
 Re-checked 14 Oct 2026 against `develop` 0d84f707. A throwaway venv, `HOME`, `XDG_CONFIG_HOME` and `ORCH_STATE_DIR` under one
 short disposable folder with a `.orch-dev` marker (deleted afterwards); Python 3.11 and Node 24.21 on `PATH` for the
-install; non-editable installs of `plugins/orch-core` and `addons/dashboard/server` from the same checkout (the wheel
+install; non-editable installs of `packages/core` and `packages/addons/dashboard/server` from the same checkout (the wheel
 holds `orch_dashboard/static/index.html` and `orch_dashboard/orch-addon.json`); one foreground host and one dashboard
 server on 127.0.0.1; no browser, no launchd, no keychain. Prompts were answered through a pty. `orch setup`, `orch host
 register` without `--peer` (passphrase custody, then again after `keys custody convenience` through the

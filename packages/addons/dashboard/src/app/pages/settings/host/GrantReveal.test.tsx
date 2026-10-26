@@ -15,7 +15,7 @@ import { GrantReveal } from './GrantReveal'
 
 type Jwk = { x: string; y: string; d: string }
 type V = { open: { name: string; expect: string; envelope: unknown; recipient_jwk: Jwk; bound: { workspace_id: string; request_id: string }; context: { view_digest: string } }[]; seal: { name: string; plaintext: string }[] }
-const VEC = JSON.parse(readFileSync(resolve(process.cwd(), '../../plugins/orch-core/tests/click_sealed_vectors.json'), 'utf8')) as V
+const VEC = JSON.parse(readFileSync(resolve(process.cwd(), '../../core/tests/click_sealed_vectors.json'), 'utf8')) as V
 const OK = VEC.open.find((c) => c.name === 'out_grant_secret/ok')!
 const SECRET = VEC.seal.find((c) => c.name === 'out_grant_secret')!.plaintext
 const WS = OK.bound.workspace_id

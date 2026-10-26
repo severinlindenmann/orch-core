@@ -7,7 +7,7 @@ from pathlib import Path
 
 UI_ERROR = (
     "the dashboard UI could not be built: install Node >= 24 or build the UI first with "
-    "`cd addons/dashboard && npm ci && npm run build`. "
+    "`cd packages/addons/dashboard && npm ci && npm run build`. "
     "Build a wheel from the full checkout; UI sources are not included in the server sdist. "
     "For development only, ORCH_DASHBOARD_SKIP_UI=1 permits a wheel without a UI."
 )
@@ -15,7 +15,7 @@ UI_ERROR = (
 
 PREBUILT_ERROR = (
     "ORCH_DASHBOARD_REQUIRE_PREBUILT=1 but the prebuilt dashboard UI is missing or incomplete ({why}) in {static}. "
-    "Build it first with `cd addons/dashboard && npm ci && npm run build`; this mode never runs npm or Node."
+    "Build it first with `cd packages/addons/dashboard && npm ci && npm run build`; this mode never runs npm or Node."
 )
 
 

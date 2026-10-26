@@ -13,7 +13,7 @@ from orch.canon import text
 
 from . import oracle_f1_questions as oq
 
-DIR = Path(__file__).parent.parent / "vectors" / "f1"
+DIR = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1"
 H = json.loads((DIR / "hashes.json").read_text(encoding="utf-8"))
 QS = json.loads((DIR / "questions.json").read_text(encoding="utf-8"))
 BY_NAME = {v["name"]: v for v in H["question_hash"]}

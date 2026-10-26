@@ -2558,7 +2558,7 @@ def test_the_page_key_fingerprint_matches_the_golden_vectors_shared_with_core_an
 
     from orch_dashboard.click import key_fingerprint
 
-    path = Path(__file__).resolve().parents[4] / "plugins/orch-core/tests/click_reveal_fingerprint.json"
+    path = Path(__file__).resolve().parents[4] / "core/tests/click_reveal_fingerprint.json"
     cases = json.loads(path.read_text())["cases"]
     assert cases
     for case in cases:

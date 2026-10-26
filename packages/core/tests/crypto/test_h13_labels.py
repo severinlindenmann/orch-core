@@ -18,7 +18,7 @@ from pathlib import Path
 from orch import canon
 from orch.crypto import labels
 
-F1 = Path(__file__).parent.parent / "vectors" / "f1" / "labels.json"
+F1 = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1" / "labels.json"
 PLANNED = {
     "kdf_host_drop_recovery": "orch/v2/host-drop-recovery|",
     "sig_drop_handoff": "orch/v2/sig/drop-handoff|",

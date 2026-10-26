@@ -1,8 +1,6 @@
 """P4: ``PublishSigner`` and ``PublishClient`` (design-publish-addon §2.4, protocol-v2 §12.1).
 
-Vectors: ``tests/publish/vectors/publish_v2.json``, byte for byte orch-publish's ``tests/vectors/publish_v2.json`` (P1),
-which is the suite-2 subset of orch-relay ``tests/vectors_v2.json``. Pinned by sha256 in ``vectors/SOURCE`` and checked
-against the relay corpus vendored in ``tests/wsproto/vectors``, so a drift in either repo fails here."""
+Vectors: ``contracts/publish/publish_v2.json`` (P1), the suite-2 subset of ``contracts/relay/vectors_v2.json``."""
 
 from __future__ import annotations
 
@@ -23,7 +21,7 @@ from orch.wsproto.sign import SignerRefused
 from tests.wsproto import corpus
 from tests.wsproto.helpers import Key, MemLedger
 
-VEC_DIR = Path(__file__).resolve().parent / "vectors"
+VEC_DIR = Path(__file__).resolve().parents[4] / "contracts" / "publish"
 VEC_BYTES = (VEC_DIR / "publish_v2.json").read_bytes()
 VEC = json.loads(VEC_BYTES)
 V = VEC["publish"]
@@ -58,9 +56,7 @@ def unb64u(s):
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-def test_vector_file_is_the_pinned_copy_of_the_relay_vectors():
-    pin = dict(line.split(": ", 1) for line in (VEC_DIR / "SOURCE").read_text().splitlines())
-    assert hashlib.sha256(VEC_BYTES).hexdigest() == pin["sha256"]
+def test_vector_file_is_the_publish_subset_of_the_relay_vectors():
     assert V == corpus.S2["publish"]  # the same publish block as the vendored relay corpus
     assert VEC["ids"] == corpus.S2["ids"]
     assert VEC["keys"]["wsk_a.sig"]["pub"] == corpus.KEYS["wsk_a.sig"]["pub"]

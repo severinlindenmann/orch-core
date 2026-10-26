@@ -1,5 +1,5 @@
 // The sealed field, browser side (#1198 C6). Contract: docs/architecture/orch-v2-sealed-field.md (read it before changing
-// anything here); vectors: plugins/orch-core/tests/click_sealed_vectors.json. WebCrypto only, no dependencies.
+// anything here); vectors: packages/core/tests/click_sealed_vectors.json. WebCrypto only, no dependencies.
 //
 // seal(): the four typed-secret purposes (direction "in"), browser -> click signer.
 // open(): grant.secret only (direction "out"), click signer -> browser.

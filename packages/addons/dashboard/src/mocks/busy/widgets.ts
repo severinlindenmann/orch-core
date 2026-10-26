@@ -1,4 +1,4 @@
-// Widgets for the busy day (format orch.widgets.v1, plugins/orch-core/docs/widgets.md): twenty DEMO tickets carry widgets.
+// Widgets for the busy day (format orch.widgets.v1, packages/core/docs/widgets.md): twenty DEMO tickets carry widgets.
 // Twelve light ones carry two or three blocks from the whole mix (every core type and two templates); eight carry 4 to 10
 // blocks each: bars with many bars, long tables, checks with 30 rows, kv, the catalog's newer types (series, stats,
 // gates, spark, diff, callout and the proposed timeline and progress), every template, one-off html pages and a few blocks the page

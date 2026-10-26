@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { keyFingerprint } from './click'
 
 // The same golden vectors core and the dashboard server test: the page, the signer and the server name a key alike.
-const V = JSON.parse(readFileSync(resolve(process.cwd(), '../../plugins/orch-core/tests/click_reveal_fingerprint.json'), 'utf8')) as { cases: { key: string; fingerprint: string }[] }
+const V = JSON.parse(readFileSync(resolve(process.cwd(), '../../core/tests/click_reveal_fingerprint.json'), 'utf8')) as { cases: { key: string; fingerprint: string }[] }
 
 describe('the page key fingerprint', () => {
   it('is the full SHA-256 and matches the shared golden vectors', async () => {

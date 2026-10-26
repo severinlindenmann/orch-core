@@ -13,7 +13,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-OUT = Path(__file__).resolve().parent.parent / "vectors" / "f1"
+OUT = Path(__file__).resolve().parents[4] / "contracts" / "core" / "f1"
+READER_KAT = Path(__file__).resolve().parents[2] / "src" / "orch" / "identity" / "reader_kat_1.json"
 
 W = "0123456789abcdef0123456789abcdef"
 UID = "01J9ZK4Q7M3R8T2V6X0B5N1C9D"
@@ -725,7 +726,8 @@ def render(v: dict[str, Any]) -> str:
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     for name, v in all_vectors().items():
-        (OUT / name).write_text(render(v))
+        # reader_kat_1.json ships inside the package (orch.identity reads it at run time): that is its one copy
+        (READER_KAT if name == "reader_kat_1.json" else OUT / name).write_text(render(v))
 
 
 if __name__ == "__main__":

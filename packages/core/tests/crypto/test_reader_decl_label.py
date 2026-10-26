@@ -10,12 +10,12 @@ from pathlib import Path
 from orch import canon
 from orch.crypto import labels
 
-VECTORS = Path(__file__).parent.parent / "vectors"
+VECTORS = Path(__file__).resolve().parents[4] / "contracts" / "core"
 LABEL = "orch/v2/sig/reader-decl|"
 
 
 def _corpus_labels() -> dict[str, str]:
-    """The vendored relay corpus (``tests/wsproto/vectors/vectors_v2.json.xz``, checked against SOURCE)."""
+    """The relay corpus (``contracts/relay/vectors_v2.json``)."""
     from tests.wsproto.corpus import VECTORS as RELAY_VECTORS
 
     return RELAY_VECTORS["labels"]

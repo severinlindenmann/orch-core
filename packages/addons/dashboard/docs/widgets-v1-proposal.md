@@ -1,7 +1,7 @@
 # Proposal: three additions to orch.widgets.v1
 
 Status: proposal from the Mission Control mockup (owner decision 2026-10-10, item 2). Nothing here changes
-`plugins/orch-core/docs/widgets.md` yet; this file is the text to take there when the owner accepts it.
+`packages/core/docs/widgets.md` yet; this file is the text to take there when the owner accepts it.
 
 The mockup draws two core types that v1 does not define (`timeline`, `progress`) and a second form of `series`. The
 gallery (Widgets addon) marks all three "Proposed — not in orch.widgets.v1 yet". Everything else the mockup draws is

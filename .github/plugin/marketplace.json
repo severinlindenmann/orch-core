@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "orch-core",
-      "source": "./plugins/orch-core",
+      "source": "./packages/core",
       "description": "Let coding agents do the work through local Markdown tickets, with a human gate at every step.",
       "version": "2.0.0.dev0"
     }

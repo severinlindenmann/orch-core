@@ -10,7 +10,7 @@ from orch.addons import builtin
 from orch.addons.manifest import load_manifest
 from orch.cli.main import main
 
-REPO_ADDONS = Path(__file__).resolve().parents[4] / "addons"
+REPO_ADDONS = Path(__file__).resolve().parents[4] / "packages" / "addons"
 
 
 @pytest.mark.parametrize("name", builtin.NAMES)

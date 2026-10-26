@@ -155,11 +155,9 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
 
 
 def suggest(env: dict[str, str], directory: Path) -> dict[str, str]:
-    """A prefix to start from (the user changes it): the directory name upper-cased. The name is left empty: a login
-    name is rarely how a person wants to be called (B11 finding 19)."""
-    stem = re.sub(r"[^A-Za-z0-9]", "", directory.name).upper()
-    prefix = stem[:6] if re.fullmatch(r"[A-Z][A-Z0-9]{1,7}", stem[:6]) else "WORK"
-    return {"name": "", "prefix": prefix}
+    """Defaults to start from (the user changes them): a workspace named "Personal Workspace", prefix PW. The person's
+    name is left empty: a login name is rarely how a person wants to be called (B11 finding 19)."""
+    return {"name": "", "workspace_name": "Personal Workspace", "prefix": "PW"}
 
 
 def _inside(child: Path, parent: Path) -> bool:

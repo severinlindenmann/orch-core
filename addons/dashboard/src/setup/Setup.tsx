@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   SetupAPI,
@@ -66,13 +66,15 @@ const rowLines = (lines: string[], hidden: number[] | undefined) =>
 /** The plain summary of what a review signs, from the review core returned and nothing else: the events' own fields,
  * the runner grant, and core's flags. A kind this page does not know is shown by its title (and opens the technical
  * details), never left out. */
-export function summarize(review: Review): { lines: string[]; unknown: boolean } {
+export function summarize(review: Review): { lines: string[]; unknown: boolean; odd: string[] } {
   const lines: string[] = []
+  const oddLines: string[] = []
   let unknown = false
   const addons: string[] = []
   const odd = (title: string) => {
     unknown = true
     lines.push(title)
+    oddLines.push(title)
   }
   for (const item of review.items) {
     const f = item.fields
@@ -100,8 +102,54 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean }
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
-  return { lines, unknown }
+  return { lines, unknown, odd: oddLines }
 }
+type Fact = { icon: string; label: string; value: string | string[] }
+/** The short card of a review (plain words only): from the review's own items and flags, nothing else. What this
+ * mapping cannot describe is added as extra lines by the caller (`summarize().odd`); everything stays in the fold. */
+export function reviewFacts(review: Review): Fact[] {
+  const facts: Fact[] = []
+  const ws = review.workspace
+  if (ws) {
+    facts.push({ icon: '▦', label: 'Workspace', value: `${ws.workspace_name ?? ws.name} (tickets ${ws.prefix}-0001…)` })
+    facts.push({ icon: '☺', label: 'Owner', value: ws.name })
+    facts.push({ icon: '▤', label: 'Folder', value: ws.dir })
+  }
+  const has = (id: string) => review.flags.some((f) => f.id === id)
+  if (has('custody')) facts.push({ icon: '◈', label: 'How you approve', value: 'One click on this computer' })
+  else if (has('terminal') || review.tty_confirm) facts.push({ icon: '◈', label: 'How you approve', value: 'In a terminal, with your passphrase' })
+  let agents: string | undefined
+  let methods: string | undefined
+  for (const item of review.items) {
+    const f = item.fields
+    if (item.id === 'runner_grant' && f && typeof f.hours === 'number')
+      // the short words only for the ordinary grant; any other scope or verbs keeps the raw values on the card
+      agents = f.scope === 'workable' && f.verbs === 'agent'
+        ? `may work for ${duration(f.hours)}`
+        : `agent access for ${duration(f.hours)} (scope ${String(f.scope)}, verbs ${String(f.verbs)})`
+    else if (item.type === 'settings.changed' && f?.set && typeof f.set === 'object') {
+      const set = f.set as Record<string, unknown>
+      if (agents === undefined && typeof set.grant_hours === 'number') agents = `may work for ${duration(set.grant_hours)}`
+      if (Array.isArray(set.sign_methods)) methods = set.sign_methods.map((m) => (m === 'click' ? 'one click' : String(m))).join(', ')
+    }
+  }
+  if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
+  if (methods !== undefined) facts.push({ icon: '◈', label: 'Ways to approve', value: methods })
+  const addons = review.items.filter((i) => i.type === 'addon.granted').map((i) => i.title)
+  if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
+  if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
+  return facts
+}
+const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
+/** A ticket prefix from a workspace name: first letters, capitals, letters and digits only ("Marketing Department" gives
+ * MARK, "Personal Workspace" gives PW); empty or unusable names fall back to PW. */
+export function suggestPrefix(name: string): string {
+  const words = name.toUpperCase().match(/[A-Z0-9]+/g) ?? []
+  const p = (words.length >= 2 ? words.map((w) => w[0]).join('') : (words[0] ?? '').slice(0, 4)).slice(0, 8)
+  return prefixOk(p) ? p : 'PW'
+}
+const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
+const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
 function duration(hours: number): string {
   if (hours > 8 && hours % 24 === 0) return `${hours / 24} ${hours === 24 ? 'day' : 'days'}`
   return `${hours} hours`
@@ -306,7 +354,8 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
     name: '',
-    prefix: '',
+    workspace_name: 'Personal Workspace',
+    prefix: 'PW',
     addons: [],
     method: 'terminal',
     agent_hours: 8,
@@ -315,6 +364,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     records: true,
   })
   const [step, setStep] = useState(0)
+  const [prefixEdited, setPrefixEdited] = useState(false)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
   const [words, setWords] = useState<Record<string, string>>({})
   const [review, setReview] = useState<Review>()
@@ -377,7 +427,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       } else
         setError(
           code === 'invalid.input'
-            ? 'Check your name and short name. Use 2–8 capital letters or digits for the short name, starting with a letter. Core will also check reserved names.'
+            ? 'Check your name, workspace name and ticket prefix. Use 2–8 capital letters or digits for the prefix, starting with a letter.'
             : code === 'review.changed'
               ? 'Your choices changed. Review them again before creating your workspace.'
               : 'We could not complete this step. Check your terminal, then try again.',
@@ -417,6 +467,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             setProfile((p) => ({
               ...p,
               name: c.name,
+              workspace_name: s.suggested.workspace_name,
               prefix: c.prefix,
               addons: s.addons.filter((a) => a.required || (a.kind === 'addon' && c.addons_on.includes(a.id))).map((a) => a.id),
               method: c.method,
@@ -603,7 +654,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     !!review &&
     (((state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
-  const summary = review ? summarize(review) : { lines: [], unknown: false }
+  const summary = review ? summarize(review) : { lines: [], unknown: false, odd: [] as string[] }
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
       Continue →
@@ -704,15 +755,40 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <input autoComplete="name" value={profile.name} onChange={(e) => update({ name: e.target.value })} />
               </label>
               <label>
-                Workspace short name
-                <input value={profile.prefix} onChange={(e) => update({ prefix: e.target.value })} />
+                Workspace name
+                <input
+                  value={profile.workspace_name}
+                  onChange={(e) => {
+                    const workspace_name = e.target.value
+                    update(prefixEdited ? { workspace_name } : { workspace_name, prefix: suggestPrefix(workspace_name) })
+                  }}
+                />
+                <small>What people see in menus, e.g. Marketing Department.</small>
               </label>
-              <p>Used in ticket names, like {profile.prefix.trim() || 'TST'}-0001.</p>
+              <label>
+                Ticket prefix
+                <input
+                  value={profile.prefix}
+                  aria-invalid={!prefixOk(profile.prefix) || undefined}
+                  onChange={(e) => {
+                    setPrefixEdited(true)
+                    update({ prefix: e.target.value.toUpperCase() })
+                  }}
+                />
+                <small>{prefixOk(profile.prefix) ? 'Tickets are numbered with it.' : 'Use 2–8 capital letters or digits, starting with a letter.'}</small>
+              </label>
+              <div className="ticket-preview" aria-label="Ticket number preview">
+                {[1, 2, 3].map((n) => (
+                  <span className="chip" key={n}>
+                    {profile.prefix.trim() || 'PW'}-{String(n).padStart(4, '0')}
+                  </span>
+                ))}
+              </div>
               <footer>
                 <button onClick={() => setStep(0)}>Back</button>
                 <button
                   className="primary"
-                  disabled={!profile.name.trim() || !profile.prefix.trim()}
+                  disabled={!profile.name.trim() || !profile.workspace_name.trim() || !prefixOk(profile.prefix)}
                   onClick={() => setStep(2)}
                 >
                   Continue →
@@ -978,38 +1054,41 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 5 && review && (
             <>
-              {review.workspace && (
-                <div className="inset review-workspace">
-                  <small>New workspace</small>
-                  <p>
-                    <strong>
-                      <Inline>{review.workspace.lines[0]}</Inline>
-                    </strong>
-                  </p>
-                  <dl className="current">
-                    <dt>Short name</dt>
+              <h2>Check and create</h2>
+              <dl className="current review-facts review-summary">
+                {reviewFacts(review).map((f) => (
+                  <Fragment key={f.label}>
+                    <dt>
+                      <span aria-hidden="true">{f.icon}</span> {f.label}
+                    </dt>
                     <dd>
-                      <Raw>{review.workspace.prefix}</Raw>
+                      {Array.isArray(f.value) ? (
+                        <span className="addon-chips">
+                          {f.value.map((v) => (
+                            <span className="chip" key={v}>
+                              <Raw>{v}</Raw>
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        <Raw>{f.value}</Raw>
+                      )}
                     </dd>
-                    <dt>Person</dt>
-                    <dd>
-                      <Raw>{review.workspace.name}</Raw>
-                    </dd>
-                    <dt>Folder</dt>
-                    <dd>
-                      <Raw>{review.workspace.dir}</Raw>
-                    </dd>
-                  </dl>
-                </div>
-              )}
-              <h2>You are about to approve</h2>
-              <ul className="review-summary">
-                {summary.lines.map((line, i) => (
-                  <li key={i}>
-                    <Inline>{line}</Inline>
-                  </li>
+                  </Fragment>
                 ))}
-              </ul>
+                {summary.odd.length > 0 && (
+                  <>
+                    <dt>Also</dt>
+                    <dd>
+                      {summary.odd.map((line, i) => (
+                        <p key={i}>
+                          <Inline>{line}</Inline>
+                        </p>
+                      ))}
+                    </dd>
+                  </>
+                )}
+              </dl>
               {(review.risk || review.flags.some((f) => f.id === 'runner' || f.id === 'terminals')) && (
                 <div className="warning">
                   <p>
@@ -1033,8 +1112,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </details>
                 </div>
               )}
-              <details className="review-technical" open={summary.unknown || undefined}>
-                <summary>Show technical details</summary>
+              <details className="review-technical">
+                <summary>Everything you approve ({review.items.length + (review.workspace ? 1 : 0)} items)</summary>
                 <p>Times and IDs are filled in when you sign.</p>
                 {review.workspace && (
                   <section className="review-item">
@@ -1096,7 +1175,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <p role="alert">Terminal confirmation is missing. Return to your terminal to restart setup.</p>
               )}
               <p>
-                Clicking {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves the choices shown above
+                Clicking {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves everything listed above
                 {review.tty_confirm ? ' and starts the final check.' : ' and starts creating your workspace.'}
               </p>
               <footer>
@@ -1147,8 +1226,8 @@ export function Setup({ api }: { api: SetupAPI }) {
             {progress?.steps.map((s) => (
               <li key={s.id}>
                 <span>{s.label}</span>
-                <strong>
-                  {{ todo: 'Waiting', doing: 'Working…', done: 'Done', failed: 'Failed', skipped: 'Skipped' }[s.status]}
+                <strong className={`status ${s.status}`} aria-label={`${s.label}: ${statusWord[s.status]}`}>
+                  <span aria-hidden="true">{statusIcon[s.status]}</span> {statusWord[s.status]}
                 </strong>
               </li>
             ))}
@@ -1184,7 +1263,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             </>
           )}
           {progress?.done && !progress.error && (
-            <button className="primary" disabled={busy} onClick={() => void act(finish)}>
+            <button className="primary open-workspace" disabled={busy} onClick={() => void act(finish)}>
               Open your workspace →
             </button>
           )}

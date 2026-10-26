@@ -39,6 +39,27 @@ def _pinned(ws: Any, ctx: Context) -> bool:
     return (ws.state_dir / "hosts" / wid / "genesis").is_file()
 
 
+def _marker(ctx: Context, ws: Any, event: str) -> Result:
+    """The "agent may need you" marker (TECH.md (d)): ``waiting`` (the harness's Notification hook) writes it, the next
+    session-start or pre-compact removes it. A display hint in ``.state/sessions``; it says nothing to the agent."""
+    from orch.instructions import marker_doc, marker_path
+    from orch.ops.runtime import records_dir
+
+    layout = ws.layout
+    if layout is not None and ctx.session:
+        files = ctx.caps.files
+        path = marker_path(records_dir(layout), ctx.session)
+        try:
+            if event == "waiting":
+                files.mkdir(path.parent, parents=True)
+                files.write_text(path, marker_doc(ctx.session, ctx.now()).decode())
+            elif files.lexists(path):
+                files.unlink(path)
+        except OSError:
+            pass  # a hint only
+    return _silent(event)
+
+
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
     from orch.instructions import pre_compact_lines, session_start_lines, stale_findings
     from orch.ops.commands import status
@@ -47,6 +68,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
     if ws.root is None:  # a plugin hook runs in every project: outside a workspace it says nothing
         return _silent(event)
+    if event == "waiting":
+        return _marker(ctx, ws, event)
+    _marker(ctx, ws, event)  # session-start and pre-compact: the agent is working again, the hint goes
     # A hook never pins a genesis (no trust on first use from a hook that runs in every cloned repository): it reads
     # only a workspace this machine has pinned, on purpose, by `orch status` or `orch setup`.
     # Host mode: the host serves only a workspace whose genesis it pinned at registration, and gives the handler no
@@ -95,7 +119,7 @@ OP = operation(
     "Admin",
     "The text a harness hook injects at session start or before compaction: at most six lines.",
     who="read",
-    props={"event": E("which hook", "session-start", "pre-compact", **{"x-metavar": "EVENT"})},
+    props={"event": E("which hook", "session-start", "pre-compact", "waiting", **{"x-metavar": "EVENT"})},
     required=("event",),
     positional=("event",),
     pre=(),

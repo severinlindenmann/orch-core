@@ -98,6 +98,7 @@ def test_every_path_into_convenience_custody_goes_through_the_refusal():
     assert callers == {
         ("click/signer.py", "stage_convenience"),
         ("custody/cli.py", "convert_to_convenience"),
+        ("host/cli.py", "stage_convenience"),  # `orch host convenience on` moves a passphrase key (run 9 fb 3.7)
         ("setup/steps.py", "stage_convenience"),
     }
     tree = ast.parse((SRC / "custody/select.py").read_text())

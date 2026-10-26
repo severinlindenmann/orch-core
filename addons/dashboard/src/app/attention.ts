@@ -11,6 +11,8 @@ export interface Attention {
   /** Everything Today lists for the viewer: open questions, gates and verdicts, open addon decisions (both
    *  permission-filtered) and, for the owner, connections that need a new login (R-c, one count everywhere). */
   needsYou: { core: number; addon: number; connections: number; total: number }
+  /** "Agent may need you: check its terminal" (a hint, never counted in `needsYou`): how many, and the first run to open. */
+  terminalWaits: { count: number; run?: string }
   /** Open items the viewer cannot act on, and the people (ids) who can. */
   waitingOnOthers: { count: number; who: string[] }
   /** Agent sessions: root sessions only (subagents are counted apart). They add up: sessions = working + waitingOnYou + waitingOnOthers + idle + stopped. */
@@ -29,6 +31,11 @@ export function groupOf(root: AgentSession, all: AgentSession[], viewer: string 
   if (asks(root) || all.some((s) => s.parent === root.session && asks(s))) return 'waiting'
   if (root.state === 'waiting' || all.some(s => s.parent === root.session && s.state === 'waiting')) return 'waiting-others'
   return root.state === 'idle' ? 'idle' : 'working'
+}
+
+export function terminalWaitsOf(items: { kind: string; ref?: string }[]): { count: number; run?: string } {
+  const waits = items.filter((i) => i.kind === 'terminal_wait')
+  return { count: waits.length, run: waits[0]?.ref }
 }
 
 /** The three nouns of the dashboard, defined once: what needs you, what waits on others, and the agent sessions. */
@@ -50,6 +57,7 @@ export function useAttention(ws: string | undefined): Attention {
   const stopped = groups.filter((g) => g === 'stopped').length
   return {
     needsYou: counts,
+    terminalWaits: terminalWaitsOf(today.data?.needs_you ?? []),
     waitingOnOthers: { count: today.data?.waiting_on_others.count ?? 0, who: today.data?.waiting_on_others.people ?? [] },
     agents: {
       sessions: roots.length,

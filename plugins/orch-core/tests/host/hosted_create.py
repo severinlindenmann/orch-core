@@ -35,7 +35,9 @@ def create_hosted(ctx: Context, args: dict[str, Any]) -> Result:
     wi.TERMINAL.show(f"Your generated passphrase:\n\n    {passphrase}\n")
     wi.TERMINAL.show(f"shown now, once.\n\n{format_code_numbered(code)}\n")
     try:
-        wi._hosted_bootstrap(ctx, sd, root, prefix, owner_name, passphrase, code, st)
+        wi._hosted_bootstrap(
+            ctx, sd, root, prefix, owner_name, passphrase, code, st, workspace_name=args.get("workspace_name")
+        )
     except KeyboardInterrupt:  # Ctrl-C: as `orch setup` does, keep the key of a bootstrap whose outcome is unknown
         wi._drop_unless_pending(sd, st.wid, st.pending)
         if st.pending is not None:

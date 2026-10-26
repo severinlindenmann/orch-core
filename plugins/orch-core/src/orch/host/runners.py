@@ -389,6 +389,7 @@ RUNNER_SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "seq": _INT,
             "lease_gen": _INT,
+            "out": _INT,  # the ring's end: the run printed (the "agent may need you" fallback)
             "cols": {"type": ["integer", "null"], "minimum": 20, "maximum": 500},
             "rows": {"type": ["integer", "null"], "minimum": 5, "maximum": 200},
         },
@@ -543,6 +544,8 @@ class RunnerHub:
         self.term_state: dict[str, dict[str, Any]] = {}
         #: the newest ``runner.term`` sequence number seen per run (this runner session); older reports are ignored
         self._term_seq: dict[str, int] = {}
+        #: run -> (the runner's last ``out`` offset, when the host saw it grow): local, display only, never persisted
+        self.activity: dict[str, tuple[int, float]] = {}
         self._pending_pub: set[str] = set()
         self._watching: asyncio.Task[None] | None = None
         #: the watcher's running check (or end) per attachment
@@ -833,6 +836,8 @@ class RunnerHub:
         rec = self.store.records.get(run)
         if rec is None or rec.get("runner_uid") != session.peer.uid or rec.get("gen") != self.generation:
             raise HostError("not_found", "no such run on this runner")
+        if args.get("out") is not None and args["out"] != (self.activity.get(run) or (None, 0))[0]:
+            self.activity[run] = (args["out"], time.time())
         if args["seq"] <= self._term_seq.get(run, -1):
             return {}  # a stale snapshot overtaken by a newer one: it must never take a live attachment out (D2)
         self._term_seq[run] = args["seq"]
@@ -1458,6 +1463,36 @@ def new_run_id() -> str:
 # -- the workspace ops (on the worker thread) ---------------------------------------------------------------------
 
 
+#: seconds without terminal output before an agent run with nothing open counts as "may need you" (no hook marker)
+QUIET_SECONDS = 90.0
+
+
+def waiting_of(service: Any, hub: Any, rec: dict[str, Any]) -> dict[str, Any] | None:
+    """``{since, source}`` when the agent of this run may be waiting for the person in its terminal (the Notification
+    hook's marker, else the terminal quiet for :data:`QUIET_SECONDS`), else ``None``. Local to this machine and display
+    only: it is never signed, logged or sent to a hub. New output clears it."""
+    if hub is None or rec.get("kind") != "agent" or rec.get("state") not in LIVE or not rec.get("ticket"):
+        return None
+    seen = hub.activity.get(rec["run"])
+    now = time.time()
+    session = rec.get("session")
+    layout = getattr(service.store, "layout", None)
+    if session and layout is not None:
+        from orch.instructions import marker_path, read_marker
+        from orch.ops.runtime import records_dir
+
+        try:
+            mark = read_marker(marker_path(records_dir(layout), session).read_bytes(), now)
+        except OSError:
+            mark = None
+        if mark is not None and (seen is None or seen[1] <= mark["at"]):
+            return {"since": _iso(mark["at"]), "source": "hook"}
+    quiet = float(os.environ.get("ORCH_TERMINAL_QUIET_SECONDS") or QUIET_SECONDS)
+    if seen is not None and now - seen[1] >= quiet:
+        return {"since": _iso(seen[1]), "source": "quiet"}
+    return None
+
+
 def serve(call: Call) -> dict[str, Any]:
     """``run.list`` and the worker half of ``run.sub`` (the visible runs now); the column was checked by the gate."""
     from .outcomes import request_idem
@@ -1512,5 +1547,5 @@ def serve(call: Call) -> dict[str, Any]:
     from .terms import runner_info
 
     runner = runner_info(service, person)
-    runs = [view(r) | {"out_bytes": int(r.get("out") or 0)} for r in window]
+    runs = [view(r) | {"out_bytes": int(r.get("out") or 0), "waiting": waiting_of(service, hub, r)} for r in window]
     return ok_result({"runs": runs, "next_page": f"o{offset + 256}" if more else None, "runner": runner})

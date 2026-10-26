@@ -546,6 +546,7 @@ def test_b8_lengths_read_as_days_and_hours_in_the_headline_and_the_settings_note
     event = {**sample("settings.changed"), "set": {"grant_hours": 168}}
     c = build({"op": "settings.set", "events": [event], "material": material_for("settings.changed", event)})
     assert any("up to 7 days" in n for n in c["notes"])
+    assert c["summary"]["lines"] == ["Longest agent access: 8 hours \u2192 7 days, in this workspace."]  # run-9 feedback: no table
 
 
 def test_a_before_the_host_alone_vouches_for_is_labelled(human, served):
@@ -860,7 +861,10 @@ def test_f7_an_addon_grant_says_what_the_addon_may_do_and_keeps_digest_and_raw_f
     for raw in ("aa" * 6, "{}", "(none)", "pty"):
         assert raw not in shown
     assert "package digest" not in {r["field"] for r in c["fields_changed"]}
-    assert "technical details" in " ".join(c["notes"])
+    # run-9 feedback 3.5: the compact view (plain title, two facts, the trust risk); no digest note, no "— → value" need
+    assert c["title"] == "Turn on Terminals"
+    assert c["summary"]["lines"] == ["It says it will open terminals on this computer, as you.", "Version 0.1.0. Runs on this computer."]
+    assert c["summary"]["risk"] == signcontent.ADDON_TRUST and len(c["summary"]["lines"]) <= 3
     two = build(_addon(name="start-agent", capabilities=["pty", "spawn_agent"]))
     assert two["headline"].startswith("Turn on Start agent: it says it will open terminals")
     assert "start agents on this computer" in two["headline"]
@@ -1466,3 +1470,16 @@ def test_788_the_hosts_word_never_reaches_a_headline_or_summary_as_if_it_were_si
     assert all(
         "per host, not signed" in x.lower() for x in ext["summary"]["lines"] if "this computer's runner, until" in x
     )
+
+
+def test_run9_the_compact_addon_risk_line_carries_market_and_dependency_warnings():
+    p = _addon()
+    p["material"] = {
+        "kind": "payload", "ticket": None,
+        "market": {"url": "https://m.example/x", "stale": True, "class": "dev-folder", "publisher": {"tofu": "new"}},
+        "deps": {"rows": [], "diff": {"widened": True, "lines": ["+ left-pad 1.0"]}},
+    }  # fmt: skip
+    risk = build(p)["summary"]["risk"]
+    for words in ("past its expiry", "local folder", "First use of this publisher key", "dependencies widened"):
+        assert words in risk
+    assert build(_addon())["summary"]["risk"] == signcontent.ADDON_TRUST

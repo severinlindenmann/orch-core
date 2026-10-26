@@ -43,11 +43,15 @@ def test_init_through_the_host_bootstraps_into_dot_orch(
     (root / "config.json").write_text('{"name": "my own project file"}')  # no collision in the new layout
     monkeypatch.chdir(root)
     with lab.host() as h:
-        res = create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "name": "Severin", "host": True})
+        res = create_hosted(
+            ctx_for(root, lab.state),
+            {"prefix": "DEMO", "name": "Severin", "workspace_name": "Marketing Department", "host": True},
+        )
         wid = res.data["workspace_id"]
         store = root / ".orch"
         assert stat.S_IMODE(store.stat().st_mode) == 0o700
-        assert json.loads((store / "config.json").read_text())["workspace"]["id"] == wid
+        cfg = json.loads((store / "config.json").read_text())
+        assert cfg["workspace"]["id"] == wid and cfg["workspace"]["name"] == "Marketing Department"
         assert (store / "events" / "workspace.jsonl").is_file() and (store / "AGENTS.orch.md").is_file()
         assert (root / "config.json").read_text() == '{"name": "my own project file"}'
         assert not (root / "events").exists() and not (root / "tickets").exists()

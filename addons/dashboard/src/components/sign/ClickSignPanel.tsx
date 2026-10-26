@@ -14,6 +14,7 @@ import { ClickProblemBox } from './RefusalDevices'
 import { useActivation, useArming } from './useArming'
 import { AgentAccess, WhatNext } from './SignAside'
 import type { SignStory } from './story'
+import { alsoSigned } from './alsoSigned'
 import { fmtClock } from '@/lib/time'
 import { STICKY_FOOTER } from './SignShell'
 
@@ -47,16 +48,18 @@ interface Props {
   ws?: string
   /** What this signature leads to (button label, steps, access): derived from the action. */
   story?: SignStory | null
+  /** The button's words when the caller names the action ("Sign and turn on"); else the story's, else "Sign". */
+  label?: string
   /** A field the review needs before Sign (the hub step's backup key), shown above the buttons. */
   extra?: ReactNode
   /** False while that field is empty: Sign stays off. */
   ready?: boolean
 }
 
-export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, extra, ready = true }: Props) {
+export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, label, extra, ready = true }: Props) {
   const { view, view_digest: digest } = answer
   // A new View (a new digest) is a new confirmation: the timer, a half-done hold and any half-begun press start over.
-  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} extra={extra} ready={ready} />
+  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} label={label} extra={extra} ready={ready} />
 }
 
 /** What the one "Technical details" expander of the review holds besides the content's own ids (action, workspace, fingerprint, device, the signer's lines and checks). */
@@ -115,7 +118,7 @@ export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
   )
 }
 
-function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, extra, ready = true }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
+function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, label: given, extra, ready = true }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
   const armed = useArming(digest)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -132,13 +135,15 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
     onSign()
   }
   const technical = <TechnicalFacts view={view} />
-  const label = story?.signLabel ?? 'Sign'
+  const label = story?.signLabel ?? given ?? 'Sign'
+  // A compact review (a summary, or a quick task shown folded) says what happens in its own lines: no step list under it.
+  const lean = !!view.content?.summary || (!!story?.quick && !!view.content && alsoSigned(view.content, story.quick) !== null)
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
       <AgentAccess story={story ?? null} />
-      {story && <WhatNext story={story} />}
+      {story && !lean && <WhatNext story={story} />}
       {view.checks.filter(c => !c.clean).map((c, i) => <p key={i} role="note" className="text-[13px] text-warning">Repository <Raw>{c.repo}</Raw>: not clean</p>)}
       {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The signer did not see the artifact bytes: only their hash is signed.</p>}
       {!view.content && <SignDetails>{technical}</SignDetails>}

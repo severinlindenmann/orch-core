@@ -34,7 +34,7 @@ export const itemId = (i: NeedsYouItem) => (i.kind === 'verdict' ? `verdict:${i.
 export const decisionId = (d: AddonDecision) => `addon:${d.id}`
 
 // Kinds Today has no row for (handoff, expiring) are left out, as before.
-const GROUP_OF: Partial<Record<NeedsYouItem['kind'], CoreEntry['group']>> = { question: 'questions', approval: 'approvals', verdict: 'verdicts' }
+const GROUP_OF: Partial<Record<NeedsYouItem['kind'], CoreEntry['group']>> = { question: 'questions', approval: 'approvals', verdict: 'verdicts', terminal_wait: 'questions' }
 
 export function toEntries(items: NeedsYouItem[], decisions: AddonDecision[]): Entry[] {
   return [
@@ -46,9 +46,13 @@ export function toEntries(items: NeedsYouItem[], decisions: AddonDecision[]): En
   ]
 }
 
+/** "Agent may need you: check its terminal": a hint from the host, not a question. */
+export const isTerminalWait = (e: Entry) => e.group !== 'addons' && e.item.kind === 'terminal_wait'
+
 /** Blocking first, then the oldest `since`, then the id: the same items always give the same order. */
 export function compareEntries(a: Entry, b: Entry): number {
   if (a.blocking !== b.blocking) return a.blocking ? -1 : 1
+  if (isTerminalWait(a) !== isTerminalWait(b)) return isTerminalWait(a) ? 1 : -1 // a hint never sits above a real question
   const sa = a.since ? Date.parse(a.since) : Infinity
   const sb = b.since ? Date.parse(b.since) : Infinity
   if (sa !== sb) return sa < sb ? -1 : 1
@@ -60,6 +64,7 @@ export const sortEntries = (entries: Entry[]) => [...entries].sort(compareEntrie
 /** Among new items the latest arrival comes first (blocking still leads): it is the one the person is looking for. */
 function compareNew(a: Entry, b: Entry): number {
   if (a.blocking !== b.blocking) return a.blocking ? -1 : 1
+  if (isTerminalWait(a) !== isTerminalWait(b)) return isTerminalWait(a) ? 1 : -1
   const sa = a.since ? Date.parse(a.since) : -Infinity
   const sb = b.since ? Date.parse(b.since) : -Infinity
   if (sa !== sb) return sa > sb ? -1 : 1

@@ -33,7 +33,9 @@ AGENT_HOURS = (8, 24, 72, 168)
 
 _PREFIX = re.compile(r"[A-Z][A-Z0-9]{1,7}")
 _ADDON_ID = re.compile(r"[a-z][a-z0-9-]{0,39}")
-_PROFILE_KEYS = frozenset({"name", "prefix", "addons", "method", "agent_hours", "agent_grant", "relay"})
+_PROFILE_KEYS = frozenset(
+    {"name", "workspace_name", "prefix", "addons", "method", "agent_hours", "agent_grant", "relay"}
+)
 #: keys a page may leave out (their value then is the default)
 _OPTIONAL_KEYS = frozenset({"git_init", "records"})
 
@@ -71,6 +73,7 @@ def validate_profile(
     if missing:
         raise SetupError("invalid.input", f"missing field {sorted(missing)[0]}", field=sorted(missing)[0])
     name = clean_name(body["name"])
+    workspace_name = clean_name(body["workspace_name"])
     prefix = body["prefix"]
     if not isinstance(prefix, str) or not _PREFIX.fullmatch(prefix):
         raise SetupError(
@@ -106,6 +109,7 @@ def validate_profile(
         raise SetupError("invalid.input", "records is true or false", field="records")
     return {
         "name": name,
+        "workspace_name": workspace_name,
         "prefix": prefix,
         "addons": sorted(addons),
         "method": body["method"],

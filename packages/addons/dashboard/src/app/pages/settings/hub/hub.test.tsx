@@ -86,7 +86,7 @@ describe('the Hub tab has a different page for each mode', () => {
 
 describe('the top-bar chip', () => {
   it.each([
-    ['standalone', 'Local only'],
+    ['standalone', 'Only on this computer'],
     ['selective', 'Hub sees only what you share'],
     ['full', 'Hub can read everything'],
     ['offline', 'Hub offline, working locally'],

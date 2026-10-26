@@ -231,7 +231,7 @@ it('#951: when no host serves the dashboard because it is not granted, the home 
   state.host.workspaces.splice(0, state.host.workspaces.length, workspace({ id: A, host_state: 'addon.disabled' }))
   show('/')
   expect(await screen.findByRole('heading', { name: 'The dashboard is not switched on yet' }, T)).toBeInTheDocument()
-  expect(screen.getByText('orch addon grant dashboard')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument() // U3: no command on screen any more
   expect(screen.queryByText(/Could not load/)).not.toBeInTheDocument()
   expect(gets(A)).toEqual([]) // nothing is read from it
 })

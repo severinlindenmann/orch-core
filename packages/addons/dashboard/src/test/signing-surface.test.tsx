@@ -827,7 +827,7 @@ it('setup Create posts the review digest shown with core rows and terminal finge
     return new Response(JSON.stringify(value))
   })
   render(<Setup api={new SetupAPI('demo-not-a-real-token', fetcher as typeof fetch)}/>)
-  await screen.findByRole('heading',{name:'Finish setup in demo'})
+  await screen.findByRole('heading',{name:'Finish setting up your workspace'})
   fireEvent.click(screen.getByLabelText(/Worktrees/))
   fireEvent.click(screen.getByRole('button',{name:'Continue →'}))
   await screen.findByRole('heading',{name:'Review your setup'})

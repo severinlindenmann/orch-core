@@ -413,7 +413,7 @@ def setup_driver(ws: Workspace, *, timeout: int = 180) -> None:
         # running outside the dashboard venv (the e2e kit uses the core venv): `orch setup` finds the dashboard on PATH
         venv_bin = ADDON / "server" / ".venv" / "bin"
         env["PATH"] = f"{venv_bin}{os.pathsep}{env['PATH']}"
-    pty_run = Pty(ws.orch("setup", "--no-browser"), env, ws.root, rules, timeout)
+    pty_run = Pty(ws.orch("setup", "--no-browser", "--role", "workspace"), env, ws.root, rules, timeout)
     box: dict[str, object] = {}
 
     def work() -> None:

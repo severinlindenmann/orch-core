@@ -85,7 +85,9 @@ class ChannelError(Exception):
         self.code = code
 
 
-def registration_object(hub_id: str, user_id: str, kind: str, key_pub: str, nonce: str, expires_ms: int, dev: bool = True) -> dict:
+def registration_object(
+    hub_id: str, user_id: str, kind: str, key_pub: str, nonce: str, expires_ms: int, dev: bool = True
+) -> dict:
     """The ``hub.channel_register`` object the channel key signs (§6.3). ``attestation`` is the gate the hub checked."""
     return {
         "v": 2,
@@ -563,7 +565,9 @@ class Channels:
         self._known_user(u)
         now = self._now()
         nonce = b64u(os.urandom(32))
-        ch = registration_object(self.keys.hub_id, u, kind, b64u(key_pub), nonce, now + CHALLENGE_TTL_MS, dev_of(self.keys))
+        ch = registration_object(
+            self.keys.hub_id, u, kind, b64u(key_pub), nonce, now + CHALLENGE_TTL_MS, dev_of(self.keys)
+        )
 
         def go() -> None:
             self.db.w("DELETE FROM challenges WHERE expires_ms <= ?", (now,))

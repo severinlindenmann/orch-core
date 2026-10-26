@@ -23,6 +23,10 @@ class Hub:
         self.store = NS(records={})
         self.grants = Mock()
         self.commands = []
+        self.starting, self.uid = {}, 0
+
+    def take_start(self, person):
+        return True
 
     def require_current(self):
         pass
@@ -223,3 +227,31 @@ def test_cancelled_and_needs_person(env):
     env.tick()
     assert env.view(uid)["state"] == "cancelled"
     assert not env.hub.commands
+
+
+def test_start_limits_apply_to_a_follow_up(env):
+    uid, _, due = env.schedule()
+    env.hub.take_start = lambda person: False
+    env.w.lab.ws.clock[0] = due
+    env.tick()
+    assert env.view(uid)["state"] == "did_not_run" and "spawn" not in [c[0] for c in env.hub.commands]
+
+
+def test_a_host_that_is_not_the_workspace_host_never_fires(env, monkeypatch):
+    uid, _, due = env.schedule()
+    monkeypatch.setattr(env.w.service.store, "_host", None)
+    env.w.lab.ws.clock[0] = due
+    env.tick()
+    assert env.view(uid)["state"] == "pending" and not env.hub.commands
+
+
+def test_harness_comes_from_the_setters_person_not_another_persons_run(env):
+    uid, _, due = env.schedule()
+    env.hub.store.records["r_other"] = {
+        "run": "r_other", "workspace_id": env.w.wid, "ticket": uid, "kind": "agent",
+        "person": "p_" + "0" * 32, "harness": "codex", "created_at": "2999-01-01T00:00:00Z", "state": "exited",
+    }  # fmt: skip
+    env.w.lab.ws.clock[0] = due
+    env.tick()
+    fired = [r for r in env.hub.store.records.values() if r.get("mode") == "followup"]
+    assert fired and fired[0]["harness"] != "codex"

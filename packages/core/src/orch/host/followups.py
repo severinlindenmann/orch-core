@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import logging
 from types import SimpleNamespace
 
 from orch.identity import new_grant, new_ulid
+from orch.model import claims
 from orch.model import followups as rules
 from orch.model import followups_wire as wire
 from orch.model.types import ts
@@ -53,6 +55,16 @@ class FollowupRunner:
         custody.ensure_private_dir(self.path.parent, self.service.host_uid)
         custody.write_private(self.path, self.intents)
 
+    def _owns(self, store, core):
+        """Fail closed: only the host whose key is the workspace key (genesis wsk_pub) fires follow-ups."""
+        from orch import crypto
+
+        host = getattr(store, "_host", None)
+        key = getattr(host, "public_key", None)
+        ok = key is not None and bool(core.ws.wsk_pub) and crypto.b64u(key) == core.ws.wsk_pub
+        self.service.host_id = core.ws.host_id if ok else None
+        return ok
+
     def _read(self, now):
         service = self.service
         if service.store is None or service.state != "ok" or service.closing:
@@ -61,8 +73,7 @@ class FollowupRunner:
         store.refresh()
         store.load_all()
         core = store.state._core
-        host_id = getattr(service, "host_id", None)
-        if host_id is not None and core.ws.host_id != host_id:
+        if not self._owns(store, core):
             return [], 0, 0
         rows, today = [], 0
         for ticket in core.tickets.values():
@@ -165,8 +176,10 @@ class FollowupRunner:
             if r.get("workspace_id") == self.service.workspace_id
             and r.get("ticket") in (uid, key)
             and r.get("kind") == "agent"
+            and r.get("person") == rec.person
         ]
-        last = max(previous, key=lambda r: r.get("created_at", ""), default={})
+        own = [r for r in previous if r.get("session") and claims.in_family(r["session"], rec.setter_session)]
+        last = max(own or previous, key=lambda r: r.get("created_at", ""), default={})
         args = {
             "ticket": key,
             "harness": last.get("harness") or "claude-code",
@@ -240,7 +253,7 @@ class FollowupRunner:
             )
             del secret, token
             call, data, _ = await self.service.call(self._plan, uid, key, rec, hub)
-            await agents._launch(call, hub, data)
+            await agents._start(call, hub, data)
             return True
         except Exception as exc:  # noqa: BLE001 - a fired follow-up must settle, never retry
             code = getattr(exc, "code", "")
@@ -251,5 +264,7 @@ class FollowupRunner:
                 if code.startswith(("harness.", "launch."))
                 else "error"
             )
+            with contextlib.suppress(Exception):  # the unused one-run secret must not stay in the runner
+                await hub.command("grant.drop", {"grant": rec.grant})
             await self._outcome(uid, rec, "did_not_run", reason)
             return False

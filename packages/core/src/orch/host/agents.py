@@ -640,9 +640,10 @@ async def _start(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str, 
         raise HostError("runner.unavailable", "no runner is connected", retry_after_ms=1000)
     hub.require_current()
     launch = data["launch"]
-    cur = hub.grants.current(wid, person)
-    if cur is None or cur["grant"] != launch["grant"]:
-        raise HostError("launch.changed", "the runner grant changed since the preview: preview again")
+    if not launch.get("run_grant"):  # a follow-up run carries its own one-run grant (put_run); the limits below apply
+        cur = hub.grants.current(wid, person)
+        if cur is None or cur["grant"] != launch["grant"]:
+            raise HostError("launch.changed", "the runner grant changed since the preview: preview again")
     live = [r for r in hub.store.records.values() if r.get("state") in runners.LIVE]
     mine = [r for r in live if r.get("person") == person and r.get("kind") == "agent"]
     if sum(1 for r in mine if r.get("workspace_id") == wid) >= AGENTS_PER_WORKSPACE or len(mine) >= AGENTS_PER_PERSON:

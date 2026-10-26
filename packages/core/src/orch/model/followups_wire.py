@@ -184,7 +184,11 @@ def cancelled_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.FOLLOWUP_DENIED, "only pending or needs_person follow-ups can be cancelled")
     a = e["actor"]
     if a["kind"] == "agent":
-        if not claims.in_family(a["session"], rec.setter_session) or a["for"] != rec.person or e["reason"] not in ("agent", "dismissed"):
+        if (
+            not claims.in_family(a["session"], rec.setter_session)
+            or a["for"] != rec.person
+            or e["reason"] not in ("agent", "dismissed")
+        ):
             return Refusal(Code.FOLLOWUP_DENIED, "an agent may cancel only its own session family's follow-up")
     elif a["kind"] == "person" and a["id"] != rec.person and not claims.signer_manages(core.ws, t, e):
         return Refusal(Code.FOLLOWUP_DENIED, "only the follow-up's person or a manager may cancel it")

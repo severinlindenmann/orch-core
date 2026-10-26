@@ -414,7 +414,8 @@ class HumanOps:
         # the submit and the model check every hub event under the lock (hubproof).
         if signer is not None and signer["auth"] == "convenience":
             convenience.check(
-                service, person, signer["device"], removing=_removing(name, [args["args"].get("device")])
+                service, person, signer["device"], removing=_removing(name, [args["args"].get("device")]),
+                leaving=name == "hub.leave",
             )  # the owner's condition, at prepare
         if signer is not None and name != ROTATE_OP:
             check_device(store, person, signer["device"], now, operate=_operate(sorted(types)))
@@ -878,6 +879,7 @@ class HumanOps:
                 record["person"],
                 signer["device"],
                 removing=_removing(record["op"], [e.get("device") for e in unsigned]),
+                leaving=record["op"] == "hub.leave",
             )
         if state == "bound":
             if record["signer"] != signer:
@@ -1133,6 +1135,7 @@ class HumanOps:
                     record["person"],
                     events[0]["actor"]["device"],
                     removing=_removing(record["op"], [e.get("device") for e in events]),
+                    leaving=record["op"] == "hub.leave",
                 )
             # §0.8.6: a reader is never added to a history with convenience signatures, nor while the flag is on,
             # however long ago the request was prepared

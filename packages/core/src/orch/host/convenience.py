@@ -469,7 +469,10 @@ def unavailable(reason: str, devices: list[str], *, hours: int | None = None) ->
     )
 
 
-def check(service: Any, person: str, device: str, *, gate: Any = None, removing: frozenset[str] = frozenset()) -> None:
+def check(
+    service: Any, person: str, device: str, *, gate: Any = None, removing: frozenset[str] = frozenset(),
+    leaving: bool = False,
+) -> None:
     """Raise ``sign.convenience_unavailable`` (message ``<reason>: …``, detail ``{reason, devices}``) unless the
     condition holds. §11A.17: for a column-R event
     with a :class:`~orch.host.devmode.DevGate` of this workspace, the gate stands in for the flag (``disabled`` does
@@ -481,6 +484,10 @@ def check(service: Any, person: str, device: str, *, gate: Any = None, removing:
         service.store, service.state_dir, service.workspace_id, service.host_uid, person, device, gated=gated,
         removing=removing,
     )  # fmt: skip
+    if found is not None and leaving and found[0] not in ("disabled", "idle"):
+        # prototype (e2e-4): leaving the hub (hub.left) by click is allowed whatever the readers are: it is the way out
+        # of a full-mode workspace, which is relay paired by definition. HARDENING SKIPPED
+        return
     if found is not None:
         if found[0] == "idle":
             raise unavailable("idle", [], hours=idle_hours(service.state_dir, service.workspace_id, service.host_uid))

@@ -1058,3 +1058,15 @@ def test_a_removal_cannot_clear_the_readers_rule_while_another_reader_still_fail
     _, key = human.ticket()
     with pytest.raises(ClickError):  # no blanket exemption: other ops stay refused
         click.prepare("log", {"ref": key, "text": "x"})
+
+
+def test_leaving_the_hub_by_click_ignores_the_readers_reasons(click, served, human):
+    """e2e-4: a full-mode workspace is relay paired, so every click was refused; hub.leave is the way out."""
+    (served.lab.state / "hosts" / served.wid / "membership").mkdir(parents=True)
+    svc, dev = served.service, human.person.device
+    with pytest.raises(Exception, match="relay_paired"):
+        convenience.check(svc, human.person.ref, dev)
+    convenience.check(svc, human.person.ref, dev, leaving=True)
+    convenience.set_enabled(served.lab.state, served.wid, False, UID)
+    with pytest.raises(Exception, match="disabled"):
+        convenience.check(svc, human.person.ref, dev, leaving=True)  # the flag still decides

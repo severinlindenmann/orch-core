@@ -60,10 +60,10 @@ def world(tmp_path_factory):
     ws = Workspace(root / "w")
     try:
         keys = ws.bring_up(seeding)
-        run(ws, "host", "convenience", "on", "--workspace", ws.ws_id, "--state", str(ws.state))
-        # The real `orch keys custody convenience`, in a pty (it prompts for the passphrase once), with the file store.
+        # The real `orch host convenience on`, in a pty: since #1304 it moves the key into the One click key file in
+        # one step (the passphrase is typed once on the terminal) and then switches the flag on.
         convert = Pty(
-            [sys.executable, "-I", CHILD, "cli", "keys", "custody", "convenience", "--workspace", ws.ws_id],
+            ws.orch("host", "convenience", "on", "--workspace", ws.ws_id, "--state", str(ws.state)),
             ws.env(),
             ws.root,
             ws.rules(),

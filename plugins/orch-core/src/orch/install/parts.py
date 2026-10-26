@@ -142,7 +142,6 @@ def command_for(
     publish_url: str | None,
     relay_url: str | None,
     dev: bool,
-    wildcard: bool = False,
 ) -> list[str]:
     """The ``serve`` command line of a part (argv; environment is :func:`env_for`)."""
     bind = address if address else ADDRESS_LOOPBACK
@@ -163,7 +162,7 @@ def command_for(
         if relay_url:
             cmd += ["--relay-url", relay_url]
         return cmd
-    listen = "0.0.0.0" if wildcard else bind  # noqa: S104 - the hub on this computer can only dial a loopback http URL
+    listen = bind
     if part == "relay":
         return [str(binary), "serve", "--host", listen, "--port", str(port)]
     cmd = [

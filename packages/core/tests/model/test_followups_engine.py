@@ -180,6 +180,8 @@ def test_agent_cancel_and_expired_parent_can_fire(env):
     assert not hasattr(result, "code"), result
     assert w.view(uid).followups[0]["reason"] == "agent"
     short = w.grant("tom", "workable", hours=1)
+    assert refused(w, uid, "claim.taken", w.agent("tom", short)) == Code.CLAIM_EXISTS  # cancelled: nothing waits now
+    uid = w.ticket(owner="tom")
     a = w.claim(uid, "tom", gid=short)
     e = set_followup(w, uid, a)
     f = fire(w, uid, e)
@@ -216,3 +218,16 @@ def test_non_time_triggers_are_refused_until_wired(env):
         brief="x",
     )  # fmt: skip
     assert result.code == Code.FOLLOWUP_DENIED
+
+
+def test_the_claim_of_a_follow_up_session_is_not_live_after_its_outcome(env):
+    from orch.model.claims import lapse_reason
+
+    w, uid, a = env
+    e1 = set_followup(w, uid, a)
+    f1 = fire(w, uid, e1)
+    runner = w.agent("tom", f1["grant"])
+    w.tev(uid, "claim.taken", runner)
+    assert lapse_reason(w.state()._core.ws, w.state()._core.tickets[uid], ts(w.at())) is None
+    w.tev(uid, "followup.outcome", w.HOST, followup=e1["followup"], outcome="ran", run=f1["run"])
+    assert lapse_reason(w.state()._core.ws, w.state()._core.tickets[uid], ts(w.at())) == "grant_ended"

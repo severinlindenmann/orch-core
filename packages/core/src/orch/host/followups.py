@@ -108,7 +108,10 @@ class FollowupRunner:
                     # The ledger is authoritative even if the cache write after fired was interrupted. Only settle
                     # once the runner is connected (its records are synced); until then the row stays fired.
                     if hub is not None and hub.connected:
-                        await self._outcome(uid, rec, "did_not_run", "host_restarted")
+                        tried = self.intents.get(rec.id, {}).get("attempted")
+                        await self._outcome(
+                            uid, rec, "did_not_run", "runner_unavailable" if tried else "host_restarted"
+                        )
                 elif run.get("state") in LIVE:
                     live += 1
                 else:
@@ -259,6 +262,9 @@ class FollowupRunner:
         except Exception as exc:  # noqa: BLE001 - a fired follow-up must settle, never retry
             code = getattr(exc, "code", None) or ""
             if code == "outcome.unknown" or hub.store.records.get(run) is not None:
+                self.intents.setdefault(rec.id, {})["attempted"] = True
+                with contextlib.suppress(Exception):
+                    await self.service.call(self._save)
                 # the start may have happened: leave the row fired, the next tick settles it from the run record
                 return True
             reason = (

@@ -302,3 +302,15 @@ def test_a_fired_row_stays_until_the_runner_is_connected(env):
     env.hub.connected = True
     env.tick()
     assert env.view(uid)["state"] == "did_not_run" and env.view(uid)["reason"] == "host_restarted"
+
+
+def test_no_runner_for_a_service_closed_while_the_check_waited(env, monkeypatch):
+    from orch.host import followups as mod
+
+    made = []
+    monkeypatch.setattr(mod, "FollowupRunner", lambda *a, **k: made.append(1))
+    env.w.service.followups = None
+    start = type(env.w.h.host)._start_followups
+    env.w.h.host.services.pop(env.w.service.workspace_id, None)  # closed meanwhile
+    env.w.h.run(start(env.w.h.host, env.w.service))
+    assert not made and env.w.service.followups is None

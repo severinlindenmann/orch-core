@@ -21,7 +21,7 @@ def in_family(session: str, claim_session: str) -> bool:
 
 def grant_ended(ws: WsCore, grant_id: str, at: int) -> bool:
     g = ws.grants.get(grant_id)
-    return g is None or g.revoked or ts(g.expires_at) <= at
+    return g is None or g.revoked or g.ended or ts(g.expires_at) <= at
 
 
 def lapse_reason(ws: WsCore, t: TCore, at: int) -> str | None:
@@ -80,8 +80,10 @@ def taken(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
     # An in_progress ticket whose claim a follow-up released (a follow-up waits on it, or a follow-up session resumes
     # it) can be claimed without a takeover. Tickets without follow-ups judge exactly as before.
     g = ws.grants.get(a.get("grant"))
-    waiting = bool(t.followups)  # a follow-up (in any state) released the claim: the ticket is not stranded
-    resumed = t.status == "in_progress" and t.claim is None and (waiting or (g is not None and g.parent is not None))
+    live = ("pending", "needs_person", "fired")  # the follow-up that released the claim
+    waiting = any(r.state in live for r in t.followups.values())
+    own = g is not None and g.parent is not None and any(r.grant == g.id for r in t.followups.values())
+    resumed = t.status == "in_progress" and t.claim is None and (waiting or own)
     if t.status in ("open", "backlog") or resumed:
         if takeover is not None:
             return Refusal(Code.CLAIM_NOT_LIVE, "nothing to take over")

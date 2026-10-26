@@ -72,7 +72,7 @@ def set_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     ws, a, now = core.ws, e["actor"], ts(e["at"])
     if e["followup"] in t.followups:
         return Refusal(Code.FOLLOWUP_DENIED, "duplicate follow-up id")
-    if e["trigger"] != "time":
+    if e.get("trigger") != "time":
         return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: only time follow-ups are built so far")
     pending = [r for r in t.followups.values() if view_state(core, t, r, now)[0] == "pending"]
     ctx = fu.SetContext(

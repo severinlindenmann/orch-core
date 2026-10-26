@@ -653,6 +653,9 @@ class Host:
         if not on:
             service.followups = None
             return
+        if self.services.get(service.workspace_id) is not service or service.closing:
+            service.followups = None  # closed while we waited: no runner for a dead service
+            return
         service.followups = FollowupRunner(service, clock=self.clock, mono=time.monotonic)
         service.followups.start()
 

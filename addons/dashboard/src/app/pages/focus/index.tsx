@@ -65,7 +65,7 @@ function FocusSession({ ticket, workspace, start }: { ticket?: string; workspace
         </AddonFrame>
         {!ticket && <Button variant="outline" size="sm" onClick={() => setCreate(true)}>Create ticket from this</Button>}
         <span role="status" className="text-xs text-text-muted">{working ? 'Agent is working' : 'No active session'}</span>
-        <TasksChip />
+        <TasksChip ticket={ticket} />
         <span data-testid="focus-pause" title="Pause coming in F4"><Button variant="outline" size="sm" disabled>Pause</Button></span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button variant="ghost" size="sm" aria-pressed={fullscreen || fallback} onClick={() => void toggleFullscreen()}><Maximize />Fullscreen</Button>
@@ -78,8 +78,8 @@ function FocusSession({ ticket, workspace, start }: { ticket?: string; workspace
           {ticket && data.isError ? <p role="alert" className="p-5 text-sm">Could not load this ticket. <Button variant="outline" size="sm" onClick={() => void data.refetch()}>Try again</Button></p> : <Conversation ticket={ticket} />}
         </div>
         {panel && <aside id="focus-side-panel" aria-label="Session details" className="flex w-[420px] max-w-[60%] min-w-0 shrink-0 flex-col overflow-auto border-l border-border bg-surface">
-          <Panel />
-          <TasksList />
+          <Panel ticket={ticket} />
+          <TasksList ticket={ticket} />
         </aside>}
       </div>}
       {create && <CreateFocusTicket onClose={() => setCreate(false)} />}

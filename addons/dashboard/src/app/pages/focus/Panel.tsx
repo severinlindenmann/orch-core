@@ -6,13 +6,13 @@ import { Context } from './panel/Context'
 
 const tabs = { Changes, Artifacts, Decisions, Context }
 
-export function Panel() {
+export function Panel({ ticket }: { ticket?: string }) {
   return (
     <Tabs defaultValue="Changes" data-testid="focus-panel" className="min-w-0">
       <TabsList aria-label="Session details" variant="line" className="w-full flex-wrap border-b border-border">
         {Object.keys(tabs).map((tab) => <TabsTrigger key={tab} value={tab}>{tab}</TabsTrigger>)}
       </TabsList>
-      {Object.entries(tabs).map(([tab, Body]) => <TabsContent key={tab} value={tab}><Body /></TabsContent>)}
+      {Object.entries(tabs).map(([tab, Body]) => <TabsContent key={tab} value={tab}><Body ticket={ticket} /></TabsContent>)}
     </Tabs>
   )
 }

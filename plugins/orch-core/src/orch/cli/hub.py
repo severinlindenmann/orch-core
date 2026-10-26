@@ -3,6 +3,7 @@
     orch hub join INVITE --hub-card FILE [--hub-id HEX32] [--hub-addr HOST:PORT] [--mode selective|full]
                                          [--owner-user-id HEX32]
                                                                                        a person: join (signed)
+    orch hub join --link LINK [--mode selective|full]            a person: join with the link the hub admin gave you
     orch hub mode full --hub-card FILE [--hub-addr HOST:PORT]   a person: selective -> full (signed, your own key)
     orch hub leave                                                                       a person: leave (signed)
     orch hub connect INVITE --hub-card FILE   a person: finish a join the hub could not take yet
@@ -42,7 +43,8 @@ from orch.cli.publish import PubError, _call, _sign, _tty_ok
 __all__ = ["main"]
 
 _USAGE = (
-    "usage: orch hub {join INVITE --hub-card FILE [--hub-id HEX32] [--hub-addr HOST:PORT] [--mode selective|full] "
+    "usage: orch hub {join --link LINK [--mode selective|full] "
+    "| join INVITE --hub-card FILE [--hub-id HEX32] [--hub-addr HOST:PORT] [--mode selective|full] "
     "[--owner-user-id HEX32] | mode full --hub-card FILE [--hub-addr HOST:PORT] | leave "
     "| connect [INVITE] --hub-card FILE [--hub-addr HOST:PORT] | unbind "
     "| status [--refresh [--hub-card FILE]] | share rule list | share rule add|remove RULE | share revoke REF "
@@ -67,6 +69,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--needs-you", dest="needs_you", action="store_true")
     p.add_argument("rest", nargs="*")
     p.add_argument("--hub-card")
+    p.add_argument("--link")
     p.add_argument("--hub-addr")
     p.add_argument("--hub-id", dest="hub_id")
     p.add_argument("--mode", default="selective")
@@ -122,11 +125,15 @@ def _check_shape(a: argparse.Namespace) -> None:
         "rotate": 0,
         "history": 0,
     }[a.cmd]
+    if a.link is not None:  # the link carries the hub id, the code and the address: no INVITE, no card file
+        if a.cmd != "join" or a.rest or a.hub_card or a.hub_id or a.hub_addr:
+            raise PubError("invalid.input", "--link belongs to: orch hub join --link LINK [--mode selective|full]", 2)
+        n = 0
     if len(a.rest) != n and not (a.cmd == "connect" and not a.rest):  # connect: the invite is for a new join only
         raise PubError("invalid.input", _USAGE, 2)
     if (a.refresh and a.cmd != "status") or (a.cmd == "status" and a.hub_card and not a.refresh):
         raise PubError("invalid.input", "--refresh belongs to status; --hub-card needs --refresh there", 2)
-    if a.cmd in ("join", "connect", "mode") and not a.hub_card:
+    if a.cmd in ("join", "connect", "mode") and not a.hub_card and a.link is None:
         raise PubError("invalid.input", _USAGE, 2)
     if a.cmd == "mode" and a.rest != ["full"]:
         raise PubError(
@@ -192,7 +199,7 @@ def _connect(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: Te
     if invite is not None and (m := _INVITE_PREFIX.fullmatch(invite)):
         invite = m.group(2)  # the hub id is the join's check (D12c); the hub only ever sees the code
     try:
-        args: dict[str, Any] = {"hub_card": _read_card(a.hub_card)}
+        args: dict[str, Any] = {"hub_card": a.card_obj if a.card_obj is not None else _read_card(a.hub_card)}
         if invite is not None:
             args["invite"] = invite
         if a.hub_addr:
@@ -204,7 +211,7 @@ def _connect(target: Any, env: Mapping[str, str], a: argparse.Namespace, out: Te
                 "signed: your workspace has recorded the join, but the hub could not be reached or did not answer.\n"
                 "finish it when the hub is up: orch hub connect "
                 + ("" if invite is None else f"{invite} ")
-                + f"--hub-card {a.hub_card}"
+                + (f"--hub-card {a.hub_card}" if a.hub_card else "(or join again with a new link)")
                 + (f" --hub-addr {a.hub_addr}" if a.hub_addr else "")
                 + "\n"
                 "or leave: orch hub leave\n"
@@ -308,8 +315,13 @@ def main(
             raise PubError("op.not_allowed", "a person does this at their own terminal; an agent never joins a hub")
         if a.cmd == "share":
             return _share(a, env, out, as_json)
+        a.card_obj = None
         _check_shape(a)
         target = _target(env)
+        if a.link is not None:  # one host op reads the link: the card is fetched and matched to the link's hub id
+            got = _call(target, "hub.link", {"link": a.link}, env)
+            a.card_obj, a.hub_id, a.rest = got["hub_card"], got["hub_id"], [got["code"]]
+            a.hub_addr = got.get("endpoint")
         if a.cmd == "status":
             if a.refresh:
                 args = {"hub_card": _read_card(a.hub_card)} if a.hub_card else {}
@@ -341,7 +353,8 @@ def main(
             if a.mode == "full":
                 out.write(f"{_FULL_WORDS}. Review it, then sign with your own key.\n")
             hub_id, _code = _split_invite(a.rest[0], a.hub_id)
-            args: dict[str, Any] = {"hub_card": _read_card(a.hub_card), "hub_id": hub_id, "mode": a.mode}
+            card = a.card_obj if a.card_obj is not None else _read_card(a.hub_card)
+            args: dict[str, Any] = {"hub_card": card, "hub_id": hub_id, "mode": a.mode}
             if a.owner_user_id:
                 args["aliases"] = [{"person_id": _person(target), "user_id": a.owner_user_id}]
             _sign(target, "hub.join", args)

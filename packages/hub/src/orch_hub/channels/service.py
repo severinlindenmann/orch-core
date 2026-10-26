@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from ..access import Access, AccessError
+from ..config import dev_of
 from ..contract import hub as H
 from ..contract import phase4 as P4
 from ..contract import suite as S
@@ -84,7 +85,9 @@ class ChannelError(Exception):
         self.code = code
 
 
-def registration_object(hub_id: str, user_id: str, kind: str, key_pub: str, nonce: str, expires_ms: int) -> dict:
+def registration_object(
+    hub_id: str, user_id: str, kind: str, key_pub: str, nonce: str, expires_ms: int, dev: bool
+) -> dict:
     """The ``hub.channel_register`` object the channel key signs (§6.3). ``attestation`` is the gate the hub checked."""
     return {
         "v": 2,
@@ -98,7 +101,7 @@ def registration_object(hub_id: str, user_id: str, kind: str, key_pub: str, nonc
         "attestation": GATE_OF[kind],
         "nonce": nonce,
         "expires_ms": expires_ms,
-        "dev": True,
+        "dev": dev,
     }
 
 
@@ -562,7 +565,9 @@ class Channels:
         self._known_user(u)
         now = self._now()
         nonce = b64u(os.urandom(32))
-        ch = registration_object(self.keys.hub_id, u, kind, b64u(key_pub), nonce, now + CHALLENGE_TTL_MS)
+        ch = registration_object(
+            self.keys.hub_id, u, kind, b64u(key_pub), nonce, now + CHALLENGE_TTL_MS, dev_of(self.keys)
+        )
 
         def go() -> None:
             self.db.w("DELETE FROM challenges WHERE expires_ms <= ?", (now,))

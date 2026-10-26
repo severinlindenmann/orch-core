@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ipaddress
 import re
+import secrets
 import signal
 import sys
 import threading
@@ -67,7 +68,16 @@ class FixedInvites:
                 self._owner[code] = user
             else:  # CODE=<not a 32-hex user id>: refuse to start rather than silently drop the alias
                 raise ValueError(f"invite #{i}: the part after '=' ({user[:40]!r}) is not a 32-hex hub user id")
+        self._expires: dict[str, int] = {}  # minted codes only: code -> expiry ms
         self._lock = threading.Lock()
+
+    def mint(self, now_ms: int, ttl_ms: int = 30 * 60_000) -> tuple[str, int]:
+        """A fresh single-use code (admin console "Connect a workspace"); expires after ``ttl_ms``."""
+        code = secrets.token_urlsafe(12)
+        with self._lock:
+            self._codes.add(code)
+            self._expires[code] = now_ms + ttl_ms
+        return code, now_ms + ttl_ms
 
     def codes(self) -> list[str]:
         """The unused codes, sorted (never the ``=USER_ID`` alias part)."""
@@ -79,13 +89,16 @@ class FixedInvites:
 
     def check(self, invite: str, now_ms: int) -> str | None:
         with self._lock:
-            if invite not in self._codes:
+            if invite not in self._codes or self._expires.get(invite, now_ms + 1) <= now_ms:
                 raise Refused("bad_invite")
         return None
 
     def consume(self, invite: str, workspace_id: str) -> None:
         with self._lock:
             self._codes.discard(invite)
+
+
+SETUP_TOKEN_FILE = "setup-token"  # written by `orch install hub`; consumed by the console's first-admin page
 
 
 def invite_line(hub_id: str, code: str) -> str:
@@ -104,6 +117,17 @@ def parse_listen(value: str) -> tuple[str, int]:
     return host.strip("[]"), int(port)
 
 
+def parse_web_listen(value: str, *, assigned: Callable[[str], bool] = CO.locally_assigned) -> tuple[str, int]:
+    """The console bind: loopback, or (prototype, no TLS) one literal private/NetBird IP of this computer."""
+    host, _, _port = value.rpartition(":")
+    try:
+        if ipaddress.ip_address(host.strip("[]")).is_loopback:
+            return parse_listen(value)
+    except ValueError:
+        pass
+    return CO.parse_link_listen(value, assigned=assigned)
+
+
 def serve(
     state: Path,
     listen: str | None,
@@ -112,6 +136,7 @@ def serve(
     *,
     link_listen: str | None = None,
     dev_shared_machine: bool = False,
+    bind_all: bool = False,
     accounts: CO.Accounts | None = None,
     assigned: Callable[[str], bool] = CO.locally_assigned,
     api_host: str | None = None,
@@ -228,13 +253,22 @@ def serve(
                 trusted_peers=cfg.trusted_peers,
                 behind_edge=cfg.behind_edge,
                 api_origin=cfg.resolved_api_origin(),
+                invites=gate,
+                link_endpoint=lambda: f"{host}:{server.address[1]}",
                 push=notifier,
+                setup_token_file=state / SETUP_TOKEN_FILE,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )
         )
-        web = WebServer.from_listen(api, cfg.web_listen)  # loopback only; the edge fronts it (no public listener)
+        web = WebServer.from_listen(
+            api, cfg.web_listen, bind_all=bind_all
+        )  # loopback, or one private IP (dev, plain http)
         if not cfg.allowed_origins:  # loopback dev: the console is served from this very address
-            api.allow_loopback_origin(f"http://{web.address[0]}:{web.address[1]}")
+            # --bind-all makes web.address 0.0.0.0: allow the advertised address (and loopback: a computer dials itself there)
+            adv = parse_web_listen(cfg.web_listen)[0]
+            api.allow_loopback_origin(f"http://{adv}:{web.address[1]}")
+            if adv not in ("127.0.0.1", "::1"):
+                api.allow_origin(f"http://127.0.0.1:{web.address[1]}")
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(
@@ -252,7 +286,7 @@ def serve(
         views=views.service,
         shares=shares,
         deliveries=deliveries,
-        host=host,
+        host="0.0.0.0" if bind_all and link_listen is not None else host,  # the address stays the validated one
         port=port,
         dev_mode=cfg.dev,
     )

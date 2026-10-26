@@ -16,6 +16,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from ..config import dev_of
 from ..contract import hub as H
 from ..contract.canon import cj
 from ..contract.hub import Refused
@@ -43,7 +44,15 @@ class AccessSnapshots:
             revoked = a.revoked_channels()
             mp = a.market_policy()
             fp = hashlib.sha256(
-                cj({"roles": roles, "revoked": revoked, "op": op_cert_id, "policy": mp["hash"]})
+                cj(
+                    {
+                        "roles": roles,
+                        "revoked": revoked,
+                        "op": op_cert_id,
+                        "policy": mp["hash"],
+                        "dev": dev_of(self._keys),
+                    }
+                )
             ).hexdigest()
             row = a.snapshot_row(workspace_id)
             if row is not None and row[1] == fp:
@@ -62,7 +71,7 @@ class AccessSnapshots:
                 "roles": roles,
                 "revoked_channels": revoked,
                 "market_policy": mp["policy"],
-                "dev": True,
+                "dev": dev_of(self._keys),
             }
             signed = signer.sign_object(o)
             db.execute(

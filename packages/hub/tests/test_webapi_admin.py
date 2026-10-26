@@ -161,3 +161,29 @@ def test_malformed_query_and_non_loopback_listen(w):
     srv = WebServer.from_listen(w.api, "127.0.0.1:0")
     assert srv.address[0] == "127.0.0.1"
     srv._srv.server_close()
+
+
+def test_setup_token_creates_one_admin_once(w):
+    f = w.env.keys.state / "setup-token"
+    f.write_text("tok-abc\n")
+    w.api.d.setup_token_file = f
+    body = {"token": "wrong", "name": "boss", "password": "a long password 1"}
+    assert w.call("POST", "/setup", body)[:2] == (401, {"error": "bad_credentials"})
+    assert w.call("POST", "/setup", {**body, "token": "tok-abc", "password": "short"})[:2] == (
+        400,
+        {"error": "weak_password"},
+    )
+    s, o, _ = w.call("POST", "/setup", {**body, "token": "tok-abc"})
+    assert s == 200 and w.env.acc.is_hub_admin(o["user_id"]) and o["totp_secret"]
+    assert not f.exists()
+    assert w.call("POST", "/setup", {**body, "token": "tok-abc"})[:2] == (401, {"error": "bad_credentials"})
+
+
+def test_web_listen_takes_a_private_ip_not_a_wildcard(w):
+    from orch_hub.serve import parse_web_listen
+
+    assert parse_web_listen("100.71.14.98:8100", assigned=lambda ip: True) == ("100.71.14.98", 8100)
+    assert parse_web_listen("127.0.0.1:0") == ("127.0.0.1", 0)
+    for bad in ("0.0.0.0:8100", "8.8.8.8:8100"):
+        with pytest.raises(ValueError):
+            parse_web_listen(bad, assigned=lambda ip: True)

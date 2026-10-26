@@ -135,6 +135,9 @@ def check_bind_allowed(
         if dev_shared_machine:
             raise BindRefused("--dev-shared-machine given but no host or agent users exist; drop the flag")
         return None
+    if not card_dev and not dev_shared_machine:
+        # a real hub on a single-user machine: a warning, not a refusal (the dev gates below stay)
+        return "this hub shares a machine with workspaces: weaker isolation than a hub on its own machine"
     if not dev_shared_machine:
         raise BindRefused(
             f"a non-loopback link needs a machine without workspace host or agent users (found {', '.join(others)}); "

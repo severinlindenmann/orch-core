@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..contract.canon import cj
+from ..localdial import dialling_locally
 from .forwarder import SYNC_CODES, _endpoint
 from .sync import PublishSyncError
 
@@ -55,7 +56,7 @@ class HttpPublishSync:
             raise PublishSyncError("malformed") from None
         start = time.monotonic()
         cls = http.client.HTTPSConnection if self._scheme == "https" else http.client.HTTPConnection
-        conn = cls(self._host, self._port, timeout=self._timeout)
+        conn = dialling_locally(cls(self._host, self._port, timeout=self._timeout))
         try:
             conn.request("PUT", path, body=body, headers={"Content-Type": "application/json"})
             resp = conn.getresponse()  # a redirect is an unexpected answer, never followed

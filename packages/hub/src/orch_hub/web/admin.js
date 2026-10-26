@@ -149,8 +149,40 @@ export function adminView(d) {
             ...data.grants.filter((g) => g.workspace_id === w.workspace_id).map((g) => [txt(g.group), roleName(g.role), groupMembers(g.group),
               remove("Revoke", "POST", "/admin/grants/revoke", { workspace_id: w.workspace_id, group: g.group })])], "Workspace permissions")))];
   }
+  // "Connect a workspace": one click mints a single-use invite and shows ONE link (docs/connect-link.md).
+  const connectBox = h("div", { "aria-live": "polite" });
+  async function mintLink(button) {
+    button.disabled = true;
+    try {
+      const r = await d.api("POST", "/admin/connect", {});
+      if (r.status !== 200) { connectBox.replaceChildren(h("div", { class: "banner bad", role: "alert", text: d.say(r.body?.error ?? "unavailable") })); return; }
+      const { link, code, endpoint, hub_id: hubId, expires_ms: expires } = r.body;
+      const input = h("input", { readonly: true, value: link, id: "connect-link", "aria-label": "Connect link", onfocus: (ev) => ev.target.select() });
+      const copied = h("span", { class: "small muted", "aria-live": "polite" });
+      const copy = h("button", { type: "button", class: "pri", text: "Copy link", onclick: async () => {
+        try { await navigator.clipboard.writeText(link); copied.textContent = "Copied"; } catch { input.focus(); input.select(); copied.textContent = "Press Ctrl+C / Cmd+C to copy"; }
+      } });
+      const fp = hubId.match(/.{4}/g).join(" ");
+      connectBox.replaceChildren(h("section", { class: "card", id: "connect-panel" },
+        h("h3", { text: "Connect a workspace" }),
+        p("Send this link to the person who runs the workspace. It works once."),
+        field("Link", input),
+        h("div", { class: "row" }, copy, copied),
+        p("Valid until " + new Date(expires).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + " (30 minutes), one use."),
+        h("div", { class: "row" },
+          h("button", { type: "button", text: "Make a new one", onclick: (ev) => void mintLink(ev.target) }),
+          h("button", { type: "button", text: "Done", onclick: () => connectBox.replaceChildren() })),
+        h("details", {}, h("summary", { text: "Technical details" }),
+          p("Hub key fingerprint " + fp + " is part of the link, so nobody has to read it out."),
+          p("Prefer two fields? Hub address " + (endpoint ?? "(this hub)") + " and code " + code + " work too."))));
+      input.focus(); input.select();
+    } catch { connectBox.replaceChildren(h("div", { class: "banner bad", role: "alert", text: d.say("unavailable") })); }
+    finally { button.disabled = false; }
+  }
   function workspaces() {
-    return [h("h2", { text: "Workspaces" }), ...data.workspaces.map((w) => h("article", { class: "card" },
+    return [h("div", { class: "row" }, h("h2", { class: "grow", text: "Workspaces" }),
+      h("button", { type: "button", class: "pri", id: "connect-workspace", text: "Connect a workspace", onclick: (ev) => void mintLink(ev.target) })),
+      connectBox, ...data.workspaces.map((w) => h("article", { class: "card" },
       h("div", { class: "row" }, h("h3", { class: "grow", text: workspaceName(w.workspace_id) }), chip(w.mode === "full" ? "Full" : "Selective", w.mode === "full" ? "full" : "sel")),
       p(w.mode === "full" ? "Hub can read everything" : "Hub can read shared items and summaries"),
       chip((w.online ?? (w.status === "bound" || w.status === "online")) ? "Connection online" : "Connection offline", (w.online ?? (w.status === "bound" || w.status === "online")) ? "ok" : "warn"),

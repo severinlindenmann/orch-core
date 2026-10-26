@@ -27,6 +27,7 @@ Nothing secret is logged: this module does not log at all.
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import json
 import re
@@ -36,12 +37,14 @@ import urllib.parse
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from ..access import Access, AccessError, role_rank
-from ..access.store import check_name
+from ..access.store import ADMIN_GROUP, check_name
 from ..channels import Channels
-from ..channels.service import ChannelError
+from ..channels.service import MIN_PASSWORD, ChannelError
+from ..connect import LinkError, build_link
 from ..contract import channelapi as CA
 from ..contract import market_policy as MP
 from ..contract import phase4 as P4
@@ -191,7 +194,12 @@ class WebDeps:
     api_origin: str | None = None
     #: the notifier that holds the push targets and keys (None = no relay: ``PUT /channels/{id}/push`` is ``unavailable``)
     push: Any = None
+    #: the invite gate (``mint``) and the hub link address, for "Connect a workspace" (None = route is ``unavailable``)
+    invites: Any = None
+    link_endpoint: Callable[[], str | None] | None = None
     now_ms: Callable[[], int] = lambda: int(time.time() * 1000)
+    #: one-time first-admin token (``orch install hub`` writes it, ``POST /setup`` consumes it); None = no setup route
+    setup_token_file: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -215,6 +223,7 @@ def _r(method: str, path: str, auth: str, handler: str, purpose: str) -> Route:
 ROUTES: tuple[Route, ...] = (
     # (0) the public card (phone pairing, protocol §6.4)
     _r("GET", "/hub/card", "none", "hub_card", "The held card and the signed API origin (pairing; no session)"),
+    _r("POST", "/setup", "none", "setup", "First admin: the one-time setup token creates the admin (password, TOTP)"),
     # (a) session
     _r("POST", "/session", "none", "sign_in", "Sign in with user id, password and TOTP; sets the session cookie"),
     _r("GET", "/session", "session", "whoami", "Who am I: user id, name, hub-admin flag"),
@@ -289,6 +298,7 @@ ROUTES: tuple[Route, ...] = (
         "a_market_policy_set",
         "Replace the hub marketplace policy ({base_version, policy}); 409 conflict when base_version is stale",
     ),
+    _r("POST", "/admin/connect", "admin", "a_connect", "Mint a workspace invite and return the one connect link"),
     _r("GET", "/admin/audit", "admin", "a_audit", "Read the audit chain (?since=N, up to 100 records)"),
 )
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
@@ -722,6 +732,28 @@ class WebApi:
         attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
         return 200, out, [("Set-Cookie", attrs + ("; Secure" if self.d.secure_cookies else ""))]
 
+    def _h_setup(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Prototype: the installer's token file is the proof; a right token makes one hub-admin and is deleted."""
+        b = _need(b, token=str, name=str, password=str)
+        f = self.d.setup_token_file
+        with self._plock:
+            try:
+                want = f.read_text().strip() if f is not None else ""
+            except OSError:
+                want = ""
+            if not want or not hmac.compare_digest(want.encode(), b["token"].encode()):
+                raise ApiError("bad_credentials")
+            check_name(b["name"])
+            if len(b["password"]) < MIN_PASSWORD:
+                raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
+            uid = self.d.keys.issue_uk(None)["o"]["user_id"]
+            self.d.access.add_user(uid, b["name"])
+            self.d.access.add_member(ADMIN_GROUP, uid)
+            self.d.channels.set_password(uid, b["password"])
+            t = self.d.channels.new_totp(uid)
+            f.unlink(missing_ok=True)  # single use
+        return 200, {"user_id": uid, "totp_secret": t["secret"], "totp_uri": t["uri"]}
+
     def _h_hub_card(self, c: Ctx, p: dict, q: dict, b: dict | None):
         """Public: the held card and the ``hub.api_origin`` that names this hub's own API origin (§6.4, L2B-1)."""
         return 200, {"card": self.d.keys.card(), "api_origin": self._api_origin()}
@@ -1084,6 +1116,32 @@ class WebApi:
     def _h_a_market_policy_set(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, base_version=int, policy=dict)
         return 200, self.d.access.set_market_policy(b["base_version"], b["policy"], actor=c.user_id)
+
+    def _h_a_connect(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Mint a single-use invite (30 min) and build ``<base>/c#h1.<hub_id>.<code>[.<endpoint>]`` (docs/connect-link.md).
+        Body (all optional): ``endpoint`` = the host:port a workspace dials, default the hub's own link address."""
+        if self.d.invites is None:
+            raise ApiError("unavailable")
+        b = b or {}
+        endpoint = b.get("endpoint")
+        if endpoint is not None and type(endpoint) is not str:
+            raise ApiError("malformed")
+        endpoint = (endpoint or "").strip() or (self.d.link_endpoint() if self.d.link_endpoint else None)
+        base = c.origin or self.d.api_origin
+        if base is None:
+            raise ApiError("unavailable")
+        code, expires = self.d.invites.mint(self.d.now_ms())
+        try:
+            link = build_link(base, self.d.keys.hub_id, code, endpoint)
+        except LinkError:
+            raise ApiError("malformed") from None
+        return 200, {
+            "link": link,
+            "code": code,
+            "hub_id": self.d.keys.hub_id,
+            "endpoint": endpoint,
+            "expires_ms": expires,
+        }
 
     def _h_a_audit(self, c: Ctx, p: dict, q: dict, b: dict | None):
         since = q.get("since", "0")

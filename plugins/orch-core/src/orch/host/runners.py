@@ -424,7 +424,8 @@ def validate(op: str, args: Any) -> None:
 #: §12.3.2 ``Run``: the record's client fields with their defaults; pid, runner UID, gen and spawn payload stay here
 VIEW_DEFAULTS: dict[str, Any] = {
     "run": None, "rev": 0, "kind": "shell", "person": None, "ticket": None, "harness": "shell", "mode": None,
-    "model": None, "subagent_model": None, "parent_run": None, "label": None, "session": None, "grant": None, "grant_state": None,
+    "model": None, "subagent_model": None, "parent_run": None, "label": None, "session": None,
+    "grant": None, "grant_state": None,
     "as_person": False, "cwd": {"kind": "workspace"}, "state": "starting", "started_at": None, "viewers": 0,
     "writer": False, "cols": 120, "rows": 40, "replay_until": None,
 }  # fmt: skip

@@ -192,7 +192,8 @@ def test_harness_of_follows_runner_json_for_a_program_with_another_name():
     from orch.runner.config import parse
     from orch.runner.link import _harness_of
 
-    cfg = parse({"v": 1, "login_shell": False, "programs": {"claude-code": "/opt/wrap/my-agent", "codex": "/opt/wrap/cx"}})
+    programs = {"claude-code": "/opt/wrap/my-agent", "codex": "/opt/wrap/cx"}
+    cfg = parse({"v": 1, "login_shell": False, "programs": programs})
     assert _harness_of(["/opt/wrap/my-agent", "--session-id", "x"], cfg) == "claude-code"
     assert _harness_of(["/opt/wrap/cx"], cfg) == "codex"
     assert _harness_of(["/opt/wrap/my-agent"]) is None  # without the config only the program's name counts

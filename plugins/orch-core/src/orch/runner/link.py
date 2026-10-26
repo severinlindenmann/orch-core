@@ -534,7 +534,8 @@ class HostLink:
                     raise SpawnError("runner.unavailable", "the agent runner is restarting on a new release; try again")
                 res = self.sup.spawn(spec)
                 if not res.get("duplicate"):  # the transcript reader finds the run's file from these
-                    self.sup.table.update(spec.run, harness=_harness_of(spec.argv, self.config()), cwd_path=spec.cwd.get("path"))
+                    harness = _harness_of(spec.argv, self.config())
+                    self.sup.table.update(spec.run, harness=harness, cwd_path=spec.cwd.get("path"))
             return {k: res.get(k) for k in ("pid", "state", "started_at", "duplicate")}
         if cmd == "stop":
             run = str(args.get("run"))

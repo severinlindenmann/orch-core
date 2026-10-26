@@ -27,8 +27,11 @@ def run(row):
     out["label"] = display(label)
     out["label_hidden"] = isinstance(label, str) and hidden(label)
     out["subagent_model"] = display(row.get("subagent_model"))
-    # Focus mode: a run a person delegated from another run names its parent; the page tells the main session from its children.
-    out["parent_run"] = row["parent_run"] if isinstance(row.get("parent_run"), str) and re.fullmatch(r"r_[0-7][0-9A-HJKMNP-TV-Z]{25}", row["parent_run"]) else None
+    # Focus mode: a run a person delegated from another run names its parent;
+    # the page tells the main session from its children.
+    parent = row.get("parent_run")
+    ok = isinstance(parent, str) and re.fullmatch(r"r_[0-7][0-9A-HJKMNP-TV-Z]{25}", parent)
+    out["parent_run"] = parent if ok else None
     # M7b: whether an agent's runner grant still holds (`ended`: the host refuses its writes; Stop is offered). Not a
     # run state. The grant id and the session stay out (nothing on the page needs them).
     out["grant_state"] = row.get("grant_state") if row.get("grant_state") in ("ok", "ended") else None

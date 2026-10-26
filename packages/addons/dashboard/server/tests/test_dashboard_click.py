@@ -3243,3 +3243,27 @@ def test_c16_the_contract_refusal_is_in_plain_words(client, token, stub, script,
     res = client.post(url(stub, "github/seal"), json={}, headers=hdr(token))
     msg = res.json()["error"]["message"]
     assert "needs an update" in msg and "signing helper" not in msg and "orch-core" not in msg
+
+
+def test_hub_steps_get_a_fresh_idem_once_the_hub_state_moved(client, token, stub, backup, monkeypatch):
+    """B10: join, leave, join again with the same card is a new request; a repeat with no event in between is not."""
+    from orch_dashboard import handoff
+
+    head = {"v": "e1"}
+    monkeypatch.setattr(handoff, "hub_base", lambda link: {"hub_head": head["v"]})
+    assert prepare(client, token, stub, hub_join()).status_code == 200
+    prepare(client, token, stub, hub_join())
+    head["v"] = "e3"  # a join and a leave happened since
+    assert prepare(client, token, stub, hub_join()).status_code == 200
+    keys = [a["idem"] for op, a in sent_of(backup, "prepare")]
+    assert keys[0] == keys[1] and keys[2] != keys[0]
+
+
+def test_hub_base_is_the_latest_hub_event():
+    from orch_dashboard.handoff import hub_base
+
+    class L:
+        def call(self, op, args=None):
+            return {"items": [{"type": "hub.left", "id": "ev9"}, {"type": "hub.joined", "id": "ev3"}]}
+
+    assert hub_base(L()) == {"hub_head": "ev9"}

@@ -36,7 +36,11 @@ def parse_link(link: str) -> dict[str, str | None]:
     if len(parts) < 3 or parts[0] != "h1":
         raise LinkError("not a connect link")
     hub_id, code, endpoint = parts[1], parts[2], (parts[3] if len(parts) == 4 else None)
-    if not _HEX32.fullmatch(hub_id) or not _CODE.fullmatch(code) or (endpoint is not None and not _ENDPOINT.fullmatch(endpoint)):
+    if (
+        not _HEX32.fullmatch(hub_id)
+        or not _CODE.fullmatch(code)
+        or (endpoint is not None and not _ENDPOINT.fullmatch(endpoint))
+    ):
         raise LinkError("bad link part")
     origin = f"{u.scheme}://{u.netloc}"
     return {"origin": origin, "hub_id": hub_id, "code": code, "endpoint": endpoint, "card_url": origin + CARD_PATH}

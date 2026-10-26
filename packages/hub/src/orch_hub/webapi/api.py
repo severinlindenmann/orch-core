@@ -41,8 +41,8 @@ from typing import Any, Protocol
 from ..access import Access, AccessError, role_rank
 from ..access.store import check_name
 from ..channels import Channels
-from ..connect import LinkError, build_link
 from ..channels.service import ChannelError
+from ..connect import LinkError, build_link
 from ..contract import channelapi as CA
 from ..contract import market_policy as MP
 from ..contract import phase4 as P4
@@ -1108,7 +1108,13 @@ class WebApi:
             link = build_link(base, self.d.keys.hub_id, code, endpoint)
         except LinkError:
             raise ApiError("malformed") from None
-        return 200, {"link": link, "code": code, "hub_id": self.d.keys.hub_id, "endpoint": endpoint, "expires_ms": expires}
+        return 200, {
+            "link": link,
+            "code": code,
+            "hub_id": self.d.keys.hub_id,
+            "endpoint": endpoint,
+            "expires_ms": expires,
+        }
 
     def _h_a_audit(self, c: Ctx, p: dict, q: dict, b: dict | None):
         since = q.get("since", "0")

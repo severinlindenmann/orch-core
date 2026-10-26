@@ -35,8 +35,17 @@ def test_vector_parses():
     assert parse_link(f"http://h/c#h1.{HUB}.abc")["endpoint"] is None
 
 
-@pytest.mark.parametrize("bad", [f"https://h/pair#h1.{HUB}.abc", "https://h/c#h1.short.abc", f"https://h/c#h2.{HUB}.abc",
-                                 f"https://h/c#h1.{HUB}.", f"https://h/c#h1.{HUB}.abc.nonsense", "ftp://h/c#x"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        f"https://h/pair#h1.{HUB}.abc",
+        "https://h/c#h1.short.abc",
+        f"https://h/c#h2.{HUB}.abc",
+        f"https://h/c#h1.{HUB}.",
+        f"https://h/c#h1.{HUB}.abc.nonsense",
+        "ftp://h/c#x",
+    ],
+)
 def test_bad_links_refused(bad):
     with pytest.raises(LinkError):
         parse_link(bad)
@@ -55,7 +64,7 @@ def test_admin_mints_a_link_whose_card_matches(w):
 
 def test_code_is_single_use_and_expires(w):
     inv = w.api.d.invites
-    code, exp = inv.mint(1000, 500)
+    code, _ = inv.mint(1000, 500)
     inv.check(code, 1499)
     with pytest.raises(Refused):
         inv.check(code, 1500)
@@ -66,7 +75,7 @@ def test_code_is_single_use_and_expires(w):
 
 
 def test_only_admin_mints(w):
-    s, o, _ = w.call("POST", "/admin/connect", {}, token=w.login(w.ann))
+    s, _o, _ = w.call("POST", "/admin/connect", {}, token=w.login(w.ann))
     assert s in (401, 403)
 
 

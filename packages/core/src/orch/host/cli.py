@@ -791,17 +791,14 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
     reg = read_json(registry_path(state), uid) or {"workspaces": []}
     here = None
     if not args.workspace:
-        # only `off` (it takes authority away) may default to the folder's workspace; `on` always names it
-        found = _cwd_workspace(reg.get("workspaces") or [])
-        here = found if args.switch == "off" else None
+        here = _cwd_workspace(reg.get("workspaces") or [])  # on and off both default to the folder's workspace
         if here is None:
-            shown = _prefix_of(reg.get("workspaces") or [], found) or "<your workspace prefix>"
+            shown = _prefix_of(reg.get("workspaces") or [], None) or "<your workspace prefix>"
             return write_error(
                 out,
                 False,
                 "invalid.input",
-                "--workspace is required"
-                + (" (or run `off` inside the workspace folder)" if args.switch == "off" else ""),
+                f"--workspace is required (or run `{args.switch}` inside the workspace folder)",
                 hint=f"orch host convenience {args.switch} --workspace {shown}",
                 fix=["orch", "host", "convenience", args.switch, "--workspace", shown],
             )
@@ -822,7 +819,9 @@ def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) 
         )
         return 0
     if here is not None:  # named before acting, so a wrong folder is seen
-        out.write(f"this folder belongs to {match[0].get('prefix')} ({wid}): switching click-to-sign off for it\n")
+        out.write(
+            f"this folder belongs to {match[0].get('prefix')} ({wid}): switching click-to-sign {args.switch} for it\n"
+        )
     try:
         if (
             args.switch == "on"

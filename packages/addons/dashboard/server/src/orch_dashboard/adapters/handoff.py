@@ -48,6 +48,9 @@ MATERIAL_KEYS = {
 #: the only ops whose material may carry a manual acceptance `statement` (core signer `_person_op`)
 STATEMENT_OPS = ("ac.accept", "ac.unaccept")
 GATE_EVENTS = ("gate.approved", "gate.changes_requested", "verdict.given")
+#: the hub events whose ``owner_proof`` the signer fills after the review (core review.OWNER_PROOF_TYPES): the host's
+#: prepared event still carries ``owner_proof: null``, the review payload and the fingerprint leave it out
+OWNER_PROOF_TYPES = ("hub.joined", "hub.left")
 
 
 def cj(value) -> bytes:
@@ -65,6 +68,8 @@ def stripped(event: dict) -> dict:
         out["actor"] = {k: v for k, v in out["actor"].items() if k != "device"}
     if out.get("type") == "grant.issued":
         out.pop("secret_hash", None)
+    if out.get("type") in OWNER_PROOF_TYPES:
+        out.pop("owner_proof", None)
     return out
 
 
@@ -112,6 +117,8 @@ def review_matches(material: dict, events: list) -> bool:
         return False
     for block, event in zip(reviews, events, strict=True):
         skip = ENVELOPE + (("gate_gen",) if event.get("type") in GATE_EVENTS else ())
+        if event.get("type") in OWNER_PROOF_TYPES:
+            skip += ("owner_proof",)
         payload = {k: v for k, v in event.items() if k not in skip}
         if (
             block.get("event_id") != event.get("id")

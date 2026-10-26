@@ -29,6 +29,11 @@ CONV = {"auth": "convenience"}
 def _lab_clock(served, monkeypatch):
     monkeypatch.setattr(host_cli, "_clock", lambda: served.lab.ws.clock[0])
     monkeypatch.setattr(convenience, "_own_device", lambda state, wid: served.lab.ws.owner.device)  # B10 preflight
+    from orch.custody import select
+
+    # `host convenience on` moves a passphrase key first; these tests are about the lock and the hand-offs, so the key is
+    # taken as already held
+    monkeypatch.setattr(select, "status", lambda st, wid: {"custody": "convenience", "device": "d", "gen": 1})
 
 
 def run(*argv):

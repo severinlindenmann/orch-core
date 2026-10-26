@@ -52,7 +52,7 @@ jobs:
           {
             echo "windows-smoke on $(date -u +%FT%TZ), sha $GITHUB_SHA"
             echo "sync: ${{ steps.sync.outcome }}, tests: ${{ steps.tests.outcome }}"
-            tail -n 5 pytest.log 2>/dev/null || tail -n 20 sync.log
+            tail -n 3 pytest.log 2>/dev/null | cut -c1-300 || tail -n 20 sync.log
           } | tee summary.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()

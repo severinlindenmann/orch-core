@@ -409,3 +409,22 @@ def test_ensure_host_retries_enable_and_names_the_reason(monkeypatch):
     with pytest.raises(F.SetupError) as e:
         F._ensure_host({"ORCH_STATE_DIR": "/nonexistent-orch-state"}, io.StringIO())
     assert "nope: x" in e.value.message and len(calls) == 3
+
+
+def test_open_workspace_goes_to_the_dashboard_service_with_a_login(tmp, tmp_path):
+    from orch.install import cli as icli
+    from orch.install.state import load, save
+
+    ictx = icli.Ctx(env={"HOME": str(tmp_path)}, out=io.StringIO(), err=io.StringIO())
+    st = load(ictx.layout)
+    st["dashboard"] = {"port": 8151, "bind": "127.0.0.1", "url": "http://127.0.0.1:8151/", "service": "x"}
+    st["workspaces"] = [{"dir": "/w", "port": 8151}]
+    ictx.layout.ensure()
+    save(ictx.layout, st)
+    seen = []
+    ictx.dashboard_entry = lambda: ["orch-dashboard"]
+    ictx.mint_login = lambda argv, env: seen.append(argv) or "http://127.0.0.1:8151/#launch=abc&to=%2F"
+    assert icli.workspace_login_url(ictx, "/w") == "http://127.0.0.1:8151/#launch=abc&to=%2F"
+    assert seen == [["orch-dashboard"]]
+    ictx.dashboard_entry = lambda: None
+    assert icli.workspace_login_url(ictx, "/w") is None

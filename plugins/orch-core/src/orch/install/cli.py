@@ -76,6 +76,7 @@ class Ctx:
     runner: Runner | None = None
     token: Callable[[], str] = lambda: secrets.token_urlsafe(18)
     dashboard_entry: Callable[[], list[str] | None] = lambda: _dashboard_entry()
+    mint_login: Callable[[list[str], Mapping[str, str]], str | None] = lambda argv, env: _mint_login(argv, env)
     publish_setup: Callable[[str], str | None] = lambda url: None  # configure the workspace; returns a hint on failure
     layout: Layout = field(init=False)
 
@@ -92,6 +93,40 @@ def _dashboard_entry() -> list[str] | None:
     from orch.cli.dashboard import find_entry_point
 
     return find_entry_point(os.environ)
+
+
+def _mint_login(argv: list[str], env: Mapping[str, str]) -> str | None:
+    """Run ``orch-dashboard open --no-browser --emit-url-fd N`` and return the single-use login URL it writes."""
+    r, w = os.pipe()
+    try:
+        proc = subprocess.run(
+            [*argv, "open", "--no-browser", "--emit-url-fd", str(w)],
+            env=dict(env), pass_fds=(w,), capture_output=True, timeout=30,
+        )  # fmt: skip
+        os.close(w)
+        w = -1
+        data = os.read(r, 8192).decode(errors="replace") if proc.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        os.close(r)
+        if w >= 0:
+            os.close(w)
+    line = data.splitlines()[0].strip() if data.strip() else ""
+    return line if line.startswith("http://") else None
+
+
+def workspace_login_url(ctx: Ctx, directory: str) -> str | None:
+    """Setup's "Open your workspace": register the workspace, make sure the dashboard SERVICE (not the stopped launcher
+    of the setup page) runs, and return a fresh single-use login URL on it. ``None`` when there is no dashboard service."""
+    if add_workspace(ctx, directory) is None:
+        return None
+    dash = load(ctx.layout).get("dashboard")
+    entry = ctx.dashboard_entry()
+    if not dash or not entry:
+        return None
+    env = {"HOME": str(ctx.layout.home), "PATH": ctx.env.get("PATH", os.defpath), "ORCH_STATE_DIR": str(ctx.layout.root.parent)}
+    return ctx.mint_login(entry, env)
 
 
 def default_ctx(env: Mapping[str, str], out: TextIO, err: TextIO) -> Ctx:

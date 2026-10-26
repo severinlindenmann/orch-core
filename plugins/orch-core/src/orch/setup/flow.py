@@ -651,6 +651,13 @@ def main(
         if server_parts:
             out.write(f"orch setup: {role}: {', '.join(server_parts)} installed; now this workspace\n")
     denv = (make_env or default_env)(env)
+    if ictx is not None and denv.workspace_url is Env.workspace_url:
+        from orch.install import cli as icli
+
+        folder = cwd if cwd is not None else os.path.realpath(os.getcwd())
+        # the page's own origin (the setup server) stops with this command: send "Open your workspace" to the running
+        # dashboard service instead, with a fresh login; the page's relative "/" stays the fallback
+        denv.workspace_url = lambda wid: icli.workspace_login_url(ictx, folder) or "/"
     try:
         (ensure_host or _ensure_host)(env, err)
     except SetupError as e:

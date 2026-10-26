@@ -136,6 +136,7 @@ def serve(
     *,
     link_listen: str | None = None,
     dev_shared_machine: bool = False,
+    bind_all: bool = False,
     accounts: CO.Accounts | None = None,
     assigned: Callable[[str], bool] = CO.locally_assigned,
     api_host: str | None = None,
@@ -259,7 +260,9 @@ def serve(
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )
         )
-        web = WebServer.from_listen(api, cfg.web_listen)  # loopback, or one private IP (dev, plain http)
+        web = WebServer.from_listen(
+            api, cfg.web_listen, bind_all=bind_all
+        )  # loopback, or one private IP (dev, plain http)
         if not cfg.allowed_origins:  # loopback dev: the console is served from this very address
             api.allow_loopback_origin(f"http://{web.address[0]}:{web.address[1]}")
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
@@ -279,7 +282,7 @@ def serve(
         views=views.service,
         shares=shares,
         deliveries=deliveries,
-        host=host,
+        host="0.0.0.0" if bind_all and link_listen is not None else host,  # the address stays the validated one
         port=port,
         dev_mode=cfg.dev,
     )

@@ -58,6 +58,7 @@ class _BoundedServer(ThreadingHTTPServer):
     connection gets a bare 503 on the accept thread and is closed."""
 
     daemon_threads = True
+    request_queue_size = 128  # the Admin page opens 7 connections at once; the stdlib default of 5 resets some
 
     def __init__(self, addr: Any, handler: Any, max_workers: int) -> None:
         super().__init__(addr, handler)
@@ -88,11 +89,13 @@ class WebServer:
         self._thread: threading.Thread | None = None
 
     @classmethod
-    def from_listen(cls, api: WebApi, listen: str) -> WebServer:
+    def from_listen(cls, api: WebApi, listen: str, *, bind_all: bool = False) -> WebServer:
         """Bind like the link listener: ``host:port`` and loopback only (``serve.parse_listen``); the edge fronts it."""
         from ..serve import parse_web_listen
 
         host, port = parse_web_listen(listen)
+        if bind_all and host not in ("127.0.0.1", "::1"):
+            host = "0.0.0.0"  # listen on every interface; the validated address is only what is advertised
         return cls(api, host, port)
 
     @property

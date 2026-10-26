@@ -129,15 +129,23 @@ class HubKeys:
         self._op: KS.OpSigner | None = None
         self._hxk: ec.EllipticCurvePrivateKey | None = None
         self._meta: dict[str, Any] = {}
+        self.dev = DEV  # replaced by init (--real) or by meta.json when opened
 
     # --- creation / opening ---------------------------------------------------------------------------------------
 
     @classmethod
     def init(
-        cls, state: Path, *, relay_url: str | None = None, tls_spki_sha256: str | None = None, **kw: Any
+        cls,
+        state: Path,
+        *,
+        relay_url: str | None = None,
+        tls_spki_sha256: str | None = None,
+        dev: bool | None = None,
+        **kw: Any,
     ) -> HubKeys:
         """Create a new hub identity: HK_root, the first HK_op (op_seq 1), HXK, and the first card (card_seq 1)."""
         self = cls(state, **kw)
+        self.dev = DEV if dev is None else dev
         try:
             if self.state.exists() and any(self.state.iterdir()):
                 raise KeysError("already_initialised", "the state dir is not empty")
@@ -161,6 +169,7 @@ class HubKeys:
                 "card_seq": 0,
                 "relay_url": relay_url,
                 "tls_spki_sha256": tls_spki_sha256 or PLACEHOLDER_TLS,
+                "dev": self.dev,
             }
             self._root = self._sc["root"](root)
             self._hxk = hxk
@@ -182,7 +191,8 @@ class HubKeys:
             m = _load_json(self.state / "meta.json")
             if (
                 type(m) is not dict
-                or set(m) != {"v", "hub_id", "op_seq", "card_seq", "relay_url", "tls_spki_sha256"}
+                or set(m) != {"v", "hub_id", "op_seq", "card_seq", "relay_url", "tls_spki_sha256", "dev"}
+                or type(m["dev"]) is not bool
                 or m["v"] != 1
                 or type(m["op_seq"]) is not int
                 or m["op_seq"] < 1
@@ -191,6 +201,7 @@ class HubKeys:
             ):
                 raise KeysError("bad_state", "meta.json")
             self._meta = m
+            self.dev = m["dev"]
             root = _load_key(self.state / "hk_root.key")
             if H.hub_id(S.public_bytes(root)) != m["hub_id"]:
                 raise KeysError("bad_state", "hk_root.key does not match the hub id")
@@ -212,7 +223,7 @@ class HubKeys:
                     cert,
                     S.public_bytes(root),
                     now_ms=self._now(),
-                    dev_mode=DEV,
+                    dev_mode=self.dev,
                     revoked_op_certs=self.revoked_op_certs(),
                 )
             except H.Refused as r:
@@ -359,7 +370,7 @@ class HubKeys:
             return H.verify_card(
                 card,
                 now_ms=self._now(),
-                dev_mode=DEV,
+                dev_mode=self.dev,
                 pinned_root=self.hk_root_pub,
                 revoked_op_certs=self.revoked_op_certs(),
             )
@@ -391,11 +402,11 @@ class HubKeys:
             "hk_op_pub": b64u(op_key_pub),
             "issued_ms": now,
             "expires_ms": now + OP_LIFETIME_MS,
-            "dev": DEV,
+            "dev": self.dev,
         }
         signed = self._root.sign_object(o)
         try:
-            H.verify_op_cert(signed, self.hk_root_pub, now_ms=now, dev_mode=DEV)
+            H.verify_op_cert(signed, self.hk_root_pub, now_ms=now, dev_mode=self.dev)
         except H.Refused as r:
             raise KeysError(r.code, "own op cert failed verification") from None
         return signed
@@ -416,7 +427,7 @@ class HubKeys:
             "card_seq": card_seq,
             "reader": H.HUB_READER,
             "issued_ms": now,
-            "dev": DEV,
+            "dev": self.dev,
         }
         return signer.sign_card(o, op_cert)
 
@@ -441,7 +452,7 @@ class HubKeys:
         write_atomic(gen / "cert.json", _json_bytes(cert))
         write_atomic(gen / "card.json", _json_bytes(card))
         held = H.verify_card(
-            card, now_ms=now, dev_mode=DEV, pinned_root=self.hk_root_pub, revoked_op_certs=self.revoked_op_certs()
+            card, now_ms=now, dev_mode=self.dev, pinned_root=self.hk_root_pub, revoked_op_certs=self.revoked_op_certs()
         )
         # Reissue every UK and channel certificate under the new op cert (protocol §5, one op cert at a time).
         for u in users:
@@ -488,11 +499,11 @@ class HubKeys:
             "hub_id": self.hub_id,
             "cert_id": cert_id,
             "revoked_ms": self._now(),
-            "dev": DEV,
+            "dev": self.dev,
         }
         signed = self._root.sign_object(o)
         try:
-            H.verify_op_revoked(signed, self.hk_root_pub, dev_mode=DEV)
+            H.verify_op_revoked(signed, self.hk_root_pub, dev_mode=self.dev)
         except H.Refused as r:
             raise KeysError(r.code, "own revocation failed verification") from None
         path = self.state / "revoked" / f"{cert_id}.json"
@@ -543,11 +554,11 @@ class HubKeys:
             "uk_pub": b64u(uk_pub),
             "issued_ms": now,
             "expires_ms": now + UK_LIFETIME_MS,
-            "dev": DEV,
+            "dev": self.dev,
         }
         signed = op.sign_object(o)
         try:
-            H.verify_uk_cert(signed, held, now_ms=now, dev_mode=DEV, revoked_op_certs=self.revoked_op_certs())
+            H.verify_uk_cert(signed, held, now_ms=now, dev_mode=self.dev, revoked_op_certs=self.revoked_op_certs())
         except H.Refused as r:
             raise KeysError(r.code, "own UK certificate failed verification") from None
         return signed
@@ -568,11 +579,11 @@ class HubKeys:
             "factor": factor,
             "issued_ms": now,
             "expires_ms": now + CHANNEL_LIFETIME_MS,
-            "dev": DEV,
+            "dev": self.dev,
         }
         signed = op.sign_object(o)
         try:
-            H.verify_channel_cert(signed, held, now_ms=now, dev_mode=DEV, revoked_op_certs=self.revoked_op_certs())
+            H.verify_channel_cert(signed, held, now_ms=now, dev_mode=self.dev, revoked_op_certs=self.revoked_op_certs())
         except H.Refused as r:
             raise KeysError(r.code, "own channel certificate failed verification") from None
         return signed

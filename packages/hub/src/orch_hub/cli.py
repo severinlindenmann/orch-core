@@ -22,6 +22,9 @@ def _parser() -> argparse.ArgumentParser:
     ks = k.add_subparsers(dest="cmd", required=True)
     i = ks.add_parser("init", help="create HK_root, HK_op, HXK and the first card")
     i.add_argument("--relay-url")
+    i.add_argument(
+        "--real", action="store_true", help="a real hub (dev: false): real workspaces join it, dev ones are refused"
+    )
     i.add_argument("--tls-spki-sha256", help="b64u SHA-256 of the hub TLS SubjectPublicKeyInfo")
     ks.add_parser("rotate-op", help="new HK_op under the next op_seq; reissues card and all certificates")
     ks.add_parser(
@@ -50,6 +53,12 @@ def _parser() -> argparse.ArgumentParser:
         "--dev-shared-machine",
         action="store_true",
         help="dev only: allow --link-listen on a machine that has host/agent users (needs a dev card; network link, not separation)",
+    )
+    sv.add_argument(
+        "--bind-all",
+        action="store_true",
+        help="listen on every interface (0.0.0.0) instead of the one --link-listen/--web-listen address, which stays "
+        "the advertised one (a computer cannot dial its own overlay IP)",
     )
     sv.add_argument(
         "--publish-url",
@@ -154,6 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.invite,
                 link_listen=args.link_listen,
                 dev_shared_machine=args.dev_shared_machine,
+                bind_all=args.bind_all,
                 api_host=args.api_host,
                 web_listen=args.web_listen,
                 relay_url=args.relay_url,
@@ -219,7 +229,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         state = Path(args.state) if args.state else default_state_dir()
         if args.cmd == "init":
-            keys = HubKeys.init(state, relay_url=args.relay_url, tls_spki_sha256=args.tls_spki_sha256)
+            keys = HubKeys.init(
+                state, relay_url=args.relay_url, tls_spki_sha256=args.tls_spki_sha256, dev=not args.real
+            )
             out = keys.card()
         else:
             keys = HubKeys.open(state)

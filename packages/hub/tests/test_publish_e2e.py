@@ -1,8 +1,8 @@
 """D11 end to end: a host-signed request forwarded by the hub is accepted by a REAL orch-publish while the workspace
 is bound to the hub, and refused after unbound or when a header is tampered with.
 
-Needs an orch-publish checkout with its dependencies: set ORCH_PUBLISH_SRC to it (its .venv/bin/python is used).
-Without it the test is skipped; the contract-level equivalence is covered in test_publish_forwarder.py.
+Starts packages/publish in its own environment (`uv run --locked --project`); the first run syncs that venv.
+The contract-level equivalence is also covered in test_publish_forwarder.py.
 """
 
 from __future__ import annotations
@@ -19,21 +19,23 @@ from orch_hub.contract.canon import cj
 from orch_hub.contract.hub import Refused
 from orch_hub.publish import HttpPublishSync, HubPublish, PublishConfig
 
-SRC = os.environ.get("ORCH_PUBLISH_SRC")  # packages/publish with its .venv; opt-in (the server helper below is stale)
-pytestmark = [
-    pytest.mark.skipif(
-        not SRC or not (Path(SRC or "x") / ".venv/bin/python").exists(),
-        reason="ORCH_PUBLISH_SRC not set",
-    ),
-    pytest.mark.slow,
-]
+PUBLISH = Path(__file__).resolve().parents[2] / "publish"
+pytestmark = pytest.mark.slow
 
 
 @pytest.fixture
 def pub():
     p = subprocess.Popen(
-        [str(Path(SRC) / ".venv/bin/python"), str(Path(__file__).parent / "publish_e2e_server.py")],
-        cwd=SRC,
+        [
+            "uv",
+            "run",
+            "--locked",
+            "--project",
+            str(PUBLISH),
+            "python",
+            str(Path(__file__).parent / "publish_e2e_server.py"),
+        ],
+        cwd=PUBLISH,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,

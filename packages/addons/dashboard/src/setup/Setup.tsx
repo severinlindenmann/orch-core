@@ -146,6 +146,28 @@ export function suggestPrefix(name: string): string {
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
+/** Roll up display rows only; setup still uses the original server steps. */
+export function groupProgress(steps: Progress['steps']): Progress['steps'] {
+  const groups = [
+    { id: 'key', label: 'Your key', ids: ['keys', 'genesis', 'custody'] },
+    { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records'] },
+    { id: 'services', label: 'Background services', ids: ['register', 'runner', 'runner_grant'] },
+    { id: 'addons', label: 'Add-ons', ids: [] },
+    { id: 'approval', label: 'Approval', ids: ['flags'] },
+  ]
+  return groups.flatMap(({ id, label, ids }) => {
+    const members = steps.filter((step) => ids.includes(step.id) || (id === 'addons' && step.id.startsWith('addon:')))
+    if (!members.length) return []
+    const has = (status: Progress['steps'][number]['status']) => members.some((step) => step.status === status)
+    const status = has('failed') ? 'failed' : has('doing') ? 'doing'
+      : has('todo') && !has('done') ? 'todo'
+      : members.every((step) => step.status === 'skipped') ? 'skipped' : 'done'
+    return [{ id, label, status }]
+  })
+}
+function SetupFooter({ cancel, children }: { cancel?: React.ReactNode; children: React.ReactNode }) {
+  return <footer>{cancel}<div className="footer-actions">{children}</div></footer>
+}
 function duration(hours: number): string {
   if (hours > 8 && hours % 24 === 0) return `${hours / 24} ${hours === 24 ? 'day' : 'days'}`
   return `${hours} hours`
@@ -183,6 +205,7 @@ function FinishChoices({
   update,
   onContinue,
   onOpen,
+  cancel,
 }: {
   state: SetupState
   current: Current
@@ -190,6 +213,7 @@ function FinishChoices({
   update: (value: Partial<Profile>) => void
   onContinue: () => void
   onOpen: () => void
+  cancel: React.ReactNode
 }) {
   const on = state.addons.filter((a) => a.id === 'dashboard' || current.addons_on.includes(a.id))
   const canAdd = state.addons.filter((a) => a.kind === 'addon' && !a.required && !current.addons_on.includes(a.id))
@@ -290,7 +314,7 @@ function FinishChoices({
       ) : (
         <p>Nothing is missing.</p>
       )}
-      <footer>
+      <SetupFooter cancel={cancel}>
         {state.complete ? (
           <button className="primary" onClick={onOpen}>
             Open dashboard →
@@ -300,7 +324,7 @@ function FinishChoices({
             Continue →
           </button>
         )}
-      </footer>
+      </SetupFooter>
     </>
   )
 }
@@ -654,6 +678,22 @@ export function Setup({ api }: { api: SetupAPI }) {
       (review.tty_confirm && review.fingerprint?.length !== 3))
   const approvalCount = review ? review.items.length + (review.workspace ? 1 : 0) : 0
   const summary = review ? summarize(review) : { lines: [], unknown: false, odd: [] as string[] }
+  const cancel = !ended && !run && state && !state.complete && (
+    <button
+      className="cancel"
+      disabled={busy}
+      onClick={() =>
+        void act(async () => {
+          drop()
+          await api.call('cancel', {})
+          api.forget()
+          setEnded(true)
+        })
+      }
+    >
+      Finish setup later
+    </button>
+  )
   const next = (n: number) => (
     <button className="primary" onClick={() => setStep(n)}>
       Continue →
@@ -727,7 +767,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <p>orch keeps a to-do list of tickets that you and your AI helpers work on.</p>
               <p>Folder: <Inline>{state.dir_name}</Inline></p>
-              <details>
+              <details className="welcome-technical">
                 <summary>Technical details</summary>
                 <Raw>{state.dir}</Raw>
               </details>
@@ -741,9 +781,10 @@ export function Setup({ api }: { api: SetupAPI }) {
                   update={update}
                   onContinue={() => void act(approveProfile)}
                   onOpen={() => void act(finish)}
+                  cancel={cancel}
                 />
               ) : (
-                <footer>{next(1)}</footer>
+                <SetupFooter cancel={cancel}>{next(1)}</SetupFooter>
               )}
             </>
           )}
@@ -783,7 +824,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </span>
                 ))}
               </div>
-              <footer>
+              <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(0)}>Back</button>
                 <button
                   className="primary"
@@ -792,7 +833,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 >
                   Continue →
                 </button>
-              </footer>
+              </SetupFooter>
             </>
           )}
           {step === 2 && (
@@ -876,7 +917,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </label>
                 </div>
               )}
-              <footer>
+              <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(1)}>Back</button>
                 {offersGit && profile.git_init === undefined ? (
                   <button className="primary" disabled>
@@ -885,7 +926,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 ) : (
                   next(3)
                 )}
-              </footer>
+              </SetupFooter>
             </>
           )}
           {step === 3 && (
@@ -980,12 +1021,12 @@ export function Setup({ api }: { api: SetupAPI }) {
                   />
                 </label>
               )}
-              <footer>
+              <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(2)}>Back</button>
                 <button className="primary" onClick={() => void act(approveProfile)}>
                   Continue →
                 </button>
-              </footer>
+              </SetupFooter>
             </>
           )}
           {step === 4 && (
@@ -1036,7 +1077,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     ))}
                   </div>
                   <p>Only these three recovery words are checked. Five incorrect attempts end this session.</p>
-                  <footer>
+                  <SetupFooter cancel={cancel}>
                     <button
                       className="primary"
                       disabled={!saved || secrets.check_positions.some((n) => !words[String(n)]?.trim())}
@@ -1044,10 +1085,10 @@ export function Setup({ api }: { api: SetupAPI }) {
                     >
                       Confirm saved words →
                     </button>
-                  </footer>
+                  </SetupFooter>
                 </>
               ) : (
-                <button onClick={() => void act(getReview)}>Continue to review →</button>
+                <SetupFooter cancel={cancel}><button onClick={() => void act(getReview)}>Continue to review →</button></SetupFooter>
               )}
             </>
           )}
@@ -1064,12 +1105,12 @@ export function Setup({ api }: { api: SetupAPI }) {
                         <span className="addon-chips">
                           {f.value.map((v) => (
                             <span className="chip" key={v}>
-                              <Raw>{v}</Raw>
+                              <Inline>{v}</Inline>
                             </span>
                           ))}
                         </span>
                       ) : (
-                        <Raw>{f.value}</Raw>
+                        <Inline>{f.value}</Inline>
                       )}
                     </dd>
                   </Fragment>
@@ -1174,7 +1215,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               <p>
                 {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} approves the {approvalCount} items in the list above.
               </p>
-              <footer>
+              <SetupFooter cancel={cancel}>
                 <button
                   className="primary"
                   disabled={terminalReviewMissing}
@@ -1190,7 +1231,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 >
                   {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'}
                 </button>
-              </footer>
+              </SetupFooter>
             </>
           )}
         </fieldset>
@@ -1220,7 +1261,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           <p><small>Your Mac may say 'Background Items Added' for orch. That's expected. Leave it on.</small></p>
           <ol className="progress">
-            {progress?.steps.map((s) => (
+            {groupProgress(progress?.steps ?? []).map((s) => (
               <li key={s.id}>
                 <span>{s.label}</span>
                 <strong className={`status ${s.status}`} aria-label={`${s.label}: ${statusWord[s.status]}`}>
@@ -1245,18 +1286,20 @@ export function Setup({ api }: { api: SetupAPI }) {
                   {progress.retry.map((id) => state?.labels?.[id] ?? 'a setup step').join(', ')}
                 </p>
               )}
-              <button
-                onClick={() =>
-                  void act(async () => {
-                    await api.call('cancel', {})
-                    api.forget()
-                    setEnded(true)
-                    setRun(undefined)
-                  })
-                }
-              >
-                Finish setup later
-              </button>
+              <footer>
+                <button className="cancel"
+                  onClick={() =>
+                    void act(async () => {
+                      await api.call('cancel', {})
+                      api.forget()
+                      setEnded(true)
+                      setRun(undefined)
+                    })
+                  }
+                >
+                  Finish setup later
+                </button>
+              </footer>
             </>
           )}
           {progress?.done && !progress.error && (
@@ -1265,22 +1308,6 @@ export function Setup({ api }: { api: SetupAPI }) {
             </button>
           )}
         </section>
-      )}
-      {!ended && !run && state && !state.complete && (
-        <button
-          className="cancel"
-          disabled={busy}
-          onClick={() =>
-            void act(async () => {
-              drop()
-              await api.call('cancel', {})
-              api.forget()
-              setEnded(true)
-            })
-          }
-        >
-          Finish setup later
-        </button>
       )}
       {ended && (
         <p>

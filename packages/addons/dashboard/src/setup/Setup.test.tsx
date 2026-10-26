@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { plainReason, Setup, reviewFacts, summarize } from './Setup'
+import { groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -174,7 +174,7 @@ function fake(
   return { api: new SetupAPI('demo-not-a-real-token', fetcher as typeof fetch), calls, fetcher }
 }
 async function approval() {
-  await screen.findByRole('heading', { name: 'Set up your workspace' })
+  await screen.findByRole('button', { name: 'Continue →' })
   for (let i = 0; i < 3; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
 }
 async function reveal() {
@@ -639,7 +639,7 @@ test('the ready list gives every status an icon and a word, never colour alone',
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
-  const running = await screen.findByLabelText('Create workspace: Running')
+  const running = await screen.findByLabelText('Your key: Running')
   expect(running).toHaveClass('status', 'doing')
   expect(running).toHaveTextContent('Running')
 })
@@ -1062,4 +1062,38 @@ test('reviewFacts builds the short card in plain words from the review', () => {
   expect(facts.find((f) => f.label === 'Agents')!.value).toBe('may work for 3 days')
   expect(facts.find((f) => f.label === 'Add-ons')).toBeUndefined()
   expect(facts.find((f) => f.label === 'Folder')!.value).toBe('p')
+})
+
+
+test('progress groups roll up done and failed steps without changing server steps', () => {
+  const steps = [
+    { id: 'keys', label: 'Keys', status: 'done' as const },
+    { id: 'genesis', label: 'Sign', status: 'done' as const },
+    { id: 'custody', label: 'Custody', status: 'skipped' as const },
+    { id: 'settings', label: 'Settings', status: 'done' as const },
+    { id: 'register', label: 'Host', status: 'done' as const },
+    { id: 'runner', label: 'Runner', status: 'failed' as const },
+    { id: 'addon:dashboard', label: 'Dashboard', status: 'done' as const },
+    { id: 'flags', label: 'Flags', status: 'done' as const },
+  ]
+  expect(groupProgress(steps)).toEqual([
+    { id: 'key', label: 'Your key', status: 'done' },
+    { id: 'workspace', label: 'Your workspace', status: 'done' },
+    { id: 'services', label: 'Background services', status: 'failed' },
+    { id: 'addons', label: 'Add-ons', status: 'done' },
+    { id: 'approval', label: 'Approval', status: 'done' },
+  ])
+  expect(steps).toHaveLength(8)
+  expect(steps[5].status).toBe('failed')
+  expect(groupProgress([])).toEqual([])
+})
+
+test.each([
+  [['todo', 'done'], 'done'],
+  [['todo', 'skipped'], 'todo'],
+  [['skipped', 'skipped'], 'skipped'],
+  [['doing', 'done'], 'doing'],
+  [['doing', 'failed'], 'failed'],
+] as const)('progress status precedence for %s', (statuses, expected) => {
+  expect(groupProgress(statuses.map((status, i) => ({ id: ['keys', 'genesis'][i], label: '', status })))[0].status).toBe(expected)
 })

@@ -430,20 +430,15 @@ class Run:
 
 ECHO = {"done": "done:", "failed": "FAILED:", "skipped": "skipped:"}
 STEP_LABELS = {
-    "keys": "Making your keys",
-    "genesis": "Signing the workspace",
-    "register": (
-        "Registering it with the host. A Mac may now show \u201cBackground Items Added\u201d for orch-host. "
-        "That is expected, leave it on"
-    ),
+    "keys": "Creating your key",
+    "genesis": "Saving your approval",
+    "register": "Starting orch in the background",
     "git": "Making the folder a git repository",
-    "runner": (
-        "Turning on dashboard execution. A Mac may show \u201cBackground Items Added\u201d for orch-runner. Leave it on"
-    ),
+    "runner": "Letting the dashboard run agents",
     "settings": "Saving the workspace settings",
     "flags": "Turning on one-click approval",
-    "runner_grant": "Giving this machine's runner agent access",
-    "custody": "Moving your key to one-click custody",
+    "runner_grant": "Letting agents start on this computer",
+    "custody": "Storing your key for one-click approval",
     "records": "Setting up the records history on this computer",
 }
 HELLO_SECONDS = 30.0

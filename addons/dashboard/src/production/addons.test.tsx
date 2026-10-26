@@ -17,6 +17,7 @@ const ROWS = [
   row({ id: 'start-agent', title: 'Start agents', state: 'on' }),
   row({ id: 'terminals', title: 'Terminals', state: 'off', blocked: 'Needs dashboard execution first. Turn it on here, then switch this on.', runner_switch: true }),
   row({ id: 'worktrees', title: 'Worktrees', state: 'off' }),
+  row({ id: 'wiki', title: 'Wiki', state: 'off' }),
 ]
 const state = useFakeHost(() => [workspace({ id: ID, addOns: data(ROWS) })])
 const open = async () => {
@@ -26,7 +27,7 @@ const open = async () => {
 
 it('lists every add-on with its description and On or Off; the dashboard is always on and has no switch', async () => {
   const list = await open()
-  expect(within(list).getAllByRole('listitem')).toHaveLength(4)
+  expect(within(list).getAllByRole('listitem')).toHaveLength(5)
   expect(within(screen.getByTestId('addon-dashboard')).getByText('Always on')).toBeInTheDocument()
   expect(within(screen.getByTestId('addon-dashboard')).queryByRole('switch')).toBeNull()
   expect(screen.queryByTestId('addon-start-agent-state')).toBeNull() // no state chip: the switch says it
@@ -61,6 +62,15 @@ it('turning one on is a signed hand-off: the typed action opens the review, noth
   expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'worktrees' }])
   expect(dialog).toHaveTextContent('Turn on an add-on')
   expect(dialog).toHaveTextContent('In your terminal you type worktrees~aaaaaaaa to continue.')
+})
+
+it('feedback 3.3: the Wiki switch opens the sign step (it was missing from the page list)', async () => {
+  const user = userEvent.setup()
+  await open()
+  await user.click(screen.getByRole('switch', { name: 'Wiki' }))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  await within(dialog).findByTestId('handoff-command', {}, T)
+  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'wiki' }])
 })
 
 it('turning one off is a signed hand-off too', async () => {

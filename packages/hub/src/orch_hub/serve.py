@@ -264,7 +264,11 @@ def serve(
             api, cfg.web_listen, bind_all=bind_all
         )  # loopback, or one private IP (dev, plain http)
         if not cfg.allowed_origins:  # loopback dev: the console is served from this very address
-            api.allow_loopback_origin(f"http://{web.address[0]}:{web.address[1]}")
+            # --bind-all makes web.address 0.0.0.0: allow the advertised address (and loopback: a computer dials itself there)
+            adv = parse_web_listen(cfg.web_listen)[0]
+            api.allow_loopback_origin(f"http://{adv}:{web.address[1]}")
+            if adv not in ("127.0.0.1", "::1"):
+                api.allow_origin(f"http://127.0.0.1:{web.address[1]}")
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(

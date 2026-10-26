@@ -44,7 +44,7 @@ class AccessSnapshots:
             revoked = a.revoked_channels()
             mp = a.market_policy()
             fp = hashlib.sha256(
-                cj({"roles": roles, "revoked": revoked, "op": op_cert_id, "policy": mp["hash"]})
+                cj({"roles": roles, "revoked": revoked, "op": op_cert_id, "policy": mp["hash"], "dev": dev_of(self._keys)})
             ).hexdigest()
             row = a.snapshot_row(workspace_id)
             if row is not None and row[1] == fp:

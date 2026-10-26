@@ -124,7 +124,15 @@ ROOT_FILES = frozenset({"favicon.svg", "loading.css"})
 
 
 def create_app(
-    port: int, gateway=None, auth=None, static=None, setup_proxy=None, remote=None, remote_problem=None, passkeys=None
+    port: int,
+    gateway=None,
+    auth=None,
+    static=None,
+    setup_proxy=None,
+    remote=None,
+    remote_problem=None,
+    passkeys=None,
+    alt_hosts=(),
 ):
     """``remote``: the front listener's policy (`remote_policy`), or None when remote access is off. One app serves both
     listeners; the server that accepted the connection says which policy applies (`scope["orch_listener"]`, set by
@@ -151,7 +159,7 @@ def create_app(
     app.state.live = live
     app.state.term_tickets = tickets
     app.state.remote_problem = remote_problem
-    app.state.policies = {p.name: p for p in (loopback_policy(port), *([remote] if remote else []))}
+    app.state.policies = {p.name: p for p in (loopback_policy(port, alt_hosts), *([remote] if remote else []))}
     app.add_middleware(
         Security, auth=auth, policy=app.state.policies[LOOPBACK], registry=app.state.policies, router=app.router
     )

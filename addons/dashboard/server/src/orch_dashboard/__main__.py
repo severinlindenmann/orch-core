@@ -8,6 +8,7 @@ import functools
 import getpass
 import hashlib
 import hmac
+import ipaddress
 import html
 import json
 import math
@@ -409,18 +410,32 @@ def bind_listener(wanted):
     return listener
 
 
-def serve(lock_held=False, port=None):
+def serve(lock_held=False, port=None, listen=None):
     refuse_agent()
     run_dir(state_dir())
     directory = state_dir() / "dashboard"
     with private_directory(directory) as fd:
         if not lock_held:
             with locked(fd) as lock_fd:
-                return _serve(directory, lock_fd=lock_fd, port=port)
-        return _serve(directory, port=port)
+                return _serve(directory, lock_fd=lock_fd, port=port, listen=listen)
+        return _serve(directory, port=port, listen=listen)
 
 
-def _serve(directory, lock_fd=None, port=None):
+def network_address(listen, port):
+    """``serve --listen ADDR``: one literal IP of this computer (no wildcard, no name), served on the same port as the
+    loopback listener, over plain http (dev prototype: the owner reaches the dashboard over NetBird)."""
+    try:
+        ip = ipaddress.ip_address(listen)
+    except ValueError:
+        raise RuntimeError("--listen takes one literal IP address of this computer") from None
+    if ip.is_unspecified or ip.is_multicast:
+        raise RuntimeError("--listen refuses a wildcard address")
+    if not port:
+        raise RuntimeError("--listen needs --port (the loopback and the network listener share it)")
+    return str(ip)
+
+
+def _serve(directory, lock_fd=None, port=None, listen=None):
     # The digest of the code this process LOADED, taken now and never again: an in-place reinstall changes the files
     # on disk, and a server that hashed them at request time would report the new release while running the old code.
     release = code_digest()
@@ -452,8 +467,24 @@ def _serve(directory, lock_fd=None, port=None):
         raise
     listener.listen(128)
     port = listener.getsockname()[1]
+    net_listener = None
+    network = None
+    if listen:
+        try:
+            addr = network_address(listen, wanted)
+            net_listener = socket.socket(socket.AF_INET6 if ":" in addr else socket.AF_INET, socket.SOCK_STREAM)
+            net_listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            net_listener.bind((addr, port))
+            net_listener.listen(128)
+        except BaseException:
+            listener.close()
+            if net_listener is not None:
+                net_listener.close()
+            raise
+        network = f"{addr}:{port}"
     front = None
     front_path = None
+    net_server = net_thread = None
     try:
         if remote:
             try:
@@ -467,7 +498,12 @@ def _serve(directory, lock_fd=None, port=None):
                     else (f"remote.not_configured: the front socket could not be opened ({exc.__class__.__name__})"),
                 )
         app = create_app(
-            port, gateway=gateway, auth=auth, remote=remote[0] if remote else None, remote_problem=remote_problem
+            port,
+            gateway=gateway,
+            auth=auth,
+            remote=remote[0] if remote else None,
+            remote_problem=remote_problem,
+            alt_hosts=(network,) if network else (),
         )
     except BaseException:
         listener.close()
@@ -516,11 +552,15 @@ def _serve(directory, lock_fd=None, port=None):
                     if caller == 0 and req != {"command": "enroll"}:
                         continue  # root (sudo orch remote ...) may mint an enrollment code and do nothing else here
                     if req == {"command": "launch"}:
-                        conn.sendall(encode({**auth.launch(port), "redirect": str(redirects)}))
+                        conn.sendall(encode({**auth.launch(port), "redirect": str(redirects), "network": network}))
                     elif req == {"command": "launch", "kind": "tunnel"}:
-                        conn.sendall(encode({**auth.launch(port, tunnel=True), "redirect": str(redirects)}))
+                        conn.sendall(
+                            encode({**auth.launch(port, tunnel=True), "redirect": str(redirects), "network": network})
+                        )
                     elif req == {"command": "launch", "kind": "setup"}:
-                        conn.sendall(encode({**auth.launch(port, setup=True), "redirect": str(redirects)}))
+                        conn.sendall(
+                            encode({**auth.launch(port, setup=True), "redirect": str(redirects), "network": network})
+                        )
                     elif req == {"command": "enroll"}:
                         # Root only: a same-UID process (an agent in tier A) could otherwise mint a code, register its
                         # own passkey and keep remote access. The code never goes to the person's own UID.
@@ -532,6 +572,8 @@ def _serve(directory, lock_fd=None, port=None):
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
                         server.should_exit = True
+                        if net_server is not None:
+                            net_server.should_exit = True
                         if front_server is not None:
                             front_server.should_exit = True
                         # Free the control socket now, not after the shutdown: until then a launcher would connect
@@ -571,8 +613,14 @@ def _serve(directory, lock_fd=None, port=None):
                 app.state.remote_problem = "remote.not_configured: the front socket did not start"
                 close_front(front, front_path)
                 front = front_server = front_thread = None
+        if net_listener is not None:
+            net_server = uvicorn.Server(server_config(app, front=True))
+            net_thread = threading.Thread(target=net_server.run, kwargs={"sockets": [net_listener]}, daemon=True)
+            net_thread.start()
         server.run(sockets=[listener])
     finally:
+        if net_listener is not None and net_server is not None:
+            net_server.should_exit = True
         server.should_exit = True
         if front_server is not None:
             front_server.should_exit = True
@@ -582,6 +630,10 @@ def _serve(directory, lock_fd=None, port=None):
             front_thread.join(timeout=GRACE + 2)
         close_front(front, front_path)
         listener.close()
+        if net_thread is not None:
+            net_thread.join(timeout=GRACE + 2)
+        if net_listener is not None:
+            net_listener.close()
 
 
 def safe_path(value):
@@ -722,12 +774,14 @@ def control_or_start(directory, command, kind=None):
     return launch
 
 
-def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False):
+def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False, network=False):
     refuse_agent()  # before anything is started or minted
     path = safe_path(path)
     kind = "setup" if path == "/setup" else None  # setup's nonce opens no normal session
     headless = is_headless()
-    if kind is None and print_url and headless:
+    if network:
+        kind = kind or "tunnel"  # a 5 min code: it is opened on another computer
+    elif kind is None and print_url and headless:
         kind = "tunnel"  # a 5 min code: the person needs time to open the tunnel
     if emit_url_fd is not None:
         check_url_fd(emit_url_fd)  # before anything is started or minted
@@ -750,6 +804,10 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
             time.sleep(0.05)
     fragment = urllib.parse.urlencode({"launch": launch["code"], "to": path})
     url = f"http://127.0.0.1:{launch['port']}/#{fragment}"
+    if network:
+        if not launch.get("network"):
+            raise RuntimeError("this dashboard has no network address (it was started without --listen)")
+        url = f"http://{launch['network']}/#{fragment}"
     if print_url:
         left = math.ceil(float(launch["expires_at"]) - time.time())  # what the server really granted
         print(
@@ -757,7 +815,7 @@ def open_dashboard(path="/", print_url=False, emit_url_fd=None, no_browser=False
             if left >= 60
             else f"Single-use dashboard link; expires in {max(left, 0)} s."
         )
-        if headless:
+        if headless and not network:
             print(f"On your own computer, first run:  {tunnel_line(launch['port'])}")
             print("then open this link in its browser:")
         print(url)
@@ -864,6 +922,8 @@ def main():
     parser.add_argument(
         "--port", type=int, help="serve on this loopback port (default: the port file, else fixed when headless)"
     )
+    parser.add_argument("--listen", help="serve: also listen on this literal IP (same --port), plain http (dev)")
+    parser.add_argument("--network", action="store_true", help="open/--print-url: a link for the --listen address")
     parser.add_argument("--stop", action="store_true")
     parser.add_argument("--launcher-lock", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -871,7 +931,7 @@ def main():
         if not (args.stop or args.command == "stop"):
             refuse_agent()  # stop passes: it mints nothing and only ends the person's own server
         if args.command == "serve" and not args.stop:
-            return serve(args.launcher_lock, port=args.port)
+            return serve(args.launcher_lock, port=args.port, listen=args.listen)
         if args.stop or args.command == "stop":
             control(state_dir() / "dashboard/ctl.sock", "stop")
         elif args.command == "up":
@@ -880,7 +940,11 @@ def main():
             restart_dashboard(args.path, print_url=args.print_url)
         else:
             open_dashboard(
-                args.path, print_url=args.print_url, emit_url_fd=args.emit_url_fd, no_browser=args.no_browser
+                args.path,
+                print_url=args.print_url,
+                emit_url_fd=args.emit_url_fd,
+                no_browser=args.no_browser,
+                network=args.network,
             )
     except AgentRefused as exc:
         print(f"orch-dashboard: {exc}", file=sys.stderr)

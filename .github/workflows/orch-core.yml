@@ -13,33 +13,19 @@ concurrency:  # a newer push to the same PR cancels the run still going; draft-e
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 defaults:
   run:
-    working-directory: plugins/orch-core
+    working-directory: packages/core
 jobs:
-  mode:
-    # Decides from the PR's LIVE draft state, not the event payload: a push and `gh pr ready` can race, and the payload
-    # then says draft for the head that is in fact ready (23 Oct: #1056 got a skipped run, gate green, no tests).
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    defaults:
-      run:
-        working-directory: .
-    outputs:
-      heavy: ${{ steps.m.outputs.heavy }}
-    steps:
-      - id: m
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          heavy=true
-          if [ "${{ github.event_name }}" = pull_request ]; then
-            d=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}" -q .draft)
-            [ "$d" = true ] && heavy=false
-          fi
-          echo "draft=${d:-n/a} heavy=$heavy"; echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+  changes:
+    # the workflow runs for every PR to develop (the ruleset needs "core gate" on each); the jobs run when core, a
+    # contract it reads, the add-ons it scans or the release/dev scripts changed
+    name: core changes
+    uses: ./.github/workflows/_changes.yml
+    with:
+      pattern: '^(packages/core/|packages/addons/|contracts/|docs/architecture/|scripts/|\.claude-plugin/|\.github/plugin/|\.github/workflows/(orch-core|_changes)\.yml$)'
   tests:
     name: core tests (${{ matrix.shard }}/3)
-    needs: mode
-    if: needs.mode.outputs.heavy == 'true'
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -52,8 +38,20 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-          cache-dependency-glob: plugins/orch-core/uv.lock
+          cache-dependency-glob: packages/core/uv.lock
       - run: uv sync --locked
+      - name: Pinned Caddy for tests/setup/test_caddy_validate.py
+        # Every slice, not one: the slices hold whole modules, so the module may land in any of them, and in CI a
+        # missing ORCH_CADDY_BIN fails the test. v2.11.7 (not a pre-release); the checksum is the SHA-512 line for
+        # caddy_2.11.7_linux_amd64.tar.gz in the release's own caddy_2.11.7_checksums.txt.
+        run: |
+          set -euo pipefail
+          url=https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/caddy.tar.gz" "$url"
+          echo "a7a433a1b133efc3c8d10eb0b99d52a24b5ef5c322dc77f5282182b1c0402139ab83f3a99f0c52409df77d20123fb0b523edad8a66d8f5e49136197bf61ef0e7  $RUNNER_TEMP/caddy.tar.gz" | sha512sum -c -
+          mkdir "$RUNNER_TEMP/caddy"
+          tar -xzf "$RUNNER_TEMP/caddy.tar.gz" -C "$RUNNER_TEMP/caddy" caddy
+          echo "ORCH_CADDY_BIN=$RUNNER_TEMP/caddy/caddy" >> "$GITHUB_ENV"
       - if: matrix.shard == 1  # the lint is the same in every slice
         run: uv run ruff check
       - if: matrix.shard == 1
@@ -67,6 +65,8 @@ jobs:
     # D79: orch core always works standalone. No hub code imported anywhere in core or add-ons, and a fresh workspace
     # works with the network down. Runs on drafts too (cheap, a few seconds); needs no secret and no network.
     name: standalone (D79)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -75,15 +75,15 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-          cache-dependency-glob: plugins/orch-core/uv.lock
+          cache-dependency-glob: packages/core/uv.lock
       - run: uv sync --locked
       - run: uv run pytest tests/test_standalone_d79.py -q -m ""
   perf-schema:
     # the slow marker holds, among others, the check that all 52 operation declarations validate against the
     # operation schema (startup does not validate); xdist, so it is quick
     name: core slow tests
-    needs: mode
-    if: needs.mode.outputs.heavy == 'true'
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -92,7 +92,7 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-          cache-dependency-glob: plugins/orch-core/uv.lock
+          cache-dependency-glob: packages/core/uv.lock
       - run: uv sync --locked
       - run: uv run pytest -q -m slow -n auto --deselect tests/ops/test_perf.py --deselect tests/store/test_perf.py --deselect tests/model/test_perf.py
         env:
@@ -100,8 +100,8 @@ jobs:
   perf-budgets:
     # the latency budgets run alone, in their own job: nothing else on the machine while they measure
     name: core latency budgets
-    needs: mode
-    if: needs.mode.outputs.heavy == 'true'
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true' && needs.changes.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -110,19 +110,19 @@ jobs:
         with:
           python-version: "3.14"
           enable-cache: true
-          cache-dependency-glob: plugins/orch-core/uv.lock
+          cache-dependency-glob: packages/core/uv.lock
       - run: uv sync --locked
       - run: uv run pytest -q -m slow -p no:xdist tests/ops/test_perf.py tests/store/test_perf.py tests/model/test_perf.py
   gate:
     # the one check a ruleset requires: it reports on every PR, also when the jobs above are skipped
     name: core gate
     if: always()
-    needs: [mode, tests, perf-schema, perf-budgets]  # mode: a failed draft check fails the gate
+    needs: [changes, tests, perf-schema, perf-budgets, standalone]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     defaults:
       run:
-        working-directory: .  # the workflow default is plugins/orch-core, which this job never checks out
+        working-directory: .  # the workflow default is packages/core, which this job never checks out
     steps:
       - env:
           RESULTS: ${{ join(needs.*.result, ' ') }}

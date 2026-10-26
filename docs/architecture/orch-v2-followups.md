@@ -105,7 +105,7 @@ rang), `addon_silent` (the add-on event never came). A time follow-up has no dea
 
 ## 7. Where the pieces live
 
-* Pure rules: `plugins/orch-core/src/orch/model/followups.py` (no clock, no I/O, no engine import).
+* Pure rules: `packages/core/src/orch/model/followups.py` (no clock, no I/O, no engine import).
 * Engine wiring: event types, schemas, `ACTOR_RULES`, emits, derived G' in `ws.grants`, `authorize_agent` follow-up
   branch (T6, T7).
 * Host timer `host/followups.py` (index from ledger, ticks, jump detection, triggers, budgets of 2 at once and

@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.not_allowed",
+    "message": "the hub does not allow this marketplace, or its policy cannot be verified",
+    "hint": "ask the hub admin, or reconnect: orch hub status --refresh",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

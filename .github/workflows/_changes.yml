@@ -1,0 +1,47 @@
+name: changes
+# Reusable: which files the PR (or the pushed commit) changed, and whether any matches `pattern` (an extended regex over
+# repository-relative paths). The caller's gate job needs this, so every PR gets its gate check even when the jobs are skipped.
+on:
+  workflow_call:
+    inputs:
+      pattern:
+        type: string
+        required: true
+    outputs:
+      relevant:
+        value: ${{ jobs.files.outputs.relevant }}
+      heavy:
+        value: ${{ jobs.files.outputs.heavy }}
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  files:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.files.outputs.relevant }}
+      heavy: ${{ steps.files.outputs.heavy }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.sha }}
+          PATTERN: ${{ inputs.pattern }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = pull_request ]; then
+            files="$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')"
+          else
+            files="$(gh api --paginate "repos/$REPO/commits/$SHA" --jq '.files[].filename')"
+          fi
+          if grep -Eq "$PATTERN" <<<"$files"; then relevant=true; else relevant=false; fi
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+          # the PR's LIVE draft state, not the event payload: a push and `gh pr ready` can race (23 Oct: #1056)
+          heavy=true
+          if [ "$EVENT" = pull_request ] && [ "$(gh api "repos/$REPO/pulls/$PR" --jq .draft)" = true ]; then heavy=false; fi
+          echo "relevant=$relevant heavy=$heavy"
+          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"

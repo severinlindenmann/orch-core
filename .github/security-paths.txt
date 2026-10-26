@@ -1,0 +1,28 @@
+# Paths where a change needs the Opus security review (crypto, keys, custody, auth, protocol, pairing, guard, permits, charter).
+# One extended regex per line over repository-relative paths; `#` lines and blank lines are ignored. Read by
+# .github/workflows/opus-review-label.yml. Keep in step with the globs in .github/CODEOWNERS.
+^contracts/
+^\.github/(workflows/|CODEOWNERS|security-paths\.txt)
+^scripts/release/
+# core: crypto, keys, custody, signing, identity and pairing, wire protocol, hub client, grants, runner/permits, guard hooks
+^packages/core/src/orch/(crypto|custody|click|identity|canon|wsproto|hubclient|land|runner|publishclient)/
+^packages/core/src/orch/host/(auth|admission|custody|signer|isolation|ownership|grantoff|runnergrants|hubproof|hubkeys|hubsign|convenience|breakglass|pins|control|peer|relayid)[^/]*\.py$
+^packages/core/src/orch/model/(authz|policies)\.py$
+^packages/core/src/orch/schema/schemas/event\.(grant|addon\.granted|device|key|member)
+^packages/core/src/orch/(gitsafe|devsandbox|rootclaim|tokenshape)\.py$
+^packages/core/(hooks|skills)/
+^packages/core/src/orch/instructions/
+^packages/core/src/orch/market/(author|verify|download|untar|install)[^/]*\.py$
+# hub, relay, publish: keys, accounts, cards, proto
+^packages/hub/src/orch_hub/(keys|contract|custodial|access|link|channels/pushkeys\.py|tlsid\.py)
+^packages/relay/src/orch_relay/(proto/|hub_accounts\.py|push_config\.py|apns\.py)
+^packages/publish/pubsrv/(auth|relay_proto|hub_path|hub_admin[^/]*|registry)\.py$
+# phone: protocol and custody
+^packages/mobile/OrchKit/Sources/(OrchProtocol|OrchCustody)/
+# dashboard: sign, passkeys, pairing, guard
+^packages/addons/dashboard/server/src/orch_dashboard/(auth|click_signer|passkey_routes|handoff)[^/]*\.py$
+^packages/addons/dashboard/server/src/orch_dashboard/explorer/guard\.py$
+^packages/addons/dashboard/src/api/(sealed|grants|pairing|click|agents)\.ts$
+# the add-on charter and permit terms
+^packages/addons/[^/]+/orch-addon\.json$
+^docs/architecture/(addon-api|orch-v2-marketplace|orch-v2-portable-custody|orch-v2-sealed-field)\.md$

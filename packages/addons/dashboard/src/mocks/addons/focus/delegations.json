@@ -1,0 +1,23 @@
+{
+  "ticket": "DEMO-0042",
+  "supported": true,
+  "sessions": [
+    {
+      "run": "r_01J0000000000000000000000A", "session": "s_main", "harness": "claude-code", "model": "sonnet", "state": "running",
+      "policy": null, "files": ["src/api/invite.py"], "visibility": { "available": true, "reason": null },
+      "children": [
+        {
+          "id": "cc:agent-a04b67fe", "parent_run": "r_01J0000000000000000000000A", "title": "Write boundary tests", "spawned_by": "agent",
+          "harness": "claude-code", "model": "sonnet", "depth": 1, "state": "done", "started_at": "2026-10-26T10:01:00Z",
+          "ended_at": "2026-10-26T10:04:00Z", "run": null, "transcript": { "run": "r_01J0000000000000000000000A", "child": "agent-a04b67fe" },
+          "files": ["tests/test_invite.py"]
+        },
+        {
+          "id": "cc:agent-b19c33d0", "parent_run": "r_01J0000000000000000000000A", "title": "Check tenant isolation", "spawned_by": "agent",
+          "harness": "claude-code", "model": "sonnet", "depth": 1, "state": "running", "started_at": "2026-10-26T10:05:00Z",
+          "ended_at": null, "run": null, "transcript": { "run": "r_01J0000000000000000000000A", "child": "agent-b19c33d0" }, "files": []
+        }
+      ]
+    }
+  ]
+}

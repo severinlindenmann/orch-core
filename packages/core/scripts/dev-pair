@@ -1,0 +1,1744 @@
+#!/usr/bin/env python3
+"""dev-pair: a throwaway host, workspace and primary linked to a relay, with a pairing link for a test phone.
+
+    uv run scripts/dev-pair up   --root DIR [--relay local|https://relay.dev.severin.io] [--invite-file F]
+                                 [--scopes look,decide] [--open-simulator] [--expect-code-from FIFO]
+                                 [--json-fd N] [--sim-convenience]
+    uv run scripts/dev-pair down --root DIR [--keep]
+    uv run scripts/dev-pair ask --root DIR --nonce N
+    uv run scripts/dev-pair check-answer --root DIR --nonce N [--timeout S]
+
+Specified in orch-v2-host 11A.15.11 (``up``/``down``, the sandbox, the allow-list environment, the codes) and 11A.17
+(``--sim-convenience``: the reserved ``SBX`` prefix, the manifest's person and workspaces, the workspace marker,
+``dev.json``, the level-1 declarations, ``orch host run --foreground --dev-sim-convenience``).
+
+**Safety, in one place.** ``--root`` is created exclusively (0700; an existing path is refused) under a parent that is
+owned by this user, not group- or world-writable, with no symbolic link in the path; a manifest ``<root>/.orch-dev-
+sandbox`` pins the root's ``st_dev``/``st_ino`` and records every process started; children get an **allow-list**
+environment (never the parent's); secrets are 0600 files under ``<root>/secrets``; the pairing link is written to
+``<root>/pair.json`` (0600) and the optional ``--json-fd`` pipe, never to stdout; codes are typed by a human at this
+terminal or read from a validated FIFO, bound to the offer id and phase; ``down`` signals **only** recorded processes,
+re-validated (pid, start time, executable, working directory inside the root) just before each signal, SIGTERM then
+SIGKILL after 10 s; it never uses ``pkill`` or ``simctl erase``/``delete``. Refused: an origin outside the allow-list,
+running as root, under ``ORCH_GRANT``, with a host already listening on the root. **The manifest is accident
+prevention, not containment**: same-UID code can forge it.
+
+``ask`` and ``check-answer`` are the end-to-end helpers (batch B3): ``ask`` plays the agent in a running sandbox (the
+host's ``orch grant`` typed with the sandbox's own passphrase, then ``orch new`` and an ``orch ask`` with the one
+option ``e2e_ok_<N>``) and
+prints ``{"ticket", "question", "nonce"}``; ``check-answer`` reads the sandbox workspace's own event logs until a
+``question.answered`` with the option ``e2e_ok_<N>`` for that question, signed by a paired device that is neither the
+owner's nor the primary's. Both print JSON on stdout and never a secret (the grant stays in this process).
+
+The owner's side (account, primary certificate, cert-request queue) and the reference phone are the test tree's
+(``tests/relay/owner.py``, ``tests/relay/phone.py``); this script imports the owner from there, so it runs from a
+checkout (``packages/core``), never from a packaged install.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import errno
+import json
+import os
+import re
+import secrets
+import select
+import shutil
+import signal
+import socket
+import stat
+import subprocess
+import sys
+import threading
+import time
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+PLUGIN = Path(__file__).resolve().parents[1]
+MANIFEST = ".orch-dev-sandbox"
+LOCAL_RELAY = "local"
+DEV_RELAY = "https://relay.dev.severin.io"
+SOCKET_LIMIT = 100  # orch.host.listener.SOCKET_PATH_LIMIT
+KILL_GRACE_S = 10.0
+REVIEW_DELAY_S = 0.5  # the review prompt flushes typed-ahead input (TCIFLUSH) after it paints: answer after that
+SAS_WAIT_S = 600.0  # how long the SAS prompt waits for a code before it rejects
+RUN_MODE = 0o711  # the host checks its run directory for exactly this (orch.host.listener)
+MAX_PUBLICATION = 4 * 1024 * 1024
+ORIGIN_ALLOW = (re.compile(r"http://127\.0\.0\.1:[1-9][0-9]{0,4}"), re.compile(r"http://localhost:[1-9][0-9]{0,4}"),
+                re.compile(re.escape(DEV_RELAY)))  # fmt: skip
+TOP_ENTRIES = ("home", "state", "run", "secrets", "logs", "work", "tmp", "ws", "owner-state", "relay-data")
+_DIR = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+_CODE_LINE = re.compile(r"([0-9a-f]{32}) (sas|cert_code) ([A-Za-z0-9]{6})")
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+class Refused(Exception):
+    """A refusal before or during ``up``/``down``; the message is safe to print (never a secret)."""
+
+
+# -- the pure parts (unit-tested) -------------------------------------------------------------------------------------
+
+
+def check_origin(origin: str) -> str:
+    """The relay origin if it is on the allow-list ``{http://127.0.0.1:*, http://localhost:*, DEV_RELAY}``."""
+    if type(origin) is not str or not any(p.fullmatch(origin) for p in ORIGIN_ALLOW):
+        raise Refused(f"relay origin {origin!r} is not on the allow-list (loopback or {DEV_RELAY})")
+    if origin.startswith("http://") and not 1 <= int(origin.rsplit(":", 1)[1]) <= 65535:
+        raise Refused("relay origin: port out of range")
+    return origin
+
+
+def refuse_environment(env: Mapping[str, str], euid: int) -> None:
+    """Never as root, never under ``ORCH_GRANT`` (an agent's environment): dev-pair is a person's tool."""
+    if env.get("ORCH_GRANT"):
+        raise Refused("dev-pair is for a person at their terminal: refused under ORCH_GRANT")
+    if euid == 0:
+        raise Refused("dev-pair refuses to run as root")
+
+
+def socket_path_ok(root: str | os.PathLike[str]) -> bool:
+    """Whether the longest control socket under ``root`` (``run/<32 hex>/host.sock``) fits the limit."""
+    return len(str(Path(root) / "run" / ("0" * 32) / "host.sock").encode()) <= SOCKET_LIMIT
+
+
+def check_root_path(root: str, *, uid: int | None = None) -> Path:
+    """The absolute, normalised root path whose parent is an existing directory owned by this user, not group- or
+    world-writable, with no symbolic link among its ancestors, and which is short enough for the socket limit. The
+    root itself is not touched here (it is created exclusively by :func:`create_root`)."""
+    uid = os.getuid() if uid is None else uid
+    if type(root) is not str or not root or "\0" in root:
+        raise Refused("--root: a path")
+    text = root.rstrip("/")
+    if not os.path.isabs(text) or os.path.normpath(text) != text:
+        raise Refused("--root: an absolute path without '..', '.' or '//' parts")
+    path = Path(text)
+    if path == path.parent:
+        raise Refused("--root: not a directory name")
+    parent = path.parent
+    for ancestor in (parent, *parent.parents):
+        try:
+            st = os.lstat(ancestor)
+        except OSError:
+            raise Refused(f"--root: {ancestor} does not exist") from None
+        if stat.S_ISLNK(st.st_mode):
+            raise Refused(f"--root: {ancestor} is a symbolic link (use the real path)")
+        if not stat.S_ISDIR(st.st_mode):
+            raise Refused(f"--root: {ancestor} is not a directory")
+    pst = os.lstat(parent)
+    if pst.st_uid != uid or pst.st_mode & 0o022:
+        raise Refused(f"--root: the parent {parent} must be owned by you and not group- or world-writable")
+    if not socket_path_ok(path):
+        raise Refused(f"--root: too long for a socket path (limit {SOCKET_LIMIT} bytes); use a shorter path")
+    problem = sticky_problem(parent)
+    if problem:
+        raise Refused(f"--root: {problem}")
+    return path
+
+
+def sticky_problem(parent: Path) -> str | None:
+    """The host's run-directory rule, checked early (``orch.host._unix.CheckedDirectory``): a directory directly below a
+    sticky root-owned directory (``/tmp``) must itself be root-owned 0755, so a sandbox root cannot live there. Returns
+    the reason, or ``None``."""
+    prev_sticky = False
+    for d in (Path("/"), *reversed(parent.parents), parent):
+        st = os.lstat(d)
+        if prev_sticky and not (st.st_uid == 0 and stat.S_IMODE(st.st_mode) == 0o755):
+            return (f"{d} is directly below a sticky directory, where the host refuses a run directory; "
+                    "use a root below your home directory (not under /tmp)")  # fmt: skip
+        prev_sticky = st.st_uid == 0 and bool(st.st_mode & stat.S_ISVTX)
+    if prev_sticky:
+        return f"{parent} is itself a sticky directory (/tmp): use a directory of yours below your home"
+    return None
+
+
+def child_env(root: str | os.PathLike[str], path: str, *, no_convenience: bool = True, term: str | None = None,
+              extra: Mapping[str, str] | None = None) -> dict[str, str]:  # fmt: skip
+    """The environment of an orch child: an **allow-list**, nothing of the parent's (11A.15.11 step 2). ``HOME`` and
+    the state and run directories are inside the root; the passphrase custody backend is forced by that fresh state
+    alone; ``ORCH_NO_CONVENIENCE=1`` narrows (any non-empty value refuses convenience) and is omitted only for the host
+    process under ``--sim-convenience``. No ``PYTHONPATH``, no inherited configuration, no ``ORCH_GRANT``."""
+    r = str(root)
+    env = {
+        "PATH": path, "HOME": f"{r}/home", "ORCH_STATE_DIR": f"{r}/state", "ORCH_HOST_RUN_DIR": f"{r}/run",
+        "LANG": "C.UTF-8", "TMPDIR": f"{r}/tmp",
+    }  # fmt: skip
+    if no_convenience:
+        env["ORCH_NO_CONVENIENCE"] = "1"
+    if term:
+        env["TERM"] = term
+    for k, v in (extra or {}).items():
+        env[k] = v
+    return env
+
+
+RELAY_PASS = ("UV_CACHE_DIR", "UV_PYTHON", "UV_PYTHON_INSTALL_DIR", "UV_PYTHON_PREFERENCE", "XDG_CACHE_HOME", "LC_ALL")
+
+
+def relay_env(root: str | os.PathLike[str], path: str, port: int, instance: str, parent: Mapping[str, str],
+              cap: int = MAX_PUBLICATION) -> dict[str, str]:  # fmt: skip
+    """The relay child's allow-list: the pinned PATH, a sandbox ``HOME``, ``uv``'s cache and interpreter settings from
+    the parent (uv writes its cache and the relay checkout's .venv there; no secrets) and the relay's own variables."""
+    env = {"PATH": path, "HOME": f"{root}/home", "LANG": "C.UTF-8", "TMPDIR": f"{root}/tmp"}
+    env.update({k: parent[k] for k in RELAY_PASS if k in parent})
+    env.update({
+        "ORCH_RELAY_ORIGIN": f"http://127.0.0.1:{port}", "ORCH_RELAY_DATA": f"{root}/relay-data",
+        "ORCH_RELAY_INSTANCE": instance, "ORCH_RELAY_MAX_PUBLICATION_BYTES": str(cap),
+    })  # fmt: skip
+    return env
+
+
+def parse_code_line(line: str) -> tuple[str, str, str] | None:
+    """``<offer_id> <phase> <CODE>`` -> ``(offer_id, phase, CODE)``, else ``None`` (anything else is ignored)."""
+    m = _CODE_LINE.fullmatch(line.strip())
+    return None if m is None else (m.group(1), m.group(2), m.group(3).upper())
+
+
+def check_fifo(path: str, root: str | os.PathLike[str]) -> Path:
+    """``--expect-code-from``: a direct child of the root (``up`` makes it), so a code can come only from a FIFO the
+    sandbox owns. (Existence and type are checked when it is opened: :class:`CodeFifo`.)"""
+    p = Path(os.path.abspath(path))
+    if p.parent != Path(root) or not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", p.name) or p.name == MANIFEST:
+        raise Refused("--expect-code-from: a FIFO named directly under --root (up creates it)")
+    return p
+
+
+# -- the sandbox (a pinned root directory) ----------------------------------------------------------------------------
+
+
+@dataclass
+class Sandbox:
+    path: Path
+    fd: int
+    dev: int
+    ino: int
+    sid: str
+
+    def verify(self) -> None:
+        """The root is still the directory ``up`` created (``st_dev``/``st_ino`` of the path and of the pinned fd)."""
+        try:
+            st = os.lstat(self.path)
+        except OSError:
+            raise Refused("the sandbox root is gone") from None
+        got = os.fstat(self.fd)
+        if (st.st_dev, st.st_ino) != (self.dev, self.ino) or (got.st_dev, got.st_ino) != (self.dev, self.ino):
+            raise Refused("the sandbox root was replaced: stopping")
+
+    def mkdir(self, name: str, mode: int = 0o700) -> None:
+        os.mkdir(name, mode, dir_fd=self.fd)
+        os.chmod(name, mode, dir_fd=self.fd)  # the umask never narrows it
+
+    def write(self, rel: str, data: bytes, *, mode: int = 0o600, exclusive: bool = True) -> None:
+        """A private file below the root through the pinned descriptor (no link followed); ``rel`` is one or two
+        components (``secrets/passphrase``)."""
+        parts = rel.split("/")
+        if not 1 <= len(parts) <= 2 or any(p in ("", ".", "..") for p in parts):
+            raise Refused(f"internal: bad relative path {rel!r}")
+        dfd = self.fd if len(parts) == 1 else os.open(parts[0], _DIR, dir_fd=self.fd)
+        try:
+            flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | (os.O_EXCL if exclusive else os.O_TRUNC)
+            f = os.open(parts[-1], flags, mode, dir_fd=dfd)
+            try:
+                os.write(f, data)
+                os.fsync(f)
+            finally:
+                os.close(f)
+        finally:
+            if dfd != self.fd:
+                os.close(dfd)
+
+    def read(self, rel: str) -> bytes:
+        parts = rel.split("/")
+        dfd = self.fd if len(parts) == 1 else os.open(parts[0], _DIR, dir_fd=self.fd)
+        try:
+            f = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dfd)
+            try:
+                st = os.fstat(f)
+                if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
+                    raise Refused(f"{rel} is not a 0600 file of this user")
+                return os.read(f, 1 << 16)
+            finally:
+                os.close(f)
+        finally:
+            if dfd != self.fd:
+                os.close(dfd)
+
+    def close(self) -> None:
+        with contextlib.suppress(OSError):
+            os.close(self.fd)
+
+
+def create_root(path: Path, sid: str | None = None) -> Sandbox:
+    """Create ``path`` **exclusively** (an existing path, empty or not, is refused: a real directory is never
+    adopted), mode 0700, pinned by a descriptor, with the manifest written first."""
+    sid = sid or secrets.token_hex(16)
+    pfd = os.open(path.parent, _DIR)
+    try:
+        try:
+            os.mkdir(path.name, 0o700, dir_fd=pfd)
+        except FileExistsError:
+            raise Refused(f"--root {path} already exists: dev-pair never adopts an existing path") from None
+        fd = os.open(path.name, _DIR, dir_fd=pfd)
+    finally:
+        os.close(pfd)
+    os.fchmod(fd, 0o700)
+    st = os.fstat(fd)
+    sb = Sandbox(path, fd, st.st_dev, st.st_ino, sid)
+    sb.write(MANIFEST, json.dumps({"id": sid, "root": {"st_dev": st.st_dev, "st_ino": st.st_ino}, "entries": [],
+                                   "processes": []}, sort_keys=True).encode())  # fmt: skip
+    return sb
+
+
+def manifest_update(root: str | os.PathLike[str], **fields: Any) -> dict[str, Any]:
+    """Read the manifest through the shared check (``orch.devsandbox``) and write it back with ``fields`` merged."""
+    ds = _devsandbox()
+    doc = ds.check_manifest(root)
+    doc.update(fields)
+    ds._write(Path(root) / MANIFEST, doc)
+    return doc
+
+
+def manifest_add(root: str | os.PathLike[str], key: str, item: Any) -> None:
+    doc = _devsandbox().check_manifest(root)
+    manifest_update(root, **{key: [*doc.get(key, []), item]})
+
+
+def _devsandbox() -> Any:
+    if str(PLUGIN / "src") not in sys.path and "orch" not in sys.modules:
+        sys.path.insert(0, str(PLUGIN / "src"))
+    from orch import devsandbox
+
+    return devsandbox
+
+
+# -- recorded processes ----------------------------------------------------------------------------------------------
+
+
+def _run(cmd: Sequence[str], timeout: float = 10.0, *, any_status: bool = False) -> str | None:
+    try:
+        r = subprocess.run(list(cmd), capture_output=True, text=True, timeout=timeout, check=False,
+                           env={"PATH": "/usr/sbin:/usr/bin:/bin:/sbin", "LC_ALL": "C", "LANG": "C"})  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 or (any_status and r.stdout) else None
+
+
+def _darwin_cwd(pid: int) -> str | None:
+    """The working directory through libproc (``proc_pidinfo(PROC_PIDVNODEPATHINFO)``): no subprocess, so no flaky
+    ``lsof``. ``None`` off macOS or when the call fails."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+
+        lib = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        buf = ctypes.create_string_buffer(2352)  # two vnode_info_path: (152-byte vnode_info + 1024-byte path) each
+        if lib.proc_pidinfo(pid, 9, 0, buf, 2352) != 2352:
+            return None
+        path = buf.raw[152 : 152 + 1024].split(b"\0")[0].decode("utf-8", "replace")
+        return os.path.realpath(path) if path.startswith("/") else None
+    except (OSError, AttributeError):
+        return None
+
+
+def proc_identity(pid: int) -> dict[str, Any] | None:
+    """``{pid, start, exe, cwd}`` of a live process, or ``None`` when it is gone or cannot be inspected (fail
+    closed). ``start`` is ``ps``'s ``lstart`` (whole seconds, the process's birth identity)."""
+    start = _run(["ps", "-p", str(pid), "-o", "lstart="])
+    if not start or not start.strip():
+        return None
+    exe: str | None = None
+    cwd: str | None = None
+    with contextlib.suppress(OSError):
+        exe = os.path.realpath(os.readlink(f"/proc/{pid}/exe"))
+        cwd = os.path.realpath(os.readlink(f"/proc/{pid}/cwd"))
+    if exe is None:
+        comm = _run(["ps", "-p", str(pid), "-o", "comm="])
+        exe = os.path.realpath(comm.strip()) if comm and comm.strip().startswith("/") else (comm or "").strip() or None
+    if cwd is None:
+        cwd = _darwin_cwd(pid)
+    if cwd is None:
+        for _ in range(6):  # lsof sometimes answers without the name for a moment
+            out = _run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"], any_status=True)  # exits 1 on warnings
+            names = [ln[1:] for ln in (out or "").splitlines() if ln.startswith("n")]
+            if names:
+                cwd = os.path.realpath(names[0])
+                break
+            time.sleep(0.15)
+    if exe is None or cwd is None:
+        return None
+    return {"pid": pid, "start": start.strip(), "exe": exe, "cwd": cwd}
+
+
+def record_mismatch(
+    rec: Mapping[str, Any],
+    root: str | os.PathLike[str],
+    inspect: Callable[[int], dict[str, Any] | None] = proc_identity,
+) -> str | None:
+    """Why the process now at ``rec['pid']`` is not the one recorded (``None``: it is): another start time (PID
+    reuse), executable or working directory outside the root; anything unreadable counts as a mismatch."""
+    try:
+        pid = rec["pid"]
+        if type(pid) is not int or pid <= 1:
+            return "bad pid"
+        now = inspect(pid)
+    except (KeyError, TypeError):
+        return "bad record"
+    if now is None:
+        return "unreadable"
+    if now["pid"] != pid:
+        return "pid"
+    if now["start"] != rec.get("start"):
+        return "start time"
+    if now["exe"] != rec.get("exe"):
+        return "executable"
+    try:
+        Path(now["cwd"]).relative_to(os.path.realpath(root))
+    except ValueError:
+        return "working directory"
+    return None
+
+
+def validate_record(
+    rec: Mapping[str, Any],
+    root: str | os.PathLike[str],
+    inspect: Callable[[int], dict[str, Any] | None] = proc_identity,
+) -> bool:
+    """Whether the process now at ``rec['pid']`` is the one recorded: the same start time and executable, and a working
+    directory inside the root. Anything unreadable is ``False`` (nothing is signalled)."""
+    return record_mismatch(rec, root, inspect) is None
+
+
+def stable_identity(pid: int, *, tries: int = 30, pause: float = 0.1) -> dict[str, Any] | None:
+    """The identity once two samples agree: right after ``Popen`` a child may still be the pre-exec image (another
+    executable), and recording that would later read as "not ours"."""
+    last = proc_identity(pid)
+    for _ in range(tries):
+        time.sleep(pause)
+        now = proc_identity(pid)
+        if now is not None and now == last:
+            return now
+        last = now
+    return last
+
+
+def record_process(root: str | os.PathLike[str], role: str, pid: int) -> dict[str, Any]:
+    ident = stable_identity(pid)
+    if ident is None:
+        raise Refused(f"cannot record the {role} process {pid} (no identity): stopping")
+    rec = {"role": role, **ident}
+    manifest_add(root, "processes", rec)
+    return rec
+
+
+def descendants(pid: int) -> list[int]:
+    """The live descendants of ``pid`` (``ps`` parent links), children first in the returned order."""
+    out = _run(["ps", "-A", "-o", "pid=,ppid="])
+    if not out:
+        return []
+    kids: dict[int, list[int]] = {}
+    for line in out.splitlines():
+        a = line.split()
+        if len(a) == 2 and a[0].isdigit() and a[1].isdigit():
+            kids.setdefault(int(a[1]), []).append(int(a[0]))
+    found: list[int] = []
+    todo = list(kids.get(pid, []))
+    while todo:
+        p = todo.pop()
+        found.append(p)
+        todo.extend(kids.get(p, []))
+    return found
+
+
+def stop_recorded(records: Sequence[Mapping[str, Any]], root: str | os.PathLike[str], *,
+                  grace: float = KILL_GRACE_S, inspect: Callable[[int], dict[str, Any] | None] = proc_identity,
+                  kill: Callable[[int, int], None] = os.kill, sleep: Callable[[float], None] = time.sleep,
+                  log: Callable[[str], None] = lambda s: None,
+                  exists: Callable[[int], bool] | None = None) -> dict[str, str]:  # fmt: skip
+    """Signal **only** recorded processes, each re-validated immediately before the signal: SIGTERM, then SIGKILL after
+    ``grace`` seconds if it is still the same process. Returns ``{role:pid -> outcome}``."""
+    out: dict[str, str] = {}
+
+    def alive(pid: int) -> bool:
+        if exists is not None:
+            return exists(pid)
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+        return True
+
+    for rec in reversed(list(records)):
+        tag = f"{rec.get('role')}:{rec.get('pid')}"
+        if type(rec.get("pid")) is not int or rec["pid"] <= 1:
+            out[tag] = "invalid"
+            continue
+        ident = inspect(rec["pid"])
+        for _ in range(3):  # a transient ps/lsof failure is not "gone"
+            if ident is not None:
+                break
+            sleep(0.2)
+            ident = inspect(rec["pid"])
+        if ident is None:
+            if alive(rec["pid"]):
+                out[tag] = "unidentified"  # it exists but cannot be inspected: never assumed gone
+                log(f"{tag}: the process exists but cannot be identified; check it by hand")
+            else:
+                out[tag] = "gone"
+            continue
+        why = record_mismatch(rec, root, inspect)
+        for _ in range(3):  # a momentary unreadable answer from ps/lsof must not leave our process running
+            if why is None:
+                break
+            sleep(0.2)
+            why = record_mismatch(rec, root, inspect)
+        if why is not None:
+            out[tag] = "not-ours"  # the pid now belongs to something else: never signalled
+            log(f"{tag}: NOT signalled: the process is not the one dev-pair started ({why} differs); check it by hand")
+            continue
+        try:
+            kill(rec["pid"], signal.SIGTERM)
+        except ProcessLookupError:
+            out[tag] = "gone"
+            continue
+        end = time.monotonic() + grace
+        while time.monotonic() < end and inspect(rec["pid"]) is not None and validate_record(rec, root, inspect):
+            sleep(0.1)
+        if inspect(rec["pid"]) is None or not validate_record(rec, root, inspect):
+            out[tag] = "terminated"
+            continue
+        with contextlib.suppress(ProcessLookupError):
+            kill(rec["pid"], signal.SIGKILL)
+        for _ in range(20):  # a moment for the pid to vanish
+            if not alive(rec["pid"]):
+                break
+            sleep(0.1)
+        out[tag] = "killed" if not alive(rec["pid"]) else "stuck"
+    return out
+
+
+def remove_tree(sb_fd: int, root_dev: int, *, depth: int = 0) -> None:
+    """Delete everything below the pinned directory descriptor ``sb_fd`` by descending through directory descriptors
+    without following links (``unlinkat``). Stops with an error at anything not owned by this user, on another device,
+    or nested deeper than 64 levels."""
+    if depth > 64:
+        raise Refused("remove: directory nesting too deep; stopping")
+    for entry in list(os.scandir(sb_fd)):
+        st = entry.stat(follow_symlinks=False)
+        if st.st_uid != os.getuid():
+            raise Refused(f"remove: {entry.name} is not owned by you; stopping (nothing else was touched)")
+        if stat.S_ISDIR(st.st_mode):
+            if st.st_dev != root_dev:
+                raise Refused(f"remove: {entry.name} is on another device; stopping")
+            sub = os.open(entry.name, _DIR, dir_fd=sb_fd)
+            try:
+                got = os.fstat(sub)
+                if (got.st_dev, got.st_ino) != (st.st_dev, st.st_ino):
+                    raise Refused(f"remove: {entry.name} changed while it was opened; stopping")
+                os.fchmod(sub, 0o700)
+                remove_tree(sub, root_dev, depth=depth + 1)
+            finally:
+                os.close(sub)
+            os.rmdir(entry.name, dir_fd=sb_fd)
+        else:
+            os.unlink(entry.name, dir_fd=sb_fd)
+
+
+# -- down ------------------------------------------------------------------------------------------
+
+
+def down(root_arg: str, *, keep: bool = False, grace: float = KILL_GRACE_S, out: Callable[[str], None] = print,
+         inspect: Callable[[int], dict[str, Any] | None] = proc_identity) -> int:  # fmt: skip
+    """Stop what ``up`` recorded and, unless ``keep``, delete the root. Fail closed: a missing, different or
+    mismatched manifest deletes (and signals) nothing."""
+    ds = _devsandbox()
+    path = Path(os.path.abspath(root_arg))
+    try:
+        fd, st = ds.open_root(path)
+    except ds.SandboxRefused as exc:
+        raise Refused(f"not a dev-pair sandbox ({exc}): nothing was done") from None
+    try:
+        try:
+            doc = ds.manifest_at(fd, st)
+        except ds.SandboxRefused as exc:
+            raise Refused(f"manifest check failed ({exc}): nothing was done") from None
+        records = doc.get("processes", [])
+        if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
+            raise Refused("the manifest's process list is malformed: nothing was done")
+        results = stop_recorded(records, path, grace=grace, inspect=inspect, log=out)
+        for tag, what in results.items():
+            out(f"dev-pair: {tag}: {what}")
+        bad = sorted(t for t, w in results.items() if w not in ("gone", "terminated", "killed"))
+        if bad:
+            out(f"dev-pair: not every recorded process is stopped ({', '.join(bad)}): the sandbox is kept at {path}")
+            return 1
+        if keep:
+            out(f"dev-pair: processes stopped, sandbox kept at {path}")
+            return 0
+        known = set(doc.get("entries", [])) | {MANIFEST}
+        unknown = sorted(n for n in os.listdir(fd) if n not in known)
+        if unknown:
+            raise Refused(f"the root holds entries dev-pair did not create ({', '.join(unknown[:5])}): nothing deleted")
+        try:
+            remove_tree(fd, st.st_dev)
+            parent = os.open(path.parent, _DIR)
+            try:
+                now = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+                if (now.st_dev, now.st_ino) != (st.st_dev, st.st_ino):
+                    raise Refused("the root was replaced before it was removed; nothing more was done")
+                os.rmdir(path.name, dir_fd=parent)
+            finally:
+                os.close(parent)
+        except OSError as exc:
+            out(f"dev-pair: could not remove the sandbox ({exc.strerror or type(exc).__name__}); it is kept at {path}")
+            return 1
+        out(f"dev-pair: sandbox removed ({path})")
+        return 0
+    finally:
+        os.close(fd)
+
+
+# -- codes: a human at this terminal, or a validated FIFO ------------------------------------------
+
+
+class CodeFifo:
+    """Reads ``<offer_id> <phase> <CODE>`` lines from a FIFO of this user inside the root. A code is returned only for
+    the asked offer and phase; a stale one (other offer) or a wrong-phase one is dropped and counted."""
+
+    def __init__(self, path: Path, root: Path) -> None:
+        check_fifo(str(path), root)
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+        st = os.fstat(fd)
+        if not stat.S_ISFIFO(st.st_mode) or st.st_uid != os.getuid():
+            os.close(fd)
+            raise Refused("--expect-code-from: not a FIFO of this user")
+        self.fd, self.buf, self.dropped = fd, b"", 0
+        self.pending: list[tuple[str, str, str]] = []
+        self.lock = threading.Lock()
+        self.stop = threading.Event()  # ends a waiting get() (the owner's thread) when the pairing is over
+
+    def close(self) -> None:
+        self.stop.set()
+        with contextlib.suppress(OSError):
+            os.close(self.fd)
+
+    def _pump(self) -> None:
+        try:
+            chunk = os.read(self.fd, 4096)
+        except BlockingIOError:
+            return
+        except OSError:
+            return
+        self.buf += chunk
+        if len(self.buf) > 65536:
+            self.buf = b""
+            self.dropped += 1
+        while b"\n" in self.buf:
+            line, self.buf = self.buf.split(b"\n", 1)
+            parsed = parse_code_line(line.decode("ascii", "replace"))
+            if parsed is None:
+                self.dropped += 1
+            else:
+                self.pending.append(parsed)
+
+    def take(self, offer_id: str, phase: str) -> str | None:
+        with self.lock:
+            return self._take(offer_id, phase)
+
+    def _take(self, offer_id: str, phase: str) -> str | None:
+        self._pump()
+        keep: list[tuple[str, str, str]] = []
+        found: str | None = None
+        for o, p, c in self.pending:
+            if found is None and (o, p) == (offer_id, phase):
+                found = c
+            elif o == offer_id and p != phase:
+                keep.append((o, p, c))  # a later phase of this offer: keep for its turn
+            else:
+                self.dropped += 1  # another offer: stale
+        self.pending = keep
+        return found
+
+    def get(self, offer_id: str, phase: str, timeout: float, sleep: Callable[[float], None] = time.sleep) -> str | None:
+        end = time.monotonic() + timeout
+        while True:
+            if self.stop.is_set():
+                return None
+            code = self.take(offer_id, phase)
+            if code is not None or time.monotonic() >= end:
+                return code
+            sleep(0.1)
+
+
+def human_code(prompt: str) -> str | None:
+    """One line typed by the person at the terminal (``/dev/tty``); empty means reject."""
+    try:
+        with open("/dev/tty", "r+", encoding="utf-8") as tty:
+            tty.write(prompt)
+            tty.flush()
+            line = tty.readline().strip()
+    except OSError:
+        raise Refused("no terminal for the codes: run in a terminal or pass --expect-code-from") from None
+    return line or None
+
+
+# -- the pseudo-terminal driver ---------------------------------------------------------------------------------------
+
+
+@dataclass
+class Responder:
+    """When the **end** of the unanswered output matches ``pattern`` (a prompt), type ``fn(match)``'s result plus
+    Enter. ``fn`` returning ``None`` types nothing (the child is waiting for something else)."""
+
+    pattern: re.Pattern[str]
+    fn: Callable[[re.Match[str]], str | None]
+
+
+def run_pty(argv: Sequence[str], *, env: Mapping[str, str], cwd: str | os.PathLike[str],
+            responders: Sequence[Responder], timeout: float, pass_fds: Sequence[int] = (),
+            idle: Callable[[], None] | None = None, watch: Sequence[int] = (),
+            on_watch: Callable[[int, bytes], None] | None = None,
+            observe: Callable[[str], None] | None = None) -> tuple[int, bytearray]:  # fmt: skip
+    """Run ``argv`` with a pseudo-terminal as its controlling terminal (so its ``/dev/tty`` prompts are ours), answering
+    prompts through ``responders``. **The transcript is captured privately** (returned in memory, never echoed or
+    logged, also on failure). ``idle`` runs every ~0.2 s; ``watch`` descriptors (the ``--json-fd`` pipe) are read and
+    handed to ``on_watch``. The child is our direct child: on a timeout it is killed by its pid before reaping."""
+    master, slave = os.openpty()
+    # No fork of this (possibly threaded) process: Popen starts a new session and the wrapper makes the pty the
+    # controlling terminal (TIOCSCTTY on fd 0) before it execs the real command.
+    wrapper = (
+        "import fcntl, os, sys, termios\n"
+        "fcntl.ioctl(0, termios.TIOCSCTTY, 0)\n"
+        "os.execve(sys.argv[1], sys.argv[1:], dict(os.environ))\n"
+    )
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", wrapper, *argv], cwd=cwd, env=dict(env), stdin=slave, stdout=slave, stderr=slave,
+            start_new_session=True, pass_fds=tuple(pass_fds),
+        )  # fmt: skip
+    finally:
+        os.close(slave)
+    buf = bytearray()
+    scan_from = 0
+    end = time.monotonic() + timeout
+    status: int | None = None
+    try:
+        while True:
+            ready, _, _ = select.select([master, *watch], [], [], 0.2)
+            for fd in ready:
+                if fd == master:
+                    try:
+                        data = os.read(master, 4096)
+                    except OSError as exc:
+                        if exc.errno == errno.EIO:  # the child closed the terminal
+                            data = b""
+                        else:
+                            raise
+                    if data:
+                        buf += data
+                        if observe is not None:
+                            observe(_ANSI.sub("", data.decode("utf-8", "replace")).replace("\r", ""))
+                elif on_watch is not None:
+                    on_watch(fd, os.read(fd, 4096))
+            tail = _ANSI.sub("", bytes(buf[scan_from:]).decode("utf-8", "replace")).replace("\r", "")
+            for r in responders:
+                m = re.search(r.pattern.pattern + r"\Z", tail, r.pattern.flags)
+                if m is not None:
+                    reply = r.fn(m)
+                    if reply is not None:
+                        os.write(master, reply.encode("utf-8") + b"\n")
+                        scan_from = len(buf)
+                    break
+            if idle is not None:
+                idle()
+            rc = proc.poll()
+            if rc is not None:
+                status = rc
+                for wfd in watch:  # whatever the child wrote before it exited
+                    while on_watch is not None and select.select([wfd], [], [], 0)[0]:
+                        chunk = os.read(wfd, 4096)
+                        if not chunk:
+                            break
+                        on_watch(wfd, chunk)
+                with contextlib.suppress(OSError):
+                    while select.select([master], [], [], 0)[0]:
+                        more = os.read(master, 4096)
+                        if not more:
+                            break
+                        buf += more
+                break
+            if time.monotonic() >= end:
+                raise Refused(f"{Path(argv[-1]).name if len(argv) < 2 else ' '.join(argv[1:3])}: timed out")
+    except BaseException:
+        if status is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            proc.wait()
+        raise
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(master)
+    return (status if status is not None else -1), buf
+
+
+# -- the steps -------------------------------------------------------------------------------------
+
+
+@dataclass
+class Ctx:
+    sb: Sandbox
+    args: argparse.Namespace
+    path_env: str
+    py: str
+    uv: str
+    origin: str = ""
+    workspace_id: str = ""
+    person_id: str = ""
+    passphrase: str = ""
+    relay_port: int = 0
+    relay_dir: Path | None = None
+    fifo: CodeFifo | None = None
+    ws_dir: str = ""
+    started: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def root(self) -> Path:
+        return self.sb.path
+
+    def env(self, **kw: Any) -> dict[str, str]:
+        return child_env(self.root, self.path_env, term="xterm", **kw)
+
+    def orch(self, *a: str) -> list[str]:
+        return [self.py, "-m", "orch", *a]
+
+
+def passphrase_responders(ctx: Ctx) -> list[Responder]:
+    """The terminal prompts of every command after ``orch setup``: the passphrase and the "type KEY" review."""
+    return [
+        Responder(re.compile(r"Repeat passphrase: "), lambda m: ctx.passphrase),
+        Responder(re.compile(r"Passphrase: "), lambda m: ctx.passphrase),
+        Responder(
+            re.compile(
+                r"Type (\S+)(?: and Enter)? to continue"
+                r"(?:(?: to the passphrase)?; anything else stops| \(d = details\)): "
+            ),
+            lambda m: (time.sleep(REVIEW_DELAY_S), m.group(1))[1],
+        ),  # fmt: skip
+    ]
+
+
+_LINK = re.compile(r"http://127\.0\.0\.1:(\d{1,5})/#launch=[A-Za-z0-9_-]{20,100}&to=")
+
+
+def step_setup(ctx: Ctx, prefix: str, name: str) -> None:
+    """``orch setup --no-browser`` through a pseudo-terminal (11A.15.11 step 4; V3-D38: setup is the only way to make a
+    workspace). The setup page is played here over the setup socket (the routes the browser calls), the terminal
+    confirmation is typed only when its three words are the review's. The host must be running (``step_host``): setup
+    creates the workspace through it and registers it. The generated passphrase and the recovery code go to
+    ``secrets/`` (0600); the transcript and every secret stay out of every message."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("orch_setup_test_helpers", PLUGIN / "tests" / "setup" / "helpers.py")
+    if spec is None or spec.loader is None:
+        raise Refused("tests/setup/helpers.py is missing (dev-pair runs from a checkout)")
+    helpers = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(helpers)  # the unix-socket HTTP client of core's setup tests
+    call = helpers.call
+    seen: dict[str, Any] = {"text": "", "fp": None, "bad": ""}
+
+    def observe(chunk: str) -> None:
+        seen["text"] = (seen["text"] + chunk)[-16384:]
+
+    def confirm(m: re.Match[str]) -> str:
+        shown = re.findall(r"should show these three words:\n\n {4}(.+)\n", seen["text"])
+        if not seen["fp"] or not shown or shown[-1].split() != list(seen["fp"]):
+            seen["bad"] = "the terminal's three words differ from the review's"
+            return "no"  # declines: nothing is created
+        return m.group(1)
+
+    responders = [Responder(re.compile(r"If they match, type (\S+): "), confirm)]
+    env = ctx.env()
+    dash = PLUGIN.parent.parent / "addons" / "dashboard" / "server" / ".venv" / "bin"
+    if (dash / "orch-dashboard").is_file():  # `orch setup` starts the dashboard add-on to serve its page
+        env["PATH"] = f"{env['PATH']}:{dash}"
+    box: dict[str, Any] = {}
+
+    def work() -> None:
+        try:
+            box["rc"], _ = run_pty(ctx.orch("setup", "--no-browser"), env=env, cwd=ctx.ws_dir, responders=responders,
+                                   timeout=300, observe=observe)  # fmt: skip
+        except BaseException as exc:  # noqa: BLE001 - reported below, never with the transcript
+            box["exc"] = exc
+
+    thread = threading.Thread(target=work, name="setup-pty", daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 300
+    link = None
+    while link is None:
+        if time.monotonic() > deadline or not thread.is_alive():
+            raise Refused("orch setup printed no link (is the dashboard add-on installed? uv sync in packages/addons/dashboard/server)")
+        link = _LINK.search(seen["text"].replace("\n", ""))
+        time.sleep(0.2)
+    port = int(link.group(1))
+    sock = str(ctx.root / "state" / "setup" / "setup.sock")
+    host = f"127.0.0.1:{port}"
+
+    def shutdown() -> None:
+        with contextlib.suppress(Exception):
+            call(sock, "POST", "/shutdown", {}, host=host)
+
+    def route(method: str, path: str, body: Any = None, token: str | None = None) -> dict[str, Any]:
+        status, out, _ = call(sock, method, path, body, token=token, host=host)
+        if status != 200:
+            code = (out.get("error") or {}).get("code", "?") if isinstance(out, dict) else "?"
+            raise Refused(f"orch setup: {path} -> {status} {code}")
+        return out
+
+    try:
+        code = json.loads((ctx.root / "state" / "setup" / "setup.code").read_text())["code"]
+        token = route("POST", "/claim", {"code": code, "port": port})["token"]
+        api = "/api/setup/"
+        route("POST", api + "profile", {"name": name, "prefix": prefix, "addons": [], "method": "terminal",
+                                        "agent_hours": 8, "agent_grant": False, "relay": False}, token)  # fmt: skip
+        sec = route("POST", api + "secrets/reveal", {}, token)
+        words = {str(p): sec["recovery_words"][p - 1] for p in sec["check_positions"]}
+        if not route("POST", api + "secrets/confirm", {"words": words}, token).get("ok"):
+            raise Refused("orch setup: the recovery words were refused")
+        ctx.passphrase = sec["passphrase"]
+        ctx.sb.write("secrets/passphrase", ctx.passphrase.encode())
+        ctx.sb.write("secrets/recovery-code", " ".join(sec["recovery_words"]).encode())
+        review = route("POST", api + "review", {}, token)
+        seen["fp"] = review["fingerprint"]
+        create = {"review_id": review["review_id"], "digest": review["digest"]}
+        run_id = route("POST", api + "create", create, token)["run_id"]
+        while True:
+            if time.monotonic() > deadline or not thread.is_alive():
+                raise Refused("orch setup: the run did not finish")
+            progress = route("GET", api + f"progress?run_id={run_id}", None, token)
+            if progress["error"]:
+                raise Refused(f"orch setup failed: {(progress['error'] or {}).get('code', '?')} {seen['bad']}".strip())
+            if progress["done"]:
+                break
+            time.sleep(0.3)
+        route("POST", api + "finish", {}, token)
+    except BaseException:
+        shutdown()
+        raise
+    thread.join(60)
+    if thread.is_alive() or box.get("exc") is not None or box.get("rc") != 0:
+        raise Refused(f"orch setup did not finish cleanly (exit {box.get('rc')})")
+
+
+def identity_from_disk(ctx: Ctx) -> None:
+    """The workspace id (the one directory under ``state/hosts``) and the sandbox person (``p_<32 hex>``), derived from
+    the recovery code ``orch setup`` just generated (the same derivation as the genesis owner's)."""
+    if str(PLUGIN / "src") not in sys.path:
+        sys.path.insert(0, str(PLUGIN / "src"))
+    from orch import crypto
+    from orch.identity import derive_person_key, person_ref
+
+    names = [n for n in os.listdir(ctx.root / "state" / "hosts") if re.fullmatch(r"[0-9a-f]{32}", n)]
+    if len(names) != 1:
+        raise Refused("expected exactly one workspace after orch setup")
+    ctx.workspace_id = names[0]
+    code = ctx.sb.read("secrets/recovery-code").decode()
+    ctx.person_id = person_ref(crypto.public_bytes(derive_person_key(code)))
+
+
+def pinned_path() -> tuple[str, str, str]:
+    """``(PATH, python, uv)``: absolute executables resolved once at start. The python is the one running this script
+    (the project's environment, ``orch`` importable); ``uv`` is for the relay checkout."""
+    uv = shutil.which("uv")
+    if uv is None:
+        raise Refused("uv is not on PATH")
+    uv = os.path.realpath(uv)
+    path = ":".join(dict.fromkeys([os.path.dirname(uv), "/usr/bin", "/bin"]))
+    return path, os.path.abspath(sys.executable), uv  # not resolved: a venv python is a link to its base
+
+
+def relay_checkout() -> Path:
+    """The relay package of this repository (``packages/relay``): one repository, so it is always the same commit."""
+    d = PLUGIN.parent / "relay"
+    if not (d / "src" / "orch_relay" / "cli.py").is_file():
+        raise Refused(f"{d} is not the relay package")
+    return d
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def healthz(port: int) -> dict[str, Any] | None:
+    import http.client
+
+    try:
+        c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        try:
+            c.request("GET", "/healthz")
+            r = c.getresponse()
+            body = json.loads(r.read(1 << 16) or b"null")
+            return body if r.status == 200 and isinstance(body, dict) else None
+        finally:
+            c.close()
+    except (OSError, ValueError):
+        return None
+
+
+def spawn_detached(
+    ctx: Ctx, role: str, argv: Sequence[str], env: Mapping[str, str], cwd: Path
+) -> subprocess.Popen[bytes]:
+    """A child that outlives this script (its own session), logging to ``<root>/logs/<role>.log`` (0600), recorded in
+    the manifest immediately."""
+    logs = ctx.root / "logs"
+    fd = os.open(logs / f"{role}.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        proc = subprocess.Popen(list(argv), cwd=cwd, env=dict(env), stdin=subprocess.DEVNULL, stdout=fd,
+                                stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)  # fmt: skip
+    finally:
+        os.close(fd)
+    record_process(ctx.root, role, proc.pid)
+    return proc
+
+
+def step_relay(ctx: Ctx) -> str | None:
+    """Step 3. Local: the pinned relay on a free loopback port, identified by its random instance; returns the invite.
+    Remote: the origin was allow-listed, the invite comes from ``--invite-file`` (0600)."""
+    a = ctx.args
+    if a.relay != LOCAL_RELAY:
+        ctx.origin = check_origin(a.relay)
+        if not a.invite_file:
+            raise Refused("--relay <remote> needs --invite-file (issued by the relay operator)")
+        st = os.stat(a.invite_file)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid() or stat.S_IMODE(st.st_mode) != 0o600:
+            raise Refused("--invite-file must be a 0600 regular file of yours")
+        return Path(a.invite_file).read_text().strip()
+    ctx.relay_dir = relay_checkout()
+    last = "no attempt"
+    for _ in range(3):
+        port, instance = free_port(), secrets.token_hex(16)
+        env = relay_env(ctx.root, ctx.path_env, port, instance, os.environ)
+        argv = [ctx.uv, "run", "--frozen", "--project", str(ctx.relay_dir), "orch-relay", "serve", "--host",
+                "127.0.0.1", "--port", str(port)]  # fmt: skip
+        proc = spawn_detached(ctx, "relay", argv, env, ctx.root / "work")
+        end = time.monotonic() + 60
+        while time.monotonic() < end and proc.poll() is None:
+            body = healthz(port)
+            if body is not None and body.get("instance") == instance:
+                for pid in descendants(proc.pid):
+                    with contextlib.suppress(Refused):
+                        record_process(ctx.root, "relay-child", pid)
+                ctx.relay_port, ctx.origin = port, f"http://127.0.0.1:{port}"
+                inv = _run_env([ctx.uv, "run", "--frozen", "--project", str(ctx.relay_dir), "orch-relay", "invite",
+                                "create", "--ttl", "1h"], env, ctx.root / "work")  # fmt: skip
+                if not inv or not inv.strip() or "\n" in inv.strip():
+                    raise Refused("the relay did not issue an invite")
+                return inv.strip()
+            time.sleep(0.25)
+        last = "port taken by another process" if proc.poll() is None else f"the relay exited ({proc.returncode})"
+        stop_recorded([r for r in _manifest_procs(ctx.root) if r["pid"] == proc.pid], ctx.root)
+        os.unlink(ctx.root / "logs" / "relay.log")
+        manifest_update(ctx.root, processes=[r for r in _manifest_procs(ctx.root) if r["pid"] != proc.pid])
+    raise Refused(f"the relay did not start: {last}")
+
+
+def _manifest_procs(root: Path) -> list[dict[str, Any]]:
+    return list(_devsandbox().check_manifest(root).get("processes", []))
+
+
+def _run_env(argv: Sequence[str], env: Mapping[str, str], cwd: Path) -> str | None:
+    try:
+        r = subprocess.run(list(argv), cwd=cwd, env=dict(env), capture_output=True, text=True, timeout=120,
+                           check=False, stdin=subprocess.DEVNULL)  # fmt: skip
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+class ControlCall:
+    """The control socket of the sandbox host, as the pairing CLI uses it."""
+
+    def __init__(self, root: Path) -> None:
+        if str(PLUGIN / "src") not in sys.path:
+            sys.path.insert(0, str(PLUGIN / "src"))
+        from orch.host.control_client import ControlClient
+
+        self.client = ControlClient(root / "run" / "control" / "host.sock")
+
+    def __call__(self, op: str, args: dict[str, Any]) -> dict[str, Any]:
+        res = self.client.call(op, args)
+        if not res.get("ok"):
+            raise Refused(f"{op}: {(res.get('error') or {}).get('code', 'refused')}")
+        return res["result"]["data"]
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):
+            self.client.close()
+
+
+def host_listening(root: Path) -> bool:
+    """Whether something already answers on the sandbox's control socket."""
+    sock = root / "run" / "control" / "host.sock"
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(1)
+    try:
+        s.connect(str(sock))
+        return True
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def step_host(ctx: Ctx, *, role: str = "host") -> None:
+    """Step 5: ``orch host run --foreground`` (no launchd/systemd unit; ``--dev-sim-convenience`` only with
+    ``--sim-convenience``, and then without ``ORCH_NO_CONVENIENCE`` for this process only). Nothing is registered
+    here: ``orch setup`` registered the workspace with the host that was running then (V3-D38). Under
+    ``--sim-convenience`` the first host is a **pending** dev host (the manifest has no person yet) that admits the one
+    SBX genesis; ``stop_host`` + ``step_sim`` + a second ``step_host`` give the full dev host."""
+    if host_listening(ctx.root):
+        raise Refused("a host is already running on this root")
+    sim = bool(ctx.args.sim_convenience)
+    argv = ctx.orch("host", "run", "--foreground") + (["--dev-sim-convenience"] if sim else [])
+    spawn_detached(ctx, role, argv, ctx.env(no_convenience=not sim), ctx.root)
+    end = time.monotonic() + 60
+    while time.monotonic() < end:
+        if host_listening(ctx.root):
+            return
+        procs = [r for r in _manifest_procs(ctx.root) if r["role"] == role]
+        if procs and proc_identity(procs[0]["pid"]) is None:
+            raise Refused(f"the host exited at start (see <root>/logs/{role}.log)")
+        time.sleep(0.25)
+    raise Refused(f"the host did not start within 60 s (see <root>/logs/{role}.log)")
+
+
+def stop_host(ctx: Ctx, role: str) -> None:
+    """Stop the host this script started under ``role`` (its recorded pid, re-validated), and forget the record."""
+    mine = [r for r in _manifest_procs(ctx.root) if r["role"] == role]
+    stop_recorded(mine, ctx.root)
+    manifest_update(ctx.root, processes=[r for r in _manifest_procs(ctx.root) if r["role"] != role])
+    end = time.monotonic() + 30
+    while host_listening(ctx.root) and time.monotonic() < end:
+        time.sleep(0.2)
+    if host_listening(ctx.root):
+        raise Refused(f"the {role} process did not stop")
+
+
+def _first_line(text: str) -> str:
+    line = next((ln for ln in text.splitlines() if ln.strip()), "")
+    return re.sub(r"[^\x20-\x7e]", "?", line)[:200]
+
+
+def step_sim_pre(ctx: Ctx, sid: str) -> None:
+    """11A.17 / V3-D38, before the host starts: ``dev.json`` next to the manifest that has only ``id`` and ``root``, which
+    is what makes the first host a pending dev host."""
+    os.makedirs(ctx.root / "state" / "host", mode=0o700, exist_ok=True)
+    _devsandbox().write_dev_json(ctx.root, sid, ctx.origin)
+
+
+def step_sim(ctx: Ctx, sid: str) -> None:
+    """D2 (11A.17), after ``orch setup`` with the pending host stopped: the manifest's person and workspace, the workspace
+    marker. ``dev.json`` stays. The next host to start proves them (S1 to S5) and has the dev powers."""
+    ds = _devsandbox()
+    manifest_update(ctx.root, person_id=ctx.person_id, workspaces=[
+        {"id": ctx.workspace_id, **ds._ident(ctx.ws_dir)}])  # fmt: skip
+    ds.write_marker(ctx.ws_dir, sid, ctx.workspace_id)
+
+
+def step_account(ctx: Ctx, invite: str) -> Path:
+    """Step 6 (first half): the owner account through ``tests/relay/owner.py``; returns the primary certificate file."""
+    owner = make_owner(ctx)
+    try:
+        return owner.create_account(invite)
+    finally:
+        owner.close()
+
+
+def make_owner(ctx: Ctx) -> Any:
+    if str(PLUGIN) not in sys.path:
+        sys.path.insert(0, str(PLUGIN))
+    if str(PLUGIN / "src") not in sys.path:
+        sys.path.insert(0, str(PLUGIN / "src"))
+    from tests.relay.owner import SandboxOwner
+
+    return SandboxOwner(ctx.root, ctx.origin)
+
+
+def pty_cmd(ctx: Ctx, argv: Sequence[str], what: str, timeout: float = 180) -> None:
+    rc, transcript = run_pty(argv, env=ctx.env(no_convenience=True), cwd=ctx.ws_dir,
+                             responders=passphrase_responders(ctx), timeout=timeout)  # fmt: skip
+    if rc != 0:
+        raise Refused(f"{what} failed (exit {rc}{error_code(transcript)}); the terminal transcript is not shown")
+
+
+_ERR_CODE = re.compile(r'"code": "([a-z][a-z0-9_.]{2,40})"|^err ([a-z][a-z0-9_.]{2,40})\b', re.M)
+
+
+def error_code(transcript: bytes | bytearray) -> str:
+    """The orch error code of a failed command (``err <code> ...``), the only part of a transcript ever shown: a code
+    is a fixed token, never a secret."""
+    m = _ERR_CODE.search(_ANSI.sub("", bytes(transcript).decode("utf-8", "replace")).replace("\r", ""))
+    return f", {m.group(1) or m.group(2)}" if m else ""
+
+
+def record_paired_device(ctx: Ctx, call: Any, pair: dict[str, Any]) -> None:
+    """Pin the phone: the device the host allocated for THIS sandbox's offer goes into ``pair.json`` (``device``), which
+    ``check-answer`` requires. Failing to learn it leaves ``pair.json`` without it, and check-answer then refuses."""
+    try:
+        offers = call("host.relay_pair_list", {"workspace_id": ctx.workspace_id})["offers"]
+        mine = next((o for o in offers if o.get("offer_id") == pair["offer_id"]), None)
+        dev = str((mine or {}).get("device_id") or "")
+        if not dev:
+            print("dev-pair: the host did not report the paired device; check-answer will refuse", file=sys.stderr)
+            return
+        pair = {**pair, "device": dev if dev.startswith("d_") else "d_" + dev}
+        ctx.sb.write("pair.json", json.dumps(pair, sort_keys=True).encode(), exclusive=False)
+    except Exception as exc:  # noqa: BLE001 - never fails the pairing itself
+        print(f"dev-pair: could not record the paired device ({type(exc).__name__}); check-answer will refuse",
+              file=sys.stderr)  # fmt: skip
+
+
+def step_pair(ctx: Ctx) -> int:
+    """Steps 8 and 9: ``orch host relay pair --primary external`` through the pseudo-terminal; the SAS typed from the
+    human or the FIFO, the primary's side by the owner client; ``pair.json`` (0600) and ``--json-fd`` get the link."""
+    a = ctx.args
+    r_json, w_json = os.pipe()
+    state: dict[str, Any] = {"offer": None, "state": None, "served": False, "pair": None, "line": b"", "final": None}
+    owner = make_owner(ctx)
+    call = ControlCall(ctx.root)
+    out_fd = a.json_fd
+
+    def need(phase: str, offer: str, prompt: str) -> str | None:
+        if ctx.fifo is not None:
+            return ctx.fifo.get(offer, phase, 600)
+        return human_code(prompt)
+
+    def on_json(fd: int, data: bytes) -> None:
+        state["line"] += data
+        while b"\n" in state["line"]:
+            raw, state["line"] = state["line"].split(b"\n", 1)
+            try:
+                obj = json.loads(raw)
+            except ValueError:
+                continue
+            if "link" in obj and state["pair"] is None:
+                state["offer"] = obj["offer_id"]
+                pair = {"link": obj["link"], "native_link": obj["native_link"], "offer_id": obj["offer_id"],
+                        "expires_ms": obj["expires_ms"], "origin": ctx.origin, "workspace_id": ctx.workspace_id,
+                        "root": str(ctx.root)}  # fmt: skip
+                ctx.sb.write("pair.json", json.dumps(pair, sort_keys=True).encode())
+                if out_fd is not None:
+                    os.write(out_fd, json.dumps(pair, sort_keys=True).encode() + b"\n")
+                if a.open_simulator:
+                    subprocess.run(["xcrun", "simctl", "openurl", "booted", pair["native_link"]], check=False,
+                                   timeout=60)  # fmt: skip
+                state["pair"] = {k: v for k, v in pair.items() if k not in ("link", "native_link")}
+                state["pair_full"] = pair
+                print(f"dev-pair: offer {pair['offer_id']} written to {ctx.root}/pair.json (the link is not printed)")
+            if "state" in obj:
+                state["state"] = obj["state"]
+
+    def sas(m: re.Match[str]) -> str | None:
+        offer = state["offer"]
+        if offer is None:
+            return None
+        if ctx.fifo is None:  # a person at this terminal: the prompt itself waits for them
+            return human_code("type the 6 characters the phone shows (the pairing code), empty to reject: ") or ""
+        state.setdefault("sas_deadline", time.monotonic() + SAS_WAIT_S)
+        code = ctx.fifo.take(offer, "sas")  # polled in slices: the terminal keeps being drained meanwhile
+        if code is None and time.monotonic() < state["sas_deadline"]:
+            return None
+        return code or ""
+
+    def cert_read(label: str, scopes: str) -> str | None:
+        return need("cert_code", state["offer"], f"primary: [{label}] wants {scopes}; the phone's compare code: ")
+
+    def cancel() -> None:
+        with contextlib.suppress(Exception):
+            call("host.relay_pair_cancel", {"workspace_id": ctx.workspace_id, "offer_id": state["offer"]})
+
+    def serve(request_id: str) -> None:
+        try:
+            state["result"] = owner.serve_request(request_id, ctx.workspace_id, ctx.root / "state", cert_read,
+                                                  wait_s=300)  # fmt: skip
+        except BaseException as exc:  # noqa: BLE001 - reported by idle(), which cancels the offer
+            state["result"] = exc
+
+    def idle() -> None:
+        worker = state.get("worker")
+        if worker is not None:  # the owner works in a thread; this loop keeps draining the terminal
+            if worker.is_alive():
+                return
+            worker.join()
+            state["worker"] = None
+            got = state.pop("result", None)
+            if got is None or isinstance(got, BaseException):
+                print(f"dev-pair: the primary step failed ({type(got).__name__}); cancelling the offer",
+                      file=sys.stderr)  # fmt: skip
+                cancel()
+            elif got.cert is not None:
+                call("host.relay_pair_cert", {"workspace_id": ctx.workspace_id, "offer_id": state["offer"],
+                                              "cert": got.cert})  # fmt: skip
+            else:
+                cancel()
+            return
+        if state["state"] == "cert_pending" and not state["served"] and state["offer"]:
+            offers = call("host.relay_pair_list", {"workspace_id": ctx.workspace_id})["offers"]
+            mine = next((o for o in offers if o["offer_id"] == state["offer"]), None)
+            if mine and mine.get("outstanding_request"):
+                state["served"] = True
+                state["worker"] = threading.Thread(target=serve, args=(mine["outstanding_request"],), daemon=True)
+                state["worker"].start()
+
+    responders = [
+        Responder(re.compile(r"type the 6 characters the phone shows \(empty: reject\): "), sas),
+        *passphrase_responders(ctx),
+    ]
+    argv = ctx.orch("host", "relay", "pair", "--workspace", ctx.workspace_id, "--primary", "external", "--json",
+                    "--json-fd", str(w_json), "--scopes", a.scopes, "--no-qr")  # fmt: skip
+    rc = -1
+    try:
+        rc, _ = run_pty(argv, env=ctx.env(), cwd=ctx.ws_dir, responders=responders, timeout=900, pass_fds=(w_json,),
+                        watch=(r_json,), on_watch=on_json, idle=idle)  # fmt: skip
+    finally:
+        if ctx.fifo is not None:
+            ctx.fifo.stop.set()  # the owner's thread must not read a descriptor number another file may reuse
+        if state.get("worker") is not None:
+            state["worker"].join(5)
+        os.close(w_json)
+        os.close(r_json)
+        owner.close()
+        if rc == 0 and state.get("pair_full"):
+            record_paired_device(ctx, call, state["pair_full"])
+        call.close()
+    final = state["state"]
+    print(f"dev-pair: pairing {'approved' if rc == 0 else (final or 'failed')}")
+    return 0 if rc == 0 else 1
+
+
+def up(args: argparse.Namespace) -> int:
+    refuse_environment(os.environ, os.geteuid())
+    if args.relay != LOCAL_RELAY:
+        check_origin(args.relay)
+    if args.json_fd is not None:
+        if args.json_fd < 3:
+            raise Refused("--json-fd must be a descriptor above 2 (a pipe or a socket)")
+        try:
+            mode = os.fstat(args.json_fd).st_mode
+        except OSError:
+            raise Refused("--json-fd is not an open descriptor") from None
+        if not (stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode)):
+            raise Refused("--json-fd must be a pipe or a socket: the link is never written to a file")
+    if not args.expect_code_from:
+        try:
+            os.close(os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY))
+        except OSError:
+            raise Refused("no terminal for the codes: run in a terminal or pass --expect-code-from") from None
+    scopes = [s for s in args.scopes.split(",") if s]
+    if not scopes or not set(scopes) <= {"look", "decide"}:
+        raise Refused("--scopes: look, decide")
+    path_env, py, uv = pinned_path()
+    root = check_root_path(args.root)
+    if args.expect_code_from:
+        check_fifo(args.expect_code_from, root)
+    sb = create_root(root)
+
+    def on_signal(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt  # the same teardown as Ctrl-C
+
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, on_signal)
+    ctx = Ctx(sb=sb, args=args, path_env=path_env, py=py, uv=uv)
+    try:
+        for name in TOP_ENTRIES:
+            sb.mkdir(name, RUN_MODE if name == "run" else 0o700)
+        fifo_name = Path(args.expect_code_from).name if args.expect_code_from else None
+        manifest_update(
+            root,
+            entries=[
+                *TOP_ENTRIES,
+                "pair.json",
+                "primary-cert.json",
+                "primary-cert.json.tmp",
+                *([fifo_name] if fifo_name else []),
+            ],
+        )
+        if fifo_name:
+            os.mkfifo(fifo_name, 0o600, dir_fd=sb.fd)
+        ctx.ws_dir = str(root / "ws")
+        sid = sb.sid
+        invite = step_relay(ctx)
+        sb.verify()
+        sim = bool(args.sim_convenience)
+        prefix, name = ("SBX", _devsandbox().owner_name(sid)) if sim else ("DVP", f"dev-pair {sid[:8]}")
+        if sim:  # a pending dev host first: the sandbox person and workspace exist only after setup (V3-D38)
+            step_sim_pre(ctx, sid)
+            step_host(ctx, role="host-pending")
+        else:
+            step_host(ctx)
+        step_setup(ctx, prefix, name)
+        identity_from_disk(ctx)
+        if sim:
+            stop_host(ctx, "host-pending")
+            step_sim(ctx, sid)  # the person, the workspace row and the marker, with no host running
+            step_host(ctx)  # the full dev host proves them (S1 to S5)
+        else:
+            manifest_update(root, person_id=ctx.person_id)
+        sb.verify()
+        if args.expect_code_from:
+            ctx.fifo = CodeFifo(Path(args.expect_code_from), root)
+        cert = step_account(ctx, invite or "")
+        if sim:
+            pty_cmd(ctx, ctx.orch("keys", "reader", "declare", "--workspace", ctx.workspace_id), "reader declare")
+        # The code refuses `primary set` before the link (relay.not_linked), so the link comes first (the design lists
+        # the primary at step 6 and the link at 7): account, host, [declare], link, primary, pair.
+        link = ctx.orch("host", "relay", "link", "--workspace", ctx.workspace_id, "--relay", ctx.origin,
+                        "--max-publication-bytes", str(MAX_PUBLICATION))  # fmt: skip
+        pty_cmd(ctx, link, "relay link", timeout=300)
+        cmd = ctx.orch("host", "relay", "primary", "set", "--workspace", ctx.workspace_id, "--cert", str(cert),
+                       "--label", "orch dev sandbox primary")  # fmt: skip
+        pty_cmd(ctx, cmd, "primary set")
+        print(f"dev-pair: sandbox {sid[:8]} at {root}; relay {ctx.origin}")
+        rc = step_pair(ctx)
+        if rc != 0:
+            raise Refused("the pairing did not reach approved")
+        return 0
+    except BaseException as exc:
+        if ctx.fifo is not None:
+            ctx.fifo.close()
+        msg = str(exc) if isinstance(exc, Refused) else type(exc).__name__
+        print(f"dev-pair: failed ({msg}); tearing down what was started", file=sys.stderr)
+        try:
+            down(str(root), keep=False, out=lambda s: print(s, file=sys.stderr))
+        except Exception as dexc:  # noqa: BLE001 - never hidden: the person must know what is left
+            print(f"dev-pair: teardown of {root} failed ({type(dexc).__name__}: {dexc}); check it by hand",
+                  file=sys.stderr)  # fmt: skip
+        sb.close()
+        if isinstance(exc, (Refused, KeyboardInterrupt)):
+            return 1 if isinstance(exc, Refused) else 130
+        raise
+
+
+# -- ask / check-answer (the end-to-end helpers; the pure parts are unit-tested) ---------------------------------------
+
+NONCE = re.compile(r"[a-z0-9]{4,32}")
+_ULID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+_GRANT = re.compile(r"ORCH_GRANT=(\S+)")
+_QID = re.compile(r"Q[0-9]+")
+
+
+def check_nonce(nonce: str) -> str:
+    if type(nonce) is not str or not NONCE.fullmatch(nonce):
+        raise Refused("--nonce: 4 to 32 lowercase letters or digits")
+    return nonce
+
+
+def new_session_id() -> str:
+    """A fresh agent session id (``s_`` and 26 Crockford characters, the first one 0-7: a 128-bit ULID)."""
+    return "s_" + secrets.choice("01234567") + "".join(secrets.choice(_ULID_ALPHABET) for _ in range(25))
+
+
+def parse_grant(transcript: bytes | bytearray | str) -> str | None:
+    """The ``ORCH_GRANT`` secret ``orch grant`` prints (held in memory only; never logged or printed here)."""
+    text = transcript if isinstance(transcript, str) else bytes(transcript).decode("utf-8", "replace")
+    m = _GRANT.search(_ANSI.sub("", text).replace("\r", ""))
+    return m.group(1) if m else None
+
+
+def answer_key(nonce: str) -> str:
+    """The one option of the question (a token: lowercase, digits, underscores; the phone taps it)."""
+    return f"e2e_ok_{nonce}"
+
+
+def asked_text(nonce: str) -> str:
+    """The free-text question the phone looks for: it contains the nonce."""
+    return f"e2e {nonce}: pick {answer_key(nonce)}"
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """The complete JSON lines of an event log (a torn last line is skipped; a missing file is empty)."""
+    out: list[dict[str, Any]] = []
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return out
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in raw.splitlines():
+        try:
+            doc = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(doc, dict):
+            out.append(doc)
+    return out
+
+
+def paired_devices(workspace_events: Sequence[Mapping[str, Any]], excluded: Sequence[str]) -> set[str]:
+    """The devices added to the workspace by ``device.added`` minus the owner's genesis device and the primary's."""
+    devices = (e.get("device") for e in workspace_events if e.get("type") == "device.added")
+    return {d for d in devices if isinstance(d, str) and d not in excluded}
+
+
+def find_question(ticket_events: Sequence[Mapping[str, Any]], nonce: str) -> str | None:
+    """The id (``Q<n>``) of the question asked in this ticket whose text contains the nonce."""
+    for e in ticket_events:
+        q = e.get("question")
+        if e.get("type") == "question.asked" and isinstance(q, Mapping) and nonce in str(q.get("text", "")):
+            qid = q.get("id")
+            if isinstance(qid, str) and _QID.fullmatch(qid):
+                return qid
+    return None
+
+
+def find_answer(
+    ticket_events: Sequence[Mapping[str, Any]], qid: str, nonce: str, phones: set[str]
+) -> dict[str, Any] | None:
+    """The ``question.answered`` for ``qid`` whose option is ``e2e_ok_<nonce>`` and whose actor is a person signing with
+    one of the paired ``phones`` (never the owner's or the primary's device), or ``None``."""
+    for e in ticket_events:
+        a = e.get("actor") or {}
+        if (
+            e.get("type") == "question.answered"
+            and e.get("question") == qid
+            and answer_key(nonce) in (e.get("option"), e.get("text"))
+            and a.get("kind") == "person"
+            and a.get("device") in phones
+        ):
+            return {
+                "question": qid,
+                "option": answer_key(nonce),
+                "device": a["device"],
+                "person": a.get("id"),
+                "at": e.get("at"),
+            }
+    return None
+
+
+def store_dir(ws: Path) -> Path:
+    """The orch store of a workspace: ``<ws>/.orch``, or ``<ws>`` itself in the old layout."""
+    return ws / ".orch" if (ws / ".orch" / "events").is_dir() else ws
+
+
+def genesis_device(ws: Path) -> str:
+    """The owner's genesis device (the ``workspace.created`` actor), or ``""`` when the log cannot be read."""
+    wsev = read_jsonl(store_dir(ws) / "events" / "workspace.jsonl")
+    created = next((e for e in wsev if e.get("type") == "workspace.created"), {})
+    return str((created.get("actor") or {}).get("device") or "")
+
+
+def scan_answer(ws: Path, nonce: str, phone: str) -> dict[str, Any] | None:
+    """One pass over the workspace logs: the answer to the question carrying the nonce, signed by ``phone`` (the one
+    device paired for this sandbox's offer), or ``None``."""
+    try:
+        dirs = sorted(d for d in (store_dir(ws) / "tickets").iterdir() if d.is_dir() and not d.is_symlink())
+    except OSError:
+        return None
+    for d in dirs:
+        events = read_jsonl(d / "events.jsonl")
+        qid = find_question(events, nonce)
+        if qid is None:
+            continue
+        hit = find_answer(events, qid, nonce, {phone})
+        if hit is not None:
+            return {**hit, "ticket": events[0].get("key")}
+    return None
+
+
+def pinned_phone(root: Path) -> str:
+    """The phone ``check-answer`` accepts, or a :class:`Refused` (fail closed): the device that joined for this
+    sandbox's offer (``pair.json``) must be known, and must be neither the primary (``primary-cert.json``) nor the
+    owner's genesis device (``workspace.created``), both of which must be readable, and must have a ``device.added``."""
+    primary = primary_device_id(root)
+    if not primary:
+        raise Refused("primary-cert.json is missing or unreadable: cannot tell the phone from the primary (refusing)")
+    genesis = genesis_device(root / "ws")
+    if not genesis:
+        raise Refused("the genesis device (workspace.created) cannot be read: refusing")
+    try:
+        doc = json.loads((root / "pair.json").read_text(encoding="utf-8"))
+        phone = doc["device"]
+    except (OSError, ValueError, KeyError, TypeError):
+        phone = ""
+    if not isinstance(phone, str) or not re.fullmatch(r"d_[0-9a-f]{32}", phone):
+        raise Refused("pair.json names no device paired for this sandbox's offer (did `up` finish?): refusing")
+    if phone in (primary, genesis):
+        raise Refused("the paired device is the primary or the genesis device: refusing")
+    if phone not in paired_devices(
+        read_jsonl(store_dir(root / "ws") / "events" / "workspace.jsonl"), [primary, genesis]
+    ):
+        raise Refused("the paired device has no device.added in the workspace log: refusing")
+    return phone
+
+
+def primary_device_id(root: Path) -> str:
+    """``d_<device id>`` of the primary certificate ``up`` wrote (``primary-cert.json``), or ``""``."""
+    try:
+        doc = json.loads((root / "primary-cert.json").read_text(encoding="utf-8"))
+        return "d_" + str(doc["o"]["device_id"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+
+
+def _sandbox_ctx(root_arg: str) -> Ctx:
+    """A context for a RUNNING sandbox (``up`` finished): the root is validated against its manifest, the passphrase is
+    read from ``secrets/``, the workspace is the manifest's."""
+    root = check_root_path(root_arg)
+    try:
+        doc = _devsandbox().check_manifest(root)
+    except Exception as exc:  # noqa: BLE001 - SandboxRefused: not a dev-pair sandbox
+        raise Refused(f"{root} is not a dev-pair sandbox ({type(exc).__name__})") from None
+    if not doc.get("workspaces"):
+        raise Refused("this sandbox has no workspace yet (run up with --sim-convenience first)")
+    path_env, py, uv = pinned_path()
+    fd, st = _devsandbox().open_root(root)
+    sb = Sandbox(root, fd, st.st_dev, st.st_ino, doc["id"])
+    ctx = Ctx(sb=sb, args=argparse.Namespace(), path_env=path_env, py=py, uv=uv, ws_dir=str(root / "ws"),
+              workspace_id=doc["workspaces"][0]["id"], person_id=doc.get("person_id", ""))  # fmt: skip
+    try:
+        if not host_listening(root):
+            raise Refused("no host is listening in this sandbox (is `up` still running?)")
+        try:
+            ctx.passphrase = sb.read("secrets/passphrase").decode().strip()
+        except Exception:  # noqa: BLE001
+            raise Refused("secrets/passphrase is missing") from None
+    except BaseException:
+        sb.close()
+        raise
+    return ctx
+
+
+def _agent(ctx: Ctx, grant: str, session: str, *argv: str) -> dict[str, Any]:
+    env = ctx.env(extra={"ORCH_GRANT": grant, "ORCH_SESSION": session})
+    try:
+        r = subprocess.run(ctx.orch("--json", *argv), cwd=ctx.ws_dir, env=env, capture_output=True, text=True,
+                           timeout=120, check=False, stdin=subprocess.DEVNULL)  # fmt: skip
+    except subprocess.TimeoutExpired:
+        raise Refused(f"orch {argv[0]} timed out after 120 s (is the sandbox host healthy?)") from None
+    try:
+        doc = json.loads(r.stdout)
+    except ValueError:
+        doc = {}
+    if r.returncode != 0 or not isinstance(doc, dict) or not doc.get("ok"):
+        code = ((doc.get("error") or {}).get("code") if isinstance(doc, dict) else None) or ""
+        msg = re.sub(
+            r"[^\x20-\x7e]", "?", str((doc.get("error") or {}).get("message", "")) if isinstance(doc, dict) else ""
+        )
+        raise Refused(f"orch {argv[0]} failed (exit {r.returncode}{', ' + code if code else ''}): {msg[:160]}")
+    return doc
+
+
+def ask(args: argparse.Namespace) -> int:
+    """Play the agent: a grant (typed with the sandbox's passphrase), a ticket, a free-text question with the nonce."""
+    nonce = check_nonce(args.nonce)
+    ctx = _sandbox_ctx(args.root)
+    try:
+        argv = ctx.orch("grant", "--hours", "2", "--label", "e2e agent")
+        rc, transcript = run_pty(argv, env=ctx.env(no_convenience=True), cwd=ctx.ws_dir,
+                                 responders=passphrase_responders(ctx), timeout=180)  # fmt: skip
+        grant = parse_grant(transcript)
+        if rc != 0 or not grant:
+            raise Refused(
+                f"orch grant failed (exit {rc}{error_code(transcript)}); the terminal transcript is not shown"
+            )
+        session = new_session_id()
+        made = _agent(ctx, grant, session, "new", f"e2e ticket {nonce}", "--type", "feature")
+        key = made.get("key")
+        if not isinstance(key, str):
+            raise Refused("orch new returned no ticket key")
+        asked = _agent(
+            ctx,
+            grant,
+            session,
+            "ask",
+            asked_text(nonce),
+            "--ref",
+            key,
+            "--options",
+            f"{answer_key(nonce)},e2e_no_{nonce}",  # a choice question has 2..6 options (#1123)
+            "--rec",
+            answer_key(nonce),
+        )
+        m = _QID.search(json.dumps(asked.get("data", {})))
+        if m is None:
+            raise Refused("orch ask returned no question id")
+        print(json.dumps({"ticket": key, "question": m.group(0), "nonce": nonce}))
+        return 0
+    finally:
+        ctx.sb.close()
+
+
+def check_answer(args: argparse.Namespace, sleep: Callable[[float], None] = time.sleep) -> int:
+    """Wait for the phone's answer in the host's own logs; JSON on stdout, exit 0 found / 1 not found in time."""
+    nonce = check_nonce(args.nonce)
+    root = check_root_path(args.root)
+    try:
+        _devsandbox().check_manifest(root)
+    except Exception as exc:  # noqa: BLE001
+        raise Refused(f"{root} is not a dev-pair sandbox ({type(exc).__name__})") from None
+    try:
+        phone = pinned_phone(root)
+    except Refused as exc:  # fail closed: exit 1, never a shorter exclusion list
+        print(f"dev-pair: check-answer refused: {exc}", file=sys.stderr)
+        return 1
+    end = time.monotonic() + float(args.timeout)
+    while True:
+        hit = scan_answer(root / "ws", nonce, phone)
+        if hit is not None:
+            print(json.dumps({"answered": True, **hit}))
+            return 0
+        if time.monotonic() >= end:
+            print(json.dumps({"answered": False, "nonce": nonce, "timeout_s": float(args.timeout)}))
+            return 1
+        sleep(1.0)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="dev-pair", description=__doc__.split("\n\n")[0], allow_abbrev=False)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    u = sub.add_parser("up", allow_abbrev=False)
+    u.add_argument("--root", required=True)
+    u.add_argument("--relay", default=LOCAL_RELAY, help="local or https://relay.dev.severin.io")
+    u.add_argument("--invite-file", help="remote relay: a 0600 file with the operator's invite")
+    u.add_argument("--scopes", default="look,decide")
+    u.add_argument("--open-simulator", action="store_true", help="xcrun simctl openurl booted <native link>")
+    u.add_argument("--expect-code-from", metavar="FIFO", help="read the codes from this FIFO (direct child of --root)")
+    u.add_argument("--json-fd", type=int, help="also write the pairing object to this pipe or socket")
+    u.add_argument("--sim-convenience", action="store_true", help="11A.17: an SBX sandbox for Simulator answers")
+    d = sub.add_parser("down", allow_abbrev=False)
+    d.add_argument("--root", required=True)
+    d.add_argument("--keep", action="store_true", help="stop the processes, keep the root for debugging")
+    a = sub.add_parser("ask", allow_abbrev=False, help="e2e: a ticket and a free-text question as the agent")
+    a.add_argument("--root", required=True)
+    a.add_argument("--nonce", required=True)
+    c = sub.add_parser("check-answer", allow_abbrev=False, help="e2e: wait for the phone's answer in the host log")
+    c.add_argument("--root", required=True)
+    c.add_argument("--nonce", required=True)
+    c.add_argument("--timeout", type=float, default=240.0)
+    return p
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        refuse_environment(os.environ, os.geteuid())
+        if args.cmd == "up":
+            return up(args)
+        if args.cmd == "ask":
+            return ask(args)
+        if args.cmd == "check-answer":
+            return check_answer(args)
+        return down(args.root, keep=args.keep)
+    except Refused as exc:
+        print(f"dev-pair: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

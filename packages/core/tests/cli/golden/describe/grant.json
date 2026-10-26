@@ -1,0 +1,186 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "grant",
+    "name": "grant",
+    "cli": "orch grant",
+    "summary": "Issue a standing grant for agents; the secret is printed once, on your terminal.",
+    "who": "human",
+    "usage": "orch grant [--hours N] [--days N] [--scope all|workable] [--verbs VERBS] [--label TEXT] [--extend GRANT] [--runner] [--dry-run]",
+    "pre": [
+      "workspace_exists",
+      "role_allows",
+      "user_presence",
+      "text_clean"
+    ],
+    "emits": [
+      "grant.issued",
+      "grant.revoked"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Issue a standing grant for agents; the secret is printed once, on your terminal.",
+      "properties": {
+        "hours": {
+          "type": "integer",
+          "description": "length in whole hours (1 to 168)",
+          "minimum": 1,
+          "maximum": 168,
+          "x-metavar": "N"
+        },
+        "days": {
+          "type": "integer",
+          "description": "length in whole days (1 to 7); instead of --hours",
+          "minimum": 1,
+          "maximum": 7,
+          "x-metavar": "N"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "all",
+            "workable"
+          ],
+          "description": "what it covers",
+          "default": "workable"
+        },
+        "verbs": {
+          "type": "string",
+          "description": "agent, or operation names comma separated",
+          "default": "agent",
+          "x-metavar": "VERBS"
+        },
+        "label": {
+          "type": "string",
+          "description": "short label",
+          "x-metavar": "TEXT"
+        },
+        "extend": {
+          "type": "string",
+          "description": "revoke this runner grant of yours together with the new one (with --runner)",
+          "pattern": "^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+          "x-metavar": "GRANT"
+        },
+        "runner": {
+          "type": "boolean",
+          "description": "hand the secret to the runner here instead of showing it (at most the grant_hours setting)"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok grant.issued[ {grant}][ until {until_local}]\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "grant": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          },
+          "until_local": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "custody.no_key",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch setup sets up your device key",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.no_prompt",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run this command yourself, in your own terminal",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.wrong_passphrase",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run the command again and type your passphrase",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "human_only",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch ask or orch wait",
+        "fix": [
+          "orch",
+          "describe",
+          "ask"
+        ]
+      },
+      {
+        "code": "role.denied",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask an owner or maintainer",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe grant",
+        "fix": [
+          "orch",
+          "describe",
+          "grant"
+        ]
+      },
+      {
+        "code": "members.stale",
+        "exit": 9,
+        "retryable": true,
+        "hint": "retry; the person re-signs",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

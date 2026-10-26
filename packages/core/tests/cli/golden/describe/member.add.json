@@ -1,0 +1,204 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "member.add",
+    "name": "member.add",
+    "cli": "orch member add",
+    "summary": "Add a member with a role; their first device certificate comes with the invitation.",
+    "who": "human",
+    "usage": "orch member add --name NAME [--role owner|maintainer|member|viewer] --pk KEY --cert PATH [--reader-decl PATH] [--dry-run]",
+    "pre": [
+      "workspace_exists",
+      "role_allows",
+      "user_presence",
+      "text_clean"
+    ],
+    "emits": [
+      "member.added"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Add a member with a role; their first device certificate comes with the invitation.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "display name",
+          "x-metavar": "NAME"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "owner",
+            "maintainer",
+            "member",
+            "viewer"
+          ],
+          "description": "role",
+          "default": "member"
+        },
+        "pk": {
+          "type": "string",
+          "description": "their public key, b64u",
+          "x-metavar": "KEY"
+        },
+        "cert": {
+          "type": "string",
+          "description": "their device certificate: PATH or - for stdin",
+          "x-metavar": "PATH",
+          "x-file": true
+        },
+        "reader_decl": {
+          "type": "string",
+          "description": "their reader declaration: PATH",
+          "x-metavar": "PATH",
+          "x-file": true
+        }
+      },
+      "required": [
+        "name",
+        "pk",
+        "cert"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok member.added {person} {role} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "person": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "person",
+          "role"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "custody.no_key",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch setup sets up your device key",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.no_prompt",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run this command yourself, in your own terminal",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.wrong_passphrase",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run the command again and type your passphrase",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "human_only",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch ask or orch wait",
+        "fix": [
+          "orch",
+          "describe",
+          "ask"
+        ]
+      },
+      {
+        "code": "reader.decl_invalid",
+        "exit": 3,
+        "retryable": false,
+        "hint": "make a new one with the reader's own orch (orch keys reader declare)",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "role.denied",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask an owner or maintainer",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "sign.convenience_readers",
+        "exit": 3,
+        "retryable": false,
+        "hint": "pass the reader's declaration (orch keys reader declare --enrol, then --reader-decl PATH)",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "parse.json",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe member.add",
+        "fix": [
+          "orch",
+          "describe",
+          "member.add"
+        ]
+      },
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe member.add",
+        "fix": [
+          "orch",
+          "describe",
+          "member.add"
+        ]
+      },
+      {
+        "code": "members.stale",
+        "exit": 9,
+        "retryable": true,
+        "hint": "retry; the person re-signs",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

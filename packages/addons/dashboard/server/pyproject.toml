@@ -1,0 +1,54 @@
+[project]
+name = "orch-dashboard"
+version = "0.1.0"
+description = "Local read-only orch dashboard addon"
+requires-python = ">=3.14"
+dependencies = ["fastapi==0.143.1", "starlette==1.8.0", "uvicorn==0.34.2", "websockets==13.1", "orch-core>=2.0.0.dev0"]
+
+[project.scripts]
+orch-dashboard = "orch_dashboard.__main__:main"
+
+[dependency-groups]
+dev = ["pytest==9.1.1", "httpx==0.28.1", "ruff==0.11.8", "pytest-xdist>=3.6"]
+
+[tool.uv.sources]
+orch-core = { path = "../../../core", editable = true }
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+# Added exactly once by the hooks, including when rebuilding from an sdist.
+exclude = ["src/orch_dashboard/static", "src/orch_dashboard/orch-addon.json"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orch_dashboard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["realhost: runs a real orch host (core) as a subprocess; skipped when it cannot start"]
+# `-n auto` in CI: tests marked xdist_group("wheel-build") share one worker, so two `uv build --wheel` runs never write the
+# UI assets in the source tree (src/orch_dashboard/static) at the same time.
+addopts = "--dist loadgroup"
+pythonpath = ["..", "../../../core"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Long prose lines in the real-host kit and tests (prompts, reasons and findings read better unwrapped).
+"tests/realhost_kit.py" = ["E501"]
+"tests/test_realhost.py" = ["E501"]
+"tests/test_explorer.py" = ["E501"]
+"tests/test_realhost_click.py" = ["E501"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist.hooks.custom]
+path = "hatch_build.py"

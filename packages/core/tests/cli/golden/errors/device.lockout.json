@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "device.lockout",
+    "message": "removing this device would lock someone out",
+    "hint": "remove it from another device, or add another device first",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

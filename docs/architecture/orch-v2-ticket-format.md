@@ -6,7 +6,7 @@ multi-user, agent ergonomics). Visual examples at four stages:
 
 **Amendment F1 (draft, 10 Oct 2026):** settles every gap found while building C1 (issue #338, PR #335 and #336
 reviews), adds D58–D60 (verdict binds to the commit, the optional code gate, grant terms) and aligns with
-orch-relay `docs/protocol-v2.md`. D61 (factory auto-approval) and D62 (mandates) are not part of the format in P1.
+`contracts/relay/protocol-v2.md`. D61 (factory auto-approval) and D62 (mandates) are not part of the format in P1.
 What changed and why is in the decisions log (§13). Points that change the security model are listed in §12 and
 need the owner's confirmation. Revised the same day after an adversarial Codex review (§13, rows 56–80) and an independent Opus security review
 with a re-review (rows 81–126). Rows 127–138 record the C4 and C5 contract decisions (#346, #347).
@@ -532,11 +532,11 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `grant.requested` | P (hub) | `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `hours`: int 1–168; `label?`: str | C10 (hub protocol §8.8, V3-D29). Hub-signed only (`auth: "hub"`; a device-signed one is refused). A request for an agent grant: it changes no grant by itself; the host answers with a host-actor `grant.issued` naming it. The signer must be a member (an aliased hub user). Terms by the signer's role as `grant.issued` (D60). The event carries no grant id, secret hash or times. |
 | `grant.revoked` | P | `grant`; `reason?`: str | **D60.** Owners revoke any grant; others their own, compared as the signer's **canonical** person (a hub user aliased to the grantee revokes it, C10). |
 | `device.excluded` | P (hub) | `device`; `reason`: `lost`, `retired` or `compromised` | C10 (hub protocol §8.8). Hub-signed only, an `admin` of the hub. Ends the device in **this** workspace as `device.removed` does; `compromised` has the effects of §5.7 and ends the device's grants. Refused (`role.denied`) for a device of a workspace owner: owner devices go only through the person-signed `device.revoked`, so the hub cannot block the owner's break-glass. |
-| `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind] | Owner only. Also enables the addon. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
+| `addon.granted` | P | `name`: addon name; `version`: str; `package_sha256`: hash; `capabilities`: [token]; `fields`: {field: {`type`, its limits, `set_by`, `gate`?}}; `sections`: [{`id`, `types`, `gate`?}]; `artifact_kinds`: [kind]; `runtime?`: {`kind`, `lock`, `packages`} | Owner only. Also enables the addon. `runtime` (V3 G4, marketplace spec §8.1) is present only when the add-on installs dependencies after the grant: the lockfile kind, its path in the package and the number of locked packages; the host derives it from the manifest's `runtime` and the checked lockfile. The host derives `fields`, `sections` and `artifact_kinds` from the package's manifest (§8.1); replay never reads the manifest and checks every later addon write against these three (§8.1). The bindings of §5.7 are the entries that have `gate`. |
 | `addon.disabled` | P | `name` | Data stays untouched. A new `addon.granted` enables it again. |
 | `addon.purged` | P | `name` | Deletes the addon's data. |
-| `hub.joined` | P | `hub_id`: hex16; `hk_root_pub`: b64u; `mode`: `selective` (`full` is refused until C2b); `binding_seq`: int ≥ 1; `aliases`: [{`person_id`, `user_id`}] sorted by `person_id` | V3 (hub contract H0 §9.1). Owner only, signed by the owner's device key at the host terminal. `hub_id` is the hub id of `hk_root_pub`. Adds no member and seals no key: a selective hub never holds `WK_e` (spec §8a). `binding_seq` is higher than every earlier one; refused while a hub is joined; an alias is never re-pointed. |
-| `hub.left` | P | `hub_id`; `binding_seq` | V3 (hub contract H0 §9.1). Owner only (break-glass): ends the joined binding it names. |
+| `hub.joined` | P | `hub_id`: hex16; `hk_root_pub`: b64u; `mode`: `selective` (`full` is refused until C2b); `binding_seq`: int ≥ 1; `aliases`: [{`person_id`, `user_id`}] sorted by `person_id`; `owner_proof`: object or null | V3 (hub contract H0 §9.1). Owner only, signed by the owner's device key. #1198 C9: `owner_proof` is the hub contract §9.6 proof signed with the owner's person key `PK` (the backup key); `null` only in a prepared event, never in a recorded one: the model refuses a `hub.joined` / `hub.left` without a valid proof (`hub.invalid`, detail `owner_proof: <code>`), with the roster's `pk_pub`, its own record of the prior hub event and the append time of the host-signed chained line (`at`). A `hub.joined` / `hub.left` of an owner that the model refuses leaves the hub state `unknown` (`ws.hub.invalid`): every reader of the signing mode treats it as full, never as standalone; a later valid `hub.joined` or `hub.left` clears it. Whether a workspace is dev is its signed genesis (`prefix` `SBX`), read the same by every opener. `hub_id` is the hub id of `hk_root_pub`. Adds no member and seals no key: a selective hub never holds `WK_e` (spec §8a). `binding_seq` is higher than every earlier one; refused while a hub is joined; an alias is never re-pointed. |
+| `hub.left` | P | `hub_id`; `binding_seq`; `owner_proof`: object or null | V3 (hub contract H0 §9.1). Owner only (break-glass): ends the joined binding it names. #1198 C9: carries the owner proof like `hub.joined`. |
 | `hub.pinned` | H | `hub_id`; `object`: one signed `hub.card` (with its `op_cert`), `hub.op_revoked` or `hub.snapshot`, verbatim | C3b (§15.2). The hub ledger: workspace log only, appended by the host together with the custodial event that needs it. Its authority is the embedded signatures under the `hk_root_pub` of `hub.joined`. |
 | `hub.pinned` | H | `hub_id`; `object`: a signed `hub.card`, `hub.op_revoked` or `hub.snapshot` | C3b (§15.2): the hub ledger; authority is the embedded signatures under the root pinned by `hub.joined`. |
 
@@ -1896,6 +1896,7 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `device.exists` | §5.3 the device id is already registered |
 | `device.invalid` | §5.3 the device was removed, revoked, or its certificate expired |
 | `device.scope` | §5.3 the certificate lacks `decide` (or `operate`), or has a `drop:` scope |
+| `device.lockout` | a `device.removed` of an owner's last device that can sign now (not removed or revoked, certificate not expired at the event's `at`, with `decide`, held by a member) |
 | `sign.method` | B6: the person event's `auth` is a way (`convenience` is `click`, `secure-enclave-unlocked` is `phone`) that the workspace's `settings.sign_methods` leaves out, judged by the state at the event's own position; honest labels only |
 | `sign.hub_only` | C8/C11 (D78, D81): a person event that is not `auth: "hub"` at a position where the workspace is joined to a hub in **full** mode, and whose type is not a break-glass event (`hub.left`, signed by an owner without the click or convenience signer); judged by the state at the event's own position, append and replay alike. The break-glass set is `orch.model.breakglass.BREAK_GLASS` |
 | `sign.key_exposed` | #1097: a device key with a signed `device.exposed` mark signs a full-mode `hub.joined` (also with an `auth: "convenience"` label, marked or not; first join, selective to full, the `hub.mode` re-affirmation) or a break-glass event (`hub.left`); judged by the state before the event, append and replay alike. A key with no such evidence is clean. The way out is `device.rotated` (`orch keys custody passphrase --rotate`) |
@@ -2105,26 +2106,24 @@ detected and refused with one message that says to delete it; nothing reads, mov
   key is tolerated on read (any other value is refused) and never written. The host serves and checks
   (`check_workspace_files`: owner, mode 0o022, ACL) the store, and agents, terminals and worktrees keep using the
   project. An entry whose root holds an old-version store is unavailable with the delete message.
-- **`Store.open`** resolves the layout from the project directory fd; `create=True` (only `orch init` and
+- **`Store.open`** resolves the layout from the project directory fd; `create=True` (only `orch setup` and
   `host.bootstrap`) makes `.orch` with `mkdir` (an existing one is refused, never reused) and records the identity of
   what it made, which is all a rollback may remove (by fds, through a tombstone). Every transaction re-checks the
   layout under the guard and the lock, so a stale opener fails closed (in a running host the message says `restart the host: orch host restart`).
 
-**Decisions of C8 (instructions and `orch init` as built).** Where §10.2, the harness doc and the custody doc were silent,
+**Decisions of C8 (instructions and `orch setup` as built).** Where §10.2, the harness doc and the custody doc were silent,
 `orch.instructions` and `orch.ops.workspace_init` do the following. Each is a rule the tests pin (`tests/instructions/`).
 
-- **Where the workspace is.** `orch init --prefix DEMO [--name NAME]` makes the workspace **in the current directory**
+- **Where the workspace is.** `orch setup` makes the workspace **in the current directory**
   (`config.json`, `keys.jsonl`, `events/`, `tickets/`, `.state/` next to your files), not in an `orchestrator/` folder;
   `find_workspace` still accepts both. It is refused as invalid input when a workspace is here or above, or when any of
   those five names exists, and when the state directory lies inside the workspace (the workspace key would be committed).
-  The workspace name in `config.json` is the directory name; the owner's name is `--name`, else `$USER`. A lock directory
-  (`.orch-init.lock`) keeps two inits in one directory apart (`lock.busy`), so one rollback never deletes the other's files.
+  The workspace name in `config.json` is the directory name; the owner's name is `--name`, else `$USER`. (V3-D38: the `.orch-init.lock` directory is gone; the host serialises bootstraps per root.)
 - **Refusals come before any key exists.** A grant (`ORCH_GRANT`) or a missing person's presence is `human_only`; no
   controlling terminal (`/dev/tty`) is `human_only` too; so is an instruction-file path that is or lies below a symbolic
   link. Any failure after a key was made removes the key directory and the workspace files this call made, so a second try
   starts clean. Ctrl-C and SIGHUP (closing the terminal) do the same and print one line (`stop: init cancelled, nothing
-  was created`), no traceback. Key directories of an init that was killed (SIGKILL, power loss) carry an
-  `.init-incomplete` marker with the process id; the next `init` removes those whose process is gone. Every failure after
+  was created`), no traceback. (V3-D38: the marker and its sweep are gone; a hosted setup that dies is cleaned up by the host's bootstrap intent and start-up recovery.) Every failure after
   a passphrase or the code was shown says that what was shown is void.
 - **The passphrase comes first.** `/dev/tty` shows a generated passphrase (six distinct words of the BIP-39 list, about
   66 bits, shown once); the person types it back to confirm, or types one of their own instead (asked twice). Only then
@@ -2175,7 +2174,7 @@ detected and refused with one message that says to delete it; nothing reads, mov
   another scope than `builtin` is the owner's and is kept; a skill folder **without** `orch.skill.json` is the user's
   unless its `SKILL.md` is exactly the shipped text (`kept ... (no sidecar, not orch's)`, also with `--force`); this
   holds in `.agents/skills` and `.claude/skills`. `init` and `sync` say what they kept (`kept .agents/skills/orch-tickets
-  (scope workspace ...)`). The plugin layout (`plugins/orch-core/skills/`, `hooks/hooks.json`) is generated by
+  (scope workspace ...)`). The plugin layout (`packages/core/skills/`, `hooks/hooks.json`) is generated by
   `scripts/sync-plugin.sh` and kept equal to the generator by a test. If writing the files fails after the genesis, the
   workspace stays and the result says so and what to run (`orch instructions sync`; the `AGENTS.md`/`CLAUDE.md` lines are
   added by hand).
@@ -2206,7 +2205,7 @@ detected and refused with one message that says to delete it; nothing reads, mov
   at most 6 lines and 150 tokens, a skill at most 600 tokens (a token is four characters), all always-loaded text under
   500 tokens (measured on the real texts), and `orch help` within its pinned size.
 - **Follow-ups.** Writing the instruction files with directory file descriptors (`dir_fd`, `O_NOFOLLOW`) to close the lstat-then-act race (a same-user process can still create empty directories outside via a swapped link; no file escapes); refusing hardlinked instruction files.
-- **Locks and signals.** The init lock is an `flock` on `.orch-init.lock` (dropped by the kernel when the process dies; the stale file blocks nothing); SIGTERM and SIGHUP are handled like Ctrl-C. A relative `ORCH_STATE_DIR` is made absolute. Files over 1 MiB are never rewritten (`init` reports it, `sync` refuses). The hook exits 0 even when it prints `DAMAGED`.
+- **Locks and signals.** (V3-D38: the init lock is gone.) SIGTERM and SIGHUP are handled like Ctrl-C. A relative `ORCH_STATE_DIR` is made absolute. Files over 1 MiB are never rewritten (`init` reports it, `sync` refuses). The hook exits 0 even when it prints `DAMAGED`.
 - **Strength check** is applied to the NFKC text without invisible format characters; dictionary words (BIP-39, the common list, a few famous phrases, the user's name and the prefix) are one unit each.
 - **Skill sidecar.** `orch.skill.json` is validated in plain Python (D55): exactly `schema_version` (1), `skill_version`
   (`x.y.z`), `scope` (`builtin`, `workspace` or `org`), `connections` and `env` (lists of names).
@@ -2248,7 +2247,7 @@ operation).
   ever reaches it. Every signature then asks for the passphrase on `/dev/tty` through the passphrase backend (§5.3, D65):
   never stdin, stdout, stderr, an argument or an environment variable, and no option skips or carries it. No controlling
   terminal is custody.no_prompt, a wrong or empty passphrase is custody.wrong_passphrase, a missing key file is
-  custody.no_key (hint: `orch init`, C8); all exit 3, not retryable, declared by every human operation and kept distinct
+  custody.no_key (hint: `orch setup`, C8); all exit 3, not retryable, declared by every human operation and kept distinct
   (D65: agents branch on them). Nothing is written in any case. A harness that shares the person's terminal can still
   trigger the prompt; that limit is D65's. A person's operation is never deduplicated or answered from the session
   records: every call is a fresh signature.
@@ -2256,7 +2255,7 @@ operation).
   role `device`), next to the workspace key. The person and the device are not named by the caller: the device id is
   derived from the key file's public key and looked up in the replayed device roster, which says whose device it is. A key
   the log does not know, a removed or revoked device and a person who is no longer a member sign nothing
-  (role.denied, before any prompt). P1 holds one device key per workspace per machine; creating it is `orch init`/`keys`
+  (role.denied, before any prompt). P1 holds one device key per workspace per machine; creating it is `orch setup`/`keys`
   (C8), not C7.
 - **What is signed comes from the log.** `gate`, `gate_gen`, `hash`, `policy_hash`, `source_sha`, the question `hash`,
   `roster_v` and `based_on` are read from the verified state at the moment of the call; the operations have no option
@@ -2472,7 +2471,7 @@ owner's confirmation.
 | N10 | The code gate (D59) | `not` always includes `assignees` and `independent` is always `true`, enforced by the host. No `via` field in P1. In P1 turning it on moves no ticket back. In P1 only a person's signature approves it; D62 mandates may sign it from P2 (spec PR #352). | agreed with Codex |
 | N11 | Addon writes | Addons hold no key; the host appends their events. `set_by` is a list of actor alternatives checked per write (`agent`, `addon`, human tokens = a signed person event). Only leaf paths can be set, so replacing `ticket.addons.<addon>` can't bypass `set_by`. Addon events never carry core authority. | agreed with Codex, modified |
 | N12 | Independence of approvers | The policy option `independent`, **off by default** for `requirements`, `plan` and `verify`, so a sole owner can approve their own agents' work; always on for `code` (D59). See O4 for what `not: assignees` covers. | new from the Codex review |
-| N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch init` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
+| N13 | Trust root | The head of `workspace.created` is the genesis, checked in six ordered steps (§5.11); remembered by the host outside the workspace, in every workspace checkpoint, shown at pairing (the person's custody key file records it from P3 pairing on; `orch setup` does not, see §10.7). Readers replay authorization, not only signatures. **P1 limit:** see O7. | new from the Codex review; tightened with the Opus reviewer |
 | N14 | Rollback and trust in P1 | Equal-height divergent heads are refused and `restore` is defined, but **P1 can't detect a rollback when both the history and the local checkpoints are replaced**, and the genesis pin lives in files the same OS user owns (O7). The workspace’s `.state/applied` crash marker is unsigned: anyone who can write `.state` can make a rollback look like a repairable crash. Relay checkpoints (P3) and host-held keys (P2) address these limits. | new from the Codex review |
 | O1 | Where the factor is recorded | In the event's `auth` only, not in the device certificate. D64 records custody in event `auth`; WebAuthn is deferred past P2 because it needs a new signature contract. | agreed with Opus reviewer |
 | O2 | Custody of `dk_sig` in P1 | `dk_sig` is held by the backend named in `auth`; in P1 it is passphrase-encrypted like the person key, decrypted for one signature on a TTY, never cached; a key that signs without its factor is `file`-tier and never signs person events (§5.3). | agreed with Opus reviewer |
@@ -2783,7 +2782,7 @@ is not `ticket.json`, `body.md`, `events.jsonl` or under `artifacts/`)
 ## 15. Amendment C3b: hub-signed (custodial) events
 
 Status: **design, 22 Oct 2026 (V3, dev only), before implementation; one Opus review pass follows.** This is the
-core amendment that the hub contract (orch-hub `docs/protocol.md` at 7674f2a, §8.1) calls "the core amendment C3 makes
+core amendment that the hub contract (`contracts/hub/protocol.md` at 7674f2a, §8.1) calls "the core amendment C3 makes
 to ticket-format §5.2". C3 (orch-core #1029) already verifies a delivered custodial event in full
 (`orch.hubclient.custodial.verify_custodial`, `identity.hub_actor`, the link op `event_deliver`). This section defines
 how such an event **enters the log and replays**. Inputs: hub contract §6–§8.5, §10.2b and §14; the L2 review
@@ -3157,7 +3156,7 @@ regenerated and declared per op (orch-core rule); `event_deliver` is not a CLI o
 
 ### 15.12 Vectors
 
-`plugins/orch-core/tests/hub/vectors/c3b_ledger.json`, generated by `scripts/gen_c3b_vectors.py` from the FAKE hub
+`packages/core/tests/hub/vectors/c3b_ledger.json`, generated by `scripts/gen_c3b_vectors.py` from the FAKE hub
 vector keys, checked by `tests/hub/test_c3b_vectors.py`:
 
 - `lines`: the exact bytes of a `hub.pinned` snapshot line and of a custodial `gate.approved` line (`line_hex`,

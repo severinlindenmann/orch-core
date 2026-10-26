@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "passkey.stepup_required",
+    "message": "this needs a fresh fingerprint or PIN check first",
+    "hint": "do the check when the dashboard asks, then click again",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

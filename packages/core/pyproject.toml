@@ -1,0 +1,51 @@
+[project]
+name = "orch-core"
+version = "2.0.0.dev0"
+description = "Local markdown ticket system with human-in-the-loop gates for agent harnesses (v2 core)"
+readme = "README.md"
+requires-python = ">=3.14"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
+dependencies = [
+    "cryptography>=43",
+    "jsonschema>=4.26.0",
+    "packaging>=24",  # lockfile and marker parsing (marketplace spec 15.2-11)
+    "pip>=24",  # installs add-on wheels offline into their own environment (spec 8.2, design G4)
+    "pyopenssl>=25",
+    "segno>=1.6.6",
+]
+
+[project.scripts]
+orch = "orch.cli.main:entry"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-xdist>=3.6", "hypothesis>=6", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/orch"]
+# written by scripts/release/stamp.py at build time and gitignored, so named here or hatchling leaves it out
+artifacts = ["src/orch/_build.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--durations=15"
+markers = [
+    "needs_os_users: requires root and ORCH_TEST_OS_USERS=1 to exercise a second real OS user",
+    "slow: takes more than ~2 s (builds wheels, property sweeps); a quick loop skips it with -m 'not slow'",
+    "windows_smoke: part of the Windows smoke job (pure unit, runs on every OS)",
+    "t2_long: a T2 test with its own longer real-time budget, t2_long(seconds); runs once, on the default cap",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/importer/*" = ["F811"]

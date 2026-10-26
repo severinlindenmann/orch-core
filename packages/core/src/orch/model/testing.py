@@ -1,0 +1,69 @@
+"""Test doubles for the injected verifier. Never import this from production code."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import Any
+
+from .verifier import SigContext
+
+
+@dataclass
+class FakeVerifier:
+    """Accepts every signature; ``bad_person``/``bad_host``/``bad_embedded`` are sets of event ids that fail."""
+
+    bad_person: set[str] = field(default_factory=set)
+    bad_host: set[str] = field(default_factory=set)
+    bad_embedded: set[str] = field(default_factory=set)
+    calls: list[tuple[str, str]] = field(default_factory=list)
+    embedded_keys: list[tuple[str, str]] = field(default_factory=list)
+    host_workspace_ids: list[str] = field(default_factory=list)
+    embedded_certs: list[tuple[str, Mapping[str, Any] | None]] = field(default_factory=list)
+    host_calls: list[tuple[str, str, bytes | None]] = field(default_factory=list)  # (event id, log, wsk_pub)
+    # C3b: the hub checks. Event ids (custodial) or object ids (pins: the ``o.cert_id``/``o.version`` text) that fail.
+    bad_custodial_sigs: set[str] = field(default_factory=set)
+    pin_codes: dict[str, str] = field(default_factory=dict)  # str(object kind or "kind:version") -> refusal code
+    actor_codes: dict[str, str] = field(default_factory=dict)  # event id -> refusal code
+    pin_calls: list[dict[str, Any]] = field(default_factory=list)
+    proof_codes: dict[str, str] = field(default_factory=dict)  # event id -> owner-proof refusal code (#1198 C9)
+    proof_calls: list[dict[str, Any]] = field(default_factory=list)
+    actor_calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def verify_person(self, event: Mapping[str, Any], context: SigContext) -> bool:
+        self.calls.append(("person", event["id"]))
+        return event["id"] not in self.bad_person
+
+    def verify_host(self, event: Mapping[str, Any], *, log: str, wsk_pub: bytes | None, workspace_id: str) -> bool:
+        self.calls.append(("host", event["id"]))
+        self.host_calls.append((event["id"], log, wsk_pub))
+        self.host_workspace_ids.append(workspace_id)
+        return event["id"] not in self.bad_host
+
+    def genesis_failure(self, event: Mapping[str, Any]) -> str | None:
+        return None
+
+    def verify_embedded(
+        self, event: Mapping[str, Any], *, pk_pub: str, device_cert: Mapping[str, Any] | None = None
+    ) -> bool:
+        self.calls.append(("embedded", event["id"]))
+        self.embedded_keys.append((event["id"], pk_pub))
+        self.embedded_certs.append((event["id"], device_cert))
+        return event["id"] not in self.bad_embedded
+
+    def verify_custodial_sigs(self, event: Mapping[str, Any], *, workspace_id: str, log: str) -> bool:
+        self.calls.append(("custodial", event["id"]))
+        return event["id"] not in self.bad_custodial_sigs
+
+    def verify_hub_pin(self, obj: Mapping[str, Any], **kw: Any) -> str | None:
+        self.pin_calls.append({"obj": obj, **kw})
+        o = obj["o"]
+        return self.pin_codes.get(f"{o['kind']}:{o.get('version', o.get('cert_id'))}") or self.pin_codes.get(o["kind"])
+
+    def verify_hub_actor(self, event: Mapping[str, Any], **kw: Any) -> str | None:
+        self.actor_calls.append({"event": event, **kw})
+        return self.actor_codes.get(event["id"])
+
+    def verify_hub_owner_proof(self, event: Mapping[str, Any], **kw: Any) -> str | None:
+        self.proof_calls.append({"event": event, **kw})
+        return self.proof_codes.get(event["id"])

@@ -141,7 +141,7 @@ front-page warning name both. That is why the split layout is the recommendation
   identity check (D59 "never the assignee", gate quorums, the ticket-format delegation check `actor.id ==
   "p_"+owner_person_id`) compares canonical identities, so `p_x` and `u_x` count as one person.
 - **Every workspace has an owner `PK`.** A workspace created by a hub user who has no `p_` identity still gets one:
-  `orch init` shows the recovery code to the creator, as today. `PK` signs the delegation (§5.3) and is aliased to the
+  `orch setup` shows the recovery code to the creator, as today. `PK` signs the delegation (§5.3) and is aliased to the
   creator's `user_id`. It is the break-glass key (§8).
 - **The hub signs only what it builds (prepare → recompute → sign).** Only a channel can start a signature. The hub
   builds the event from its own `WK_e` view of the workspace: the ticket, the gate hash material, the host-chain head.
@@ -163,7 +163,7 @@ front-page warning name both. That is why the split layout is the recommendation
   meets a D49-level policy, and `password+totp` meets neither.
 - **Audit.** Every custodial signature and every grant or membership change is in a hash-chained hub audit log.
   Workspaces verify the records they see and acknowledge the head to the hub (`audit_ack`), so a gap in what a workspace
-  receives is detectable (orch-hub `docs/protocol.md` §10.5). The acks go to the hub itself, though: nothing yet detects
+  receives is detectable (`contracts/hub/protocol.md` §10.5). The acks go to the hub itself, though: nothing yet detects
   a hub that shows different chains to different workspaces. Fork detection needs HK_op-signed checkpoints, an open L7
   gap (orch-core #1007), so a compromised hub can still silently rewrite or withhold entries from workspaces it chooses.
   The workspace also keeps each signed event.
@@ -178,6 +178,9 @@ front-page warning name both. That is why the split layout is the recommendation
   - A hub restored from backup starts a new `generation`, signed under `HK_root`, so it is not locked out for good.
     A `generation` is accepted only if it is strictly higher than the pinned one and signed by `HK_root`.
   - Each snapshot is stored in the workspace ledger, so readers and restores can verify old events.
+  - Every snapshot also carries the hub-wide **marketplace policy** (`market_policy`, required, signed with the rest): which
+    marketplaces, add-ons and capabilities the company allows. The hub admin edits it in the console; a change raises every
+    workspace's snapshot `version`. Core can only refuse by it (marketplace spec §9; hub protocol 7.1).
 - Every grant and membership change is signed by the acting admin's `UK`, with a channel proof as in §5.
 - **Removing a user** from every group that reaches a workspace makes the hub drop their channel sessions for it;
   the workspace sees the new snapshot. No `WK_e` rotation is needed, because the user never held `WK_e` (D73, D74).
@@ -216,6 +219,11 @@ front-page warning name both. That is why the split layout is the recommendation
 3. The owner's current key signs `hub.joined {hub_id, hk_root_pub, aliases}` into the ledger. The host pins
    `HK_root`, adds a member of the new kind `hub` to its `WSK`-signed member list (D39), and seals `WK_e` to `HXK`
    over the hub link. That link replaces the relay's `PUT membership` (§5.4) for this workspace.
+   **Owner proof (#1198 C8):** `hub.joined` and `hub.left` carry a required `owner_proof`, a `hub.owner_proof`
+   signed by the person key `PK` (derived from the recovery code, never stored) and bound to the host request and the
+   payload, so the One-click device key alone cannot hand the workspace to a hub. The hub card carries a signed
+   `reader` level; a card below the workspace's `required_reader` is refused (`hub_too_old`). Contract: orch-hub
+   `contracts/hub/protocol.md` §5 and §9.6; host side: orch-v2-host §0.8.6 item 6. *Enforced by the host from C9.*
 4. The host signs `hub.binding {workspace_id, hub_id, hk_root_pub, valid_from}` with `WSK`. The hub hands it to
    orch-publish and the relay (D76).
 5. The workspace switches to hub mode, but **only from step H5 on** (§10). Before H5, `hub join` is a dev and test step
@@ -301,7 +309,7 @@ at step H5, so daily use keeps working.
 
 | Step | Content | Repos |
 |---|---|---|
-| H0 | Contract first: `orch-hub/docs/protocol.md` + vectors for the hub card (`HK_root`/`HK_op`), `UK` certificate, signing domains, custodial event with channel proof, group snapshot, `hub.joined`, `hub.binding`/`hub.unbound`, identity alias, member kind `hub`, host↔hub link operations, the `webauthn` channel contract | orch-hub, orch-core |
+| H0 | Contract first: `contracts/hub/protocol.md` + vectors for the hub card (`HK_root`/`HK_op`), `UK` certificate, signing domains, custodial event with channel proof, group snapshot, `hub.joined`, `hub.binding`/`hub.unbound`, identity alias, member kind `hub`, host↔hub link operations, the `webauthn` channel contract | orch-hub, orch-core |
 | H1 | Hub skeleton: install, `HK`, users, groups, grants, admin console (dashboard look and feel), audit log | orch-hub |
 | H2 | Workspace join/leave (§8), group snapshot pinning, `auth: hub` verification in core | orch-core, orch-hub |
 | H3 | Router: ws→ws through the hub; shared spaces on the hub | orch-hub, orch-core |

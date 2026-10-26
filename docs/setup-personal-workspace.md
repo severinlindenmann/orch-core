@@ -49,8 +49,8 @@ This guide was checked with `268838a1e46dedf5d0ae88ea1875c5bf9c48a58f`.
 PIN=268838a1e46dedf5d0ae88ea1875c5bf9c48a58f
 G=git+https://github.com/severinlindenmann/orch-core@$PIN
 uv tool install \
-  --with "orch-dashboard @ $G#subdirectory=addons/dashboard/server" \
-  "$G#subdirectory=plugins/orch-core"
+  --with "orch-dashboard @ $G#subdirectory=packages/addons/dashboard/server" \
+  "$G#subdirectory=packages/core"
 uv tool update-shell
 ```
 
@@ -91,7 +91,7 @@ run it again.
 Note: the marketplace follows the repository's default branch, not your pin. The plugin holds instructions only. If
 `orch status` ever says the instructions are stale, run `orch instructions sync`.
 
-Skip this step if you use another agent such as Codex: `orch init` (step 5) writes `AGENTS.orch.md` for every agent.
+Skip this step if you use another agent such as Codex: `orch setup` (step 5) writes `AGENTS.orch.md` for every agent.
 
 ## 4. Pick the folder for your workspace
 
@@ -102,28 +102,32 @@ mkdir -p ~/projects/my-project && cd ~/projects/my-project
 git init
 ```
 
-## 5. Create the workspace (`orch init`)
+## 5. Create the workspace (`orch setup`)
 
-Run this yourself, in your own Terminal. An agent can't run it.
+Run this yourself, in your own Terminal, in the folder from step 4. An agent can't run it. (`orch setup` is the only way
+to make a workspace; there is no `orch init`.)
 
 ```bash
-orch init --prefix DEMO --name "Your Name"
+orch setup
 ```
 
-`DEMO` is the short prefix for your ticket numbers (`DEMO-0001`). Pick something that fits the project.
+`orch setup` starts the host if it is not running, then opens a setup page in your browser. If no browser opens it
+prints a single-use link in the Terminal (`orch setup --no-browser` only prints the link). The Terminal stays with the
+page until it is done; Ctrl-C cancels.
 
-orch now does three things, and waits for you each time:
+On the page you answer, and orch waits for you each time:
 
-1. **Passphrase.** It shows a generated passphrase of six words. Write it down or save it in a password manager: it is
-   shown once and unlocks every signature. Then type it again at `Passphrase:`. (You may type your own instead; it needs
-   at least 14 characters.)
-2. **Recovery code.** It shows 24 words. They are the only way back to your key if you lose this Mac or the passphrase.
-   Write them down in order and keep them somewhere safe. Press Enter, then orch asks for three of the words
-   (`Word 5:`) to check you wrote them down.
-3. **Signing screen.** It shows what you are signing (`create workspace DEMO`). Type the word it asks for, then your
-   passphrase again.
+1. **Name and prefix.** `DEMO` is the short prefix for your ticket numbers (`DEMO-0001`). Pick something that fits the
+   project. Choose which add-ons to switch on and how you approve things: "Terminal" (you type in this Terminal) is the
+   safe default.
+2. **Passphrase and recovery code.** The page shows a generated passphrase and 24 recovery words, once. Write them down or
+   save them in a password manager: the passphrase unlocks every signature, and the 24 words are the only way back to
+   your key if you lose this Mac or the passphrase. The page then asks for three of the words to check you wrote them
+   down.
+3. **Review.** The page shows what you are about to create. Press Create. The Terminal shows three words that the page
+   must show too; if they match, type `yes` there.
 
-**What you should see:** `ok init DEMO seq=1`, the folder of the workspace, and `device key: passphrase`. The folder now
+**What you should see:** the page lists every step as done and the Terminal prints `workspace DEMO set up in <folder>`. The folder now
 has a hidden `.orch` folder plus `AGENTS.md`, `CLAUDE.md` and skill folders for your agents. Check:
 
 ```bash
@@ -136,23 +140,25 @@ orch doctor
 
 **If not:**
 
-- `custody.no_prompt`: you ran it somewhere without a keyboard (a script, an agent). Run it in your own Terminal window.
-- `passphrase needs at least 14 characters`: type the generated phrase exactly, or a longer one of your own.
+- `orch setup: needs your own terminal (/dev/tty)`: you ran it somewhere without a keyboard (a script, an agent). Run it
+  in your own Terminal window.
 - `custody.unsafe_mode`: the folder (or a parent) can be changed by other users. Use a folder under your home folder.
-- `no usable passphrase after three tries; nothing was created`: nothing was written. Run it again.
+- `the setup page could not be opened`: run `orch setup --no-browser` and open the printed link yourself.
+- A step on the page failed: the page says which one and what to run next; run `orch setup` again in the same folder and
+  it checks what is still missing.
 
 ## 6. Turn on the host
 
-The host keeps your keys and enforces the gates. Turn it on once; macOS then keeps it running.
+The host keeps your keys and enforces the gates. `orch setup` (step 5) already turned it on and registered the
+workspace with it; macOS then keeps it running. Check:
 
 ```bash
-orch host enable
-orch host register .
 orch host status
 ```
 
-`orch host enable` installs a macOS background service (a LaunchAgent called `io.orch.host`) and starts it.
-`orch host register .` tells the host about this workspace. After that, orch commands go through the host.
+`orch host enable` (run by setup) installed a macOS background service (a LaunchAgent called `io.orch.host`) and started
+it. From now on orch commands go through the host. (`orch host enable` and `orch host register <folder>` still exist
+for restoring a workspace on another Mac.)
 
 **What you should see:**
 

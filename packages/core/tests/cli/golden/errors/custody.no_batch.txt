@@ -1,0 +1,1 @@
+err custody.no_batch this key backend cannot sign a reviewed batch · retry:false · next: use a passphrase device key (orch setup sets one up) · fix: orch help

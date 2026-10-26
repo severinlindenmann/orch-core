@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "custody.no_batch",
+    "message": "this key backend cannot sign a reviewed batch",
+    "hint": "use a passphrase device key (orch setup sets one up)",
+    "fix": {
+      "argv": [
+        "orch",
+        "help"
+      ]
+    },
+    "retryable": false
+  }
+}

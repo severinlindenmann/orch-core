@@ -1,0 +1,638 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.orch.dev/v2/event.settings.changed",
+  "title": "settings.changed event",
+  "description": "5.4.2, D60. A null repo removes it.",
+  "type": "object",
+  "properties": {
+    "v": {
+      "const": 2
+    },
+    "id": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+    },
+    "seq": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+    },
+    "at": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
+    },
+    "type": {
+      "const": "settings.changed"
+    },
+    "actor": {
+      "allOf": [
+        {
+          "type": "object",
+          "description": "Section 5.2. A person, an agent (with a grant, or unattended) or the host. An addon actor is refused in P1 (A5).",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "person",
+                "agent",
+                "host"
+              ]
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "person"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "if": {
+                  "required": [
+                    "via"
+                  ]
+                },
+                "then": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "person"
+                    },
+                    "id": {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hubUserId"
+                    },
+                    "via": {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "id",
+                    "via"
+                  ]
+                },
+                "else": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "const": "person"
+                    },
+                    "id": {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+                    },
+                    "device": {
+                      "$ref": "https://schemas.orch.dev/v2/common#/$defs/deviceId"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "id",
+                    "device"
+                  ]
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "agent"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "agent"
+                      },
+                      "id": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/agentId"
+                      },
+                      "session": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
+                      },
+                      "for": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/personId"
+                      },
+                      "grant": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/grantId"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "id",
+                      "session",
+                      "for",
+                      "grant"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "const": "agent"
+                      },
+                      "id": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/agentId"
+                      },
+                      "session": {
+                        "$ref": "https://schemas.orch.dev/v2/common#/$defs/sessionId"
+                      },
+                      "unattended": {
+                        "const": true
+                      }
+                    },
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "id",
+                      "session",
+                      "unattended"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "kind": {
+                    "const": "host"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              "then": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "const": "host"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "kind"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "person"
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "based_on": {
+      "oneOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "prev": {
+      "oneOf": [
+        {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "hash_v": {
+      "const": 1
+    },
+    "ws_seq": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/posInt"
+    },
+    "roster_v": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+    },
+    "auth": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/auth"
+    },
+    "sig": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+    },
+    "host_sig": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+    },
+    "set": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "grant_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 168
+        },
+        "claim_ttl_min": {
+          "type": "integer",
+          "minimum": 15,
+          "maximum": 1440
+        },
+        "lease_ttl_min": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 1440
+        },
+        "sign_methods": {
+          "type": "array",
+          "description": "B6 (owner decision F, 16 Oct 2026): the ways a signature may be made in this workspace. terminal is always present; touchid is reserved and not selectable yet.",
+          "items": {
+            "enum": [
+              "terminal",
+              "click",
+              "phone",
+              "hub"
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1,
+          "maxItems": 4,
+          "contains": {
+            "const": "terminal"
+          }
+        },
+        "repos": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoName"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+                  },
+                  "remote": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/repoIdentity"
+                  },
+                  "default_branch": {
+                    "$ref": "https://schemas.orch.dev/v2/common#/$defs/branchName"
+                  }
+                },
+                "additionalProperties": false,
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "publish": {
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "The Publish add-on's server: where shared files go (api, signed requests) and where a link opens (share). A person signs it; it is never an agent's choice. null removes it.",
+              "properties": {
+                "server": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/publishOrigin"
+                },
+                "share": {
+                  "$ref": "https://schemas.orch.dev/v2/common#/$defs/publishOrigin"
+                }
+              },
+              "required": [
+                "server",
+                "share"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "icon": {
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "The workspace icon shown in menus (dashboard, hub): an icon and a colour from closed lists, nothing else. null clears it (the default comes from the workspace id).",
+              "properties": {
+                "icon": {
+                  "enum": [
+                    "folder",
+                    "rocket",
+                    "briefcase",
+                    "building",
+                    "code",
+                    "cloud",
+                    "compass",
+                    "globe",
+                    "leaf",
+                    "flame",
+                    "zap",
+                    "anchor",
+                    "heart",
+                    "star"
+                  ]
+                },
+                "colour": {
+                  "enum": [
+                    "orange",
+                    "blue",
+                    "green",
+                    "purple",
+                    "pink",
+                    "teal",
+                    "amber",
+                    "slate"
+                  ]
+                }
+              },
+              "required": [
+                "icon",
+                "colour"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "addons": {
+          "type": "object",
+          "description": "G6: the settings of ONE installed add-on (its manifest's settings schema is checked by the host, the general bounds by every replay). null removes them.",
+          "minProperties": 1,
+          "maxProperties": 1,
+          "propertyNames": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/addonName"
+          },
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "channel": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+    },
+    "channel_factor": {
+      "enum": [
+        "password+totp",
+        "se-unlocked",
+        "passkey"
+      ]
+    },
+    "hub_id": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hex32"
+    },
+    "snapshot_version": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt"
+    },
+    "channel_cert": {
+      "type": "object",
+      "properties": {
+        "o": {
+          "type": "object"
+        },
+        "sig": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "o",
+        "sig"
+      ]
+    },
+    "uk_cert": {
+      "type": "object",
+      "properties": {
+        "o": {
+          "type": "object"
+        },
+        "sig": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "o",
+        "sig"
+      ]
+    },
+    "item_hash": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+    },
+    "channel_proof": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+    }
+  },
+  "required": [
+    "v",
+    "id",
+    "seq",
+    "at",
+    "type",
+    "actor",
+    "based_on",
+    "prev",
+    "hash_v",
+    "host_sig",
+    "set"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "const": "person"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "actor"
+        ]
+      },
+      "then": {
+        "required": [
+          "sig",
+          "auth",
+          "roster_v"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "agent",
+                  "host"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          }
+        },
+        "required": [
+          "actor"
+        ]
+      },
+      "then": {
+        "properties": {
+          "sig": {
+            "not": {}
+          },
+          "auth": {
+            "not": {}
+          },
+          "roster_v": {
+            "not": {}
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "seq": {
+            "const": 1
+          }
+        },
+        "required": [
+          "seq"
+        ]
+      },
+      "then": {
+        "properties": {
+          "prev": {
+            "type": "null"
+          },
+          "based_on": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "prev": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          },
+          "based_on": {
+            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "auth": {
+            "const": "hub"
+          }
+        },
+        "required": [
+          "auth"
+        ]
+      },
+      "then": {
+        "required": [
+          "channel",
+          "channel_factor",
+          "hub_id",
+          "snapshot_version",
+          "channel_cert",
+          "uk_cert",
+          "channel_proof"
+        ],
+        "properties": {
+          "actor": {
+            "required": [
+              "via"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "channel": {
+            "not": {}
+          },
+          "channel_factor": {
+            "not": {}
+          },
+          "hub_id": {
+            "not": {}
+          },
+          "snapshot_version": {
+            "not": {}
+          },
+          "channel_cert": {
+            "not": {}
+          },
+          "uk_cert": {
+            "not": {}
+          },
+          "channel_proof": {
+            "not": {}
+          },
+          "item_hash": {
+            "not": {}
+          },
+          "actor": {
+            "not": {
+              "required": [
+                "via"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ]
+}

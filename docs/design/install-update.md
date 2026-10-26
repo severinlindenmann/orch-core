@@ -9,9 +9,9 @@ manifest. Add-on versions, the add-on catalog and the dashboard "Versions" view 
 
 ## 1. Today
 
-- Install: `uv tool install --force --with "orch-dashboard @ $G#subdirectory=addons/dashboard/server" "$G#subdirectory=plugins/orch-core"`
+- Install: `uv tool install --force --with "orch-dashboard @ $G#subdirectory=packages/addons/dashboard/server" "$G#subdirectory=packages/core"`
   with `G=git+https://github.com/severinlindenmann/orch-core@<sha>`. uv clones the repo and runs
-  `addons/dashboard/server/hatch_build.py`, which runs `npm ci && npm run build` (Node >= 24) unless
+  `packages/addons/dashboard/server/hatch_build.py`, which runs `npm ci && npm run build` (Node >= 24) unless
   `src/orch_dashboard/static/index.html` already exists. That hook already reuses a prebuilt page: CI only has to build
   the page first.
 - Versions: `orch-core` is `2.0.0.dev0` (pyproject and `orch.__version__`), `orch-dashboard` is `0.1.0`. `orch --version`
@@ -47,9 +47,9 @@ Triggers: `push` to `main` → channel `main`; `push` to `develop` → channel `
 `issued_at`/`expires_at`, nothing rebuilt). `concurrency: release-${channel}` with `cancel-in-progress: false`.
 
 Job `build` (ubuntu-latest, no secrets):
-1. Check out the pushed commit. Set up Node 24 and uv. Run `npm ci && npm run build` in `addons/dashboard`.
+1. Check out the pushed commit. Set up Node 24 and uv. Run `npm ci && npm run build` in `packages/addons/dashboard`.
 2. `stamp.py 2.0.0.dev$RUN_NUMBER $CHANNEL $SHA`.
-3. `uv build --wheel plugins/orch-core` and `uv build --wheel addons/dashboard/server` with
+3. `uv build --wheel packages/core` and `uv build --wheel packages/addons/dashboard/server` with
    `ORCH_DASHBOARD_REQUIRE_PREBUILT=1` (new: the hook fails instead of building).
 4. `scripts/release/check_wheels.py dist/*.whl`. It checks that both versions equal V; the dashboard `Requires-Dist`
    has `orch-core==V`; the dashboard wheel holds `orch_dashboard/static/index.html` and `orch_dashboard/orch-addon.json`;
@@ -332,7 +332,7 @@ boundaries only in tier B.
 | U1 | Version stamp, `_build.json`, `orch --version [--json]` | `scripts/release/stamp.py`, `orch/_build.py`, `cli/main.py` (version line only) | `uv run pytest tests/cli/test_version.py -x -q` |
 | U2 | Envelope and verifier (Tier S) | `orch/update/{envelope,verify,keys}.py` | `uv run pytest tests/update/test_verify.py -x -q` |
 | U3 | Release tooling: manifest, sign, certify, check_wheels | `scripts/release/{manifest,sign,rootkey,check_wheels}.py` | `uv run pytest tests/release -x -q` |
-| U4 | Dashboard hook: `ORCH_DASHBOARD_REQUIRE_PREBUILT`, train version pin | `addons/dashboard/server/hatch_build.py`, `pyproject.toml` | `cd addons/dashboard/server && uv run pytest tests/test_build_hook.py -x -q` |
+| U4 | Dashboard hook: `ORCH_DASHBOARD_REQUIRE_PREBUILT`, train version pin | `packages/addons/dashboard/server/hatch_build.py`, `pyproject.toml` | `cd packages/addons/dashboard/server && uv run pytest tests/test_build_hook.py -x -q` |
 | U5 | `release.yml` written plus `actionlint` (the owner pushes it) | `.github/workflows/release.yml` | `actionlint .github/workflows/release.yml` |
 | U3b | Root ceremony in `rootkey.py` (`init` piped to `pass-cli` on stdin, `certify` from the env var, `release-key` to `gh secret set` on stdin), `release/keys/root.env`, the pinning test; run once by the lead (Tier S) | `scripts/release/rootkey.py`, `release/keys/` | `uv run pytest tests/release/test_rootkey.py -x -q` |
 | U6a | install.sh core plus macOS: args, uv, verifier, install, record, PATH, Rosetta | `install.sh`, `tests/install/test_install_sh.py` | `shellcheck -s sh install.sh && uv run pytest tests/install/test_install_sh.py -x -q` |

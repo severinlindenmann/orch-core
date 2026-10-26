@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "market.publisher_unpinned",
+    "message": "the publisher key is not one the hub pins for this marketplace",
+    "hint": "ask the hub admin",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

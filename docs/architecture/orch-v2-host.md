@@ -9,7 +9,8 @@ closed-ticket rules (amendment of 11 Oct 2026), and v1.5 answers §9 item 8 (set
 grant and session fields, the live-tail payload with its workspace-topic filter fix, artifact and commit listings;
 §0.8.5). §0.8.6 adds click-to-sign (H5c, D-P2-23, owner decisions of 12 Oct 2026; built, off by default per workspace). **v1.6** (§12, decided 12 Oct 2026, with three owner decisions) adds the phase-2
 addons on the host side: the runner, terminals, start agent, worktrees, records and quick tasks (caps `run/1`, `term/1`,
-`worktree/1`, `records/1`, `quick/1`, and `runner/1` on a new runner socket). Changes go through the coordination log.
+`worktree/1`, `records/1`, `quick/1`, and `runner/1` on a new runner socket). §13 (24 Oct 2026, #1198 H1) specifies tier B:
+agents and add-ons as their own OS user. Changes go through the coordination log.
 
 Built on `origin/develop` 908f2511. Decisions are numbered **D-P2-n**, each with a one-line reason.
 
@@ -83,8 +84,8 @@ The schemas below use a compact notation:
     worker connection (§0.5). It serves the jobs of **every** workspace, and each job names its `workspace_id`. A
     worker-UID connection to a workspace or control socket is `fatal` `peer.denied`, and so is any other UID on the
     worker socket.
-  - One runner socket, `<run>/runner/host.sock` (v1.6, §12.3.3; tier A: directory 0700, host UID; tier B: 0750, group
-    `orch-runner`, socket 0660), for one runner connection per runner UID, accepted only from the runner unit's main
+  - One runner socket, `<run>/runner/host.sock` (v1.6, §12.3.3; tier A: directory 0700, host UID; tier B: the setgid run
+    directory of §13.3, group `orch-agent-<user>`, socket 0660), for one runner connection per runner UID, accepted only from the runner unit's main
     PID. The runner's own terminal socket `<run>/term/<runner uid>/term.sock` is not a host socket (§12.6.1).
 - **Frame.** A 4-byte unsigned big-endian length `n`, then `n` bytes, with `1 ≤ n ≤ 2 097 152`. Readers handle partial
   and coalesced reads. The body must arrive within 10 s of the first byte of its length prefix.
@@ -224,7 +225,8 @@ OpName  = str/[a-z][a-z_]*(\.[a-z_]+)*/      ReqId = str/[A-Za-z0-9_-]{1,32}/
 | `control/1` | `host.list`, `host.register`, `host.unregister`, `host.wsk_create`, `host.bootstrap`, `host.restart` (1) | control |
 | `run/1` | `run.sub`, `run.list`, `agent.preview`, `agent.start`, `run.stop`, `grant.deposit`, `grant.deposit_status`, `grant.forget` (1) (v1.6, §12.3) | workspace |
 | `term/1` | `term.preview`, `term.open`, `term.attach`, `attach.cancel` (1) (v1.6, §12.6) | workspace |
-| `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7) | workspace |
+| `worktree/1` | `worktree.list`, `worktree.create`, `worktree.remove` (1) (v1.6, §12.7); `worktree.diff` (1) (focus mode phase 2, §12.3.5; column P only) | workspace |
+| `focus/1` | `run.transcript`, `delegation.list`, `run.sources`, `run.link`, `run.detach` (1) (focus mode phase 2, §12.3.4; column P only) | workspace |
 | `workdir/1` | `workdir.get`, `workdir.delete` (1) (r3 part C, §12.4.4; column P only) | workspace |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note`, `records.remote_private` (1) (v1.6, §12.8) | workspace |
 | `reader/1` | `reader.declare`, `reader.list` (1) (H12d-2, §0.8.6 item 9.11; H12d-3: both in column R too) | workspace |
@@ -632,7 +634,7 @@ H12b") and are never sent on a socket. A workspace op that meets one maps it to 
 can never delete a person's files. Rollback removes only the five store names (`config.json`, `keys.jsonl`, `events`, `tickets`,
 `.state`), never the root and never any other file. So `root` may be an existing project with files as long as none of those
 names (nor `.orch`) is already there, which the host checks before any write; otherwise `invalid.input` `<root> already holds orch
-files (...)`. The D-P2-17 owner and ancestor checks are unchanged. `orch init --host` makes the same check on the client first.
+files (...)`. The D-P2-17 owner and ancestor checks are unchanged. `orch setup` makes the same check on the client first.
 
 `custody.unsafe_mode` (exit 3, not retryable, stays): the root or an ancestor fails the D-P2-17 checks.
 
@@ -722,7 +724,7 @@ state**:
 
 - **A rolled-back bootstrap restarts from `host.wsk_create`.** The id and key are gone, and the genesis signs both
   `workspace_id` and `wsk_pub`, so the client gets a new id and key, signs a new genesis, and calls `host.bootstrap`
-  with a new idem. The CLI's `init` composite does this by itself after one confirmation on the person's terminal,
+  with a new idem. The hosted create of `orch setup` does this by itself after one confirmation on the person's terminal,
   because the device key signs again.
 - `control.rolled_back` (exit 9, retryable, connection stays) is only ever a stored answer. A same-key retry gets it
   again; it never runs the op a second time.
@@ -793,8 +795,8 @@ parsed CLI arguments), its handler and its `Result`. The changes from P1:
   In tier B (agent UIDs, #287) it would let one agent UID plant a command another agent UID of the same person (or the
   person, with a grant) runs, crossing the boundary tier B enforces: there "own" must mean the same grant (or the same
   agent UID class), not the same person. A phase-3 follow-up (§9 item 10).
-- `import.v1` and `init` are not served (D-P2-9). `import.v1` runs in direct mode before registration. `init` is the
-  `host.wsk_create` + `host.bootstrap` composite.
+- `import.v1` is not served (D-P2-9); it runs in direct mode before registration. (V3-D38: `init` is gone; `orch setup` is the
+  `host.wsk_create` + `host.bootstrap` composite and runs on the person's side.)
 - `help` and `describe` are answered by the client from its own registry. The host serves them too.
 - The `show` data is unchanged, so the goldens stay byte-identical. UIs use `ticket.get` (R1).
 
@@ -1692,8 +1694,8 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
     event that signs a `source_sha`, the host reads each linked repo's head again through its git reader (under the
     caller's principal) and refuses with `gate.stale` when it differs from the signed source list, or with
     `observe.unavailable` when the reader cannot answer (fail closed). The working tree's cleanliness is
-    `tree.check` at prepare and at binding (N3); in tier A the host runs it itself (H10a, below D-P2-19), in tier B
-    `verdict` and `approve code` answer `observe.unavailable` until the worker (H10) takes the job over.
+    `tree.check` at prepare and at binding (N3); the host runs it itself (H10a, below D-P2-19), in tier B too, on the
+    agent's clone through `orch.gitread` (§13.4).
 12. **Gate texts.** Gate material carries `texts` for every section in `input.sections` (next to `material.policy`);
     the signer checks each against `input.sections` and shows them with the criteria, tasks, links and policy, as P1's
     review did. `gate_gen` and `source_sha` are shown labelled as host attestations; the policy hash is recomputed from
@@ -1763,7 +1765,7 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    An unreadable registry or pin counts as registered. A
    registered workspace whose host is down answers `host.unavailable` (exit 9, retryable, the catalog entry that already
    existed for `init`), never a direct write for the same state dir (an agent pointed at another `ORCH_STATE_DIR` is
-   the accepted H2a limit: it holds no workspace key there). `help`, `describe`, `init` and `import v1` are always local (the host does
+   the accepted H2a limit: it holds no workspace key there). `help`, `describe` and `import v1` are always local (the host does
    not serve them; the direct-mode guard still answers `host.required` for the last two on a registered workspace).
    `task done --run` in host mode runs `verify.cmd` on the client (see §0.8, `task.done`) and sends a receipt; it never
    forwards `run`.
@@ -1862,11 +1864,11 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
 2. **Registration turns host mode on.** `orch host register DIR` first checks the control socket; a host that answers
    (the service, or a dev host from `orch host run --foreground`) is used as it is, otherwise the service is enabled as
    above (`--no-service` never touches it). `--peer` is now optional: by default this UID maps to the person whose device
-   key for the workspace is on this machine, in either custody (the passphrase key `orch init` made, or the convenience
+   key for the workspace is on this machine, in either custody (the passphrase key `orch setup` made, or the convenience
    key after click-to-sign: `custody.select.device_backend`, public key only), matched against the workspace's devices. A
    removed, revoked or expired key, one without `decide`, or one whose person left counts as none: then `--peer` is
    required. The host checks the mapping again (F8). From then on the thin CLI (H4b) and the dashboard serve the workspace through the
-   host; `orch init` itself stays direct (see §3), and `orch init --host` remains for a new directory or an existing project
+   host; `orch setup` is the only way to create a workspace, for a new directory or an existing project
    (**As built in B5:** see the note under `host.bootstrap` below).
 3. **`orch host status`** (alias `doctor`, `--json` for the document): the service (unit present, current, loaded,
    running, or none on this platform), whether a host answers on the control socket, every registered workspace (the
@@ -1998,7 +2000,7 @@ host.restart    {} → {draining:true}
 | Op | Rules |
 |---|---|
 | `host.wsk_create` | The host draws a new workspace id and creates `hosts/<id>/keys/wsk` with `O_CREAT\|O_EXCL` in a fresh 0700 directory. It never takes an id from the caller and never replaces a key. A key with no genesis after 1 h is deleted. |
-| `host.bootstrap` | The `init` composite. `events[0]` is the signed genesis `workspace.created` (F1 §5.4.2: `workspace_id`, `prefix`, `host_id`, `wsk_pub`, `owner`, `delegation`, `device_cert`; `roster_v: 0`). Its `workspace_id` and `wsk_pub` must equal what `wsk_create` returned. `root` is a new empty directory owned by the host UID that passes the D-P2-17 ancestor check. The host validates the event with the model (the six genesis checks, F1 §5.11), appends it with that workspace's WSK as `seq` 1, writes the files, pins the genesis and registers the workspace as `host.register` does. **Refused (`host.busy`) when the workspace id already has a genesis or a registration (N5).** |
+| `host.bootstrap` | The hosted create of `orch setup`. `events[0]` is the signed genesis `workspace.created` (F1 §5.4.2: `workspace_id`, `prefix`, `host_id`, `wsk_pub`, `owner`, `delegation`, `device_cert`; `roster_v: 0`). Its `workspace_id` and `wsk_pub` must equal what `wsk_create` returned. `root` is a new empty directory owned by the host UID that passes the D-P2-17 ancestor check. The host validates the event with the model (the six genesis checks, F1 §5.11), appends it with that workspace's WSK as `seq` 1, writes the files, pins the genesis and registers the workspace as `host.register` does. Optional `workspace_name` (1 to 80 characters) is the display name written to `config.json` (`workspace.name`, unsigned; default: the folder name). **Refused (`host.busy`) when the workspace id already has a genesis or a registration (N5).** |
 | `host.register` | The one op besides `bootstrap` that opens a client-named path. `root` is resolved with `realpath`, must be owned by the host UID and pass the D-P2-17 ancestor check. The workspace id comes from its verified genesis and must match the pinned genesis. A UID with a root-owned agent or worker pin can never be mapped as `person`. A `person` mapping must name a member with a valid `decide` device. Takes the ownership lock (D-P2-18). |
 | `host.unregister` | stops serving and restores direct mode |
 | `host.restart` | D-P2-4 |
@@ -2347,8 +2349,10 @@ prompts (D-P2-15); the prepare → check and recompute → sign → submit contr
 and the fingerprint are unchanged; `orch sign CODE` (H5b) stays available **whether the flag is on or off** (item 8: the terminal hand-off keeps working while the flag is on).
 **Accepted risk, shown when click-to-sign is switched on, in the workspace settings and in the docs (amended 16 Oct 2026,
 "As built in B6": no longer on every sign panel): "Convenience signing: agents running as you, or anything that takes
-over this dashboard, could sign."** This supersedes D41's per-signature presence for phase 1; H9 (Touch ID) and tier B bring
-isolation back in phase 3, and only after migration, UID separation and removal of the old convenience devices.
+over this dashboard, could sign."** This supersedes D41's per-signature presence for phase 1. **Tier B (§13.7, owner decision of 24 Oct 2026):** one click
+stays allowed when agents run as their own OS user, and is on by default only where `isolation.detect()` finds that;
+elsewhere it is off by default and the line reads "Agents run as you. Anything an agent runs can sign with One click and
+read your files."
 
 **0. The trust boundary (read this first).** The signer constructs and validates the review data and binds signing to
 the corresponding immutable signing bytes. **The dashboard HTTP process and its browser application are trusted to
@@ -2364,8 +2368,8 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
 
 - Click-to-sign is enabled per workspace by the host-state file `<state>/host/convenience.json` (0600, host UID, in
   the D-P2-17 custody list): `{"v":1, "workspaces":{"<ws id>":{"enabled":true, "at":Time}}}`, written by
-  `orch host convenience on|off --workspace W` (a host-UID CLI command, not a socket op), or, in tier A only, by the
-  click signer's custody switch (item 3a, amended 15 Oct 2026). **It is off for every workspace until switched on**: the
+  `orch host convenience on|off --workspace W` (a host-UID CLI command, not a socket op), or by the click signer's
+  custody switch (item 3a, amended 15 Oct 2026; in both tiers since §13). **It is off for every workspace until switched on**: the
   compatibility gate (item 6) is met first.
 - **The condition.** Convenience signing is allowed only while every reader of the workspace's log is local and
   updated: no relay pairing, no phone device, no other member's devices or cores, and a model that knows the value. The
@@ -2464,8 +2468,8 @@ imported by `orch.custody`'s package init, the host or the dashboard's HTTP proc
   `<state>/person/`, a relative name that is a person-custody file (`d_….key`, `custody.json`, `click.jsonl`,
   `dk.key.json`; a `dir_fd` walk cannot be resolved from the audit event), a working directory inside those places, a
   `ctypes.dlopen` of `Security.framework`, and an import of `orch.click`, `orch.custody.convenience`,
-  `orch.custody.keychain`, `orch.custody.select` or `orch.custody.cli`. In tier A this is not an OS security
-  boundary. In tier B, permissions separate the host UID from person custody.
+  `orch.custody.keychain`, `orch.custody.select` or `orch.custody.cli`. This is not an OS security boundary:
+  in tier B (§13) the host is the person's UID too; tier B separates agents and add-ons from person custody, not the host.
 
 **3. Lifecycle** (`orch keys`, terminal CLI). Creation and custody changes are terminal CLI workflows and are not
 exposed through host APIs; the one dashboard path is the click signer's switch of item 3a. `ORCH_GRANT` refuses every `orch keys` subcommand but `status`, and the changing
@@ -2478,8 +2482,8 @@ envelope.
   `/dev/tty`, then the destination is written durably, read back, its public key and a test signature are verified,
   the selection is updated recoverably (`transition` records the step), and only then the passphrase file is removed.
   The device id and certificate do not change (custody is per event, F1 O1). It refuses unless the workspace's flag is
-  on; the host checks the readers condition at every convenience signature. Creating a convenience key at `orch init`/`join`/pairing is not offered in phase 1:
-  a workspace is registered (and its flag set) after `init`.
+  on; the host checks the readers condition at every convenience signature. Creating a convenience key at `orch setup`/`join`/pairing is not offered in phase 1:
+  a workspace is registered (and its flag set) after `orch setup`.
 - `orch keys custody passphrase --workspace W --in-place` moves the same key back under a new passphrase (14+
   characters, the strength check). It warns: "Later signatures will say passphrase, but anyone who copied the key can
   still sign with any label; use --rotate for a clean break." Without `--in-place` it refuses and names `--rotate`.
@@ -2498,9 +2502,8 @@ envelope.
   does not report complete revocation while any workspace remains outstanding.
 
 **3a. The dashboard's switch** (owner decision 15 Oct 2026, amending item 3 and D-P2-23; fixed forward after the
-Opus review of #539, owner decision relayed by orch-d6 15 Oct 2026 22:45). **Tier A only**: in tier B the signer runs
-as the person UID and cannot write the host-UID flag file, so the switch is not offered there (the terminal commands
-are). The click signer (item 5) has two more channel ops, advertised as `features: ["custody"]` in its `status` (no
+Opus review of #539, owner decision relayed by orch-d6 15 Oct 2026 22:45). **Both tiers** (amended 24 Oct 2026, §13.7): tier B keeps
+host = person, so the signer can write the flag file; the earlier "tier A only" assumed a separate host UID. The click signer (item 5) has two more channel ops, advertised as `features: ["custody"]` in its `status` (no
 contract change). **The invariant, enforced in the signer and nowhere else: the dashboard turns click-to-sign on only
 by proving the passphrase of a key that is in passphrase custody now, and it never chooses a passphrase.**
 
@@ -2609,10 +2612,13 @@ by proving the passphrase of a key that is in passphrase custody now, and it nev
   (`sha256(cj(sorted served_ops()))`); a mismatch refuses that workspace with `host.version_mismatch` ("the signer's
   orch-core differs from the host's") and `status` shows `available:false, problem:"version_mismatch"`. Algorithm
   drift the registry digest does not see still fails closed in the signer's checks (`check_failed`). `status` also
-  answers `core` (the orch-core version) and `contract`: **1** (H5c to H11b) or **2** (H11c-2, deposit support: `prepare {deposit}` and the
-  `deposit`, `deposit_id`, `grant`, `deposit_reason` answers of `sign`). A contract-1 signer reads `deposit` as an unknown
-  argument and answers `invalid.input`, and refuses every `grant` as `terminal_only`; a client reads `contract` to tell
-  the two apart. A client written for contract 2 accepts 1 and 2 (1: no click grants) and refuses any other value.
+  answers `core` (the orch-core version), `contract` and `features`. **Contract 3** (#1198 C1/C2, item 6) is the only
+  one: every confirmation is a plain click after the shown review, `prepare`
+  answers `confirm:"click"`, `sign` reads no `word` and the `word` refusal is gone. Contract 2 (H11c-2, deposit
+  support) and 1 (H5c to H11b, a typed word for some ops) are history: the dashboard accepts exactly 3
+  (`CONTRACTS = (3,)`) and answers any other value with `click.contract` ("update orch-core"). `features` lists
+  `custody`, `sequence`, `images` and `reveal`; `reveal` (#1198 C7) is a `grant` without `deposit` whose secret is
+  sealed to the page (item 6); a signer without it answers `terminal_only` for that grant.
 - **Frames (normative)** on the socketpair: §0.2's codec (`orch.host.frames.encode` and `Decoder`: a 4-byte big-endian
   length, then strict JSON, at most 2 MiB; parsing and nesting limits before any validation), one request at a time:
   - request: `{"t":"req", "id":str/[A-Za-z0-9_-]{1,32}/, "op":"prepare"|"view"|"sign"|"cancel"|"status", "args":{…}}`;
@@ -2623,23 +2629,25 @@ by proving the passphrase of a key that is in passphrase custody now, and it nev
     only for `sign.convenience_unavailable` and `sign.convenience_readers` and re-validated whole first against the
     host's own §0.3 schema (`orch.host.errors.DETAIL_KEYS`): exactly the keys the host sends, `reason` (from that
     code's closed set) and `devices` (a list of at most 64 `d_` + 32 lowercase hex ids, maybe empty); anything else
-    drops the whole `detail` (never a partial one), and every other code answers without `detail`. No contract change
-    (`contract` stays 2): a client ignores unknown `Error` keys.
+    drops the whole `detail` (never a partial one), and every other code answers without `detail`. #517 changed no contract
+    (it stayed 2 then): a client ignores unknown `Error` keys.
   - A malformed frame, an unknown `op` or bad `args` answers `invalid.input` (a framing error closes the channel).
 
 ```
 prepare {workspace_id:WsId, op:OpName, args:object, idem:Idem, files?:{name: {b64:str}},
-         deposit?:bool = false}                       // v1.6: only with op "grant" (§12.4.2)
-  → {request_id:ReqHr, expires_at:Time, op:OpName, confirm:"click"|"word"}
+         deposit?:bool = false,                       // v1.6: only with op "grant" (§12.4.2)
+         reveal_key?:str/[A-Za-z0-9_-]{87}/}          // #1198 C7: only with op "grant", the page's P-256 key
+  → {request_id:ReqHr, expires_at:Time, op:OpName, confirm:"click"}
 view    {workspace_id:WsId, request_id:ReqHr} → {view:View, view_digest:Hash}
-sign    {workspace_id:WsId, request_id:ReqHr, view_digest:Hash, word?:str{1..128}}
-  → {result:<human.submit's result: {data, key, hints, seq, …}>, duplicate:bool,     // never a secret
+sign    {workspace_id:WsId, request_id:ReqHr, view_digest:Hash, reveal_key?:str}   // reveal_key: the prepared one
+  → {result:<human.submit's result: {data, key, hints, seq, …}>, duplicate:bool,     // never a plain secret
      deposit?:"confirmed"|"rejected"|"unknown", deposit_id?:ULID, grant?:str,           // v1.6: deposit grants only
-     deposit_reason?:DepositReason}                  // contract 2: only when deposit is "rejected"
+     deposit_reason?:DepositReason,                  // only when deposit is "rejected"
+     reveal?:{purpose:"grant.secret", envelope:Envelope}}   // C7: the secret sealed to reveal_key (sealed-field doc)
 DepositReason = "grant.forgotten"|"grant.not_runner"|"grant.verbs"|"grant.expiring"|"rate.limited"|"runner.unavailable"|"other"
                // a static code of this closed set, never host text; any other host refusal is "other"
 cancel  {workspace_id:WsId, request_id:ReqHr} → {state:"cancelled"|"submitted"|"expired"}
-status  {} → {core:str, contract:1|2, workspaces:[{workspace_id:WsId, prefix:str,
+status  {} → {core:str, contract:3, features:[str], workspaces:[{workspace_id:WsId, prefix:str,
                            custody:"convenience"|"passphrase"|"none", device:Device|null, enabled:bool,
                            available:bool, problem?:str}]}
 View = {risk:"Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.",
@@ -2647,10 +2655,11 @@ View = {risk:"Convenience signing: agents running as you, or anything that takes
         headline:str, content:SignContent,                 // B6: the plain view (additive), derived from the same events and material
         lines:[str],                                       // the terminal review of orch sign, line for line, escaped
         checks:[{repo:str, clean:true, attested_by:"worker", at:Time}],   // shown; `at` is not in view_digest
-        confirm:{kind:"click"} | {kind:"word", word:str}, expires_at:Time, auth:"convenience", device:Device,
+        confirm:{kind:"click"}, expires_at:Time, auth:"convenience", device:Device,
         artifacts:"checked"|"unseen"|null,
         deposit?:true,                 // v1.6: set only for a deposit grant (§0.8.6 item 6); the line below is then in lines
-        deposit_line?:"The secret goes to your orch runner on this machine and is never shown"}
+        deposit_line?:"The secret goes to your orch runner on this machine and is never shown",
+        seal?:{v:1, alg:str, purposes:["grant.secret"], for:str}}   // C7: a shown-secret grant only (item 6)
 view_digest = "sha256:" + hex(sha256(cj(View with every checks[].at removed)))
 Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, one per click, reused on retry
 ```
@@ -2665,12 +2674,11 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
 
   | `reason` | When |
   |---|---|
-  | `terminal_only` | `grant` without `deposit:true` (v1.6: a deposit grant whose `grant.issued` lacks `label:"runner"`, asks for more than 168 h (or more than the workspace `grant_hours`), or is prepared while this machine has no dashboard execution enabled for the workspace), an op outside the allowlist, or a request too large for the View (more than 16 events or 1 MiB): use the terminal |
+  | `terminal_only` | `grant` with neither `deposit:true` nor `reveal_key` (a reveal grant that is not one `grant.issued` of `verbs:"agent"`, 1 to 168 h, no `runner` label; v1.6: a deposit grant whose `grant.issued` lacks `label:"runner"`, asks for more than 168 h (or more than the workspace `grant_hours`), or is prepared while this machine has no dashboard execution enabled for the workspace), an op outside the allowlist, or a request too large for the View (more than 16 events or 1 MiB): use the terminal |
   | `not_prepared_here` | `view`/`sign`/`cancel` of a request this signer did not prepare |
   | `expired` | the approval's deadline passed |
   | `view_changed` | `view_digest` differs from the stored View, or the host's answer differs from the approval record |
   | `too_soon` | `sign` less than 1 s after the View was built |
-  | `word` | the word is missing or wrong |
   | `custody_changed` | the custody selection changed since `view` (`gen`) |
   | `busy` | another `sign` is in flight |
   | `check_failed` | a §0.8.1 signer check refused the host's answer (the message names the check) |
@@ -2703,7 +2711,7 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
 - **`sign`**: the request must be in the registry and its approval unexpired (the local deadline is the host's
   `expires_at`, capped at 10 minutes); `view_digest` must equal the stored one;
   at least 1 s must have passed since the signer built that View (a misclick guard, not security); the custody `gen` is
-  unchanged; `word` is checked when the View asks for one. The signer then calls `human.get` again, revalidates the host
+  unchanged (there is no typed word: contract 3). The signer then calls `human.get` again, revalidates the host
   answer and compares the full signing inputs and invariant fields byte for byte with the approval record, rebuilds the
   View from that answer and requires its digest to equal the one shown (a changed substantive check or registry name is
   `view_changed`); it signs
@@ -2723,7 +2731,8 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
   - **What.** A completed record is `{"v":1, workspace_id, request_id, view_digest, op, idem, events, expires_at, signed_at, result}`:
     `events` is the exact signed event array (its signatures are what the workspace log shows anyway), `idem` the submit
     idem, `result` null until `human.submit` answered, then its result. **Never** a key, a factor, keychain material
-    or a grant secret (`grant` is terminal-only and refused before signing). A **claim** is the same record without
+    or a grant secret (a deposit grant's secret goes to the runner, a reveal grant's only into the sealed envelope;
+    neither is written). A **claim** is the same record without
     `events`, `signed_at` and `result` and with `claimed_at`; a record is a claim or a completed record, anything else
     fails closed.
   - **When.** A claim is written and synced **before the crypto signing**: exclusively (a temporary file opened
@@ -2779,40 +2788,75 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
   `human.request_expired`, `sign.convenience_unavailable`) plus `human.click_refused` (exit 3, not retryable,
   client-side only: the host never sends it).
 
-**6. Which ops are click-signed.** The signer enforces an explicit operation allowlist and the complete emitted-event
-checks. Unknown operations and future additions fail closed (terminal-only). `grant` and any operation returning a
-bearer secret are refused before signing, irrespective of the secret field's initial value, **with one exception
-(v1.6, D-P2-27, owner decision of 12 Oct 2026):** a `grant` prepared with `deposit:true` is click + word
-`<PREFIX>~<WS8>/GRANT` when its prepared `grant.issued` carries `label:"runner"`, `hours` 1..12 (default 8) and
-`verbs:"agent"`, and this machine has dashboard execution enabled for the workspace. `check_prepared` admits exactly
-that case, and `orch.click.view.build` sets the View's `deposit:true` and `deposit_line` (the constant "The secret goes
-to your orch runner on this machine and is never shown") only then, with the person, scope, hours and until in
-`lines`. The dashboard requires `args.deposit` and `view.deposit` to agree, else no Sign button. `sign` draws the secret, signs, submits, and only after the commit calls
-`grant.deposit {deposit_id}` with `auth.grant` on its own host connection, wipes the secret and answers `deposit` and
-`deposit_id`; the secret is never in a result, a frame to the dashboard or a log. On `deposit:"unknown"` it asks
-`grant.deposit_status` once (§12.4.2).
+**6. Which ops are click-signed** (amended by #1198, owner decision V3-D40 of 24 Oct 2026: every admin action in the
+dashboard is a plain click after the shown review, no typed word; the CLI is the backup). The signer enforces an
+explicit operation allowlist (`orch.click.protocol.CLICK_OPS`) and the complete emitted-event checks. Unknown
+operations and future additions fail closed (terminal-only). There is one confirmation class on the click path:
+`prepare` answers `confirm:"click"` and the View carries `confirm:{kind:"click"}` (contract 3, item 5). A `grant`
+(the only op that returns a bearer secret) is a click in exactly two shapes, and refused before signing in any other:
+
+- **Deposit grant** (v1.6, D-P2-27, owner decision of 12 Oct 2026): `prepare {deposit:true}`, one `grant.issued` with
+  `label:"runner"`, `verbs:"agent"`, 1 to `min(grant_hours, 168)` hours (an Extend may add the `grant.revoked` of the
+  replaced runner grant), and dashboard execution enabled for the workspace on this machine (checked at prepare and
+  again at sign). `orch.click.view.build` sets `deposit:true` and `deposit_line` ("The secret goes to your orch runner on
+  this machine and is never shown") only then. The dashboard requires `args.deposit` and `view.deposit` to agree, else
+  no Sign button. `sign` draws the secret, signs, submits, and only after the commit calls `grant.deposit {deposit_id}`
+  with `auth.grant` on its own host connection, wipes the secret and answers `deposit` and `deposit_id`; the secret is
+  never in a result, a frame to the dashboard or a log. On `deposit:"unknown"` it asks `grant.deposit_status` once
+  (§12.4.2).
+- **Reveal grant** (#1198 C7, feature `reveal`): agent access for a tool outside the dashboard. `prepare {reveal_key}`
+  with the page's one-use P-256 public key; exactly one `grant.issued` with `verbs:"agent"`, 1 to 168 hours and no
+  `runner` label (`reveal_checks`). The View carries `seal {v, alg, purposes:["grant.secret"], for}` (`for`: the full
+  SHA-256 of the key's text, so `view_digest` covers the key) and the lines `REVEAL_RISK` ("The secret will be shown
+  once in this browser. Anyone who controls this dashboard could read it.") and `REVEAL_LINE`. `sign` must carry the
+  prepared `reveal_key`; the signer draws the secret, signs, submits, and answers `reveal {purpose:"grant.secret",
+  envelope}`, the secret sealed to that key, at most once per approval. A key is reserved for one request at
+  prepare: a second prepare with the same key is refused and its host request cancelled, and sealing refuses a key
+  reserved for another request. The host caps a member's grant at the workspace `grant_hours`; an owner's (or a
+  maintainer's) can run to 168 h. The page opens it, shows it once and drops its key. Contract: [orch-v2-sealed-field.md](orch-v2-sealed-field.md) §7.
+  On a remote session the review (`prepare`) is a plain click and signing the reveal (`sign` with the page's
+  `reveal_key`) needs the passkey step-up of item 10.5; a session opened on this computer needs none.
 
 | Class | Ops |
 |---|---|
-| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `ac.accept`, `ac.unaccept`, `task.mark_done`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `grant.revoke`, `addon.disable`, `settings.set` without `repos` |
-| **Click + typed word** | `relay.pair_device` (the last eight hex of the device id; B10), `member.add`, `member.role`, `member.remove` (word: the person id, unique already), `addon.grant`, `addon.purge` (`<name>~<WS8>`: addon names repeat across workspaces), workspace `policy.set` (`<PREFIX>~<WS8>/POLICY`), `settings.set` with `repos` (`<PREFIX>~<WS8>/SETTINGS`: it changes the repo path and remote that D58's source checks read); a ticket-scope op keeps `KEY/FRAG`. `WS8` is the last 8 characters of the workspace id and `PREFIX` the prefix, both from the signer's own registry (orch-52 decision, 12 Oct 2026, shared with #404's terminal signer) |
-| **Click + word, deposit only** (v1.6) | `grant` with `deposit:true` and `label:"runner"`, at most 168 h and the workspace `grant_hours` (word `<PREFIX>~<WS8>/GRANT`; the secret goes only to the runner; owner decision of 12 Oct 2026, §12.4.2) |
-| **Terminal only** | `grant` without `deposit:true`, and every op not listed above |
+| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `ac.accept`, `ac.unaccept`, `task.mark_done`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `people.set`, `grant.revoke`, `addon.disable`, `addon.grant` (every add-on, `publish` included; V3-D38: the review shows the capabilities and the marketplace block), `addon.purge`, `publish.share`, `member.add`, `member.role`, `member.remove`, `policy.set`, `settings.set` (every key: `repos`, `sign_methods`, `grant_hours`, `publish`, `addons`, `icon`) |
+| **Click, grant** | `grant` as a deposit grant or a reveal grant (above) |
+| **Terminal only** | any other `grant`, and every op not listed above (the hub ops among them until the owner proof is enforced, below) |
 
-Daily operations use click confirmation as a phase-1 usability decision. A later event may supersede their recorded
-state but may not reverse external effects. Typed words on member, addon-grant/purge, policy and repo-settings
-operations reduce accidental confirmation; they are neither authentication factors nor protection against
-script-driven signing (the word is in the View). Framing defences address clickjacking separately. The grant secret
-stays off the HTTP path (F1, D-P2-16): a terminal `grant` shows it only on the terminal, and a click deposit grant
-(v1.6) hands it from the signer to the runner through `grant.deposit`, never through the dashboard. This protects
-against passive disclosure only; a click deposit grant is dashboard-controlled issuance of standing agent authority
-(up to 7 days, owner decisions of 12 Oct and 16 Oct 2026), and nothing here prevents every authority escalation through the allowed
-member, policy or addon operations.
+The ops that were "click + typed word" up to contract 2 (member, `people.set`, addon purge, workspace policy,
+`settings.set` with `repos`, `sign_methods` or `grant_hours`, the deposit grant's `<PREFIX>~<WS8>/GRANT`) and the
+terminal-only Publish ops (`publish.share`, `addon.grant` of `publish`, `settings.set` of `publish`) are plain clicks
+since #1212. The typed word reduced accidental confirmation only; it was never an authentication factor nor a defence
+against script-driven signing (the word was in the View), so dropping it changes no threat answer (item 8). The
+review the person reads is the protection; Publish's View names both servers in words. Framing defences address
+clickjacking separately. The terminal signer (`orch sign`, the CLI backup) keeps its `/dev/tty` confirmation word
+(§0.8.1 step 3).
+
+**The grant secret and F1 / D-P2-16 (amended by #1198 C7).** The secret is still drawn by the signing client, never
+by the preparer, and never crosses the dashboard in plain text: a terminal `grant` shows it only on the terminal, a
+deposit grant hands it from the signer to the runner through `grant.deposit`, and a reveal grant gives the dashboard
+server only ciphertext for a key held by the page (the sealed field). The amendment is that the person's own browser
+page may now see the secret once. Stated trade-off: whoever controls the dashboard channel can prepare a reveal grant
+under its own key and read the secret (the review says so); the passkey step-up for the reveal on remote sessions
+(10.5 item 4) is the follow-up. A deposit or reveal grant is dashboard-controlled issuance of standing agent
+authority (up to 7 days, owner decisions of 12 Oct and 16 Oct 2026); nothing here prevents every authority
+escalation through the allowed member, policy or add-on operations.
+
+**Hub ops and the owner proof** (#1198 C8, merged contract; host enforcement from C9). `hub.join`, `hub.mode` and
+`hub.leave` stay out of `CLICK_OPS`, and a hub op signed by the One-click key is refused (item 8), until the host
+checks an **owner proof**: a `hub.owner_proof` object `{workspace_id, person_id, op, payload, request_id, issued_ms,
+expires_ms, dev}` signed by the person key `PK` (derived once from the owner's recovery code, never stored)
+under the domain `orch/v2/sig/hub-owner-proof|`, bound to the host request and to the event payload without its
+`owner_proof` member, valid at most 10 minutes; `hub.joined` and `hub.left` record it so the hub and readers can check
+it. The hub card gains a signed `reader` level that never goes down; a card below the workspace's `required_reader`
+is `hub_too_old`. Contract and vectors: `contracts/hub/protocol.md` §5 and §9.6, core side
+`orch.hubclient.wire` (`build_owner_proof`, `check_owner_proof`, `check_hub_reader`). *Enforced by the host from C9
+(`check_hub_proof` at binding and submit); until then the rules above hold.*
 
 **7. What the dashboard does** (dashboard stream; not in this core PR).
 
 - **Flow.** Click on an action → the signer's `prepare` (one idem per click, reused on retry) → `view` → the sign panel
-  shows the View → the person clicks **Sign** (or types the word) → `sign` → the result. "Sign in the terminal instead"
+  shows the View → the person clicks **Sign** → `sign` → the result. "Sign in the terminal instead"
   prepares a separate hand-off request.
 - **It displays exactly the View** (`lines` as text through `visible.tsx`, never HTML; the risk (the one-click custody line with a "What this means" toggle that holds the risk sentence); the checks with
   their time). It does not show its own preview, the host's `fingerprint`, its cached ticket view or `ticket.get` hashes
@@ -2842,12 +2886,12 @@ member, policy or addon operations.
 
 | Threat | Answer |
 |---|---|
-| Same-UID agent | Accepted: can acquire or use convenience signing authority. H9/tier B improve isolation only after migration, applicable UID separation and revocation of old convenience devices. |
+| Same-UID agent | Tier A: accepted, can acquire or use convenience signing authority (One click is then off by default, §13.7). Tier B (§13): agents run as their own UID and can neither read the key nor reach the signer or (Linux) the dashboard port. |
 | Host | Honest host code never handles person keys. A compromised tier-A host has the accepted same-UID access. A separate-UID host cannot directly read person custody, but its reported origin and attestations remain untrusted. Signer checks establish specified consistency properties, not truth of every host assertion. |
 | Another local user | Cannot directly read correctly protected person custody under ordinary OS permissions. Can reach loopback HTTP; signing additionally depends on bearer and session security. A stolen bearer crosses this boundary. |
 | Remote web page | Without credentials, same-origin execution or another vulnerability, browser requests are constrained by bearer, Host/Origin validation, CORS and framing controls. A page gaining same-origin script execution can drive signing. |
 | HTTP bug or compromise | A passive disclosure of HTTP memory does not directly disclose signer-resident keys. Disclosure of a bearer can disclose signing authority. Active control of the HTTP workflow can obtain unseen signatures through the signer API. Code execution in it can read the key. |
-| Stolen bearer | Can request unseen signatures for click-eligible operations while valid, including (v1.6) a deposit-only runner grant of up to the workspace `grant_hours` (at most 7 days; **owner-accepted 16 Oct 2026, B8**: a longer bearer window, mitigated by the secret never being in the browser (runner-held, 0600), one-click Stop and a visible expiry in the dashboard header, every agent action attributed, grants never covering human-only operations, and the 8 h default). Typed words do not prevent this. Terminal-only secret issuance remains unavailable through the click API. |
+| Stolen bearer | Can request unseen signatures for click-eligible operations while valid, including (v1.6) a deposit-only runner grant of up to the workspace `grant_hours` (at most 7 days; **owner-accepted 16 Oct 2026, B8**: a longer bearer window, mitigated by the secret never being in the browser (runner-held, 0600), one-click Stop and a visible expiry in the dashboard header, every agent action attributed, grants never covering human-only operations, and the 8 h default), and (#1198 C7) a reveal grant whose secret it can read under its own page key (until the step-up of 10.5, reveal grants are prepared only for a session opened on this computer; that gate limits remote sessions only: a stolen local-session token can still prepare a reveal grant and read its secret). No typed word would have prevented this (the word was in the View). Any other grant stays terminal-only. |
 | Agent-prepared request | Signer-local preparation registration excludes foreign or historical pending requests from click eligibility. Host-reported PID equality alone does not. |
 | Host lies in material | Signer recomputation rejects mismatches between supplied material and signing inputs. It does not prove the truth of mutually consistent fabricated input or fields explicitly classified as host attestations. |
 | View swap | Full signing-input binding rejects changes to an approved record. It does not detect the dashboard displaying one record while requesting a signature for another. |
@@ -3585,15 +3629,258 @@ methods).** Presentation only: the signed events, `material`, `review_digest` an
    `sign.convenience_unavailable` reason `disabled` while the setting exists and does not list `click`. The person's own default (`sign_default`: `{method, fallback?}`) is host-local, not
    signed and not a rule: it only chooses which button is primary in the dashboard. The dashboard server keeps it in
    `<state>/dashboard/sign_default.json` (0600, per person and workspace; `GET`/`PUT /api/w/{ws}/me/sign_default`); a default
-   the workspace no longer allows reads back as `terminal`. A `sign_methods` change is signed with the typed word, not one click.
+   the workspace no longer allows reads back as `terminal`. A `sign_methods` change is a plain click after its review (contract 3, §0.8.6 item 6; it had a typed word before #1198).
 
 6. **Not built: one signature for "New quick task (1 of 2)".** A quick task is `ticket.created` then a labelling
    `ticket.updated`. One request cannot carry both: every event of a request shares one `based_on`, and the second event
    of a new ticket must name the head of the first, which exists only after the host stamps and appends it (F1 §5.5;
    `event.bad_base` at submit). Two ways forward, both outside B6: (a) `ticket.created` carries `labels` (an F1 format
-   change, readers must learn it), or (b) a sequential signer session: one review that states both, one typed word, two
+   change, readers must learn it), or (b) a sequential signer session: one review that states both, one click, two
    signatures (the second request is prepared after the first lands and checked against the review the person
    confirmed). The dashboard keeps its two hand-offs until one is chosen.
+
+**10. Remote dashboard (#1198 R1, owner decisions of 24 Oct 2026).** A dashboard on a headless Linux server (a VPS)
+is reached over HTTPS on the server's own web name, and people log in with a passkey. Off unless configured; Windows
+and macOS keep the loopback dashboard only. Design: `design-r1-remote-dashboard.md` (kit state). The SSH tunnel to the
+loopback listener stays the IT and break-glass path. A hub's browser channel is the company path; a workspace in hub
+mode may keep remote mode on, but remote mode signs nothing for the hub (D81).
+
+**10.1 Threat model.** The dashboard can start terminals and drive the click signer, so it is a shell on the server
+with signing authority. Remote mode adds one new surface: the front socket is reachable from the internet before
+login.
+
+| Threat | Answer |
+|---|---|
+| Anyone on the internet, before login | Only the pre-login surface of 10.3 answers; passkeys cannot be guessed; per-source rate limits; every parse error fails closed. Pre-login code is kept small and fuzzed (R1-3). |
+| Phishing site with a look-alike name | The passkey is bound to the RP ID; a different name gets no assertion. |
+| DNS hijack or a mis-issued certificate for the real name | Not ours to stop; reduced by a CAA record (setup prints it as advice) and HSTS. A passkey does not help against a valid certificate for the same name. |
+| A TLS-terminating proxy in between (NetBird proxy, Cloudflare, a provider's load balancer) | Forbidden (10.2). Whoever serves the page's JavaScript can change it, read every typed secret before the sealed field encrypts it and click Sign. The start refuses any front other than the configured local socket. |
+| The enrollment link leaks | At least 128 random bits, single use, 15 min, first browser wins; 5 wrong secrets for one code burn that code only; a wrong guess of an unknown id costs its source a rate-limit charge and touches no code, so nobody can wipe the owner's open links by guessing. The terminal and the dashboard show "A passkey was added: <name>, <time>" and list all passkeys with Remove; IT can reset over SSH. |
+| Stolen bearer (XSS, an extension, a copied tab) | As in item 8, plus 2 h idle and 12 h absolute life, and step-up (10.5) for each listed action: one assertion per op, bound to that op's review. |
+| Stolen laptop with a passkey | User verification is required (device unlock). Remove the passkey from another device or over SSH. |
+| Lockout by brute-force traffic | Per-source buckets (IPv4 /32, IPv6 /64), so one source's traffic does not use the owner's budget. A distributed flood that reaches the global CPU cap can delay remote login; then the SSH tunnel is the fallback. |
+| Replay of a WebAuthn response | Single-use challenge, 120 s, bound to its ceremony. A step-up nonce is minted, held and consumed by the click signer and bound to the request and its `view_digest` (10.5), so not even the dashboard server can replay one. |
+| Cloned passkey | The sign counter is not relied on (synced passkeys report 0); it is recorded and shown only. |
+| Host header or listener confusion | The policy belongs to the listener (10.2); no header switches it. |
+| Another local user | Cannot open the front socket (peer UID check); reaches loopback HTTP and needs a bearer, as today. |
+| Same-UID agent on the server | Can write the passkey store and add its own login, as it can already sign with the One-click key. **Isolation depends on #1198 H1 (agents as their own OS user):** with H1 the store, the signer and the front socket are out of the agent's reach. Until H1 is built and active on the server, setup and Settings say "Agents on this server can act as you", and remote mode is not offered by default. |
+| Root on the server | Out of scope: root holds the keys. |
+
+**10.2 The front and the listeners.**
+
+- **Never behind a third-party TLS terminator.** TLS ends on the server itself, in the front. No NetBird reverse proxy,
+  CDN, tunnel service or provider load balancer may terminate TLS for the dashboard. A future TLS passthrough name (the
+  edge routes by SNI and sees only ciphertext) does not break this rule; it is not specified here.
+- **The front is Caddy**, installed and configured by one admin step (`orch remote enable --name <name>`, run with
+  sudo): its own system user `orch-front`, a generated Caddyfile that only does `reverse_proxy` to the front socket,
+  ACME for the configured name, TLS 1.2 or later (1.3 preferred), HSTS `max-age=31536000` (no preload), a 10 s header
+  timeout and at most 32 connections to the dashboard (`max_conns_per_host`; stock Caddy has no per-site cap on
+  inbound unauthenticated connections). Port 80 answers only the ACME challenge and a redirect. The front runs on the
+  same machine as root-installed infrastructure, inside the server's trust boundary like sshd.
+- **The client address (R1-7).** Caddy sets `X-Orch-Client` to `{client_ip}` with `header_up` (which replaces, so a
+  header from the browser is never forwarded). Caddy computes it from the TCP peer, or, for peers inside the networks
+  given with `orch remote enable --trusted-proxy` (`trusted_proxies static`; never a /0), from `X-Forwarded-For`. Without
+  that option the TCP peer is used. Needs Caddy 2.11 or newer: the version CI validates the generated Caddyfile with
+  (`{client_ip}` itself is 2.7+).
+- **`orch remote enable|disable|reset` (R1-7).** Run by the person on Linux, never as root. `enable --name <name>`
+  checks the name points to this server and that ports 80 and 443 are free (`remote.name_mismatch`), prints exactly
+  what will change (the root steps are the dry run of the code root will run), asks for a confirm on the person's own
+  terminal (`--dry-run` stops, `--yes` is for scripts), then runs the root steps through
+  `sudo /usr/bin/python3 -I -S /usr/lib/orch/os-setup/orch-os-setup --front-enable --person <user> --name <name>` (the
+  trusted root copy, `osfront.py`; root never runs the person's release): the system user `orch-front`
+  (`useradd --system`, no login, locked), the Caddyfile in `/etc/orch/front/`, the unit `orch-front.service` (Caddy as
+  `orch-front`, one capability for ports 80/443, sandboxed, `StateDirectory` for its certificates) and the tmpfiles
+  entry of the socket directory above. A file there that orch did not make, or a user `orch-front` with other
+  properties, is refused, never changed. Then the person's side writes `remote.json` and restarts the dashboard
+  (`orch-dashboard up`), and **root** (`sudo ... orch-os-setup --front-enroll --person <user> --ctl <ctl.sock>`, the
+  trusted copy again) asks it for the first enrollment link over its control socket and prints it on the terminal;
+  the link is never in argv, a file or a log (if sudo is set to record terminal output with `log_output`, the link is recorded there: turn that off for
+  `orch-os-setup`). The dashboard's `ctl.sock` answers `enroll` to a peer with uid 0 and to
+  nobody else (the person's own uid gets `enroll.root_only`), and root may do nothing else there (no launch code, no
+  stop): otherwise a same-UID agent could mint a code, register its own passkey and keep remote access. Later codes
+  come from "Add a device" in the dashboard (a local session, or a remote one with step-up). **Residual (tier A):** a
+  same-UID agent can still drive a local dashboard session as the person; that is the known limit "tier A = agents
+  run as you", and why One click defaults on only where isolation is detected. The printed lines also give the
+  SSH tunnel as the way back in, because a flood of login attempts can use up the global login budget. `disable` takes
+  `remote.json`, the dashboard and the front away and keeps the `orch-front` user and its certificates. `reset` stops
+  the dashboard (every remote session and open link ends), deletes every passkey and prints a new link.
+- **Own domain only.** No "no domain" quick start through a public wildcard DNS service (sslip.io, nip.io): that
+  service could point the name elsewhere. `orch remote enable` checks that the name resolves to this server and that
+  ports 80 and 443 are reachable, and stops before changing anything if not (`remote.name_mismatch`).
+- **Two listeners, one frozen policy each**, built once at start. A header never changes which policy applies.
+  - Loopback TCP, `127.0.0.1:<port>`, unchanged: exact Host `127.0.0.1:<port>`, Origin `http://127.0.0.1:<port>`,
+    launch codes. A request carrying the public name is refused here. Headless installs get a fixed port
+    (`dashboard.port`) so the printed `ssh -L` line stays true.
+  - The front socket, a Unix socket `<run>/dashboard/front.sock`. The server checks the peer UID of every connection
+    against the configured front UID and closes any other. Every request on it is remote. Host must be exactly the
+    configured name (port 443 implied, no other spelling); Origin must be exactly `https://<name>` on every non-GET and
+    every `/api` call that carries one; a mutation without Origin is refused; Fetch Metadata applies as on loopback. A
+    loopback Host is refused here. The client address is read from the single header `X-Orch-Client` that the front
+    sets, only on this socket; generic proxy headers stay off.
+- **CSP** on the front: as item 7, with `connect-src 'self' wss://<name>` and `frame-src https://<name>/widget-frame/`.
+- **Missing any of these keeps remote mode off.** The server refuses to open the front socket and names what is
+  missing (`remote.not_configured`).
+
+**10.3 Login and enrollment.**
+
+- **Session = passkey.** WebAuthn with RP ID = the configured name, origin exactly `https://<name>`,
+  `userVerification: "required"`, discoverable credentials (`residentKey: "required"`), `attestation: "none"`,
+  `pubKeyCredParams` ES256 (-7) and EdDSA (-8) only. The verification contract is 10.6. After success the server mints
+  a bearer as today (tab memory or `sessionStorage`; never a cookie, never in a URL). **Launch codes are refused on the
+  front**: they are a local credential.
+- **Remote session kind**: 12 h absolute, 2 h idle (local keeps 24 h / 12 h). Logout ends it at once; Settings has "Log
+  out everywhere"; a restart of the dashboard ends every session.
+- **A session belongs to the listener that opened it (R1-4).** A launch code opens a `local` session on loopback; a
+  verified passkey login opens a `remote` one on the front. The bearer is refused on every other listener exactly like
+  an unknown token (loopback answers 401, the front 404), without ending the session, whatever else the request
+  carries. `Auth.exchange` takes the kind as a required argument and accepts `local` only. The local-only gates (One
+  click on/off with a typed passphrase, device rotate, dashboard execution on, a grant secret, a hub backup key) test
+  `login_kind` themselves too, so a remote session that somehow reached one is refused (fail closed) until the
+  step-up (10.5) exists. The front's `remote.json` (`{"name", "front_uid"}` in the dashboard state directory, mode
+  not writable by others, `front_uid` neither the person nor root) turns the front socket on; a file that is there
+  but wrong switches remote access off and shows `remote.not_configured` in `/api/session` (`remote_problem`); the
+  loopback dashboard keeps serving.
+- **The front socket (R1-4, R1-7).** `/run/orch/front/<person uid>/front.sock`. The directory is made by root at every
+  boot (systemd-tmpfiles, written by `orch remote enable`): owned by the person, group `orch-front`, mode 0750, below
+  `/run/orch/front` (0711). It is not under `<state>/run` (0700) or `/run/orch/<uid>` (setgid, the agent's group)
+  because the front's user could reach neither without opening it for the agent too; here the agent user, the add-on
+  users and other people cannot even look inside. The dashboard creates nothing there (it could not give the directory
+  the front's group): a missing directory, one that is not the person's, not in the front's group, group-writable or
+  open to others keeps remote access off (`remote.not_configured`). The socket file is mode 0666: who may connect is
+  decided by the server's peer-UID check on every accepted connection (closed before a byte is read unless the peer
+  is `front_uid`), which stays the gate; the directory only keeps everyone else from reaching it. Both servers run on
+  asyncio's selector loop (the check lives in `accept`; the front refuses to start on any other loop). The front server
+  adds `limit_concurrency` 64, keep-alive 5 s and a 16 KiB incomplete-event limit behind Caddy's own limits.
+  `front_uid` is never the person, root, or any user named `orch-agent-*` or `orch-addon-*` (every name the user
+  database gives that id counts).
+- **Terminal tickets belong to a listener.** A ticket records the listener it was minted on and redeems only on that
+  listener's socket, for a session of that listener; `attach` and `terminals/open` mint or open nothing where the
+  listener's policy has terminals off (the front's default).
+- **Rate limits** for passkey login, in buckets of their own: 20 per minute per source, the source being the client's
+  IPv4 address (/32) or its IPv6 /64 prefix. A global cap of 600 per minute only guards the CPU, far above any single
+  source; when a distributed flood reaches it, remote login waits and the SSH tunnel is the fallback. The loopback
+  launch limiter stays as it is, so internet traffic cannot lock out the local owner.
+- **Enrollment.** `orch remote enable` (and later "Add a device" in Settings, a step-up action) prints or shows one link
+  `https://<name>/#enroll=<code>`: the code is at least 128 random bits (`secrets.token_urlsafe(16)` or longer) and is
+  compared in constant time; single use, 15 min, the first browser that completes a registration wins; 5 wrong secrets
+  for one code burn that code (`enroll.expired`). The fragment never reaches a server log.
+- **The passkey store** `<state>/dashboard/passkeys.json`: mode 0600, owned by the person UID, holding per passkey the
+  credential id, the user handle, the COSE public key, its algorithm, the backup-eligible flag of the registration, a
+  name ("MacBook, Chrome"), created, last used and the last sign count. No secret is in it, but writing it adds a login,
+  so it is read with the `O_NOFOLLOW`, owner and mode checks of the pins file and fails closed.
+- **Pre-login surface**: the app shell and its assets, `/auth/passkey/*` and `/auth/enroll/*`. Nothing else answers
+  without a remote session; `/setup` and `/api/setup/*` need a remote session (the setup token stays, on top).
+- **The route table (R1-5).** Every route of the dashboard app has one rule for the front in `routegate.TABLE`:
+  `allowed`, `refused`, `step_up` (a whole route whose handler asks for the passkey, 10.5), `pre_login` (the four
+  passkey routes) or `terminals` (allowed only where the listener's policy has terminals on). `security.Security` enforces it in one place, after the session
+  test: a route that is unlisted or matches nothing is refused (`remote.refused`, 403), and a test walks the app's
+  routes and fails on one without a rule. Refused for good: launch codes, the setup routes, hub signing, the widget
+  frame. Routes that serve several bodies (`click/custody`, `click/runner`, `click/runner/review`, `click/prepare`,
+  `click/sign`) stay `allowed`; their handlers ask `stepup.refuse_step_up`, which needs the passkey step-up (10.5)
+  for the step-up variants of every session that was not opened on this computer.
+- **Passkey routes (R1-5).** `POST /auth/passkey/options` and `/login`, `POST /auth/enroll/options` and `/register`.
+  Strict closed bodies (16 KiB), one rate-limit charge per request, a 120 s single-use challenge per ceremony held in
+  memory, and one answer for every failure (`passkey.invalid` for login, `enroll.expired` for enrollment: a wrong,
+  used, expired or killed code, a bad registration). The enrollment code is `<id>-<secret>` (public id, 128-bit secret kept only as a digest);
+  5 wrong secrets burn that code only, an unknown id or malformed code costs its source a rate-limit charge and
+  touches no code; the options step checks it, the register step spends it (first browser wins), and the
+  challenge is bound to the code that asked for it.
+  A store that fails its checks means no login and no enrollment.
+- **Terminals are off remotely by default.** `/term` on the front needs the bearer ticket, Origin `https://<name>`
+  (`wss://<name>` connection) and the Settings switch "Terminals over remote access", which is off after enable. A
+  terminal is a shell on the server.
+
+**10.4 What makes a plain click the owner's.** All of 10.2 and 10.3, plus: no ambient credential (no cookie), so a
+cross-site request carries nothing; exact Origin; JSON bodies only; no CORS; `frame-ancestors 'none'`. Every admin action
+stays a plain click after the shown review (owner decision of 24 Oct 2026); the listed few add a fingerprint touch
+(10.5), never typing.
+
+**10.5 Step-up (owner decision of 24 Oct 2026, "all as recommended": exactly this list).** On a remote session each of
+these actions needs its own passkey assertion:
+
+1. turning One click on (the custody switch of item 3a);
+2. a hub join or a hub mode change;
+3. `device.rotate`;
+4. a grant whose secret is revealed;
+5. turning dashboard execution on;
+6. adding a passkey or a device (the "Add a device" link);
+7. removing a passkey.
+
+Everything else, including turning things off and turning remote access off, is a plain click. The step-up rule does not
+apply on loopback, where the person is at the machine or behind the SSH tunnel.
+
+- **One assertion per op, no elevation (as built, R1-6).** A step-up covers exactly one listed op: it is made for that
+  op's review digest (or, where the op has no signer review, for `action_digest(action, scope, extra)`: One click on,
+  a hub connect, "Add a device", removing one named passkey), is used once, and is at most ten minutes old when used
+  (owner decision: a fresh touch at most every ten minutes; it is also a request's own lifetime). The browser answers
+  the challenge within 120 s (the server's ceremony); the op follows within the ten minutes. A step-up never covers
+  another op, another review or a later click, and there is no session-wide "recently verified" state.
+- **The ceremony.** `POST /api/w/{ws}/stepup/options {action, view_digest?}` (workspace actions) or
+  `POST /api/stepup/options {action, credential_id?}` (adding a device, removing a passkey) returns a challenge for
+  this session: `SHA-256("orch/v2/dash-stepup|" || nonce || vd)` with `vd` the 32 raw bytes of the digest. The browser
+  runs `navigator.credentials.get` and posts the assertion to `POST /api/stepup/verify`; the server verifies it (10.6),
+  keeps it for this session only, keyed by the digest, and the action's own request then spends it. A failed or
+  second try of a challenge spends it.
+- **The signer owns the nonce for the ops it runs.** For `custody_on`, `custody_off {sealed}`, `rotate {sealed}`,
+  `runner` on and `sign` with a sealed value or reveal key, the server asks the signer (`stepup {workspace_id,
+  view_digest}`, feature `passkey_stepup`) for the nonce. The signer keeps `(nonce, workspace, digest, issued at)` in
+  memory (monotonic clock; a restart forgets all). The server relays the assertion with the op as `remote: true` and
+  `stepup: {nonce, id, response}`. For a call that says `remote`, the signer decides from the op and the arguments
+  whether the step-up is needed (not from anything the server says) and, before anything else, uses up the nonce and
+  accepts only an assertion that verifies (10.6) against the passkey store, which the signer reads itself, for the
+  relying party in `<state>/dashboard/remote.json`, for exactly this workspace and digest, issued at most ten
+  minutes ago. Otherwise the answer is `passkey.stepup_required`. So a buggy server, or an attacker who only drives
+  its HTTP workflow, cannot skip or replay it. A call without `remote` is a session opened on this computer, which
+  the signer trusts as it always has (item 0); a server that lies about that is code execution as the person.
+- **What the touch is bound to.** The signer's nonce is bound to the op and, for `custody_off`, `rotate` and `sign`, to
+  the `request_id`. A hub connect is bound to the hub id and the SHA-256 of the invite it will send; "Add a device" to a
+  `link_id` the server minted with the options; removing a passkey to the SHA-256 of that credential id. A session has
+  at most four open step-ups and each options call is charged to the source's bucket. Grants are keyed by
+  (action, digest); a signer op needs a proof, and a session that is not local always sends `remote: true`.
+- **Removing a passkey** (never the last, checked under the store's lock) ends every session that passkey opened,
+  the requesting one too if it used it, and drops every held step-up it made.
+- **Not signer ops.** The server's own check (the same helper, the same ceremony with a server-drawn nonce) covers
+  `hub/connect`, "Add a device" (`POST /api/passkeys/enroll-link`) and removing a passkey (`DELETE /api/passkeys/{id}`,
+  never the last one). The steps that only open a review (`custody/seal`, `rotate/seal`, `runner/review`, `prepare`)
+  are plain: they sign and reveal nothing, and the touch comes at the step that acts, when the review and its digest
+  exist.
+
+**10.6 WebAuthn verification contract (`orch.click.passkeys`, vectors `packages/addons/dashboard/server/tests/vectors/webauthn_*.json`).**
+An own small verifier on `cryptography` (already a core dependency), not the `webauthn` PyPI package: it would add
+`cbor2`, `asn1crypto` and every attestation format (TPM, Android, Apple, packed with x5c) to an internet-facing pre-login
+path, and its defaults (user verification preferred, RSA allowed) would have to be overridden at every call. The verifier
+accepts exactly what 10.3 asks for and nothing else. Any failure raises `PasskeyError` (catalog code `passkey.invalid`)
+with an internal reason that is logged, never sent before login.
+
+- **Inputs** are the decoded bytes of the browser's response (strict base64url: no padding, URL-safe alphabet, zero
+  trailing bits) with size limits: `clientDataJSON` 4 KiB, `attestationObject` 8 KiB, `authenticatorData` 4 KiB,
+  signature 128 bytes, credential id 16 to 1023 bytes.
+- **RP ID and origin.** The RP ID is a lower-case DNS name with at least two labels, not an IP address; the expected
+  origin is exactly `https://` + RP ID.
+- **clientDataJSON**: UTF-8 JSON object, duplicate keys refused; `type` exactly `webauthn.create` (registration) or
+  `webauthn.get` (assertion); `challenge` a strict base64url string equal (constant time) to the expected challenge;
+  `origin` exactly the expected origin; `crossOrigin`, if present, `false`; `topOrigin` absent; `tokenBinding.status`
+  not `present`. Other keys are ignored (browsers add some on purpose).
+- **authenticatorData**: `rpIdHash` equal to SHA-256(RP ID); flags UP and UV both set; BS set without BE is refused;
+  the 4-byte sign count is returned, never enforced. Registration: AT set, the attested credential data parses exactly
+  (AAGUID, credential id length and id, one COSE key), an ED extension map if flagged, and nothing after. Assertion: AT
+  not set; without ED the data is exactly 37 bytes, with ED one extension map and nothing after.
+- **CBOR**: a strict subset (unsigned and negative integers, byte and text strings, arrays, maps, `true`/`false`);
+  shortest-form lengths, definite lengths only, no tags, no floats, no null or undefined, unique map keys, map keys
+  integers or text, depth at most 8, no trailing bytes.
+- **attestationObject**: a map with exactly `fmt`, `attStmt` and `authData`; `fmt` must be `"none"` and `attStmt` an
+  empty map. The credential id in it must equal the id the browser reported.
+- **COSE keys**, exactly these labels: ES256 `{1: 2, 3: -7, -1: 1, -2: x(32), -3: y(32)}`, a point on P-256; EdDSA
+  `{1: 1, 3: -8, -1: 6, -2: x(32)}`, Ed25519, not one of the 14 encodings of small-order points (libsodium's blocklist,
+  non-canonical spellings included). Any other algorithm, curve or label is refused.
+- **Signature** over `authenticatorData || SHA-256(clientDataJSON)`: ES256 in strict DER (re-encoding must give the same
+  bytes), EdDSA as 64 raw bytes.
+- **Ceremonies.** Login and enrollment challenges are 32 random bytes, stored server-side with their ceremony kind, 120
+  s, single use (R1-5); step-up nonces are the signer's (10.5). The caller finds the credential by its id; the verifier
+  then checks that a `userHandle` in the response, if present, equals the stored one, and that the BE flag equals the
+  one stored at registration (it never changes for a credential).
+- The hub's planned `webauthn` channel contract (orch-hub #908) should reuse these vectors; core imports no hub code
+  (D79).
 
 **As built in H5c** (the core PR #407 and its follow-ups; the wire schemas above are unchanged):
 
@@ -3956,7 +4243,7 @@ The dashboard sees `seq` 20 through its subscription, or polls `human.pending {r
 `quota.host` remains request-scoped except at connect. Bound host-wide connections and default per-UID connection
 attempts to 20/s, burst 40. Runtime binding uses per-thread cwd on macOS or `/proc/self/fd` on Linux (orch-52).
 
-**v1.3.2 → v1.4 (provisional).** Requested by the dashboard stream (addons/dashboard HANDOVER, "P2 server (M2 reads)").
+**v1.3.2 → v1.4 (provisional).** Requested by the dashboard stream (packages/addons/dashboard HANDOVER, "P2 server (M2 reads)").
 Every change is an optional key or a new op, so no existing op changes its version.
 
 1. **`ticket.query` rows** gain `restricted`, `tasks` and `criteria` counts, `blocking_questions`, a richer `claim`
@@ -3986,7 +4273,7 @@ Every change is an optional key or a new op, so no existing op changes its versi
    metadata; `_more` and `_cut` flags; a scan budget for the feed; `who` and `eligible` limited to persons who can see the
    ticket; accepted risks recorded in §7.
 
-**v1.4 → v1.5 (provisional draft).** Answers §9 item 8 (the dashboard stream's list and its comment on #378; addons/dashboard
+**v1.4 → v1.5 (provisional draft).** Answers §9 item 8 (the dashboard stream's list and its comment on #378; packages/addons/dashboard
 HANDOVER "Still not served"), amended after the Codex challenge and the dashboard check of #390 (decided by orch-52).
 Additive: new ops under new caps, optional keys under `read_ext/2`, new arguments behind caps; no op changes its version
 (§0.4).
@@ -4071,12 +4358,17 @@ existing op changes its version.
     signature. A claim that never completed is refused as `record_unavailable` (`already_signed` for another
     `view_digest`); an in-process retry resends the identical in-memory events. Once signing has started the claim is never
     released; a failure fails that request closed. No new reason, no wire change.
-
 21. **Click follow-ups (additive, after item 20):**
     the 2 s wait for the per-workspace lock raises `lock.busy` (exit 9, retryable) instead of `host.busy`, and is listed
     under `human.prepare` and (for a hand-off) `human.submit`; a hand-off `human.submit` holds the workspace lock from its flag check to its journal write
     (§0.8.6 item 8); `human.get` (in `request`) and `human.pending` carry `submitted_at:Time | null`, the host's time
     when `human.submit` was accepted for the request (null until then, and for records stored before the field).
+22. **No typed words on the click path (#1198; click-signer contract 3):** the
+    word class and the `word` refusal are gone; member, policy, add-on purge, repo/sign-method/grant-hour settings and
+    Publish (`publish.share`, `addon.grant` of `publish`, `settings.set` of `publish`) are plain clicks after the review;
+    a reveal grant (feature `reveal`) shows a grant secret once, sealed to the page (§0.8.6 items 5 and 6,
+    [orch-v2-sealed-field.md](orch-v2-sealed-field.md)). The dashboard accepts only contract 3. The terminal signer keeps
+    its `/dev/tty` word. No host op or wire schema change on the workspace socket.
 
 **v1.6 → v1.7 (draft, 12 Oct 2026, revised 13 Oct after the Codex challenge and Opus tie-break, §11A.13).** The host
 bridge client. On the wire it is additive: no op on any socket changes its version, and no new error code is added (an
@@ -4286,7 +4578,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     lands first):** `orch.custody.personkey`: the `PersonKeySource` protocol (`person_id`, `pk_pub`,
     `sign(label, payload)`, `signer(label)`, `derive_label_key()`, a context manager) and `RecoveryCodeSource`, which
     asks for the recovery code on `/dev/tty` once per command, checks it with the existing parser, derives `PK` as
-    `orch init` does, refuses another person's code before any signature and zeroises (best effort) when the block
+    `orch setup` does, refuses another person's code before any signature and zeroises (best effort) when the block
     ends. It signs only the labels its command names (`labels=`, required; a subset of device certificates, cert
     challenges, rejections and revocations, never `sig_ws_delegation`). New custody codes `custody.recovery_code`
     (with the parser's reason), `custody.person_mismatch`, `custody.person_key_closed`, `custody.person_key`,
@@ -4404,7 +4696,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `auth:"convenience"` only for `question.answered` on an `SBX` sandbox workspace passing S1 to S6 (P5 cached gate,
     L2 fresh gate, L8 token plus fresh gate). One registry choke point `orch.host.registry.admit`; normal hosts refuse
     every `SBX` workspace (register, bootstrap, link, records push) and skip plus alarm one already registered; the
-    dev host refuses the click signer (`dev_host`); `orch init`/`host.bootstrap` reserve `SBX`. New code
+    dev host refuses the click signer (`dev_host`); `orch setup`/`host.bootstrap` reserve `SBX`. New code
     `host.dev_refused` (§0.6, both catalogs); additive fields `host.status.dev`, column-R `whoami.relay.dev`,
     `host.list.dev`/`sandbox`/`alarms` (absent elsewhere); the alarm `dev_convenience_refused`; one R2 vector.
     `dev-pair` (D2) and the phone part are not in it.
@@ -4455,7 +4747,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `orch-relay-push-<id8>` as a worker companion with the 404, 409 `stale_epoch`, 409 `fenced` classes and the host
     budgets) and the `push` relay-hook seam (`host/relaypush.py`). `host.status.relay` gains a `push` block (additive).
     Kinds `question` and `question.closed`. No wire, hash, F1 or error-code change.
-69. **B5: `init --host` in an existing project (16 Oct 2026; §3 "As built in B5"):** `host.bootstrap` accepts a root that
+69. **B5: `orch setup` in an existing project (16 Oct 2026; §3 "As built in B5"):** `host.bootstrap` accepts a root that
     already holds files; it refuses only a root holding a store name (`config.json`, `keys.jsonl`, `events`, `tickets`,
     `.state`) or `.orch`. The 24-word recovery code is shown numbered (4 rows of 6) and the input accepts the plain or the
     numbered form. No wire, hash, F1 or error-code change.
@@ -4474,7 +4766,7 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     made a way it excludes (`sign.method`, by the state at the event's position).
 
 71. **B7: skills in `.agents/skills`, `AGENTS.md` block, `CLAUDE.md` imports, structured `AGENTS.orch.md` (owner decisions
-    A and B of 16 Oct 2026; ticket format §10.2 "Files written", harnesses §2):** `orch init` and `orch instructions sync`
+    A and B of 16 Oct 2026; ticket format §10.2 "Files written", harnesses §2):** `orch setup` and `orch instructions sync`
     write the skills to `.agents/skills/<name>/` (canonical) and always a generated copy in `.claude/skills` (never
     deleted). `AGENTS.md` gets one `<!-- orch:begin -->`..`<!-- orch:end -->` block, `CLAUDE.md` the lines `@AGENTS.md` and
     `@AGENTS.orch.md`; the old pointer line is migrated. A skill folder without a sidecar is the user's unless it is the
@@ -4483,13 +4775,13 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     instructions sync`. No wire, hash, F1 or error-code change.
 73. **B9: `orch setup` (16 Oct 2026; "As built in B9" at the end of this document; the number may be renumbered when a parallel change lands first):** a
     CLI-side command, not a host op: it serves the onboarding page over `<state>/setup/setup.sock` (HTTP, 0600), generates the passphrase and the recovery code
-    itself, and signs in-process through the existing host ops. No new host op, frame or error code; one hosted-bootstrap helper is shared with `orch init --host`.
+    itself, and signs in-process through the existing host ops. No new host op, frame or error code; one hosted-bootstrap helper is shared with `orch setup`.
 
 72. **B8: agent access 1 / 3 / 7 days (owner decision D of 16 Oct 2026; D60, D-P2-27):** `grant_hours` (workspace setting) and
     every grant range 1 to 168 h (`GRANT_MAX_HOURS`; schemas `grant.issued`, `settings.changed`, `workspace`); owners and
     maintainers issue up to 168 h whatever the setting, members up to the setting; a lowered setting never shortens a grant
     already issued (revoke it). The runner grant cap is `min(grant_hours, 168)` (was 12 h), checked at prepare and at
-    `grant.deposit`. `settings.set` that contains `grant_hours` is typed-word class. `orch grant --days N` (1 to 7)
+    `grant.deposit`. `settings.set` that contains `grant_hours` was typed-word class (a plain click since #1198, §0.8.6 item 6). `orch grant --days N` (1 to 7)
     alternatively to `--hours`; `orch grant --runner --extend GRANT` and the click signer's deposit grant may carry a second
     event, `grant.revoked` of the replaced runner grant (`events_fit`; `EMITS_V2` (= V1 + `grant.revoked` on the human-only `grant` op; V1 frozen), no verb
     covers a human-only operation so no replay verdict changes). The `DEPOSIT_RISK` sentence no longer
@@ -4523,8 +4815,9 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
       and is never replaced by the host's word.
 
 74. **B10 Part A: one click together with a phone (owner decision F of 16 Oct 2026; JUDGEMENT CALL reversing orch-52's N4):**
-    `relay.pair_device` may be signed with the convenience device key; it is WORD class (`WORD_OPS`: the typed word is the
-    last eight hex of the device id; a bare click never adds a device); the three `refuse_pair_device` sites and the
+    `relay.pair_device` may be signed with the convenience device key; it was WORD class (`WORD_OPS`: the typed word was the
+    last eight hex of the device id; history: the op left the click allowlist with the relay client, V3 R4c, and the
+    word class is gone since #1198); the three `refuse_pair_device` sites and the
     signer's convenience refusal are removed, `paircli` signs with the key's custody. `convenience.check` still refuses
     with the flag off (`disabled`); the allocation's `check_readers` counts the incoming phone's level-1 declaration; the
     primary's keys stay barred from convenience custody. `pair.preview` no longer blocks on the flag or on custody.
@@ -4630,7 +4923,7 @@ tolerated when the registry is read (any other value is refused) and never writt
 version in the project root is served as unavailable with the message that says to delete it (there is no migration).
 
 - The class and mapping rules are §0.5 and §0.8.3. The mapping is checked at registration and again on every request.
-- **Machines without agent UIDs** (dev, or a Mac before H3c) are tier A (§0.5).
+- **Machines without agent UIDs** (dev, no admin step done, Windows, or a Mac before M1) are tier A (§0.5); tier B is §13.
 
 ## 2. The socket
 
@@ -4757,15 +5050,14 @@ audit hook before it reads anything.
 
 - The check-and-run core of `cli.main.run` moves into `orch.host.dispatch` and serves both modes. That covers input
   validation, the who-check, the grant check, the stop rule, dedup and declared errors.
-- **`init`** (composite):
+- **`orch setup`** (hosted create, V3-D38):
   1. the person's TTY steps (passphrase, recovery code; device key made locally);
   2. `host.wsk_create` → `{workspace_id, wsk_pub}`;
   3. the client signs the delegation and `workspace.created` locally;
   4. `host.bootstrap` appends the genesis and registers the workspace.
 
-  `orch init --host` runs it (H3b3). Since H7 host mode is the default for a registered workspace, and registration
-  starts the per-user service; `orch init` itself still creates the workspace in direct mode, then `orch host register`
-  hands it to the host (see "As built in H7"). The directory must be empty; the peers map
+  `orch setup` runs it (H3b3). Since H7 host mode is the default for a registered workspace, and registration
+  starts the per-user service; `orch setup` creates the workspace through the host (V3-D38: `orch init` and direct creation are gone), (see "As built in H7"). The directory must be empty; the peers map
   is the caller's UID as the genesis owner (agents and the worker are added later by `unregister` + `register`). The
   device key is kept under `hosts/<ws>/person` as in direct mode. Once the genesis is in the log, a failure to finish
   the bootstrap is answered `outcome.unknown`, never a refusal. The client treats `outcome.unknown`, `host.restarting`
@@ -4824,7 +5116,9 @@ secret.
 that could prompt would let any peer raise prompts on the person's screen. C7's rules stay with the signer.
 
 **D-P2-16. The grant secret is drawn by the signing client, never by the preparer (§0.8.1).** Later calls made under
-the grant send the secret in `auth.grant`.
+the grant send the secret in `auth.grant`. *Amended by #1198 C7 (§0.8.6 item 6):* the click
+signer may hand it to the person's own dashboard page once, sealed to the page's key, never in plain text through the
+dashboard server (§0.8.6 item 6, [orch-v2-sealed-field.md](orch-v2-sealed-field.md)).
 
 **D-P2-21. The signer recomputes hashes from structured material and renders its own review**, opening with its own
 header and the shared fingerprint. A host bug must not be able to make the person sign content they did not see.
@@ -4848,7 +5142,7 @@ that takes over this dashboard, could sign."** The flag is **per workspace** and
 device, no other member, a model that knows the value: `sign.convenience_unavailable`), and refuses adding a reader to
 a workspace whose history has convenience events (`sign.convenience_readers`), because switching back to terminal
 signing would not help: the new reader must still parse the old events. `orch sign CODE` stays available, and `grant`
-stays terminal-only. Supersedes D41's per-signature presence for phase 1 and amends the dashboard's D65 rule ("the
+stays terminal-only (amended: a deposit grant, v1.6, and a reveal grant, #1198 C7, are clicks; §0.8.6 item 6). Supersedes D41's per-signature presence for phase 1 and amends the dashboard's D65 rule ("the
 browser never handles a factor" stays true; "signing only in the terminal or H9" does not). Reason: the owner wants
 phase 1 usable every day in tier A, where an agent of the same UID can already read a passphrase typed into a terminal
 it can see (D65's stated limit); presence returns with H9 and tier B in phase 3.
@@ -4866,7 +5160,7 @@ it can see (D65's stated limit); presence returns with H9 and tier B in phase 3.
 |---|---|---|---|
 | CLI (`orch approve`) | `human.prepare` with `signer` | `/dev/tty`: header, then review from `material`, confirmation word, `tcflush` (C7) | passphrase, fields from the signing bytes |
 | CLI (`orch sign CODE`) | `human.pending` + `human.get` (binds the device) | the same | the same |
-| H5c click signer (`python -I -m orch.click`, beside the dashboard, auth `convenience`, phase 1) | its own `human.prepare` with `signer` (bound at prepare), then `human.get` | the dashboard's sign panel shows the signer's View (the terminal review line for line, the risk line), §0.8.6 | a click; a typed word for member, addon-grant/purge, policy and repo-settings ops; none on the key |
+| H5c click signer (`python -I -m orch.click`, beside the dashboard, auth `convenience`, phase 1) | its own `human.prepare` with `signer` (bound at prepare), then `human.get` | the dashboard's sign panel shows the signer's View (the terminal review line for line, the risk line), §0.8.6 | a click for every click-eligible op (#1198: no typed word; the click review lists every line and, for `addon.grant`, the marketplace block "per host, not signed"; §0.8.6 item 6); none on the key |
 | H9 `orch-signer` (macOS, Swift, Secure Enclave P-256, auth `secure-enclave`) | `human.get` (binds the device) | its own native window: header, then review from `material` after recomputing the hashes | Touch ID; the LocalAuthentication reason is built from the signing bytes; non-person labels refused |
 
 WebAuthn (D64) needs a new signature contract and is deferred past P2 (H0 records this).
@@ -4937,7 +5231,7 @@ UID. P2 adds no keychain.**
 | A direct CLI with another state directory (H2a) | Ownership lives in `<state>/hosts/<ws>`, so a direct-mode CLI with a different `ORCH_STATE_DIR` or `XDG_CONFIG_HOME` does not see the registration and can write to a served workspace (trusting its genesis on first use in that directory). Known limit of D-P2-18 in tier A. Tier B closes it, because only the host can write the store files. A follow-up may have the host hold a lock inside the workspace while it serves. |
 | A job takes over the worker role | Worker connections are accepted only from the service manager's main PID (N1). |
 | A worktree that blocks or misleads the check | `O_NONBLOCK`, regular files only, symlinks by target, escaped names (N3). |
-| Click-to-sign (phase 1, D-P2-23) | §0.8.6 item 8. Accepted: a same-UID agent, and anything that takes over the dashboard (XSS, stolen bearer, code execution in the HTTP process), can sign (shown on the card). The signer signs only requests it prepared itself, binds the full signing inputs, and keeps the key out of the HTTP process against passive disclosure. Readers that do not know `convenience` are excluded per workspace. |
+| Click-to-sign (phase 1, D-P2-23) | §0.8.6 item 8. Tier A accepted (tier B: §13.9): a same-UID agent, and anything that takes over the dashboard (XSS, stolen bearer, code execution in the HTTP process), can sign (shown on the card). The signer signs only requests it prepared itself, binds the full signing inputs, and keeps the key out of the HTTP process against passive disclosure. Readers that do not know `convenience` are excluded per workspace. |
 | A prepared request that smuggles an extra event | The signer checks every event against `EMITS_V1[op]`, one log, one `based_on` and its own person, and lists every event (N4). The fingerprint covers the events (N2). |
 
 
@@ -5026,9 +5320,8 @@ UID. P2 adds no keychain.**
   - There is no worker UID in tier A, so the host runs the `tree.check` job itself: `TreeCheckInput` from the repo's
     pins, one `python -I -m orch.gitread` child through the launcher (fixed argv, empty environment, the §0.11 limits,
     the child's audit hook) under the `worktree` profile, and the child's raw answer checked and escaped into
-    `TreeCheckResult` by the host (`orch.gitread.treecheck`, `orch.gitread.treejob`). The phase-3 worker takes over
-    the same job kind and input; only the caller of the child changes. A tier-B workspace has no check until then
-    (fail closed).
+    `TreeCheckResult` by the host (`orch.gitread.treecheck`, `orch.gitread.treejob`). The phase-3 worker may take over
+    the same job kind and input; only the caller of the child changes. Tier B (§13.4) keeps the host as the caller.
   - It also compares the index with `HEAD`'s tree, so a staged change, an unmerged entry or an `intent-to-add` entry
     is a change (`why:"modified"`; a path of `HEAD` missing from the index: `"deleted"`).
   - **Clean at the signed commit.** `TreeCheckResult` also carries `head` and `head_ref` (host-side, never shown):
@@ -5168,7 +5461,7 @@ dispatch is turned on.
 | **H3a Handler capabilities** | `Context` capabilities; handlers lose env, path and exec access; direct mode unchanged | goldens unchanged; with the audit hook in host mode, no open outside the roots and no spawn except the launcher | Codex |
 | **H3b1 git reader and `diff`** | `orch.gitread`, the launcher, pins, refs, extensions, identity, `diff` | a malicious `.git/config` runs nothing; a `.git` file or symlinked `objects/` pointing elsewhere is refused; a 1 GB zlib bomb is refused within the limits; reftable is unavailable; the `gitdir` profile cannot open a worktree file and the `worktree` profile cannot open outside its three pins (audit hook); `diff` is a valid unified diff that `git apply` accepts, reproducing the head exactly; identical to `git diff --no-ext-diff --no-textconv --no-renames` on simple fixtures; hunk placement may differ where git uses its heuristics; the F7 cases (changed `origin` against a declared `remote`, a `.git` file planted before the repo is added, a swapped `commondir`, loose/packed disagreement, case-colliding refs, `worktreeConfig`); at most 4 children under a burst of 100 `diff` calls (F10) | Opus |
 | **H3b2 Client receipts** | `task.done` contract 2, client-side `verify.cmd`, `attested_by` | `run:true` refused by the host; a receipt with a `cmd` other than `verify.cmd` refused; the output file goes through `files`; the receipt is labelled | Codex |
-| **H3b3 Bootstrap** | `host.bootstrap`, the `init` composite | `init` through the host yields the same genesis bytes as direct mode; `bootstrap` refuses a non-empty root, a foreign owner, or an id not from `wsk_create`; a second `bootstrap` for an id that has a genesis or a registration is `host.busy` (N5); a bootstrap killed after the append is finished at restart, and one killed before it leaves no root, key or id behind | Opus |
+| **H3b3 Bootstrap** | `host.bootstrap`, the hosted create of `orch setup` | the hosted create yields the genesis bytes of the old direct mode (direct mode is gone); `bootstrap` refuses a non-empty root, a foreign owner, or an id not from `wsk_create`; a second `bootstrap` for an id that has a genesis or a registration is `host.busy` (N5); a bootstrap killed after the append is finished at restart, and one killed before it leaves no root, key or id behind | Opus |
 | **H3c Agent and worker users (#287)** | the macOS and Linux setup helper: users outside `staff`, groups, root-owned `orch` directories, `<run>`, pins, workspace modes, the worker LaunchDaemon | e2e `keys-isolation` and `mac-agent-uid`: the agent cannot read `wsk` or `dk` but can call `status`; the helper refuses a pre-existing foreign `/Users/Shared/orch` (`needs_os_users`, real foreign owner) | Opus |
 | **H4a1 Dispatcher** | policy matrix, principals, auth and the reads rule, `whoami`, `host.status`, error catalog and disposition | closed list (registry × column of §0.5); no key material in any response (property test); grant in args refused; invalid grant on a read gives workspace tickets; another person's grant id with a wrong secret cannot reach outcomes, blobs or notes (F4); the F6 visibility cases (`total`, `next_page`, `needs {person}` from an agent, `session.list` claims, `diff` on an unlinked repo, `artifact.get` with `../x`, `sub.open ticket:<restricted>` gives `not_found`) | Opus |
 | **H4a2 Files and blobs** | `files`, `blob.*`, `artifact.get`, quotas | chunk retry with the same bytes accepted, with different bytes refused; a wrong final digest refused; use across principals and workspaces gives `blob.invalid`; the per-UID quota and the person reserve (F9); consumed on commit, kept after a refusal or dry run, expired after 10 min; `x-file` without `files` refused; a lost first-chunk response is recovered with the same `upload_key`; a zero-byte blob; a repeated final chunk returns the same result | Opus |
@@ -5278,24 +5571,22 @@ dispatch is turned on.
    - **`diff`'s linked-repo check becomes a confidentiality boundary.** In tier B the check that `repo` is in the
      ticket's `links.repos` must be a real boundary (commit provenance, or per-person repo visibility in
      `settings.repos`), because agent UIDs then cannot read the disk themselves. In phase 1 it is accepted (§7 v1.5).
-11. **Tier B for the phase-2 addons (§12).**
-   - **Runner:** one per agent UID as a system service (`UserName=`/`User=`), installed by the H3c helper; runner socket
-     group `orch-runner`; the term socket directory 0750 with a group holding the person, socket 0660.
-   - **Shells from the dashboard run as the agent UID** ("this terminal runs as orch-agent-…; it cannot read your keys");
-     no "shell as me" from the dashboard. This is #307's original "terminals behind the agent UID".
+11. **Tier B for the phase-2 addons (§12).** Specified in §13 (24 Oct 2026), which replaces the earlier list here:
+   - **Runner:** one system unit per agent user (§13.2 item 7); runner socket in the setgid run directory (§13.3); the
+     terminal socket in the agent's own run directory with an ACL for the person.
+   - **Shells from the dashboard run as the agent user** ("This terminal runs as orch-agent-<user>. It cannot read your
+     keys."); no "shell as me" from the dashboard (§13.5).
    - **Columns become real:** an agent-UID process is class `agent`, never P, so `term.*`, `agent.start` and
      `grant.deposit` are refused to it. Owners may need to see other persons' runs on a shared host.
    - **Runner grants** per (workspace, person, agent UID); `grant.deposit` names the runner UID; a UID-restricted grant
      (item 4) becomes useful; "own" means the same grant (item 10).
-   - **Grant signing:** H9 or the terminal; click-to-sign ends after migration (§0.8.6).
-   - **Environment:** agent UIDs get their own home and credentials; nothing of the person's (`SSH_AUTH_SOCK`, API keys)
-     is carried by default.
-   - **Resource limits and an orphan sweep per agent UID** become possible and are reconsidered.
-   - **Worktrees** are owned by the agent UID and must be group-readable by the worker UID for `tree.check` (runner
-     umask 002, directory group `orch-<ws>`).
+   - **Grant signing:** one click stays allowed in tier B (§13.7, owner decision of 24 Oct 2026; this reverses the
+     earlier "click-to-sign ends after migration").
+   - **Environment:** the agent user's own home and credentials; nothing of the person's (§13.5).
+   - **Resource limits** per agent unit (§13.2 item 7).
+   - **Worktrees** are worktrees of the agent's own clone, read by the host through `orch.gitread` (§13.4).
    - **Terminal rendering** moves to a separate restricted origin (deferred from D-P2-30).
-   - **Records** stay person-side (on a Mac the person UID is the host UID); the store files are host-owned and
-     group-readable.
+   - **Records** stay person-side; the store files are host-owned.
 12. **Person `new` with labels in one signed request** (quick add by click, §12.9): extend `EMITS_V1["new"]` for
     persons to `ticket.created` plus one `ticket.updated` (labels, priority, size), reviewed in H5a's style; until then
     the click flow signs twice.
@@ -5388,10 +5679,11 @@ alternative:
   guarantees; `file` collides with the file tier), or reusing `passphrase` (would hide the missing factor).
 - **Same device on conversion; downgrade in place only with `--in-place`** (Codex 4, Opus R10). *Alternative:* a new
   device for every custody change. That is `--rotate`, designed for when device ops exist.
-- **Click for daily ops; a typed word for member, addon-grant/purge, policy and repo-settings ops; `grant` and unknown
+- **Click for daily ops; a typed word for member, addon-purge, policy and repo-settings ops; `grant` and unknown
   ops terminal-only** (Codex 10, Opus R8; v1.6 adds the deposit-only runner grant, click + word, §10 entry 8 and
   D-P2-27). *Alternatives:* click for everything (the grant secret would cross the HTTP
-  process); a word for every op (the owner wants it easy).
+  process); a word for every op (the owner wants it easy). *Superseded by #1198 (§0.8.6
+  item 6):* click for everything after the review, no typed word; the grant secret crosses only sealed (§0.8.6 item 6).
 - **Per-workspace readers condition and blocking new readers** (owner, orch-d6). *Alternative:* allow adding a reader
   after switching back to terminal signing. Rejected by the owner: the history already holds convenience events, which
   the new reader must parse.
@@ -5577,13 +5869,13 @@ Status: **decided 13 Oct 2026 by orch-52 (see PR #435 comment)**; drafted 12 Oct
 independent Codex challenge and an Opus tie-break, recorded in 11A.13. Section 11 lists what the host owes the relay; this section is the design of the
 core-side client that pays it: the code that makes a served workspace reachable through orch-relay. It is numbered 11A
 so that the §12 references stay valid. Ground truth for the relay side is orch-relay `develop` @ `772d7b0`
-(`docs/protocol-v2.md` §8, §12.2, §13, §19; `docs/p3-relay-design.md` §3, §9, §10 "G4 as built", P3-D1 to P3-D37;
+(`contracts/relay/protocol-v2.md` §8, §12.2, §13, §19; `docs/p3-relay-design.md` §3, §9, §10 "G4 as built", P3-D1 to P3-D37;
 P3-D37 merged in relay PR #62, `7c0406a`). Where the relay and core disagree, the text says so; §11A.12 collects those
 points. "MUST" is normative for the implementation groups below.
 
 ### 11A.1 Scope, layout and groups
 
-Package `orch.relay` (`plugins/orch-core/src/orch/relay/`), tests under `plugins/orch-core/tests/relay/`. The relay
+Package `orch.relay` (`packages/core/src/orch/relay/`), tests under `packages/core/tests/relay/`. The relay
 corpus is vendored under `tests/relay/vectors/` (11A.10).
 
 | Module | Contents |
@@ -7068,7 +7360,7 @@ store API exists for it to degrade the host itself (gap, below). The store passe
   `checkpoints.py` `completeness` (`missing` lists every index) and `publish` (`unpublished_refs`): P15.
 - 11A.3 `publish.json` and `published/` (this file, the 11A.3 table) vs `relay/state.py` `_NAME` (flat names) and
   `MAX_FILE` (1 MiB; a restore record is up to about 4.7 MiB): P2, P3.
-- 11A.5 "The relay does not announce it" (Maximum publication size) and orch-relay `docs/protocol-v2.md` §19.8 ("The
+- 11A.5 "The relay does not announce it" (Maximum publication size) and `contracts/relay/protocol-v2.md` §19.8 ("The
   relay does not advertise its maximum yet") vs `relay_info.py` at `438b719` (it does; 11A.12 already says so).
 - 11A.5 startup classification table vs §11 "A mismatch with an entry still in the outbox": the queued-restore row
   is missing (P5).
@@ -8125,7 +8417,7 @@ with one correction (below):
 | `WK_e` (one per epoch, ever) | R6, `membership/keys/` (11A.15.3) | grants (sealed), `K_bridge(e)` through `EpochKeySource` | **must be added** |
 | `WXK_v`, `CK_s` | R6, `membership/keys/` | the card (`wxk_pub`, `ck_commit`) and the card-key wraps | **must be added**; R1's `LinkSteps.card()` already needs them (conflict C6) |
 | `S`, `sas_nonce` (per offer) | R6, the offer record | `K_pair`, the SAS | **must be added** |
-| `PK` (person) | **not stored**: `orch init` derives it from the recovery code and drops it (C8, `ops/workspace_init.py`) | the primary signs certificates, cert challenges and rejections with it (§5.2, §8.4), and derives the label key from it | **conflict C1**; the source is the owner decision Q1 (11A.15.16) |
+| `PK` (person) | **not stored**: `orch setup` derives it from the recovery code and drops it (C8, `ops/workspace_init.py`) | the primary signs certificates, cert challenges and rejections with it (§5.2, §8.4), and derives the label key from it | **conflict C1**; the source is the owner decision Q1 (11A.15.16) |
 | primary `dk_sig` | the person path (passphrase backend now, Secure Enclave later) | relay login as a device (D(p) session on the cert queue) | **must be added** (H12c item 9) |
 | primary `dk_kx` (private) | the person path, **kept**, key type `kx` | opening the sealed `cert_request` inner (purpose `cert-request` only) | **must be added** (conflict C2) |
 | the Mac's per-workspace `dk_sig` (F1 device) | the person path | signing F1 `device.added` for the phone (F1 §5.3: an existing device of the same person) | exists |
@@ -8552,7 +8844,7 @@ set.
 | 7c | **The primary's challenge.** On a `notices.cert_requests` wake (fallback: `GET /v2/cert-requests/{id}` at most every 10 s, 5 s deadline, never blocking the pair thread) R6 reads the request. It verifies the PK-signed challenge with H12c `check_cert_challenge(signed, pk_pub, request_o)` (under the pinned `PK` and against the stored request's binding; the phone verifies again, §8.4 step 5) and relays it **unchanged** in `cert_pending`. Unverifiable relay data is dropped and alarmed `relay_misbehaving` | the challenge bytes, in the record, **before** the first answer that carries them; never replaced | a relay that withholds the challenge only delays: the phone's deadline gives `expired` |
 | 7d | **The primary signs or rejects** (owner client, 11A.15.9): it uploads the certificate (`PUT /v2/devices/{device}`) and the relay marks the request `signed`; or it posts a `cert_rejection`. The inline CLI also hands the certificate it signed (or the rejection) straight to R6 through the control op `relay.pair_cert` (Opus L4): the relay keeps a request only until `expires_ms + 60 s`, and a workspace session cannot `GET devices/{id}` before the device is in `ever_devices` (`directory.py`), so a host down at that moment would otherwise lose a signed cert. R6 still verifies it itself (step 8) | — | `rejected` with a rejection verified by `check_cert_rejection(signed, pk_pub, request_o)`: R6 relays the long form `{state, wsk_pub, pk_pub, rejection}` unchanged (§8.3 G3b). `expired`: `expired` |
 | 8 | **Certificate in hand** (from 7a, from `relay.pair_cert`, or from `GET cert-requests/{id}` `state:"signed"`). R6 verifies it itself, never trusting the relay's state: `check_cert` under the pinned owner `PK`; the keys equal the pending keys; `person_id` is the owner's; `verify_cert` at now; no revocation known (relay feed and `HostPins`); for 7b `scopes_max` equals what was requested, for 7a it covers the offer's scopes. The offer must still be `cert_pending`/`confirmed` (a cancelled offer's cert is refused here) | the cert, in the record; `outstanding.json` cleared | any failure ends the offer `failed` (short `rejected`, alarm `pairing_cert_invalid`) |
-| 9 | **The R6 allocation (the authoritative gate).** Refused when the phone's deadline is near (above). The CLI drives the person path: `human.prepare` of the material kind `relay.pair_device` (H12c item 12) renders `device.added {device, cert}` with the device id, the label (the cleaned label as `clean_label` returned it, shown for review only; there is no F1 copy of the label and no NFC step, 11A.15.13), scopes, `cert_code` (7b) or SAS (7a), and the cert digest. the Mac signs `device.added` with the workspace device key: at a terminal with its passphrase (the hand-off `orch sign CODE` or the attached CLI's inline signer), or, when the key is in convenience custody and the flag is on (B10, 17 Oct 2026: JUDGEMENT CALL reversing N4, 11A.15.6), with `auth:"convenience"` after the typed word (WORD class: in the dashboard, or in the attached CLI's TTY confirmation after the SAS and certificate steps, never a bare click). With the click-to-sign flag on the hand-off still works (it binds `auth:"convenience"`); the attached CLI may also use its inline signer with the convenience key; `pair.preview` does not block (11A.15.9A), then `human.submit`. The submit's append job, **under the store lock**, in one critical section: (i) the record is `confirmed`/`cert_pending` with this cert and within its deadline; (ii) **the allocation intent** `{offer_id, attempt, event digest (the reviewed prepared material), decl_digest, device_id}` is written into the offer record (Codex 2); (iii) the authoritative reader check (`refuse_reader_op`, later `check_readers` over the event, §0.8.6 item 9.4); (iv) `append_signed(...)` of `device.added`; (v) the reader record (§9.10, `source:"pair"`); (vi) `membership/devices/<id>.json`; (vii) the offer state `allocated` with the event id | the intent before the append; the F1 log line is the commit; then the reader record, devices and offer, under the same lock before it is released | **crash recovery** (at open, before either R6 thread starts, before anything is served): an offer whose intent's event digest matches a `device.added` in the log is rolled forward by recovering **all** derived records: the reader record, `devices/<id>` and `allocated`. Matching is by the intent (offer, attempt, reviewed event, declaration), never by "same cert, same device". A `device.added` without an intent is a plain F1 device (not relay-reachable). The gate refusal ends the offer `failed`: nothing appended, short `rejected`. **Already in F1** (orch-f1 S3): if F1 already holds this exact device with the same keys and certificate and it is valid, the allocation is idempotent (no second append; the intent names the existing event), and if the device is in `excluded` the same critical section clears it (re-admission, N2, 11A.15.4); if the id was removed or revoked, refuse `revoked` |
+| 9 | **The R6 allocation (the authoritative gate).** Refused when the phone's deadline is near (above). The CLI drives the person path: `human.prepare` of the material kind `relay.pair_device` (H12c item 12) renders `device.added {device, cert}` with the device id, the label (the cleaned label as `clean_label` returned it, shown for review only; there is no F1 copy of the label and no NFC step, 11A.15.13), scopes, `cert_code` (7b) or SAS (7a), and the cert digest. the Mac signs `device.added` with the workspace device key: at a terminal with its passphrase (the hand-off `orch sign CODE` or the attached CLI's inline signer), or, when the key is in convenience custody and the flag is on (B10, 17 Oct 2026: JUDGEMENT CALL reversing N4, 11A.15.6), with `auth:"convenience"` after the typed word (WORD class, history: gone with the relay client, V3 R4c, and #1198; in the dashboard, or in the attached CLI's TTY confirmation after the SAS and certificate steps, never a bare click). With the click-to-sign flag on the hand-off still works (it binds `auth:"convenience"`); the attached CLI may also use its inline signer with the convenience key; `pair.preview` does not block (11A.15.9A), then `human.submit`. The submit's append job, **under the store lock**, in one critical section: (i) the record is `confirmed`/`cert_pending` with this cert and within its deadline; (ii) **the allocation intent** `{offer_id, attempt, event digest (the reviewed prepared material), decl_digest, device_id}` is written into the offer record (Codex 2); (iii) the authoritative reader check (`refuse_reader_op`, later `check_readers` over the event, §0.8.6 item 9.4); (iv) `append_signed(...)` of `device.added`; (v) the reader record (§9.10, `source:"pair"`); (vi) `membership/devices/<id>.json`; (vii) the offer state `allocated` with the event id | the intent before the append; the F1 log line is the commit; then the reader record, devices and offer, under the same lock before it is released | **crash recovery** (at open, before either R6 thread starts, before anything is served): an offer whose intent's event digest matches a `device.added` in the log is rolled forward by recovering **all** derived records: the reader record, `devices/<id>` and `allocated`. Matching is by the intent (offer, attempt, reviewed event, declaration), never by "same cert, same device". A `device.added` without an intent is a plain F1 device (not relay-reachable). The gate refusal ends the offer `failed`: nothing appended, short `rejected`. **Already in F1** (orch-f1 S3): if F1 already holds this exact device with the same keys and certificate and it is valid, the allocation is idempotent (no second append; the intent names the existing event), and if the device is in `excluded` the same critical section clears it (re-admission, N2, 11A.15.4); if the id was removed or revoked, refuse `revoked` |
 | 10 | **Publication.** `PUT /v2/devices/{device} {cert}` (idempotent: an identical `cj(o)` is a free 200; `cert_conflict` is alarmed `pairing_cert_conflict` and fails the offer), then the pair thread asks the membership thread for the body that **adds** the device (11A.15.4; a rotation if the gate is up). **No WK is sealed before steps 8 and 9** (§8.3 step 5) | H1/H2 `head.json` write-ahead | as 11A.15.4. A content refusal of the add ends the offer `failed`, puts the device in `excluded` and forces the rotation (holder invariant). The device stays an F1 device: R6 raises the `needs` item "pairing of <label> failed after it was added: remove the device" and never appends `device.removed` itself (Q13) |
 | 11 | **The baseline.** After the add committed: R1's verified `GET checkpoint` gives the held `{n, hash}`. `POST /v2/workspaces/{ws}/baselines {hash, offer_id}` (W(g), 7 days). **JUDGEMENT CALL:** a linked workspace always has a held checkpoint, so a missing one while `published.jsonl` has an accepted entry is `relay_rolled_back` (11A.5): R6 does not approve with `baseline: null` and retries until the phone's deadline | `published` with the acknowledged publication `{epoch, list_seq, list_hash}`, the current accepted `card_seq`, and the baseline | `404 not_found` or `410 checkpoint_gone`: reread H and pin the new one. `quota_exceeded` (16 pins): alarm, retry every 30 s until the deadline. A baseline is never downgraded |
 | 12 | **Approved.** Every later `pair_status` gets `{state:"approved", scopes, cert, pk_pub, epoch, list_seq, card_seq, baseline, wsk_pub}` from the record. `scopes` are **byte-equal to the accepted list entry's** (orch-f1 S7: else the phone refuses `scopes_mismatch`); `epoch` and `list_seq` name the exact locally persisted publication the relay acknowledged | `approved` | the pin is released (`DELETE baselines/{hash}?offer_id`) on the device's first verified column-R request, but only if no other non-tombstoned offer names the same hash (Opus L5: the relay keys pins by `(ws, hash)`); else left to expire. The record becomes a tombstone after 7 days |
@@ -8605,7 +8897,8 @@ the phone show "link used by someone else" after 60 s, the wrong message for an 
 - **Dissent (Opus L11):** give both an expiry and a renewal path. Recorded; it needs a relay rule for certificate
   renewal of an existing device id (Q15: decided 15 Oct 2026, no relay change now; a pre-public relay item).
 
-**Convenience custody may sign the pairing, word-confirmed (JUDGEMENT CALL of B10, 17 Oct 2026; REVERSES orch-52's
+**Convenience custody may sign the pairing, word-confirmed** (history: the relay client is gone since V3 R4c, and
+the click path has no typed word since #1198; the reasoning below is kept as the record) **(JUDGEMENT CALL of B10, 17 Oct 2026; REVERSES orch-52's
 decided item "convenience custody is refused for pairing", 15 Oct 2026, N4; owner decision F: phone and one-click
 together).** The old rule made a phone and one-click exclusive: the pairing signature had to be a terminal passphrase
 signature, and a key in convenience custody has no passphrase. Opus's reasoning for the reversal:
@@ -8778,7 +9071,7 @@ grant).**
 - `pair.preview`: the blocked codes and warnings, without creating an offer. **Its convenience basis (DECIDED 15 Oct
   2026, orch-52 re-check of beafc6c8, N3a):**
   - **not blocked** on the click flag or on convenience custody (B10, 17 Oct 2026, reversing N3a: the pairing may be
-    signed with the convenience key after the typed word, 11A.15.6). It is blocked only by the reader gate for a real
+    signed with the convenience key after the review, 11A.15.6). It is blocked only by the reader gate for a real
     refusal: a reader below level 1 (`no_declaration`, `reader_too_old`), naming the devices;
   - **not blocked** on convenience **history**: that is H12d's reader gate (§0.8.6 item 9; the owner decision of 13 Oct
     admits a qualifying phone, level-1 readers may pair, on a workspace with convenience history). It is shown as a
@@ -8901,7 +9194,7 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   label policy every source applies.
 - **Labels (JUDGEMENT CALL).** `SIGN_LABELS` = `sig_device_cert`, `sig_cert_challenge`, `sig_cert_rejection`,
   `sig_revocation`: a subset of `PERSON_KEY_LABELS` **without `sig_ws_delegation`**. The delegation is signed once
-  by `orch init` from the code it has just shown; adding and revoking devices never need it, and a source that cannot
+  by `orch setup` from the code it has just shown; adding and revoking devices never need it, and a source that cannot
   sign one cannot delegate a workspace to another `WSK`. Same set as 11A.15.16 fixes for A'.
 - **`RecoveryCodeSource(labels=…, person_id=… | pk_pub=…, action=…)`** (Q1 = B). `labels` is **required** (least
   privilege, review of #519, Opus F4): a non-empty subset of `SIGN_LABELS`; adding a device names
@@ -9065,7 +9358,7 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
 
 #### 11A.15.11 Deliverable: the scripted dev path (one command)
 
-`plugins/orch-core/scripts/dev-pair` (Python, stdlib only, run with `uv run`) sets up a **throwaway** host, workspace and
+`packages/core/scripts/dev-pair` (Python, stdlib only, run with `uv run`) sets up a **throwaway** host, workspace and
 primary, links them to a relay, and emits a pairing link.
 
 **Who uses which relay (orch-f1 B3, corrected).** The first draft claimed a Simulator end-to-end against a local
@@ -9136,7 +9429,7 @@ code (N6, 15 Oct 2026):** `tests/relay/owner.py` and the product inline primary 
      `{http://127.0.0.1:*, http://localhost:*, https://relay.dev.severin.io}`.
    - The origin stored in `link.json`, the one the host signs and the one the relay was started with are the **same
      literal** (`http://127.0.0.1:P`, not `localhost`).
-4. **Identity and workspace.** `orch init` runs in `<root>/ws` through a **pseudo-terminal** (stdlib `pty`). The script
+4. **Identity and workspace.** `orch setup` runs in `<root>/ws` through a **pseudo-terminal** (stdlib `pty`). The script
    feeds a fresh random passphrase and confirms the generated recovery code, both kept in `<root>/secrets/` (0600). No
    test seam is added to production code: the dev path drives the real TTY prompts. **pty transcripts are captured
    privately** (into memory, never echoed or logged, also on failure; Opus L12c, Codex 4).
@@ -9803,7 +10096,7 @@ paragraph disagree, the item wins.
     (`pairdevice.event_digest(line) == alloc.event_digest`). `refused(alloc, err)` runs when nothing landed after an
     accepted `precommit` (including a same-id, different-content line).
 14. **With the click flag on** the hand-off still works (`auth: convenience`); the CLI may also use its inline signer
-    (passphrase, or the convenience key after the typed word, B10); `pair.preview` does not block on the flag (11A.15.9A).
+    (passphrase, or the convenience key after the review, B10); `pair.preview` does not block on the flag (11A.15.9A).
 15. **`RecoveryCodeSource(labels=..., pk_pub=... | person_id=..., action=...)`** (#519): `labels` is required: add a
     device `{sig_cert_challenge, sig_cert_rejection, sig_device_cert}`, revoke `{sig_revocation}`; read `pk_pub` only
     inside the block, or construct with `pk_pub=`. Test sandbox: `tests/relay/personkey_sandbox.py`
@@ -10280,7 +10573,7 @@ no secret in the state directory, the CLI), `tests/relay_owner/test_inline.py` (
 deadline, Ctrl-C), `tests/host/test_relay_pair_cli.py` (the attach loop with the inline primary, defaults of `link` and
 `primary set`, the QR and its erasure), `tests/relay/test_owner_phone_kit.py` (the sandbox owner on the product step),
 and the T2 test `tests/relay/t2/test_b1b_owner_pairing_real_relay.py`: the **product CLI under a pty** against the real
-relay (no manifest, no dev-pair, no `owner.py`): `orch init`, host, account, link, `primary set`, a wrong `cert_code`
+relay (no manifest, no dev-pair, no `owner.py`): `orch setup`, host, account, link, `primary set`, a wrong `cert_code`
 three times (rejection, the phone is refused), a kill at the recovery prompt then `--resume` to `approved` with the phone's
 column-R read, a wrong recovery code three times (nothing signed, offer cancelled), and the 409 join of a second
 install. The run takes about 20 s.
@@ -10353,7 +10646,7 @@ the routes stay off until then. The other marks:
 Ground truth:
 - orch-relay `develop` `docs/p3-relay-design.md` §14: P3-D39 items 1 to 12, P3-D40 items 1 to 9, amendment A1, and the
   host questions Q-H1 to Q-H7 of §14.9;
-- orch-relay `docs/protocol-v2.md` §9, §10, §19.9 and §19.10;
+- `contracts/relay/protocol-v2.md` §9, §10, §19.9 and §19.10;
 - orch-core `develop` @ `58c365a4` (R2, R3, R5 and H12b merged);
 - R6a PR #554;
 - orch-mobile `develop` @ `2cf4de2`: the Drop client of #75, the NSE, and the bridge ops `drop_claim` and `drop_rewrap`.
@@ -11383,7 +11676,7 @@ variables of check 1 only narrow.
      `tests/relay/personkey_sandbox.py` into `orch.devsandbox` so that production code and `dev-pair` share one
      check; orch-29's open point in 11A.15.10);
   3. `dev.json` exists, is valid, and its `sandbox_id` and `root` equal the manifest's;
-  4. the manifest names the sandbox person (`person_id`, written by `dev-pair` after `orch init`) and the state
+  4. the manifest names the sandbox person (`person_id`, written by `dev-pair` after `orch setup`; a manifest without `person_id` and without `workspaces` starts a pending dev host, 17.3 "Creation") and the state
      directory holds no registered workspace that fails 17.3 (a dev host serves sandbox workspaces only, 17.3 rule
      R5);
   5. the passphrase is the only person custody in the sandbox's `HOME` (no keychain selection, no `custody.json`
@@ -11422,14 +11715,14 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 | # | Check | Why |
 |---|---|---|
 | S1 | the workspace root is `<root>/ws` (or `<root>/ws-<n>`), reached from the pinned root descriptor without following a link, and its `st_dev`/`st_ino` equal the pair the manifest recorded for this workspace id | a copy or a move breaks it (17.3 "Copies") |
-| S2 | the manifest lists this workspace id under `workspaces`, written by `dev-pair` right after `orch init` in that root | the sandbox owns the workspace, not the other way round |
-| S3 | the signed genesis `workspace.created` has `prefix` = `SBX`, `owner.name` = exactly `orch dev sandbox <id8>`, with `id8` = the first 8 characters of the manifest id (the manifest id is 8 or more lowercase hex characters, `^[0-9a-f]{8,}$`; DECIDED (orch-07), D4), and `owner.person` = the manifest's sandbox person (DECIDED (orch-52), O5; strengthened by DECIDED (orch-07), F1: `SBX` is a **reserved** prefix, see "Creation") | an immutable, signed, creation-time marker without an F1 change. Because production `orch init` gives `SBX` only to a fresh throwaway person, no real workspace has an `SBX` genesis, and a forged manifest cannot change a signed genesis |
+| S2 | the manifest lists this workspace id under `workspaces`, written by `dev-pair` right after `orch setup` in that root | the sandbox owns the workspace, not the other way round |
+| S3 | the signed genesis `workspace.created` has `prefix` = `SBX`, `owner.name` = exactly `orch dev sandbox <id8>`, with `id8` = the first 8 characters of the manifest id (the manifest id is 8 or more lowercase hex characters, `^[0-9a-f]{8,}$`; DECIDED (orch-07), D4), and `owner.person` = the manifest's sandbox person (DECIDED (orch-52), O5; strengthened by DECIDED (orch-07), F1: `SBX` is a **reserved** prefix, see "Creation") | an immutable, signed, creation-time marker without an F1 change. Because production `orch setup` gives `SBX` only to a fresh throwaway person, no real workspace has an `SBX` genesis, and a forged manifest cannot change a signed genesis |
 | S4 | the member list holds exactly one person, the sandbox person; no `member.added` in the merged history | a sandbox workspace has no other reader whose history we would poison |
 | S5 | the workspace-local marker `<ws>/.state/dev-sandbox.json` (0600) exists and names the same `sandbox_id` and workspace id | an extra check (DECIDED (orch-07), F2). It travels with a file copy, but not through a records repo or a relay restore (`.state/` is rebuilt), so the primary marker on normal hosts is the `SBX` genesis |
 | S6 | the workspace's `link.json` origin equals `dev.json`'s `relay_origin` byte for byte, or there is no link (DECIDED (orch-52), O2: no hard-coded allow-list in production code; `dev.json` is read only under the flag and a matching manifest, so a stray file cannot widen anything) | a sandbox talks only to the relay `dev-pair` chose |
 
 - **R5: a dev host serves sandbox workspaces only, through one registration choke point (DECIDED (orch-07), F5).**
-  Every path that adds a workspace to a host's registry (`orch host register`, `host.bootstrap` (`orch init` against a
+  Every path that adds a workspace to a host's registry (`orch host register`, `host.bootstrap` (`orch setup` against a
   running host), any restore, and a relay-based adopt or recovery) goes through one function,
   `orch.host.registry.admit(service, ws)`. On a dev host it refuses a workspace that fails any of S1 to S5
   (`host.dev_refused`, reason `not_sandbox`); on a normal host it refuses an `SBX` genesis (below). The start-up proof
@@ -11455,15 +11748,28 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
   is neither registered nor served. On a normal host its `SBX` genesis makes `admit` refuse it, whether it arrives as a
   file copy, a records-repo checkout or a relay restore, with or without the marker. Test
   `sbx_genesis_without_marker_refused_on_normal_host` (records rebuild, `.state/` removed, relay restore).
-- **Creation.** `dev-pair up --sim-convenience` runs `orch init --prefix SBX` (owner name `orch dev sandbox <id8>`) in
-  `<root>/ws`, then writes the workspace marker and the manifest's `workspaces` entry (`id`, `st_dev`, `st_ino`) and
-  `person_id`, then `dev.json`, then starts the host.
-- **`SBX` is a reserved prefix (DECIDED (orch-07), F1).** Production `orch init` and `host.bootstrap` accept
+- **Creation (V3-D38, amended).** `orch setup` is gone; `orch setup` (hosted: `host.wsk_create` + `host.bootstrap`) is the
+  only genesis. `dev-pair up --sim-convenience` and the kit therefore work in four phases: (1) write the manifest with
+  `id` and `root` only (no `person_id`, no `workspaces`) and `dev.json`, and start a **pending dev host**; (2) run
+  `orch setup --prefix SBX` (owner name `orch dev sandbox <id8>`, passphrase custody) in `<root>/ws`, which bootstraps and
+  registers the workspace on that host; (3) stop the host by its own PID and write the manifest's `person_id` and
+  `workspaces` entry (`id`, `st_dev`, `st_ino`) and the workspace marker (`dev.json` was written once, in step 1, and stays); (4) start the full dev host, which
+  proves S1 to S5 as before. Production code never writes a sandbox file.
+- **The pending dev host (V3-D38).** A manifest with neither `person_id` nor `workspaces` gives a pending dev host
+  (start-up proof checks 1 to 3 and 5 unchanged; a manifest that lists workspaces but no person is still refused,
+  `no_person`). It has **no dev powers**: `sandbox_reason` fails first with `S0` for every workspace, so `dev_gate`,
+  the test marketplace and the lock-free `gated` are all off, and a records push is refused as on every dev host. It
+  starts only with an empty registry (`not_sandbox` otherwise) and admits exactly one fresh `SBX` genesis per process (the claim records the workspace id and is checked again before every admission, start-up recovery and same-key retries included),
+  only through `host.bootstrap`: the genesis prefix is `SBX`, the owner name the sandbox's, the owner a fresh person, the
+  root `<root>/ws` or `<root>/ws-<n>` directly below the pinned root. `host.register` and every further bootstrap on a
+  pending host are `not_sandbox`. Its status line reads `DEV HOST (pending genesis, no dev powers)`. Dev powers exist
+  only on a host that has proven the bound person, workspace row and marker at its own start.
+- **`SBX` is a reserved prefix (DECIDED (orch-07), F1).** Production `orch setup` and `host.bootstrap` accept
   `--prefix SBX` only when the init **creates a fresh person** (no person identity in `HOME` yet, so the person owns
-  nothing else), **this `orch init` run generates the recovery code itself** (never a typed, restored or imported
+  nothing else), **this `orch setup` run generates the recovery code itself** (never a typed, restored or imported
   code; DECIDED (orch-07), D1), **and** the owner name is exactly `orch dev sandbox <id8>`, with `id8` = the first 8 characters of the manifest id (the manifest id is 8 or more lowercase hex characters, `^[0-9a-f]{8,}$`; DECIDED (orch-07), D4).
   Otherwise `invalid.input` (`detail.prefix`, "SBX is reserved for dev-pair sandboxes"). An `SBX` genesis therefore
-  always belongs to a throwaway person. **Existing use (grep of `docs/` and `plugins/orch-core/tests/` on 15 Oct 2026):**
+  always belongs to a throwaway person. **Existing use (grep of `docs/` and `packages/core/tests/` on 15 Oct 2026):**
   no workspace, vector, fixture or test uses the prefix `SBX`; the only matches are two base64 signature substrings
   in `tests/vectors/f1/restore.json` and `checkpoint.json`. The release notes of D1 tell any v2 user that an existing
   `SBX` workspace would be refused on a normal host. Tests `init_refuses_sbx_for_existing_person`,
@@ -11594,7 +11900,7 @@ checked at registration, at host start, and again by `dev_gate` inside the colum
 
 | PR | Owner | Content | Estimate |
 |---|---|---|---|
-| core D1 | orch-52 (Sonnet, Opus review) | `orch.devsandbox` (manifest check moved from the test tree, shared with `dev-pair`), `orch.host.devmode.prove`, the `--dev-sim-convenience` flag and its refusal in the unit writers, `dev_gate`, P5/L2/L8/`_signed_by`/`convenience.check`/`required_reader` changes, the narrowing marker on normal hosts, `host.status.dev`, `whoami.relay.dev`, the log lines and the alarm, the R2 vectors, new codes in §0.6 (`host.dev_refused`); after the review: the reserved `SBX` prefix in `orch init`/`host.bootstrap`, the `SBX` refusal on normal hosts, the `admit` choke point, the `dev_host` refusals of the click signer, the `HOME` pin, the `--dev-runner`-style service detection | 2 to 2.5 days |
+| core D1 | orch-52 (Sonnet, Opus review) | `orch.devsandbox` (manifest check moved from the test tree, shared with `dev-pair`), `orch.host.devmode.prove`, the `--dev-sim-convenience` flag and its refusal in the unit writers, `dev_gate`, P5/L2/L8/`_signed_by`/`convenience.check`/`required_reader` changes, the narrowing marker on normal hosts, `host.status.dev`, `whoami.relay.dev`, the log lines and the alarm, the R2 vectors, new codes in §0.6 (`host.dev_refused`); after the review: the reserved `SBX` prefix in `orch setup`/`host.bootstrap`, the `SBX` refusal on normal hosts, the `admit` choke point, the `dev_host` refusals of the click signer, the `HOME` pin, the `--dev-runner`-style service detection | 2 to 2.5 days |
 | core D2 | orch-29 | `dev-pair up --sim-convenience`: `--prefix SBX`, the manifest's `person_id` and `workspaces`, the workspace marker, `dev.json` with `relay_origin`, `orch keys reader declare` for the sandbox device, a level-1 `reader_decl` for the sandbox primary (O4), the flag on `orch host run`, `ORCH_NO_CONVENIENCE` omitted for the host only; `down` unchanged | 0.5 day |
 | relay | orch-29 | none: the pinned relay and `relay.dev.severin.io` serve level 1 (O1, resolved) | 0 |
 | core follow-up | core | the F1 checkpoint vectors and `reader_kat_1` convenience cases (9.8 rollout step 2); not needed for the sandbox flow | separate |
@@ -11702,13 +12008,13 @@ that is core's), the R2 vector `answer_convenience_refused`.
 - `<root>/.orch-dev-sandbox`: `{"id": "<8 to 128 lowercase hex>", "root": {"st_dev": int, "st_ino": int},
   "person_id": "p_<32 hex>", "workspaces": [{"id": "<32 hex>", "st_dev": int, "st_ino": int}]}`. `root` is
   `<root>`'s own identity, each `workspaces` row the identity of `<root>/ws` (or `ws-<n>`); other keys are ignored.
-  `person_id` and `workspaces` are added after `orch init`, before the host starts.
+  `person_id` and `workspaces` are added after `orch setup`, before the host starts.
 - `<root>/state/host/dev.json`: exactly `{"v": 1, "sim_convenience": true, "sandbox_id": "<manifest id>",
   "root": {"st_dev": int, "st_ino": int}, "relay_origin": "<scheme://host[:port]>"}` (`<root>/state/host` 0700).
 - `<ws>/.state/dev-sandbox.json`: exactly `{"v": 1, "sandbox_id": "<manifest id>", "workspace_id": "<32 hex>"}`.
 - The start: `HOME=<root>/home ORCH_STATE_DIR=<root>/state orch host run --foreground --dev-sim-convenience`
   (`ORCH_NO_CONVENIENCE` unset for this process only; any non-empty value turns the gate off). Then
-  `orch host register <root>/ws`. The order of 17.3 "Creation" holds: `orch init --prefix SBX` (owner name
+  `orch host register <root>/ws`. The order of 17.3 "Creation" holds: `orch setup` (prefix `SBX`) (owner name
   `orch dev sandbox <id8>`, a fresh state directory) in `<root>/ws` with the manifest already in `<root>`, then the
   marker, the manifest's `person_id` and `workspaces`, `dev.json`, the host, the registration.
 
@@ -11718,7 +12024,7 @@ that is core's), the R2 vector `answer_convenience_refused`.
    three callers: `host.register`, `host.bootstrap` and its start-up recovery (`registry_add_paths_table` pins
    them; `Registry.add` is called only by `admit`). `host.bootstrap` also runs the admit check in its validation,
    before the genesis is appended. A dev host therefore refuses every bootstrap (a new root is in no manifest):
-   `dev-pair` creates the sandbox with a direct-mode `orch init` and registers it.
+   `dev-pair` creates the sandbox with `orch setup` on a pending dev host (V3-D38, 17.3 "Creation") and binds it.
 2. **The SBX init rules.** "No person identity in `HOME`" is checked as: the state directory holds no
    `<state>/person/` entry and no `<state>/hosts/*/person/` device key. "The recovery code this init generated" is
    structural: `_signed_genesis` refuses `SBX` unless its caller passes `generated=True`, which only the two init paths
@@ -11760,7 +12066,7 @@ that is core's), the R2 vector `answer_convenience_refused`.
 - `relayr6._convenience_block` passes the stored relay level like `relayhook.convenience_block`; a level drop does not
   halt the worker (the alarm `relay_reader_old` is the rule, §11A.6 "Foreign appends").
 - `Registry._save` adds a new entry only by consuming the spent `AdmitToken` of `_add` (a direct `_save` cannot).
-- `orch init` declares `host.dev_refused` and passes the host's refusal through as it is (the P1 catalog entry, the
+- `orch setup` passes `host.dev_refused` and passes the host's refusal through as it is (the P1 catalog entry, the
   CLI goldens). The other refusing paths (`host.register`, `host.bootstrap`, `relay.link`, a records push) are host
   ops, not P1 operations, so the code is in the host table and §0.6 for them.
 - `convenience.flag_or_gate` also decides `refuse_reader_op`'s "convenience on" refusal and `observe_relay_level`'s
@@ -11777,7 +12083,7 @@ Opus delta pass.
 
 **Phase 2 is tier A.** Agents, the runner, the dashboard server, the click signer and the person are one UID. No column,
 switch or process split below is a boundary against a same-UID process; each says what it is (policy, fault separation,
-protection against passive disclosure). §9 item 11 lists what tier B (phase 3) changes. Windows stays in direct mode.
+protection against passive disclosure). §9 item 11 and §13 give what tier B changes. Windows stays in direct mode.
 
 ### 12.1 Overview
 
@@ -11809,11 +12115,11 @@ Records tool (python -I -m orch.records, one shot, person UID): from `orch recor
 | **D-P2-24** | **A separate per-UID runner service** (`python -I -m orch.runner`) supervises agent runs, terminals and worktree git; never the host (its only spawn stays `orch.gitread`, D-P2-9) and never the dashboard server. Tier A: LaunchAgent `io.orch.runner` / systemd user unit `orch-runner.service`, person UID, installed by `orch runner enable` like H7's unit. Tier B: one system service per agent UID. **Same-UID separation is not containment: runner reports are untrusted and cannot establish authorization; reports are accepted only for runs assigned to that runner.** The runner accepts commands (and `grant.put`) only after checking that the peer UID of `<run>/runner/host.sock` is the host UID (`getpeereid`/`SO_PEERCRED`); one runner connection per runner UID, bound to the runner unit's main PID and to the runner's generation (§12.4). The runner concentrates every deposited grant: compromising it (or, in tier A, any agent) yields all of them; tier B confines this per agent UID. | Sessions outlive host and dashboard restarts; the key-holding host never parents workspace code; tier B needs the spawner to be the agent UID. | **SC** |
 | **D-P2-25** | **Control through the host, terminal bytes direct.** Clients call host ops (§12.3). The host mints an attach capability, registers it at the runner over the command stream (`attach.allow`) and can end it (`attach.end`); the dashboard server connects to the runner's term socket and presents the ticket once (§12.6). The host relays no terminal byte and has no stream router. | Keeps terminal floods out of the failure domain of signing, revocation and the D58 precommit; the dashboard server is already trusted (it can click-sign); the enforcement point does not move. | **SC** |
 | **D-P2-26** | **Columns** (§12.3.1): start, stop, open, attach, write, resize are **P only**, attach/write/resize only for the run's own person; **G never** (F1 §8: `pty` is never granted to agents); **N never**. `run.list`/`run.sub`: P sees its own person's runs; G sees only `kind:"agent"` runs on tickets inside its grant's scope, never shells; owners and maintainers do not see other persons' runs; viewers see none. Worktrees: P on a visible ticket; G only on the ticket its session holds the live claim on, rechecked when the runner executes. Records: owners and maintainers. Authorization is rechecked at execution and before every delivery of queued data. Recovery without the host or membership: `orch runner stop RUN\|--all` (terminal, local). | Typing into a PTY is code execution; agents must not drive each other or the person's shell; a removed person must still be able to stop their own processes. | **SC** |
-| **D-P2-27** | **The runner grant** (**owner decision, 12 Oct 2026: click-issued agent grants allowed**, at most the workspace `grant_hours` setting (1 to 168 h), **amended 16 Oct 2026 (owner decision D, B8): was a fixed 12 h**; the typed word `<PREFIX>~<WS8>/GRANT`, handed straight to the runner, never shown in the browser). *Extend* (the dashboard's "Agents can work for you until … · Extend · Stop") is the runner grant only: one prepared request of `grant.issued` (new) then `grant.revoked` (the replaced one), the same typed word, judged together by `judge_events` so either both land or neither; the log commit comes before the secret deposit (`deposit_id`, idempotent), a failed deposit leaves the runner without a live grant (retry the deposit only, never re-sign). A future phone/relay Extend uses the same word class. The cap is host admission only (`min(grant_hours, 168)`, read at prepare and again at `grant.deposit` on the state then); the model accepts an owner's 168 h grant regardless. The runner holds at most one runner grant per (workspace, person), in memory only, and reuses it for every agent it starts (F1 A3 standing grants). It gets it only through `grant.deposit`, a person-class op that also carries the secret in `auth.grant` (**amended in H11c review, owner decision of 15 Oct 2026:** at the permission matrix it is column G, a verified `auth.grant`; the op itself then requires a person-class peer whose UID maps to a valid member and a grant that is that same person's `label:"runner"` grant, which is equivalent to "P-class plus `auth.grant`"), sent by the process that drew the secret: the click signer in **deposit-only grant mode** (amends §0.8.6 item 6), `orch grant --runner`, or `orch sign CODE` (it asks "show or hand to the runner"). Only a grant whose `grant.issued` has `label:"runner"` can be deposited; a forgotten or replaced runner grant id cannot be deposited again (`grant.forgotten`). Every deposit has a `deposit_id` with outcome `confirmed`, `rejected` or `unknown`. Owner's plain-language risk: *"Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."* | Start-from-dashboard as one daily flow, while the secret stays out of the HTTP process and the browser; an agent cannot re-point the runner to its own grant. | **SC** |
+| **D-P2-27** | **The runner grant** (**owner decision, 12 Oct 2026: click-issued agent grants allowed**, at most the workspace `grant_hours` setting (1 to 168 h), **amended 16 Oct 2026 (owner decision D, B8): was a fixed 12 h**; a plain click since #1198 (it had the typed word `<PREFIX>~<WS8>/GRANT`), handed straight to the runner, never shown in the browser). *Extend* (the dashboard's "Agents can work for you until … · Extend · Stop") is the runner grant only: one prepared request of `grant.issued` (new) then `grant.revoked` (the replaced one), the same click, judged together by `judge_events` so either both land or neither; the log commit comes before the secret deposit (`deposit_id`, idempotent), a failed deposit leaves the runner without a live grant (retry the deposit only, never re-sign). A future phone/relay Extend uses the same click class. The cap is host admission only (`min(grant_hours, 168)`, read at prepare and again at `grant.deposit` on the state then); the model accepts an owner's 168 h grant regardless. The runner holds at most one runner grant per (workspace, person), in memory only, and reuses it for every agent it starts (F1 A3 standing grants). It gets it only through `grant.deposit`, a person-class op that also carries the secret in `auth.grant` (**amended in H11c review, owner decision of 15 Oct 2026:** at the permission matrix it is column G, a verified `auth.grant`; the op itself then requires a person-class peer whose UID maps to a valid member and a grant that is that same person's `label:"runner"` grant, which is equivalent to "P-class plus `auth.grant`"), sent by the process that drew the secret: the click signer in **deposit-only grant mode** (amends §0.8.6 item 6), `orch grant --runner`, or `orch sign CODE` (it asks "show or hand to the runner"). Only a grant whose `grant.issued` has `label:"runner"` can be deposited; a forgotten or replaced runner grant id cannot be deposited again (`grant.forgotten`). Every deposit has a `deposit_id` with outcome `confirmed`, `rejected` or `unknown`. Owner's plain-language risk: *"Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."* | Start-from-dashboard as one daily flow, while the secret stays out of the HTTP process and the browser; an agent cannot re-point the runner to its own grant. | **SC** |
 | **D-P2-28** | **Launch specs are computed by core** from a closed harness registry (`claude-code`, `codex`, `shell`; the F1 `actor.id` values) and validated values (ticket, mode, model, subagent model). Argv only; the prompt is one element ("data to the OS, instructions to the harness"). `agent.preview` returns a `spec` digest; `agent.start {…, spec}` recomputes it and refuses `launch.changed` on any difference; preview has no side effects. **Agents start through the person's login shell** in exec form `[$SHELL, "-l", "-c", 'exec "$0" "$@"', argv…]` (a POSIX shell is required, else `harness.shell_unsupported`); the preview says "the program is found and started through your login shell; your shell profile runs first and can change what runs". Opt-out: `runner.json {login_shell:false, programs:{…absolute paths…}}`. Environment allow-list (§12.5.3) with a `pass_env` deny-list. | The client chooses values, never a command; without the login shell launchd-started harnesses are not found on a normal Mac. | **SC** |
 | **D-P2-29** | **Supervision.** Every child starts through a fixed trampoline (`python -I -m orch.runner.exec`). Linux: each run enters its own cgroup **before** `exec` and stops with `cgroup.kill` until `populated=0`. macOS: process group plus a sweep of the run's session id, **best-effort cleanup, not containment** (a `setsid()` descendant escapes). `run.stop` answers `cleanup:"complete"\|"incomplete"\|"unknown"`. Every signal targets a (pid, birth time) pair re-read right before `kill`; the runner kills only its own runs, never by name, never UID-wide. **No CPU, memory or process-count limits in phase 2** (agents are the person's own programs; revisit with tier B). | Honest claims; "kill only own PIDs" on a shared machine. | **SC** |
 | **D-P2-30** | **Terminal transport.** The runner reads every PTY continuously into a 1 MiB ring; a slow or absent viewer never blocks an agent. **Attach is read-only by default**; the write lease is taken only when the capability is consumed, only if nobody holds it, or with explicit `take:true`; a reconnect or remount never takes it implicitly. Writes and resizes carry the **lease generation** and an **input id**, both checked at the runner; replay never generates input; a `gap` resets the client's parser. Control frames are never dropped. xterm.js runs with the hardened configuration of §12.6.7 (no links in phase 2). A separate restricted origin for terminal rendering is **deferred to phase 3** (accepted risk, owner FYI). | Fixes double input, lease ping-pong and answerback injection. | **SC** |
-| **D-P2-31** | **Dashboard execution** (**owner decision, 12 Oct 2026: accepted**; start agent and terminals may be switched on per workspace from the terminal; tier B narrows it in phase 3). One machine switch, `orch runner enable --workspace W` (terminal only: `/dev/tty`, refused under `ORCH_GRANT`, prints the risk, requires typing the workspace prefix, records time and text), gates agent start, worktree git and terminals; the workspace also needs the addon granted (`addon.granted`). `--no-terminals` is a UX preference only and does not make agent execution safe. The dashboard has no op that turns it on; a same-UID process can. **Card line** (workspace card, Start dialog, terminal header): **"Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys."** Owner's plain-language risk: *"Anything that takes over the dashboard (a bug in the web page, a stolen login token, a malicious dependency), or any agent it starts, can run any command as you and read your files, SSH keys and orch keys. Today a takeover can already sign as you; after this it can also run code."* | As soon as the dashboard can start an agent, a takeover is code execution as the person, terminals or not. | **SC** |
+| **D-P2-31** | **Dashboard execution** (**owner decision, 12 Oct 2026: accepted**; start agent and terminals may be switched on per workspace from the terminal; tier B narrows it in phase 3). One machine switch, `orch runner enable --workspace W` (terminal only: `/dev/tty`, refused under `ORCH_GRANT`, prints the risk, requires typing the workspace prefix, records time and text), gates agent start, worktree git and terminals; the workspace also needs the addon granted (`addon.granted`). `--no-terminals` is a UX preference only and does not make agent execution safe. The dashboard has no op that turns it on; a same-UID process can. **Card line** (workspace card, Start dialog, terminal header): **"Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys."** Owner's plain-language risk: *"Anything that takes over the dashboard (a bug in the web page, a stolen login token, a malicious dependency), or any agent it starts, can run any command as you and read your files, SSH keys and orch keys. Today a takeover can already sign as you; after this it can also run code."* In tier B the card line is §13.5's ("This terminal runs as orch-agent-<user>. It cannot read your keys."). | As soon as the dashboard can start an agent, a takeover is code execution as the person, terminals or not. | **SC** |
 | **D-P2-32** | **Worktrees.** One per (ticket, linked repo) at the host-chosen path `<repo path>.worktrees/<WS8>-<KEY>` (`WS8` = the first 8 characters of the workspace id), on the ticket's current `links.branches` branch, created and removed by the runner's git under a per-repo lock. The host then pins it and records a **registration generation**. Prepared requests, every `human.get` binding and the D58 precommit bind (workspace, ticket uid, repo, branch ref, source sha, worktree pin, generation); a new registration invalidates outstanding preparations, and nothing ever falls back to the declared working copy. HEAD is rechecked against the current branch; one ticket per branch (`worktree.branch_in_use`). A clean tree is an observation of that directory at that moment, not proof that tests ran on those bytes. Amends D-P2-19 "Declared paths" and H10a. | As built, D58 and `tree.check` read only the declared working copy; binding the registration closes "prepare against worktree A, swap the registration". | **SC** |
 | **D-P2-33** | **Records** are the store's own files (never `.state/`), committed by a person-side one-shot tool `python -I -m orch.records`, never by the host or the runner, into a **dedicated records repo** only. The tool commits exactly the manifest the host names (`records.snapshot`): a temporary index built **from empty**, the written tree checked against the manifest before `commit-tree`; history validated once (or a fresh orphan history); the real index refreshed only by compare-and-swap; single-read hashing under a pinned root; byte limits. Push is **fast-forward only**: the lease guards the race, it never authorizes a non-fast-forward; no rebase. Git commits are unsigned transport: authority comes only from F1 replay and checkpoints. | Correctness (no `.state/` in history, no clobbered index, no torn line); no git in the host; push credentials are the person's. | **SC** |
 | **D-P2-34** | **A records push adds a reader** (**owner decision, 12 Oct 2026: the private remote is allowed**; one exact remote URL marked "only I read this"; the docs and the UI state that orch trusts the owner's word). Every push path calls `records.export_check {manifest, sha, url, ref}` right before pushing; while the convenience flag is on or the history holds `auth:"convenience"` events it answers `sign.convenience_readers` unless that exact normalized URL is in this machine's `private_remotes` (set in the terminal only). **As built (#441):** "the history" is the merged history, **or** the durable `convenience_seen` mark (§0.8.6 item 1; never cleared by a restore), **or** the records tool's scan of the event logs reachable from the pushed commit (`history_convenience`, which refuses that push only and never writes the mark), reported before any network call; any error fails closed. The tool resolves the effective push URL once and uses that literal string for `ls-remote` and `push`. This is a policy orch enforces on its own export paths, not information-flow control (manual git can still push). Owner's plain-language risk: *"orch trusts your word; if someone else can read that remote, they get your convenience-signed history."* | A records remote is a copy of the workspace log that other cores may read; a per-workspace boolean would silently follow a changed remote. | **SC** |
@@ -11850,19 +12156,106 @@ valid mapping to a member, and that the grant is that person's own `label:"runne
 | `worktree/1` | `worktree.list` | ✓ | ✓ grant scope | — | read |
 | `worktree/1` | `worktree.create` | ✓ visible ticket | ✓ own claimed ticket | — | idem create |
 | `worktree/1` | `worktree.remove` | ✓ (`force` too) | ✓ own claimed ticket, no `force` | — | side effect |
+| `worktree/1` | `worktree.diff` | ✓ visible ticket | — | — | read |
 | `records/1` | `records.status`, `records.snapshot`, `records.export_check`, `records.note` | ✓ owner, maintainer | — | — | read / side effect |
 | `reader/1` | `reader.declare` | ✓ own current devices | — | — | side effect, idem (column R, H12d-3: the requesting device's own declaration, kind `device_signed`, no idem, exempt from `rd`) |
 | `reader/1` | `reader.list` | ✓ | — | — | read (column R too, trimmed to `{device, person, reader, level}`) |
 | `quick/1` | `quick.list` | ✓ | ✓ | ✓ (workspace tickets only) | read |
+| `focus/1` | `run.transcript` | ✓ own runs | — | — | read |
+| `focus/1` | `delegation.list` | ✓ own runs | — | — | read |
+| `focus/1` | `run.sources` | ✓ own runs | — | — | read |
+| `focus/1` | `run.link`, `run.detach` | ✓ own runs | — | — | write, no idem (naturally idempotent), no dry run |
 | `runner/1` (runner socket) | `runner.hello`, `runner.report`, `runner.exit` | — | — | — | runner class only |
 
 Writes and resizes on a terminal are not host ops: they travel on the term socket (§12.6) under the capability.
+
+#### 12.3.4 `focus/1`: transcripts (focus mode phase 2)
+
+Prototype addition (26 Oct 2026), additive: no new error code, no new event kind, no signed shape. `run.transcript {run,
+after?, limit?, child?}` (column P, the run must be the caller's own and its ticket visible to them; N5: otherwise
+`not_found`) returns a run's harness transcript as normalized chat items. The runner reads the files (they live in the
+home of the account that runs the agents, which may be another UID than the host); the host forwards the read as the
+runner command `transcript` (15 s). Claude Code runs are launched with `--session-id <uuid5(ORCH_NS, run)>` (the argv
+carries the placeholder `@orch-session-id`, which the runner replaces); a Codex run is bound by cwd and start time.
+
+```
+TranscriptItem = {id, role:"user"|"assistant"|"tool"|"system", kind:"text"|"tool"|"result"|"question"|"status",
+                  text:str (<= 4 KiB, truncated:true if cut), ts, tool?:{name,call}, files?:[relpath], options?:[str],
+                  error?:bool}
+run.transcript -> {run, harness, available:bool, reason?, items:[TranscriptItem] (<= 200), next:"o:<n>"|null, eof:bool}
+```
+
+`after` is the `next` of a previous answer (a byte offset; the reader never returns a partial line). Unavailability is
+data: `available: false` with a `reason` (no transcript yet, a shell run, Codex rollout not found). `child` is a Claude
+Code sub-agent id `agent-<id>`; for Codex it is `agent-<thread id>` of a child rollout.
+
+`delegation.list {ticket}` (column P, a visible ticket) returns, for each agent run of the caller on the ticket, the
+children the runner finds in the harness files plus the caller's runs whose record names it as `parent_run`:
+
+```
+DelegationChild = {id:"cc:agent-<id>"|"cx:agent-<thread>"|"run:<run>", parent_run, title, spawned_by:"agent"|"human"|"promoted",
+                   harness, model?, depth, state:"running"|"done"|"failed", started_at?, ended_at?, run?:str|null,
+                   transcript:{run, child?}, files:[relpath]}
+delegation.list -> {ticket, sessions:[{run, session?, harness, model?, state, policy?, files:[relpath],
+                   visibility:{available:bool, reason?}, children:[DelegationChild]}]}
+```
+
+Claude Code children are the files `<uuid>/subagents/agent-<id>.{jsonl,meta.json}` next to the parent transcript (state from
+`meta.finished` and the parent's `toolUseResult.status`). A Codex child rollout names its parent in
+`session_meta.source.subagent.thread_spawn.parent_thread_id` (spike 26 Oct 2026, codex-cli 0.163). A runner that cannot
+answer gives `visibility.available:false` with a `reason`, never an error. The runner command is `transcript {run,
+children:true}`.
+
+`run.sources {run, child?, source?}` (P2-4, column P, own runs) lists what the run read, from the same transcript:
+`{run, harness, available, reason?, sources:[{id, kind:"web"|"search"|"file", read_at, url?, host?, title?,
+has_extract?, query?, results?:[{title,url}], path?}]}`. Claude Code: `WebFetch` (url), `WebSearch` (query, hits) and
+`Read` of a file inside the run's folder; Codex: `web_search_call`. Deduped by url, query or path, newest first; `id` is a
+short hash of that key. With `source` the answer is the text the agent got for one web source, `{id, url, extract,
+truncated}` (64 KiB cap); an unknown source is `not_found`. Nothing is fetched by the runner, host or browser. The runner
+command is `transcript {run, sources:true, source?}`.
+
+`run.link {run, ticket}` and `run.detach {run}` (P2-6, column P, own runs; plain writes, no idem, no `dry_run`) change
+the unsigned run record only; no event, no signed shape. `run.link` sets `ticket` on a run that has none (a *scratch
+session*: a person-run `claude-code`/`codex` terminal opened with `term.open` and no ticket) once the person created the
+ticket the normal signed way; the ticket must be visible to the caller (`not_found` otherwise), the same ticket again is
+a no-op, another ticket is `invalid.input`. `run.detach` clears `parent_run` and sets `spawned_by:"promoted"` on a live
+or ended run the person delegated (`spawned_by:"human"`), so a stop of the parent no longer stops it and it is listed as
+a session of its own by `delegation.list`; any other run is `invalid.input`. Both answer `{run: <run view>}`.
+
+`agent.preview` / `agent.start` take four optional keys and one more mode (P2-3, same cap, no new op, error code or signed
+shape): `policy {delegate?:bool, max_children?:0..9, models?:[Model]<=1}` (claude-code only; Codex stores nothing),
+`mode:"task"` with `parent_run:RunId`, `brief` (<= 4000) and `expected` (<= 400); the child's title is `label`. `policy` and
+the task fields are in the spec digest. `delegate:false` adds `--disallowedTools=Agent,Task` to the Claude Code argv (one
+element: a variadic flag would swallow the prompt); `delegate:true` with a model sets `CLAUDE_CODE_SUBAGENT_MODEL`. A
+`task` start needs `parent_run` to be the caller's live agent run on the same ticket (`not_found` otherwise,
+`launch.invalid` for a dead parent, another ticket, nine children or more than three levels). The child gets the session
+`<parent session>.<n>` (next free n <= 9; the `launch.claimed` check passes when the claim is the parent's session or a prefix
+of it), the parent's working folder (shared: the preview warns) and the prompt `Run orch status. You are a delegated task of
+session S on ticket KEY. Task: <label>. Brief: <brief> Expected output: <expected> Ask the parent, not the person; log your
+result with orch log, then stop.` The run record gains `policy`, `parent_run` and `spawned_by:"human"` (unsigned, never in
+`run.list`; `delegation.list` reads them). `run.stop` of a parent also stops the live runs whose `parent_run` is it. The
+budget (`max_children`) is shown and checked by the dashboard, not enforced by the host.
+
+#### 12.3.5 `worktree.diff`: the live diff of a ticket worktree (focus mode phase 2)
+
+Prototype addition (26 Oct 2026), additive, cap `worktree/1`, no new error code or signed shape. `worktree.diff {ticket,
+repo?}` (column P, a visible ticket) returns the uncommitted changes of the ticket's registered worktree. The reader
+(profile `worktree`, request `worktree_diff`) takes the changed paths from the same `tree.check` the clean-tree check
+uses, reads each working file through the pinned working-copy fd (`O_NOFOLLOW`) and the `HEAD` side from the object
+store, and builds the hunks with its own Myers diff; no git process. A symlink, a non-regular file, a binary file or one
+over 1 MiB is listed without hunks. Caps: 200 files, 256 KiB of unified text (`truncated:true` past either). A ticket
+without a linked repo, an unregistered or unpinned worktree, or a worktree that moved is data, not an error.
+
+```
+worktree.diff {ticket:Ref, repo?:RepoName} -> {ticket, repo, available:bool, reason?, path_label, branch, head, checked_at,
+  truncated:bool, files:[{path, status:"M"|"A"|"D"|"?", added, removed, binary, too_large?}]{0..200}, unified:str}
+```
 
 #### 12.3.2 Schemas
 
 ```
 Harness   = "claude-code"|"codex"                 TermHarness = Harness | "shell"
-Mode      = "refine"|"work"|"fix"|"continue"|"context"
+Mode      = "refine"|"work"|"fix"|"continue"|"context"|"task"   (task: P2-3, with parent_run)
 Model     = str/[A-Za-z0-9][A-Za-z0-9._:\[\]\/-]{0,63}/          (never starts with "-")
 RunId     = str/r_[0-7][0-9A-HJKMNP-TV-Z]{25}/                     AttId = str/at_[0-7][0-9A-HJKMNP-TV-Z]{25}/
 Gen       = str/[0-9a-f]{32}/                                      (a runner generation, drawn at runner start)
@@ -12152,9 +12545,9 @@ reviewed code change, never configuration. The dashboard's `harnesses.ts` keeps 
 #### 12.4.2 The runner grant flow (D-P2-27)
 
 - **Click** (dashboard execution enabled for the workspace on this machine): `prepare {workspace_id, op:"grant",
-  args:{hours:1..12 (default 8), scope}, idem, deposit:true}` on the click signer. `check_prepared` has one exception: a
-  `grant.issued` is click-eligible only with `deposit:true` and `label:"runner"`. The View's confirm kind is `word`,
-  word `<PREFIX>~<WS8>/GRANT`; the View carries the person, scope, hours, until, the tier-A sentence and the line
+  args:{hours:1..grant_hours (default 8), scope}, idem, deposit:true}` on the click signer. `check_prepared` admits a
+  `grant.issued` with `deposit:true` only with `label:"runner"` (the other click grant is the reveal grant, §0.8.6 item
+  6). The View's confirm kind is `click` (contract 3; it was the word `<PREFIX>~<WS8>/GRANT`); the View carries the person, scope, hours, until, the tier-A sentence and the line
   **"The secret goes to your orch runner on this machine and is never shown"** (the dashboard does not arm Sign without
   that line when `deposit:true`). `sign` draws the secret, signs, submits, and only after the commit calls
   `grant.deposit {deposit_id}` with `auth.grant` on its own host connection, then wipes the secret. The result is
@@ -12322,8 +12715,8 @@ Where the code differs from or adds to §12.3, §12.4 and §0.8.6 item 6, the co
 
 - **Location.** The runner listens on `<run>/term/<runner uid>/term.sock`. `<run>` is the same run directory the host
   and its clients use (`--run`, else `ORCH_HOST_RUN_DIR`, else `<state>/run`: `orch.host.enable.run_dir_for`). The
-  directory `<run>/term/<uid>/` is created by the runner, owned by the runner UID, mode 0700 in tier A (tier B: 0750
-  with a group holding the person, §9 item 11); the socket is 0600 (tier B 0660). The same ancestor rules as D-P2-6
+  directory `<run>/term/<uid>/` is created by the runner, owned by the runner UID, mode 0700 in tier A (tier B: §13.3,
+  `/run/orch/agents/orch-agent-<user>/` with an ACL for the person); the socket is 0600 (tier B 0660). The same ancestor rules as D-P2-6
   apply; the path stays under 100 bytes.
 - **Discovery.** The runner reports `term_socket` in `runner.hello`; the host accepts it only if it equals
   `<run>/term/<runner uid>/term.sock` and returns it in every `term.attach` answer as `socket`, with
@@ -12997,7 +13390,8 @@ ops. No quick-specific state exists.
 | Action | Path | Signature | A dashboard takeover can do it (tier A) |
 |---|---|---|---|
 | Start an agent with a deposited runner grant | `agent.start` | none | yes |
-| Issue a runner grant | click, deposit-only, word `<PREFIX>~<WS8>/GRANT`, ≤ `grant_hours` (168 h); or terminal | **yes** | yes when click-to-sign is on |
+| Issue a runner grant | click, deposit-only, ≤ `grant_hours` (168 h); or terminal | **yes** | yes when click-to-sign is on |
+| Issue agent access with the secret shown once | click, reveal grant sealed to the page (§0.8.6 item 6), local sessions only until 10.5 | **yes** | yes when click-to-sign is on: it can read the secret under its own key |
 | Open a shell, attach, type, stop | `term.*`, `run.stop` | none | yes: code execution as the person |
 | Create or remove a worktree (force too) | `worktree.*` | none | yes |
 | Commit and push records | records child | none | yes (owner, maintainer; only to a URL the export check allows) |
@@ -13025,13 +13419,13 @@ ops. No quick-specific state exists.
 | Agents page, dock | `run.sub` first, then `run.list {since}`; keep the higher `rev`; `{t:"gone"}` removes | SSE fan-out like `live.py` (replaces the mockup's `agent.started`/`agent.stopped`) |
 | Start dialog | `agent.preview` → show exactly `display`, cwd, env names, grant, warnings, the login-shell line → `agent.start {…, spec}` with idem; `blocked.code` is one of `runner.disabled`, `runner.unavailable`, `launch.claimed`, `launch.no_grant`, `launch.invalid`, `harness.*`, `worktree.*` | core component `SpawnConfirm`; never from an addon frame |
 | Dock: person-run shell, Claude, Codex | `term.preview` (shows `display` and the notice "acts as you, not as an agent") → `term.open {…, spec}` with idem | runs as `kind:"shell"` |
-| Runner grant | click `prepare {op:"grant", deposit:true}` → `view` (word `<PREFIX>~<WS8>/GRANT`, the deposit line) → `sign` → `deposit`; `unknown` → `grant.deposit_status`; fallback hand-off | never receives a secret |
+| Runner grant | click `prepare {op:"grant", deposit:true}` → `view` (the deposit line) → `sign` → `deposit`; `unknown` → `grant.deposit_status`; fallback hand-off | never receives a secret |
 | Terminal | `term.preview`, `term.open`, `term.attach {mode, take, from}`, `attach.cancel`, `run.stop` | §12.6.1 verification, §12.6.6 browser path, §12.6.7 xterm configuration |
 | Worktrees | `worktree.list {check}`, `worktree.create`, `worktree.remove {force}` | destructive confirm for `force`; "Open terminal here" = `term.open {cwd:{kind:"worktree", …}}` |
 | Records | `records.status` (owners, maintainers) | spawns the records child (one per workspace), shows the export warning, `auto` off switch only |
 | Quick tasks | `quick.list {limits}`, existing `new`/`set`/sign paths | limits are a local setting |
 
-Click-eligible versus other ops (G12): click with a word: `grant` with `deposit:true`, `addon.grant`. No signature,
+Click-eligible versus other ops (G12): click (no typed word since #1198): `grant` with `deposit:true` or `reveal_key`, `addon.grant`. No signature,
 dashboard-direct: `agent.start`, `run.stop`, `term.*`, `worktree.*`, the records child. Terminal only: `orch runner
 enable`, `orch records remote private`, `orch records auto on`/`--push`, `orch records push --initial`.
 
@@ -13108,10 +13502,10 @@ sets `RLIMIT_CORE=0`, serves `<state>/setup/setup.sock` and stays until the page
   SIGHUP of the setup process cannot run that code; the key then stays under the unseen passphrase and the recovery code is the way back.
 * **Review** (`review.py`): the plan is built in core and rendered with B6 `signcontent`; the digest (R1) covers the canonical
   profile, directory, every planned event (add-on manifest hashes included) and every row. Host-drawn values are "set at
-  signing". R2: typed word `GRANT` (any runner grant) or `AGENTS` (more than 8 hours); R3: the three-word fingerprint is
+  signing". R2 (no typed word since #1198 C20: the page confirms with a click after the review); R3: the three-word fingerprint is
   also asked on the setup terminal for Finish setup, a runner grant and execution add-ons.
 * **Create** (`steps.Creator`): terminal confirm (R3), then genesis through `workspace_init._hosted_bootstrap` (the B5 path,
-  shared with `init --host`), add-on manifests, runner flags, the runner hello wait (R4: no hello, no grant), then the batch.
+  shared with `orch setup`), add-on manifests, runner flags, the runner hello wait (R4: no hello, no grant), then the batch.
   `human.prepare` is **one operation per request**, so a dependent chain cannot be prepared in one bundle; the written
   fallback is used: prepare every request, check each with `host.signer.check` and against the review (`check_prepared`,
   R1: every event equals its reviewed rows except the coded volatile fields), and only then ONE
@@ -13164,7 +13558,364 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
 * **CLI.** `orch publish setup|register|prepare|share|send|revoke|list|discard` (`orch.cli.publish`). An agent
   (`ORCH_GRANT`) may `prepare`, `list`, `discard`; the rest is `op.not_allowed` here and again in the host. The link is
   written to `/dev/tty` only.
-* **Signing class.** `publish.share` and a `settings.set` that touches `publish` are **terminal-only**: never click or one-click,
-  and the dashboard signs them through `orch sign CODE`. `click/protocol.op_class` classes `settings.set` by key
-  (`publish` terminal; `repos`, `sign_methods`, `grant_hours` word) from the request's `set` before prepare (early check) and from
-  the prepared events at sign time; the sign-time class wins (`click/view.py`).
+* **Signing class** (#1198 C2, §0.8.6 item 6). `publish.share`, `addon.grant` of `publish` and a
+  `settings.set` that touches `publish` are plain clicks after the review (they were terminal-only); the View names both
+  servers in words, and the staged copy's own words are the share's review. `orch sign CODE` stays the backup.
+  `click/protocol.op_class` still classes `settings.set` by key (`SETTINGS_TERMINAL_KEYS`, now empty) from the
+  request's `set` before prepare and from the prepared events at sign time; the sign-time class wins.
+
+## 13. Tier B: agents and add-ons as their own OS user (#1198 H1, #287)
+
+**Status: spec, 24 Oct 2026, not built.** Tasks L1–L13, A1–A4, E1, M1–M3 of #1198 build it. **Owner decisions of 24 Oct
+2026** (not reopened): Linux (a headless VPS) first, then Windows, then macOS; One click is on by default only where
+isolation is detected (13.7), elsewhere off with a red line; a VPS where the person logs in as `root` gets a normal
+person user `orch` from the installer, which runs host, dashboard and keys; dashboard terminals run as the agent user
+(a shell as the person stays with SSH); one agent user per person for now; add-ons get slot users (#287) with the
+marketplace stream's requirements R-M1 to R-M4 (13.8).
+
+This section is authoritative for tier B. Where it differs from earlier text (D-P2-2, D-P2-5, D-P2-6, D-P2-24, D-P2-27,
+D-P2-31, §0.2, §0.8.6, §9 items 10 and 11, §12.4, §12.6, §12.7, H3c), this section wins and the earlier text is
+amended to point here. **No migration:** tier A is not a compatibility path. It stays only where tier B does not exist
+(no admin step done, Windows, macOS before M1, and the dev sandbox's tests), and the dashboard says so (13.7). On Linux,
+once L1–L7 are built, dashboard execution (agent start, terminals) requires tier B.
+
+### 13.1 Principals (Linux)
+
+The host stays the person's UID: **host = the person's OS user**. The threat tier B answers is agents and add-ons, not
+the host; a separate host UID stays possible later and nothing here blocks it.
+
+| OS user | Runs | Holds |
+|---|---|---|
+| the person, e.g. `sev` (= host UID) | host, dashboard server, click signer, CLI, `orch sign` | One-click key, passphrase key, WSK, host state, add-on credentials, the person's checkouts |
+| `orch-agent-<user>` (system user, password locked, shell `/bin/bash`) | the runner (system unit), every agent run, every dashboard terminal | its own HOME, its Claude/Codex login, its clones and worktrees, the grants deposited to it |
+| `orch-addon-1` … `orch-addon-8` (system users, `nologin`) | one add-on slot runner each and the calls assigned to it | nothing persistent; a per-call work dir |
+
+One agent user per person (not per workspace): a person's agents can read every repository that person shares with
+them. Per-workspace agent users are a later option the layout allows. The worker role (H10) is unchanged by this step.
+**One naming key.** Every unit instance, writable path and directory of an agent or slot user is keyed by its user
+name (`orch-agent-<user>`, `orch-addon-<n>`), never by the person's name or a numeric UID, so the units' `%i`, their
+`ReadWritePaths` and the directories always agree. Two things keep the UID: the person's run directory `/run/orch/<person uid>`
+(D-P2-2) and the root-owned pins `/etc/orch/pins/<uid>.json` (the `orch.host.pins` format). Where a check starts from a UID (§12.6.1's expected terminal path from `runner.uid`), it maps the UID to
+the name with `getpwuid` and requires the root-owned pin of that UID to agree.
+
+Classes are §0.5's: an agent-user connection is class `agent` (column N, or G with a verified grant), never P or C,
+so `human.*`, `term.*`, `agent.start`, `grant.deposit` and the control ops are refused by the kernel UID, not by an
+environment variable.
+
+### 13.2 The one admin step: `orch-os-setup`
+
+Root is needed once, at install, never at run time: no setuid binary, no capabilities, no root daemon, no polkit rule.
+`orch-os-setup` is a short Python program, but **root never runs a file it does not own**: the person's release lives in
+the person's home, so it is not what root executes. The installer, as root, downloads the signed release into a root-owned
+0700 staging directory, verifies the signed manifest against the bytes there, and runs
+`/usr/bin/python3 -I -S <staging>/orch/setup/osinstall.py` (system interpreter, never the release venv, never `-m orch...`).
+That step re-checks the staging tree, copies the five stdlib-only setup modules (with the package `__init__` files; the fifth, `osfront`, is the HTTPS front of the remote dashboard, 10.2, run with `--front-enable` / `--front-disable`) and a launcher to the root-owned
+`/usr/lib/orch/os-setup/` (`/usr/lib`, not `/usr/local`: Debian's `/usr/local` can be group-writable), and re-hashes the copy
+against the source. The launcher `/usr/lib/orch/os-setup/orch-os-setup` has the shebang `#!/usr/bin/python3 -IS` (one argument: Linux does not split shebang arguments); before it
+imports anything of orch it checks that the interpreter, the standard library and the whole copy (and every directory above
+them) are root's and not writable by group or other, and afterwards that every loaded orch module came from the copy. The
+installer runs it when it is root (most VPSs); otherwise setup shows one line to copy,
+`sudo /usr/lib/orch/os-setup/orch-os-setup --person <user> --release <release>`, with a "Check again" button (the installer
+has put the copy there; the release path is validated: absolute, plain characters, a plain directory owned by root or by
+the person, and every ancestor owned by root or the person and not writable by group or other. A symbolic link anywhere
+on the path is refused, never followed ("give the release by its real path"): hosts such as Fedora Atomic, where `/home`
+is a link to `var/home`, must pass the resolved path. Root never executes anything in it: its only root-run line is the
+recheck from the trusted copy, and setup never writes an ACL for an agent or add-on user, the person does, item 6.
+`--release` is the releases directory that holds `current`, the same path `orch runner enable` compares the installed
+unit against). It computes a plan from OS
+facts, prints it, applies it (`--dry-run` prints the exact actions), and may run again: it repairs, it never widens. It uses
+fixed absolute binaries. Directories below an agent-owned one are only ever opened file-descriptor-relative with
+`O_NOFOLLOW` (never by path), so a symlink planted by the agent is refused. The agent's runner is started only after root
+has recorded the sudo/SSH verdict; a re-run whose verdict fails stops the runner and drops the verdict from the pin.
+
+1. **Users.** `useradd --system --user-group --home-dir /var/lib/orch/agents/orch-agent-<user>/home --create-home --shell
+   /bin/bash orch-agent-<user>`, password locked; `orch-addon-1..8` with `/usr/sbin/nologin` and home
+   `/var/lib/orch/addons/orch-addon-<n>`. A pre-existing user of one of these names without orch's pin is refused, never adopted.
+2. **Privileged groups refused.** If an agent or slot user is in `sudo`, `wheel`, `admin`, `adm`, `docker`, `lxd`,
+   `libvirt`, `disk` or `shadow` (each is root or close to it), the helper refuses. The host checks again at every
+   start (13.6).
+3. **Pins.** Root-owned `/etc/orch/pins/<uid>.json`: `{"class":"agent"|"addon","host_uid":…,"workspaces":"*"}`
+   (the `orch.host.pins` format; class `addon` is new). A pinned UID is never a person.
+4. **Run directories** (`/etc/tmpfiles.d/orch.conf`):
+   - `d /run/orch 0755 root root`;
+   - `d /run/orch/<person uid> 2750 <person> orch-agent-<user>`: setgid, so every socket the host creates inside
+     carries the agent's group without the person joining it; the host `chmod`s each socket it shares to 0660. The
+     control directory inside stays 0700;
+   - `d /run/orch/agents/orch-agent-<user> 0750 orch-agent-<user> orch-agent-<user>` plus the ACL `u:<person>:rwx`,
+     default `u:<person>:rw`, so the dashboard (the person) can reach the runner's terminal socket without joining any
+     group (a group change needs a re-login of the person's systemd user manager).
+5. **Agent tree.** `/var/lib/orch/agents/orch-agent-<user>/{home,state,repos}`, owned by the agent, 0700, except `repos` 0750
+   with the default ACL `d:u:<person>:rX` (the host reads clones through `orch.gitread`).
+6. **Person-side sharing**, set **as the person** by the CLI right after (no root needed for one's own files):
+   `u:<agent>:x` on each ancestor of the release, the interpreter and each workspace repository inside the person's
+   home; `u:<agent>:rX` plus a default ACL on the release tree and on `<repo>/.git` only. Each ACL is read back and
+   verified.
+7. **Units.** `orch-runner@.service` (instance = the person) and `orch-addon@.service` (instance = the slot number),
+   the runner enabled and started (add-on slot units are written but enabled by L3): `User=orch-agent-%i` (the instance is the bare person name, e.g. `orch-runner@sev`, so no instance such as `root` can ever run as root; slots: `orch-addon@<n>` with `User=orch-addon-%i`), `Delegate=yes` (per-run cgroups, D-P2-29), `NoNewPrivileges=yes`, `PrivateTmp=yes`,
+   `ProtectSystem=strict`, `ProtectHome=read-only`, `ReadWritePaths=/var/lib/orch/agents/orch-agent-%i /run/orch/agents/orch-agent-%i`,
+   `RestrictSUIDSGID=yes`, `TasksMax=`, `MemoryMax=` (agent: 80 % of RAM by default; D-P2-29's "no limits in phase 2"
+   was a tier-A limit), plus `ProtectProc=invisible`, `ProtectKernelTunables/Modules/Logs`, `ProtectClock`,
+   `ProtectHostname`, `LockPersonality`, `RestrictRealtime` and `SystemCallArchitectures=native` (`ProtectControlGroups` stays
+   off: `Delegate=yes` needs a writable cgroup tree). `ReadWritePaths` is the agent's own tree (`home` for its
+   Claude/Codex login, `state`, `repos`) and its run directory; the state directory is the agent's, never the person's.
+   `ExecStart` is the person's `<release>/current/bin/orch-runner` (the release build writes it next to `orch-host`).
+   **Start check:** `ExecStartPre=+/usr/bin/python3 -I -S /usr/lib/orch/os-setup/orch-os-setup --recheck %i` runs as root
+   (the `+` prefix) from the trusted copy, never from the release, before every start, including every `Restart=always`
+   restart (`RestartSec=2` throttles it; `StartLimitIntervalSec=0`, because the agent can kill its own runner and a start limit would then stop the unit for good). It asks `sudo -l -U` and `sshd -T`
+   again (authoritative, so LDAP and sssd are covered; the policy files' stat signatures are taken before the questions and compared again after them, and a change in between gives no verdict), runs setup's user, group and pin checks, and exits non-zero if
+   any answer changed: it drops the verdict from the pin (the host answers broken) and systemd refuses the start. It
+   never calls `systemctl` (stopping a unit from its own start job would wait on itself). When every answer still holds
+   it refreshes the pin's stat signatures, so a harmless edit elsewhere in `/etc/ssh` does not leave the host saying
+   "policy changed" until the next setup run. On a new release the host sends `runner.restart` (it notices at
+   `runner.hello` that the runner loaded another release, once per release); the runner exits when it has no live runs
+   (`force`: at once); once the restart is armed the runner refuses new spawns, and the idle decision and a spawn's admission
+   share one lock, so no spawn is accepted and then killed and `Restart=always` starts the new code, so updates need no root. The person's CLI only reads the
+   unit (`is-active`, `show`); it never installs, starts or stops it.
+8. **Report.** It prints what it did. A root login: the installer creates the person user `orch` first and the tunnel
+   line uses it. Running the dashboard as root would still separate agents, but a dashboard takeover would then be a
+   takeover of the server.
+
+### 13.3 Run directory and sockets (amends D-P2-2, D-P2-6, §0.2, §12.6.1)
+
+- `<run>` = `/run/orch/<person uid>`, mode 2750, owner the person, group `orch-agent-<user>` (setgid). This replaces,
+  for Linux tier B, D-P2-6's mode 0711 and per-workspace `orch-<ws>` groups (they stay the later per-workspace option).
+  The ancestor rules of D-P2-6 apply; a root-owned `/run/orch` 0755 is the helper-made parent. **Invariant:** inside
+  `<run>` only the shared sockets (and the directories leading to them) are group-accessible; every other file (pid
+  files, launch codes, state) is 0600 and every other directory 0700. **Built (L4):** the host finds the agent user from
+  the root-owned pin (class `agent`, `host_uid` = its UID; the name must be `orch-agent-<person>`, the group its own with
+  no other member), never from a flag. It then requires `<run>` to exist already (root made it; the host never creates
+  or repairs it) with owner the person, group the agent's, mode exactly 2750 and no ACL; the runner and workspace socket
+  directories are 2750 with the same group, the control directory stays 0700 in the person's group, sockets are 0660,
+  and every recheck repeats all of it (and rejects an ACL on a socket). A pin that names an agent but cannot be trusted
+  shares nothing (no runner or workspace socket) and leaves the host on tier A modes, which the 2750 directory refuses,
+  so such a host does not start. A pin of class `addon` is a pinned UID that names no workspace and is never the
+  runner.
+- Workspace sockets `<run>/<ws>/host.sock` and the runner socket `<run>/runner/host.sock`: owner the person, group the
+  agent's (inherited), socket 0660. The control socket directory stays 0700: `host.*` stay person-only.
+- The runner connects as before (D-P2-24): peer UID = the registered runner UID, bound to the unit's `MainPID` read over
+  systemd's D-Bus (readable by any user); the runner checks that its peer is the host UID.
+  **Built (L4):** the runner socket admits only the pinned agent UID, and only when the peer PID is the `MainPID` of
+  `orch-runner@<person>.service` (`systemctl show -p MainPID`, a D-Bus client; the pin is read again at every
+  connection). A second process of the same agent user is `peer.denied`. The runner reads its own pin, so it knows the
+  host is the person (`host_uid`) at `/run/orch/<person uid>/runner/host.sock`, and refuses to start for any `--run` but
+  its own `/run/orch/agents/<user>`. `runner.hello` names
+  `/run/orch/agents/<user>/term/<runner uid>/term.sock` and the host accepts only that path.
+  The PID is bound to the process, not only compared: by the kernel's pidfd of the peer (`SO_PEERPIDFD`, Linux 6.5+),
+  else by its start time in `/proc/<pid>/stat` against the unit's `ExecMainStartTimestampMonotonic` (both converted to
+  the boot clock, within a second); where neither can be read the connection is denied. The query runs
+  `systemctl` with `env={PATH, LC_ALL=C}` and a 3 s limit. A suspend after the runner started makes the start times
+  disagree and denies it until the unit restarts (fail closed): after three `peer.denied` answers in a row the runner
+  exits non-zero and `Restart=always` (no start limit) starts it afresh. With a pidfd there is no such lockout. The
+  pidfd is the only path that is used when the kernel has it: only a kernel without the option (`ENOPROTOOPT`) falls back
+  to the start time; any other error (an exited peer: EINVAL, ESRCH) denies. The pidfd stays open until the decision
+  and its `Pid:` is read again after the manager was asked. **Residual (LOW):** on kernels before 6.5 (Debian 12,
+  Ubuntu 22.04) the start-time fallback cannot catch the reuse of a PID that the unit's own main process left behind;
+  the runner is inside the agent's trust domain, so this adds nothing the agent user could not already do.
+  The agent and its runner share one UID, so they share one connection-attempt bucket and the 32-connection cap: an agent
+  can lock its own runner out and nobody else. In tier B `runner.json` (programs, `login_shell`, `pass_env`) is owned
+  by the agent and the agent can edit it: no person-side policy may live in that file; it stays in state the host
+  enforces.
+- **The terminal socket** (L9) stays at `/run/orch/agents/orch-agent-<user>/term/<agent uid>/term.sock`, in the agent's
+  own run directory. The runner creates `term/` and `term/<uid>/` (owner the agent; the group and other bits show only the ACL mask, `--x` on the directories and `rw-` on the socket, and nothing for other)
+  and grants the person `--x` on both and `rw-` on the socket by a POSIX access ACL (`u:<person>:`, mask the same, group and
+  other nothing), written and read back at every start; if the ACL cannot be set, no terminal socket is served (fail
+  closed). The runner admits a connection only if the kernel's peer UID is the person's (`host_uid` of the pin; root or
+  the agent itself is refused at `open`), so the agent's own processes, which share the runner's UID, cannot attach.
+  The dashboard's `TermClient` does not trust the host's answer for the path: the runner UID must have a root-owned
+  `agent` pin whose `host_uid` is the client's own UID, the directory is `/run/orch/agents/<pw_name>` from the user
+  database (`orch-agent-*`), the `term/<uid>` directory must be the agent's with no more than `--x` for others, and the
+  peer UID and PID after `connect` must be the runner's (§12.6.1). Any mismatch is `RunnerChanged`.
+- **No shell as the person in tier B.** Terminals start only on a runner whose UID is the pinned agent's (never the
+  person's, never another UID: `runner.unavailable`), re-checked in `term.open`; `term.preview` reports
+  `as_person: false` and `runs_as: orch-agent-<user>`, and the dashboard shows the card line of §13.5.
+- The agent's `orch` CLI finds the host by `ORCH_HOST_RUN_DIR=/run/orch/<person uid>` from the runner's environment.
+- No abstract Unix sockets on the person's side (everyone can reach those); kept as a tested invariant.
+
+### 13.4 Files, and the agent's own clone
+
+| Thing | Owner, mode | Agent can |
+|---|---|---|
+| One-click key `<state>/person/<ws>/devices/<d>.key` | person, 0600 in 0700 dirs | nothing |
+| passphrase key, WSK, host state, add-on credentials, all of `<state>/` | person, 0700/0600 | nothing |
+| person's `~/.ssh`, `~/.config/gh`, `~/.claude`, `~/.codex` | person | nothing if 0700/0600; **an other-readable file in a home the agent may traverse is readable** (the doctor lists and fixes these, L13) |
+| person's working tree (incl. untracked `.env`) | person | nothing |
+| person's `<repo>/.git` | person + ACL `u:agent:rX` | read (fetch) |
+| workspace store `<root>/.orch/` | person | nothing directly; only through the host socket |
+| agent clone `/var/lib/orch/agents/orch-agent-<user>/repos/<ws8>/<name>/` and its worktrees | agent + default ACL `u:person:rX` | everything |
+| release and interpreter | person + ACL `u:agent:rX` | read, execute |
+
+**Worktrees are worktrees of a clone the agent owns** (amends §12.7). A `git worktree add` into the person's
+repository would put the agent's metadata, refs and objects into the person's `.git`; across UIDs that needs a
+writable `.git`, and a writable `.git` lets the agent plant `config` or hooks that the person's next `git` runs as the
+person, a full escape. So there is one clone per (agent user, repository), fetched as the agent from the person's
+`.git`, and per-ticket worktrees of that clone. `safe.directory` is passed on the command line
+(`-c safe.directory=<exact path>`), never written to a file and never `*`. The gitsafe owner rule becomes "owned by the
+pinned person UID" for the fetch source and "owned by me" for the clone. The way back is unchanged in kind: `diff`,
+`tree.check` and landing read the agent's clone through `orch.gitread` as the host (the host runs `tree.check` itself,
+as in tier A; the worker split of H10 is not required for tier B). **Condition:** the host reads an agent-owned tree
+only through the `orch.gitread` child with its limits, opened from the pinned directory with `O_NOFOLLOW`, objects by
+id; no git process ever runs there (#565), landing imports objects into the host's bare
+repository (`land/git.py`). The person's own `git` refuses the agent's clone (dubious ownership); the doctor warns on
+`safe.directory=*`. A ticket without a codebase works in a work folder inside the agent's tree (L6 fixes the path),
+not in the person's project root (§12.4.4), which the agent cannot write. The runner creates and writes it; the host
+only reads it (`orch.gitread`, or fd-relative `O_NOFOLLOW` reads) and **never writes or deletes anything inside an
+agent-owned tree** (symlink races).
+
+**The store and the guard.** The agent reaches `.orch/` only through the host socket. Direct mode (D-P2-18) under an
+agent UID refuses with a plain message ("this workspace is served by its host"), not with `EACCES` (L7). The plugin's
+hooks (`orch instructions hook …`) run as the agent through the socket; `instructions.hook` must accept the agent
+class (today it is P-only and works because a tier-A agent is person class).
+
+### 13.5 Runner, environment, terminals, sign-in (amends D-P2-24, D-P2-27, D-P2-31, §12.4.3, §12.6)
+
+- **The runner is the agent user** (one system unit per agent user, 13.2 item 7), so it starts runs through the existing
+  trampoline (`runner/exec.py`) without any UID change. Grants deposited to it are bound to the runner UID (§9 item 11).
+- **Environment.** The run's environment comes from the runner's own (the `ENV_FROM_RUNNER` allow-list): `HOME` is the
+  agent's; `SSH_AUTH_SOCK` and the person's API keys and tokens do not exist there. Agents push only through landing or
+  a deploy key of their own. Docker through the person's daemon is refused (the `docker` group is root); rootless
+  podman as the agent is fine.
+- **Terminals run as the agent user**, never as the person; there is no "shell as me" in the dashboard (a shell as the
+  person stays with SSH). **Card line** in tier B (terminal header, Start dialog, workspace card), replacing D-P2-31's
+  line there: **"This terminal runs as orch-agent-<user>. It cannot read your keys."** D-P2-31's line ("…run as you…")
+  stays only where tier B is not active. D-P2-27's risk sentence for the runner grant stays (a dashboard takeover can
+  still give agents standing authority).
+- **Agent sign-in.** Agents log in to Claude Code and Codex once, as themselves, in an agent terminal ("Sign in your
+  agents": `claude` login, `codex login --device-auth` on a headless VPS), or with a pasted token or API key that
+  reaches the runner sealed and is written into the agent's own HOME 0600 (L10). They never use the person's login,
+  SSH key or GitHub token. The Claude trust file is written into the agent's HOME (unchanged code, different HOME).
+
+### 13.6 `isolation.detect()` (L11)
+
+Isolation is read from OS facts on every call (cached at most 60 s, with the ancestor checks of D-P2-6), never from a
+flag, a setting or a file the person's UID could write. It answers per role `isolated`, `same_user` or `broken`, with the
+first failed fact named.
+
+- **Agents `isolated`** only if all hold: the runner's peer UID ≠ the person UID; a root-owned pin
+  `/etc/orch/pins/<uid>.json` with class `agent` and this `host_uid`; the agent user in none of the privileged groups of
+  13.2 item 2 (from the group database, not the user's claim); the runner unit active with `User=` that UID (D-Bus);
+  `<run>`, the control directory and the person's `<state>` with the owners and modes of 13.2–13.4 and no ACL entry for
+  the agent on `<state>` or the key files.
+- **Add-ons `isolated`** only if, for the slot in question: a root-owned pin with class `addon`; slot UID ≠ person UID
+  and ≠ any agent UID; not in a privileged group; `orch-addon@<n>` active with that `User=`; the add-on's package and
+  environment readable by that slot and **not readable by any other slot** (ACL read back), and not writable by the slot
+  (R-M2).
+- **`same_user`**: no agent or slot users (tier A). **`broken`**: users exist but a fact fails; the doctor names it.
+  The failed facts split by cause:
+  - **exposure facts** (an agent could reach the key or act as the person): the agent or slot user in a privileged
+    group; an ACL entry for it on `<state>` or a key file; a missing or foreign pin; the runner's peer UID is the
+    person's; `<run>` or the control directory wider than 13.3. These **pause click signing** (13.7) and keep the
+    marketplace gate closed;
+  - **availability facts** (nothing is exposed, something is down): the runner or slot unit not active. One click
+    stays on, with the red line and the doctor; the marketplace gate stays closed for an inactive slot.
+- Used by: the One-click default (13.7), the dashboard's status line ("Agents run as their own user" or the red line),
+  the marketplace gate (13.8, #929) and setup's "Check again".
+
+### 13.7 One click in tier B (reverses §9 item 11 "click-to-sign ends after migration")
+
+- **One click is allowed in tier B.** With host = person, the click signer keeps running as the person next to the
+  dashboard (§0.8.6 item 5); the signer needs no change. Agents cannot read the key file and cannot reach the signer
+  (a `socketpair` child of the dashboard server, no path to connect to).
+- **Default.** On by default where `isolation.detect()` says agents are `isolated`. Off by default elsewhere (no admin
+  step, Windows, macOS before M1, `broken`): turning it on is one click after the red line **"Agents run as you.
+  Anything an agent runs can sign with One click and read your files."** (plus the step-up of §0.8.6 10.5 on a remote session).
+  If isolation later turns `broken` while One click is on: an **exposure fact** (13.6) **pauses click signing**. The
+  signer refuses each sign with the failed fact named; custody, the key and the person's setting do not change, and
+  signing resumes by itself once the check passes again. An **availability fact** leaves One click on, with the red line
+  and the doctor. Pausing rather than switching off means an agent that breaks something (for example kills its own
+  runner) gains no lever over the person's custody; `orch sign CODE` in the terminal keeps working throughout.
+- **§0.8.6 item 3a works in tier B.** The host-state flag file is the person's (host = person), so the dashboard's custody
+  switch is offered in both tiers.
+- **The dashboard port (L8, Linux).** The dashboard server drops loopback TCP connections whose socket owner UID
+  (`sock_diag` or `/proc/net/tcp{,6}`) is not the person. The SSH tunnel's forwarding runs as the person, so the VPS path
+  keeps working; an agent does not even reach the login. macOS has no equivalent; there the bearer remains the gate.
+- Memory: another UID cannot `ptrace` the person's processes or read their `/proc/<pid>/environ` or `mem`. `argv` is
+  world-readable unless `/proc` is mounted `hidepid=invisible` (doctor hint), so secrets stay out of `argv` (tested
+  invariant).
+
+### 13.8 Add-ons under slot users (#287)
+
+- **Slots, not per-install users.** Making a user needs root; an install must not. The helper makes
+  `orch-addon-1..8` and their units once. Granting a community add-on assigns a free slot (host state, person-owned) and
+  sets `u:orch-addon-<n>:rX` on that add-on's package and G4 environment only. No free slot: refused with "run setup
+  again to add slots".
+- **Call path.** The slot runner connects to `<run>/addon/host.sock` (one connection per slot UID, from the unit's
+  `MainPID`, like the runner). The host sends `{call, package path, request}`; the slot runs the existing
+  `addons/runner.call` (G4's environment verify inside, closed environment, a per-call work dir in its own home, a cgroup
+  per call so a `setsid` escape is killed too).
+- **Built-in and official add-ons** may keep running as today or move to a shared slot later; tier B does not block
+  either.
+- **R-M1, check order (A4).** Lifting `market.community_unisolated` (#929) never bypasses hub policy: on a hub-joined
+  workspace the marketplace spec's D14/G7 decide first which marketplaces are allowed, then isolation. `isolation.detect()` only removes the
+  isolation refusal. A4's T0 includes a hub refusal with isolation detected: it stays refused.
+- **R-M2, the environment is read-only for the slot (A2, checked in A1).** G4 environments are built and verified by the
+  host user (`host/addonenv.py`, the envtree stamp). The slot can read the env and its stamp but not write them
+  (person-owned, no write ACL), so an add-on cannot defeat the runtime verify. A2 reads the ACL back and fails on any
+  write bit for the slot; A1 keeps `envtree.verify` inside the call.
+- **R-M3, the credential stays host-owned (A3).** The credential file (`<state>/hosts/<ws>/addons/<name>/credential`,
+  0600, host user) stays host-owned with #1179's fd-relative store; the host passes it on stdin per call. The slot never
+  gets a path or a descriptor to it. Marketplace spec §15.1's tier-A credential limit closes.
+- **R-M4, `{python}` under the slot (A2, tested in A1).** G4's `{python}` line (`-B -s -S`, `PYTHONPATH` from an empty
+  environment) must work as the slot: the interpreter and its stdlib, the package copy and the env are readable and the
+  interpreter executable by the slot (ACL `rX`, set and read back by A2). A1's T0 runs a `{python}` add-on as the slot.
+
+### 13.9 Threat model
+
+| Attacker | Tier A (no isolation) | Tier B |
+|---|---|---|
+| **Agent** (prompt-injected or malicious) | Runs as the person: reads the One-click key and signs anything it allows; reads SSH keys, tokens and every file; calls every person and control op except signing without a key (§7); drives the dashboard locally; writes the store files directly | Column G ops of its grant; reads the shared repositories' `.git` and its own files; its own Claude/Codex credentials (it can leak those: give it a separate key with a spend limit); the network; the other runs of the same agent user (no per-run isolation). **Cannot** read or use the keys, reach the signer or (Linux) the dashboard port, call human or control ops, write the store, write the person's files, or push with the person's credentials |
+| **Paths from an agent to the person** that tier B leaves | — | (a) content it writes that the dashboard renders (ticket text, artifacts, terminal output): an XSS there is an escalation, so strict CSP and safe rendering are now the main boundary; (b) social engineering in what the person approves (the review shows what is signed; hub steps need the backup key); (c) the person running the agent's code as themselves (`npm install`, tests); (d) kernel or setup bugs (an unpatched kernel; an agent in a privileged group, refused by the helper and the host) |
+| **Compromised dashboard** (XSS, stolen bearer, malicious dependency of the server) | Everything | Unchanged: it runs as the person, so it can click-sign everything One click covers and start agents. Hub ops still need the backup key; secrets travel sealed. Shrunk by idle auto-off, the short bearer and passkey step-up (§0.8.6 item 10), the key at rest (H3) and L8 (an agent can no longer be the local attacker that takes it over) |
+| **Malicious add-on** (community, after #287) | Runs as the person: everything; therefore community marketplaces are refused (`market.community_unisolated`) | Its slot UID only: its env (read-only), its per-call work dir, its credential for one call (stdin), the network if granted. Not the keys, not agents' files, not other add-ons' credentials or envs |
+| **Another local user** | As §0.8.6 item 8 | Same; plus L8 drops their loopback connections to the dashboard on Linux |
+| **Root** | Out of scope | Out of scope |
+
+**Sudo and SSH policy check, and its limit (L2/L11).** The root-owned pin records the verdict of `sudo -l -U` and
+`sshd -T` taken at setup, plus the stat signature of each policy file. The unprivileged host compares signatures on
+every `detect()`. Where the person cannot search a policy folder (Ubuntu and RHEL: `/etc/sudoers.d` is 0750 root), only
+the folder's own signature is recorded: an entry added, removed or renamed is seen, but an **in-place edit of an existing
+file inside that folder is not**, because only root can stat it (the edit needs root as well, so this sits inside the
+"Root: out of scope" row). A folder the person can list but not search refuses with "is new" for any entry that was not
+recorded; that fails closed and is accepted. A recorded entry the host cannot stat (a symlink to a root-only target)
+reads as changed. **Closed by L3:** the runner unit's `ExecStartPre=+… --recheck %i` (13.2 item 7) asks `sudo -l -U` and
+`sshd -T` again at each runner start as root, refuses the start if an answer changed and rewrites the pin without a
+verdict. It runs at start, not continuously: a rule added while the runner runs is caught at its next start (or setup
+rerun), and the host's signature comparison covers the time in between.
+
+**What tier A honestly loses.** Without isolation, anything an agent runs can sign with One click and read every file
+of the person, including SSH keys and tokens; the column split of §0.5 is policy, not a boundary; community add-ons
+stay refused. The dashboard shows the red line "Agents run as you" and One click is off by default. An unprivileged
+bubblewrap sandbox could hide paths from a same-user agent, but it is weaker (same UID, shared loopback; Ubuntu 24.04
+restricts unprivileged user namespaces) and is not part of this plan.
+
+### 13.10 Windows (after the Windows host)
+
+Today there is no host, runner or click signer on Windows (D-P2-38): agents a person starts there run as the person,
+can use the One-click key and read every file of the person. The dashboard says so and One click is off by default.
+**Planned** (design first, with the Windows host port): a local standard account `orch-agent` created by the installer
+(one UAC prompt), never in Administrators; the runner as a Windows service under that account (or a virtual service
+account `NT SERVICE\orch-runner`); host named pipes with an explicit DACL and the client token's SID checked; the
+dashboard's loopback peer check by owning PID (`GetExtendedTcpTable`) to token SID; keys in the person's
+`%LOCALAPPDATA%` (the profile ACL excludes other standard users) plus DPAPI user scope (H3); repository sharing with
+`icacls`; ConPTY terminals as the agent account. Not protected even then: an administrator account, and anything the
+person runs as themselves.
+
+### 13.11 macOS (last, M1–M3)
+
+**Until M1:** tier A, with the same red line and One click off by default. **Planned:** a hidden role user
+(`sysadminctl -addUser orch-agent-<user>`, `IsHidden`), not in `admin` or `staff`; the runner as a LaunchDaemon with
+`UserName`; run directory `/Users/Shared/orch/run/<uid>` (H3c; BSD semantics give new files the directory's group, so no
+setgid is needed); ACLs with `chmod +a`; one admin password prompt at install. The person's login keychain is in their
+0700 `~/Library`, out of the agent's reach. **What is not protected or does not work:** there is no kernel peer check
+for loopback TCP, so an agent can reach the dashboard's login and only the bearer stops it; repositories under
+`~/Documents`, `~/Desktop` or `~/Downloads` are TCC-protected and a daemon user gets no prompt (setup says "keep code
+outside these folders"); Claude Code under a daemon user has no unlocked keychain and uses `claude setup-token` or an API
+key in the agent's own file. Touch ID and the keychain stay extras for the person's key. This replaces H3c's agent-user
+part; H3c's per-workspace groups and worker daemon stay later options.
+
+### 13.12 Build tasks
+
+L1 setup plan (pure) → L2 apply and the root-owned launcher `/usr/lib/orch/os-setup/orch-os-setup`; L3 runner as system unit; L4 run directory and sockets; L5
+person-side ACLs; L6 agent clone and worktrees; L7 agent CLI (served mode only, `instructions.hook`, environment); L8
+dashboard peer-UID check; L9 terminals as the agent; L10 agent sign-in; L11 `isolation.detect()`; L12 the setup step;
+L13 doctor; A1–A4 slots, ACLs, credentials per call, #929; E1 e2e `vps-agent-uid` on the dev VPS; M1–M3 macOS. Real
+cross-UID tests run in a CI job with root (`needs_root`, `tests/osusers/`); locally they skip.

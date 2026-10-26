@@ -1,4 +1,4 @@
-# orch core
+# orch
 
 **Let coding agents do the work. Keep every decision yours.**
 
@@ -11,6 +11,8 @@ It works with Claude Code, Codex and any other agent that can run a shell comman
 </p>
 
 **Website: [severin.io/orch-core](https://severin.io/orch-core/)**
+
+This repository holds all of orch: the core, Mission Control, the relay, publish, the hub, the iPhone app and the shared protocol vectors. The add-on marketplace lives in its own repository, [orch-marketplace](https://github.com/severinlindenmann/orch-marketplace) (see [Add-ons and the marketplace](#add-ons-and-the-marketplace)).
 
 ## Why
 
@@ -93,6 +95,23 @@ For bigger requests, sign a charter instead of every single gate. You set the li
 - **AI Factory:** lights on. The factory runs the tickets while you watch the board, and you can step in at any gate.
 - **Dark AI Factory:** lights off. One signed request runs end to end, from requirements to delivery, with restricted permissions. You sign it in, and you can stop it from your desk or your phone before it ships.
 
+## What is in this repository
+
+```
+packages/
+  core/       the orch CLI, the host, the ticket format          (Python, uv)
+  addons/     first-party add-ons; dashboard/ is Mission Control (React and a Python server)
+  relay/      relay, directory, Drop and push                    (Python)
+  hub/        the company hub                                    (Python and a small web console)
+  publish/    shares and small apps over HTTPS                   (Python)
+  mobile/     the iPhone app                                     (Swift, Xcode)
+contracts/    protocol docs and test vectors that several packages share: one copy, read by all of them
+docs/         design (docs/architecture), guides
+.github/      path-filtered CI per package, CODEOWNERS
+```
+
+`contracts/` is where a wire format lives. The relay protocol and its vectors, the hub protocol and its vectors, the publish vectors, the plain-http origin rule and core's F1 and R2 vectors are each stored once; core, relay, publish, hub and the phone read them from there, so a change to a signed shape is one commit that every consumer sees at once. See [`contracts/README.md`](contracts/README.md).
+
 ## Architecture
 
 <picture>
@@ -102,14 +121,15 @@ For bigger requests, sign a charter instead of every single gate. You set the li
 
 | Piece | What it does | Where |
 |---|---|---|
-| **`orch` CLI** | Agent-first commands with terse output: `new`, `claim`, `task`, `ask`, `artifact`, `submit`. Any agent with a shell can use it. | [`plugins/orch-core`](plugins/orch-core) |
+| **`orch` CLI** | Agent-first commands with terse output: `new`, `claim`, `task`, `ask`, `artifact`, `submit`. Any agent with a shell can use it. | [`packages/core`](packages/core) |
 | **Workspace** | Plain files: `config.json`, `keys.jsonl` and, per ticket, `ticket.json`, `body.md`, `events.jsonl` and `artifacts/`. Every change is an appended, signed event. | your repo or folder |
-| **Host** (`orch serve`, `orch host`) | The only process that loads keys (OS keychain or Secure Enclave). It enforces gates, roles and policies, and agents reach it through a narrow local socket. | [`plugins/orch-core`](plugins/orch-core) |
-| **Mission Control** | The desktop dashboard. It's an addon itself. | [`addons/dashboard`](addons/dashboard) |
-| **Addons** | GitHub reviews and issues, Databricks, wiki, terminals, schedules, quick tasks, or your own. Each one runs only after you trust that exact version. | [`addons/`](addons) |
-| **orch-relay** | Directory, relay, Drop (files) and push. It stores and forwards ciphertext only, and runs as a public instance or self-hosted inside a company. | [orch-relay](https://github.com/severinlindenmann/orch-relay) |
-| **orch mobile** | iPhone app: questions, approvals and verdicts signed with Face ID, push notifications and Drop. | [orch-mobile](https://github.com/severinlindenmann/orch-mobile) |
-| **orch-publish** | Shares and small apps over HTTPS, in the workspace's own namespace and signed by the workspace. | [orch-publish](https://github.com/severinlindenmann/orch-publish) |
+| **Host** (`orch serve`, `orch host`) | The only process that loads keys (OS keychain or Secure Enclave). It enforces gates, roles and policies, and agents reach it through a narrow local socket. | [`packages/core`](packages/core) |
+| **Mission Control** | The desktop dashboard. It's an addon itself. | [`packages/addons/dashboard`](packages/addons/dashboard) |
+| **Addons** | Wiki, terminals, worktrees, schedules, quick tasks, usage and more, or your own. Each one runs only after you trust that exact version. | [`packages/addons`](packages/addons) |
+| **orch-relay** | Directory, relay, Drop (files) and push. It stores and forwards ciphertext only, and runs as a public instance or self-hosted inside a company. | [`packages/relay`](packages/relay) |
+| **orch hub** | One hub per company between workspaces and the relay: groups, shared spaces, the phone pairing. | [`packages/hub`](packages/hub) |
+| **orch mobile** | iPhone app: questions, approvals and verdicts signed with Face ID, push notifications and Drop. | [`packages/mobile`](packages/mobile) |
+| **orch-publish** | Shares and small apps over HTTPS, in the workspace's own namespace and signed by the workspace. | [`packages/publish`](packages/publish) |
 
 Workspaces can hand tickets to each other: yours, a colleague's or one on a client's VM. An incoming ticket lands in the inbox as untrusted data until you accept it.
 
@@ -119,7 +139,7 @@ orch doesn't depend on one harness. Every command is defined once, and gates and
 
 | | Claude Code | Codex CLI and others |
 |---|---|---|
-| Install | plugin marketplace | `uv tool install`, then `orch init` writes `AGENTS.orch.md` |
+| Install | plugin marketplace | `uv tool install`, then `orch setup` writes `AGENTS.orch.md` |
 | Instructions | `AGENTS.orch.md` and skills | `AGENTS.orch.md`, plus skills where the harness supports `SKILL.md` |
 | Gates and signatures | enforced by orch | enforced by orch |
 | Hand edits to ticket files | refused early by a guard hook | detected by `orch check` and `orch doctor`, or prevented by running agents under their own OS user |
@@ -136,15 +156,25 @@ claude plugin marketplace add severinlindenmann/orch-core
 claude plugin install orch-core@orch-core
 
 # Codex and any other agent with a shell
-uv tool install "git+https://github.com/severinlindenmann/orch-core#subdirectory=plugins/orch-core"
+uv tool install "git+https://github.com/severinlindenmann/orch-core#subdirectory=packages/core"
 
 # then, in your project
-orch init           # creates the workspace and writes AGENTS.orch.md
-orch host enable    # starts the host that holds the keys
+orch setup          # starts the host that holds the keys, creates the workspace and writes AGENTS.orch.md
 orch help work      # what an agent reads first
 ```
 
+The hub, relay and publish servers install from this same repository, one subdirectory each, and `orch install` does it for you:
+
+```bash
+orch install hub          # or relay, publish: pins a commit of this repository, starts the part, prints its address
+uv tool install "git+https://github.com/severinlindenmann/orch-core#subdirectory=packages/hub"   # the same, by hand
+```
+
 On a Mac and not sure where to start? Follow [Set up a personal workspace](docs/setup-personal-workspace.md): every step with what you should see and what to do if you don't.
+
+## Add-ons and the marketplace
+
+The add-ons in [`packages/addons`](packages/addons) ship with orch. Everything else comes through a marketplace: [orch-marketplace](https://github.com/severinlindenmann/orch-marketplace) is the official one, a plain git repository with a signed index (`marketplace.json`) that lists add-ons by commit and package digest. Installing is always a person's act: orch fetches the bytes itself, shows you what the add-on may do, and runs it only after you trust that exact version. The marketplace README explains the index, the pins and how to publish an add-on.
 
 ## Documentation
 
@@ -152,16 +182,19 @@ On a Mac and not sure where to start? Follow [Set up a personal workspace](docs/
 - [The minimal core](docs/architecture/orch-v2-core.md) and the [ticket format](docs/architecture/orch-v2-ticket-format.md)
 - [Host process](docs/architecture/orch-v2-host.md): socket API, signing, custody and worker isolation
 - [Harnesses and enforcement tiers](docs/architecture/orch-v2-harnesses.md)
-- [Dashboard addon](addons/dashboard/README.md)
+- [Dashboard addon](packages/addons/dashboard/README.md)
 
 ## Development
 
-From `plugins/orch-core`:
+Each package is its own project; work in its folder and run its own tests.
 
 ```bash
-uv sync
-uv run pytest -q -m "not slow"
+cd packages/core      && uv sync --locked && uv run pytest -q -m "not slow" -n auto     # also: relay, publish, hub
+cd packages/addons/dashboard && npm ci && npx vitest run                                # Mission Control
+cd packages/mobile    && swift test --package-path OrchKit --no-parallel                # the phone (macOS, Xcode)
 ```
+
+CI runs only what a change touches: one workflow per package (`orch-core`, `dashboard`, `relay`, `publish`, `hub`, `mobile`) and a `contracts` workflow that replays the shared vectors on both sides whenever `contracts/` or a package that reads or writes them changes. A PR that touches crypto, keys, custody, auth, protocol, pairing, guard, permit or charter paths gets the `needs-opus-review` label (see [`.github/security-paths.txt`](.github/security-paths.txt) and [CODEOWNERS](.github/CODEOWNERS)).
 
 The diagrams are drawn from [`docs/images/readme/src/diagrams.html`](docs/images/readme/src/diagrams.html), and `node render.cjs` re-renders the PNGs. See [CONTRIBUTING.md](CONTRIBUTING.md) for the checks CI runs. Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), never in a public issue.
 

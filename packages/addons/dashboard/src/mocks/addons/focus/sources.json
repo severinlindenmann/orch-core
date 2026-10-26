@@ -1,0 +1,10 @@
+{
+  "run": "r_01J0000000000000000000000A",
+  "available": true,
+  "reason": null,
+  "sources": [
+    { "id": "s_aaaaaaaaaa", "kind": "web", "url": "https://www.rfc-editor.org/rfc/rfc6585#section-4", "host": "rfc-editor.org", "title": "RFC 6585 section 4", "read_at": "2026-10-26T10:44:00Z", "has_extract": true },
+    { "id": "s_bbbbbbbbbb", "kind": "search", "query": "redis rate limit counter", "read_at": "2026-10-26T10:42:00Z", "results": [{ "title": "INCR | Redis", "url": "https://redis.io/commands/incr" }] },
+    { "id": "s_cccccccccc", "kind": "file", "path": "docs/api/invites.md", "read_at": "2026-10-26T10:41:00Z" }
+  ]
+}

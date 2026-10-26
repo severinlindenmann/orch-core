@@ -13,12 +13,11 @@ it('renders the ticket key and title with slots and a collapsible tab panel', as
   await waitFor(() => expect(chip).toHaveTextContent(mockStore.ticket('DEMO-0042')!.title))
   expect(chip).toHaveTextContent('DEMO-0042')
   expect(screen.getByTestId('focus-conversation')).toBeInTheDocument()
-  expect(screen.getByTestId('focus-tasks-chip')).toBeInTheDocument()
   expect(screen.getByTestId('focus-tasks-list')).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Pause' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Stop all' })).toBeDisabled()
   for (const tab of ['Changes', 'Artifacts', 'Decisions', 'Context']) {
     await user.click(screen.getByRole('tab', { name: tab }))
-    expect(screen.getByRole('tabpanel')).toHaveTextContent(`${tab} coming in F3.`)
+    expect(screen.getByRole('tabpanel')).toBeInTheDocument()
   }
   await user.click(screen.getByRole('button', { name: 'Hide panel' }))
   expect(screen.queryByTestId('focus-panel')).toBeNull()

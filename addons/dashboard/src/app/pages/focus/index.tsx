@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { Conversation } from './Conversation'
 import { Panel } from './Panel'
-import { TasksChip, TasksList } from './Delegation'
+import { PauseButton, TasksChip, TasksList } from './Delegation'
 import { CreateFocusTicket, StartDialog } from './StartDialog'
 
 export function FocusPage() {
@@ -66,7 +66,7 @@ function FocusSession({ ticket, workspace, start }: { ticket?: string; workspace
         {!ticket && <Button variant="outline" size="sm" onClick={() => setCreate(true)}>Create ticket from this</Button>}
         <span role="status" className="text-xs text-text-muted">{working ? 'Agent is working' : 'No active session'}</span>
         <TasksChip ticket={ticket} />
-        <span data-testid="focus-pause" title="Pause coming in F4"><Button variant="outline" size="sm" disabled>Pause</Button></span>
+        <PauseButton ticket={ticket} />
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button variant="ghost" size="sm" aria-pressed={fullscreen || fallback} onClick={() => void toggleFullscreen()}><Maximize />Fullscreen</Button>
           <Button variant="ghost" size="sm" aria-expanded={panel} aria-controls="focus-side-panel" onClick={() => setPanel(!panel)}>{panel ? <PanelRightClose /> : <PanelRightOpen />}{panel ? 'Hide panel' : 'Show panel'}</Button>

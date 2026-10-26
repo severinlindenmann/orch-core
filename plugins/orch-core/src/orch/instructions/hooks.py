@@ -7,9 +7,17 @@ These are pure functions over plain values, so the budget is tested without a wo
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import json
+import re
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any
 
 __all__ = [
+    "WAITING_TTL_SECONDS",
+    "marker_doc",
+    "marker_path",
+    "read_marker",
     "PRE_COMPACT_MAX_LINES",
     "SESSION_START_MAX_LINES",
     "STALE_LINE",
@@ -65,3 +73,31 @@ def pre_compact_lines(*, claim: str | None, open_questions: int) -> list[str]:
         out.append(f"{open_questions} question(s) still open")
     out.append("next: orch status, then orch show")
     return out
+
+
+# -- the "agent may need you: check its terminal" marker (run-9 feedback 3.6, TECH.md section 2 (d)) -----------------
+#: A marker is a display hint, local to this machine, never a ticket event and never sent to a hub or phone. It stops
+#: counting after this long (the agent may simply have been left alone).
+WAITING_TTL_SECONDS = 30 * 60
+
+
+def marker_path(directory: Path, session: str) -> Path:
+    """``<sessions dir>/<session>.waiting.json`` (the session label made file-safe)."""
+    return directory / (re.sub(r"[^A-Za-z0-9_-]", "_", session)[:120] + ".waiting.json")
+
+
+def marker_doc(session: str, now: float) -> bytes:
+    return json.dumps({"session": session, "at": now}).encode()
+
+
+def read_marker(raw: bytes, now: float) -> Mapping[str, Any] | None:
+    """The marker as ``{session, at}``, or ``None`` when it is damaged or older than :data:`WAITING_TTL_SECONDS`."""
+    try:
+        doc = json.loads(raw)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(doc, dict) or not isinstance(doc.get("at"), (int, float)) or isinstance(doc.get("at"), bool):
+        return None
+    if not isinstance(doc.get("session"), str) or now - doc["at"] > WAITING_TTL_SECONDS:
+        return None
+    return {"session": doc["session"], "at": float(doc["at"])}

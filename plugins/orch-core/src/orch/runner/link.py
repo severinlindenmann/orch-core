@@ -277,6 +277,7 @@ class HostLink:
         sup.on_event = self._on_event
         if term is not None:
             term.on_change = self._term_changed
+            term.on_activity = self._term_activity
 
     # -- life cycle
     def start(self) -> None:
@@ -564,6 +565,20 @@ class HostLink:
         if args["cols"] is None:
             args.pop("cols")
             args.pop("rows")
+        with contextlib.suppress(OSError, ConnectionError):
+            self._send_req("runner.term", args)
+
+    def _term_activity(self, run: str) -> None:
+        """The run printed: ``runner.term`` again with ``out``, so the host knows the terminal is not quiet."""
+        if not self.ready.is_set() or self.term is None:
+            return
+        ring = self.sup.ring(run)
+        args = self.term.summary(run)
+        if args["cols"] is None:
+            args.pop("cols")
+            args.pop("rows")
+        if ring is not None:
+            args["out"] = ring.end
         with contextlib.suppress(OSError, ConnectionError):
             self._send_req("runner.term", args)
 

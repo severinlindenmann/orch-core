@@ -91,6 +91,12 @@ def plugin_files() -> dict[str, str]:
                 }
             ],
             "PreCompact": [{"hooks": [{"type": "command", "command": "orch instructions hook pre-compact"}]}],
+            "Notification": [
+                {
+                    "matcher": "idle_prompt|permission_prompt",
+                    "hooks": [{"type": "command", "command": "orch instructions hook waiting"}],
+                }
+            ],
         }
     }
     files["hooks/hooks.json"] = json.dumps(hooks, indent=2) + "\n"

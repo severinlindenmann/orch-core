@@ -91,6 +91,8 @@ from orch.host._socket import peer_credentials
 
 __all__ = ["TermListener", "TicketError"]
 
+#: seconds between two output-activity reports of one run to the host
+ACTIVITY_EVERY = 5.0
 LOG = logging.getLogger(__name__)
 ATTACH_WAIT = 5.0
 ALLOW_SECONDS = 10.0
@@ -295,6 +297,10 @@ class TermListener:
         self._rates: dict[str, tuple[_Bucket, _Bucket]] = {}
         #: called with a run id (outside every lock) when its attachments, lease or size changed
         self.on_change: Callable[[str], None] | None = None
+        #: called with a run id (on its own thread) at most every :data:`ACTIVITY_EVERY` seconds while the run prints:
+        #: the host learns that the terminal is not quiet (the "agent may need you" fallback)
+        self.on_activity: Callable[[str], None] | None = None
+        self._activity_at: dict[str, float] = {}
         #: ``runner.term`` sequence number, taken under ``lock`` with the snapshot: the host ignores an older report
         #: that arrives after a newer one (two threads may send their snapshots in either order)
         self._report_seq = 0
@@ -607,6 +613,17 @@ class TermListener:
         """The supervisor's wake-up: new output, an exit, a closed PTY (I/O thread; never blocks)."""
         for att in self._by_run.get(run, ()):
             att.wake.set()
+        hook, now = self.on_activity, self.clock()
+        if hook is not None and now - self._activity_at.get(run, -1e9) >= ACTIVITY_EVERY:
+            self._activity_at[run] = now
+            threading.Thread(target=self._activity, args=(hook, run), name="orch-runner-term-act", daemon=True).start()
+
+    @staticmethod
+    def _activity(hook: Callable[[str], None], run: str) -> None:
+        try:
+            hook(run)
+        except Exception:  # noqa: BLE001 - reporting never breaks supervision
+            LOG.exception("term activity report failed")
 
     def _changed(self, run: str) -> None:
         hook = self.on_change

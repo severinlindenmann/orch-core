@@ -149,11 +149,15 @@ def test_outside_a_workspace_a_hook_says_nothing_and_succeeds(tmp_path, monkeypa
         assert (code, out.getvalue(), err.getvalue()) == (0, "", ""), event
 
 
-def test_the_plugin_runs_exactly_these_two_hooks():
+def test_the_plugin_runs_exactly_these_hooks():
     hooks = json.loads(plugin_files()["hooks/hooks.json"])["hooks"]
-    assert set(hooks) == {"SessionStart", "PreCompact"}
+    assert set(hooks) == {"SessionStart", "PreCompact", "Notification"}
     cmds = [h["command"] for g in hooks.values() for e in g for h in e["hooks"]]
-    assert cmds == ["orch instructions hook session-start", "orch instructions hook pre-compact"]
+    assert cmds == [
+        "orch instructions hook session-start",
+        "orch instructions hook pre-compact",
+        "orch instructions hook waiting",
+    ]
     assert hooks["SessionStart"][0]["matcher"] == "startup|resume|clear|compact"  # re-injected after compaction
 
 
@@ -188,3 +192,27 @@ def test_a_damaged_log_is_reported_instead_of_ok(ws):
     assert code == 0 and "DAMAGED" in out  # exit 0: a harness shows a hook's stdout only then
     assert "DAMAGED" in out and out.splitlines()[-1] == "next: orch check", out + err
     assert "ok session-start Owner" not in out
+
+
+def _markers(ws):
+    return sorted((ws.root / ".orch" / ".state" / "sessions").glob("*.waiting.json"))
+
+
+def test_waiting_writes_a_marker_and_the_next_session_start_clears_it(ws):
+    code, out, _ = hook(ws, "waiting")
+    assert (code, out) == (0, "")  # silent: the agent is told nothing
+    marks = _markers(ws)
+    assert len(marks) == 1
+    doc = json.loads(marks[0].read_text())
+    assert doc["at"] == ws.clock[0] and doc["session"]
+    assert hook(ws, "session-start")[0] == 0
+    assert _markers(ws) == []
+
+
+def test_marker_reading_ignores_damaged_and_old_files():
+    from orch.instructions import WAITING_TTL_SECONDS, marker_doc, read_marker
+
+    assert read_marker(marker_doc("s_1", 1000.0), 1010.0) == {"session": "s_1", "at": 1000.0}
+    assert read_marker(marker_doc("s_1", 1000.0), 1000.0 + WAITING_TTL_SECONDS + 1) is None
+    assert read_marker(b"not json", 1.0) is None
+    assert read_marker(b'{"session": 3, "at": 1}', 2.0) is None

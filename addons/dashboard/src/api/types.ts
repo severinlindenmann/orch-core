@@ -598,7 +598,7 @@ export interface CoreLaunch {
 
 // ---------------------------------------------------------------- today
 
-export type NeedsYouKind = 'question' | 'verdict' | 'approval' | 'handoff' | 'expiring' | 'no_eligible' | 'acknowledge' | 'addon'
+export type NeedsYouKind = 'question' | 'verdict' | 'approval' | 'handoff' | 'expiring' | 'no_eligible' | 'acknowledge' | 'addon' | 'terminal_wait'
 
 export interface NeedsYouItem {
   kind: NeedsYouKind
@@ -606,7 +606,7 @@ export interface NeedsYouItem {
   title: string
   text: string
   since: string
-  ref?: string // Q2, gate name, ...
+  ref?: string // Q2, gate name, ...; for terminal_wait the run id ("Open terminal" opens it)
   /** Gate hash an approval item covers (approval items only). */
   hash?: string
   /** Real host only. */

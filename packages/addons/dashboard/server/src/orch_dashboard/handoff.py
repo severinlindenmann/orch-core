@@ -1536,8 +1536,8 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
 
 
 def hub_base(link) -> dict:
-    """B10: the latest `hub.*` event of the workspace is part of a hub step's intent, so join, leave, join again with the
-    same card is a new request each time; a double click (no event in between) is still one."""
+    """B10: the latest `hub.*` event is part of a hub step's intent, so join, leave, join again with the same
+    card is a new request each time; a double click (no event in between) is still one."""
     types = ["hub.joined", "hub.left"]
     data = link.call("activity.list", {"scope": "workspace", "types": types, "order": "desc", "limit": 10})
     for item in data.get("items") or []:

@@ -379,6 +379,10 @@ SCOPE_ROUTES: dict[str, frozenset[str]] = {
 SWITCH_HANDLERS = frozenset(
     {"whoami", "sign_out", "my_workspaces", "my_handoffs", "needs_you", "item", "switch_ticket", "rail"}
 )
+#: E4: routes only the console PAGE may call (its cookie session, from its own origin). The console's own session sent
+#: as a bearer is ``not_allowed``; an unknown bearer stays ``no_session`` and an app (pairing/channel) one
+#: ``forbidden_role``, as on every route.
+BROWSER_ONLY = frozenset({"switch_ticket"})
 
 
 def route_scopes(rt: Route) -> frozenset[str]:
@@ -633,6 +637,8 @@ class WebApi:
             # a session is for the carrier it was issued for (cookie = browser: ``full``; bearer = app: ``pairing`` or
             # ``channel``); the scope is stored with the session, so it also holds across a restart
             if (ctx.scope == "full") != ctx.cookie:
+                if ctx.scope == "full" and route.handler in BROWSER_ONLY:
+                    raise ApiError("not_allowed")  # the console's session lifted into a script as a bearer: never mints
                 raise ApiError("no_session")
             if ctx.scope not in route_scopes(route):
                 raise ApiError("forbidden_role")

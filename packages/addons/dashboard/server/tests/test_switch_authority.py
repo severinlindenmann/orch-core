@@ -17,9 +17,9 @@ from test_dashboard_switch import TICKET, WS, Gw, Link
 
 from orch_dashboard import routegate, trusted
 from orch_dashboard.app import create_app
-from orch_dashboard.auth import SWITCH_CHALLENGE_RATE, Auth
+from orch_dashboard.auth import SWITCH_CHALLENGE_GLOBAL, SWITCH_CHALLENGE_RATE, Auth
 from orch_dashboard.errors import fail
-from orch_dashboard.gateway import WRITE_OPS
+from orch_dashboard.gateway import WRITE_OPS, Gateway
 from orch_dashboard.security import SWITCH_GLOBAL
 
 H = {"Origin": ORIGIN}
@@ -76,9 +76,15 @@ class KeyLink(Link):
 
 class PeopleGw(Gw):
     people_now = {WS: PERSON}
+    served = (WS,)  # the workspaces this computer hosts (all through the one fake link)
 
     def people(self):
         return dict(self.people_now)
+
+    def enabled(self, ws):
+        if ws not in self.served:
+            raise fail("not_found")
+        return self._l
 
 
 @pytest.fixture
@@ -321,6 +327,47 @@ def test_a_key_enrolled_before_the_workspace_existed_is_the_confirm(client, link
     still_good(client, link)
 
 
+def test_a_key_enrolled_without_this_workspace_is_refused(client, link, auth):
+    b = Browser()
+    PeopleGw.people_now = {"c" * 32: PERSON}  # the same person, but only in another workspace
+    try:
+        _, kid = enrol(client, auth, b)
+    finally:
+        PeopleGw.people_now = {WS: PERSON}
+    assert WS not in auth.trusted.get(kid)["people"]
+    assert unverified(silent(client, b))
+    still_good(client, link)
+
+
+def test_a_proof_for_workspace_a_replayed_with_a_ticket_for_b_is_the_confirm(client, link, auth, monkeypatch):
+    other_ws = "c" * 32
+    ticket_b = other_ws + "." + "d" * 32
+    monkeypatch.setattr(PeopleGw, "served", (WS, other_ws))
+    monkeypatch.setattr(PeopleGw, "people_now", {WS: PERSON, other_ws: PERSON})
+    b = Browser()
+    enrol(client, auth, b)
+    # a whole proof made for A's ticket, presented with B's ticket
+    nonce = challenge(client)["nonce"]
+    proof_a = {"key_id": b.kid, "sig": b.sign(nonce)}
+    assert unverified(client.post("/auth/switch", json={"t": ticket_b, **proof_a}, headers=H))
+    # B's own challenge, signed as if for workspace A
+    nonce = challenge(client, ticket_b)["nonce"]
+    body = {"t": ticket_b, "key_id": b.kid, "sig": b.sign(nonce, t=ticket_b, ws=WS)}
+    assert unverified(client.post("/auth/switch", json=body, headers=H))
+    assert not auth.keyed
+    sw = still_good(client, link, ticket_b)  # B's ticket is unused: the confirm can still open it
+    assert auth.login_kind(sw) == "switch" and auth.switch_workspace(sw) == other_ws
+
+
+def test_the_hub_is_not_contacted_when_the_switch_is_unverified(client, link, auth):
+    b, stranger = Browser(), Browser()
+    enrol(client, auth, b)
+    assert unverified(silent(client, stranger))  # unknown key
+    assert unverified(silent(client, b, origin="http://127.0.0.1:1"))  # bad signature
+    assert unverified(client.post("/auth/switch", json={"t": TICKET, "key_id": b.kid}, headers=H))  # half a proof
+    assert link.calls == []  # no hub.switch of any kind reached the host, so nothing went on to the hub
+
+
 def test_the_local_person_must_be_the_workspace_owner_the_ticket_is_for(client, link, auth):
     b = Browser()
     enrol(client, auth, b)
@@ -348,13 +395,30 @@ def test_remote_listeners_never_redeem_silently(auth):
 
 
 def test_challenges_are_rate_limited_and_bounded(client, auth, now):
-    for i in range(SWITCH_CHALLENGE_RATE):
+    for i in range(SWITCH_CHALLENGE_GLOBAL):
         challenge(client, WS + "." + f"{i:032x}")
     res = client.post("/auth/switch/challenge", json={"ticket_hash": "f" * 64, "workspace_id": WS}, headers=H)
     assert res.status_code == 429
+    assert len(auth.switch_challenge_keys) <= SWITCH_CHALLENGE_GLOBAL
     now[0] += 61
     assert challenge(client)["nonce"]
     assert len(auth.switch_challenges) <= 64
+    assert len(auth.switch_challenge_keys) == 1  # the idle buckets were forgotten
+
+
+def test_spamming_one_tickets_challenges_does_not_block_another(client, link, auth, now):
+    spam = trusted.ticket_hash(OTHER_TICKET)
+    for _ in range(SWITCH_CHALLENGE_RATE):
+        challenge(client, OTHER_TICKET)
+    for _ in range(20):
+        res = client.post("/auth/switch/challenge", json={"ticket_hash": spam, "workspace_id": WS}, headers=H)
+        assert res.status_code == 429
+    assert auth.switch_challenge(spam, "http://127.0.0.1:1", "loopback")  # the same hash from another origin: its own
+    b = Browser()
+    enrol(client, auth, b)
+    assert silent(client, b).status_code == 200  # another ticket still gets its challenge and lands
+    now[0] += 61
+    assert challenge(client, OTHER_TICKET)["nonce"]  # the spammed ticket's own bucket empties after a minute
 
 
 def test_an_invalid_ticket_with_a_good_proof_is_an_error_not_a_session(client, link, auth):
@@ -379,6 +443,42 @@ def test_a_switch_session_cannot_enrol_a_key_nor_can_a_key_opened_one(client, li
     enrol(client, auth, b2)
     full = silent(client, b2).json()["token"]
     assert auth.enrol_key(full, b.jwk, ORIGIN) is None
+
+
+def test_a_malformed_pin_row_is_skipped_and_enrolment_still_answers(auth, tmp_path):
+    import os
+
+    uid = os.getuid()
+    good = {"workspace_id": WS, "host_uid": uid, "peers": {str(uid): {"class": "person", "person": PERSON}}}
+    rows = [
+        {"workspace_id": "1" * 32, "host_uid": uid},  # no peers
+        {"workspace_id": "2" * 32, "host_uid": uid, "peers": {str(uid): {"class": "person"}}},  # no person
+        {"workspace_id": "3" * 32, "host_uid": uid, "peers": ["not", "a", "map"]},
+        {"workspace_id": "4" * 32, "host_uid": uid, "peers": {str(uid): "p_x"}},
+        {"workspace_id": "5" * 32, "host_uid": uid, "peers": {str(uid): {"class": "person", "person": 7}}},
+        {"workspace_id": 5, "host_uid": uid, "peers": {}},
+        {"workspace_id": "6" * 32, "host_uid": str(uid), "peers": good["peers"]},
+        {"workspace_id": "../x", "host_uid": uid, "peers": good["peers"]},
+        "a row that is not an object",
+        None,
+        good,
+    ]
+    state = tmp_path / "state"
+    (state / "host").mkdir(parents=True, mode=0o700)
+    (state / "host/workspaces.json").write_text(json.dumps({"workspaces": rows}))
+    (state / "host/workspaces.json").chmod(0o600)
+    gateway = Gateway(state)
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html></html>")
+    try:
+        assert gateway.people() == {WS: PERSON}
+        with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as c:
+            b = Browser()
+            _, kid = enrol(c, auth, b)
+        assert kid == b.kid and auth.trusted.get(kid)["people"] == {WS: PERSON}
+    finally:
+        gateway.close()
 
 
 def test_the_enrolled_person_is_kept_with_the_key(client, auth, tmp_path):

@@ -37,10 +37,15 @@ LAUNCH_KINDS = frozenset({"local"})
 STEPUP_FRESH = 600
 STEPUPS_PER_SESSION = 8
 #: E4: a switch challenge (the nonce a browser key signs before a ticket is used) lives 60 s, is single use and bound
-#: to one ticket hash and origin. At most SWITCH_CHALLENGES wait, and at most SWITCH_CHALLENGE_RATE are made a minute.
+#: to one ticket hash and origin. At most SWITCH_CHALLENGES wait. At most SWITCH_CHALLENGE_RATE are made a minute for
+#: one (ticket hash, origin), so spamming one ticket cannot block another's, and at most SWITCH_CHALLENGE_GLOBAL a
+#: minute in all (a CPU guard). The per-key buckets are bounded by the global cap (a bucket expires a minute after its
+#: last use) and by SWITCH_CHALLENGE_KEYS.
 CHALLENGE_TTL = 60
 SWITCH_CHALLENGES = 64
-SWITCH_CHALLENGE_RATE = 30
+SWITCH_CHALLENGE_RATE = 5
+SWITCH_CHALLENGE_GLOBAL = 60
+SWITCH_CHALLENGE_KEYS = 256
 
 #: Passkey-login buckets, separate from the launch limiter so internet traffic cannot lock out the local owner (host
 #: spec 0.8.6 10.3): 20 per minute per source, 600 per minute overall (a CPU guard only).
@@ -89,7 +94,9 @@ class Auth:
         self.trusted = trust.TrustedKeys(trust_file, clock)
         #: ticket hash -> (nonce, origin, expires): the one challenge a browser key signs before the ticket is used
         self.switch_challenges: dict[str, tuple[str, str, float]] = {}
-        self.switch_challenge_times = deque()
+        self.switch_challenge_times = deque()  # every challenge made in the last minute (the global cap)
+        #: (ticket hash, origin) -> the times of its challenges in the last minute
+        self.switch_challenge_keys: dict[tuple[str, str], deque] = {}
         #: session a browser key opened from a switch link -> (key id, its workspace); revoking the key ends it
         self.keyed: dict[str, tuple[str, str]] = {}
         self.instance = secrets.token_hex(16)
@@ -298,8 +305,22 @@ class Auth:
                 return None
             while self.switch_challenge_times and self.switch_challenge_times[0] <= now - 60:
                 self.switch_challenge_times.popleft()
-            if len(self.switch_challenge_times) >= SWITCH_CHALLENGE_RATE:
+            buckets = self.switch_challenge_keys
+            for key in [k for k, times in buckets.items() if not times or times[-1] <= now - 60]:
+                del buckets[key]  # nothing in the last minute: forgotten
+            bucket = buckets.get((t_hash, origin))
+            if bucket is not None:
+                while bucket and bucket[0] <= now - 60:
+                    bucket.popleft()
+                if len(bucket) >= SWITCH_CHALLENGE_RATE:
+                    return None
+            if len(self.switch_challenge_times) >= SWITCH_CHALLENGE_GLOBAL:
                 return None
+            if bucket is None:
+                if len(buckets) >= SWITCH_CHALLENGE_KEYS:
+                    return None  # cannot happen while the global cap is lower; full means refused, never untracked
+                bucket = buckets[(t_hash, origin)] = deque()
+            bucket.append(now)
             self.switch_challenge_times.append(now)
             for stale in [h for h, (_, _, until) in self.switch_challenges.items() if until <= now]:
                 del self.switch_challenges[stale]

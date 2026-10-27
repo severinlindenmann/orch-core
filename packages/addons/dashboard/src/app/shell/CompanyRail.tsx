@@ -6,6 +6,7 @@ import { logout } from '@/api/prodApi'
 import { toastApiError } from '../toast'
 import { cn } from '@/lib/utils'
 import { useWorkspace } from '../workspace'
+import { WorkspaceIconFor } from '../workspaceIcon'
 
 /** The rail's data for the open workspace: the hub and the owner's workspaces, read by the server through the host's hub
  * link. Without a hub it is `{ hub: null }` and nothing is shown (no switcher without a hub). */
@@ -15,7 +16,12 @@ export function useRail() {
   return useQuery({ queryKey: ['rail', ws], queryFn: () => fetchRail(ws as string), enabled: !!ws && isRealHost(), staleTime: 15_000, retry: false })
 }
 
-const initials = (r: RailRow) => (r.name ?? '?').slice(0, 2).toUpperCase()
+/** Two letters from the name ("Personal Workspace" -> "PW"); without a name the start of the id. Never "?". */
+export function railInitials(r: Pick<RailRow, 'name' | 'workspace_id'>): string {
+  const words = (r.name ?? '').trim().split(/\s+/).filter(Boolean)
+  const s = words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? r.workspace_id).slice(0, 2)
+  return s.toUpperCase()
+}
 
 /** The company rail (V3 of the hub-one-app mockup): the hub, then your workspaces. A click is one ticketed hop. */
 export function CompanyRail() {
@@ -37,8 +43,7 @@ export function CompanyRail() {
           onClick={() => go(`/open/${r.workspace_id}`)}
           className={cn('relative flex size-9 items-center justify-center rounded-lg text-[12px] font-medium outline-none focus-visible:ring-2 focus-visible:ring-brand',
             r.current ? 'bg-brand text-bg' : 'bg-surface-2 text-text hover:bg-surface-3', !r.online && 'opacity-70')}>
-          {initials(r)}
-          <span aria-hidden className={cn('absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full border border-surface', r.online ? 'bg-success' : 'bg-text-faint')} />
+          {r.current && workspace ? <WorkspaceIconFor workspace={workspace} className="bg-transparent" /> : railInitials(r)}
           {r.badge > 0 && <span aria-hidden className="absolute -right-1 -top-1 min-w-4 rounded-full bg-warning px-1 text-[10px] leading-4 text-bg">{r.badge}</span>}
         </button>
       ))}

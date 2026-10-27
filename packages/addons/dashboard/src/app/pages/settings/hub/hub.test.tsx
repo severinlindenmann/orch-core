@@ -297,7 +297,7 @@ describe('by click (#1198 C11)', () => {
     await view.user.click(await screen.findByTestId('hub-leave', {}, T))
     expect(screen.getByText(/cannot be taken back/)).toBeTruthy()
     expect(screen.queryByTestId('hub-command')).toBeNull()
-    await sign('Sign and leave the hub')
+    await sign('Leave hub')
     expect(await screen.findByTestId('hub-step-done', {}, T)).toHaveTextContent(/You left the hub/)
     await view.user.click(within(screen.getByTestId('hub-step')).getByRole('button', { name: 'Close' }))
     expect(await screen.findByText(/Not connected\./, {}, T)).toBeTruthy()

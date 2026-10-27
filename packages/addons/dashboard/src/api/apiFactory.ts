@@ -45,7 +45,7 @@ import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPre
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
 import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, GithubCredential, GithubSave, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
-import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
+import type { ClaudeTrust, QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { connectionInfo, connectionList, doctorReport, secretsFileInfo, skillInfo, skillList, type SkillGrantRequest } from './connections'
 
 import type { AddonSettingsData } from './addOnSwitches'
@@ -199,6 +199,11 @@ export function createApi(transport: Transport) {
     getRecords: (ws: string) => call<RecordsStatus>('GET', `/api/w/${ws}/records`),
     recordsCommit: (ws: string, push: boolean) => call<RecordsRun>('POST', `/api/w/${ws}/records/commit`, { push }),
     recordsAutoOff: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/auto-off`),
+    recordsAutoOn: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/auto-on`, {}),
+    /** Whether Claude Code may open this workspace's folders without asking; `available: false` when the host cannot say. */
+    getClaudeTrust: (ws: string) => call<ClaudeTrust>('GET', `/api/w/${ws}/claude-trust`),
+    /** `allowParent`: trust the folders even though a parent folder has someone else's settings (the person chose "Trust anyway"). */
+    grantClaudeTrust: (ws: string, allowParent: boolean) => call<{ on: true }>('POST', `/api/w/${ws}/claude-trust`, { allow_parent: allowParent }),
     /** #1198 C15: the admin clicks. The address is the one the review showed; the tool refuses if git now resolves to another. */
     recordsInit: (ws: string) => call<RecordsRun>('POST', `/api/w/${ws}/records/init`, {}),
     recordsMark: (ws: string, url: string | null) => call<RecordsRun>('POST', `/api/w/${ws}/records/remote`, url === null ? { on: false } : { on: true, url }),

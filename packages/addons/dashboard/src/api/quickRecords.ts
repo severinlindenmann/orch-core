@@ -56,6 +56,15 @@ export interface RecordsRun {
   url_hidden?: boolean
 }
 
+/** Whether Claude Code may open this workspace's folders without asking (the host's own answer, in plain words). */
+export interface ClaudeTrust {
+  available: boolean
+  on: boolean
+  offered: boolean
+  why_not: string
+  parent_config: string
+}
+
 /** What `runner` says on `/api/workspaces`, `/api/me` and the identity (host `whoami.runner`, cap `run/1`); null: the host does not say. */
 export interface RunnerInfo {
   connected: boolean

@@ -9,7 +9,7 @@ import { methodLabel, type SignContent } from '@/api/signing'
 // material, the fingerprint, the code and the exact terminal command, and follows the outcome (design 4).
 import { Loader2 } from 'lucide-react'
 import { Link, useRouter } from '@tanstack/react-router'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
@@ -26,8 +26,8 @@ import { ClickProblemBox, RefusalDevices, TechnicalDetails } from './RefusalDevi
 import { ClickSignPanel } from './ClickSignPanel'
 import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
-import { HubAddonPanel, HubSettingsPanel, HubSignPanel, NotFromHub } from './HubSignPanel'
-import { hubOnly, hubRequestOf, hubSettingsSplit, isAddonGrant } from '@/api/hubsign'
+import { HubAddonPanel, HubSettingsPanel } from './HubSignPanel'
+import { hubSettingsSplit, isAddonGrant } from '@/api/hubsign'
 import { Inline, Raw } from './visible'
 import { failedSubmit, useHandoff, type HandoffPhase } from './useHandoff'
 import { fmtClock } from '@/lib/time'
@@ -134,8 +134,8 @@ export function SignPopover(p: SignPopoverProps) {
   // V3 C11 (D78/D81): in full hub mode no local key signs; the dialog shows the hub panel and prepares nothing here.
   // The workspace card can be older than the host's mode (the hub was joined after this page loaded): the host's own
   // `sign.hub_only` refusal turns the review into the hub approval (below), the same as for an add-on.
-  const [hubRefused, setHubRefused] = useState(false)
-  const viaHub = hubOnly(here) || p.forceHub === true || hubRefused
+  // the hub is an optional extra path (A1): only when the caller asks for it, and only for what the hub can approve
+  const viaHub = p.forceHub === true && (isAddonGrant(p.action) || !!hubSettingsSplit(p.action))
   // Click-to-sign (H5c): offered where the signer says the flag is on and it can sign, for the actions it serves.
   const click = useClickSign(p.ws, (_phase, state, request) => {
     if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
@@ -171,9 +171,6 @@ export function SignPopover(p: SignPopoverProps) {
       p.onSettled?.('failed', state, request)
     }, () => {})
   }, [click.phase, click.problem, click.prepared, p.ws, p.onSettled])
-  const refusedByHost = [click.error, run.error].some((e) => (e as { code?: string } | null)?.code === 'sign.hub_only')
-  const queryClient = useQueryClient()
-  useEffect(() => { if (refusedByHost) { setHubRefused(true); void queryClient.invalidateQueries({ queryKey: ['workspaces'] }) } }, [refusedByHost, queryClient])
   const clickOpen = click.phase !== 'idle'
   const [waitUntil, setWaitUntil] = useState(0)
   const shared = !!here && workspaces.some((o) => o.id !== here.id && sharesPrefix(o, here))
@@ -285,10 +282,9 @@ export function SignPopover(p: SignPopoverProps) {
   const cliOnly = (v: unknown) => run.error?.code === 'gate.incomplete' && typeof v === 'string' && /\borch describe\b/.test(v)
 
   if (viaHub) {
-    const request = hubRequestOf(p.action)
     return (
       <SignShell inline={p.inline} anchor={anchor} open onDismiss={p.onClose} title={<Inline>{p.title}</Inline>} description={null} showClose onOpenAutoFocus={(e) => e.preventDefault()}>
-        {isAddonGrant(p.action) && p.ws ? <HubAddonPanel ws={p.ws} action={p.action} onDone={() => p.onSettled?.('done', null, null)} /> : hubSettingsSplit(p.action) && p.ws ? <HubSettingsPanel ws={p.ws} action={p.action as Extract<HandoffAction, { action: 'settings_set' }>} onDone={() => p.onSettled?.('done', null, null)} /> : request && p.ws ? <HubSignPanel ws={p.ws} request={request} /> : <NotFromHub action={p.action?.action} />}
+        {isAddonGrant(p.action) && p.ws ? <HubAddonPanel ws={p.ws} action={p.action} onDone={() => p.onSettled?.('done', null, null)} /> : hubSettingsSplit(p.action) && p.ws ? <HubSettingsPanel ws={p.ws} action={p.action as Extract<HandoffAction, { action: 'settings_set' }>} onDone={() => p.onSettled?.('done', null, null)} /> : null}
         <div className="flex justify-end gap-2">
           <Button variant="outline" ref={cancelRef} onClick={p.onClose}>
             Close

@@ -62,6 +62,12 @@ try {
   });
   assert(keyInfo.extractable === false && keyInfo.exported === "no", "private key must not be extractable");
 
+  if (process.env.S5_STOP === "register") {
+    console.log("S5 browser: ok (registered)");
+    await browser.close();
+    process.exit(0);
+  }
+
   // review the question and sign it
   await page.getByText("CSV or API?").first().waitFor();
   await page.getByRole("button", { name: "Review" }).first().click();

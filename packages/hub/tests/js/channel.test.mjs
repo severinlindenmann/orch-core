@@ -33,7 +33,7 @@ test("signProof only takes a 32-byte digest", async () => {
 
 test("the registration challenge is checked field by field before signing", async () => {
   const g = await generateKey();
-  const me = { keyPub: g.keyPub, userId: "cd".repeat(16), hubId: null };
+  const me = { keyPub: g.keyPub, userId: "cd".repeat(16), hubId: null, dev: true };
   const signed = await signRegistration(g.pair.privateKey, challenge(g), me, NOW);
   assert.ok(await verify(g.keyPub, signed.sig, utf8(LABEL_REG + cj(signed.o))));
   const other = await generateKey();
@@ -43,4 +43,18 @@ test("the registration challenge is checked field by field before signing", asyn
   ]) await assert.rejects(signRegistration(g.pair.privateKey, challenge(g, over), me, NOW), ChannelError, JSON.stringify(over));
   // once the hub is pinned, a challenge from another hub is refused
   assert.throws(() => checkChallenge(challenge(g), { ...me, hubId: "11".repeat(16) }, NOW), ChannelError);
+});
+
+test("the challenge's dev flag must match the serving hub's own mode (a real hub is not a dev hub)", async () => {
+  const g = await generateKey();
+  const base = { keyPub: g.keyPub, userId: "cd".repeat(16), hubId: null };
+  // real hub (dev:false) accepts its own dev:false challenge, and refuses a dev:true one
+  const real = { ...base, dev: false };
+  const signed = await signRegistration(g.pair.privateKey, challenge(g, { dev: false }), real, NOW);
+  assert.ok(await verify(g.keyPub, signed.sig, utf8(LABEL_REG + cj(signed.o))));
+  await assert.rejects(signRegistration(g.pair.privateKey, challenge(g, { dev: true }), real, NOW), ChannelError);
+  // dev hub: the reverse
+  await assert.rejects(signRegistration(g.pair.privateKey, challenge(g, { dev: false }), { ...base, dev: true }, NOW), ChannelError);
+  // an unknown hub mode never signs
+  assert.throws(() => checkChallenge(challenge(g), base, NOW), ChannelError);
 });

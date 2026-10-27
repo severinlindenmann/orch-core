@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -137,6 +138,30 @@ describe('Sign is armed by presentation', () => {
     act(() => void window.dispatchEvent(new Event('focus')))
     act(() => void vi.advanceTimersByTime(ARM_MS + 10))
     expect(sign()).toBeEnabled()
+  })
+
+  it('says "Ready in a moment" while disabled, never signs by itself, and names the real button after a too-soon refusal', () => {
+    const onSign = vi.fn()
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <ClickSignPanel
+          answer={answer()}
+          signing={false}
+          onSign={onSign}
+          onCancel={vi.fn()}
+          label="Approve and turn on"
+          problem={{ title: 'Too soon', body: 'Nothing was signed. Press the button again.', next: 'retry' }}
+        />
+      </QueryClientProvider>,
+    )
+    const b = screen.getByRole('button', { name: 'Approve and turn on' })
+    expect(b).toBeDisabled()
+    expect(screen.getByTestId('sign-arming')).toHaveTextContent('Ready in a moment')
+    expect(screen.getByText(/Press Approve and turn on again/)).toBeInTheDocument()
+    arm()
+    expect(b).toBeEnabled()
+    expect(screen.queryByTestId('sign-arming')).toBeNull()
+    expect(onSign).not.toHaveBeenCalled()
   })
 
   it('arms after one second, the signer’s own dwell', () => {

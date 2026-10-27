@@ -362,9 +362,9 @@ class Ports(Protocol):
     def runner_hello(self, wid: str, timeout: float) -> bool: ...
     def runner_refresh(self) -> None: ...
     def records_setup(self, wid: str, root: Path) -> None: ...
-    def trust_folder(self, root: Path) -> bool | None: ...
+    def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool | None: ...
 
-    def trust_why(self, root: Path) -> str: ...
+    def trust_why(self, root: Path, *, allow_parent: bool = False) -> str: ...
     def background_blocked(self) -> list[str]: ...  # io.orch labels macOS turned off (Login Items & Extensions)
     def workspace(self, wid: str) -> Any: ...  # a connection: .call(op, args, **kw) -> result dict; .close()
     def unlock(self, wid: str, passphrase: str | None, digest: str, fields: tuple[tuple[str, str], ...]) -> Any: ...
@@ -691,13 +691,13 @@ class Creator:
             return
         self.run.set("trust", "doing")
         try:
-            ok = self.ports.trust_folder(self.root)
+            ok = self.ports.trust_folder(self.root, allow_parent=bool(self.profile.get("trust_parent")))
         except Exception:  # noqa: BLE001 - Claude Code simply asks itself, as before
             ok = False
         if ok is False:
             why = ""
             with contextlib.suppress(Exception):
-                why = self.ports.trust_why(self.root)
+                why = self.ports.trust_why(self.root, allow_parent=bool(self.profile.get("trust_parent")))
             if why:
                 self.run.explain("trust", why)
         self.run.set("trust", "skipped" if ok is False else "done")
@@ -1074,10 +1074,10 @@ class RealPorts:
     def git_init(self, root: Path) -> None:
         init_repository(root)
 
-    def trust_folder(self, root: Path) -> bool:
+    def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool:
         from .claude_folder import trust_folder
 
-        return trust_folder(self.env, root)
+        return trust_folder(self.env, root, allow_parent=allow_parent)
 
     def background_blocked(self) -> list[str]:
         import sys
@@ -1086,11 +1086,11 @@ class RealPorts:
 
         return blocked_orch_labels(Env(env=self.env, out=sys.stdout, err=sys.stderr))
 
-    def trust_why(self, root: Path) -> str:
+    def trust_why(self, root: Path, *, allow_parent: bool = False) -> str:
         """Why the trust step was skipped, in plain words (shown on the page and in the setup log)."""
         from .claude_folder import refusal
 
-        return refusal(self.env, root) or (
+        return refusal(self.env, root, allow_parent=allow_parent) or (
             "Claude Code has no settings file yet (~/.claude.json): start claude once, then allow it in Settings."
         )
 

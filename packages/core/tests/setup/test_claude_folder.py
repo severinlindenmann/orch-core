@@ -75,15 +75,32 @@ def test_a_folder_with_foreign_project_config_is_not_offered_and_nothing_is_writ
         assert json.loads((home / ".claude.json").read_text()) == {"projects": {}}
 
 
-def test_config_in_a_parent_folder_does_not_block_a_workspace_below_it(tmp_path):
+def test_config_above_the_folder_is_named_and_trusted_only_on_the_explicit_choice(tmp_path):
     home, env = _home(tmp_path, {"projects": {}})
     docs = tmp_path / "work" / "Documents"
     (docs / ".claude").mkdir(parents=True)
-    (docs / "CLAUDE.md").write_text("mine")
     root = docs / "demo1"
-    root.mkdir()
-    assert claude_folder.foreign_config(root, env) is False and claude_folder.refusal(env, root) is None
-    assert claude_folder.trust_folder(env, root) is True
+    (root / ".orch").mkdir(parents=True)
+    assert claude_folder.parent_config(root, env) == os.path.join(os.path.realpath(docs), ".claude")
+    why = claude_folder.refusal(env, root)
+    assert why and ".claude" in why and "apply to this folder too" in why
+    assert claude_folder.trust_folder(env, root) is False  # default: Claude Code asks
+    from orch.runner.claude_trust import _consented
+
+    assert not _consented(os.path.realpath(root)) and json.loads((home / ".claude.json").read_text()) == {
+        "projects": {}
+    }
+    assert claude_folder.trust_folder(env, root, allow_parent=True) is True  # "trust anyway"
+    assert _consented(os.path.realpath(root))
+
+
+def test_config_in_the_root_itself_is_never_trusted_even_with_trust_anyway(tmp_path):
+    home, env = _home(tmp_path, {"projects": {}})
+    root = tmp_path / "ws"
+    (root / ".orch").mkdir(parents=True)
+    (root / ".mcp.json").write_text("{}")
+    assert claude_folder.offered(env, root, allow_parent=True) is False
+    assert claude_folder.trust_folder(env, root, allow_parent=True) is False
 
 
 def test_a_refusal_names_the_file_found_in_the_folder(tmp_path):

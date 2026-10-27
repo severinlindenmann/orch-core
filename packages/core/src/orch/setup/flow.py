@@ -211,8 +211,12 @@ class SetupFlow:
             "agent_hours": list(AGENT_HOURS),
             "git": facts.git_state(Path(self.dir)) if self.dir else {"repo": True},
             "claude": {
-                "available": bool(self.dir) and self.mode == "new" and claude_folder.offered(self.e.env, self.dir),
-                "why_not": (claude_folder.refusal(self.e.env, self.dir) or "") if self.dir else "",
+                "available": bool(self.dir)
+                and self.mode == "new"
+                and claude_folder.offered(self.e.env, self.dir, allow_parent=True),
+                "why_not": (claude_folder.refusal(self.e.env, self.dir, allow_parent=True) or "") if self.dir else "",
+                # config above the folder: shown by path, trusted only on the explicit "trust anyway"
+                "parent_config": (claude_folder.parent_config(self.dir, self.e.env) or "") if self.dir else "",
             },
             "relay": {"available": bool(relay.get("available")), "enabled": bool(relay.get("enabled"))},
             "missing": missing,
@@ -275,7 +279,9 @@ class SetupFlow:
             raise SetupError("invalid.input", "git init is offered for a new workspace in a folder without git", 400,
                              field="git_init")  # fmt: skip
         if p["trust_folder"] and (
-            self.mode != "new" or not self.dir or not claude_folder.offered(self.e.env, self.dir)
+            self.mode != "new"
+            or not self.dir
+            or not claude_folder.offered(self.e.env, self.dir, allow_parent=bool(p["trust_parent"]))
         ):
             raise SetupError("invalid.input", "Claude Code trust is not offered for this folder", 400,
                              field="trust_folder")  # fmt: skip

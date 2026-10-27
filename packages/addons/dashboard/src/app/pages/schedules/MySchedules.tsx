@@ -146,7 +146,7 @@ function NewScheduleDialog({ ws, tickets, onClose }: { ws: string; tickets?: Tic
     queryKey: ['schedule-tickets', ws],
     enabled: !tickets,
     queryFn: async () => {
-      const list = (await api.listTickets(ws, { status: ['open', 'in_progress'] })) as unknown as TicketOption[]
+      const list = (await api.listTickets(ws, { status: ['open', 'in-progress'] })) as unknown as TicketOption[]
       return list
     },
   })

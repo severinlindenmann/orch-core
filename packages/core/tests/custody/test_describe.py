@@ -173,6 +173,19 @@ CASES: dict[str, tuple[str, dict]] = {
         },
     ),
     "followup.restored": (TICKET, {"followup": "fu_01J9ZK4Q7M3R8T2V6X0B5N1C9D"}),
+    "schedule.set": (
+        TICKET,
+        {
+            "schedule": "sc_01J9ZK4Q7M3R8T2V6X0B5N1C9D",
+            "brief": "Check the import.",
+            "label": "Weekly",
+            "rule": {"every": "week", "at": "09:00", "tz": "UTC", "weekdays": [0]},
+            "starts": "2026-10-28T09:00:00Z",
+            "ends": "2026-11-27T09:00:00Z",
+            "run_hours": 8,
+        },
+    ),
+    "schedule.cancelled": (TICKET, {"schedule": "sc_01J9ZK4Q7M3R8T2V6X0B5N1C9D"}),
     "ticket.created": (TICKET, {"key": "DEMO-0042", "ticket_type": "feature", "title": "Login", "owner": PERSON}),
     "ticket.updated": (
         TICKET,

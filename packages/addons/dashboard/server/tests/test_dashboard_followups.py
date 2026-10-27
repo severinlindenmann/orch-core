@@ -4,7 +4,7 @@ import pytest
 from conftest import ORIGIN
 
 from orch_dashboard import followups
-from orch_dashboard.handoff import FollowupCancel, expected, host_call
+from orch_dashboard.handoff import FollowupCancel, FollowupReschedule, FollowupUndo, expected, host_call
 
 FU = "fu_" + "0" * 26
 
@@ -109,7 +109,12 @@ def test_a_follow_up_grant_is_listed_with_its_parent():
     assert [g.parent for g in out] == [None, parent]
 
 
-def test_cancel_names_the_ticket_the_follow_up_is_on(gateway, stub, monkeypatch):
+@pytest.mark.parametrize("cls,action,extra,args", [
+    (FollowupCancel, "followup_cancel", {}, {"id_or_ref": FU}),
+    (FollowupReschedule, "followup_reschedule", {"when": "2026-10-28T09:00:00Z"}, {"id": FU, "when": "2026-10-28T09:00:00Z"}),
+    (FollowupUndo, "followup_undo", {}, {"id": FU}),
+])
+def test_cancel_names_the_ticket_the_follow_up_is_on(gateway, stub, monkeypatch, cls, action, extra, args):
     import pytest
 
     from orch_dashboard import handoff
@@ -124,9 +129,9 @@ def test_cancel_names_the_ticket_the_follow_up_is_on(gateway, stub, monkeypatch)
     link = gateway.enabled(stub.ws)
     monkeypatch.setattr(gateway, "link", lambda ws: link)
     monkeypatch.setattr(gateway, "call", call)
-    ok = FollowupCancel(action="followup_cancel", key="DEMO-0001", id=FU)
-    assert handoff.plan(gateway, stub.ws, ok).args == {"id_or_ref": FU}
-    other = FollowupCancel(action="followup_cancel", key="DEMO-0001", id=FU[:-1] + "1")
+    ok = cls(action=action, key="DEMO-0001", id=FU, **extra)
+    assert handoff.plan(gateway, stub.ws, ok).args == args
+    other = cls(action=action, key="DEMO-0001", id=FU[:-1] + "1", **extra)
     with pytest.raises(HostError):
         handoff.plan(gateway, stub.ws, other)
     assert ("follow_up.list", {"ref": "DEMO-0001", "all": True}) in seen
@@ -140,3 +145,80 @@ def test_only_a_revoke_may_name_a_follow_up_grant():
     for cls, extra in ((handoff.RunnerGrant, {"hours": 1, "scope": "workable", "extend": fgr}),):
         with pytest.raises(Exception):  # noqa: B017, PT011
             cls(action="runner_grant", **extra)
+
+
+@pytest.mark.parametrize("field", ["due", "deadline"])
+def test_reschedule_is_one_fixed_op_and_exact_event(field):
+    from orch_dashboard.handoff import FollowupReschedule
+
+    when = "2026-10-28T09:00:00.123Z"
+    action = FollowupReschedule(action="followup_reschedule", key="DEMO-0001", id=FU, when=when)
+    assert host_call(action) == ("follow_up.reschedule", {"id": FU, "when": when})
+    ok = expected(action)
+    event = {"type": "followup.rescheduled", "followup": FU, field: "2026-10-28T09:00:00Z"}
+    assert ok([event])
+    for wrong in [
+        {**event, "followup": FU[:-1] + "1"},
+        {**event, field: "2026-10-28T09:00:01Z"},
+        {**event, "due": when, "deadline": when},
+        {**event, field: None},
+        {"type": "followup.rescheduled", "followup": FU},
+    ]:
+        assert not ok([wrong])
+    assert not ok([event, event])
+    assert not ok([])
+
+
+@pytest.mark.parametrize("when", ["2026-10-28", "2026-10-28T09:00:00+00:00", "tomorrow"])
+def test_reschedule_requires_utc_instant(when):
+    from pydantic import ValidationError
+    from orch_dashboard.handoff import FollowupReschedule
+
+    with pytest.raises(ValidationError):
+        FollowupReschedule(action="followup_reschedule", key="DEMO-0001", id=FU, when=when)
+
+
+def test_undo_is_one_fixed_op_and_exact_event():
+    from orch_dashboard.handoff import FollowupUndo
+
+    action = FollowupUndo(action="followup_undo", key="DEMO-0001", id=FU)
+    assert host_call(action) == ("follow_up.undo", {"id": FU})
+    ok = expected(action)
+    event = {"type": "followup.restored", "followup": FU}
+    assert ok([event])
+    assert not ok([{**event, "followup": FU[:-1] + "1"}])
+    assert not ok([{**event, "type": "followup.cancelled"}])
+    assert not ok([event, event])
+
+
+@pytest.mark.parametrize("reschedule,undo", [(True, False), (False, True), (True, True), (False, False)])
+@pytest.mark.parametrize("role", ["member", "viewer"])
+def test_action_support_flags(client, token, stub, gateway, fu_host, monkeypatch, reschedule, undo, role):
+    link = gateway.enabled(stub.ws)
+    for op, supported in [("follow_up.reschedule", reschedule), ("follow_up.undo", undo)]:
+        if supported:
+            link.welcome["ops"][op] = 1
+        else:
+            link.welcome["ops"].pop(op, None)
+    original = link.call
+
+    def call(op, args=None, **kwargs):
+        if op == "member.list":
+            data = original(op, args, **kwargs)
+            return {**data, "members": [{**m, "role": role} if m["person"] == stub.person else m for m in data["members"]]}
+        return original(op, args, **kwargs)
+
+    monkeypatch.setattr(link, "call", call)
+    got = client.get(f"/api/w/{stub.ws}/followups", headers=headers(token))
+    assert got.json()["can"] == {
+        "cancel": role != "viewer",
+        "reschedule": reschedule and role != "viewer",
+        "undo": undo and role != "viewer",
+    }
+
+
+@pytest.mark.parametrize("state", ["pending", "needs_person", "cancelled", "fired"])
+@pytest.mark.parametrize("mine,role", [(True, "member"), (False, "member"), (False, "owner"), (False, "maintainer")])
+def test_row_reschedule_permission(state, mine, role):
+    result = followups.row({"id": FU, "state": state, "person": "me" if mine else "other"}, {}, "me", role)
+    assert result["can_reschedule"] == (state in ("pending", "needs_person") and (mine or role in followups.MANAGERS))

@@ -2,9 +2,9 @@
 
 Read only. The host's own `follow_up.list` (a registry read, served on the workspace socket under the viewer's
 visibility) is the only source; this module adds the ticket title and what the viewer may do, and withholds hidden text.
-It writes nothing: Cancel is a signed hand-off (`handoff.py`, action `followup_cancel`), Run now is the normal
-Start agent flow, Hide is a per-person choice the page keeps. What the host cannot do yet (Reschedule, Undo of a Cancel)
-is said in `can`, so the page never offers it.
+It writes nothing: Cancel, Reschedule and Undo are signed hand-offs in `handoff.py`. Run now is the normal
+Start agent flow; Hide is a per-person choice the page keeps. Host support for Reschedule and Undo is
+reported in `can`, so the page offers only supported actions.
 """
 
 from __future__ import annotations
@@ -69,6 +69,7 @@ def row(r: dict, titles: dict, who: str, role: str) -> dict | None:
         "label": display(r.get("label")),
         # the host decides who may cancel; the page only hides a button it knows is refused
         "can_cancel": live and (mine or role in MANAGERS),
+        "can_reschedule": live and (mine or role in MANAGERS),
     }
 
 
@@ -96,6 +97,10 @@ def register(app: FastAPI, gateway: Gateway) -> None:
             "available": True,
             "role": role,
             # What this host can do. A page never offers what is false here.
-            "can": {"cancel": role != "viewer", "reschedule": False, "undo": False},
+            "can": {
+                "cancel": role != "viewer",
+                "reschedule": role != "viewer" and link.supports("follow_up.reschedule", "ops/1"),
+                "undo": role != "viewer" and link.supports("follow_up.undo", "ops/1"),
+            },
             "rows": rows,
         }

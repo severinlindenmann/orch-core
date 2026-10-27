@@ -127,6 +127,19 @@ class FollowupCancel(Action):
     id: Annotated[str, StringConstraints(pattern=r"^fu_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 
 
+class FollowupReschedule(Action):
+    action: Literal["followup_reschedule"]
+    key: Key
+    id: Annotated[str, StringConstraints(pattern=r"^fu_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+    when: Annotated[str, StringConstraints(pattern=r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$")]
+
+
+class FollowupUndo(Action):
+    action: Literal["followup_undo"]
+    key: Key
+    id: Annotated[str, StringConstraints(pattern=r"^fu_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+
+
 class NewTicket(Action):
     """A person's `new` carries the key, type, title and owner only (stream A, 11 Oct); the rest is `Details`."""
 
@@ -1006,6 +1019,8 @@ PrepareBody = Annotated[
     | Close
     | Reopen
     | FollowupCancel
+    | FollowupReschedule
+    | FollowupUndo
     | Move
     | AcceptCriterion
     | WithdrawAcceptance
@@ -1149,6 +1164,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "close", args | ({"message": action.message} if action.message else {})
         case FollowupCancel():
             return "follow_up.cancel", {"id_or_ref": action.id}
+        case FollowupReschedule():
+            return "follow_up.reschedule", {"id": action.id, "when": action.when}
+        case FollowupUndo():
+            return "follow_up.undo", {"id": action.id}
         case Reopen():
             return "reopen", {"ref": action.key} | ({"message": action.message} if action.message else {})
         case AcceptCriterion():
@@ -1349,6 +1368,22 @@ def expected(action: Action, person: str | None = None):
             return lambda ev: one(ev, "task.done", task=action.task) and _acceptance_event_ok(ev[0], person, {"task"})
         case FollowupCancel():
             return lambda ev: one(ev, "followup.cancelled", followup=action.id, reason="person")
+        case FollowupReschedule():
+            def rescheduled(ev):
+                if not one(ev, "followup.rescheduled", followup=action.id):
+                    return False
+                fields = {"due", "deadline"} & ev[0].keys()
+                if len(fields) != 1:
+                    return False
+                value = ev[0][next(iter(fields))]
+                return (
+                    isinstance(value, str)
+                    and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z", value) is not None
+                    and value[:19] == action.when[:19]
+                )
+            return rescheduled
+        case FollowupUndo():
+            return lambda ev: one(ev, "followup.restored", followup=action.id)
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():
@@ -1482,7 +1517,7 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     link = gateway.link(ws)
     key = getattr(body, "key", None)
     data = gateway.call(ws, "ticket.get", {"ref": key}) if key is not None else None
-    if isinstance(body, FollowupCancel):
+    if isinstance(body, (FollowupCancel, FollowupReschedule, FollowupUndo)):
         # the signature is for a follow-up of THIS ticket; one on another ticket is refused before any request exists
         rows = gateway.call(ws, "follow_up.list", {"ref": key, "all": True}).get("rows") or []
         if not any(isinstance(r, dict) and r.get("id") == body.id for r in rows):

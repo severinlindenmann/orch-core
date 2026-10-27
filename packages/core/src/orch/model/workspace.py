@@ -796,6 +796,7 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     # aliases belong to their hub (L2P4-C1): a rejoin restores this hub's own, another hub starts empty
     book = {k: dict(v) for k, v in h.get("alias_book", {}).items()}
     aliases = dict(book.get(e["hub_id"], {}))
+    fresh = not (h and h.get("status") == "joined")  # a new membership, not the selective-to-full switch of one
     users = {u: p for p, u in aliases.items()}
     for a in e["aliases"]:
         pid, uid = a["person_id"], a["user_id"]
@@ -806,6 +807,8 @@ def hub_joined(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     if e["hub_id"] in ledger and ledger[e["hub_id"]]["root"] != e["hk_root_pub"]:
         return Refusal(Code.HUB_INVALID, "root_mismatch")  # the hub id is derived from the root: it never changes
     ledger.setdefault(e["hub_id"], hubledger.new_ledger(e["hk_root_pub"]))
+    if fresh:  # a fresh membership never inherits an earlier one's pinned snapshot
+        ledger[e["hub_id"]] = {**ledger[e["hub_id"]], "snapshot": None}
     # the union over all hubs must stay a function: a user id another hub aliased to someone else is refused (L2P4-C1b)
     other = {u: p for hid, al in book.items() if hid != e["hub_id"] for p, u in al.items()}
     for a in e["aliases"]:
@@ -857,11 +860,15 @@ def hub_left(ws: WsCore, e: dict[str, Any], core: Core | None = None) -> Refusal
     hub_id = e["hub_id"]
 
     def change() -> None:
+        led = {k: dict(v) for k, v in h.get("ledger", {}).items()}
+        if hub_id in led:
+            led[hub_id]["snapshot"] = None  # the hub's role projection ends with the membership
         ws.hub = {
             **{k: v for k, v in h.items() if k != "member"},
             "status": "left",
             "owner_proof": None,
             "invalid": False,
+            "ledger": led,
         }  # the hub member goes with the leave
         for grant in ws.grants.values():
             if grant.hub_id == hub_id:

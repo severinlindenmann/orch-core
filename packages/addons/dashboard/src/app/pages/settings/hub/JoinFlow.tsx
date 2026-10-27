@@ -59,6 +59,7 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
       <details><summary>Technical details</summary><p>Hub id: <Raw>{info.hub_id}</Raw></p></details>
       {!signed && <ModeChoice mode={mode} onChange={setMode} />}
       <p>{mode === 'full' ? 'The hub will read everything.' : 'You choose what to share.'}</p>
+      {mode === 'full' && !info.owner_user && <p role="alert" data-testid="hub-link-old" className="text-warning">This link does not name you on the hub, so your agents could not work in this mode. Make a new connect link in the hub and paste that one.</p>}
       <p className="text-warning">{caveat}</p></>}
       {oneClick !== 'on'
         ? <NoOneClick state={oneClick} what="Connecting" />

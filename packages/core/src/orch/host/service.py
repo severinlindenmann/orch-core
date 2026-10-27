@@ -157,7 +157,11 @@ class Host:
         runner_identity: Callable[[Any], bool] | None = None,
         dev_runner: bool = False,
         dev: Any = None,
+        hook_listen: str | None = None,
+        hook_url: str | None = None,
     ) -> None:
+        #: #717: where webhook doorbells are received (HOST:PORT) and the public base URL printed to agents
+        self.hook_listen, self.hook_url, self.hooks = hook_listen, hook_url, None
         self.state_dir = Path(state_dir)
         self.host_uid = os.getuid() if host_uid is None else host_uid
         self.run_dir = Path(run_dir) if run_dir is not None else default_run_directory(self.host_uid)
@@ -395,6 +399,11 @@ class Host:
         server = Server(listener, self.registry, self.limits, ControlGate(self), welcome)
         self.servers["control"] = (server, asyncio.create_task(server.serve()))
         await self._serve_runner()
+        if self.hook_listen:
+            from .hooks import HookReceiver
+
+            self.hooks = HookReceiver(self, self.hook_listen)
+            await self.hooks.start()
         self.bus.start()
         for entry in self.registry.entries():
             if self.skipped(entry.workspace_id):
@@ -481,6 +490,7 @@ class Host:
 
     async def _serve(self, entry: Entry) -> None:
         service = WorkspaceService(entry, self.state_dir, self.host_uid, clock=self.clock)
+        service.hook_base = self.hook_url if self.hooks is not None else None
         service.bus, service.publish = self.bus, self.bus.publisher(entry.workspace_id)
         service.cursors = self.cursors
         service.blobs.quota = self.blob_quota  # §0.10: per UID across workspaces, and per host
@@ -718,6 +728,9 @@ class Host:
                 await asyncio.gather(task, return_exceptions=True)
         self._sweeper = self._checker = self._dev_logger = None
         await self.bus.stop()
+        if self.hooks is not None:
+            await self.hooks.close()
+            self.hooks = None
         for name in list(self.servers):
             pair = self.servers.pop(name)
             pair[1].cancel()

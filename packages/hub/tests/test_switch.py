@@ -386,3 +386,15 @@ def test_same_computer_comes_from_the_socket_not_the_peer():
     assert same("::ffff:100.64.0.7", "100.64.0.7")
     assert same("100.64.0.7", "100.64.0.7")  # this computer dialling its own private address
     assert not same("100.64.0.9", "100.64.0.7")  # another computer
+
+
+def test_signing_in_after_a_switch_gives_a_normal_session(w):
+    """Opus review of #1481: the "Sign in to answer" step is a plain password sign-in; its session is not a switch session."""
+    _, _, h = w.call("POST", "/switch/redeem", {"t": w.sw.issue_to_hub(w.admin, WS, "/")})
+    sw_tok = _tok(h)
+    w.browser_tokens.add(sw_tok)
+    assert w.api.d.channels.session_info(sw_tok)["via"] == "switch"
+    real = w.login(w.admin)
+    assert w.api.d.channels.session_info(real)["via"] is None
+    s, me, _ = w.call("GET", "/session", token=real)
+    assert s == 200 and me["needs_sign_in"] is False

@@ -418,6 +418,7 @@ async function addonView(wsId, raw) {
 
 // A settings change (protocol 8.8): the link a workspace's Mission Control builds, #/w/<workspace>/settings/<b64u(JSON set)>.
 // Parsed strictly, shown in this page's words, signed only after the click and the normal review.
+const isObjTerms = (t) => t !== null && typeof t === "object" && !Array.isArray(t) && Object.keys(t).sort().join() === "exp,set";
 async function settingsView(wsId, raw) {
   let terms = null;
   try {
@@ -428,11 +429,15 @@ async function settingsView(wsId, raw) {
   if (!(await refresh())) return loginView();
   const ws = await api("GET", "/me/workspaces");
   const mine = ws.status === 200 ? ws.body.workspaces.find((w) => w.workspace_id === wsId) : null;
+  const exp = terms?.exp;
+  const fresh = Number.isInteger(exp) && exp * 1000 > Date.now();
+  if (isObjTerms(terms) && !fresh) return shell("home", h("div", {}, back, banner("bad", "This link has expired", "Go back to the workspace and press Save again.")));
+  terms = isObjTerms(terms) ? terms.set : null;
   if (!settingsTermsOk(terms) || !mine) return shell("home", h("div", {}, back, banner("bad", "This link cannot be used", "It does not describe a settings change this page can show safely.")));
   const action = { type: "settings.changed", log: "workspace", set: terms };
   shell("home", h("div", {}, back,
     h("h1", { text: "Change workspace settings" }),
-    h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? wsId.slice(0, 8)) + " asks to change how long things are held." }),
+    h("p", { class: "sentence", text: "This link asks to change how long things are held in " + renderText(mine.name ?? wsId.slice(0, 8)) + ". Check the change below; nothing happens until you approve." }),
     h("dl", { class: "facts" }, settingsFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }

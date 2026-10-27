@@ -224,7 +224,9 @@ def test_a_settings_change_gets_one_fragment_link_with_the_terms(served, full):
     assert data["summary"] == {"kind": "settings", "set": {"grant_hours": 24}}
     head, frag = data["url"].split("/settings/")
     assert head.startswith(f"https://{ADDR}/#/w/") and data["url"].count("#") == 1
-    assert json.loads(base64.urlsafe_b64decode(frag + "=" * (-len(frag) % 4))) == {"grant_hours": 24}
+    terms = json.loads(base64.urlsafe_b64decode(frag + "=" * (-len(frag) % 4)))
+    assert terms["set"] == {"grant_hours": 24} and set(terms) == {"set", "exp"}
+    assert 0 < terms["exp"] - served.service.clock() <= hubhandoff.SETTINGS_LINK_TTL
 
 
 @pytest.mark.parametrize(

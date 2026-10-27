@@ -43,3 +43,11 @@ test("a session that came by the rail switch is asked to sign in, in plain words
   assert.match(src, /"Sign in to " \+ verb/);
   assert.match(src, /confirm it is you with your password and a 6-digit code/);
 });
+
+test("the settings page refuses an expired link and does not claim the workspace wrote it", async () => {
+  const src = await (await import("node:fs/promises")).readFile(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  assert.match(src, /exp \* 1000 > Date\.now\(\)/);
+  assert.match(src, /This link has expired/);
+  assert.match(src, /This link asks to change how long things are held/);
+  assert.doesNotMatch(src, /"The workspace " \+ renderText\(mine\.name \?\? wsId\.slice\(0, 8\)\) \+ " asks to change/);
+});

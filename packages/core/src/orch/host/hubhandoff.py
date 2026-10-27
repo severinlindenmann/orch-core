@@ -197,14 +197,20 @@ def _addon(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
     )
 
 
-def build_settings_url(addr: str, workspace_id: str, change: dict[str, int]) -> str:
+#: how long a settings link opens (seconds): an old link must not roll back a later change
+SETTINGS_LINK_TTL = 600
+
+
+def build_settings_url(addr: str, workspace_id: str, change: dict[str, int], expires: int) -> str:
     """The link of a settings change (27 Oct): ``https://<hub>/#/w/<workspace_id>/settings/<b64u(JSON set)>``. The hub's
-    page parses the change strictly, shows it in words and signs only after a click (``settings.changed``, 8.8)."""
+    page parses ``{"set", "exp"}`` strictly (``exp``: epoch seconds, the page refuses an expired link), shows the change
+    in words and signs only after a click (``settings.changed``, 8.8)."""
     import json
 
     from orch.crypto.encoding import b64u
 
-    body = json.dumps(change, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    terms = {"exp": int(expires), "set": change}
+    body = json.dumps(terms, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
     return f"{build_root_url(addr, workspace_id)}/settings/{b64u(body)}"
 
 
@@ -225,7 +231,9 @@ def _settings(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[s
             "kind": "settings",
             "summary": {"kind": "settings", "set": dict(sorted(change.items()))},
             "short_hash": None,
-            "url": build_settings_url(state.addr, call.service.workspace_id, dict(change)),
+            "url": build_settings_url(
+                state.addr, call.service.workspace_id, dict(change), call.service.clock() + SETTINGS_LINK_TTL
+            ),
         }
     )
 

@@ -145,7 +145,7 @@ def test_parent_revocation_is_derived_without_mutation(env):
     assert state.tickets[uid].followups[0]["reason"] == "grant_revoked"
     assert state._core.tickets[uid].followups[e["followup"]].state == "pending"
     assert (
-        replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id, hub_only=False)._core
+        replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id)._core
         == state._core
     )
 

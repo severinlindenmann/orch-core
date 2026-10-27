@@ -1,4 +1,5 @@
-"""V3 C8 (design-c8 M1, M2.2, M3): the break-glass table, the model's full-mode rule, what a leave voids and ends."""
+"""A1 (D83): a local person event is valid in every hub mode; what a leave voids and ends; the recovery shapes; the
+agent gate."""
 
 from __future__ import annotations
 
@@ -35,44 +36,25 @@ def w() -> World:
 
 
 def strict(w: World):
-    return replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id, hub_only=True)
+    return replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id)
 
 
-# --- the table -----------------------------------------------------------------------------------------------------
+# --- the model: local signing is valid in a full-mode position ----------------------------------------------------
 
 
-def test_the_set_is_exactly_leave_recover_repin_rotate_and_the_1097_rows():
-    assert set(breakglass.BREAK_GLASS) == {
-        "hub.leave", "device.recover", "hub.repin", "keys.rotate", "device.rotate", "device.mark_exposed",
-    }  # fmt: skip
-    assert breakglass.event_types() == {
-        "hub.left", "device.added", "hub.repinned", "device.rotated", "device.exposed",
-    }  # fmt: skip
-
-
-# --- the model rule ------------------------------------------------------------------------------------------------
-
-
-def test_a_local_person_event_in_full_mode_is_refused_and_leave_is_not(w):
+@pytest.mark.parametrize("auth", ["passphrase", "convenience", "secure-enclave-unlocked", "webauthn"])
+def test_a_local_person_event_in_full_mode_is_admitted_whatever_the_way_of_signing(w, auth):
     st = strict(w)
-    e = w.build_unappended("workspace", "settings.changed", "sev", roster_v=w.roster_v, set={"claim_ttl_min": 30})
-    assert admit(st, e, log="workspace").code == Code.SIGN_HUB_ONLY
-    left = w.build_unappended("workspace", "hub.left", "sev", roster_v=w.roster_v, hub_id=HUB, binding_seq=1)
-    assert not hasattr(admit(st, left, log="workspace"), "code")
-
-
-def test_a_selective_or_left_workspace_signs_locally():
-    w = World(validate=False).bootstrap({})
-    hub_joined(w, [], mode="selective")
-    e = w.build_unappended("workspace", "settings.changed", "sev", roster_v=w.roster_v, set={"claim_ttl_min": 30})
-    assert not hasattr(admit(strict(w), e, log="workspace"), "code")
-
-
-def test_an_excluded_owner_device_still_signs_the_leave(w):
-    """Exclusion is a hub-custodial line; the model never feeds it into the break-glass check (C10 also refuses it)."""
-    st = strict(w)
-    e = w.build_unappended("workspace", "hub.left", "sev", roster_v=w.roster_v, hub_id=HUB, binding_seq=1)
+    e = w.build_unappended(
+        "workspace", "settings.changed", "sev", roster_v=w.roster_v, set={"claim_ttl_min": 30}, auth=auth
+    )
     assert not hasattr(admit(st, e, log="workspace"), "code")
+
+
+def test_a_non_owner_member_follows_the_roster_not_the_hub(w):
+    """Local authority is the roster: the maintainer cannot change settings locally, in any hub mode."""
+    e = w.build_unappended("workspace", "settings.changed", "mara", roster_v=w.roster_v, set={"claim_ttl_min": 30})
+    assert hasattr(admit(strict(w), e, log="workspace"), "code")
 
 
 # --- a leave voids what the hub decided and ends what it granted ---------------------------------------------------
@@ -138,33 +120,11 @@ def test_leave_ends_grants_the_hub_requested_and_no_others():
     assert not ws.grants["gr_own"].revoked and not ws.grants["gr_other"].revoked
 
 
-# --- the signer is classified fail closed (security review of the first push) ----------------------------------------
+# --- the recovery shapes and the agent gate -----------------------------------------------------------------------
 
 
 def _leave(w, who="sev", **extra):
     return w.build_unappended("workspace", "hub.left", who, roster_v=w.roster_v, hub_id=HUB, binding_seq=1, **extra)
-
-
-@pytest.mark.parametrize("auth", ["secure-enclave", "secure-enclave-unlocked", "webauthn", "tpm", "windows-hello"])
-def test_only_the_passphrase_label_is_the_owners_terminal(w, auth):
-    r = admit(strict(w), _leave(w, auth=auth), log="workspace")
-    assert r.code == Code.SIGN_HUB_ONLY
-
-
-def test_a_passphrase_leave_by_the_owners_own_device_is_allowed(w):
-    assert not hasattr(admit(strict(w), _leave(w, auth="passphrase"), log="workspace"), "code")
-
-
-def test_a_relay_signed_leave_is_refused(w):
-    r = admit(strict(w), _leave(w, signed_by=["p_x", "d_x"]), log="workspace")
-    assert r.code == Code.SIGN_HUB_ONLY
-
-
-def test_a_device_that_is_not_the_actors_is_not_the_owners_key(w):
-    e = _leave(w)
-    e["actor"] = {**e["actor"], "device": w.dev["tom"]}
-    assert breakglass.signer_kind(strict(w)._core.ws, e) == "other"
-    assert not breakglass.allowed("hub.leave", "other")
 
 
 def _lose_device(w):
@@ -191,79 +151,37 @@ def _admit_append(w, e):
     w._append("workspace", e)
 
 
-def test_the_recovery_shape_is_its_own_kind(w):
+def test_the_recovery_shape_is_recognised(w):
     newdev, actor = _lose_device(w)
     ws = strict(w)._core.ws
-    e = _recovery(w, newdev, actor)
-    assert breakglass.is_recovery(ws, e) and breakglass.signer_kind(ws, e) == "pk"
-    assert breakglass.allowed("device.recover", "pk") and not breakglass.allowed("hub.repin", "owner_device_key")
+    assert breakglass.is_recovery(ws, _recovery(w, newdev, actor))
 
 
-def test_lost_device_pk_recovery_is_admitted_then_the_new_device_leaves(w):
-    """L2-C8i-1, end to end: the owner's only device is lost, a hub-joined full-mode workspace still lets the owner
-    recover with the recovery key (append and replay) and leave with the recovered device."""
+def test_lost_device_recovery_is_admitted_then_the_new_device_leaves(w):
     newdev, actor = _lose_device(w)
     assert admit(strict(w), _leave(w), log="workspace").code == Code.DEVICE_INVALID  # the lost device itself: no
     _admit_append(w, _recovery(w, newdev, actor))
     left = w.build_unappended("workspace", "hub.left", actor, roster_v=w.roster_v, hub_id=HUB, binding_seq=1)
-    assert breakglass.signer_kind(strict(w)._core.ws, left) == "owner_device_key"
     _admit_append(w, left)
     assert strict(w)._core.ws.hub.get("status") != "joined"
 
 
-def test_recovery_by_a_non_owner_or_with_a_valid_device_or_another_signer_is_refused(w):
-    newdev, actor = _lose_device(w)
-    # a valid device exists (tom's own): tom's "recovery" is not the recovery shape, the device is unknown
-    t_actor = {"kind": "person", "id": w.people["tom"], "device": "d_" + newdev}
-    e = w.build_unappended(
-        "workspace", "device.added", t_actor, roster_v=w.roster_v, device="d_" + newdev,
-        cert=cert(w.people["tom"][2:], newdev),
-    )  # fmt: skip
-    assert admit(strict(w), e, log="workspace").code == Code.DEVICE_UNKNOWN
-    # the owner has no valid device, but a non-owner member with none either: refused as break-glass is owner only
-    w.wev(
-        "device.revoked", w.HOST, device=w.dev["tom"], reason="lost",
-        revocation=revocation(w.people["tom"][2:], w.dev["tom"][2:], "lost"),
-    )  # fmt: skip
-    e = w.build_unappended(
-        "workspace", "device.added", t_actor, roster_v=w.roster_v, device="d_" + newdev,
-        cert=cert(w.people["tom"][2:], newdev),
-    )  # fmt: skip
-    assert admit(strict(w), e, log="workspace").code == Code.SIGN_HUB_ONLY
-    # a labelled (not terminal) recovery, a relay-signed one, and a convenience-labelled one
-    for extra in ({"auth": "convenience"}, {"auth": "secure-enclave-unlocked"}, {"signed_by": ["p_x", "d_x"]}):
-        r = admit(strict(w), _recovery(w, newdev, actor, **extra), log="workspace")
-        assert r.code == Code.SIGN_HUB_ONLY, extra
-
-
-def test_an_ordinary_device_added_in_full_mode_is_still_refused(w):
-    """A plain ``device.added`` by the owner's valid device is not the recovery shape: it needs the hub."""
+def test_an_ordinary_device_added_in_full_mode_is_admitted_for_the_owner(w):
     newdev = hex32("plain")
     e = w.build_unappended(
         "workspace", "device.added", "sev", roster_v=w.roster_v, device="d_" + newdev,
         cert=cert(w.people["sev"][2:], newdev),
     )  # fmt: skip
-    assert admit(strict(w), e, log="workspace").code == Code.SIGN_HUB_ONLY
+    assert not hasattr(admit(strict(w), e, log="workspace"), "code")
 
 
-def test_agent_and_hub_cannot_recover_a_device(w):
-    newdev, actor = _lose_device(w)
-    e = _recovery(w, newdev, actor)
-    assert breakglass.signer_kind(strict(w)._core.ws, {**e, "actor": {**actor, "via": "ch"}}) == "hub"
-    assert breakglass.signer_kind(strict(w)._core.ws, {**e, "actor": {**actor, "kind": "agent"}}) == "agent"
-
-
-def test_an_agent_cannot_write_a_human_only_event_in_full_mode():
+def test_an_agent_cannot_write_a_human_only_event_in_any_mode():
     w = World(validate=False).bootstrap({"mara": "maintainer"})
     gid = w.grant("sev")
-    u = w.ticket()  # made before the join: a full-mode workspace takes no local ticket
+    u = w.ticket()
     hub_joined(w, [])
-    assert {"gate.approved", "ticket.closed", "grant.issued", "verdict.given"} <= breakglass.human_only_types()
-    assert "task.done" not in breakglass.human_only_types() and "log.added" not in breakglass.human_only_types()
     ag = w.agent("sev", gid)
     e = w.build_unappended(u, "ticket.closed", ag)
-    # the actor-kind rule already refuses it; the full-mode check is the second line of defence at the same choke point
-    assert admit(strict(w), e, log=u).code in (Code.EVENT_BAD_ACTOR, Code.SIGN_HUB_ONLY)
-    assert breakglass.agent_refusal(strict(w)._core.ws, e).code == Code.SIGN_HUB_ONLY
+    assert admit(strict(w), e, log=u).code == Code.EVENT_BAD_ACTOR
     e = w.build_unappended(u, "log.added", ag, text="hello")
-    assert getattr(admit(strict(w), e, log=u), "code", None) != Code.SIGN_HUB_ONLY  # agents keep their other writes
+    assert not hasattr(admit(strict(w), e, log=u), "code")

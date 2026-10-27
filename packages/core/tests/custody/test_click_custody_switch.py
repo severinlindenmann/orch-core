@@ -379,14 +379,9 @@ def test_a_crash_after_the_selection_write_leaves_a_scalar_that_off_sweeps(switc
 
 
 def test_off_works_in_full_hub_mode(switch, monkeypatch):
-    """Opus B: the way back is never refused by the entry refusals."""
+    """The way back is never refused."""
     signer, state, provider, *_ = switch
     on(signer, provider.passphrase)
-
-    def refuse(*a, **k):
-        raise AssertionError("turning convenience off must not call an entry refusal")
-
-    monkeypatch.setattr(select, "refuse_full_mode", refuse)
     assert off(signer, passphrase=STRONG)["custody"] == "passphrase"
 
 
@@ -631,35 +626,18 @@ def test_on_is_refused_up_front_while_a_reader_is_below_level_1_and_nothing_move
     assert not flag(state) and signer.status({})["workspaces"][0]["custody"] == "passphrase"
 
 
-def _hub_only(*a, **k):
+def _interrupted(*a, **k):
     from orch.host.errors import HostError
 
-    raise HostError("sign.hub_only", "this workspace is in full hub mode")
+    raise HostError("internal", "the conversion was interrupted")
 
 
-def test_a_refused_finish_in_full_mode_puts_the_terminal_conversion_back(switch, monkeypatch):
-    """L2-C11f-2: finish refused with sign.hub_only after stage: no stored copy, no stuck transition."""
-    from orch.host.errors import HostError
-
-    _, state, _, store, _, _ = switch
-    before = select.read_selection(state, WS)
-    monkeypatch.setattr(select, "finish_convenience", _hub_only)
-    with pytest.raises(HostError):
-        select.convert_to_convenience(state, WS, store=store)
-    assert select.read_selection(state, WS) == before
-    st = select.status(state, WS)
-    assert st["custody"] == "passphrase" and "problem" not in st
-    assert not store.exists(WS, st["device"]) and legacy_file(state).exists()
-
-
-def test_turn_off_clears_a_stuck_convenience_transition_in_full_mode(switch, monkeypatch):
-    """L2-C11f-2: a transition left at step written (older build, or a crash) is abandoned by the way back, which never
-    calls the full-mode refusal."""
+def test_turn_off_clears_a_stuck_convenience_transition(switch, monkeypatch):
+    """L2-C11f-2: a transition left at step written (older build, or a crash) is abandoned by the way back."""
     signer, state, provider, store, _, _ = switch
-    monkeypatch.setattr(select, "finish_convenience", _hub_only)
+    monkeypatch.setattr(select, "finish_convenience", _interrupted)
     staged = select.stage_convenience(state, WS, store=store)  # what the stuck state looks like
     assert select.status(state, WS)["problem"] == "unfinished change to convenience"
-    monkeypatch.setattr(select, "refuse_full_mode", _hub_only)
     assert select.turn_off_convenience(state, WS, os.getuid(), store=store) is not None
     st = select.status(state, WS)
     assert st["custody"] == "passphrase" and "problem" not in st and not store.exists(WS, staged["device"])

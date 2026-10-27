@@ -16,7 +16,7 @@ NEW = "d_" + hex32("device-sev-new")
 
 
 def strict(w: World):
-    return replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id, hub_only=True)
+    return replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id)
 
 
 def codes(w: World) -> list[str]:

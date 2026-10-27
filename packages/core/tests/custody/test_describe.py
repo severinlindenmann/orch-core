@@ -459,3 +459,10 @@ def test_long_field_names_refuse_instead_of_truncating():
         rendered(p)
     ok = payload("settings.changed", "workspace", {"set": {"repos": {"demo": {"path": "/x"}}}})
     assert "set.repos.demo.path: /x" in rendered(ok)
+
+
+def test_a_followup_cancel_carrying_a_field_the_prompt_does_not_list_is_refused():
+    log, fields = CASES["followup.cancelled"]
+    assert set(fields) == {"followup", "reason"}
+    with pytest.raises(CustodyError, match="does not show"):
+        describe_payload(payload("followup.cancelled", log, {**fields, "sneaky": "fu_x"}))

@@ -107,3 +107,36 @@ def test_a_follow_up_grant_is_listed_with_its_parent():
     }
     out = settings.grants({"grants": [{**base, "id": parent}, {**base, "id": child, "parent": parent}]}, ext=False)
     assert [g.parent for g in out] == [None, parent]
+
+
+def test_cancel_names_the_ticket_the_follow_up_is_on(gateway, stub, monkeypatch):
+    import pytest
+
+    from orch_dashboard import handoff
+    from orch_dashboard.errors import HostError
+
+    seen = []
+
+    def call(ws, op, args=None, **kw):
+        seen.append((op, args))
+        return {"rows": [{"id": FU}]} if op == "follow_up.list" else {}
+
+    link = gateway.enabled(stub.ws)
+    monkeypatch.setattr(gateway, "link", lambda ws: link)
+    monkeypatch.setattr(gateway, "call", call)
+    ok = FollowupCancel(action="followup_cancel", key="DEMO-0001", id=FU)
+    assert handoff.plan(gateway, stub.ws, ok).args == {"id_or_ref": FU}
+    other = FollowupCancel(action="followup_cancel", key="DEMO-0001", id=FU[:-1] + "1")
+    with pytest.raises(HostError):
+        handoff.plan(gateway, stub.ws, other)
+    assert ("follow_up.list", {"ref": "DEMO-0001", "all": True}) in seen
+
+
+def test_only_a_revoke_may_name_a_follow_up_grant():
+    from orch_dashboard import handoff
+
+    fgr = "fgr_" + "0" * 26
+    assert handoff.GrantRevoke(action="grant_revoke", grant=fgr).grant == fgr
+    for cls, extra in ((handoff.RunnerGrant, {"hours": 1, "scope": "workable", "extend": fgr}),):
+        with pytest.raises(Exception):  # noqa: B017, PT011
+            cls(action="runner_grant", **extra)

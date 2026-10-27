@@ -554,7 +554,9 @@ class QuickStart(Action):
 # repo editing, and `extra="forbid"` refuses it. `grant` (issuing) is not an action: the signer draws the secret.
 
 Person = Annotated[str, StringConstraints(pattern=r"^p_[0-9a-f]{32}$")]
-GrantId = Annotated[str, StringConstraints(pattern=r"^f?gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+GrantId = Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+#: only a revoke may name a follow-up grant (`fgr_`); nothing that hands out, extends or relabels a grant takes one
+RevocableGrantId = Annotated[str, StringConstraints(pattern=r"^f?gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Role = Literal["owner", "maintainer", "member", "viewer"]
 OneLine = AfterValidator(no_hidden)  # no control, bidi, zero-width or other hidden characters (by Unicode category)
 Token = Literal["owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers"]
@@ -885,7 +887,7 @@ class PublishShare(Action):
 
 class GrantRevoke(Action):
     action: Literal["grant_revoke"]
-    grant: GrantId
+    grant: RevocableGrantId
     reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
 
 
@@ -1480,6 +1482,11 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     link = gateway.link(ws)
     key = getattr(body, "key", None)
     data = gateway.call(ws, "ticket.get", {"ref": key}) if key is not None else None
+    if isinstance(body, FollowupCancel):
+        # the signature is for a follow-up of THIS ticket; one on another ticket is refused before any request exists
+        rows = gateway.call(ws, "follow_up.list", {"ref": key, "all": True}).get("rows") or []
+        if not any(isinstance(r, dict) and r.get("id") == body.id for r in rows):
+            raise fail("not_found", "That follow-up is not on this ticket.", exit=2)
     labels = list(data["doc"].get("labels", [])) if isinstance(body, AddLabel) and data else None
     if isinstance(body, EditTicket):
         from orch.host import sequence

@@ -62,20 +62,27 @@ def committed_epoch(ctx: ReadCtx) -> int:
     return 0
 
 
-def _name(ctx: ReadCtx, prefix: str) -> str:
+def cosmetic(ctx: ReadCtx, prefix: str) -> tuple[str, Any]:
+    """The workspace name and icon (D6): unsigned, from ``config.json`` only. The name falls back to the prefix, the
+    icon to ``None`` (the automatic one)."""
     from orch import schema
     from orch.store import StoreError, fsio
 
     try:  # the store's own rules: below its pinned root (#516), no symlink, size limit, bounded nesting, schema-valid
         raw = ctx.store.fs.read_or_none("config.json")
         if raw is None:
-            return prefix
+            return prefix, None
         doc = fsio.loads(raw)
         schema.validate("workspace", doc)
         name = doc["workspace"]["name"]  # type: ignore[index]
+        icon = doc["workspace"].get("icon")  # type: ignore[index]
     except (OSError, ValueError, KeyError, TypeError, RecursionError, schema.SchemaError, StoreError):
-        return prefix
-    return name if isinstance(name, str) and name else prefix
+        return prefix, None
+    return (name if isinstance(name, str) and name else prefix), icon
+
+
+def _name(ctx: ReadCtx, prefix: str) -> str:
+    return cosmetic(ctx, prefix)[0]
 
 
 def _fingerprint(wsk_pub: str) -> str:
@@ -99,7 +106,8 @@ def workspace_show(ctx: ReadCtx) -> dict[str, Any]:
     return {
         "id": ws.workspace_id,
         "prefix": ws.prefix,
-        "name": _name(ctx, ws.prefix),
+        "name": cosmetic(ctx, ws.prefix)[0],
+        "icon": cosmetic(ctx, ws.prefix)[1],
         "genesis": ws.genesis,
         "epoch": committed_epoch(ctx),
         "wsk_fingerprint": _fingerprint(wsk),
@@ -458,7 +466,6 @@ def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
         "gates": {g: canonical_policy(thaw(ws.policies[g])) for g in GATES},
         "defaults": [k for k in SETTINGS if k not in named],
         "sign_methods": sign_methods(ctx.service, ws),
-        "icon": thaw(ws.settings["icon"]) if "icon" in ws.settings else None,
         "publish": thaw(ws.settings["publish"]) if "publish" in ws.settings else None,
         ADDONS_KEY: thaw(ws.settings[ADDONS_KEY]) if ADDONS_KEY in ws.settings else {},
         "settings_at": settings_at,
@@ -516,7 +523,6 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         "gates": data["gates"],
         "defaults": data["defaults"],
         "sign_methods": data["sign_methods"],
-        "icon": data["icon"],  # always present (null: none signed): the key means "this host knows the icon setting"
         "sub_cursor": data["sub_cursor"],
     }
     if viewer.column in ("P", "R"):  # the Publish server addresses: for a person (or their phone), not an agent (G, N)

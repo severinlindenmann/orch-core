@@ -19,6 +19,7 @@ from . import (
     agents,
     claude_trust_routes,
     click,
+    cosmetic_routes,
     focus_routes,
     followups,
     handoff,
@@ -333,6 +334,7 @@ def create_app(
     phone.register(app, gateway)
     addon_routes.register(app, gateway)
     market_routes.register(app, gateway)
+    cosmetic_routes.register(app, gateway)
     activity_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)

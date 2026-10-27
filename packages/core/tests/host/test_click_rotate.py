@@ -407,6 +407,18 @@ def test_the_terminal_path_takes_the_same_lock(served, click, monkeypatch):
             )
 
 
+def test_the_rotation_and_runner_reviews_name_the_workspace_by_prefix_and_id_not_its_unsigned_name_alone():
+    from orch.click import view as views
+
+    ws = {"id": "705d40abbb8c1c90354a1acaa94c935c", "name": "Acme", "prefix": "DEMO"}
+    assert views.workspace_label(ws) == "Acme (DEMO · a94c935c)"
+    rot = views.rotation(workspace=ws, old="d_old", new="d_new", pk="pk")
+    assert rot["lines"][0] == "Replace the signing key of this computer for Acme (DEMO · a94c935c)."
+    for on in (True, False):
+        run = views.runner_switch(workspace=ws, on=on, terminals=False, text="first\nsecond")
+        assert "Acme (DEMO · a94c935c)" in run["lines"][0]
+
+
 @pytest.mark.parametrize("events", [[], [{"type": "a"}, {"type": "b"}], ["not an object"], None, "x"])
 def test_single_event_is_one_object_or_none(events):
     from orch.click import view as views

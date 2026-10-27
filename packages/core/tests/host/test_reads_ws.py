@@ -69,7 +69,7 @@ def test_workspace_show_gives_the_identity_of_the_workspace(w):
     data = ok(c.req("workspace.show"))
     ws = w.service.store.state.workspace
     assert set(data) == {
-        "id", "prefix", "name", "genesis", "epoch", "wsk_fingerprint", "members_v", "state", "next_key",
+        "id", "prefix", "name", "genesis", "epoch", "wsk_fingerprint", "members_v", "state", "next_key", "icon",
         "required_reader",  # H12d-2
     }  # fmt: skip
     assert data["id"] == w.wid == ws.workspace_id and data["prefix"] == ws.prefix == "DEMO"

@@ -170,6 +170,8 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/records/push-initial"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/records/commit"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/records/auto-off"): (ALLOWED, "turning off"),
+    # --- the workspace name and icon (unsigned cosmetic settings, owner only; the host checks the role)
+    (PUT, W + "/workspace/cosmetic"): (ALLOWED, "owner, plain click, no signature (run 13 D6)"),
     (POST, W + "/records/auto-on"): (REFUSED, "starts a timer on this computer: local only"),
     (GET, W + "/claude-trust"): (REFUSED, "what Claude Code may open is decided on this computer"),
     (POST, W + "/claude-trust"): (REFUSED, "what Claude Code may open is decided on this computer"),

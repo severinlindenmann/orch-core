@@ -12,7 +12,7 @@ import { handoffMode } from '@/api/features'
 import { queries } from '@/api/queries'
 import { answeredNow, signedNow } from '@/api/signedDrop'
 import type { QuestionStatus } from '@/api/types'
-import { workspaceOfTicket } from '@/api/workspaces'
+import { uuid8, workspaceOfTicket } from '@/api/workspaces'
 import { useMe } from '@/app/useMe'
 import { Button } from '@/components/ui/button'
 import { Loader2 } from 'lucide-react'
@@ -218,7 +218,8 @@ function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClick
       <h3 className="text-[12px] font-medium text-text-muted">You are answering</h3>
       {showWorkspace && view.workspace?.name && (
         <p data-testid="strip-workspace" className="text-[12px] text-text-muted">
-          Workspace <Raw>{view.workspace.name}</Raw>
+          {/* the name is unsigned (D6): never alone, always after the prefix and the id tail */}
+          Workspace <Raw>{view.workspace.prefix}</Raw> · <span className="font-mono" data-ws-id>{uuid8(view.workspace.id)}</span> · <bdi><Raw>{view.workspace.name}</Raw></bdi>
         </p>
       )}
       <SignContent content={view.content!} ws={view.workspace?.id} technical={<TechnicalFacts view={view} />} compact />

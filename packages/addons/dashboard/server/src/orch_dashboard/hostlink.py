@@ -52,6 +52,7 @@ OPS = {
         "host.list",
         "whoami",
         "workspace.show",
+        "workspace.cosmetic.set",
         "host.status",
         "member.list",
         "workspace.settings",

@@ -325,7 +325,7 @@ test('long runner access is one plain click after the review; digest and fingerp
   expect(screen.getByText(/Continue in the setup window on this computer/)).toBeInTheDocument()
   expect(screen.getByText(/type yes in that window and press Enter/)).toBeInTheDocument()
   expect(screen.getByText('Waiting for you in the setup window…')).toBeInTheDocument()
-  expect(screen.getByText('The words don’t match').closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByText('Are the words different?').closest('details')).not.toHaveAttribute('open')
   expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({
     review_id: 'demo-review',
     digest: 'demo-digest',

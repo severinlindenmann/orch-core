@@ -292,3 +292,19 @@ def test_status_shows_version_and_commit_of_the_workspace_dashboard(home, monkey
     cli.main(["status"], env=ctx.env, out=out, err=err, ctx=ctx)
     line = next(ln for ln in out.getvalue().splitlines() if ln.startswith("workspace"))
     assert "1.2.3" in line and "c" * 12 in line
+
+
+def test_mac_is_told_it_cannot_open_its_own_netbird_address(home, monkeypatch):
+    ctx, out, err, _ = make(home)
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    cli.choose_address(ctx, None, {})
+    assert out.getvalue().count("cannot open its own NetBird address") == 1
+    out.truncate(0), out.seek(0)
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    cli.choose_address(ctx, None, {})
+    assert "NetBird address" not in out.getvalue()
+    out.truncate(0), out.seek(0)
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    ctx.detect = lambda: [("127.0.0.1", "this computer only")]
+    cli.choose_address(ctx, None, {})
+    assert "NetBird" not in out.getvalue()

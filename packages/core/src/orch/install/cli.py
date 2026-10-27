@@ -163,6 +163,8 @@ def choose_address(ctx: Ctx, given: str | None, st: dict[str, Any]) -> str:
     if st.get("address"):
         return st["address"]
     found = ctx.detect()
+    if sys.platform == "darwin" and any(_is_cgnat(ip) for ip, _ in found):
+        ctx.say("Note: this Mac cannot open its own NetBird address in a browser; use 127.0.0.1 on this Mac.")
     if not ctx.interactive or len(found) == 1:
         return found[0][0]
     ctx.say("Which address should the parts listen on?")
@@ -171,6 +173,15 @@ def choose_address(ctx: Ctx, given: str | None, st: dict[str, Any]) -> str:
     ctx.say("  or type your own address (an IP; a domain is only noted)")
     ans = ctx.ask("address", "1")
     return found[int(ans) - 1][0] if ans.isdigit() and 1 <= int(ans) <= len(found) else ans
+
+
+def _is_cgnat(ip: str) -> bool:
+    """100.64.0.0/10: where NetBird addresses live."""
+    try:
+        a, b, *_ = (int(x) for x in ip.split("."))
+    except ValueError:
+        return False
+    return a == 100 and 64 <= b <= 127
 
 
 def _taken(st: dict[str, Any], skip: str = "") -> set[int]:

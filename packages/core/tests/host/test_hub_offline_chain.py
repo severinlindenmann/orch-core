@@ -29,7 +29,8 @@ def switchable(loghub):  # noqa: F811
     return state
 
 
-def test_every_workspace_action_works_with_the_hub_down_and_the_hub_catches_up(human, served, stub, switchable, loghub):
+@pytest.mark.slow
+def test_the_workspace_works_with_the_hub_down_and_the_hub_catches_up(human, served, stub, switchable, loghub):
     human.run("hub.join", join_args(mode="full"))
     ok(served.client().req("hub.connect", connect_args(), idem=True))
     uid, key = human.ticket("before the outage")

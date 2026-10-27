@@ -40,9 +40,15 @@ export const queries = {
   /** The board's own copy of the ticket list (moves update it optimistically). */
   board: (ws: string) => queryOptions({ queryKey: ['board', ws], queryFn: () => api.listBoard(ws) }),
   /** Every ticket of the workspace, unfiltered (options, counts, titles). */
-  ticketsAll: (ws: string) => queryOptions({ queryKey: ['tickets', ws, 'all'], queryFn: () => api.listTickets(ws) }),
+  ticketsAll: (ws: string) => queryOptions({ queryKey: ['tickets', ws, 'all'], queryFn: () => api.listTickets(ws), staleTime: 30_000 }),
   /** The Tickets list for its server-side filters (see ticketsServerParams). */
-  tickets: (ws: string, params: ListTicketsParams) => queryOptions({ queryKey: ['tickets', ws, params], queryFn: () => api.listTickets(ws, params) }),
+  // Without a filter this is the very same read as ticketsAll: one cache entry, one request (the Tickets page asks for both).
+  tickets: (ws: string, params: ListTicketsParams) =>
+    queryOptions({
+      queryKey: ['tickets', ws, Object.values(params).every((v) => v === undefined) ? 'all' : params] as (string | ListTicketsParams)[],
+      queryFn: () => api.listTickets(ws, params),
+      staleTime: 30_000,
+    }),
   /** Closed tickets (host v1.4 leaves them out unless asked): the Tickets list's Closed filter. */
   ticketsClosed: (ws: string, params: ListTicketsParams) =>
     queryOptions({ queryKey: ['tickets', ws, 'closed', params], queryFn: () => api.listTickets(ws, { ...params, status: ['closed'] }) }),
@@ -53,7 +59,7 @@ export const queries = {
   /** Reduced workspace settings of a real host (M4). */
   signDefault: (ws: string) => queryOptions({ queryKey: ['sign-default', ws], queryFn: () => api.getSignDefault(ws), retry: false }),
   addOns: (ws: string) => queryOptions({ queryKey: ['add-ons', ws], queryFn: () => api.getAddOns(ws) }),
-  hostSettings: (ws: string) => queryOptions({ queryKey: ['settings', ws], queryFn: () => api.getHostSettings(ws) }),
+  hostSettings: (ws: string) => queryOptions({ queryKey: ['settings', ws], queryFn: () => api.getHostSettings(ws), staleTime: 60_000 }),
   roster: (ws: string) => queryOptions({ queryKey: ['members', ws], queryFn: () => api.getRoster(ws) }),
   /** H12d-2: reader levels and `required_reader` (Settings → Devices). */
   readers: (ws: string) => queryOptions({ queryKey: ['readers', ws], queryFn: () => api.getReaders(ws) }),
@@ -82,6 +88,8 @@ export const queries = {
     }),
   /** Records status (owners, maintainers: the host refuses anyone else). Refused answers are not retried. */
   records: (ws: string) => queryOptions({ queryKey: ['records', ws], queryFn: () => api.getRecords(ws), retry: false }),
+  /** Whether Claude Code may open this workspace's folders without asking. */
+  claudeTrust: (ws: string) => queryOptions({ queryKey: ['claude-trust', ws], queryFn: () => api.getClaudeTrust(ws), retry: false }),
   identity: (ws: string) => queryOptions({ queryKey: ['identity', ws], queryFn: () => api.getIdentity(ws) }),
   people: (ws: string) => queryOptions({ queryKey: ['people', ws], queryFn: () => api.listPeople(ws) }),
   /** The relay state with the time it was read (the page polls while something moves). */

@@ -884,8 +884,8 @@ reply decides it. The host's reply is a signed w2h reply; its body decides (refe
 settings" of §16: exactly the five hub-signed custodial types below, no fourth break-glass power. Design:
 `~/orch-dev/state/design-c10.md` (M1, M6), `design-c8.md` (M2.2).
 
-Why: in full mode no local human signature exists (D78, D81; core C11), so without these nobody could issue or revoke
-an agent grant, exclude a lost device or change policy; agents would stop within 168 h.
+Why: these are the acts a person may do remotely (phone, hub web) as an additional path. Local signing stays valid in every
+mode (D83); the hub path exists so a person who is away can still issue or revoke a grant, exclude a lost device or change policy.
 
 | Type | Log | Lowest role | Action fields (exact) | Derived by the hub |
 |---|---|---|---|---|
@@ -971,7 +971,7 @@ C8/C10 merge: `host_grant_issued_{needs_request,request_reused,other_terms,late}
 
 ### 8.8b Turning an add-on on through a channel: `addon.requested` (FB15, 27 Oct)
 
-Why: in full mode no local human signature exists, and `addon.granted` carries declarations (`fields`, `sections`,
+Why: a person away from the workspace may turn an add-on on from the hub (local signing stays valid, D83), and `addon.granted` carries declarations (`fields`, `sections`,
 `artifact_kinds`, `runtime`) that only the host can derive from the package, so the hub cannot build it. Same pattern as
 `grant.requested` (§8.8): the channel signs flat terms, the host answers with its own event.
 

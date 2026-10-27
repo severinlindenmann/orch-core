@@ -27,6 +27,7 @@ ACTIONS = {
     "mark": ["remote-private", "--yes"],
     "unmark": ["remote-private", "--off"],
     "push-initial": ["push", "--initial", "--yes"],
+    "auto-on": ["auto", "on", "--yes"],
 }
 NEEDS_URL = frozenset({"mark", "push-initial"})
 

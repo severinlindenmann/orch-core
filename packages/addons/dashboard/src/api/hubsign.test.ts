@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { groupHash, hubOnly, hubRequestOf, safeHubUrl } from './hubsign'
+import { groupHash, safeHubUrl } from './hubsign'
 
 const H = 'sha256:' + '3d3f5e93357c' + 'a'.repeat(52)
 const W = 'a'.repeat(32)
@@ -28,17 +28,4 @@ it('shows a link only when it is exactly the host grammar', () => {
   for (const u of bad) expect(safeHubUrl(u)).toBeNull()
 })
 
-it('full and unknown take no local key; other modes and an unknown host do', () => {
-  expect(hubOnly({ signing: 'full' })).toBe(true)
-  expect(hubOnly({ signing: 'unknown' })).toBe(true)
-  for (const s of ['standalone', 'selective', null, undefined] as const) expect(hubOnly({ signing: s })).toBe(false)
-  expect(hubOnly(undefined)).toBe(false)
-})
 
-it('names only the actions the hub can build', () => {
-  expect(hubRequestOf({ action: 'approve', key: 'DEMO-1', gate: 'plan' })).toEqual({ kind: 'gate', ticket: 'DEMO-1', gate: 'plan' })
-  expect(hubRequestOf({ action: 'verdict', key: 'DEMO-1', outcome: 'pass' })).toEqual({ kind: 'verdict', ticket: 'DEMO-1', gate: 'verify' })
-  expect(hubRequestOf({ action: 'answer', key: 'DEMO-1', question: 'Q1' })).toEqual({ kind: 'question', ticket: 'DEMO-1', question: 'Q1' })
-  expect(hubRequestOf({ action: 'comment', key: 'DEMO-1', message: 'x' } as never)).toBeNull()
-  expect(hubRequestOf(null)).toBeNull()
-})

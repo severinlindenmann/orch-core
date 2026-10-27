@@ -163,7 +163,7 @@ describe('a hub step by click', () => {
     s.view.mockResolvedValue(view({ op: 'hub.leave' }))
     mount({ action: 'hub_leave' })
     await input()
-    expect(screen.getByRole('button', { name: 'Sign and leave the hub' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Leave hub' })).toBeInTheDocument()
   })
 })
 

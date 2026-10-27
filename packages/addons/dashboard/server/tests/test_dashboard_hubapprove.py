@@ -155,13 +155,12 @@ def test_i2_this_server_has_no_hub_code_no_hub_client_and_no_outbound_fetch():
         }, name
 
 
-def test_click_status_reports_the_mode_and_prepare_is_refused_in_full_mode(client, token, stub, script, monkeypatch):
+def test_click_status_reports_the_mode_and_prepare_is_open_in_full_mode(client, token, stub, script, monkeypatch):
     monkeypatch.setattr(click, "mode_of", lambda gateway, ws: "full")
     assert client.get(url(stub, "status"), headers=hdr(token, False)).json()["mode"] == "full"
-    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "full")
     res = prepare(client, token, stub)
-    assert res.status_code == 403 and res.json()["error"]["code"] == "sign.hub_only"
-    assert script.prepared == 0  # the signer is never asked
+    assert res.json().get("error", {}).get("code") != "sign.hub_only"
+    assert script.prepared == 1  # A1: a local signature is valid in every hub mode
 
 
 def test_leaving_the_hub_is_prepared_in_full_mode(client, token, stub, script, backup, monkeypatch):
@@ -170,32 +169,6 @@ def test_leaving_the_hub_is_prepared_in_full_mode(client, token, stub, script, b
     res = client.post(f"/api/w/{stub.ws}/click/prepare", json={"action": "hub_leave"}, headers=hdr(token))
     assert res.status_code == 200, res.text
     assert script.prepared == 1  # the signer was asked: the full-mode refusal did not fire
-
-
-def test_unknown_mode_is_refused_like_full(client, token, stub, script, monkeypatch):
-    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "unknown")
-    assert prepare(client, token, stub).json()["error"]["code"] == "sign.hub_only"
-
-
-def test_selective_and_standalone_prepare_as_before(client, token, stub, script, monkeypatch):
-    for mode in ("selective", "standalone", None):
-        monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws, m=mode: m)
-        assert prepare(client, token, stub).json().get("error", {}).get("code") != "sign.hub_only"
-
-
-def test_the_today_rows_say_sign_hub_in_full_mode_only(client, token, stub, rich, monkeypatch):
-    path = f"/api/w/{stub.ws}/today"
-    plain = client.get(path, headers=hdr(token, False)).json()
-    assert all("sign" not in n for n in plain["needs_you"])
-    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "full")
-    full = client.get(path, headers=hdr(token, False)).json()
-    assert full["needs_you"] and all(n["sign"] == "hub" for n in full["needs_you"])
-
-
-def test_the_error_code_is_allowed_through_and_is_a_403():
-    res = host_response(fail("sign.hub_only", exit=3))
-    assert res.status_code == 403
-    assert ORIGIN
 
 
 RID = "hr_01J9ZP0000000000000000HND1"

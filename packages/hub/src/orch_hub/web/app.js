@@ -136,7 +136,7 @@ function railView() {
   const items = state.rail.rows.map((w) => {
     const b = h("button", { class: "ra " + colour(w.id), "aria-label": "Open " + renderText(w.name) + (w.online ? "" : " (offline)"), disabled: !w.canOpen,
       title: w.canOpen ? renderText(w.name) : renderText(w.name) + ": " + OPEN_FIRST, onclick: () => openWorkspace(w) },
-      initials(w.name, w.id), w.badge ? h("span", { class: "bd", text: String(w.badge) }) : null, h("span", { class: "dot" + (w.online ? " up" : "") }));
+      initials(w.name, w.id), w.badge ? h("span", { class: "bd", text: String(w.badge) }) : null);
     return b;
   });
   return h("nav", { class: "rail", "aria-label": "Hub and workspaces" }, hub, items.length ? h("div", { class: "rsep" }) : null, items);

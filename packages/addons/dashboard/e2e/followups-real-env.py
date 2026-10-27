@@ -1,6 +1,6 @@
 # Real-host helper for followups-real.spec.ts: a dev sandbox workspace (prefix SBX, Schedules ON, the dashboard add-on installed,
-# NO runner) with one ticket whose agent set a follow-up two days ahead (pending) and one whose follow-up falls due in about a
-# minute with nobody to run it (the host then records `did_not_run`). Reuses core's own follow-up e2e environment.
+# a runner whose harness writes nothing) with one ticket whose agent set a follow-up two days ahead (pending) and one whose follow-up falls due in about a
+# minute and whose run writes nothing (the host records `failed`). Reuses core's own follow-up e2e environment.
 # Run it with: <server venv python> -I e2e/followups-real-env.py up|link|sign|cli|state|down BASE   (ORCH_CORE_DIR = this checkout)
 import json, os, re, signal, subprocess, sys, time
 from pathlib import Path
@@ -25,6 +25,10 @@ def checked_base(base, new=False):
     return b
 
 
+# A harness that ends at once and writes nothing: the host records the run as `failed` (no_writes), a Today card.
+core_e2e.HARNESS = "#!@PY@\nimport sys\nsys.exit(0)\n"
+
+
 def env_of(base):
     return core_e2e.Env(Path(base))
 
@@ -37,12 +41,10 @@ def up(base):
     e = env_of(base)
     ws, kit = e.ws, e.kit
     Path(base).mkdir(parents=True, exist_ok=True)
-    kit.sandbox_bring_up(ws, core_e2e.SANDBOX_ID)
-    ws.grant()
-    ws.human("addon", "grant", "schedules")
+    e.up()  # sandbox workspace, Schedules ON, the host with the dev timer, a runner running the silent harness
     ws.install_dashboard()
     (Path(base) / "host.pid").write_text(str(ws.host.pid))
-    ws.register()
+    (Path(base) / "runner.pid").write_text(str(e.runner.pid))
     waiting = e.in_progress("Backfill tariff data")
     soon = e.in_progress("Reconcile settlement files")
     state = {
@@ -87,6 +89,7 @@ def main():
         print(getattr(ws, sys.argv[3])(*sys.argv[4:])); return
     if cmd == "down":
         subprocess.run([sys.executable, "-m", "orch_dashboard", "stop"], env=denv(ws), capture_output=True)
+        stop_pid(Path(base) / "runner.pid", "orch", "runner", str(ws.state))
         stop_pid(Path(base) / "host.pid", "orch", "host", str(ws.state))
 
 

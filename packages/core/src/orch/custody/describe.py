@@ -51,6 +51,8 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "gate.changes_requested": (*_GATE, "text"),
     "verdict.given": ("outcome", "gate_gen", "hash", "policy_hash", "source_sha", "text"),
     "ticket.moved": ("from", "to", "reason"),
+    # a person cancels a follow-up (Schedules, #720): which one, and why ("person"); `follow_up.cancel` through human.prepare
+    "followup.cancelled": ("followup", "reason"),
     # ticket log, actor A or AU, signed by a person through human.prepare (H5a: person versions of agent ops)
     "ticket.created": ("key", "ticket_type", "title", "owner"),
     "ticket.updated": ("base_rev", "set", "sections"),

@@ -42,7 +42,7 @@ def test_rows_are_drawn_and_filtered(client, token, stub, fu_host):
             "state": "pending",
             "trigger": "time",
             "due": "2026-10-28T09:00:00Z",
-            "brief": "Check it.",
+            "brief": "Check it.\n\n- a\n- b",
             "person": stub.person,
             "set_at": "2026-10-27T09:00:00Z",
             "fired_at": None,
@@ -64,7 +64,7 @@ def test_rows_are_drawn_and_filtered(client, token, stub, fu_host):
     assert body["available"] is True and body["can"] == {"cancel": True, "reschedule": False, "undo": False}
     assert [r["state"] for r in body["rows"]] == ["pending", "did_not_run"]
     first, second = body["rows"]
-    assert first["brief"] == "Check it." and first["mine"] is True and first["can_cancel"] is True
+    assert first["brief"] == "Check it.\n\n- a\n- b" and first["mine"] is True and first["can_cancel"] is True
     assert second["brief"] is None and second["brief_hidden"] is True and second["reason"] == "no_host"
     assert {"all": True} in fu_host["calls"]
     assert "schedules" in client.get("/api/session", headers=headers(token)).json()["features"]

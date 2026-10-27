@@ -2,7 +2,7 @@
 //   FU_PY=<server venv python> FU_ENV=e2e/followups-real-env.py FU_BASE=<dir under ~/orch-dev> ORCH_CORE_DIR=<checkout> \
 //     playwright test -c e2e/playwright.config.ts followups-real.spec.ts
 // A pending follow-up shows on the ticket strip, the board chip and the Follow-ups list; one that fell due with nobody to run
-// it is a "did not run" Today card (Hide for me hides the card only); Cancel is signed by the test human in the terminal.
+// it is a "failed" Today card (Hide for me hides the card only); Cancel is signed by the test human in the terminal.
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
@@ -39,13 +39,13 @@ test('real host: pending follow-up on the strip, the chip and the list; did not 
 
   // the board chip
   await page.goto(helper('link', BASE, '/board'))
-  await expect(page.getByTestId('followup-chip').filter({ hasText: /^Resumes / })).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByTestId(`card-${state.waiting}`).getByTestId('followup-chip')).toHaveText(/^Resumes /, { timeout: 30_000 })
   await page.screenshot({ path: path.join(SHOTS, 'fu-real-board.png') })
 
-  // the other follow-up falls due with no runner: the host records "did not run"; Today gets a card
+  // the other follow-up falls due and its run writes nothing: the host records "failed"; Today gets a card
   await expect
     .poll(() => helper('cli', BASE, 'unattended', 'follow-up', 'show', state.stuck_fu, '--json'), { timeout: 240_000, intervals: [5_000] })
-    .toMatch(/"state": ?"(did_not_run|failed)"/)
+    .toMatch(/"state": ?"failed"/)
   await page.goto(helper('link', BASE, '/'))
   const cards = page.getByTestId('followup-cards')
   await expect(cards).toBeVisible({ timeout: 60_000 })

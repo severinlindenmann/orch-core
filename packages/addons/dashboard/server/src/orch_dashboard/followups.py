@@ -16,6 +16,7 @@ from .adapters import board_statuses
 from .adapters.addons import display
 from .errors import HostError, fail
 from .gateway import Gateway
+from .text import hidden
 
 ADDON = "schedules"
 #: the states a row can have (the host's `view_state`); anything else is dropped, never shown
@@ -32,6 +33,11 @@ REASONS = frozenset(
     }
 )  # fmt: skip
 MANAGERS = ("owner", "maintainer")
+
+
+def note(value) -> str | None:
+    """The agent brief: newlines and tabs are normal; any other invisible character withholds it."""
+    return value if isinstance(value, str) and not hidden(value.replace("\n", "").replace("\t", "")) else None
 
 
 def row(r: dict, titles: dict, who: str, role: str) -> dict | None:
@@ -53,8 +59,8 @@ def row(r: dict, titles: dict, who: str, role: str) -> dict | None:
         "set_at": r.get("set_at"),
         "fired_at": r.get("fired_at"),
         "late_by": r["late_by"] if isinstance(r.get("late_by"), int) and r["late_by"] > 0 else None,
-        "brief": display(r.get("brief")),
-        "brief_hidden": isinstance(r.get("brief"), str) and display(r.get("brief")) is None,
+        "brief": note(r.get("brief")),
+        "brief_hidden": isinstance(r.get("brief"), str) and note(r.get("brief")) is None,
         "outcome": r.get("outcome") if r.get("outcome") in ("ran", "failed", "did_not_run") else None,
         "reason": reason if reason in REASONS else None,
         "running": r["state"] == "fired",

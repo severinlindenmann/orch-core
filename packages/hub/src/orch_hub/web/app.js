@@ -5,6 +5,8 @@ import { CanonError, parseStrict } from "./cj.js";
 import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, signProof, signRegistration } from "./channel.js";
 import { homeView } from "./home.js";
 import { adminView } from "./admin.js";
+import { servicesView } from "./services.js";
+import { workspacesView } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl, ticketFromHash } from "./switch.js";
 import { Refusal, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
@@ -119,10 +121,10 @@ function shell(active, ...nodes) {
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", home, "nv"), state.user?.is_admin ? tab("admin", "Admin", admin, "nv") : null,
+    tab("home", "Home", home, "nv"), tab("workspaces", "Workspaces", workspaces, "nv"), state.user?.is_admin ? tab("services", "Services", services, "nv") : null, state.user?.is_admin ? tab("admin", "Admin", admin, "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   const top = h("header", { class: "topbar" }, h("span", { class: "t", text: hubName }),
-    h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", home, "nav"), state.user?.is_admin ? tab("admin", "Admin", admin, "nav") : null),
+    h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", home, "nav"), tab("workspaces", "Workspaces", workspaces, "nav"), state.user?.is_admin ? tab("services", "Services", services, "nav") : null, state.user?.is_admin ? tab("admin", "Admin", admin, "nav") : null),
     h("span", { class: "grow" }), h("span", { class: "small muted", text: name }), signOutMenu());
   show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content" }, nodes.flat(2)))));
   root.classList.add("shelled");
@@ -220,6 +222,30 @@ async function admin() {
   state.notice = null;
   const adminApi = async (m, path, body) => { const r = await api(m, path, body); if (r.status === 403 && r.body.error === "reauth_required") reauthView(); return r; };
   shell("admin", adminView({ api: adminApi, say, notice, refresh }));
+}
+
+async function workspaces() {
+  if (!(await refresh())) return loginView();
+  state.menu = false;
+  await loadRail();
+  const [ws, ho] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs")]);
+  shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces : [], handoffs: ho.status === 200 ? ho.body.handoffs : [] }));
+}
+
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch { return false; }
+}
+
+async function services() {
+  if (!(await refresh())) return loginView();
+  state.menu = false;
+  await loadRail();
+  if (!state.user.is_admin) return home();
+  if (state.user.needs_sign_in) return reauthView();
+  const r = await api("GET", "/admin/services");
+  if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
+  if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
+  shell("services", servicesView(r.body, { check: services, open: workspaces, copy: copyText }));
 }
 
 async function home() {

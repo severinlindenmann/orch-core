@@ -1,6 +1,6 @@
 """Runs the REAL dashboard server (orch_dashboard.create_app, its Security layer, auth and routes) on 127.0.0.1 for the
 two-origin switch test, in the dashboard's own venv. Its host link is a bridge: `hub.switch` goes over HTTP to the test,
-which answers with the hub's real link-op handlers. Usage: dashboard_driver.py PORT BRIDGE_URL WORKSPACE_ID STATEDIR.
+which answers with the hub's real link-op handlers. Usage: dashboard_driver.py PORT BRIDGE_URL WORKSPACE_ID STATEDIR [STATIC_DIR].
 Prints `READY <launch code>` once it listens."""
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from orch_dashboard.errors import fail
 from orch_dashboard.gateway import Gateway
 
 port, bridge, ws, state = int(sys.argv[1]), sys.argv[2], sys.argv[3], Path(sys.argv[4])
+static = Path(sys.argv[5]) if len(sys.argv) > 5 else state
 
 
 class Link:
@@ -45,12 +46,14 @@ class Gw(Gateway):
         return Link()
 
 
-auth = Auth()
-app = create_app(port, Gw(state), auth, state)
+auth = Auth(trust_file=state / "trusted.json")
+app = create_app(port, Gw(state), auth, static)
 config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
 server = uvicorn.Server(config)
 threading.Thread(target=server.run, daemon=True).start()
 while not server.started:
     time.sleep(0.05)
 print("READY " + auth.launch(port)["code"], flush=True)
-sys.stdin.read()  # runs until the test closes our stdin
+for line in sys.stdin:  # runs until the test closes our stdin; `launch` prints a fresh launch code (30 s)
+    if line.strip() == "launch":
+        print("CODE " + auth.launch(port)["code"], flush=True)

@@ -120,7 +120,11 @@ def test_a_fresh_profile_is_read_mostly_and_gets_a_structured_step_up(client, li
     sw = switch_session(client, link)
     assert client.get(f"/api/w/{WS}/head", headers=bearer(sw)).status_code != 403
     assert client.get("/api/host", headers=bearer(sw)).status_code != 403  # Settings › General reads it
-    for method, path in (("POST", WRITE), ("POST", f"/api/w/{WS}/terminals/open"), ("POST", f"/api/w/{WS}/agents/start")):
+    for method, path in (
+        ("POST", WRITE),
+        ("POST", f"/api/w/{WS}/terminals/open"),
+        ("POST", f"/api/w/{WS}/agents/start"),
+    ):
         assert refused_as_step_up(client.request(method, path, json={}, headers=bearer(sw)))
     assert client.post("/api/auth/challenge", json={}, headers=bearer(sw)).status_code == 200
     # no key: the upgrade fails whatever it signs
@@ -166,7 +170,10 @@ def test_a_challenge_is_single_use_and_bound_to_the_origin(client, link, auth):
     wrong = {"key_id": kid, "signature": b.sign(n2, "http://127.0.0.1:1")}
     assert client.post("/api/auth/upgrade", json=wrong, headers=bearer(sw2)).status_code == 401
     # and the failed try spent the challenge
-    assert client.post("/api/auth/upgrade", json={"key_id": kid, "signature": b.sign(n2)}, headers=bearer(sw2)).status_code == 401
+    assert (
+        client.post("/api/auth/upgrade", json={"key_id": kid, "signature": b.sign(n2)}, headers=bearer(sw2)).status_code
+        == 401
+    )
 
 
 def test_a_stale_challenge_is_refused(client, link, auth, now):

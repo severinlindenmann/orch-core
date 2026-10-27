@@ -87,7 +87,7 @@ class Auth:
         #: switch session -> (nonce, expires): the one challenge a browser key must sign (single use)
         self.challenges: dict[str, tuple[str, float]] = {}
         self.challenge_count: dict[str, int] = {}
-        #: session upgraded by a browser key -> (key id, the workspace its switch was for); revoking the key puts it back
+        #: session upgraded by a browser key -> (key id, its switch workspace); revoking the key puts it back
         self.upgraded: dict[str, tuple[str, str]] = {}
         self.instance = secrets.token_hex(16)
         self.probe_key = secrets.token_hex(32)
@@ -247,7 +247,7 @@ class Auth:
         with self.lock:
             return self.switch_ws.get(token) if token in self.sessions else None
 
-    # --- trusted browsers (run 12) -------------------------------------------------------------------------------------
+    # --- trusted browsers (run 12) ---
 
     def enrol_key(self, token, jwk, origin):
         """Enrol a browser key. ONLY a session opened by a real local sign-in may: not a switch session, not a remote
@@ -323,7 +323,12 @@ class Auth:
                 return None
             ws = self.switch_ws.get(token)
             row = self.trusted.get(kid)
-            if ws is None or row is None or row["origin"] != origin or not trust.verify(row["jwk"], held[0], origin, signature):
+            if (
+                ws is None
+                or row is None
+                or row["origin"] != origin
+                or not trust.verify(row["jwk"], held[0], origin, signature)
+            ):
                 return None
             self.trusted.touch(kid)
             self._drop(token)

@@ -127,7 +127,12 @@ class SwitchService:
         workspace claiming a loopback browser origin must not get a ticket link to the user's own loopback)."""
         fn = getattr(self, "_loopback_origin", None)
         loop = fn() if fn else None
-        if loop and same_computer and isinstance(browser, str) and re.match(r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", browser):
+        if (
+            loop
+            and same_computer
+            and isinstance(browser, str)
+            and re.match(r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", browser)
+        ):
             return loop
         return self._hub_origin()
 

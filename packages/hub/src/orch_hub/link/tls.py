@@ -57,7 +57,7 @@ class TlsConn:
 
             peer = ipaddress.ip_address(self._s.getpeername()[0].split("%")[0])
             mine = ipaddress.ip_address(self._s.getsockname()[0].split("%")[0])
-        except (OSError, ValueError, IndexError):
+        except OSError, ValueError, IndexError:
             return False
         return peer.is_loopback or peer == mine
 

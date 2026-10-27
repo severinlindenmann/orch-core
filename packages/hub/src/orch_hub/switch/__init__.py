@@ -21,6 +21,7 @@ from ..contract import phase4 as P4
 
 TTL_MS = 30_000
 MAX_LIVE = 1000
+MAX_PER_WORKSPACE = 20  # live tickets one workspace can hold: a host cannot flood out other users' tickets
 KINDS = ("open", "signout")
 _ORIGIN = re.compile(r"https?://[A-Za-z0-9.\[\]:-]{1,200}")
 _PATH = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{0,255}")
@@ -124,6 +125,9 @@ class SwitchService:
         with self._mu:
             for t in [t for t, r in self._tickets.items() if r["exp"] <= now]:
                 del self._tickets[t]
+            mine = [t for t, r in self._tickets.items() if r["ws"] == ws]
+            for t in mine[: max(0, len(mine) - MAX_PER_WORKSPACE + 1)]:
+                del self._tickets[t]  # this workspace's own oldest goes first
             while len(self._tickets) >= MAX_LIVE:
                 del self._tickets[next(iter(self._tickets))]  # dicts keep insertion order: the oldest goes
             self._tickets[token] = {

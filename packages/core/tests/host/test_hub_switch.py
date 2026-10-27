@@ -9,7 +9,7 @@ import pytest
 
 from orch.host import hubops
 from tests.host import human_helpers
-from tests.host.dispatch_helpers import ok
+from tests.host.dispatch_helpers import SESSION, ok
 from tests.host.human_helpers import err
 from tests.host.test_hub_ops import CARD, HUB_ID, StubHub, connect_args, dev_workspace, join_args  # noqa: F401
 
@@ -115,3 +115,17 @@ def test_a_hub_refusal_is_a_plain_refusal(human, served, hub):
         err(served.client().req("hub.switch", {"kind": "redeem", "ticket": "w." + "c" * 32}, idem=False))
         == "hub.refused"
     )
+
+
+def test_an_agent_is_refused_every_switch_kind(human, served, hub):
+    """B2: column P and the owner role, like the other hub ops: no ticket and no rail for anyone else."""
+    bound(human, served)
+    n = len(hub.sent)
+    for args in (
+        {"kind": "rail", "origin": "http://127.0.0.1:8000"},
+        {"kind": "ticket", "origin": "http://127.0.0.1:8000", "return_to": "/", "ticket_kind": "open"},
+        {"kind": "redeem", "ticket": "w." + "b" * 32},
+    ):
+        res = served.client().req("hub.switch", args, idem=False, grant=served.grant, session=SESSION)
+        assert err(res) in ("op.not_allowed", "role.denied")
+    assert len(hub.sent) == n

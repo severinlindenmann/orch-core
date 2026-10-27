@@ -60,6 +60,7 @@ COOKIE = "orch_hub_session"
 CSRF_HEADER = "x-orch-csrf"
 PREPARE_LIMIT = (10, 60_000)  # per user: 10 prepares a minute (orch-hub#25 item 6)
 SIGN_LIMIT = (20, 60_000)
+SWITCH_PEEK_LIMIT = (30, 60_000)  # per source: peek is unauthenticated and names the ticket's person
 SIGNIN_SOURCE_LIMIT = (20, 60_000)  # per network source (IPv6: per /64), counted before any password hashing
 SIGNIN_NET_LIMIT = (200, 60_000)  # looser aggregate per IPv6 /48 and per IPv4 /24: one allocation cannot spray
 # No global request bucket, by design: any hub-wide bucket is a lockout lever a few sources can hold. What bounds the
@@ -602,7 +603,7 @@ class WebApi:
                 raise ApiError("no_session")
             info = self.d.channels.session_info(ctx.token)
             ctx.user_id, ctx.scope, ctx.channel_id = info["user_id"], info["scope"], info["channel_id"]
-            ctx.via_switch = info["login_ms"] == 0
+            ctx.via_switch = info["via"] == "switch"
             # a session is for the carrier it was issued for (cookie = browser: ``full``; bearer = app: ``pairing`` or
             # ``channel``); the scope is stored with the session, so it also holds across a restart
             if (ctx.scope == "full") != ctx.cookie:
@@ -895,6 +896,7 @@ class WebApi:
         """The landing page asks before it signs anybody in (login CSRF): who the ticket is for and who, if anyone,
         is signed in here already. The ticket is not used."""
         b = _need(b, t=str)
+        self._limit.hit("switch-peek", c.source, SWITCH_PEEK_LIMIT)
         try:
             r = self._switch().peek(b["t"], "to_hub")
         except SwitchError:

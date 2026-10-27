@@ -454,6 +454,7 @@ def switch_ticket(c: OpContext) -> dict[str, Any]:
     """The workspace's owner alias gets a ticket for the hub console; the host never names the user."""
     from ..switch import SwitchError
 
+    _require_bound(c)  # a link that did not pass the join checks (a dev host against a real hub) has no binding
     sw = _switch(c)
     user = _owner_user(c)
     try:
@@ -470,6 +471,7 @@ def switch_ticket(c: OpContext) -> dict[str, Any]:
 def switch_redeem(c: OpContext) -> dict[str, Any]:
     from ..switch import SwitchError
 
+    _require_bound(c)  # a link that did not pass the join checks (a dev host against a real hub) has no binding
     sw = _switch(c)
     try:
         r = sw.redeem(c.body["ticket"], "to_ws", ws=c.workspace_id)
@@ -484,6 +486,7 @@ def switch_redeem(c: OpContext) -> dict[str, Any]:
 def rail_get(c: OpContext) -> dict[str, Any]:
     from ..switch import SwitchError
 
+    _require_bound(c)  # a link that did not pass the join checks (a dev host against a real hub) has no binding
     sw = _switch(c)
     user = _owner_user(c)
     try:

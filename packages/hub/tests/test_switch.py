@@ -276,3 +276,42 @@ def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_close
                 o,
             )
     assert seen > 20
+
+
+def test_a_channel_session_is_not_a_switch_session(w):
+    """B3: the marker is explicit; a password sign-in (and a channel session born of one) is never restricted."""
+    tok = w.login(w.ann)
+    assert w.api.d.channels.session_info(tok)["via"] is None
+    _, _, h = w.call("POST", "/switch/redeem", {"t": w.sw.issue_to_hub(w.ann, WS, "/")})
+    sw_tok = _tok(h)
+    assert w.api.d.channels.session_info(sw_tok)["via"] == "switch"
+    s, o, _ = w.call("GET", "/me/channels", token=tok)
+    assert s == 200  # allowed for the password session
+    w.browser_tokens.add(sw_tok)
+    s, o, _ = w.call("GET", "/me/channels", token=sw_tok)
+    assert (s, o["error"]) == (403, "reauth_required")
+
+
+def test_the_switch_ops_need_a_bound_workspace(w):
+    """B5: a workspace whose binding never passed the join checks (a dev host against a real hub is refused there:
+    tests/test_link_negative.py dev_refused) gets no ticket and no rail."""
+    w.reg.add(WS_SEL, "selective", owner=w.ann, status="unbound")
+    for op, body in (
+        ("switch_ticket", {"origin": DASH, "return_to": "/", "kind": "open"}),
+        ("switch_redeem", {"ticket": "x" * 40}),
+        ("rail_get", {"origin": DASH}),
+    ):
+        with pytest.raises(Refused) as e:
+            getattr(ops, op)(ctx(w, WS_SEL, op, body))
+        assert e.value.code == "not_bound"
+
+
+def test_peek_is_rate_limited_and_a_workspace_cannot_flood_the_store(w):
+    for _ in range(30):
+        assert w.call("POST", "/switch/peek", {"t": "a" * 32})[0] in (403, 200)
+    assert w.call("POST", "/switch/peek", {"t": "a" * 32})[0] == 429
+    first = w.sw.issue_to_hub(w.ann, WS, "/")
+    for _ in range(25):
+        w.sw.issue_to_hub(w.ann, WS, "/")
+    with pytest.raises(SwitchError):
+        w.sw.redeem(first, "to_hub")  # its own oldest went, not other workspaces' tickets

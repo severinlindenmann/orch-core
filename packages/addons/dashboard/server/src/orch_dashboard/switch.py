@@ -33,7 +33,7 @@ from .gateway import Gateway
 from .policy import LOOPBACK, REMOTE
 
 TICKET = re.compile(r"^([0-9a-f]{32})\.[0-9a-f]{32}$")
-RETURN_TO = re.compile(r"^/(?!/)[A-Za-z0-9._~!$&'()*+,;=:@%/?#-]{0,255}$")
+RETURN_TO = re.compile(r"^/(?!/)[A-Za-z0-9._~!$&'()*+,;=:@%/-]{0,255}$")  # a path only, like the hub's
 RAIL_TTL = 15.0  # seconds a rail answer is reused (per workspace): a page load must not hit the hub every time
 _NO_HUB = {"hub.not_joined", "hub.state_mismatch", "hub.unreachable"}
 

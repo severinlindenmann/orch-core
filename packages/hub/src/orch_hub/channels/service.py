@@ -378,7 +378,7 @@ class Channels:
     def open_session(self, user_id: str) -> dict[str, Any]:
         """A ``full`` (browser) session for a user the hub itself has just authenticated by other means (a one-time switch
         ticket from the user's workspace). No password, no TOTP, no failure counters touched.
-        ``login_ms`` is 0: the hub did not see a password sign-in, so hub-admin routes refuse this session until the
+        ``via`` is ``switch``: the hub did not see a password sign-in, so hub-admin routes refuse this session until the
         person signs in for real (``reauth_required``)."""
         u = self._known_user(user_id)
         token = secrets.token_urlsafe(32)
@@ -388,8 +388,8 @@ class Channels:
             with self._tx() as db:
                 db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
                 db.execute(
-                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms) VALUES (?,?,?,?,?,?)",
-                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", 0),  # login_ms 0: no password sign-in
+                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, via) VALUES (?,?,?,?,?,?)",
+                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", "switch"),  # via: no password sign-in
                 )
 
         self._guard(go)
@@ -416,19 +416,20 @@ class Channels:
         user = self.session_user(token)
         rows = self._guard(
             lambda: self.db.q(
-                "SELECT scope, channel_id, expires_ms, login_ms, created_ms FROM sessions WHERE token_hash=?",
+                "SELECT scope, channel_id, expires_ms, login_ms, created_ms, via FROM sessions WHERE token_hash=?",
                 (_sha(token),),
             )
         )
         if not rows:
             raise ChannelError("no_session")
-        scope, cid, exp, login, created = rows[0]
+        scope, cid, exp, login, created, via = rows[0]
         return {
             "user_id": user,
             "scope": scope,
             "channel_id": cid,
             "expires_ms": exp,
             "login_ms": login if login is not None else created,
+            "via": via,
         }
 
     def pin_api_origin(self, op_cert_id: str, origin: str) -> bool:

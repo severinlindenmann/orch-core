@@ -35,15 +35,20 @@ SWITCH_GLOBAL = frozenset(
 )
 
 
+#: The only non-GET routes of the bound workspace a switch session may call (a ticket to the hub, not a write).
+SWITCH_POST = frozenset({"hub/switch"})
+
+
 def switch_allows(method, path, bound, query=None) -> bool:
-    """The ONE table of what a switch session may reach: its own workspace's routes (never a shell on the server) and
-    the named global routes. `bound` is the workspace of its ticket."""
+    """The ONE table of what a switch session may reach: READS of its own workspace (GET/HEAD, never a shell on the
+    server), `SWITCH_POST`, and the named global routes. `bound` is the workspace of its ticket."""
     if (method, path) in SWITCH_GLOBAL:
         return path != "/api/events" or (query or {}).get("ws") == [bound]
     parts = path.split("/")
     if len(parts) > 4 and parts[:3] == ["", "api", "w"] and parts[3] == bound:
-        shell = parts[4] == "terminals" or parts[-1] == "attach"
-        return not shell
+        if parts[4] == "terminals" or parts[-1] == "attach":
+            return False
+        return method in ("GET", "HEAD") or (method == "POST" and "/".join(parts[4:]) in SWITCH_POST)
     return False
 
 

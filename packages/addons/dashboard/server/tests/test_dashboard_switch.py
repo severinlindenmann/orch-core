@@ -185,6 +185,7 @@ def test_every_route_a_switch_session_may_not_use_is_closed(client, link):
                 template.startswith("/api/w/{ws}/")
                 and "/terminals" not in template
                 and not template.endswith("/attach")
+                and (method in ("GET", "HEAD") or template == "/api/w/{ws}/hub/switch")
             )
             assert switch_allows(method, path, bound, query) == want, (method, template)
     assert seen > 50
@@ -192,3 +193,32 @@ def test_every_route_a_switch_session_may_not_use_is_closed(client, link):
     assert not switch_allows("GET", "/api/events", bound, {"ws": ["c" * 32]})
     for closed in ("/api/host", "/api/testrun/x", "/auth/passkey/options", "/api/passkeys"):
         assert not switch_allows("GET", closed, bound) and not switch_allows("POST", closed, bound)
+
+
+def test_a_switch_token_cannot_write_anywhere_on_its_workspace(client, link):
+    """B1: read-only. Every non-GET workspace route, the settings, market, testrun and hand-off writes among them, is
+    refused for a switch session before it is routed; only the ticket to the hub is open."""
+    h = {"Authorization": "Bearer " + _switch_token(client, link), "Origin": ORIGIN}
+    walked = 0
+    for route in client.app.routes:
+        template = getattr(route, "path", "")
+        if not template.startswith("/api/w/{ws}/") or template == "/api/w/{ws}/hub/switch":
+            continue
+        for method in (getattr(route, "methods", None) or set()) - {"GET", "HEAD", "OPTIONS"}:
+            walked += 1
+            path = template.replace("{ws}", WS)
+            for name in ("key", "run", "name", "page", "tab", "ticket", "id", "route:path", "path:path"):
+                path = path.replace("{" + name + "}", "x")
+            res = client.request(method, path, json={}, headers=h)
+            assert res.status_code == 403, (method, template, res.status_code)
+    assert walked > 40
+
+
+def test_a_switch_session_also_works_on_loopback_but_only_as_a_reader(client, link, auth):
+    """B4, chosen on purpose: the dev setups reach the dashboard on loopback or a LAN address, so /auth/switch works
+    there; the read-only allowlist is the only gate (no route_gate on loopback)."""
+    token = _switch_token(client, link)
+    assert auth.listener_of(token) == "loopback" and auth.login_kind(token) == "switch"
+    h = {"Authorization": "Bearer " + token, "Origin": ORIGIN}
+    assert client.get(f"/api/w/{WS}/hub/rail", headers=h).status_code != 403
+    assert client.post(f"/api/w/{WS}/settings", json={}, headers=h).status_code == 403

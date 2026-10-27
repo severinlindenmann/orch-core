@@ -1,8 +1,9 @@
 // The Follow-ups tab of Schedules (#720, pick B: grouped). Needs a person first, then what is waiting, then the last 7
 // days of what finished. A follow-up is never created here: only an agent sets one; a person can cancel, run now or move one.
 import { Link } from '@tanstack/react-router'
+import { useState } from 'react'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
-import { groups, kindOf, reasonText, wakeLine, inText, type FollowupRow } from '@/api/followups'
+import { groups, hide, hiddenIds, kindOf, reasonText, wakeLine, inText, type FollowupRow } from '@/api/followups'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -10,7 +11,7 @@ import { plural } from '@/lib/time'
 import { CancelButton, RescheduleButton, RunNowButton, StateBadges, usePersonName, useFollowups } from './FollowupParts'
 
 /** The buttons of one row, by what it is. The viewer who cannot act sees none (a viewer has no buttons, never disabled ones that explain nothing). */
-export function RowButtons({ row, ws, can, primaryRun = false }: { row: FollowupRow; ws: string; can: { cancel: boolean; reschedule: boolean; undo: boolean }; primaryRun?: boolean }) {
+export function RowButtons({ row, ws, can, primaryRun = false, onHide }: { row: FollowupRow; ws: string; can: { cancel: boolean; reschedule: boolean; undo: boolean }; primaryRun?: boolean; /** Hide for me: shown where something went wrong (the viewer's own list). */ onHide?: () => void }) {
   const k = kindOf(row)
   const live = k === 'waiting' || k === 'needs_person'
   const stuck = k === 'failed' || k === 'did_not_run'
@@ -29,14 +30,19 @@ export function RowButtons({ row, ws, can, primaryRun = false }: { row: Followup
   }
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="followup-buttons">
-      <RunNowButton row={row} ws={ws} primary={primaryRun || stuck || k === 'needs_person'} />
+      <RunNowButton row={row} ws={ws} primary={primaryRun || stuck} />
       <RescheduleButton row={row} ws={ws} canMove={can.reschedule} />
       <CancelButton row={row} ws={ws} canUndo={can.undo} />
+      {onHide && (
+        <Button type="button" size="sm" variant="ghost" className="text-text-muted" onClick={onHide} title="Hides this for you. The ticket keeps showing the problem.">
+          Hide for me
+        </Button>
+      )}
     </div>
   )
 }
 
-function Row({ row, ws, can }: { row: FollowupRow; ws: string; can: { cancel: boolean; reschedule: boolean; undo: boolean } }) {
+function Row({ row, ws, can, onHide }: { row: FollowupRow; ws: string; can: { cancel: boolean; reschedule: boolean; undo: boolean }; onHide: () => void }) {
   const name = usePersonName()
   const kind = kindOf(row)
   const sentence = reasonText(row)
@@ -54,8 +60,7 @@ function Row({ row, ws, can }: { row: FollowupRow; ws: string; can: { cancel: bo
         <StateBadges row={row} />
       </div>
       <p className="text-[13px] text-text-muted">
-        {wakes && <span>{wakes} </span>}
-        {wait && <span>({wait}) </span>}
+        {wakes && <span>{wakes}{wait ? ` (${wait})` : ''}. </span>}
         {sentence && <span>{sentence} </span>}
         <span>
           {row.chain && kind !== 'cancelled' ? `Follow-up ${row.chain.n} of ${row.chain.max}. ` : ''}Set by {name(row.person)}'s agent.
@@ -69,12 +74,12 @@ function Row({ row, ws, can }: { row: FollowupRow; ws: string; can: { cancel: bo
           </div>
         </details>
       )}
-      <RowButtons row={row} ws={ws} can={can} />
+      <RowButtons row={row} ws={ws} can={can} onHide={row.state === 'failed' || row.state === 'did_not_run' ? onHide : undefined} />
     </li>
   )
 }
 
-function Group({ title, rows, ws, can, id }: { title: string; rows: FollowupRow[]; ws: string; can: { cancel: boolean; reschedule: boolean; undo: boolean }; id: string }) {
+function Group({ title, rows, ws, can, id, onHide }: { title: string; rows: FollowupRow[]; ws: string; can: { cancel: boolean; reschedule: boolean; undo: boolean }; id: string; onHide: (id: string) => void }) {
   if (rows.length === 0) return null
   return (
     <section aria-labelledby={id} data-testid={`followups-${id}`}>
@@ -83,7 +88,7 @@ function Group({ title, rows, ws, can, id }: { title: string; rows: FollowupRow[
       </h3>
       <ul className="divide-y divide-border">
         {rows.map((r) => (
-          <Row key={r.id} row={r} ws={ws} can={can} />
+          <Row key={r.id} row={r} ws={ws} can={can} onHide={() => onHide(r.id)} />
         ))}
       </ul>
     </section>
@@ -91,11 +96,17 @@ function Group({ title, rows, ws, can, id }: { title: string; rows: FollowupRow[
 }
 
 export default function FollowupsPanel() {
-  const { ws, on, query, data, rows, can } = useFollowups()
+  const { ws, on, query, data, rows, can, person } = useFollowups()
+  const [tick, setTick] = useState(0)
   if (!on || !ws) return <p className="text-[13px] text-text-muted">Follow-ups are off. Turn Schedules on in Add-ons.</p>
   if (query.isError) return <LoadFailed what="follow-ups" onRetry={() => void query.refetch()} />
   if (!data || !can) return <Skeleton className="h-24 w-full" />
-  const g = groups(rows)
+  void tick
+  const g = groups(rows, undefined, ws && person ? hiddenIds(ws, person) : undefined)
+  const onHide = (id: string) => {
+    if (ws && person) hide(ws, person, id)
+    setTick((t) => t + 1)
+  }
   if (g.needs.length + g.waiting.length + g.finished.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-surface p-6 text-center" data-testid="followups-empty">
@@ -112,9 +123,9 @@ export default function FollowupsPanel() {
         {plural(g.waiting.length, 'follow-up')} waiting{g.needs.length ? `, ${g.needs.length} ${g.needs.length === 1 ? 'needs' : 'need'} a person` : ''}. Only an agent sets a follow-up; you can run it now, move it or cancel it.
       </p>
       <div className="overflow-hidden rounded-lg border border-border bg-surface">
-        <Group id="needs" title="Needs a person" rows={g.needs} ws={ws} can={can} />
-        <Group id="waiting" title="Waiting" rows={g.waiting} ws={ws} can={can} />
-        <Group id="finished" title="Finished in the last 7 days" rows={g.finished} ws={ws} can={can} />
+        <Group id="needs" title="Needs a person" rows={g.needs} ws={ws} can={can} onHide={onHide} />
+        <Group id="waiting" title="Waiting" rows={g.waiting} ws={ws} can={can} onHide={onHide} />
+        <Group id="finished" title="Finished in the last 7 days" rows={g.finished} ws={ws} can={can} onHide={onHide} />
       </div>
     </div>
   )

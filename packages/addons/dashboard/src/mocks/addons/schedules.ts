@@ -68,9 +68,9 @@ const seedFollowups = (): Followup[] => [
   // waiting on an event or a web address, latest Tue 13 Oct 16:00 UTC; the second of five in a row
   { id: FU('1A'), ticket: 'DEMO-0045', state: 'pending', trigger: 'orch', due: null, deadline: '2026-10-13T16:00:00Z', set_at: '2026-10-08T15:40:00Z', fired_at: null, late_by: null, brief: 'Check whether backfill 8812 finished.\n\n- If yes: run the reconcile and mark the task done.\n- If not: ask Mara before trying again.', outcome: null, reason: null, person: 'p_mara', label: 'backfill 8812', chain: { n: 2, max: 5 } },
   // waiting on the clock: tomorrow 14:00 UTC
-  { id: FU('1B'), ticket: 'DEMO-0037', state: 'pending', trigger: 'time', due: '2026-10-10T14:00:00Z', deadline: null, set_at: '2026-10-09T09:00:00Z', fired_at: null, late_by: null, brief: 'Look at the freshness alert for the meter feed again and file what is still late.', outcome: null, reason: null, person: 'p_sev', chain: { n: 1, max: 5 } },
+  { id: FU('1B'), ticket: 'DEMO-0048', state: 'pending', trigger: 'time', due: '2026-10-10T14:00:00Z', deadline: null, set_at: '2026-10-09T09:00:00Z', fired_at: null, late_by: null, brief: 'Look at the freshness alert for the meter feed again and file what is still late.', outcome: null, reason: null, person: 'p_sev', chain: { n: 1, max: 5 } },
   // stopped by orch: the 5th follow-up with no task done
-  { id: FU('1C'), ticket: 'DEMO-0043', state: 'needs_person', trigger: 'time', due: null, deadline: null, set_at: '2026-10-08T10:00:00Z', fired_at: null, late_by: null, brief: 'Try the seed load again after the CSV export.', outcome: null, reason: 'chain_cap', person: 'p_mara', chain: { n: 5, max: 5 } },
+  { id: FU('1C'), ticket: 'DEMO-0054', state: 'needs_person', trigger: 'time', due: null, deadline: null, set_at: '2026-10-08T10:00:00Z', fired_at: null, late_by: null, brief: 'Try the seed load again after the CSV export.', outcome: null, reason: 'chain_cap', person: 'p_mara', chain: { n: 5, max: 5 } },
   // did not run: nobody was running orch
   { id: FU('1D'), ticket: 'DEMO-0046', state: 'did_not_run', trigger: 'time', due: '2026-10-07T07:00:00Z', deadline: null, set_at: '2026-10-05T16:00:00Z', fired_at: null, late_by: null, brief: 'Continue with the billing run once the tariff versions are in.', outcome: 'did_not_run', reason: 'no_host', person: 'p_mara' },
   // failed: the session wrote nothing
@@ -78,8 +78,8 @@ const seedFollowups = (): Followup[] => [
   // finished: ran on time, ran late, woken by the deadline, cancelled
   { id: FU('1F'), ticket: 'DEMO-0042', state: 'ran', trigger: 'time', due: '2026-10-06T07:00:00Z', deadline: null, set_at: '2026-10-05T14:00:00Z', fired_at: '2026-10-06T07:00:00Z', late_by: null, brief: 'Confirm the UTC change in the staging model.', outcome: 'ran', reason: null, person: 'p_sev' },
   { id: FU('1G'), ticket: 'DEMO-0053', state: 'ran', trigger: 'time', due: '2026-10-05T07:10:00Z', deadline: null, set_at: '2026-10-04T14:00:00Z', fired_at: '2026-10-05T14:10:00Z', late_by: 25200, brief: 'Rerun the reconciliation tests.', outcome: 'ran', reason: null, person: 'p_mara' },
-  { id: FU('1H'), ticket: 'DEMO-0050', state: 'ran', trigger: 'deadline', due: null, deadline: '2026-10-07T16:00:00Z', set_at: '2026-10-06T10:00:00Z', fired_at: '2026-10-07T16:00:00Z', late_by: null, brief: 'Check that the billing run finished.', outcome: 'ran', reason: null, fallback: 'no_event', person: 'p_sev', label: 'billing run' },
-  { id: FU('1I'), ticket: 'DEMO-0044', state: 'cancelled', trigger: 'time', due: '2026-10-08T07:00:00Z', deadline: null, set_at: '2026-10-06T09:00:00Z', fired_at: null, late_by: null, brief: 'Look at the duplicate meter ids again.', outcome: null, reason: 'claimed_by_other', person: 'p_sev' },
+  { id: FU('1H'), ticket: 'DEMO-0052', state: 'ran', trigger: 'deadline', due: null, deadline: '2026-10-07T16:00:00Z', set_at: '2026-10-06T10:00:00Z', fired_at: '2026-10-07T16:00:00Z', late_by: null, brief: 'Check that the billing run finished.', outcome: 'ran', reason: null, fallback: 'no_event', person: 'p_sev', label: 'billing run' },
+  { id: FU('1I'), ticket: 'DEMO-0047', state: 'cancelled', trigger: 'time', due: '2026-10-08T07:00:00Z', deadline: null, set_at: '2026-10-06T09:00:00Z', fired_at: null, late_by: null, brief: 'Look at the duplicate meter ids again.', outcome: null, reason: 'claimed_by_other', person: 'p_sev' },
 ]
 const followupsOf = (state: Record<string, unknown>) => (state.followups ??= seedFollowups()) as Followup[]
 

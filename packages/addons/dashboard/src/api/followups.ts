@@ -10,7 +10,7 @@ import { call } from './runs'
 import { hasFeature, isRealHost } from './features'
 import { addonActive } from './addons'
 import type { Role, Workspace } from './types'
-import { fmtClock, fmtDay, fmtSpan, nowMs, plural } from '@/lib/time'
+import { fmtClock, fmtDay, fmtSpan, nowMs } from '@/lib/time'
 
 export type FollowupState = 'pending' | 'needs_person' | 'fired' | 'ran' | 'failed' | 'did_not_run' | 'cancelled'
 export type FollowupTrigger = 'time' | 'orch' | 'addon' | 'webhook' | 'deadline'
@@ -170,9 +170,10 @@ export interface Groups {
   finished: FollowupRow[]
 }
 /** The tab's three groups: needs a person first, then waiting (soonest first), then the last 7 days of what finished. */
-export function groups(rows: readonly FollowupRow[], now = nowMs()): Groups {
+export function groups(rows: readonly FollowupRow[], now = nowMs(), hidden: ReadonlySet<string> = new Set()): Groups {
   const latest = new Set([...latestByTicket(rows).values()].map((r) => r.id))
-  const needs = rows.filter((r) => needsAPerson(r) && latest.has(r.id))
+  // a row this person hid leaves "needs a person" for them (a chain stopped by orch stays: it still waits for a decision)
+  const needs = rows.filter((r) => needsAPerson(r) && latest.has(r.id) && !(hidden.has(r.id) && r.state !== 'needs_person'))
   const waiting = rows.filter((r) => r.state === 'pending' || r.state === 'fired').sort((a, b) => (ms(a.due ?? a.deadline) || 0) - (ms(b.due ?? b.deadline) || 0))
   const finished = rows
     .filter((r) => !needs.includes(r) && !waiting.includes(r) && r.state !== 'needs_person' && now - happened(r) <= 7 * DAY)
@@ -239,7 +240,7 @@ export function reasonText(r: FollowupRow): string {
 export function headline(r: FollowupRow): string {
   switch (kindOf(r)) {
     case 'needs_person':
-      return `${chainCount(r)} with no task done`
+      return 'A person has to decide'
     case 'failed':
       return 'The follow-up ran but wrote nothing'
     case 'did_not_run':
@@ -258,16 +259,15 @@ export function headline(r: FollowupRow): string {
       return `The agent comes back ${r.due ? wakeText(r.due) : ''}`.trim()
   }
 }
-const chainCount = (r: FollowupRow) => (r.chain ? plural(r.chain.n, 'follow-up') + ' in a row' : 'Follow-ups in a row')
 
-/** What a waiting row says it wakes on: a time, or the event or web address and the latest time (only what the data has). */
+/** What a waiting row says it wakes on: a time, or the event or web address and the latest time (only what the data has). No final full stop: the caller adds it. */
 export function wakeLine(r: FollowupRow): string {
   if (r.trigger !== 'time' && r.deadline) {
     const what = r.label ? `${r.label} finishes` : 'the job finishes'
-    return `Wakes when ${what}, at the latest ${wakeText(r.deadline)}.`
+    return `Wakes when ${what}, at the latest ${wakeText(r.deadline)}`
   }
   const at = r.due ?? r.deadline
-  return at ? `Wakes ${wakeText(at)}.` : ''
+  return at ? `Wakes ${wakeText(at)}` : ''
 }
 
 // ---- Hide for me (per person, this browser): hides a Today card only; the ticket strip and the board chip keep the problem

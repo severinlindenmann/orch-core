@@ -4,7 +4,7 @@
 // strip and the board chip keep showing the problem until someone acts.
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
-import { followupsOn, hide, hiddenIds, headline, kindOf, reasonText, todayCards, type FollowupRow } from '@/api/followups'
+import { followupsOn, hide, hiddenIds, kindOf, reasonText, todayCards, wakeText, type FollowupRow } from '@/api/followups'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { Pill, RescheduleButton, RunNowButton, StateBadges, CancelButton, useFollowups } from './FollowupParts'
@@ -29,9 +29,13 @@ function Card({ row, ws, can, onHide }: { row: FollowupRow; ws: string; can: { c
         <StateBadges row={row} />
       </div>
       <h3 className="text-[14px] font-semibold">
-        {row.ticket} · {woken ? 'The agent was woken without the event' : stopped ? headline(row) : `Follow-up ${kind === 'failed' ? 'failed' : 'did not run'}`}
+        <span className="font-mono text-[12px] font-normal text-text-muted">{row.ticket}</span> {row.title ? `${row.title} · ` : '· '}
+        {woken ? 'The agent was woken without the event' : stopped ? 'A person has to decide' : `Follow-up ${kind === 'failed' ? 'failed' : 'did not run'}`}
       </h3>
-      <p className="text-[13px] text-text-muted">{reasonText(row)}</p>
+      <p className="text-[13px] text-text-muted">
+        {row.due && !stopped ? `Due ${wakeText(row.due)}. ` : ''}
+        {reasonText(row)}
+      </p>
       <div className="flex flex-wrap items-center gap-2">
         {woken ? (
           row.ticket && (

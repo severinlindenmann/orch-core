@@ -53,9 +53,9 @@ describe('follow-up rules', () => {
     expect(currentFor(rows, 'A-2', now)?.id).toBe('bad') // the strip and the chip still show it
   })
   it('a webhook or event wake-up is drawn only where the data has one', () => {
-    expect(wakeLine(row({}))).toMatch(/^Wakes .*\.$/)
+    expect(wakeLine(row({}))).toMatch(/^Wakes \w{3} /)
     expect(wakeLine(row({}))).not.toMatch(/earlier|finishes/)
-    expect(wakeLine(row({ trigger: 'orch', due: null, deadline: '2026-10-13T16:00:00Z', label: 'backfill 8812' }))).toMatch(/when backfill 8812 finishes, at the latest/)
+    expect(wakeLine(row({ trigger: 'orch', due: null, deadline: '2026-10-13T16:00:00Z', label: 'backfill 8812' }))).toMatch(/^Wakes when backfill 8812 finishes, at the latest /)
   })
 })
 
@@ -64,7 +64,7 @@ describe('follow-ups on the mock', () => {
     const { user } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })
     await user.click(await screen.findByRole('tab', { name: /^Follow-ups\s*\d+/ }, T))
     const needs = await screen.findByTestId('followups-needs', {}, T)
-    expect(within(needs).getByText(/DEMO-0043/)).toBeInTheDocument()
+    expect(within(needs).getByText(/DEMO-0054/)).toBeInTheDocument()
     expect(within(needs).getByText(/Stopped by orch/)).toBeInTheDocument()
     expect(within(needs).getByText(/DEMO-0046/)).toBeInTheDocument()
     expect(within(needs).getByText(/DEMO-0041/)).toBeInTheDocument()
@@ -73,11 +73,23 @@ describe('follow-ups on the mock', () => {
     expect(within(waiting).getByText(/Wakes when backfill 8812 finishes/)).toBeInTheDocument()
     expect(screen.getByTestId('followups-finished')).toHaveTextContent(/Woken by deadline/)
     expect(screen.getAllByRole('button', { name: 'Run now as me' }).length).toBeGreaterThan(0)
-    const mine = within(waiting).getAllByTestId('followup-row').find((r) => r.dataset.ticket === 'DEMO-0037')!
+    const mine = within(waiting).getAllByTestId('followup-row').find((r) => r.dataset.ticket === 'DEMO-0048')!
     await user.click(within(mine).getByRole('button', { name: 'Cancel follow-up' }))
     await waitFor(() => expect(within(screen.getByTestId('followups-finished')).getByText(/A person cancelled it/)).toBeInTheDocument(), T)
     await user.click(await screen.findByRole('button', { name: 'Undo' }, T))
     await waitFor(() => expect(within(screen.getByTestId('followups-waiting')).getAllByTestId('followup-row')).toHaveLength(2), T)
+  })
+  it('Hide for me on the list moves a failed row out of "needs a person" for this person only', async () => {
+    const { user } = renderApp('/addon/schedules/schedules', { viewer: 'p_sev', setup: on })
+    await user.click(await screen.findByRole('tab', { name: /^Follow-ups\s*\d+/ }, T))
+    const needs = await screen.findByTestId('followups-needs', {}, T)
+    const failed = within(needs).getAllByTestId('followup-row').find((r) => r.dataset.ticket === 'DEMO-0041')!
+    await user.click(within(failed).getByRole('button', { name: 'Hide for me' }))
+    await waitFor(() => expect(within(screen.getByTestId('followups-needs')).queryByText(/DEMO-0041/)).not.toBeInTheDocument(), T)
+    expect(within(screen.getByTestId('followups-finished')).getByText(/DEMO-0041/)).toBeInTheDocument()
+    // the chain stopped by orch still waits for a decision: no Hide for it
+    const stopped = within(screen.getByTestId('followups-needs')).getAllByTestId('followup-row').find((r) => r.dataset.ticket === 'DEMO-0054')!
+    expect(within(stopped).queryByRole('button', { name: 'Hide for me' })).not.toBeInTheDocument()
   })
   it('a viewer sees the list and no buttons; the ticket strip, the board chip and a Today card show the same facts', async () => {
     const { user } = renderApp('/addon/schedules/schedules', { viewer: 'p_tom', setup: on })
@@ -89,13 +101,13 @@ describe('follow-ups on the mock', () => {
     for (const b of within(off[0]).getAllByRole('button')) expect(b).toBeDisabled()
   })
   it('the ticket page: a quiet card while waiting, a banner when it needs a person', async () => {
-    renderApp('/ticket/DEMO-0037', { viewer: 'p_sev', setup: on })
+    renderApp('/ticket/DEMO-0048', { viewer: 'p_sev', setup: on })
     // below 1280 px the card is in the Panels sheet and one line at the top says there is a follow-up
     expect(await screen.findByTestId('followup-line', {}, T)).toHaveTextContent(/^⏱ Follow-up \w{3} \d\d:\d\d$/)
     expect(screen.queryByTestId('followup-banner')).not.toBeInTheDocument()
   })
   it('the ticket page banner for a chain stopped by orch, with Run now as me', async () => {
-    renderApp('/ticket/DEMO-0043', { viewer: 'p_sev', setup: on })
+    renderApp('/ticket/DEMO-0054', { viewer: 'p_sev', setup: on })
     const banner = await screen.findByTestId('followup-banner', {}, T)
     expect(banner).toHaveTextContent(/Stopped by orch/)
     expect(within(banner).getByRole('button', { name: 'Run now as me' })).toBeInTheDocument()

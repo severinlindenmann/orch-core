@@ -289,7 +289,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
 
   // A host that does not serve agent sessions says nothing about them: no count, no panel.
   const agentsKnown = hasFeature('agents', ws)
-  const n = attention.needsYou.total
+  const n = attention.needsYou.total + (readOnly ? 0 : followups.cards.length) // a follow-up card is something a person has to do
   const counts = attention.agents
   const waiting = attention.waitingOnOthers
   const whoWaits = waiting.who.map((p) => displayName(dir, p)).join(', ')

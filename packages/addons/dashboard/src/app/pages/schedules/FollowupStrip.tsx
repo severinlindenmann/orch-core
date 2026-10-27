@@ -2,7 +2,7 @@
 // banner only when a person is needed; on a narrow page a one-line link takes the card's place). It stays 7 days after the
 // follow-up ends, so whoever arrives at the ticket sees what happened and why.
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
-import { chipTime, currentFor, headline, kindOf, needsAPerson, reasonText, wakeLine, wakeText, type FollowupRow } from '@/api/followups'
+import { chipTime, currentFor, headline, inText, kindOf, needsAPerson, reasonText, wakeLine, wakeText, type FollowupRow } from '@/api/followups'
 import type { TicketDocument } from '@/api/types'
 import { cn } from '@/lib/utils'
 import { RowButtons } from './FollowupsPanel'
@@ -15,6 +15,8 @@ function useCurrent(ticket: TicketDocument) {
   const row = f.on && f.data ? currentFor(f.rows, ticket.key) : null
   return { ...f, row }
 }
+
+const whenIn = (r: FollowupRow) => (r.trigger === 'time' && r.due ? inText(r.due) : '')
 
 const bannerKind = (r: FollowupRow) => needsAPerson(r) || kindOf(r) === 'woken'
 
@@ -76,7 +78,7 @@ export function TicketFollowup({ ticket }: { ticket: TicketDocument }) {
         {waiting && (
           <>
             <dt className="text-text-muted">Wakes</dt>
-            <dd>{wakeLine(row).replace(/^Wakes /, '')}</dd>
+            <dd>{wakeLine(row).replace(/^Wakes /, '')}{whenIn(row) ? ` (${whenIn(row)})` : ''}.</dd>
           </>
         )}
         {kind === 'running' && row.fired_at && (
@@ -92,7 +94,7 @@ export function TicketFollowup({ ticket }: { ticket: TicketDocument }) {
         {(waiting || kind === 'running') && (
           <>
             <dt className="text-text-muted">Runs as</dt>
-            <dd>{name(row.person)}'s rights, this ticket only</dd>
+            <dd>{name(row.person)}'s rights, this ticket only, up to 8 h</dd>
           </>
         )}
       </dl>

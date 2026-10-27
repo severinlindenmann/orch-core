@@ -1,3 +1,5 @@
+import { enrolBrowser, upgradeSession } from './trustedKey'
+
 const STORAGE = 'orch-session'
 let currentToken: string | null = null
 let channel: BroadcastChannel | null = null
@@ -25,11 +27,16 @@ export async function confirmSwitch(fetcher: typeof fetch = fetch): Promise<stri
   }
   if (typeof body.token !== 'string') return undefined
   remember(body.token)
+  // Same browser as a real sign-in on this computer: its enrolled key makes the session a full one, no prompt.
+  const full = await upgradeSession(body.token, fetcher)
+  if (full) remember(full)
   return safeDestination(body.return_to ?? '/')
 }
 const listeners = new Set<() => void>()
 export const isForeignNavigation = () => document.querySelector('meta[name="orch-nav"][content="foreign"]') !== null
 export const getToken = () => currentToken
+/** A new full session replaced the read-mostly one (after a step-up). */
+export const adoptToken = (token: string) => remember(token)
 export function onSessionChange(listener: () => void) {
   listeners.add(listener)
   return () => { listeners.delete(listener) }
@@ -83,6 +90,7 @@ export async function bootstrap(fetcher: typeof fetch = fetch): Promise<string |
     if (!response.ok) return null
     const body = await response.json() as { token: string }
     remember(body.token)
+    void enrolBrowser(body.token, fetcher) // a real sign-in on this computer: this browser becomes a trusted one
     if (foreign) history.replaceState(null, '', destination)
   } else if (!currentToken && channel) {
     await new Promise<void>((resolve) => {

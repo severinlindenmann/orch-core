@@ -10,6 +10,7 @@ import { CHECKLIST_PATH, createAppRouter } from '../app/router'
 import { getToken, isForeignNavigation, onSessionChange } from '../api/bootstrap'
 import { setFeatures } from '../api/features'
 import { session } from '../api/prodApi'
+import { StepUpModal } from './StepUpModal'
 import './shell.css'
 
 export const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 5_000, retry: false, refetchOnWindowFocus: false } } })
@@ -60,7 +61,7 @@ export function Shell() {
   if (!token && isForeignNavigation()) return <main className="prod-login"><OrbitMark /><h1>This page was opened from another site.</h1><p>Open the dashboard from the terminal (<code>orch-dashboard open</code>) or a bookmark.</p></main>
   if (!token && hadSession.current) return <main className="prod-login" role="alert"><OrbitMark /><h1>Your dashboard session ended</h1><p>Run <code>orch dashboard open</code> in your terminal to open it again.</p></main>
   if (!token) return <main className="prod-login"><OrbitMark /><h1>Open your dashboard</h1><p>Run <code>orch dashboard</code> in your terminal.</p><p>Addon launcher: <code>python -m orch_dashboard open</code></p></main>
-  return <App />
+  return <><App /><StepUpModal /></>
 }
 
 export function mount() {

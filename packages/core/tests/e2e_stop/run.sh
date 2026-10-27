@@ -1,6 +1,6 @@
 #!/bin/bash
 # Real end-to-end run of `orch stop` / `orch start` / `orch services` on a throw-away HOME (not collected by pytest).
-#   packages/core/tests/e2e_stop/run.sh      # needs: uv, python3.14, git; network for `uv tool install`
+#   STOP_E2E_BASE=~/orch-dev packages/core/tests/e2e_stop/run.sh   # needs uv, python3.14, git, network
 # Installs orch-core + the dashboard add-on as a uv tool, hub/relay/publish as real background services (launchd on a
 # Mac, systemd --user or pidfile elsewhere; their labels carry a hash of the throw-away state folder, so no label of this
 # machine is touched), two demo workspaces made by `orch setup`; then stop in a folder, stop all, start all and the table.

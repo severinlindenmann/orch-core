@@ -84,6 +84,7 @@ class LinkServer:
         wk_seals: WkSeals | None = None,
         views: Any = None,
         shares: Any = None,
+        switch: Any = None,
         deliveries: Any = None,
         host: str = "127.0.0.1",
         port: int = 0,
@@ -110,6 +111,7 @@ class LinkServer:
         self._wk_seals = wk_seals
         self._views = views
         self._shares = shares
+        self._switch = switch
         self._deliveries = deliveries  # custodial.DeliveryQueue: event_deliver out, its replies in (§8.7)
         self._retry_at = float("-inf")
         self._dev, self._now = dev_mode, now_ms
@@ -453,6 +455,7 @@ class LinkServer:
                 wk_seals=self._wk_seals,
                 views=self._views,
                 shares=self._shares,
+                switch=self._switch,
             )
             return handler(ctx)
         except Refused as e:

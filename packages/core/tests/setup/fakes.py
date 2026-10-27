@@ -139,6 +139,9 @@ class FakePorts:
         if self.fail_runner:
             raise RuntimeError("no service")
 
+    def runner_refresh(self) -> None:
+        self.log.append(("runner_refresh",))
+
     def runner_hello(self, wid: str, timeout: float) -> bool:
         self.log.append(("runner_hello",))
         return self.hello

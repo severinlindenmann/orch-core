@@ -1,6 +1,6 @@
 import './lib/zodJitless'
 import { bootstrapSetup, isSetupPage } from './api/setup'
-import { bootstrap } from './api/bootstrap'
+import { bootstrap, getPendingSwitch } from './api/bootstrap'
 import { showBootFailure } from './api/bootFailure'
 import './lib/cssom'
 import './styles/tokens.css'
@@ -12,6 +12,10 @@ if (setup) {
   void session.catch(() => {})
   void import('./setup/Setup').then(({mount}) => mount(session)).catch(() => showBootFailure())
 } else void bootstrap().catch(() => null).then(async () => {
+  if (getPendingSwitch()) { // a hub link: ask before anybody is signed in
+    const { showSwitchConfirm } = await import('./api/switchConfirm')
+    return showSwitchConfirm()
+  }
   const { mount } = await import('./production/Shell')
   mount()
 }).catch(() => showBootFailure()) // the app's own code did not load: never leave "Loading…" on screen for good

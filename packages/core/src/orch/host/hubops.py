@@ -55,9 +55,9 @@ __all__ = [
 
 HUB_OPS: dict[str, int] = {
     "hub.connect": 1, "hub.link": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1,
-    "hub.history": 1, "keys.rotate": 1,
+    "hub.history": 1, "keys.rotate": 1, "hub.switch": 1,
 }  # fmt: skip
-NETWORK_OPS = frozenset({"hub.connect", "hub.link", "hub.unbind", "hub.refresh"})
+NETWORK_OPS = frozenset({"hub.connect", "hub.link", "hub.unbind", "hub.refresh", "hub.switch"})
 HUB_CAPS = ["hub/1"]
 _MU = threading.Lock()
 
@@ -90,6 +90,18 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
     },
     "hub.unbind": {"type": "object", "properties": {}, "additionalProperties": False},
+    "hub.switch": {  # H1 (27 Oct): one-time switch tickets and the rail list over the hub link; see _switch
+        "type": "object",
+        "properties": {
+            "kind": {"enum": ["ticket", "redeem", "rail"]},
+            "origin": {"type": "string", "pattern": "^https?://[A-Za-z0-9.\\[\\]:-]{1,200}$"},
+            "return_to": {"type": "string", "maxLength": 256},
+            "ticket_kind": {"enum": ["open", "signout"]},
+            "ticket": {"type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Za-z0-9._-]+$"},
+        },
+        "required": ["kind"],
+        "additionalProperties": False,
+    },
     "hub.status": {"type": "object", "properties": {}, "additionalProperties": False},
     "keys.rotate": {"type": "object", "properties": {}, "additionalProperties": False},  # C8: owner, column P only
     "hub.history": {  # C8 M5: what a hub did here; ``since`` starts the third list (default: the last 7 days)
@@ -722,6 +734,15 @@ def serve(call: Call) -> dict[str, Any]:
         from .hubhandoff import handoff
 
         return handoff(call, args, state)
+    if op == "hub.switch":
+        if state is None or state.status != "bound":
+            raise HostError("hub.not_joined", "this workspace is not connected to a hub")
+        need = {"ticket": ("origin", "return_to", "ticket_kind"), "redeem": ("ticket",), "rail": ("origin",)}[
+            args["kind"]
+        ]
+        if set(args) - {"kind"} != set(need):
+            raise HostError("invalid.input", f"hub.switch {args['kind']} takes exactly: {', '.join(need)}")
+        return {"plan": {"op": op, "args": args, "state": state, "dev": workspace_dev(service)}}
     if op == "hub.status":
         from orch.hubclient import snapshot
 
@@ -847,6 +868,11 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         except HubRefused as exc:
             raise _refused(exc.code) from None
     wsk_pub, sign = _wsk_sign(service)
+    if plan["op"] == "hub.switch":
+        try:
+            return ok_result(_switch(service, plan, wsk_pub, sign))
+        except HubRefused as exc:
+            raise _refused(exc.code) from None
     now = lambda: int(service.clock() * 1000)  # noqa: E731
     save = lambda s: _save_state(service, s)  # noqa: E731
     model, state = plan["model"], plan["state"]
@@ -881,6 +907,30 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     except HubRefused as exc:
         _audit(call, "hub.refused", op=plan["op"], code=exc.code)
         raise _refused(exc.code) from None
+
+
+_SWITCH_OPS = {"ticket": "switch_ticket", "redeem": "switch_redeem", "rail": "rail_get"}
+
+
+def _switch(service: Any, plan: dict[str, Any], wsk_pub: bytes, sign: Any) -> dict[str, Any]:
+    """``hub.switch`` (H1, 27 Oct): the hub decides the person (the owner alias of this workspace), the host relays.
+    ``ticket``: a one-time ticket to open (or sign out of) the hub console; ``redeem``: the hub answers for a ticket the
+    hub console made for THIS workspace (single use, 30 s, audience = this authenticated link); ``rail``: the workspace
+    list. Nothing here is logged, signed by a person or kept."""
+    a = plan["args"]
+    hub_link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"])
+    try:
+        if a["kind"] == "ticket":
+            r = hub_link.call(
+                "switch_ticket", {"origin": a["origin"], "return_to": a["return_to"], "kind": a["ticket_kind"]}
+            )
+        elif a["kind"] == "redeem":
+            r = hub_link.call("switch_redeem", {"ticket": a["ticket"]})
+        else:
+            r = hub_link.call("rail_get", {"origin": a["origin"]})
+    finally:
+        getattr(transport, "close", lambda: None)()
+    return r
 
 
 def _quiesce_logsync(service: Any, plan: dict[str, Any]) -> None:

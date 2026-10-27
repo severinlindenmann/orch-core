@@ -363,7 +363,7 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
       </ol>
       <small className="words-wait">Waiting for you in the setup window…</small>
       <details>
-        <summary>The words don’t match</summary>
+        <summary>Are the words different?</summary>
         <p>Do not type yes. Close the setup window, then run orch setup again to start over with new words.</p>
       </details>
     </section>
@@ -1225,6 +1225,8 @@ export function Setup({ api }: { api: SetupAPI }) {
                         review_id: review.review_id,
                         digest: review.digest,
                       })
+                      setProgress(undefined) // run-11 item 7: nothing of the earlier run (its error, its words) stays on screen
+                      setReason('')
                       setRun(result.run_id)
                     })
                   }

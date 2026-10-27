@@ -40,6 +40,7 @@ from .relay.client import Transport
 from .router import AccessAuthz, RouteQueue, Router
 from .shares import ShareService, ShareStore, hxk_handle
 from .spaces import SpaceService, SpaceStore
+from .switch import SwitchService
 from .view import build_view_services
 from .webapi import SessionBridge, WebApi, WebDeps, WebServer
 
@@ -237,6 +238,10 @@ def serve(
         dev_mode=cfg.dev,
         notify=notifier.notify_async if notifier else None,
     )
+    switch = SwitchService(
+        hub_origin=cfg.resolved_api_origin,
+        badge=lambda ws, user: len(views.reader.needs_you(ws, user)),
+    )
     web: WebServer | None = None
     if cfg.web_listen is not None:
         api = WebApi(
@@ -257,9 +262,11 @@ def serve(
                 link_endpoint=lambda: f"{host}:{server.address[1]}",
                 push=notifier,
                 setup_token_file=state / SETUP_TOKEN_FILE,
+                switch=switch,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )
         )
+        switch.set_hub_origin(lambda: api.d.api_origin or cfg.resolved_api_origin())  # the dev server learns it late
         web = WebServer.from_listen(
             api, cfg.web_listen, bind_all=bind_all
         )  # loopback, or one private IP (dev, plain http)
@@ -285,6 +292,7 @@ def serve(
         wk_seals=wk_seals,
         views=views.service,
         shares=shares,
+        switch=switch,
         deliveries=deliveries,
         host="0.0.0.0" if bind_all and link_listen is not None else host,  # the address stays the validated one
         port=port,

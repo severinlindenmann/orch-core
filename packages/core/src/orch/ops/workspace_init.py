@@ -15,6 +15,7 @@ environment variable skips a prompt.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -405,6 +406,52 @@ def _bootstrap(
         _sleep(0.25)
 
 
+_PENDING = "setup-pending.json"
+
+
+def _pending_path(sd: Path) -> Path:
+    return Path(sd) / _PENDING
+
+
+def _pending_load(sd: Path, root: Path) -> tuple[str, bytes] | None:
+    """A workspace id/key a previous ``orch setup`` in this folder got from ``host.wsk_create`` but never used (it
+    failed before the genesis landed). Returns (wid, wsk_pub) while the key still exists on the host."""
+    from orch.custody import FileBackend
+
+    try:
+        wid = json.loads(_pending_path(sd).read_text()).get(str(root))
+        keys = Path(sd) / "hosts" / wid / "keys"
+        if (
+            not isinstance(wid, str)
+            or not _WID.fullmatch(wid)
+            or not (Path(sd) / "hosts" / wid / "wsk_create.json").is_file()
+        ):
+            return None
+        return wid, FileBackend(keys).public_key("wsk")
+    except Exception:  # noqa: BLE001 - nothing usable: a fresh key is made
+        return None
+
+
+def _pending_store(sd: Path, root: Path, wid: str | None) -> None:
+    """Remember (or with ``None`` forget) the unused key of ``root``; best effort, no secret in it."""
+    path = _pending_path(sd)
+    try:
+        try:
+            doc = json.loads(path.read_text())
+        except (OSError, ValueError):
+            doc = {}
+        if wid is None:
+            doc.pop(str(root), None)
+        else:
+            doc[str(root)] = wid
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(doc))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
 class BootstrapState:
     """What a hosted bootstrap leaves for its caller's cleanup: the connection, the workspace id of the key in use, the
     idem of a bootstrap whose outcome is unknown (its device key is kept) and the definite result."""
@@ -438,19 +485,29 @@ def _hosted_bootstrap(
         st.client = connect_host(sd)
     except Exception as e:  # noqa: BLE001 - socket missing, wrong owner, no welcome: all "no host here"
         raise _unavailable(f"no orch host answers ({str(e)[:200]})") from None
+    reuse = _pending_load(sd, root)  # item 6: a rerun after a failure continues with the half-made workspace
     for attempt in range(BOOTSTRAP_ATTEMPTS):
+        if reuse is not None:
+            st.wid, wsk_pub = reuse
+            reuse = None
+            reused = True
+        else:
+            reused = False
+            try:
+                created = _call(st.client, "host.wsk_create", {})
+            except _Lost as lost:
+                raise _unavailable(f"the host connection dropped ({lost})") from None
+            if not created.get("ok"):
+                raise _host_refusal(created.get("error") or {})
+            data = created["result"]["data"]
+            if not isinstance(data.get("workspace_id"), str) or not _WID.fullmatch(data["workspace_id"]):
+                raise _refuse("internal", "the host answered host.wsk_create without a workspace id")
+            st.wid = data["workspace_id"]
+            wsk_pub = None
+        _pending_store(sd, root, st.wid)
         try:
-            created = _call(st.client, "host.wsk_create", {})
-        except _Lost as lost:
-            raise _unavailable(f"the host connection dropped ({lost})") from None
-        if not created.get("ok"):
-            raise _host_refusal(created.get("error") or {})
-        data = created["result"]["data"]
-        if not isinstance(data.get("workspace_id"), str) or not _WID.fullmatch(data["workspace_id"]):
-            raise _refuse("internal", "the host answered host.wsk_create without a workspace id")
-        st.wid = data["workspace_id"]
-        try:
-            wsk_pub = crypto.unb64u(data["wsk_pub"], crypto.PUB_LEN)
+            if wsk_pub is None:
+                wsk_pub = crypto.unb64u(data["wsk_pub"], crypto.PUB_LEN)
             event, st.person = _signed_genesis(
                 ctx,
                 sd,
@@ -477,9 +534,13 @@ def _hosted_bootstrap(
         st.client, st.result, error = _bootstrap(sd, st.client, request, st.pending)
         st.pending = None  # a definite answer
         if st.result is not None:
+            _pending_store(sd, root, None)
             return
         _drop_person(sd, st.wid)
         st.wid = None
+        _pending_store(sd, root, None)  # a definite refusal: that key is spent
+        if reused and (error or {}).get("code") == "not_found":  # the host forgot that key: start over with a new one
+            continue
         if (error or {}).get("code") != "control.rolled_back" or attempt == BOOTSTRAP_ATTEMPTS - 1:
             raise _host_refusal(error or {})
         TERMINAL.wait(

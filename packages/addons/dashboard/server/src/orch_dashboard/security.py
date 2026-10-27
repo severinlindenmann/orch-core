@@ -1,4 +1,5 @@
 import contextlib
+import urllib.parse
 
 from . import widget_frame
 from .errors import response
@@ -20,6 +21,35 @@ _FRAME_OWN = frozenset(
 # everything else keeps the general bound.
 CLICK_BODY_LIMIT = 16_384
 CLICK_STEP = ("/view", "/sign", "/cancel", "/state", "/custody")
+
+
+#: The global routes a switch session may use (their answers are cut down to the bound workspace in app.py).
+SWITCH_GLOBAL = frozenset(
+    {
+        ("GET", "/api/session"),
+        ("GET", "/api/me"),
+        ("GET", "/api/workspaces"),
+        ("GET", "/api/events"),  # only with ?ws=<bound>
+        ("POST", "/auth/logout"),
+    }
+)
+
+
+#: The only non-GET routes of the bound workspace a switch session may call (a ticket to the hub, not a write).
+SWITCH_POST = frozenset({"hub/switch"})
+
+
+def switch_allows(method, path, bound, query=None) -> bool:
+    """The ONE table of what a switch session may reach: READS of its own workspace (GET/HEAD, never a shell on the
+    server), `SWITCH_POST`, and the named global routes. `bound` is the workspace of its ticket."""
+    if (method, path) in SWITCH_GLOBAL:
+        return path != "/api/events" or (query or {}).get("ws") == [bound]
+    parts = path.split("/")
+    if len(parts) > 4 and parts[:3] == ["", "api", "w"] and parts[3] == bound:
+        if parts[4] == "terminals" or parts[-1] == "attach":
+            return False
+        return method in ("GET", "HEAD") or (method == "POST" and "/".join(parts[4:]) in SWITCH_POST)
+    return False
 
 
 class Security:
@@ -140,6 +170,9 @@ class Security:
             if not (self.auth.valid_setup(token) if setup else self.session_ok(token, policy)):
                 return await reject("session.required", 401)
             scope.setdefault("state", {})["token"] = token
+            refusal = self.switch_refused(token, path, method, scope)
+            if refusal:
+                return await reject("remote.refused", 403)
         if method not in ("GET", "HEAD", "OPTIONS"):
             if origins != [origin]:
                 return await reject("origin.bad", 403)
@@ -162,7 +195,7 @@ class Security:
         )
         limit = (
             1024
-            if path == "/auth/session" or records_step
+            if path in ("/auth/session", "/auth/switch") or records_step
             else 8192
             if records_admin
             else CLICK_BODY_LIMIT
@@ -214,6 +247,16 @@ class Security:
                 raise
             # No body/header interpolation in errors or logs.
             await reject("internal", 500)
+
+    def switch_refused(self, token, path, method, scope) -> bool:
+        """A session opened by a hub switch (H1) is read-mostly on ONE workspace until a real sign-in: routes default
+        CLOSED. It reaches only `switch_allows` (below); every other API or auth route is refused, so a route added
+        later is closed for it until someone opens it here on purpose."""
+        bound = self.auth.switch_workspace(token)
+        if bound is None:
+            return False
+        query = urllib.parse.parse_qs(scope.get("query_string", b"").decode("latin1"))
+        return not switch_allows(method, path, bound, query)
 
     async def refuse(self, scope, receive, send):
         if scope["type"] == "websocket":

@@ -53,7 +53,7 @@ def make(home, **kw):
         run=run,
         resolve_ref=lambda url, ref: "a" * 40,
         health=lambda h, p: True,
-        detect=lambda: [("127.0.0.1", "this computer only"), ("100.64.1.2", "NetBird")],
+        detect=lambda: [("127.0.0.1", "this computer only"), ("100.64.1.2", "private network")],
         port_free=lambda p, h: True,
         token=lambda: "TOKEN",
         dashboard_entry=lambda: ["/bin/orch-dashboard"],
@@ -158,7 +158,11 @@ def test_detected_addresses_offer_the_netbird_ip():
         "en0: flags=8863\n\tinet 192.168.1.10 netmask 0xffffff00\n"
     )
     got = detect_addresses(lambda argv: ifc if argv == ["ifconfig"] else "")
-    assert ("100.64.9.9", "NetBird") in got and ("192.168.1.10", "local network") in got and got[0][0] == "127.0.0.1"
+    assert (
+        ("100.64.9.9", "private network") in got
+        and ("192.168.1.10", "local network") in got
+        and got[0][0] == "127.0.0.1"
+    )
 
 
 def test_an_agent_is_refused(home):
@@ -276,3 +280,35 @@ def test_phone_refuses_loopback_none_installed_and_many_admins(home):
     ctx3, out3, err3, _ = _phone_ctx(home / "two", users=two)
     assert cli.main(["phone"], env=ctx3.env, out=out3, err=err3, ctx=ctx3) == 1
     assert "--user" in err3.getvalue()
+
+
+def test_status_shows_version_and_commit_of_the_workspace_dashboard(home, monkeypatch):
+    # run-11 owner item 9: the workspace row said "-" for version and commit
+    ctx, out, err, _ = make(home)
+    monkeypatch.setattr(cli, "installed_version", lambda ctx, dist: ("1.2.3", "c" * 40))
+    cli.full_server(ctx, ["hub"], address="127.0.0.1")
+    cli.add_workspace(ctx, "/w/one")
+    out.truncate(0), out.seek(0)
+    cli.main(["status", "--json"], env=ctx.env, out=out, err=err, ctx=ctx)
+    ws = [r for r in json.loads(out.getvalue())["parts"] if r["part"] == "workspace"][0]
+    assert (ws["version"], ws["ref"]) == ("1.2.3", "c" * 40)
+    out.truncate(0), out.seek(0)
+    cli.main(["status"], env=ctx.env, out=out, err=err, ctx=ctx)
+    line = next(ln for ln in out.getvalue().splitlines() if ln.startswith("workspace"))
+    assert "1.2.3" in line and "c" * 12 in line
+
+
+def test_mac_is_told_it_cannot_open_its_own_netbird_address(home, monkeypatch):
+    ctx, out, err, _ = make(home)
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    cli.choose_address(ctx, None, {})
+    assert out.getvalue().count("open it at 127.0.0.1") == 1
+    out.truncate(0), out.seek(0)
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    cli.choose_address(ctx, None, {})
+    assert "open it at 127.0.0.1" not in out.getvalue()
+    out.truncate(0), out.seek(0)
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    ctx.detect = lambda: [("127.0.0.1", "this computer only")]
+    cli.choose_address(ctx, None, {})
+    assert "127.0.0.1 (a Mac" not in out.getvalue()

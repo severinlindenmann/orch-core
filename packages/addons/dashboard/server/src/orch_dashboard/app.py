@@ -32,6 +32,7 @@ from . import (
     shares,
     signprefs,
     stepup_routes,
+    switch,
     terminals,
     testrun,
     usage,
@@ -225,9 +226,14 @@ def create_app(
     def head(ws: str = Depends(reads.workspace)):
         return {"sub_cursor": gateway.call(ws, "ticket.query", {"limit": 1})["sub_cursor"]}
 
+    def bound_only(request: Request, rows):
+        """A session opened by a hub switch sees only the workspace its ticket was for (H1)."""
+        bound = auth.switch_workspace(request.state.token)
+        return rows if bound is None else [ws for ws in rows if ws.id == bound]
+
     @app.get("/api/session")
     def session_info(request: Request):
-        workspaces = gateway.workspaces()
+        workspaces = bound_only(request, gateway.workspaces())
         return {
             # How this browser session was opened: "local" (a launch code from this computer; the page hides Log out).
             "login": auth.login_kind(request.state.token) or "unknown",
@@ -243,8 +249,8 @@ def create_app(
         }
 
     @app.get("/api/workspaces")
-    def workspaces():
-        return gateway.workspaces()
+    def workspaces(request: Request):
+        return bound_only(request, gateway.workspaces())
 
     @app.get("/api/host")
     def host():
@@ -260,8 +266,8 @@ def create_app(
         )
 
     @app.get("/api/me")
-    def me():
-        return [identity_row(ws.id) for ws in gateway.workspaces() if "identity" in ws.features]
+    def me(request: Request):
+        return [identity_row(ws.id) for ws in bound_only(request, gateway.workspaces()) if "identity" in ws.features]
 
     @app.get("/api/w/{ws}/identity")
     def identity(ws: str = Depends(reads.workspace)):
@@ -286,6 +292,7 @@ def create_app(
     stepup_routes.register(app, gateway)
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
+    switch.register(app, gateway, auth)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
     signprefs.register(app, gateway)

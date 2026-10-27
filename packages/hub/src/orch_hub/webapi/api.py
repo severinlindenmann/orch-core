@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from ..access import Access, AccessError, role_rank
+from ..access import Access, AccessError
 from ..access.store import ADMIN_GROUP, check_name
 from ..channels import Channels
 from ..channels.service import MIN_PASSWORD, ChannelError
@@ -52,6 +52,7 @@ from ..contract import suite as S
 from ..contract.canon import CanonError, loads_strict, unb64u
 from ..contract.hub import HV, Refused
 from ..relay.client import RelayError
+from ..switch import SwitchError, clean_return_to, workspace_rows
 from .static import StaticSite
 
 MAX_BODY = 64 * 1024
@@ -59,6 +60,7 @@ COOKIE = "orch_hub_session"
 CSRF_HEADER = "x-orch-csrf"
 PREPARE_LIMIT = (10, 60_000)  # per user: 10 prepares a minute (orch-hub#25 item 6)
 SIGN_LIMIT = (20, 60_000)
+SWITCH_PEEK_LIMIT = (30, 60_000)  # per source: peek is unauthenticated and names the ticket's person
 SIGNIN_SOURCE_LIMIT = (20, 60_000)  # per network source (IPv6: per /64), counted before any password hashing
 SIGNIN_NET_LIMIT = (200, 60_000)  # looser aggregate per IPv6 /48 and per IPv4 /24: one allocation cannot spray
 # No global request bucket, by design: any hub-wide bucket is a lockout lever a few sources can hold. What bounds the
@@ -113,6 +115,8 @@ STATUS = {
     "unavailable": 503,
     "internal": 500,
     "not_bound": 409,
+    "bad_ticket": 403,
+    "reauth_required": 403,
     # contract refusals a registration or a prepare/sign can surface (protocol.md §14)
     "bad_signature": 403,
     "cert_invalid": 403,
@@ -201,6 +205,8 @@ class WebDeps:
     now_ms: Callable[[], int] = lambda: int(time.time() * 1000)
     #: one-time first-admin token (``orch install hub`` writes it, ``POST /setup`` consumes it); None = no setup route
     setup_token_file: Path | None = None
+    #: switch tickets and the rail (``orch_hub.switch.SwitchService``); None = those routes answer ``unavailable``
+    switch: Any = None
 
 
 @dataclass(frozen=True)
@@ -307,6 +313,16 @@ ROUTES: tuple[Route, ...] = (
         "Replace the hub marketplace policy ({base_version, policy}); 409 conflict when base_version is stale",
     ),
     _r("POST", "/admin/connect", "admin", "a_connect", "Mint a workspace invite and return the one connect link"),
+    _r("POST", "/switch/ticket", "session", "switch_ticket", "A one-time ticket to open one of my workspaces"),
+    _r(
+        "POST",
+        "/switch/peek",
+        "none",
+        "switch_peek",
+        "Look at a ticket from a workspace without using it (who, and who is signed in here)",
+    ),
+    _r("POST", "/switch/redeem", "none", "switch_redeem", "Redeem a ticket from a workspace: signs me in here"),
+    _r("GET", "/rail", "session", "rail", "The hub and my workspaces, for the switcher"),
     _r("GET", "/admin/audit", "admin", "a_audit", "Read the audit chain (?since=N, up to 100 records)"),
 )
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
@@ -339,6 +355,12 @@ SCOPE_ROUTES: dict[str, frozenset[str]] = {
 }
 
 
+#: What a session that came from a switch ticket (``via_switch``: a workspace vouched for it, no password sign-in) may
+#: call: reading what it sees, the rail, opening another workspace, signing out. Every OTHER route (admin, channels,
+#: signing, credentials) answers ``reauth_required`` until a real sign-in: routes default closed.
+SWITCH_HANDLERS = frozenset({"whoami", "sign_out", "my_workspaces", "needs_you", "item", "switch_ticket", "rail"})
+
+
 def route_scopes(rt: Route) -> frozenset[str]:
     """The session scopes that may call this ROUTE (keyed by route, not handler: ``/admin/channels/{id}/revoke`` shares the
     ``revoke`` handler with the channel's own revoke, but an admin route is ``full`` only, L2H1-1)."""
@@ -359,6 +381,8 @@ class Ctx:
     channel_id: str | None = None  # the channel a ``channel`` session is bound to
     origin: str | None = None
     source: str = ""
+    via_switch: bool = False  # the session came from a switch ticket, not a password sign-in
+    cookie_value: str = ""  # the session cookie the browser sent, if any (auth-none routes may use it, never trust it)
 
 
 class _Limiter:
@@ -572,13 +596,14 @@ class WebApi:
         bearer = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
         if method != "GET":
             self._csrf(headers, bool(raw), use_cookie=not bearer and bool(cookie_token))
-        ctx = Ctx(origin=headers.get("origin"), source=source)
+        ctx = Ctx(origin=headers.get("origin"), source=source, cookie_value=cookie_token)
         if route.auth != "none":
             ctx.token, ctx.cookie = (bearer, False) if bearer else (cookie_token, True)
             if not ctx.token:
                 raise ApiError("no_session")
             info = self.d.channels.session_info(ctx.token)
             ctx.user_id, ctx.scope, ctx.channel_id = info["user_id"], info["scope"], info["channel_id"]
+            ctx.via_switch = info["via"] == "switch"
             # a session is for the carrier it was issued for (cookie = browser: ``full``; bearer = app: ``pairing`` or
             # ``channel``); the scope is stored with the session, so it also holds across a restart
             if (ctx.scope == "full") != ctx.cookie:
@@ -593,6 +618,8 @@ class WebApi:
                     raise ApiError("cert_expired")
                 if state != "active":
                     raise ApiError("no_session")
+            if ctx.via_switch and route.handler not in SWITCH_HANDLERS:  # a workspace vouched for this session
+                raise ApiError("reauth_required")
             if route.auth == "admin" and not self.d.access.is_hub_admin(ctx.user_id):
                 raise ApiError("forbidden_role")
         body = self._body(raw)
@@ -648,36 +675,7 @@ class WebApi:
     # --- the hub's own data: what this user may see ------------------------------------------------------------------
 
     def _workspaces(self, user: str) -> list[dict[str, Any]]:
-        """Workspaces the user has a part in: full mode by the role the access model gives; selective by being the
-        admin-aliased owner (spec §8a: hub groups and hub-admins get no role there)."""
-        reg, acc, out = self.d.registry, self.d.access, []
-        for ws in sorted(reg.pins()):
-            st = reg.binding_state(ws)
-            mode = reg.last_mode(ws)
-            if st is None or mode not in ("full", "selective"):
-                continue
-            if mode == "selective":
-                if reg.owner_alias(ws) != user:
-                    continue
-                role = "owner"
-            else:
-                role = acc.role_of(user, ws)
-                if role is None:
-                    continue
-            card = reg.card(ws) or {}
-            name = card.get("name") if type(card.get("name")) is str else None
-            out.append(
-                {
-                    "workspace_id": ws,
-                    "name": P4.render_text(name) if name else None,
-                    "mode": mode,
-                    "role": role,
-                    "online": st["status"] == "bound",
-                    "hub_reads": "everything" if mode == "full" else "shared items and summaries",
-                    "can_start": mode == "full" and role_rank(role) >= role_rank("edit"),
-                }
-            )
-        return out
+        return workspace_rows(self.d.registry, self.d.access, user)
 
     def _mine(self, user: str, ws: str) -> dict[str, Any]:
         for w in self._workspaces(user):
@@ -845,12 +843,121 @@ class WebApi:
 
     def _h_whoami(self, c: Ctx, p: dict, q: dict, b: dict | None):
         name = next((u["name"] for u in self.d.access.users() if u["user_id"] == c.user_id), None)
-        return 200, {"user_id": c.user_id, "name": name, "is_admin": self.d.access.is_hub_admin(c.user_id)}
+        return (
+            200,
+            {
+                "user_id": c.user_id,
+                "name": name,
+                "is_admin": self.d.access.is_hub_admin(c.user_id),
+                "needs_sign_in": c.via_switch,  # admin pages need a password sign-in (a workspace vouched for this one)
+            },
+            [],
+        )
 
     def _h_sign_out(self, c: Ctx, p: dict, q: dict, b: dict | None):
         self.d.channels.sign_out(c.token)
         clear = f"{self._cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
         return 200, {"ok": True}, [("Set-Cookie", clear + ("; Secure" if self.d.secure_cookies else ""))]
+
+    # --- hub one-app: switch tickets and the rail ---------------------------------------------------------------------
+
+    def _switch(self) -> Any:
+        if self.d.switch is None:
+            raise ApiError("unavailable")
+        return self.d.switch
+
+    def _h_switch_ticket(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, workspace_id=str, return_to=str, kind=str)
+        sw = self._switch()
+        ws = _hex32(b["workspace_id"])
+        if b["kind"] not in ("open", "signout"):
+            raise ApiError("malformed")
+        if not any(w["workspace_id"] == ws for w in self._workspaces(c.user_id)):
+            raise ApiError("forbidden_role")
+        origin = sw.origin_of(ws)
+        if origin is None:
+            raise ApiError("unavailable")
+        return 200, {"url": f"{origin}/#t={sw.issue_to_ws(c.user_id, ws, b['return_to'], b['kind'])}"}, []
+
+    def _session_name(self, token: str) -> dict[str, Any] | None:
+        """Who the presented cookie is, or None (no cookie, dead session)."""
+        if not token:
+            return None
+        try:
+            uid = self.d.channels.session_info(token)["user_id"]
+        except ChannelError:
+            return None
+        return {"user_id": uid, "name": self._user_name(uid)}
+
+    def _user_name(self, uid: str) -> str | None:
+        return next((u["name"] for u in self.d.access.users() if u["user_id"] == uid), None)
+
+    def _h_switch_peek(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """The landing page asks before it signs anybody in (login CSRF): who the ticket is for and who, if anyone,
+        is signed in here already. The ticket is not used."""
+        b = _need(b, t=str)
+        self._limit.hit("switch-peek", c.source, SWITCH_PEEK_LIMIT)
+        try:
+            r = self._switch().peek(b["t"], "to_hub")
+        except SwitchError:
+            raise ApiError("bad_ticket") from None
+        return (
+            200,
+            {
+                "kind": r["kind"],
+                "user_id": r["user"],
+                "name": self._user_name(r["user"]),
+                "signed_in_as": self._session_name(c.cookie_value),
+            },
+            [],
+        )
+
+    def _h_switch_redeem(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, t=str)
+        if c.origin is None:  # a cookie is only ever set for a request the browser labelled
+            raise ApiError("not_allowed")
+        replace = b.get("replace", False)
+        if type(replace) is not bool:
+            raise ApiError("malformed")
+        sw = self._switch()
+        try:
+            want = sw.peek(b["t"], "to_hub")
+        except SwitchError:
+            raise ApiError("bad_ticket") from None
+        mine = self._session_name(c.cookie_value)
+        if want["kind"] == "open" and mine is not None and mine["user_id"] != want["user"] and not replace:
+            raise ApiError("other_user")  # never replace another person's session silently (login CSRF)
+        try:
+            r = sw.redeem(b["t"], "to_hub")
+        except SwitchError:
+            raise ApiError("bad_ticket") from None
+        clear = f"{self._cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
+        secure = "; Secure" if self.d.secure_cookies else ""
+        if r["kind"] == "signout":
+            if c.cookie_value:
+                self.d.channels.sign_out(c.cookie_value)
+            return 200, {"user_id": None, "return_to": "/", "kind": "signout"}, [("Set-Cookie", clear + secure)]
+        if mine is not None and c.cookie_value:
+            self.d.channels.sign_out(c.cookie_value)
+        try:
+            s = self.d.channels.open_session(r["user"])
+        except ChannelError:
+            raise ApiError("bad_ticket") from None
+        ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
+        attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
+        out = {"user_id": s["user_id"], "return_to": clean_return_to(r["rt"]), "kind": "open"}
+        return 200, out, [("Set-Cookie", attrs + secure)]
+
+    def _h_rail(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        sw = self._switch()
+        return (
+            200,
+            {
+                "hub": {"name": sw.hub_name, "origin": sw.hub_origin()},
+                "workspaces": sw.rail_rows(self.d.registry, self.d.access, c.user_id),
+            },
+            [],
+        )
 
     # --- (b) person home ---------------------------------------------------------------------------------------------
 

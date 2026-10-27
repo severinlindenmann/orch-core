@@ -355,6 +355,7 @@ def _join(
             "pk_pub": b64u(pk_pub),
             "binding": binding,
             "owner_proof": dict(owner_proof),
+            "alias_users": sorted(new.aliases.values()),  # the owner-signed aliases: the hub holds them to its invite
         },
     )
     new.status = "bound"

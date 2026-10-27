@@ -31,7 +31,9 @@ def build_link(base: str, hub_id: str, code: str, endpoint: str | None = None, o
         or (owner_user is not None and not _HEX32.fullmatch(owner_user))
     ):
         raise LinkError("bad link part")
-    return f"{base}/c#h1.{hub_id}.{code}" + (f".{endpoint}" if endpoint else "") + (f"~{owner_user}" if owner_user else "")
+    return (
+        f"{base}/c#h1.{hub_id}.{code}" + (f".{endpoint}" if endpoint else "") + (f"~{owner_user}" if owner_user else "")
+    )
 
 
 def parse_link(link: str) -> dict[str, str | None]:
@@ -52,4 +54,11 @@ def parse_link(link: str) -> dict[str, str | None]:
     ):
         raise LinkError("bad link part")
     origin = f"{u.scheme}://{u.netloc}"
-    return {"origin": origin, "hub_id": hub_id, "code": code, "endpoint": endpoint, "owner_user": owner_user or None, "card_url": origin + CARD_PATH}
+    return {
+        "origin": origin,
+        "hub_id": hub_id,
+        "code": code,
+        "endpoint": endpoint,
+        "owner_user": owner_user or None,
+        "card_url": origin + CARD_PATH,
+    }

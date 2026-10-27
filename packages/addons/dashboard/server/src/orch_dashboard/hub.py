@@ -55,8 +55,14 @@ RuleValue = Annotated[str, StringConstraints(min_length=1, max_length=100)]
 
 
 #: the hub id a join invite may start with (`<hub id>:<code>`): the hub only ever sees the code
+OWNER_USER = re.compile(r"[0-9a-f]{32}")
 INVITE_PREFIX = re.compile(r"([0-9a-f]{32}):(.+)", re.DOTALL)
 MAX_CARD_BYTES = 16 * 1024
+
+
+def _owner_user(v) -> str | None:
+    """The link's hub user for the owner: a hint only; the hub holds the signed join to its invite's owner."""
+    return v if isinstance(v, str) and OWNER_USER.fullmatch(v) else None
 
 
 class ConnectBody(BaseModel):
@@ -347,7 +353,7 @@ def register(app: FastAPI, gateway: Gateway):
 
         return {
             "hub_id": text("hub_id"), "name": text("name"), "code": text("code"), "endpoint": text("endpoint"),
-            "owner_user": got["owner_user"] if isinstance(got.get("owner_user"), str) and re.fullmatch(r"[0-9a-f]{32}", got["owner_user"]) else None,
+            "owner_user": _owner_user(got.get("owner_user")),
             "dev": got.get("dev") is True, "hub_card": json.dumps(got["hub_card"], separators=(",", ":")),
         }  # fmt: skip
 

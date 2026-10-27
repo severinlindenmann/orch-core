@@ -1308,6 +1308,8 @@ def check_recorded_owner_proof(
 # --- link messages ------------------------------------------------------------------------------------------------
 
 #: op -> (direction of the request, mode it exists in or None for both, exact body fields)
+#: body members a request may leave out (everything else in LINK_OPS is required)
+LINK_OPTIONAL: dict[str, frozenset[str]] = {"join": frozenset({"alias_users"})}
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "snapshot_get": ("w2h", None, {}),
     "event_deliver": ("h2w", None, {"log": lambda x: type(x) is str, "event": lambda x: type(x) is dict}),
@@ -1324,6 +1326,8 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "pk_pub": _pub,
             "binding": lambda x: type(x) is dict,
             "owner_proof": lambda x: x is None or type(x) is dict,  # #1198 C9: required member; null is proof_missing
+            # optional (run 12): the hub users the owner-signed aliases name; the hub holds them to the invite's owner
+            "alias_users": lambda x: type(x) is list and all(type(u) is str for u in x),
         },
     ),
     "card_put": ("w2h", None, {"card": lambda x: type(x) is dict, "pk_pub": _pub}),
@@ -1410,7 +1414,11 @@ def verify_link(
         raise Refused("other_workspace")
     if abs(now_ms - o["ts_ms"]) > LINK_WINDOW_MS:
         raise Refused("stale_timestamp")
-    if is_request and (set(o["body"]) != set(body) or not all(ok(o["body"][k]) for k, ok in body.items())):
+    optional = LINK_OPTIONAL.get(o["op"], frozenset())
+    if is_request and (
+        not set(body) - optional <= set(o["body"]) <= set(body)
+        or not all(ok(o["body"][k]) for k, ok in body.items() if k in o["body"])
+    ):
         raise Refused("malformed")
     return o
 

@@ -202,6 +202,11 @@ def join(c: OpContext) -> dict[str, Any]:
         )
         owner_user = getattr(c.invites, "owner_user", None)
         alias = owner_user(invite) if owner_user is not None else None
+        # run 12: the owner's alias on the workspace log must be the user the admin bound to this invite, nothing a
+        # crafted link could say; the hub's own invite binding is the authority.
+        claimed = c.body.get("alias_users") or []
+        if type(claimed) is not list or any(u != alias for u in claimed):
+            raise Refused("owner_alias_mismatch")
         c.registry.commit_join(
             c.workspace_id,
             pin["owner_person_id"],

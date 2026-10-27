@@ -107,7 +107,14 @@ def test_hub_never_sees_wk_material(host: Host, hub: FakeHub) -> None:
     assert ws.wk_seals == [] and all(op != "wk_seal" for _, op, _ in hub.calls)
     # nothing the hub received is a wrap, a member list or a key: only the join body members
     for m in host.wire.sent:
-        assert m["o"]["op"] == "join" and set(m["o"]["body"]) == {"invite", "card", "pk_pub", "binding", "owner_proof"}
+        assert m["o"]["op"] == "join" and set(m["o"]["body"]) == {
+            "invite",
+            "card",
+            "pk_pub",
+            "binding",
+            "owner_proof",
+            "alias_users",
+        }
 
 
 def test_wk_seal_refused_in_selective(host: Host, hub: FakeHub) -> None:

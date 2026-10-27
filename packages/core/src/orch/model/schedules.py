@@ -13,7 +13,19 @@ from .followups import FU_BRIEF_MAX_BYTES, FU_RUN_HOURS
 from .followups import REASONS as FU_REASONS
 
 MAX_DAYS = 30
-REASONS = (*FU_REASONS, "role_lost", "device_lost", "ticket_closed", "claimed_by_other", "missed", "addon_disabled")
+SET_SKEW_S = 300  # a signed `starts` is at most this far after the event `at` (a crafted far-future start is refused)
+SET_PAST_S = 3600  # and at most this far before it (a slow signing flow)
+LABEL_MAX = 200
+REASONS = (
+    *FU_REASONS,
+    "role_lost",
+    "device_lost",
+    "access_lost",
+    "ticket_closed",
+    "claimed_by_other",
+    "missed",
+    "addon_disabled",
+)
 
 
 def validate_rule(rule):
@@ -83,13 +95,17 @@ def occurrences(rule, starts: int, ends: int, after: int) -> int | None:
     return None
 
 
-def validate_set(rule, starts, ends, now, brief, run_hours):
+def validate_set(rule, starts, ends, now, brief, run_hours, label=None):
     try:
         validate_rule(rule)
     except ValueError as exc:
         return str(exc)
     if any(type(v) is not int for v in (starts, ends, now)) or not 0 < ends - starts <= MAX_DAYS * 86400 or ends <= now:
         return "schedule interval must be positive, future, and at most 30 days"
+    # `starts` is the signing time and the interval is bounded from the event itself, so a crafted
+    # far-future `starts` cannot stretch the authority past MAX_DAYS from when it was signed.
+    if not (-SET_PAST_S <= starts - now <= SET_SKEW_S) or ends > now + MAX_DAYS * 86400:
+        return "starts must be the signing time and ends at most 30 days after it"
     if type(run_hours) is not int or not 1 <= run_hours <= min(8, FU_RUN_HOURS):
         return "run_hours must be 1..8"
     if (
@@ -99,4 +115,11 @@ def validate_set(rule, starts, ends, now, brief, run_hours):
         or len(brief.encode("utf-8")) > FU_BRIEF_MAX_BYTES
     ):
         return "brief must be clean text of at most 4096 bytes"
+    if label is not None and (
+        not isinstance(label, str)
+        or not label.strip()
+        or len(label) > LABEL_MAX
+        or not is_clean_text(label, one_line=True)
+    ):
+        return "label must be one line of clean text of at most 200 characters"
     return None

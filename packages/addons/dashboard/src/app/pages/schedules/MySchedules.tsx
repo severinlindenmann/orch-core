@@ -66,6 +66,7 @@ const formOf = (row: ScheduleRow): ScheduleForm => ({
   weekdays: row.rule.weekdays ?? [],
   day: row.rule.day ?? 1,
   tz: row.rule.tz,
+  run_hours: row.run_hours,
 })
 
 function CancelButton({ row, ws }: { row: ScheduleRow; ws: string }) {

@@ -30,8 +30,11 @@ export interface ScheduleRow {
   next_run: string | null
   brief: string
   label: string | null
+  /** Hours each run may take (1..8); null when the server could not read it. */
+  run_hours: number | null
   state: ScheduleState
   mine: boolean
+  /** The setter or an owner (the model's rule). */
   can_cancel: boolean
 }
 
@@ -94,6 +97,8 @@ export interface ScheduleForm {
   weekdays: number[]
   day: number
   tz: string
+  /** Hours each run may take; absent means the host's default (8). Undo of a cancel carries the old value. */
+  run_hours?: number | null
 }
 
 export type ScheduleAddAction = Extract<HandoffAction, { action: 'schedule_add' }>
@@ -110,5 +115,6 @@ export function scheduleAddAction(form: ScheduleForm): ScheduleAddAction {
   if (form.repeat !== 'once') action.every = form.repeat
   if (form.repeat === 'week') action.weekdays = [...new Set(form.weekdays)].sort((a, b) => a - b)
   if (form.repeat === 'month') action.day = form.day
+  if (form.run_hours != null) action.run_hours = form.run_hours
   return action
 }

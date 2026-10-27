@@ -17,7 +17,6 @@ from .reads import workspace
 
 MAX_ROWS = 200
 MAX_BRIEF = 4096
-MANAGERS = ("owner", "maintainer")
 WRITERS = ("owner", "maintainer", "member")
 
 
@@ -100,8 +99,10 @@ def build(gateway: Gateway, ws: str, now: int | None = None) -> dict:
                 "next_run": next_run(row, now),
                 "brief": note(row.get("brief")),
                 "mine": mine,
-                "can_cancel": mine or role in MANAGERS,
-                "label": row.get("label"),
+                # the model's rule (schedules_wire.cancelled_event): the setter or an owner
+                "can_cancel": mine or role == "owner",
+                "label": note(row.get("label")) or None,
+                "run_hours": row.get("run_hours") if type(row.get("run_hours")) is int else None,
             }
         )
     return {

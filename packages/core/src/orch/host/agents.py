@@ -324,7 +324,9 @@ def plan(
     p = _Plan()
     harness = args.get("harness", "shell")
     mode, model, sub = args.get("mode"), args.get("model"), args.get("subagent_model")
-    if fu is not None and (mode != "followup" or not agent):
+    # Mode followup is host-only: it goes with the host timer's own ledger follow-up or schedule (`fu`), never with a
+    # client's args (the wire schemas have no such mode; this holds even if one is passed in).
+    if (fu is not None) != (mode == "followup") or (fu is not None and not agent):
         p.block("launch.invalid", "a follow-up needs an agent in mode followup")
     person = str(call.viewer)
     parent_run = args.get("parent_run")

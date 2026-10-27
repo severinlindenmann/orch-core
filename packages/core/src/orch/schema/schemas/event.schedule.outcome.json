@@ -326,6 +326,7 @@
         "error",
         "role_lost",
         "device_lost",
+        "access_lost",
         "ticket_closed",
         "claimed_by_other",
         "missed",

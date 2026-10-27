@@ -85,6 +85,76 @@ async def _once_restart_cancel(monkeypatch, tmp_path, cancelled):
         assert commands[0][1]["secret"]
 
 
+def test_host_early_window_never_refused_for_earliness(monkeypatch, tmp_path):
+    asyncio.run(_early_edge(monkeypatch, tmp_path))
+
+
+async def _early_edge(monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    from orch.host import agents
+    from orch.host.followups import FollowupRunner
+    from orch.model.schedules_wire import early_s
+
+    w, uid, event, due = setup()  # noqa: F811 - imported fixture
+    commands, appended = [], []
+
+    class Store:
+        def refresh(self):
+            pass
+
+        def load_all(self):
+            pass
+
+        @property
+        def state(self):
+            return w.state()
+
+        def append(self, payload, log):
+            # the World stamps `at` 10 s after its clock; the host's own clock is that `at`
+            w.clock = clock[0] - timedelta(seconds=10)
+            e, result = w.try_(
+                log, payload["type"], w.HOST, **{k: v for k, v in payload.items() if k not in ("type", "actor")}
+            )
+            assert not hasattr(result, "code"), result  # the model admits every firing the host starts
+            appended.append(e)
+            return NS(event=e)
+
+    async def call(fn, *args):
+        return fn(*args)
+
+    async def command(name, payload):
+        commands.append((name, payload))
+
+    async def launch(call, hub, data):
+        hub.store.records[data["run"]] = {"state": "running"}
+
+    hub = NS(connected=True, store=NS(records={}), command=command)
+    service = NS(
+        state_dir=tmp_path,
+        workspace_id=w.workspace_id,
+        host_uid=__import__("os").getuid(),
+        store=Store(),
+        state="ok",
+        closing=False,
+        call=call,
+        sync=lambda: None,
+        runners=hub,
+    )
+    monkeypatch.setattr(FollowupRunner, "_owns", lambda *a: True)
+    monkeypatch.setattr(FollowupRunner, "_plan", lambda self, uid, key, rec, hub: (None, {"run": rec.run}, None))
+    monkeypatch.setattr(agents, "_start", launch)
+    window = early_s(w.state()._core.ws)
+    clock = [due - timedelta(seconds=window + 1)]
+    runner = ScheduleRunner(service, clock=lambda: clock[0].timestamp(), mono=lambda: 0)
+    await runner.tick_once()
+    assert not appended and not commands  # before the window: the host does nothing
+    clock[0] = due - timedelta(seconds=window)
+    await runner.tick_once()
+    assert [e["type"] for e in appended] == ["schedule.fired"] and appended[0]["at"] == w.at()
+    assert len(commands) == 1
+
+
 def test_addon_off_skips_firing_settles_due_and_on_again_fires_fresh(monkeypatch, tmp_path):
     asyncio.run(_addon_off_on(monkeypatch, tmp_path))
 

@@ -41,4 +41,9 @@ describe('scheduleAddAction', () => {
     expect(a.weekdays).toBeUndefined()
     expect(a.day).toBeUndefined()
   })
+  it('carries run_hours when the form has it (Undo of a cancel) and leaves it to the host otherwise', () => {
+    expect(scheduleAddAction({ ...base, repeat: 'day', run_hours: 2 }).run_hours).toBe(2)
+    expect('run_hours' in scheduleAddAction({ ...base, repeat: 'day', run_hours: null })).toBe(false)
+    expect('run_hours' in scheduleAddAction({ ...base, repeat: 'day' })).toBe(false)
+  })
 })

@@ -81,9 +81,23 @@ def test_rows_for_a_member():
     assert theirs["mine"] is False and theirs["can_cancel"] is False
 
 
-def test_a_manager_cancels_anyone_s():
-    out = schedules.build(FakeGateway(role="maintainer", rows=[row(person=OTHER)]), "w")
+def test_an_owner_cancels_anyone_s():
+    out = schedules.build(FakeGateway(role="owner", rows=[row(person=OTHER)]), "w")
     assert out["rows"][0]["mine"] is False and out["rows"][0]["can_cancel"] is True
+
+
+def test_a_maintainer_cancels_only_their_own():
+    # The model lets the setter or an owner cancel (schedules_wire.cancelled_event); the page agrees.
+    out = schedules.build(FakeGateway(role="maintainer", rows=[row(person=OTHER), row(id="sc_" + "1" * 26)]), "w")
+    theirs, mine = out["rows"]
+    assert theirs["can_cancel"] is False and mine["can_cancel"] is True
+
+
+def test_rows_carry_run_hours_and_a_plain_label():
+    out = schedules.build(FakeGateway(rows=[row(label="rep\u202eort"), row(run_hours="8", label=None)]), "w")
+    first, second = out["rows"]
+    assert first["run_hours"] == 2 and first["label"] == "report"
+    assert second["run_hours"] is None and second["label"] is None
 
 
 def test_a_viewer_cannot_add():

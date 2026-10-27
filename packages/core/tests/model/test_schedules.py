@@ -54,9 +54,35 @@ def test_occurrences(rule, start, end, want):
 
 def test_length_and_brief_caps():
     rule = {"every": "day", "at": "09:00", "tz": "UTC"}
-    assert validate_set(rule, 3600, 3600 + 30 * 86400, 0, "brief", 8) is None
+    assert validate_set(rule, 3600, 3600 + 30 * 86400, 3600, "brief", 8) is None
     for ends, brief in [(3601 + 30 * 86400, "brief"), (3600, "brief"), (7200, "é" * 2049)]:
-        assert validate_set(rule, 3600, ends, 0, brief, 8)
+        assert validate_set(rule, 3600, ends, 3600, brief, 8)
+
+
+def test_starts_is_the_signing_time_and_bounds_ends():
+    rule = {"every": "day", "at": "09:00", "tz": "UTC"}
+    now = 10 * 86400
+    assert validate_set(rule, now - 300, now + 86400, now, "brief", 8) is None
+    assert validate_set(rule, now + 300, now + 86400, now, "brief", 8) is None
+    # a crafted far-future start would otherwise carry authority up to a year ahead
+    year = 365 * 86400
+    assert validate_set(rule, now + year, now + year + 86400, now, "brief", 8)
+    assert validate_set(rule, now + 301, now + 86400, now, "brief", 8)
+    assert validate_set(rule, now - 3600, now + 86400, now, "brief", 8) is None  # a slow signing flow
+    assert validate_set(rule, now - 3601, now + 86400, now, "brief", 8)
+    assert validate_set(rule, now + 300, now + 300 + 30 * 86400, now, "brief", 8)
+
+
+@pytest.mark.parametrize("label", ["", "  ", "a\nb", "x\u202ey", "bell\x07", "l" * 201, 7])
+def test_label_must_be_clean_one_line_text(label):
+    rule = {"every": "day", "at": "09:00", "tz": "UTC"}
+    assert validate_set(rule, 3600, 7200, 3600, "brief", 1, label)
+
+
+def test_clean_label_accepted():
+    rule = {"every": "day", "at": "09:00", "tz": "UTC"}
+    assert validate_set(rule, 3600, 7200, 3600, "brief", 1, "Weekly report") is None
+    assert validate_set(rule, 3600, 7200, 3600, "brief", 1, "l" * 200) is None
 
 
 @pytest.mark.parametrize(

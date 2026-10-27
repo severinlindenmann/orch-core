@@ -1,16 +1,20 @@
 """Schedule ledger admission and replay share these transitions; no I/O or clock."""
 
-from datetime import UTC, datetime
-
-from . import claims, identity, schedules
+from . import claims, identity, schedules, visibility
 from . import followups as fu
 from .codes import Code, Refusal
-from .followups_wire import enabled
+from .followups_wire import canonical_ts, caps_of, enabled, stamp
 from .types import Grant, ScheduleRec, ts
 
 
 def denied(detail):
     return Refusal(Code.SCHEDULE_DENIED, detail)
+
+
+def early_s(ws):
+    """How long before an occurrence it may fire or be settled: the one window the model admits and the host timer
+    uses (FU_TIME_EARLY_S, or DEV_EARLY_S in a dev sandbox workspace)."""
+    return caps_of(ws).early_s
 
 
 def addon_off(core):
@@ -37,6 +41,8 @@ def blocked(core, t, rec, now):
         return "role_lost"
     if not device_live(core.ws, rec.person, rec.device, now):
         return "device_lost"
+    if not visibility.can_see(core.ws, t, rec.person):
+        return "access_lost"
     if t.status == "closed":
         return "ticket_closed"
     if (
@@ -59,15 +65,19 @@ def set_event(core, t, e):
         ws, signer.person, a.get("device", ""), now
     ):
         return denied("a non-viewer with a live device is required")
+    if not visibility.can_see(ws, t, signer.person):
+        return denied("access_lost: the setter may not see this ticket")
     if t.status == "closed":
         return denied("ticket_closed")
     if any(e["schedule"] in ticket.schedules for ticket in core.tickets.values()):
         return denied("duplicate schedule id")
-    error = schedules.validate_set(e["rule"], ts(e["starts"]), ts(e["ends"]), now, e["brief"], e["run_hours"])
+    if not (canonical_ts(e["starts"]) and canonical_ts(e["ends"])):
+        return denied("starts and ends must be canonical UTC timestamps")
+    error = schedules.validate_set(
+        e["rule"], ts(e["starts"]), ts(e["ends"]), now, e["brief"], e["run_hours"], e.get("label")
+    )
     if error:
         return denied(error)
-    from .followups_wire import caps_of
-
     first = schedules.occurrences(e["rule"], ts(e["starts"]), ts(e["ends"]), now - 1)
     if first is None or first < now + caps_of(ws).min_lead_s:
         return denied("first occurrence must be after the minimum scheduling lead")
@@ -99,9 +109,12 @@ def set_event(core, t, e):
 
 def fired_event(core, t, e):
     rec = t.schedules.get(e["schedule"])
-    now, occurrence = ts(e["at"]), ts(e["occurrence"])
     if e["actor"]["kind"] != "host" or rec is None or rec.cancelled:
         return denied("schedule is not live")
+    # At-most-once is keyed on the occurrence string: only its canonical spelling may be recorded.
+    if not canonical_ts(e["occurrence"]):
+        return denied("occurrence must be a canonical UTC timestamp")
+    now, occurrence = ts(e["at"]), ts(e["occurrence"])
     if not enabled(core.ws):
         return denied("addon_off: the Schedules add-on must be enabled")
     if e["occurrence"] in rec.occurrences:
@@ -110,7 +123,7 @@ def fired_event(core, t, e):
         return denied("schedule is outside its interval")
     if schedules.occurrences(rec.rule, ts(rec.starts), ts(rec.ends), occurrence - 1) != occurrence:
         return denied("not a rule occurrence")
-    if not occurrence - fu.FU_TIME_EARLY_S <= now <= occurrence + fu.FU_LATE_S:
+    if not occurrence - early_s(core.ws) <= now <= occurrence + fu.FU_LATE_S:
         return denied("missed")
     if reason := blocked(core, t, rec, now):
         return denied(reason)
@@ -144,7 +157,7 @@ def fired_event(core, t, e):
         )
     except ValueError as exc:
         return denied(str(exc))
-    until = datetime.fromtimestamp(derived.expires_at, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    until = stamp(derived.expires_at)
     core.ws.grants[derived.id] = Grant(
         derived.id, rec.person, t.uid, derived.verbs, e["at"], until, parent=rec.set_event
     )
@@ -162,6 +175,8 @@ def outcome_event(core, t, e):
     if e["actor"]["kind"] != "host" or rec is None:
         return denied("unknown schedule or non-host outcome")
     occ = e["occurrence"]
+    if not canonical_ts(occ):
+        return denied("occurrence must be a canonical UTC timestamp")
     instant = ts(occ)
     if schedules.occurrences(rec.rule, ts(rec.starts), ts(rec.ends), instant - 1) != instant:
         return denied("not a rule occurrence")
@@ -174,7 +189,7 @@ def outcome_event(core, t, e):
         or (e["outcome"] != "ran" and e.get("reason") not in schedules.REASONS)
     ):
         return denied("invalid outcome or reason")
-    if not row and ts(e["at"]) < instant - fu.FU_TIME_EARLY_S:
+    if not row and ts(e["at"]) < instant - early_s(core.ws):
         return denied("occurrence is not due")
     rec.occurrences[occ] = {**row, "outcome": e["outcome"], "reason": e.get("reason")}
     if row.get("grant"):
@@ -209,6 +224,6 @@ def root_valid(core, root_id, now):
                     not rec.cancelled
                     and enabled(core.ws)
                     and ts(rec.starts) <= now < ts(rec.ends)
-                    and blocked(core, ticket, rec, now) not in ("role_lost", "device_lost")
+                    and blocked(core, ticket, rec, now) not in ("role_lost", "device_lost", "access_lost")
                 )
     return True  # ordinary person-issued root

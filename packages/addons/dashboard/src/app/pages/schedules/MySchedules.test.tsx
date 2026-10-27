@@ -33,6 +33,7 @@ const row = (over: Partial<ScheduleRow> & Pick<ScheduleRow, 'id' | 'rule'>): Sch
   next_run: null,
   brief: 'Check the import.',
   label: null,
+  run_hours: 3,
   state: 'live',
   mine: true,
   can_cancel: true,
@@ -109,7 +110,7 @@ describe('MySchedules', () => {
     expect(undo.label).toBe('Undo')
     undo.onClick()
     fireEvent.click(await screen.findByRole('button', { name: /^Sign: Restore the schedule/ }))
-    expect(h.signed[1]).toEqual(expect.objectContaining({ action: 'schedule_add', key: 'DEMO-1', every: 'week', weekdays: [0, 3], at: '09:00' }))
+    expect(h.signed[1]).toEqual(expect.objectContaining({ action: 'schedule_add', key: 'DEMO-1', every: 'week', weekdays: [0, 3], at: '09:00', run_hours: 3 }))
   })
 
   it('has no Cancel where the server says the viewer may not cancel', () => {

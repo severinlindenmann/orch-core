@@ -1,21 +1,16 @@
 """Host timer for bounded person-signed schedules. Ledger occurrence keys are authoritative."""
 
 import contextlib
-from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from orch.identity import new_grant, new_ulid
 from orch.model import followups as rules
 from orch.model import schedules, schedules_wire
-from orch.model.followups_wire import caps_of, enabled
+from orch.model.followups_wire import enabled, stamp
 from orch.model.types import ts
 
 from .followups import FollowupRunner
 from .runners import LIVE
-
-
-def stamp(at):
-    return datetime.fromtimestamp(at, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class ScheduleRunner(FollowupRunner):
@@ -52,7 +47,7 @@ class ScheduleRunner(FollowupRunner):
                     continue
                 after = max((ts(o) for o in rec.occurrences), default=ts(rec.starts) - 1)
                 due = schedules.occurrences(rec.rule, ts(rec.starts), ts(rec.ends), after)
-                if due is not None and now >= due - (caps_of(core.ws).early_s if on else 0):
+                if due is not None and now >= due - (schedules_wire.early_s(core.ws) if on else 0):
                     reason = (
                         "addon_disabled"
                         if not on
@@ -61,7 +56,7 @@ class ScheduleRunner(FollowupRunner):
                         else schedules_wire.blocked(core, ticket, rec, now)
                     )
                     rows.append((ticket.uid, ticket.key, self._run(rec, stamp(due), {}), reason))
-        return rows, today, caps_of(core.ws).early_s
+        return rows, today, schedules_wire.early_s(core.ws)
 
     @staticmethod
     def _run(rec, occurrence, row):

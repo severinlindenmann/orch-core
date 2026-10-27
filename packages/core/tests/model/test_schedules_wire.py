@@ -244,6 +244,162 @@ def test_only_setter_or_owner_can_cancel():
     assert not hasattr(result, "code"), result
 
 
+def test_crafted_far_future_starts_refused():
+    w = World().bootstrap({"tom": "member"})
+    grant_addon(w)
+    uid = w.ticket(owner="tom")
+    start = w.clock.replace(second=0) + timedelta(days=365)
+    due = start + timedelta(hours=2)
+    _, result = w.try_(
+        uid,
+        "schedule.set",
+        "tom",
+        schedule="sc_" + w.nid(),
+        brief="Later",
+        rule={"every": "once", "at": due.strftime("%H:%M"), "tz": "UTC", "date": due.strftime("%Y-%m-%d")},
+        starts=stamp(start),
+        ends=stamp(due + timedelta(hours=1)),
+        run_hours=2,
+    )
+    assert result.code == Code.SCHEDULE_DENIED and "starts must be the signing time" in result.detail
+
+
+def test_unclean_label_refused_and_clean_label_kept():
+    w, uid, e, due = setup()
+    payload = {k: e[k] for k in ("brief", "rule", "ends", "run_hours")}
+    for bad in ("two\nlines", "rtl\u202eoverride", "bell\x07"):
+        _, result = w.try_(uid, "schedule.set", "tom", schedule="sc_" + w.nid(), starts=w.at(), label=bad, **payload)
+        assert result.code == Code.SCHEDULE_DENIED and "label" in result.detail
+    ok, result = w.try_(
+        uid, "schedule.set", "tom", schedule="sc_" + w.nid(), starts=w.at(), label="Weekly report", **payload
+    )
+    assert not hasattr(result, "code"), result
+    assert w.state()._core.tickets[uid].schedules[ok["schedule"]].label == "Weekly report"
+
+
+def test_occurrence_must_be_canonical_for_fired_and_outcome():
+    from orch.model import schedules_wire
+
+    w, uid, e, due = setup()
+    w.clock = due
+    canonical = stamp(due)
+    spellings = (canonical.replace("Z", "+00:00"), canonical.replace("Z", ".000Z"), canonical[:-1])
+    for occurrence in spellings:
+        _, result = w.try_(
+            uid,
+            "schedule.fired",
+            w.HOST,
+            schedule=e["schedule"],
+            occurrence=occurrence,
+            grant="gr_" + w.nid(),
+            secret_hash=canon.grant_secret_hash(b"s" * 32),
+            run="r_" + w.nid(),
+        )
+        assert result.code == Code.SCHEDULE_DENIED and "canonical" in result.detail
+        _, result = w.try_(
+            uid,
+            "schedule.outcome",
+            w.HOST,
+            schedule=e["schedule"],
+            occurrence=occurrence,
+            outcome="did_not_run",
+            reason="missed",
+        )
+        assert result.code == Code.SCHEDULE_DENIED and "canonical" in result.detail
+        core = w.state()._core
+        host = {"actor": w.HOST, "at": w.at(), "schedule": e["schedule"], "occurrence": occurrence}
+        assert (
+            schedules_wire.outcome_event(
+                core, core.tickets[uid], {**host, "outcome": "did_not_run", "reason": "missed"}
+            ).code
+            == Code.SCHEDULE_DENIED
+        )
+    assert w.state()._core.tickets[uid].schedules[e["schedule"]].occurrences == {}
+    # The canonical spelling still fires exactly once.
+    assert not hasattr(fire(w, uid, e, due)[1], "code")
+    assert hasattr(fire(w, uid, e, due)[1], "code")
+
+
+def restrict_away_from_tom(w, uid):
+    w.tev(uid, "visibility.changed", "sev", visibility={"restricted": [w.people["sev"]]})
+
+
+def test_access_lost_refuses_firing_and_settles_did_not_run():
+    from orch.model.schedules_wire import blocked
+
+    w, uid, e, due = setup()
+    restrict_away_from_tom(w, uid)
+    w.clock = due
+    result = fire(w, uid, e, due)[1]
+    assert result.code == Code.SCHEDULE_DENIED and result.detail == "access_lost"
+    core = w.state()._core
+    t = core.tickets[uid]
+    assert blocked(core, t, t.schedules[e["schedule"]], ts(w.at())) == "access_lost"
+    _, result = w.try_(
+        uid,
+        "schedule.outcome",
+        w.HOST,
+        schedule=e["schedule"],
+        occurrence=stamp(due),
+        outcome="did_not_run",
+        reason="access_lost",
+    )
+    assert not hasattr(result, "code"), result
+
+
+def test_access_lost_ends_run_grant_and_chain():
+    from orch.model.followups_wire import grant_chain
+    from orch.model.schedules_wire import root_valid
+
+    w, uid, e, due = setup()
+    w.clock = due
+    fired, result = fire(w, uid, e, due)
+    assert not hasattr(result, "code"), result
+    actor = w.agent("tom", fired["grant"])
+    assert refused(w, uid, "log.added", actor, text="scheduled work") is None
+    w.clock = due + timedelta(minutes=5)
+    restrict_away_from_tom(w, uid)
+    core, now = w.state()._core, ts(w.at())
+    chain = grant_chain(core.ws, fired["grant"])
+    assert chain and chain[-1].id == e["id"]
+    assert not root_valid(core, e["id"], now)
+    assert refused(w, uid, "log.added", actor, text="after access lost") is not None
+    # A new schedule by the person who lost access is refused too.
+    payload = {k: e[k] for k in ("brief", "rule", "ends", "run_hours")}
+    _, result = w.try_(uid, "schedule.set", "tom", schedule="sc_" + w.nid(), starts=w.at(), **payload)
+    assert hasattr(result, "code")
+
+
+def test_set_refused_without_access_to_the_ticket():
+    from orch.model import schedules_wire
+
+    w, uid, e, due = setup()
+    restrict_away_from_tom(w, uid)
+    core = w.state()._core
+    t = core.tickets[uid]
+    attempt = {**e, "schedule": "sc_" + w.nid(), "at": w.at(), "starts": w.at()}
+    result = schedules_wire.set_event(core, t, attempt)
+    assert result.code == Code.SCHEDULE_DENIED and "access_lost" in result.detail
+
+
+def test_host_early_window_is_the_model_window():
+    from types import SimpleNamespace
+
+    from orch.model import followups as fu
+    from orch.model.schedules_wire import early_s
+
+    assert early_s(SimpleNamespace(prefix="DEMO", settings={})) == fu.FU_TIME_EARLY_S == 300
+    assert early_s(SimpleNamespace(prefix="SBX", settings={})) == fu.DEV_EARLY_S
+    # At the very start of the window the model admits the firing (never refused for earliness).
+    # (each built event ticks the clock 10 s, so the clock is set 10 s before the intended `at`)
+    w, uid, e, due = setup()
+    w.clock = due - timedelta(seconds=early_s(w.state()._core.ws) + 10)
+    assert not hasattr(fire(w, uid, e, due)[1], "code")
+    w2, uid2, e2, due2 = setup()
+    w2.clock = due2 - timedelta(seconds=early_s(w2.state()._core.ws) + 11)
+    assert "missed" in fire(w2, uid2, e2, due2)[1].detail
+
+
 def test_fire_releases_own_claim_but_refuses_another_person():
     w, uid, e, due = setup()
     w.clock = due - timedelta(minutes=1)

@@ -56,7 +56,7 @@ jobs:
         run: uv run ruff check
       - if: matrix.shard == 1
         run: uv run ruff format --check
-      - run: uv run pytest -q -m "not slow" -n auto
+      - run: uv run pytest -q -m "not slow" -n auto --durations=0
         env:
           ORCH_TEST_SHARD: ${{ matrix.shard }}/3
           # The runtime must have Unicode 16.0, so the canon comparison tests can never skip silently.

@@ -77,6 +77,34 @@ def denied(denial: fu.Denial | None) -> Refusal | None:
     return Refusal(Code.FOLLOWUP_DENIED, f"{denial.code}: {denial.detail}") if denial else None
 
 
+def pending_count(core: Core, now: int, *, skip: str | None = None) -> int:
+    """Pending follow-ups in the workspace (FU5/FU6 `pending_max`), not counting the record `skip`."""
+    return sum(
+        r.id != skip and view_state(core, ticket, r, now)[0] == "pending"
+        for ticket in core.tickets.values()
+        for r in ticket.followups.values()
+    )
+
+
+def admit(core: Core, t: TCore, rec: FollowupRec, e: dict[str, Any], *, becomes: str) -> Refusal | None:
+    """The one place the checks shared by a person bringing a follow-up (back) to life live: reschedule of a
+    needs_person one and undo of a cancel. One live follow-up per ticket (set replaces; these refuse), the workspace
+    pending cap when it becomes `pending`, and the signer is the follow-up's person or a manager."""
+    now, a = ts(e["at"]), e["actor"]
+    if a["kind"] != "person":
+        return Refusal(Code.FOLLOWUP_DENIED, "only a person may do this")
+    if a["id"] != rec.person and not claims.signer_manages(core.ws, t, e):
+        return Refusal(Code.FOLLOWUP_DENIED, "only the follow-up's person or a manager may do this")
+    if any(
+        o.id != rec.id and view_state(core, t, o, now)[0] in ("pending", "needs_person", "fired")
+        for o in t.followups.values()
+    ):
+        return Refusal(Code.FOLLOWUP_DENIED, "another follow-up is live on this ticket")
+    if becomes == "pending" and pending_count(core, now, skip=rec.id) + 1 > caps_of(core.ws).pending_max:
+        return Refusal(Code.FOLLOWUP_DENIED, "pending_cap: workspace pending capacity is used up")
+    return None
+
+
 def set_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     ws, a, now = core.ws, e["actor"], ts(e["at"])
     if e["followup"] in t.followups:
@@ -99,11 +127,7 @@ def set_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         t.status,
         enabled(ws),
         enabled(ws),
-        sum(
-            view_state(core, ticket, r, now)[0] == "pending"
-            for ticket in core.tickets.values()
-            for r in ticket.followups.values()
-        ),
+        pending_count(core, now),
         bool(pending),
     )
     req = fu.SetRequest(
@@ -241,6 +265,8 @@ def rescheduled_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None
         ts(e["deadline"]) if "deadline" in e else None,
         rec.brief,
     )
+    if state == "needs_person" and (r := admit(core, t, rec, e, becomes="pending")) is not None:
+        return r
     if (
         r := denied(
             fu.check_reschedule(state, req, caps_of(core.ws), old_deadline=ts(rec.deadline) if rec.deadline else None)
@@ -253,6 +279,10 @@ def rescheduled_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None
     rec.due, rec.deadline = e.get("due"), deadline
     rec.state = "pending"
     return None
+
+
+def records_newer(t: TCore, rec: FollowupRec) -> bool:
+    return list(t.followups).index(rec.id) != len(t.followups) - 1
 
 
 def restored_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
@@ -269,12 +299,10 @@ def restored_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         or rec.cancel_prev_state not in ("pending", "needs_person")
     ):
         return Refusal(Code.FOLLOWUP_DENIED, "only the canceller may undo a person cancellation within 120 seconds")
-    records = list(t.followups.values())
-    if records.index(rec) != len(records) - 1 or any(
-        other.id != rec.id and view_state(core, t, other, now)[0] in ("pending", "needs_person", "fired")
-        for other in records
-    ):
-        return Refusal(Code.FOLLOWUP_DENIED, "a live or newer follow-up prevents undo")
+    if records_newer(t, rec):
+        return Refusal(Code.FOLLOWUP_DENIED, "a newer follow-up prevents undo")
+    if (r := admit(core, t, rec, e, becomes=rec.cancel_prev_state)) is not None:
+        return r
     deadline = rec.due if rec.trigger == "time" and rec.deadline is None else rec.deadline
     if deadline is None or now > ts(deadline):
         return Refusal(Code.FOLLOWUP_DENIED, "the follow-up deadline has passed")

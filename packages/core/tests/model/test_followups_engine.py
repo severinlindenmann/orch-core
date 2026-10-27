@@ -412,3 +412,36 @@ def test_restore_refusals(env, reason):
         if reason == "deadline":
             w.clock += timedelta(seconds=1)
     assert refused(w, uid, "followup.restored", "tom", followup=e["followup"]) == Code.FOLLOWUP_DENIED
+
+
+def _one_pending_cap(monkeypatch):
+    from dataclasses import replace
+
+    from orch.model import followups_wire
+
+    real = followups_wire.caps_of
+    monkeypatch.setattr(followups_wire, "caps_of", lambda ws: replace(real(ws), pending_max=1))
+
+
+def test_restore_counts_the_workspace_pending_cap(env, monkeypatch):
+    w, uid, a = env
+    e = set_followup(w, uid, a)
+    w.tev(uid, "followup.cancelled", "tom", followup=e["followup"], reason="person")
+    uid2 = w.ticket(owner="tom")
+    set_followup(w, uid2, w.claim(uid2, "tom"))  # the one allowed pending follow-up of the workspace
+    _one_pending_cap(monkeypatch)
+    assert refused(w, uid, "followup.restored", "tom", followup=e["followup"]) == Code.FOLLOWUP_DENIED
+
+
+def test_reschedule_of_needs_person_counts_the_workspace_pending_cap(env, monkeypatch):
+    w, uid, a = env
+    for i in range(6):
+        if i:
+            w.tev(uid, "claim.taken", a)
+        e = set_followup(w, uid, a)
+    assert w.view(uid).followups[-1]["state"] == "needs_person"
+    uid2 = w.ticket(owner="tom")
+    set_followup(w, uid2, w.claim(uid2, "tom"))
+    _one_pending_cap(monkeypatch)
+    due = stamp(w.clock + timedelta(hours=3))
+    assert refused(w, uid, "followup.rescheduled", "tom", followup=e["followup"], due=due) == Code.FOLLOWUP_DENIED

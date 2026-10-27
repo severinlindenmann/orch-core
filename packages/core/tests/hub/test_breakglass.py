@@ -37,6 +37,7 @@ def test_a_same_hub_rejoin_refuses_a_custodial_line_made_before_the_leave():
     r = _line(w, held)[1]  # the hub delivers the held line after the rejoin
     assert (r.code, r.detail) == (Code.HUB_INVALID, "before_binding")
     w.tick()
+    pin(w, snap(2))  # the new membership gets its own snapshot (none is inherited from the left one)
     assert _line(w, w.at())[1].code == Code.ADDON_UNKNOWN  # a line of the new binding passes
 
 

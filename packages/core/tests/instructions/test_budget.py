@@ -48,7 +48,7 @@ WORST_SESSION_START = session_start_lines(
     unread=["DEMO-0043 #14 answered Q1 option=b"] * 9,
     stale=True,
     next_hint="orch wait",
-    addons="add-ons: addon01, addon02, addon03, addon04 \u00b7 off: addon05, addon06 \u00b7 read a skill before using one",
+    addons="add-ons: addon01, addon02, addon03, addon04 \u00b7 off: addon05 \u00b7 read a skill before using one",
 )
 
 

@@ -111,8 +111,9 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             open_q = sum(len(views.open_questions(v)) for v in mine)
             return _split(event, pre_compact_lines(claim=st.data.get("claim"), open_questions=open_q, addons=line))
         # a change pulled from another machine (or made while no session ran) is picked up here, once per change
-        wts = [*known_worktrees(ctx.caps), *([w] if (w := ctx.env.get("ORCH_WORKTREE")) and w.startswith("/") else [])]
-        sync_if_changed(ws.root, rows, store=ws.store_dir, worktrees=wts)
+        if not ctx.hosted:  # the host syncs after add-on events; a hosted read hook has no side effect
+            # only the root and the worktrees the git reader registered: never a path the agent's env names
+            sync_if_changed(ws.root, rows, store=ws.store_dir, worktrees=known_worktrees(ctx.caps))
         lines = session_start_lines(
             person=flat(st.data["person"]),
             grant=st.data.get("grant"),

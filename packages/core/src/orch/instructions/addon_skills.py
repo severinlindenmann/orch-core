@@ -20,6 +20,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from orch.layout import STORE_DIR
+
 from .agents_md import AddonRow
 from .harness import (
     CLAUDE_SKILLS_DIR,
@@ -33,10 +35,9 @@ from .harness import (
 )
 from .skills import SIDECAR_NAME, SKILL_NAME, SkillError, check_sidecar
 
-__all__ = ["IGNORE_LINES", "PREFIX", "QUARANTINE", "reconcile", "skill_rels", "wanted"]
+__all__ = ["IGNORE_LINES", "PREFIX", "reconcile", "skill_rels", "wanted"]
 
 PREFIX = "orch-addon-"
-QUARANTINE = ".orch/removed-skills"
 #: the lines of the ``.gitignore`` of the workspace: generated skills are never committed
 IGNORE_LINES = (f"{SKILLS_DIR}/{PREFIX}*/", f"{CLAUDE_SKILLS_DIR}/{PREFIX}*/")
 _ROOTS = (SKILLS_DIR, CLAUDE_SKILLS_DIR)
@@ -106,7 +107,7 @@ def _listing(base: Path, root_rel: str) -> list[str]:
 
 def _quarantine(root: Path, store: Path | None, base: Path, folder: str, now: float) -> str:
     """Move ``base / folder`` to ``<store>/removed-skills/<name>-<ts>`` below the workspace ``root``; the new path."""
-    store_rel = store.relative_to(root).as_posix() if store is not None and store != root else ".orch"
+    store_rel = store.relative_to(root).as_posix() if store is not None and store != root else STORE_DIR
     parent_rel = f"{store_rel}/removed-skills"
     cur = root
     for part in Path(parent_rel).parts:  # make the missing directories one by one, each checked after it exists

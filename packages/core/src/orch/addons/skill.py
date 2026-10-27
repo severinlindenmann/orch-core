@@ -18,6 +18,7 @@ from typing import Any
 __all__ = ["SkillError", "check_package", "check_skill", "skill_name", "skill_path", "warnings"]
 
 DESCRIPTION_MAX = 300
+_FORBIDDEN_PATH = re.compile(r"(tickets|\.orch)/")  # the ticket files and the store folder, as path starts
 _SPAN = re.compile(r"`([^`\n]+)`")
 _FIELD_TOKEN = re.compile(r"([a-z][a-z0-9-]*)\.([A-Za-z_][A-Za-z0-9_]*)=")
 _OTHER_SKILL = re.compile(r"orch-addon-[a-z0-9-]*[a-z0-9]")
@@ -74,8 +75,8 @@ def _lint(addon: str, body: str, fields: Mapping[str, Any]) -> None:
         else:
             for m in _SPAN.finditer(line):
                 _lint_command(m[1].strip(), addon, fields, known)
-    if "tickets/" in body or ".orch/" in body:
-        raise SkillError("the skill must not name tickets/ or .orch/ (agents never touch them)")
+    if _FORBIDDEN_PATH.search(body):
+        raise SkillError("the skill must not name the ticket files or the store folder (agents never touch them)")
     own = skill_name(addon)
     for m in _OTHER_SKILL.finditer(body):
         if m[0] != own:

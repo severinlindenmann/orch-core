@@ -142,7 +142,7 @@ def test_orch_set_may_name_only_its_own_fields():
 
 @pytest.mark.parametrize("bad", ["tickets/ABC-1.md", ".orch/AGENTS.orch.md"])
 def test_no_ticket_or_store_paths(bad):
-    refused(GOOD + f"Edit {bad} by hand.\n", "tickets/ or .orch/")
+    refused(GOOD + f"Edit {bad} by hand.\n", "ticket files or the store folder")
 
 
 @pytest.mark.parametrize("other", ["orch-addon-changelog", "orch-tickets", "orch-work-on-ticket", "orch-refine-ticket"])

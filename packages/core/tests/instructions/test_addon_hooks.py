@@ -68,3 +68,53 @@ def test_an_unchanged_set_writes_nothing_at_session_start(hws, me, agent):
     skill.write_text("my edit\n")
     hook(agent, "session-start")
     assert (hws.store_dir / AGENTS_FILE).stat().st_mtime_ns == before and skill.read_text() == "my edit\n"
+
+
+def stale_agents(hws, me):
+    """Files written for the empty set, then an add-on arrives without the files following."""
+    write_workspace_files(hws.root, pointers=False, store=hws.store_dir)
+    grant_echo(hws, me)
+    skill = hws.root / ".agents/skills/orch-addon-echo"
+    for p in list(skill.rglob("*"))[::-1]:
+        p.unlink() if p.is_file() else p.rmdir()
+    skill.rmdir()
+    path = hws.store_dir / AGENTS_FILE
+    head = path.read_text().split("\n\n## Add-ons here")[0].splitlines()
+    head[1] = head[1].replace(f" add-ons {stamp_set(path.read_text())}", "")
+    path.write_text("\n".join(head) + "\n")
+
+
+def test_orch_worktree_in_the_env_is_never_a_place_to_write(hws, me, agent, tmp_path_factory):
+    elsewhere = tmp_path_factory.mktemp("elsewhere")
+    stale_agents(hws, me)
+    r = agent("instructions", "hook", "session-start", ORCH_WORKTREE=str(elsewhere))
+    assert r.code == 0, r.err
+    assert list(elsewhere.iterdir()) == []
+    assert (hws.root / ".agents/skills/orch-addon-echo/SKILL.md").exists()  # the root was synced
+
+
+def test_a_hosted_hook_never_runs_the_sync(hws, me, agent, monkeypatch):
+    """The host syncs after add-on events; the hosted read hook has no side effect (the spy proves the guard: with
+    ``hosted`` forced on, the handler still reaches the sync call site, because the direct store serves it)."""
+    import dataclasses
+
+    import orch.instructions as instructions
+    from orch.ops.commands import instructions_hook as mod
+
+    stale_agents(hws, me)
+    calls = []
+    monkeypatch.setattr(instructions, "sync_if_changed", lambda *a, **k: calls.append(1) or True)
+    real = mod.handle
+    reached = []
+
+    def hosted(ctx, args):
+        reached.append(1)
+        return real(dataclasses.replace(ctx, hosted=True), args)
+
+    original = mod.OP.handler
+    object.__setattr__(mod.OP, "handler", hosted)  # the operation is frozen
+    try:
+        hook(agent, "session-start")
+    finally:
+        object.__setattr__(mod.OP, "handler", original)
+    assert reached and calls == [] and (hws.store_dir / AGENTS_FILE).read_text().count("Add-ons here") == 0

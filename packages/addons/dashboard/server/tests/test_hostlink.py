@@ -219,6 +219,38 @@ def test_hub_reads_are_plain_reads_decided_by_the_listed_op():
         t.join(2)
 
 
+def test_hot_reads_are_cached_per_link_and_a_write_drops_them():
+    """Perf (run 13 F2): addon.list is asked on almost every request; one host round trip serves the repeats."""
+    a, b = socket.socketpair()
+    seen = []
+
+    def host():
+        with b:
+            receive(b)
+            b.sendall(encode(welcome(ops={"addon.list": 1, "ticket.new": 1})))
+            for _ in range(3):
+                req = receive(b)
+                seen.append(req["op"])
+                data = {"addons": [{"name": str(len(seen))}]}
+                b.sendall(encode({"t": "res", "id": req["id"], "ok": True, "result": {"data": data}}))
+
+    t = threading.Thread(target=host)
+    t.start()
+    link = HostLink(a, os.getuid(), WS)
+    try:
+        first = link.call("addon.list")
+        first["addons"].clear()  # a caller changing its copy must not change the cache
+        assert link.call("addon.list") == {"addons": [{"name": "1"}]}
+        assert link.call("addon.list") == {"addons": [{"name": "1"}]}
+        assert seen == ["addon.list"]  # one round trip for three calls
+        link.call("ticket.new", {"title": "x"}, write=True, idem="i1")
+        assert link.call("addon.list") == {"addons": [{"name": "3"}]}  # the write dropped the cache
+        assert seen == ["addon.list", "ticket.new", "addon.list"]
+    finally:
+        link.close()
+        t.join(2)
+
+
 def test_idle_event_reader_does_not_block_calls():
     """The live stream's reader waits for an event on the same link the REST calls use: an idle reader must not hold the
     link's lock while it waits (run-8 B2: every call waited out the reader's 100 ms select, twice per request)."""

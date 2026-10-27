@@ -4,6 +4,7 @@ The socket is authenticated against a local registry pin before hello. No automa
 write retries: callers must keep their original idem for outcome recovery.
 """
 
+import copy
 import ctypes
 import json
 import os
@@ -137,6 +138,17 @@ RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "g
 #: ops this process never sends, whatever a caller asks: `grant.deposit` carries the runner grant's secret
 #: (`auth.grant`), which never reaches the dashboard's HTTP process (D-P2-27, section 0.8.6 item 6).
 FORBIDDEN = frozenset({"grant.deposit"})
+#: Read ops the page asks for on nearly every request (addon.list alone was 56% of the host time of a page load): the
+#: answer is kept per link for a few seconds, and any write through the link drops it. A change made elsewhere (the CLI)
+#: shows up after the TTL. Live data (tickets, needs, activity) is never cached here.
+CACHED_READS = {
+    "addon.list": 2.0,
+    "whoami": 5.0,
+    "workspace.show": 2.0,
+    "workspace.settings": 2.0,
+    "member.list": 2.0,
+    "hub.status": 2.0,
+}
 WORKTREE_OPS = {"worktree.list", "worktree.create", "worktree.remove", "worktree.diff"}
 WORKDIR_OPS = {"workdir.get", "workdir.delete"}
 FOCUS_OPS = {"run.transcript", "run.sources", "delegation.list", "run.link", "run.detach"}
@@ -251,6 +263,7 @@ class HostLink:
         self.sock, self.lock, self.send_lock = sock, threading.Lock(), threading.Lock()
         self.events = deque(maxlen=256)
         self.serial = 0
+        self.read_cache: dict = {}  # (op, args) -> (monotonic deadline, data); see CACHED_READS
         try:
             check_uid(sock, host_uid)
             sock.settimeout(2)
@@ -380,7 +393,19 @@ class HostLink:
         )
         if not self.supports(op, cap):
             raise fail("op.unsupported", exit=1)
+        cache_key = None
+        if op in CACHED_READS and not write and dry_run is None and not files:
+            cache_key = (op, json.dumps(args or {}, sort_keys=True, default=str))
+            hit = self.read_cache.get(cache_key)
+            if hit and hit[0] > time.monotonic():
+                return copy.deepcopy(hit[1])
         with self.lock:
+            if cache_key is not None:  # a call that waited for the lock may now find the answer its neighbour fetched
+                hit = self.read_cache.get(cache_key)
+                if hit and hit[0] > time.monotonic():
+                    return copy.deepcopy(hit[1])
+            if write:
+                self.read_cache.clear()  # anything this link changed makes every cached read suspect
             self.serial += 1
             rid = f"d{self.serial}"
             req = {"t": "req", "id": rid, "op": op, "args": args or {}}
@@ -409,7 +434,11 @@ class HostLink:
                         raise fail("frame.invalid", exit=6)
                     if frame.get("ok") is not True:
                         raise HostError(frame.get("error"), frame.get("exit"))  # both checked by HostError
-                    return frame["result"]["data"]
+                    data = frame["result"]["data"]
+                    if cache_key is not None:
+                        ttl = CACHED_READS[op]
+                        self.read_cache[cache_key] = (time.monotonic() + ttl, data)
+                    return copy.deepcopy(data)
             except (OSError, EOFError):
                 self.close()
                 raise fail("outcome.unknown" if write else "host.unavailable") from None

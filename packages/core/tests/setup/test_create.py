@@ -386,3 +386,23 @@ def test_unlock_labels_cover_every_event_the_batch_signs(monkeypatch):
     monkeypatch.setattr(hashing, "signed_context", lambda key, *a, **k: seen.append(key) or b"")
     hashing.person_signing_bytes("w" * 32, "workspace", {"hash_v": 1, "type": "settings.changed"})
     assert [canon.LABELS[k].encode("ascii") for k in seen] == list(steps.batch_labels())
+
+
+def test_b3_setup_refreshes_a_stale_runner_before_enabling_it(tmp):
+    f, ports, p, rv = run_ok(tmp, AGENT)
+    n = names(ports)
+    assert "runner_refresh" in n and n.index("runner_refresh") < n.index("runner_enable")
+
+
+def test_b3_refresh_restarts_a_runner_of_another_release(tmp_path, monkeypatch):
+    from orch.host import cli as hostcli
+
+    seen = {}
+
+    def fake(state, env, run_dir, mine, data, force=False):
+        seen["mine"] = mine
+        data["runner_restarted"] = True
+
+    monkeypatch.setattr(hostcli, "_restart_stale_runner", fake)
+    out = hostcli.refresh_stale_runner(tmp_path, {"HOME": str(tmp_path)})
+    assert out == {"runner_restarted": True} and seen["mine"]

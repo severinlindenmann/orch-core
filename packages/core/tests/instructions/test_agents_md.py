@@ -28,7 +28,7 @@ def test_at_most_40_lines_with_headings_each_short_and_stamped_under_the_title()
     assert text.endswith("\n") and "\r" not in text
     assert all(len(x) <= 110 for x in lines), [x for x in lines if len(x) > 110]
     assert lines[0] == "# orch in this project" and lines[1].startswith("orch v2.0 (instructions r")
-    assert stamp_rev(text) == INSTRUCTIONS_REV == 4
+    assert stamp_rev(text) == INSTRUCTIONS_REV == 5
     assert [x for x in lines if x.startswith("#")] == [
         "# orch in this project",
         "## First, every session",
@@ -91,16 +91,6 @@ def test_a_command_missing_from_the_registry_fails_the_generator(monkeypatch):
     monkeypatch.setattr(ops, "get", get)
     with pytest.raises(KeyError):
         render_agents_md()
-
-
-def test_addon_lines_fit_the_budget_and_go_before_the_last_line():
-    text = render_agents_md(("dashboard: orch addon list",))
-    lines = text.splitlines()
-    assert lines[-2] == "dashboard: orch addon list" and lines[-1].startswith("Run `orch help work`")
-    with pytest.raises(ValueError, match="limit is 40"):
-        render_agents_md(tuple(f"addon {i}: x" for i in range(AGENTS_MAX_LINES)))
-    with pytest.raises(ValueError):
-        render_agents_md(("two\nlines",))
 
 
 def test_stamp_rev_reads_only_a_well_formed_first_line():

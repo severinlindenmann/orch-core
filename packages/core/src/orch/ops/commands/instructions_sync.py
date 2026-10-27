@@ -5,19 +5,23 @@ from typing import Any
 from orch.ops._dsl import STR, B, arr, err, obj, operation
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
-from orch.ops.runtime import Workspace
+from orch.ops.runtime import Call, Workspace
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
-    from orch.instructions import INSTRUCTIONS_REV, UnsafePath, write_workspace_files
+    from orch.instructions import INSTRUCTIONS_REV, AddonBlockError, UnsafePath, collect_rows, write_workspace_files
 
     ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
     root = ws.require_root()
     dry = bool(ctx.dry_run or args.get("dry_run"))
+    c = Call.of(ctx, "instructions.sync")
+    rows = collect_rows(c.store.layout.store, c.store.state.workspace.addons)  # the log's add-ons and their packages
     try:
         changed, kept = write_workspace_files(
-            root, pointers=False, force=bool(args.get("force")), dry_run=dry, store=ws.store_dir
+            root, pointers=False, force=bool(args.get("force")), dry_run=dry, store=ws.store_dir, addons=rows
         )
+    except AddonBlockError as e:
+        raise OrchError("invalid.input", f"nothing written: {e}", hint=e.hint) from e
     except UnsafePath as e:
         raise OrchError("invalid.input", f"nothing written: {e}", hint="remove the symbolic link, then retry") from e
     verb = "would write" if dry else "wrote"

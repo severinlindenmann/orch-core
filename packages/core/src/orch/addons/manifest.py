@@ -103,6 +103,11 @@ class Manifest:
     def agents_md(self) -> str:
         return self.doc.get("agents_md", "")
 
+    @property
+    def skill(self) -> str | None:
+        """The package folder of the add-on's one skill (``skills/main``), or ``None`` (addon-skills D1)."""
+        return self.doc.get("skill")
+
 
 def load_manifest(raw: bytes) -> Manifest:
     """Parse and validate the bytes of an ``orch-addon.json``. Raises :class:`ManifestError`."""

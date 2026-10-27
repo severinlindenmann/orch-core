@@ -9,9 +9,10 @@ moved to another scope (``workspace``) or deleted is theirs: it is not checked.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from pathlib import Path
 
-from .agents_md import INSTRUCTIONS_REV, stamp_rev
+from .agents_md import INSTRUCTIONS_REV, AddonRow, addon_fingerprint, stamp_rev, stamp_set
 from .harness import AGENTS_FILE, SKILLS_DIR, UnsafePath, agents_rel, safe_read
 from .skills import SIDECAR_NAME, SkillError, builtin_skills, check_sidecar
 
@@ -22,11 +23,15 @@ def _tuple(version: str) -> tuple[int, ...]:
     return tuple(int(x) for x in version.split("."))
 
 
-def stale_findings(root: Path, store: Path | None = None) -> list[dict[str, str]]:
+def stale_findings(
+    root: Path, store: Path | None = None, addons: Sequence[AddonRow] | None = None
+) -> list[dict[str, str]]:
     """``[{"where", "what"}]`` for every installed instruction file that is missing, unstamped, older or newer than
     this CLI's generator; empty when everything is current. Two roots: ``AGENTS.orch.md`` is read from ``store`` (the
     ``.orch`` directory, or the project itself in the legacy layout; ``None``: ``root``), the skills from the project
-    ``root`` (``.agents/skills``, ``.claude/skills`` stay where harnesses look for them)."""
+    ``root`` (``.agents/skills``, ``.claude/skills`` stay where harnesses look for them). ``addons`` is the workspace's
+    add-on set (:func:`orch.instructions.addon_set.collect_rows`); when given, a file written for another set (names,
+    states, package digests) is stale. ``None``: the set is not known here and is not checked."""
     out: list[dict[str, str]] = []
     try:
         text = safe_read(root, agents_rel(root, store))
@@ -45,6 +50,8 @@ def stale_findings(root: Path, store: Path | None = None) -> list[dict[str, str]
                 out.append({"where": AGENTS_FILE, "what": f"r{rev}, this orch writes r{INSTRUCTIONS_REV}"})
             elif rev > INSTRUCTIONS_REV:
                 out.append({"where": AGENTS_FILE, "what": f"r{rev} is newer than this orch (r{INSTRUCTIONS_REV})"})
+            elif addons is not None and stamp_set(text) != addon_fingerprint(addons):
+                out.append({"where": AGENTS_FILE, "what": "the add-ons changed since it was written"})
     for skill in builtin_skills():
         where = f"{SKILLS_DIR}/{skill.name}"
         try:

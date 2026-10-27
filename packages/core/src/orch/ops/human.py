@@ -680,7 +680,14 @@ class Human:
             precommit = self._readers_check(precommit, [ev])  # H12d-2: before the mark, so a refusal sets none
         if ev.get("auth") == "convenience":  # #441: the durable mark, inside the append, before the event is written
             precommit = self._mark_seen(precommit)
-        return self.store.append(ev, log=log, precommit=precommit, artifacts=artifacts)
+        done = self.store.append(ev, log=log, precommit=precommit, artifacts=artifacts)
+        if typ in ("addon.granted", "addon.disabled", "addon.purged") and self.call.ws.root is not None:
+            from orch.host import addonsync  # D2: AGENTS.orch.md and the add-on skills follow the log
+
+            addonsync.refresh(
+                Path(self.call.ws.root), self.store
+            )  # a failure is logged; `orch instructions sync` retries
+        return done
 
     def _hub_only_check(self, inner: Callable[[], None] | None, ev: dict[str, Any]) -> Callable[[], None]:
         """``precommit`` (V3 C11, D78/D81): in full hub mode, as the signed log says it under the store lock, only the

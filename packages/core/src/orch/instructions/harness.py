@@ -21,10 +21,10 @@ import json
 import os
 import stat
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from .agents_md import render_agents_md
+from .agents_md import AddonRow, render_agents_md
 from .skills import builtin_skills
 
 __all__ = [
@@ -39,6 +39,7 @@ __all__ = [
     "check_targets",
     "safe_read",
     "plugin_files",
+    "sync_addon_part",
     "workspace_files",
     "write_workspace_files",
 ]
@@ -66,10 +67,11 @@ def _with_header(text: str) -> str:
     return "\n".join([*lines[: end + 1], COPY_HEADER, *lines[end + 1 :]])
 
 
-def workspace_files(extra: tuple[str, ...] = ()) -> dict[str, str]:
+def workspace_files(addons: Sequence[AddonRow] = ()) -> dict[str, str]:
     """``{path relative to the workspace: content}`` of the files orch owns and rewrites on ``instructions sync``:
-    ``AGENTS.orch.md``, the skills in ``.agents/skills`` and the generated copy in ``.claude/skills``."""
-    files = {AGENTS_FILE: render_agents_md(extra)}
+    ``AGENTS.orch.md`` (with the block of ``addons``), the skills in ``.agents/skills`` and the generated copy in
+    ``.claude/skills``."""
+    files = {AGENTS_FILE: render_agents_md(addons)}
     for skill in builtin_skills():
         for rel, text in skill.files().items():
             files[f"{SKILLS_DIR}/{rel}"] = text
@@ -312,6 +314,7 @@ def write_workspace_files(
     force: bool = False,
     dry_run: bool = False,
     store: Path | None = None,
+    addons: Sequence[AddonRow] = (),
 ) -> tuple[list[str], list[str]]:
     """Write the instruction files into ``root``. Returns ``(changed, kept)``: the relative paths that changed (or
     would, with ``dry_run``) and a line for each file left alone and why.
@@ -324,7 +327,8 @@ def write_workspace_files(
     another scope than ``builtin`` is the owner's and is kept; so is one without a sidecar unless its ``SKILL.md`` is
     the shipped text, and a ``SKILL.md`` that differs from the shipped text at the same ``skill_version`` (edited by
     hand) unless ``force``. Nothing is written through a symbolic link: :class:`UnsafePath`. ``store``: the store
-    directory (``.orch``); ``AGENTS.orch.md`` is written there, everything else under ``root``."""
+    directory (``.orch``); ``AGENTS.orch.md`` is written there, everything else under ``root``. ``addons``: the
+    workspace's add-on set (:func:`orch.instructions.addon_set.collect_rows`), written as the add-on block."""
     if not dry_run and store is not None and store != root:  # the store folder is never made here
         try:
             mode = os.lstat(store).st_mode
@@ -338,7 +342,7 @@ def write_workspace_files(
     kept: list[str] = []
     skip_dirs: set[str] = set()
     checked: set[str] = set()
-    files = dict(owned) if owned is not None else workspace_files()
+    files = dict(owned) if owned is not None else workspace_files(addons)
     moved = store is not None and store != root  # the store is <root>/.orch: the pointers and the ignore line follow it
     # the pointer files first: any problem is found before anything is written
     agents_have = _read_pointer_file(root, "AGENTS.md")
@@ -377,6 +381,20 @@ def write_workspace_files(
         if dry_run or _ensure_line(root, ".gitignore", ignore_line):
             changed.append(".gitignore")
     return changed, kept
+
+
+def sync_addon_part(
+    root: Path, addons: Sequence[AddonRow], *, store: Path | None = None, dry_run: bool = False
+) -> tuple[list[str], list[str]]:
+    """The add-on part of ``instructions sync`` (design D2): ``AGENTS.orch.md`` with the block for ``addons``. Returns
+    ``(changed, kept)`` like :func:`write_workspace_files`. Nothing else is touched; an unsafe path is
+    :class:`UnsafePath` before anything is written."""
+    where = _where(root, store, AGENTS_FILE)
+    _check_chain(root, where)
+    text = render_agents_md(addons)
+    if dry_run:
+        return ([where] if safe_read(root, where) != text else []), []
+    return ([where] if _write(root, where, text) else []), []
 
 
 def _skill_dir(rel: str) -> str | None:

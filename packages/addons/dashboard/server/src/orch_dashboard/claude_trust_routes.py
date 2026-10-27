@@ -5,7 +5,7 @@
 * ``POST /api/w/{ws}/claude-trust`` `{allow_parent}` grants the consent (`claude_folder.grant_consent`); the runner
   pre-trusts each ticket folder itself, so nothing else is written here.
 
-Both need a full local session (the same gate as the trusted browsers).
+Both need a full local session (the same gate as the trusted browsers) and the workspace OWNER role (host roster).
 """
 
 import os
@@ -16,6 +16,7 @@ from orch.runner import claude_trust
 from orch.setup import claude_folder
 from pydantic import BaseModel, ConfigDict
 
+from . import adapters
 from .errors import fail, step_up_response
 from .policy import LOOPBACK
 from .reads import workspace
@@ -34,11 +35,17 @@ def register(app, gateway, auth):
             return step_up_response(False)
         return None
 
+    def owner_only(ws):
+        me = app.state.person_of(ws)
+        if not any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list"))):
+            raise fail("role.denied", "Only an owner decides what Claude Code may open on this computer.", exit=3)
+
     @app.get("/api/w/{ws}/claude-trust")
     def status(request: Request, ws: str = Depends(workspace)):
         denied = local_only(request)
         if denied is not None:
             return denied
+        owner_only(ws)
         project = gateway.workspace_folder(ws)[0]
         root = Path(os.path.realpath(project))
         env = os.environ
@@ -55,6 +62,7 @@ def register(app, gateway, auth):
         denied = local_only(request)
         if denied is not None:
             return denied
+        owner_only(ws)
         project = gateway.workspace_folder(ws)[0]
         reason = claude_folder.grant_consent(os.environ, project, allow_parent=body.allow_parent)
         if reason:

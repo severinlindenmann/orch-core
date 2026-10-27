@@ -79,12 +79,12 @@ describe('WorkspaceSwitches', () => {
     await waitFor(() => expect(fns.recordsAutoOff).toHaveBeenCalledWith('w1'))
   })
 
-  it('hides the history for a member', async () => {
-    viewer.role = 'member'
+  it('hides both switches from anyone but an owner', async () => {
+    viewer.role = 'maintainer'
     show()
-    await screen.findByRole('switch', { name: TRUST })
-    expect(screen.queryByRole('switch', { name: HISTORY })).toBeNull()
+    await waitFor(() => expect(screen.queryByRole('switch')).toBeNull())
     expect(fns.getRecords).not.toHaveBeenCalled()
+    expect(fns.getClaudeTrust).not.toHaveBeenCalled()
   })
 
   it('hides the history when records are not set up', async () => {

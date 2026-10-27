@@ -36,8 +36,11 @@ class FakeGateway:
     state = None
     run = None
 
-    def __init__(self, folder):
-        self.folder = folder
+    def __init__(self, folder, role="owner"):
+        self.folder, self.role = folder, role
+
+    def call(self, ws, op, args=None):
+        return {"members": [{"person": "p_me", "name": "Me", "role": self.role, "devices": []}]}
 
     def workspace_folder(self, ws):
         return (self.folder, None)
@@ -46,9 +49,10 @@ class FakeGateway:
         return FakeLink()
 
 
-def build(tmp_path, auth=None):
+def build(tmp_path, auth=None, role="owner"):
     app = FastAPI()
-    gateway = FakeGateway(tmp_path)
+    app.state.person_of = lambda ws: "p_me"
+    gateway = FakeGateway(tmp_path, role)
 
     @app.middleware("http")
     async def token(request: Request, call_next):
@@ -130,3 +134,18 @@ def test_records_auto_on_runs_the_child_action(tmp_path, monkeypatch):
     res = build(tmp_path).post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/records/auto-on", json={})
     assert res.status_code == 200, res.text
     assert seen == [("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "auto-on", None)]
+
+
+@pytest.mark.parametrize("role", ["maintainer", "member", "viewer"])
+def test_only_an_owner_may_use_either_switch(tmp_path, monkeypatch, role):
+    called = []
+    monkeypatch.setattr(claude_folder, "grant_consent", lambda *a, **k: called.append(1))
+    monkeypatch.setattr(addon_routes.RecordsChild, "run", lambda *a, **k: called.append(1))
+    client = build(tmp_path, role=role)
+    ws = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert client.get(f"/api/w/{ws}/claude-trust").status_code == 403
+    res = client.post(f"/api/w/{ws}/claude-trust", json={"allow_parent": False})
+    assert res.status_code == 403 and "Only an owner" in res.text
+    res = client.post(f"/api/w/{ws}/records/auto-on", json={})
+    assert res.status_code == 403 and "Only an owner" in res.text
+    assert called == []

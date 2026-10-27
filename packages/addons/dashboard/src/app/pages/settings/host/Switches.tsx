@@ -52,8 +52,8 @@ export function WorkspaceSwitches({ workspace }: { workspace: Workspace }) {
   const ws = workspace.id
   const qc = useQueryClient()
   const role = useViewerRole(workspace)
-  const mayRecord = role === 'owner' || role === 'maintainer'
-  const trust = useQuery(queries.claudeTrust(ws))
+  const mayRecord = role === 'owner' // the host checks the owner role on both routes
+  const trust = useQuery({ ...queries.claudeTrust(ws), enabled: mayRecord })
   const records = useQuery({ ...queries.records(ws), enabled: mayRecord })
 
   const grant = useMutation({

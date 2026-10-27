@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import adapters
 from .adapters import addons as adapt
 from .adapters import host_status
 from .errors import fail
@@ -94,6 +95,11 @@ def register(app, gateway):
         link.call("records.status", {})  # authorize this person before any local process is started
         return child.run(ws, push=push, auto_off=auto_off, state=gateway.state, run_dir=gateway.run)
 
+    def owner_only(ws):
+        me = app.state.person_of(ws)
+        if not any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list"))):
+            raise fail("role.denied", "Only an owner turns the history timer on.", exit=3)
+
     def admin(ws, action, url=None):
         """The records admin actions (#1198 C15). The page showed the review (the exact address, where there is one) and
         the person clicked: the child runs with `--yes` and the address as `--expect-url`. The host still decides who
@@ -112,6 +118,7 @@ def register(app, gateway):
 
     @app.post("/api/w/{ws}/records/auto-on")
     def auto_on(body: Empty, ws: str = Depends(workspace)):
+        owner_only(ws)
         return admin(ws, "auto-on")
 
     @app.post("/api/w/{ws}/records/remote")

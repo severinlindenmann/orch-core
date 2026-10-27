@@ -82,7 +82,7 @@ _SPECS = [
         3,
         False,
         "this host does not receive webhooks",
-        "ask an owner to start the host with --hook-listen and --hook-url",
+        "ask an owner to run orch host webhooks on, then orch host restart",
         ["orch", "follow-up", "--help"],
         "this host does not receive webhooks",
     ),

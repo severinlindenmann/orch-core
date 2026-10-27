@@ -127,6 +127,7 @@ export function CancelButton({ row, ws, canUndo, size = 'sm' }: { row: FollowupR
           ws={ws}
           action={{ action: 'followup_cancel', key: row.ticket, id: row.id }}
           autoStart
+          autoSign
           confirmLabel={label}
           doneToast={`Cancelled the follow-up on ${row.ticket}.`}
           onSettled={done}

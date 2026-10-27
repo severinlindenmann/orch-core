@@ -149,6 +149,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     conv.add_argument("--workspace", required=False, help="workspace id or prefix (on/off)")
     conv.add_argument("--state", type=Path)
+    wh = sub.add_parser(
+        "webhooks", help="receive webhook doorbells for follow-ups: on/off/show, kept in the host state dir"
+    )
+    wh.add_argument("switch", choices=("on", "off", "show"))
+    wh.add_argument("--address", default="127.0.0.1", help="on: address to listen on (default 127.0.0.1)")
+    wh.add_argument("--port", type=int, help="on: port to listen on (default: a free one, kept)")
+    wh.add_argument("--url", help="on: the public base URL agents are told (default http://ADDRESS:PORT)")
+    wh.add_argument("--state", type=Path)
     rdr = sub.add_parser(
         "readers",
         help="reader records of a workspace (orch-v2-host §0.8.6 item 9.10): reset drops them all (fail closed), the "
@@ -286,6 +294,8 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
             else:
                 out.write(units.tmpfiles_conf(args.user or str(os.getuid()), args.group or "root", os.getuid()))
             return 0
+        if args.cmd == "webhooks":
+            return _webhooks(args, env, out)
         if args.cmd == "convenience":
             return _convenience(args, env, out)
         if args.cmd == "readers":
@@ -823,6 +833,33 @@ def _cwd_workspace(entries: list[dict[str, Any]]) -> str | None:
             if best is None or len(root.parts) > best[0]:
                 best = (len(root.parts), str(item.get("workspace_id")))
     return best[1] if best else None
+
+
+def _webhooks(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:
+    """``orch host webhooks on|off|show``: the persisted receiver setting the service host reads at start (the unit
+    carries no flags). Takes effect at the next host start: ``orch host restart``."""
+    from orch.custody.cli import write_error
+
+    from . import hooks
+
+    state, uid = _state(args.state, env), os.getuid()
+    if env.get("ORCH_GRANT"):
+        return write_error(out, False, "human_only", "an agent never changes what the host listens on")
+    if args.switch == "show":
+        out.write(json.dumps(hooks.read_settings(state, uid) or {}, sort_keys=True) + "\n")
+        return 0
+    if args.switch == "off":
+        hooks.write_settings(state, uid, None)
+        out.write("ok: webhooks off; takes effect at the next host start (orch host restart)\n")
+        return 0
+    if args.address in ("0.0.0.0", "::") and not args.url:
+        raise HostError("invalid.input", "listening on every address needs --url (the address agents use)")
+    port = args.port or hooks.free_port(args.address)
+    host = f"[{args.address}]" if ":" in args.address else args.address
+    url = args.url or f"http://{host}:{port}"
+    hooks.write_settings(state, uid, f"{host}:{port}", url)
+    out.write(f"ok: webhooks on at {host}:{port}, url {url}; takes effect at the next host start (orch host restart)\n")
+    return 0
 
 
 def _convenience(args: argparse.Namespace, env: Mapping[str, str], out: TextIO) -> int:

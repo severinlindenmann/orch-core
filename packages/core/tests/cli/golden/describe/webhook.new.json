@@ -93,7 +93,7 @@
         "code": "followup.no_receiver",
         "exit": 3,
         "retryable": false,
-        "hint": "ask an owner to start the host with --hook-listen and --hook-url",
+        "hint": "ask an owner to run orch host webhooks on, then orch host restart",
         "fix": [
           "orch",
           "follow-up",

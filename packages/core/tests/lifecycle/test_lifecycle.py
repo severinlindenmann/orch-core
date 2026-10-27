@@ -525,3 +525,11 @@ def test_a_malformed_registry_id_is_refused_before_any_path_is_built(tmp_path, m
         json.dumps({"workspaces": [{"root": str(tmp_path / "ws1"), "workspace_id": "../../x"}]})
     )
     assert run_cli(e, [], "stop") == 1 and "not valid" in err.getvalue()
+
+
+def test_services_table_has_a_version_column(tmp_path):
+    e, m, runner, out, err = machine(tmp_path, "darwin")
+    assert run_cli(e, [], "services") == 0
+    assert out.getvalue().splitlines()[0].split()[:3] == ["service", "state", "version"]
+    assert run_cli(e, ["--json"], "services") == 0
+    assert all("version" in r for r in json.loads(out.getvalue())["services"])

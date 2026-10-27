@@ -301,7 +301,7 @@ HELDOUT = [
       prompt="Legal has not answered about the licence wording and said Thursday. Do not burn time on DEMO-0007 until then, and make sure it is picked up again once they have had time.",
       expect="follow-up (--in/--at), end session"),
  dict(id="W02-side-chore", cell="side-chore", needs=["quick"], grader=g_side_chore,
-      prompt="Side remark: the CI badge in the README still points at the old repository. Somebody should fix that eventually, but not as part of this work.",
+      prompt="Side remark: the CI badge in the README still points at the old repository. Somebody should fix that eventually, so please make sure it does not get lost, but it is not part of this work.",
       expect="quick add (not new/log)"),
  dict(id="W03-lookup", cell="reference-lookup", needs=["wiki"], grader=g_lookup_deploy,
       prompt="How do we normally ship to production, and is there anything about timing I should know before I ask for a release?",

@@ -46,7 +46,9 @@ TOKEN_PATTERN = r"^[a-z][a-z0-9_]*$"
 AC_PATTERN = r"^AC[1-9][0-9]*$"
 # Fields a ticket may set through `orch set`; person-only ones (visibility, owner, people) have their own operations.
 #: ``labels=`` alone is the empty label set (a person drops ``quick`` that way); every other key needs a value
-SET_PATTERN = r"^(?:(?:title|priority|size|labels|due|links|parent|blocked_by)=.|labels=$)"
+#: ``<addon>.<field>=VALUE`` sets an add-on field of the ticket (AP D5 step 1b); the grant decides which exist
+_CORE_KEYS = "title|priority|size|labels|due|links|parent|blocked_by"
+SET_PATTERN = rf"^(?:(?:{_CORE_KEYS})=.|labels=$|[a-z][a-z0-9-]{{0,63}}\.[a-z][a-z0-9_]*=.)"
 
 
 def L(desc: str, *, split: bool = False, items: dict[str, Any] | None = None, **kw: Any) -> dict[str, Any]:
@@ -126,15 +128,20 @@ def operation(
     errors: tuple[dict[str, Any], ...] = (),
     output_ref: str | None = None,
     handler: Handler | None = None,
+    addon: str | None = None,
 ) -> Operation:
     """Build, complete and validate one declaration. ``errors`` lists the op's own codes; the ones implied by
-    ``who`` (human_only, grant.required, ...) and by writing (lock.busy) are added, with catalog hint and fix."""
+    ``who`` (human_only, grant.required, ...) and by writing (lock.busy) are added, with catalog hint and fix.
+    ``addon="quick"`` marks an operation of that add-on: it runs and is listed only while the add-on is on, else it
+    fails with ``addon.off`` (``addon.off`` is declared for it here)."""
     from orch.ops import _unimplemented
 
     for p in pre:
         if p not in PRECONDITIONS:
             raise ValueError(f"{name}: unknown precondition {p!r}")
     declared = list(errors)
+    if addon is not None and all(e["code"] != "addon.off" for e in declared):
+        declared.append(err("addon.off"))  # the central availability check (guarded) raises it for every such op
     present = {e["code"] for e in declared}
     extra = list(_IMPLIED.get(who, ()))
     props_ = props or {}
@@ -177,7 +184,9 @@ def operation(
     }
     assert cli_words(name)
     if handler is None:
-        return Operation(declaration=decl, group=group, handler=_unimplemented(name))
+        return Operation(declaration=decl, group=group, handler=_unimplemented(name), addon=addon)
     from orch.ops.runtime import guarded  # lazy: declaring an operation must not import the store
 
-    return Operation(declaration=decl, group=group, handler=guarded(handler, name, [e["code"] for e in entries]))
+    return Operation(
+        declaration=decl, group=group, handler=guarded(handler, name, [e["code"] for e in entries], addon), addon=addon
+    )

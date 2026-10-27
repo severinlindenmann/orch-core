@@ -236,6 +236,13 @@ def test_quick_commands_render_identically_in_direct_and_host_mode(tmp_path_fact
     direct = Lab(tmp_path_factory.mktemp("d"))
     other = Lab(tmp_path_factory.mktemp("h"))
     try:
+        for lab in (direct, other):  # `quick list` and `quick add` are commands of the Quick tasks add-on
+            lab.ws.store = lab.ws.other()
+            try:
+                grant_quick(lab.ws)
+            finally:
+                lab.ws.store.close()
+                lab.ws.store = None
         d = Cli(direct.ws)
         want = [flat(d(*argv), WS) for argv in QUICK_SCRIPT]
         served = hosted(other)
@@ -389,8 +396,28 @@ def test_quick_label_is_refused_when_the_addon_is_off(tmp_path):
         c = served.client()
         uid, key = served.ticket("no grant")
         res = err(c.req("set", {"ref": key, "pairs": ["labels=quick"]}, grant=served.grant, session=SESSION, idem=True))
-        assert res == "quick.off"
+        assert res == "addon.off"
         ok(c.req("set", {"ref": key, "pairs": ["labels=other"]}, grant=served.grant, session=SESSION, idem=True))
     finally:
         served.close()
         lab.close()
+
+
+def test_quick_list_is_addon_off_in_host_mode_too(tmp_path_factory):
+    """The host answers ``quick.list`` itself, not through the registry handler, so it checks too."""
+    from tests.host.test_hostclient import hcli, hosted
+
+    lab = Lab(tmp_path_factory.mktemp("h"))
+    try:
+        served = hosted(lab)
+        try:
+            r = hcli(lab)("quick", "list", "--json")
+            listed = hcli(lab)("describe").out  # help and describe ask the host which add-ons are on
+            off = hcli(lab)("describe", "quick.list", "--json")
+        finally:
+            served.close()
+    finally:
+        lab.close()
+    assert r.code == 3 and r.err_code == "addon.off", r.out
+    assert "quick list" not in listed and "follow-up" not in listed
+    assert off.err_code == "addon.off", off.out

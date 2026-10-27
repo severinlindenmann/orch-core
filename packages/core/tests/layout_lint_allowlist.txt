@@ -46,7 +46,7 @@ ops/commands/show.py 2
 ops/health.py 24
 ops/human.py 1
 ops/import_run.py 1
-ops/runtime.py 13
+ops/runtime.py 14
 ops/workspace_init.py 1
 records/__init__.py 15
 records/tool.py 3
@@ -60,3 +60,6 @@ market/__init__.py 1
 # the hub policy's JSON key "addons" (not a store path)
 hubclient/marketpolicy.py 2
 cli/dashboard.py 1
+# the ticket field and the addon.list row key "addons" (JSON keys, not store paths; AP D5)
+cli/main.py 1
+ops/plans.py 1

@@ -123,13 +123,17 @@ def _check_private_fd(fd: int, what: str, path: str | None = None) -> None:
     if st.st_uid != os.getuid():
         raise CustodyError(f"{what} belongs to another user")
     if st.st_mode & 0o077:
+        from orch.privdir import healable
+
         where = path or what
-        if st.st_mode & 0o022:  # others could WRITE here (files may have been planted): never heal silently
+        if not healable(st.st_mode):  # others could WRITE here (files may have been planted): never heal silently
             raise CustodyError(
                 f"{where} is writable by others (mode {st.st_mode & 0o777:03o}); check what is in it, "
                 f"then run: chmod 700 {where}"
             )
         # only read/execute for others (e.g. launchd made it 0744 for a log): ours, so tighten it
+        # safe to heal: fd is our O_NOFOLLOW directory descriptor, owned by us (checked above); every key file in it is
+        # still opened O_NOFOLLOW + fstat and refused for a foreign uid, any 0o077 bit or st_nlink > 1 (read_private)
         try:
             os.fchmod(fd, 0o700)
         except OSError:

@@ -65,3 +65,16 @@ def test_custody_refuses_and_names_the_fix_when_others_can_write(tmp_path):
     (root / "ws").chmod(0o757)
     with pytest.raises(CustodyError, match=f"chmod 700 {root / 'ws'}"):
         secure_dir(root, ("ws",), create=True)
+
+
+def test_timer_install_leaves_a_group_writable_person_dir_alone_and_custody_refuses(tmp_path):
+    from orch.custody.base import CustodyError
+
+    state = tmp_path / "state"
+    (state / "person").mkdir(parents=True)
+    (state / "person").chmod(0o770)
+    unit = rtimer.plan({"HOME": str(tmp_path)}, state, platform="darwin", python=Path("/usr/bin/python3"), dev=True)
+    rtimer.TimerManager(unit).install()
+    assert _mode(state / "person") == 0o770
+    with pytest.raises(CustodyError, match="chmod 700"):
+        secure_dir(state / "person", (), create=True)

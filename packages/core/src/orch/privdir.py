@@ -11,19 +11,31 @@ from pathlib import Path
 __all__ = ["make_private_dir", "tighten"]
 
 
+def healable(mode: int) -> bool:
+    """The ONE rule for a too-open private directory of ours (custody and the creators share it): only read/execute
+    for group/others is tightened (e.g. launchd's 0744). Writable by group/others may hold planted files: never healed."""
+    return bool(mode & 0o077) and not mode & 0o022
+
+
 def tighten(path: str | os.PathLike[str]) -> bool:
-    """chmod an existing directory of ours that group/others can enter or read to 0700. True when it changed.
-    A directory of another user, a link or a non-directory is left alone."""
+    """chmod an existing directory of ours that group/others can read or enter (not write) to 0700, through an
+    ``O_NOFOLLOW`` descriptor. True when it changed; anything else (another user's, a link, writable by others) is
+    left alone for custody to refuse."""
     try:
-        st = os.lstat(path)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
     except OSError:
         return False
-    if not stat.S_ISDIR(st.st_mode) or (hasattr(os, "getuid") and st.st_uid != os.getuid()):
-        return False
-    if st.st_mode & 0o077:
-        with contextlib.suppress(OSError):
-            os.chmod(path, 0o700)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISDIR(st.st_mode) or (hasattr(os, "getuid") and st.st_uid != os.getuid()):
+            return False
+        if healable(st.st_mode):
+            os.fchmod(fd, 0o700)
             return True
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
     return False
 
 

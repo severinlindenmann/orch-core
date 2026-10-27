@@ -224,20 +224,21 @@ def env_unaliased(served, human, stub, net):
     return e
 
 
-def bind_owner_user(env, prepared, user):
-    """What the dashboard does: the hub names the owner's hub user (`rail_get`); `hub.handoff` binds it."""
-    got = env.served.client().req(
-        "hub.handoff", {"kind": "addon", "request": prepared["request"]["id"], "hub_user": user}
-    )
+def bind_owner_user(env, prepared, user, monkeypatch):
+    """The host asks the hub (`owner_get`, its own link) who the owner is; here the answer is faked, once per call."""
+    from orch.host import hubops
+
+    monkeypatch.setattr(hubops, "owner_user", lambda service, state: user)
+    got = env.served.client().req("hub.handoff", {"kind": "addon", "request": prepared["request"]["id"]})
     ok(got)
 
 
-def test_an_unaliased_hub_admin_turns_an_add_on_on_for_the_local_owner(env_unaliased):
+def test_an_unaliased_hub_admin_turns_an_add_on_on_for_the_local_owner(env_unaliased, monkeypatch):
     """Round 4: `addon.requested` was refused `role.denied` (addon.requested is for a workspace owner) because the hub
     user is not a workspace member; the ticket-level question answer needs no member. Fails before the fix."""
     env = env_unaliased
     prepared, ev = prepare_handoff(env)
-    bind_owner_user(env, prepared, ALICE)
+    bind_owner_user(env, prepared, ALICE, monkeypatch)
     assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is None
     assert [e["type"] for e in env.lines("workspace")][-2:] == ["addon.requested", "addon.granted"]
     assert addon_dir(env.served).exists()
@@ -256,11 +257,11 @@ def test_an_unaliased_hub_user_who_is_not_an_admin_is_refused(served, human, stu
     assert granted(e) == []
 
 
-def test_another_hub_admin_cannot_answer_the_owners_hand_off(env_unaliased):
+def test_another_hub_admin_cannot_answer_the_owners_hand_off(env_unaliased, monkeypatch):
     """Security review: the hub user must be THE one the hub named as owner when the hand-off was made."""
     env = env_unaliased
     prepared, ev = prepare_handoff(env)
-    bind_owner_user(env, prepared, "ab" * 16)  # the hub names somebody else as the owner
+    bind_owner_user(env, prepared, "ab" * 16, monkeypatch)  # the hub names somebody else as the owner
     assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is None
     assert granted(env) == [] and not addon_dir(env.served).exists()
 
@@ -270,3 +271,25 @@ def test_without_a_hub_named_owner_an_unaliased_hub_user_answers_nothing(env_una
     prepared, ev = prepare_handoff(env)
     assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is None
     assert granted(env) == []
+
+
+def test_a_second_handoff_call_cannot_rebind_hub_user(env_unaliased, monkeypatch):
+    """The hub user is derived by the host and written once: asking again (even when the hub now names the signer)
+    changes nothing, so no caller can rebind it to their own hub id."""
+    env = env_unaliased
+    prepared, ev = prepare_handoff(env)
+    bind_owner_user(env, prepared, "ab" * 16, monkeypatch)  # first answer: somebody else
+    bind_owner_user(env, prepared, ALICE, monkeypatch)  # a later call, the hub now says ALICE
+    rec = env.service.submit(lambda: env.service.requests.read(prepared["request"]["id"])).result()
+    assert rec["hub_user"] == "ab" * 16
+    assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is None
+    assert granted(env) == []
+
+
+def test_hub_user_is_not_an_argument_of_hub_handoff(env_unaliased):
+    env = env_unaliased
+    prepared, _ = prepare_handoff(env)
+    res = env.served.client().req(
+        "hub.handoff", {"kind": "addon", "request": prepared["request"]["id"], "hub_user": ALICE}
+    )
+    assert err(res) == "invalid.input"

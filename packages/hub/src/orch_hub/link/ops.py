@@ -483,6 +483,13 @@ def switch_redeem(c: OpContext) -> dict[str, Any]:
     return {"user_id": r["user"], "name": name, "return_to": r["rt"], "kind": r["kind"]}
 
 
+def owner_get(c: OpContext) -> dict[str, Any]:
+    """FB15: the hub user this hub names as the owner of the calling workspace (V3-D19, #1394). The host binds an
+    add-on hand-off to it. No argument, nothing stored."""
+    _require_bound(c)
+    return {"user_id": _owner_user(c)}
+
+
 def rail_get(c: OpContext) -> dict[str, Any]:
     from ..switch import SwitchError
 
@@ -521,6 +528,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "switch_ticket": switch_ticket,
     "switch_redeem": switch_redeem,
     "rail_get": rail_get,
+    "owner_get": owner_get,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

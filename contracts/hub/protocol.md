@@ -993,6 +993,7 @@ Why: in full mode no local human signature exists, and `addon.granted` carries d
   still open on the host's clock (10 min), of op `addon.grant`, and carries exactly the requested terms; then the request ends
   `submitted` and the staged bytes are installed. Otherwise the request stays in the log and turns nothing on. A hub alone cannot
   turn an add-on on; a compromised custodial hub can sign for exactly what the owner prepared (accepted, as in §8.8).
+- **One identity for an unaliased hub user (D70, prototype).** A console-link join signs `hub.joined` with no alias, so the hub user is `u_…` (owner by the hub role). The host then asks the hub over its OWN link (`owner_get`, never from a caller) who it names as the owner, writes that user ONCE on the prepared hand-off record (never rebound) and answers an `addon.requested` only from that user, for a hand-off prepared by a workspace owner of this host. This binding is host-local state, not replayable log state.
 - **Not on the channel (hv 0):** the add-on settings step (`settings.set` of the `addons` key) of a sequence; an add-on that needs it
   is turned on at the terminal or after leaving. The phone has no screen for this type.
 - Vectors: `action_addon_requested_*` (incl. `reserved_name_<name>` for every reserved name, smuggling of `fields`, `sections`,
@@ -1284,6 +1285,7 @@ unknown `op` is `unknown_op`.
 | `switch_ticket` | w2h | both | `{"origin", "return_to", "kind": "open"\|"signout"}` | `{"ticket", "url"}` (hub one-app, below) |
 | `switch_redeem` | w2h | both | `{"ticket"}` | `{"user_id", "name", "return_to", "kind"}` (hub one-app) |
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
+| `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
 
 A reply's body is either the reply body above or `{"error": <code>}`; H0 fixes request bodies only (reply bodies are

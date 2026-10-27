@@ -99,19 +99,6 @@ def addon_panel(got: dict) -> dict:
     }
 
 
-def hub_owner_user(link, request) -> str | None:
-    """The hub user the hub names as this workspace's owner (its `rail` answer), or None. The host binds it to the
-    add-on hand-off: only that hub user's request answers it when the owner never aliased the hub user."""
-    from .switch import browser_origin
-
-    try:
-        raw = link.call("hub.switch", {"kind": "rail", "origin": browser_origin(request)})
-    except Exception:  # noqa: BLE001 - none known: an unaliased hub user then answers nothing (fail closed)
-        return None
-    user = raw.get("user_id") if isinstance(raw, dict) else None
-    return user if isinstance(user, str) and re.fullmatch(r"[0-9a-f]{32}", user) else None
-
-
 def with_console_origin(info: dict, link, request) -> dict:
     """FB15 round 3: the host builds the add-on link from its hub LINK address (the host-to-hub port), which a browser
     cannot open. The page the person signs in to is the hub's web console: its origin is what the hub's `rail` answer
@@ -162,10 +149,5 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("click.contract", "Update orch-core: it cannot hand an approval to the hub yet.", exit=9)
         if (body.kind == "addon") != (body.request is not None) or (body.kind == "addon") == (body.ticket is not None):
             raise fail("invalid.input", "An add-on names its request; a ticket approval names its ticket.", exit=5)
-        asked = body.model_dump(exclude_none=True)
-        if body.kind == "addon":
-            user = hub_owner_user(link, request)
-            if user is not None:
-                asked["hub_user"] = user
-        shown = panel(link.call("hub.handoff", asked))
+        shown = panel(link.call("hub.handoff", body.model_dump(exclude_none=True)))
         return with_console_origin(shown, link, request) if shown.get("kind") == "addon" else shown

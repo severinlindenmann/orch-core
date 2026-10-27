@@ -262,13 +262,3 @@ def test_without_a_console_origin_the_hosts_link_stands():
         app_for(Link({"hub.handoff": ADDON, "hub.switch": RuntimeError("no rail")})), {"kind": "addon", "request": RID}
     )
     assert res.json()["url"] == ADDON["url"]
-
-
-def test_the_hub_named_owner_user_is_bound_to_the_add_on_hand_off(monkeypatch):
-    from orch_dashboard import switch
-
-    monkeypatch.setattr(switch, "browser_origin", lambda request: "http://127.0.0.1:8200")
-    rail = {"hub": {"name": "Hub", "origin": "http://127.0.0.1:8100"}, "user_id": "c" * 32, "workspaces": []}
-    link = Link({"hub.handoff": ADDON, "hub.switch": rail})
-    assert post(app_for(link), {"kind": "addon", "request": RID}).status_code == 200
-    assert ("hub.handoff", {"kind": "addon", "request": RID, "hub_user": "c" * 32}) in link.calls

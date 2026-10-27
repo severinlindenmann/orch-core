@@ -160,11 +160,16 @@ def _addon(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
     ev = prepared_event(record)
     if ev.get("type") != "addon.granted":
         raise HostError("not_found", "no such add-on request waiting for the hub")
-    if args.get("hub_user") is not None and record.get("hub_user") != args["hub_user"]:
-        # the hub user the hub names as the owner of this workspace: the ONE hub user whose request may answer this
-        # hand-off when the owner never aliased it (a console-link join); the owner's session sets it.
-        record = {**record, "hub_user": args["hub_user"]}
-        service.requests.write(record)
+    if record.get("hub_user") is None:
+        # The hub user the hub names as the owner of this workspace, asked by the host over its own link and written
+        # ONCE (never rebound): the one hub user whose request may answer this hand-off when the owner never aliased it
+        # (a console-link join). Host-local state, not replayable log state (prototype).
+        from . import hubops
+
+        who = hubops.owner_user(service, state)
+        if who is not None:
+            record = {**record, "hub_user": who}
+            service.requests.write(record)
     terms = {
         "name": ev["name"],
         "version": ev["version"],

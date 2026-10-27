@@ -308,7 +308,7 @@ def _same_asker(ws: Any, record: dict[str, Any], signer: str) -> bool:
     """Is the hub signer of an ``addon.requested`` the person who prepared the hand-off here? An aliased hub user is
     that member (canonical ``p_`` id). A hub user the owner never aliased (a console-link join) is ``u_...``: it is
     accepted only when it is THE hub user the hub named as this workspace's owner when the hand-off was made
-    (``hub_user``, hub ``rail_get``) and the hand-off was prepared by a workspace owner of this host. Any other hub
+    (``hub_user``, hub ``owner_get``) and the hand-off was prepared by a workspace owner of this host. Any other hub
     user, admin or not, is refused."""
     from orch.model import identity
 

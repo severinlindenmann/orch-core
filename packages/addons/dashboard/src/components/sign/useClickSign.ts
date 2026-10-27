@@ -58,6 +58,9 @@ export interface ClickRun {
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
 
 /** The `onSettled` arguments of the hand-off dialog, for a signed click request (callers read `key` of a signed `new`). */
+/** Slightly more than the host's one-second dwell. */
+export const TOO_SOON_WAIT_MS = 1100
+
 export function settledAs(prepared: ClickPrepared, signed: ClickSigned): { state: HandoffState; request: HandoffRequest } {
   const state: HandoffState = { id: prepared.request_id, state: 'submitted', op: prepared.op, key: signed.key ?? null, expires_at: prepared.expires_at, event_ids: [], seq: signed.seq ?? null, ...(signed.deposit ? { deposit: signed.deposit } : {}) }
   const request = { id: prepared.request_id, code: null, expires_at: prepared.expires_at, state: 'submitted', op: prepared.op, key: signed.key ?? null } as unknown as HandoffRequest
@@ -176,7 +179,14 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       busy.current = true
       setPhase('signing')
       try {
-        const got = await (sealed ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed) : api.signClick(where, open.request_id, view.view_digest, revealKey))
+        const once = () => (sealed ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed) : api.signClick(where, open.request_id, view.view_digest, revealKey))
+        // The host refuses a press within a second of the review being built (nothing was signed). That guard is
+        // invisible: wait out the moment and press again, once.
+        const got = await once().catch(async (e: unknown) => {
+          if (!(e instanceof ApiError) || e.code !== 'human.click_refused' || e.reason !== 'too_soon') throw e
+          await new Promise((r) => setTimeout(r, TOO_SOON_WAIT_MS))
+          return once()
+        })
         if (!mounted.current) return
         setSigned(got)
         setPhase('done')

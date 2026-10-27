@@ -263,7 +263,7 @@ const REFUSED: Record<string, ClickProblem> = {
   not_prepared_here: { title: 'Not prepared by this dashboard', body: 'The signing helper does not know this request (it may have restarted). Prepare it again.', next: 'prepare' },
   expired: { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again.', next: 'prepare' },
   view_changed: { title: 'The review changed', body: 'What you would sign is no longer what you were shown. Nothing was signed. Read the new review.', next: 'review' },
-  too_soon: { title: 'Too soon', body: 'The review was on screen for less than a second. Nothing was signed. Press Sign again.', next: 'retry' },
+  too_soon: { title: 'Too soon', body: 'The review was on screen for less than a second. Nothing was signed. Press the button again.', next: 'retry' },
   custody_changed: { title: 'The key moved', body: 'The custody of your device key changed since the review. Nothing was signed. Prepare the request again.', next: 'prepare' },
   busy: { title: 'Busy', body: 'Another signature is in progress. Wait a moment, then press Sign again.', next: 'retry' },
   check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed.'+OFF, next: 'terminal' },

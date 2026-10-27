@@ -126,6 +126,17 @@
         ]
       },
       {
+        "code": "addon.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "tell the person; do not work around it",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
+      },
+      {
         "code": "grant.expired",
         "exit": 3,
         "retryable": false,
@@ -143,17 +154,6 @@
         "fix": [
           "orch",
           "status"
-        ]
-      },
-      {
-        "code": "quick.off",
-        "exit": 3,
-        "retryable": false,
-        "hint": "ask an owner to turn Quick tasks on in Settings, Add-ons",
-        "fix": [
-          "orch",
-          "addon",
-          "list"
         ]
       },
       {

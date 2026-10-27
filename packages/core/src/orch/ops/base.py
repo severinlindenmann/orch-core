@@ -74,6 +74,9 @@ class Context:
     #: by hub policy"). ``addon.list`` shows a paused add-on as not active, which is what the dashboard reads.
     #: ``None``: no host.
     addon_pause: Any = field(default=None, repr=False)
+    #: ``orch help`` / ``orch describe`` only (answered locally): the add-ons that are on in this workspace, as
+    #: ``{name: grant fields}``. ``None``: no workspace (or none readable), so every command is listed as before.
+    addons_on: Mapping[str, Mapping[str, Any]] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if self.caps is None:
@@ -119,6 +122,9 @@ class Operation:
     declaration: Mapping[str, Any]
     group: str
     handler: Handler
+    #: the add-on this operation belongs to (``addon=`` in the declaration module), or ``None`` for a core operation.
+    #: It is availability, not part of the declaration: the operation runs, and is listed, only while the add-on is on.
+    addon: str | None = None
 
     def validate(self) -> None:
         """Check the declaration against the ``operation`` schema (slow, about 0.1 s: tests call it, startup

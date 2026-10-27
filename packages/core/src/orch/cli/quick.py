@@ -22,7 +22,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, TextIO
 
 from orch.cli import render
-from orch.ops import Result
+from orch.ops import Result, addon_gate
 from orch.ops import quick as core
 from orch.ops.errors import OrchError
 
@@ -133,7 +133,7 @@ def main(
         a.get("name") == core.ADDON and a.get("state") not in ("disabled", "purged", "not_granted")
         for a in doc["data"].get("addons", [])
     ):
-        return fail(OrchError("quick.off", core.MESSAGE))
+        return fail(OrchError("addon.off", addon_gate.off_message(core.ADDON)))
     key = _earlier(title, run, env, now())
     created = key is None
     if created:

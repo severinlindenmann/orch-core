@@ -21,7 +21,7 @@ from orch.model.tasks import verify_cmd_problem
 from orch.ops import views
 from orch.ops.base import Context, Result
 from orch.ops.errors import OrchError
-from orch.ops.runtime import Call, Projection, short
+from orch.ops.runtime import Call, Projection, path_hash, short
 from orch.ops.views import fence
 from orch.schema import SECTIONS_BY_TYPE
 from orch.store.render import section_entry, thaw
@@ -266,6 +266,68 @@ def _keys(c: Call, p: Projection, v: str, what: str) -> list[str]:
     return out
 
 
+def addon_field_value(c: Call, p: Projection, key: str, raw: str) -> Any:
+    """The new value of the add-on field ``<addon>.<field>`` from the text after ``=`` (AP D5 step 1b). The add-on must
+    be on (``addon.off``); the field, its type, limits and ``set_by`` are the **grant's** (the same rules replay
+    applies, :func:`orch.model.addon_rules.check_field_write`). ``none`` clears. Returns the value; the caller writes it
+    as ``ticket.addons.<addon>.<field>`` in an ordinary ``ticket.updated``."""
+    from orch.addons.install import as_addons
+    from orch.model import addon_rules
+    from orch.ops import addon_gate
+
+    name, _, fname = key.partition(".")
+    addons = c.store.state.workspace.addons
+    addon_gate.require_on(addons, name)
+    grant = as_addons(addons)[name]
+    spec = grant.fields.get(fname)
+    if spec is None:
+        raise OrchError("invalid.input", f"the {name} add-on declares no field {fname}", hint=f"orch describe {name}.*")
+    value = _addon_value(c, spec, raw, key)
+    actor = p.capture.actor if p.capture is not None else c.actor()
+    if actor["kind"] == "agent":  # a person's write is judged by replay against the roles they hold on the ticket
+        refusal = addon_rules.check_field_write(grant, fname, value, actor)
+        if refusal is not None:
+            raise OrchError("invalid.input", f"{key}: {refusal.detail}")
+    return value
+
+
+def _addon_value(c: Call, spec: dict[str, Any], raw: str, label: str) -> Any:
+    from orch.model.addon_rules import validate_value
+
+    kind = spec["type"]
+    if _none(raw):
+        return None
+    if kind in ("string", "text"):
+        value: Any = c.text(raw, one_line=kind == "string", what=label)
+    elif kind == "integer":
+        if not re.fullmatch(r"-?[0-9]{1,16}", raw):
+            raise OrchError("invalid.input", f"{label} is an integer")
+        value = int(raw)
+    elif kind == "boolean":
+        if raw not in ("true", "false"):
+            raise OrchError("invalid.input", f"{label} is true or false")
+        value = raw == "true"
+    elif kind == "string_list":
+        value = raw.split(",")
+    else:  # enum, person
+        value = raw
+    try:
+        validate_value(spec, value)
+    except ValueError as e:
+        raise OrchError("invalid.input", f"{label}: {e}") from None
+    return value
+
+
+def addon_field_base(p: Projection, path: str) -> str:
+    """``base_rev`` of ``ticket.addons.<addon>.<field>``: the hash of the value now (null when unset), the one replay
+    compares. Taken from the planned view under the workspace lock, so it cannot go stale between read and append."""
+    name, _, fname = path[len("ticket.addons.") :].partition(".")
+    current = thaw(p.last_view.fields["addons"]).get(name, {}).get(fname)
+    if p.capture is not None:  # a person edits what they are shown: the current value, sent as `before`
+        p.capture.before[path] = current
+    return path_hash(p.last_view, path)
+
+
 def parse_pair(c: Call, p: Projection, key: str, raw: str) -> Any:
     """The new value of ``ticket.<key>`` from the text after ``=`` (``none`` clears size, due, parent and the lists)."""
     enums = {
@@ -322,15 +384,18 @@ def set_fields(c: Call, p: Projection, args: dict[str, Any]) -> Out:
     sets: dict[str, Any] = {}
     for pair in args["pairs"]:
         key, _, raw = pair.partition("=")
-        if f"ticket.{key}" in sets:
+        path = f"ticket.addons.{key}" if "." in key else f"ticket.{key}"  # ``echo.points`` is an add-on field
+        if path in sets:
             raise OrchError("invalid.input", f"{key} is given twice")
-        sets[f"ticket.{key}"] = parse_pair(c, p, key, raw)
-    from orch.ops import quick
+        sets[path] = addon_field_value(c, p, key, raw) if "." in key else parse_pair(c, p, key, raw)
+    from orch.ops import addon_gate, quick
 
     if quick.LABEL in (sets.get("ticket.labels") or ()) and quick.LABEL not in (p.last_view.fields.get("labels") or ()):
-        quick.require_on(c.store.state.workspace.addons)  # a NEW quick task needs the add-on; existing ones stay
-    p.add({"type": "ticket.updated", "base_rev": {path: p.base(path) for path in sets}, "set": sets})
-    return Out({"fields": [k[len("ticket.") :] for k in sets]})
+        # a NEW quick task needs the add-on; existing ones stay
+        addon_gate.require_on(c.store.state.workspace.addons, quick.ADDON)
+    base = {path: addon_field_base(p, path) if path.startswith("ticket.addons.") else p.base(path) for path in sets}
+    p.add({"type": "ticket.updated", "base_rev": base, "set": sets})
+    return Out({"fields": [k.removeprefix("ticket.").removeprefix("addons.") for k in sets]})
 
 
 def _acceptance(p: Projection) -> list[dict[str, str]]:

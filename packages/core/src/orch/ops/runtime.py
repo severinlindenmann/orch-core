@@ -416,8 +416,10 @@ class Workspace:
         )
 
 
-def guarded(handler: Handler, name: str, declared: list[str]) -> Handler:
-    """``handler`` with what the store and the key custody raise turned into the operation's error codes."""
+def guarded(handler: Handler, name: str, declared: list[str], addon: str | None = None) -> Handler:
+    """``handler`` with what the store and the key custody raise turned into the operation's error codes. For an
+    operation of an add-on (``addon``) it first checks that the add-on is on, else ``addon.off``: the one availability
+    check, shared by the CLI, the host and batches."""
 
     def run(ctx: Context, args: dict[str, Any]) -> Result:
         from orch.cli.store_errors import to_orch_error
@@ -425,6 +427,10 @@ def guarded(handler: Handler, name: str, declared: list[str]) -> Handler:
         from orch.store import StoreError
 
         try:
+            if addon is not None:
+                from orch.ops import addon_gate
+
+                addon_gate.require_on(Call.of(ctx, name).store.state.workspace.addons, addon)
             return handler(ctx, args)
         except StoreError as e:
             raise to_orch_error(e, declared) from e
@@ -600,7 +606,11 @@ def path_hash(view: Any, path: str) -> str:
 
     if path.startswith("body."):
         return view.sections.get(path[5:], {"hash": _EMPTY})["hash"]
-    return canon.value_hash(thaw(view.fields[path[len("ticket.") :]]))
+    key = path[len("ticket.") :]
+    if key.startswith("addons."):  # ``ticket.addons.<addon>.<field>``: null while unset, as replay reads it
+        name, _, fname = key[len("addons.") :].partition(".")
+        return canon.value_hash(thaw(view.fields["addons"]).get(name, {}).get(fname))
+    return canon.value_hash(thaw(view.fields[key]))
 
 
 # --------------------------------------------------------------------------------------------------- planning

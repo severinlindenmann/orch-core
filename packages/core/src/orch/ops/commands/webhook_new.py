@@ -2,7 +2,6 @@
 follow-up is set with ``--on webhook:<id>`` (the ledger then keeps only the hash of the id)."""
 
 from orch.model import followup_events as fe
-from orch.ops import followup
 from orch.ops._dsl import REF, STR, S, err, obj, operation
 from orch.ops.base import Result
 from orch.ops.errors import OrchError
@@ -15,7 +14,6 @@ HINT = (
 
 def handle(ctx, args):
     c = Call.of(ctx, "webhook.new")
-    followup.require_on(c.store.state.workspace.addons)
     view = c.resolve(args["ref"], live_only=True)
     base = (c.ctx.caps.env.get("ORCH_HOOK_BASE") or "").rstrip("/")
     if not base:
@@ -42,6 +40,7 @@ OP = operation(
     positional=("ref",),
     text="ok {key} webhook {label}",
     data=obj({"id": STR, "url": STR, "label": STR}),
-    errors=(err("followup.off"), err("followup.no_receiver"), err("not_found"), err("parse.text")),
+    errors=(err("followup.no_receiver"), err("not_found"), err("parse.text")),
     handler=handle,
+    addon="schedules",
 )

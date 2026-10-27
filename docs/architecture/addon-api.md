@@ -124,3 +124,26 @@ running as the same UID can read or write the stored file directly until the per
 
 **8.5 Reserved ids.** `github`, `landing` and `model-routing` are reserved for the official marketplace
 (`orch.market.constants.OFFICIAL_IDS`); another marketplace that lists one is refused with `market.reserved_id`.
+
+## 9. Commands and fields of an add-on at the CLI (AP D5, steps 1 and 1b)
+
+**9.1 Availability.** A core operation that belongs to an add-on is declared `operation(..., addon="<name>")` (today
+`quick list` for `quick`; `follow-up`, `follow-up list|show|cancel` and `webhook new` for `schedules`). The add-on is
+*on* while it is granted, enabled and not purged. The one check lives in `orch.ops.runtime.guarded`, so the CLI, the
+host and batches share it: while the add-on is off the operation fails with `addon.off` (exit 3, `retry:false`, "the
+`<name>` add-on is off in this workspace", hint "tell the person; do not work around it"). The older per-add-on codes
+`quick.off` and `followup.off` are gone. `orch new --label quick` and `orch set REF labels=quick` (a new quick task) and
+`orch quick add` answer `addon.off` too.
+
+`orch help`, `orch help <workflow>` and `orch describe` list such an operation only while its add-on is on; bare
+`orch help` and `orch describe` show them in an `Add-on commands` group, a workflow with no visible step is hidden, and
+`orch describe <op>` / `orch help <workflow>` of an off add-on answer `addon.off`. Without a workspace everything is
+listed. In host mode the CLI reads the state from the host's `addon.list` (its rows carry the grant's `fields`).
+
+**9.2 Fields.** `orch set REF <addon>.<field>=VALUE` sets an add-on field of a ticket. The add-on must be on
+(`addon.off`); the field, its type and limits and `set_by` are the **grant's**, checked with the rules replay applies
+(`orch.model.addon_rules`); the write is an ordinary `ticket.updated` setting `ticket.addons.<addon>.<field>`, so no
+event type or signed shape is new. VALUE is parsed by the field type: string and text as written, integer as digits,
+boolean as `true` or `false`, enum as one of its values, string_list comma separated; `none` clears. An unknown field is
+`invalid.input`, a field whose `set_by` excludes the agent is `invalid.input` ("not settable by this actor (set_by)"). `orch describe <addon>.<field>` prints the
+type, limits, `set_by` and gate from the grant.

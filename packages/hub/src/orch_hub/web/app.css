@@ -182,3 +182,26 @@ main#app.shelled { max-width:none; padding:0; margin:0; }
   .content { padding:16px 14px 40px; }
   .menu { right:0; left:auto; }
 }
+
+/* --- Services and Workspaces pages (run-11 #12, #13) --- */
+.dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--text-faint); flex:none; margin-right:8px; }
+.dot.up { background:var(--success); } .dot.warn { background:var(--warning); }
+.overall { display:flex; align-items:center; gap:2px; padding:12px 16px; border-radius:10px; background:var(--okBg); font-weight:600; margin:0 0 14px; }
+.overall.warn { background:var(--warnBg); }
+.svc-list { padding:6px 20px; }
+.svc-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px 20px; padding:16px 0; border-top:1px solid var(--line); align-items:start; }
+.svc-row:first-child { border-top:0; }
+.svc-row h3 { display:flex; align-items:center; } .svc-row p { margin:4px 0 0; }
+.svc-side { display:flex; flex-direction:column; align-items:flex-end; gap:8px; }
+.svc-row .how { grid-column:1 / -1; border-top:0; padding:0; margin:0; }
+.cmd { display:flex; gap:8px; align-items:center; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:6px 6px 6px 12px; font:12.5px ui-monospace,monospace; color:var(--text-muted); }
+.cmd code { flex:1; overflow-x:auto; white-space:nowrap; }
+.cmd button { min-height:28px; padding:2px 10px; font-size:12px; }
+.work-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.5fr); gap:20px; align-items:start; }
+.work-grid .card { margin:0; }
+.tbl { width:100%; border-spacing:0; font-size:13.5px; }
+.tbl th { text-align:left; color:var(--text-muted); font-weight:600; padding:8px 10px; border-bottom:1px solid var(--border); background:transparent; }
+.tbl td { padding:12px 10px; border-bottom:1px solid var(--border); vertical-align:middle; }
+.tbl tr:last-child td { border-bottom:0; }
+.pair { display:inline-flex; flex-wrap:wrap; align-items:center; gap:8px; font-weight:550; } .pair .ar { color:var(--text-faint); }
+@media (max-width:760px) { .work-grid { grid-template-columns:minmax(0,1fr); } .svc-row { grid-template-columns:minmax(0,1fr); } .svc-side { flex-direction:row; align-items:center; flex-wrap:wrap; } }

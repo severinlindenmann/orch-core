@@ -38,6 +38,7 @@ from .reconcile import reconcile_full_only, reconcile_relay_purge
 from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
 from .router import AccessAuthz, RouteQueue, Router
+from .services import Services
 from .shares import ShareService, ShareStore, hxk_handle
 from .spaces import SpaceService, SpaceStore
 from .switch import SwitchService
@@ -263,6 +264,8 @@ def serve(
                 push=notifier,
                 setup_token_file=state / SETUP_TOKEN_FILE,
                 switch=switch,
+                services=Services(relay_url=cfg.relay_url, publish_url=publish_url),
+                routes=queue,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )
         )

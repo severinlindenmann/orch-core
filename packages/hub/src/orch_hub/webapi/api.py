@@ -207,6 +207,10 @@ class WebDeps:
     setup_token_file: Path | None = None
     #: switch tickets and the rail (``orch_hub.switch.SwitchService``); None = those routes answer ``unavailable``
     switch: Any = None
+    #: relay/publish health for the Services page (``orch_hub.services.Services``); None = ``unavailable``
+    services: Any = None
+    #: the route queue (``recent``): hand-offs between workspaces, for the Workspaces page; None = an empty list
+    routes: Any = None
 
 
 @dataclass(frozen=True)
@@ -243,6 +247,13 @@ ROUTES: tuple[Route, ...] = (
         "A phone's channel key binds its pairing session to itself; the pairing session is consumed",
     ),
     # (b) person home
+    _r(
+        "GET",
+        "/me/handoffs",
+        "session",
+        "my_handoffs",
+        "Tickets sent between my workspaces: who, when, delivered or waiting",
+    ),
     _r("GET", "/me/workspaces", "session", "my_workspaces", "My workspaces with my role and the workspace mode"),
     _r(
         "GET",
@@ -302,6 +313,13 @@ ROUTES: tuple[Route, ...] = (
         "Remove a workspace that has left (deletes the hub's record)",
     ),
     _r("GET", "/admin/workspaces", "admin", "a_workspaces", "List workspaces with mode, binding status and grants"),
+    _r(
+        "GET",
+        "/admin/services",
+        "admin",
+        "a_services",
+        "Hub, relay and publish: state, version, last answer (run-11 #12)",
+    ),
     _r("GET", "/admin/channels", "admin", "a_channels", "List every channel (optional ?user_id=)"),
     _r("POST", "/admin/channels/{channel_id}/revoke", "admin", "revoke", "Revoke any channel (permanent)"),
     _r("GET", "/admin/market-policy", "admin", "a_market_policy", "Read the hub marketplace policy (D14)"),
@@ -358,7 +376,9 @@ SCOPE_ROUTES: dict[str, frozenset[str]] = {
 #: What a session that came from a switch ticket (``via_switch``: a workspace vouched for it, no password sign-in) may
 #: call: reading what it sees, the rail, opening another workspace, signing out. Every OTHER route (admin, channels,
 #: signing, credentials) answers ``reauth_required`` until a real sign-in: routes default closed.
-SWITCH_HANDLERS = frozenset({"whoami", "sign_out", "my_workspaces", "needs_you", "item", "switch_ticket", "rail"})
+SWITCH_HANDLERS = frozenset(
+    {"whoami", "sign_out", "my_workspaces", "my_handoffs", "needs_you", "item", "switch_ticket", "rail"}
+)
 
 
 def route_scopes(rt: Route) -> frozenset[str]:
@@ -1233,6 +1253,40 @@ class WebApi:
                 }
             )
         return 200, {"workspaces": out}
+
+    def _h_a_services(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        if self.d.services is None:
+            raise ApiError("unavailable")
+        reg = self.d.registry
+        states = [reg.binding_state(w) for w in reg.pins()]
+        joined = [st for st in states if st is not None and st["status"] in ("bound", "unbound")]
+        online = sum(1 for st in joined if st["status"] == "bound")
+        return 200, {**self.d.services.snapshot(), "workspaces": {"count": len(joined), "online": online}}
+
+    def _h_my_handoffs(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        mine = {w["workspace_id"]: w for w in self._workspaces(c.user_id)}
+        rows = self.d.routes.recent(set(mine)) if self.d.routes is not None else []
+
+        def end(ws: str) -> dict[str, Any]:  # a workspace the user has no part in is named only as "another workspace"
+            w = mine.get(ws)
+            return {
+                "workspace_id": ws if w else None,
+                "name": w["name"] if w else None,
+                "online": bool(w and w["online"]),
+            }
+
+        return 200, {
+            "handoffs": [
+                {
+                    "id": r["id"],
+                    "from": end(r["from_ws"]),
+                    "to": end(r["to_ws"]),
+                    "sent_ms": r["sent_ms"],
+                    "status": r["status"],
+                }
+                for r in rows
+            ]
+        }
 
     def _h_a_channels(self, c: Ctx, p: dict, q: dict, b: dict | None):
         u = q.get("user_id")

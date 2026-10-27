@@ -46,6 +46,9 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         "/home.js",
         "/admin.js",
         "/switch.js",
+        "/ui.js",
+        "/services.js",
+        "/workspaces.js",
     }
     for path, (name, ctype) in FILES.items():
         s, h, body = get(w, path)

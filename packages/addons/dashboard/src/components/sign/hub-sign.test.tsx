@@ -132,6 +132,24 @@ describe('the hub sign panel in a full-mode workspace', () => {
     expect(hub).not.toHaveBeenCalled()
   })
 
+  it('a follow-up change or a new ticket names itself and does not talk about stopping an agent', async () => {
+    full()
+    const { SignPopover } = await import('./SignPopover')
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { render } = await import('@testing-library/react')
+    const { mount: m } = await import('@/test/handoffHarness')
+    const { ws } = await m({ kind: 'approve', gate: 'plan' })
+    cleanup()
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <SignPopover title="Cancel follow-up" ws={ws} action={{ action: 'followup_cancel', key: 'X-1', id: 'fu_1' } as never} onClose={() => {}} />
+      </QueryClientProvider>,
+    )
+    const none = await screen.findByTestId('hub-unavailable', {}, T)
+    expect(none).toHaveTextContent('Changing a follow-up cannot be approved in the hub yet')
+    expect(none).not.toHaveTextContent('orch grant forget')
+  })
+
   it('a selective workspace keeps its usual dialog', async () => {
     const hub = vi.spyOn(api, 'hubSign')
     full('selective')

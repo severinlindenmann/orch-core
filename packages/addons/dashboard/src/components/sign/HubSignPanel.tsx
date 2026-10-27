@@ -15,14 +15,32 @@ import { Inline, Raw } from './visible'
 
 const WAYS = 'Approve on your phone or in the hub'
 
-/** Fixed copy for an action the hub cannot build yet (grant, settings, devices): no local fallback exists (D78). */
-export function NotFromHub() {
+/** What each action the hub cannot sign yet is called in the copy (N4: the stop-an-agent line fits only access changes). */
+const UNSUPPORTED: Record<string, string> = {
+  followup_cancel: 'Changing a follow-up',
+  followup_reschedule: 'Changing a follow-up',
+  followup_undo: 'Changing a follow-up',
+  new: 'Creating a ticket',
+  new_sequence: 'Creating a ticket',
+  quick_start: 'Creating a ticket',
+}
+
+/** Fixed copy for an action the hub cannot build yet (D78): no local fallback exists. It names the action; the way to
+ *  stop an agent is said only for access changes, where it helps. */
+export function NotFromHub({ action }: { action?: string }) {
+  const what = action ? UNSUPPORTED[action] : undefined
   return (
     <div data-testid="hub-unavailable" className="space-y-2 text-[13px]">
       <p className="font-medium text-text">Not available from the hub yet</p>
-      <p className="text-text-muted">
-        This workspace takes approvals through the hub only. To stop an agent now, run <Raw>orch grant forget</Raw> in your terminal, or leave the hub with <Raw>orch hub leave</Raw>.
-      </p>
+      {what ? (
+        <p className="text-text-muted">
+          {what} cannot be approved in the hub yet, so nothing was changed. This workspace takes approvals through the hub only; this step will work here once the hub can approve it.
+        </p>
+      ) : (
+        <p className="text-text-muted">
+          This workspace takes approvals through the hub only. To stop an agent now, run <Raw>orch grant forget</Raw> in your terminal, or leave the hub with <Raw>orch hub leave</Raw>.
+        </p>
+      )}
     </div>
   )
 }

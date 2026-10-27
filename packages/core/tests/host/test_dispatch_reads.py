@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import errno
 import json
+import time
 
 import pytest
 
@@ -19,9 +20,11 @@ from tests.host.test_dispatch_matrix import as_agent_class
 TITLE = "zebracorn"  # a word that appears nowhere but in the restricted ticket
 
 
-@pytest.fixture
-def world(tmp_path):
-    lab = Lab(tmp_path)
+@pytest.fixture(scope="module")
+def _world(tmp_path_factory):
+    """The host, its workspace and the baseline walk, built once for the module: every test here only reads. The
+    per-test state (the page snapshot store) is swapped by the autouse ``_fresh_snapshot_store``."""
+    lab = Lab(tmp_path_factory.mktemp("reads"))
     try:
         s = Served(lab)
     except OSError as exc:  # pragma: no cover
@@ -45,6 +48,26 @@ def world(tmp_path):
     finally:
         s.close()
         lab.close()
+
+
+@pytest.fixture
+def world(_world):
+    """The module's world with per-test state reset around it: the connections a test opened are closed (and the host
+    has released them), and the host's connection-rate bucket is refilled (it caps attempts per UID per second)."""
+    served = _world[0]
+    limits = served.h.host.limits
+    before = len(served.clients)
+    kept = sum(limits.connections.values())
+    limits.attempts.clear()
+    try:
+        yield _world
+    finally:
+        for c in served.clients[before:]:
+            c.close()
+        del served.clients[before:]
+        deadline = time.monotonic() + 5
+        while sum(limits.connections.values()) > kept and time.monotonic() < deadline:
+            time.sleep(0.005)
 
 
 #: every read, the person reads (doctor, instructions.sync, instructions.hook) included: no-person is refused those

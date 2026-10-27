@@ -200,6 +200,26 @@ class FollowupRunner:
                 self._cursor[rec.id] = after
                 return None
 
+    def learn_hooks(self):
+        """N4 (c): called on the worker thread right after a ``followup.set`` is committed, so a real pending hook is
+        known before its first ring (the tick is 30 s on a real host and a webhook sender rings once). Only adds hashes;
+        an unknown hash still costs nothing (no store read) and shares no slot with a known one."""
+        store = self.service.store
+        if store is None or self.service.state != "ok" or self.service.closing:
+            return
+        core = store.state._core
+        if not self._owns(store, core):
+            return
+        now = int(self.clock())
+        new = {
+            rec.hook
+            for t in core.tickets.values()
+            for rec in t.followups.values()
+            if rec.hook and wire.view_state(core, t, rec, now)[0] == "pending"
+        }
+        if new - self.hooks:
+            self.hooks = self.hooks | frozenset(new)
+
     # -- doorbell (host/hooks.py calls this; the body of a request never gets here)
     def _hook_pending(self, hook_hash):
         store = self.service.store

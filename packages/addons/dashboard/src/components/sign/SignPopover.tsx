@@ -288,7 +288,7 @@ export function SignPopover(p: SignPopoverProps) {
     const request = hubRequestOf(p.action)
     return (
       <SignShell inline={p.inline} anchor={anchor} open onDismiss={p.onClose} title={<Inline>{p.title}</Inline>} description={null} showClose onOpenAutoFocus={(e) => e.preventDefault()}>
-        {isAddonGrant(p.action) && p.ws ? <HubAddonPanel ws={p.ws} action={p.action} onDone={() => p.onSettled?.('done', null, null)} /> : hubSettingsSplit(p.action) && p.ws ? <HubSettingsPanel ws={p.ws} action={p.action as Extract<HandoffAction, { action: 'settings_set' }>} onDone={() => p.onSettled?.('done', null, null)} /> : request && p.ws ? <HubSignPanel ws={p.ws} request={request} /> : <NotFromHub />}
+        {isAddonGrant(p.action) && p.ws ? <HubAddonPanel ws={p.ws} action={p.action} onDone={() => p.onSettled?.('done', null, null)} /> : hubSettingsSplit(p.action) && p.ws ? <HubSettingsPanel ws={p.ws} action={p.action as Extract<HandoffAction, { action: 'settings_set' }>} onDone={() => p.onSettled?.('done', null, null)} /> : request && p.ws ? <HubSignPanel ws={p.ws} request={request} /> : <NotFromHub action={p.action?.action} />}
         <div className="flex justify-end gap-2">
           <Button variant="outline" ref={cancelRef} onClick={p.onClose}>
             Close

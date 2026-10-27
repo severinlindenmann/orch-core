@@ -22,6 +22,9 @@ from .runners import LIVE
 
 LOG = logging.getLogger(__name__)
 
+#: an unknown hook costs at most one authoritative store read per this many seconds (N4)
+HOOK_PROBE_S = 5.0
+
 
 class FollowupRunner:
     def __init__(self, service, *, clock, mono, tick_s=30):
@@ -39,6 +42,7 @@ class FollowupRunner:
         self._last_tick, self._slept_s, self._blocked = None, 0, {}
         self._lock = asyncio.Lock()
         self._wake = asyncio.Event()
+        self._hook_probe = self.mono()
         self._cursor = {}  # follow-up id -> last ticket-log seq scanned for its event
 
     def start(self):
@@ -217,6 +221,13 @@ class FollowupRunner:
 
     async def ring(self, hook_hash):
         """True when a pending follow-up of this workspace is bound to the hook. Only the first ring counts."""
+        if hook_hash not in self.hooks and self.mono() - self._hook_probe >= HOOK_PROBE_S:
+            # N4 (c): a follow-up set since the last tick is not in ``self.hooks`` yet (the tick is 30 s on a real host),
+            # and a webhook sender rings once. One authoritative store read per HOOK_PROBE_S for an unknown hook, so a
+            # flood of unknown rings still costs at most one read per interval (B2).
+            self._hook_probe = self.mono()
+            if await self.service.call(self._hook_pending, hook_hash):
+                self.hooks = self.hooks | {hook_hash}
         if hook_hash not in self.hooks or not await self.service.call(self._hook_pending, hook_hash):
             LOG.info("webhook ring ignored: no pending follow-up for hook %s", hook_hash[:8])
             return False

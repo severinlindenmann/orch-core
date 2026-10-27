@@ -347,6 +347,7 @@ def register(app: FastAPI, gateway: Gateway):
 
         return {
             "hub_id": text("hub_id"), "name": text("name"), "code": text("code"), "endpoint": text("endpoint"),
+            "owner_user": got["owner_user"] if isinstance(got.get("owner_user"), str) and re.fullmatch(r"[0-9a-f]{32}", got["owner_user"]) else None,
             "dev": got.get("dev") is True, "hub_card": json.dumps(got["hub_card"], separators=(",", ":")),
         }  # fmt: skip
 

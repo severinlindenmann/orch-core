@@ -132,7 +132,7 @@ export type RunnerGrantAction = Extract<HandoffAction, { action: 'runner_grant' 
 export type AgentAccessAction = { action: 'agent_access'; hours: number; scope: 'workable' | 'all'; label?: string; reveal_key: string }
 
 /** #1198 C10: join a hub (selective only; a full join is the Terminal's) or leave it, with the backup key sealed to the signer. */
-export type HubJoinAction = { action: 'hub_join'; hub_card: string; hub_id: string; mode?: 'selective' | 'full' }
+export type HubJoinAction = { action: 'hub_join'; hub_card: string; hub_id: string; mode?: 'selective' | 'full'; owner_user?: string }
 export type HubModeFullAction = { action: 'hub_mode_full'; hub_card: string; hub_id: string }
 export type HubLeaveAction = { action: 'hub_leave' }
 

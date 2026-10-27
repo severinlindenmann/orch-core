@@ -12,7 +12,7 @@ import { HubStep } from '../host/HubStep'
 import { Action, Flow, NoOneClick, caveat, useHubRefresh, useOneClick } from './shared'
 import { ModeChoice } from './ModeChoice'
 
-const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.\S+)?$/
+const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.[^\s~]+)?(~[0-9a-f]{32})?$/
 
 export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
   const oneClick = useOneClick(ws)
@@ -62,7 +62,7 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
       <p className="text-warning">{caveat}</p></>}
       {oneClick !== 'on'
         ? <NoOneClick state={oneClick} what="Connecting" />
-        : <HubStep key={link + mode} ws={ws} action={{ action: 'hub_join', hub_card: info.hub_card, hub_id: info.hub_id, mode }} onClose={onClose} onFailedChange={setFailed} onChanged={() => { refresh(); setSigned(true) }} />}
+        : <HubStep key={link + mode} ws={ws} action={{ action: 'hub_join', hub_card: info.hub_card, hub_id: info.hub_id, mode, ...(info.owner_user ? { owner_user: info.owner_user } : {}) }} onClose={onClose} onFailedChange={setFailed} onChanged={() => { refresh(); setSigned(true) }} />}
     </>}
     {(!info || oneClick !== 'on') && <div className="flex justify-end"><Action id="hub-join-cancel" onClick={onClose}>Cancel</Action></div>}
   </Flow>

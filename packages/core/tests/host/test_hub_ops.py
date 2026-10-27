@@ -206,6 +206,15 @@ def test_only_the_owner_may_be_aliased(human):
     assert signed.events[0]["aliases"] == [me]
 
 
+def test_a_connect_link_owner_becomes_the_owners_alias(human):
+    """Run-12 6.2: the console link names the owner's hub user; the signed join records it, so the hub role counts."""
+    user = V["ids"]["user_alice"]
+    me = {"person_id": human.person.ref.removeprefix("p_"), "user_id": user}
+    assert err(human.prepare_res("hub.join", join_args(owner_user_id=user, aliases=[me]))) == "hub.refused"
+    _, _, signed = human.run("hub.join", join_args(owner_user_id=user))
+    assert signed.events[0]["aliases"] == [me]
+
+
 def test_agents_are_refused(human, served):
     c = served.client()
     mode_args = {"hub_card": copy.deepcopy(CARD), "mode": "full"}

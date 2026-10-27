@@ -29,10 +29,15 @@ def test_vector_parses():
         "hub_id": HUB,
         "code": "Ab3_x-9Zq",
         "endpoint": "10.0.0.5:8105",
+        "owner_user": None,
         "card_url": "https://hub.example.test:8443/api/v1/hub/card",
     }
     assert build_link("https://hub.example.test:8443/", HUB, "Ab3_x-9Zq", "10.0.0.5:8105") == VECTOR
     assert parse_link(f"http://h/c#h1.{HUB}.abc")["endpoint"] is None
+    own = "c" * 32
+    for ep in (None, "10.0.0.5:8105"):
+        got = parse_link(build_link("http://h", HUB, "abc", ep, own))
+        assert (got["owner_user"], got["endpoint"]) == (own, ep)
 
 
 @pytest.mark.parametrize(
@@ -81,7 +86,7 @@ def test_only_admin_mints(w):
 
 def test_explicit_endpoint(w):
     s, o, _ = w.call("POST", "/admin/connect", {"endpoint": "hub.example.com:8105"}, token=w.login(w.admin))
-    assert s == 200 and o["link"].endswith(".hub.example.com:8105")
+    assert s == 200 and o["link"].endswith(".hub.example.com:8105~" + w.admin)
     s, o, _ = w.call("POST", "/admin/connect", {"endpoint": "bad endpoint"}, token=w.login(w.admin))
     assert s == 400
 
@@ -91,6 +96,7 @@ def test_minted_link_binds_the_minting_admin_as_owner(w):
     s, o, _ = w.call("POST", "/admin/connect", {}, token=w.login(w.admin))
     assert s == 200 and o["owner_user"] == w.admin
     assert w.api.d.invites.owner_user(o["code"]) == w.admin
+    assert o["link"].endswith("~" + w.admin)  # the owner's join records this alias
 
 
 def test_minted_link_owner_can_be_picked_but_must_be_a_hub_user(w):

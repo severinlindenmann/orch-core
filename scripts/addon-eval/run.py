@@ -31,6 +31,11 @@ import tasks as T  # noqa: E402
 lock = threading.Lock()
 CORE_PKG = os.path.abspath(os.path.join(HERE, "..", "..", "packages", "core"))
 CLAUDE_TOOLS = "Bash,Read,Edit,Write,Glob,Grep,Skill"
+#: Allowlist instead of bypassPermissions: in -p mode with permission-mode default, anything not listed is denied.
+#: Bash only runs the stub orch and a few read-only shell commands; Edit/Write stay inside the run workspace (cwd).
+ALLOWED_TOOLS = ["Bash(orch:*)", "Bash(cat:*)", "Bash(ls:*)", "Bash(grep:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)",
+                 "Bash(find:*)", "Bash(echo:*)", "Bash(pwd)", "Bash(python3:*)", "Bash(git status:*)", "Bash(git log:*)",
+                 "Bash(git diff:*)", "Read", "Glob", "Grep", "Skill", "Edit", "Write"]
 
 
 def child_env(work: str, log: str, meta: str, cache: str) -> dict:
@@ -45,7 +50,7 @@ def child_env(work: str, log: str, meta: str, cache: str) -> dict:
 
 def claude_cmd(model: str, prompt: str) -> list[str]:
     return ["claude", "-p", "--model", model, "--setting-sources", "project", "--strict-mcp-config", "--tools", CLAUDE_TOOLS,
-            "--permission-mode", "bypassPermissions", "--max-turns", "15", "--output-format", "stream-json", "--verbose", prompt]
+            "--permission-mode", "default", "--allowedTools", ",".join(ALLOWED_TOOLS), "--max-turns", "15", "--output-format", "stream-json", "--verbose", prompt]
 
 
 def parse_stream(raw: str):

@@ -55,11 +55,15 @@ normal one with Claude auth only. `EVAL_WORK` (default `$TMPDIR/addon-eval`) hol
 in `--out` for the same tag are skipped (resumable). `--par 3` is the default parallelism.
 
 Isolation: `claude -p --setting-sources project --strict-mcp-config --tools Bash,Read,Edit,Write,Glob,Grep,Skill
---permission-mode bypassPermissions --max-turns 15`, child env without `ORCH_*`, `XDG_CONFIG_HOME`, `CLAUDECODE`,
+--permission-mode default --allowedTools <allowlist> --max-turns 15`, child env without `ORCH_*`, `XDG_CONFIG_HOME`, `CLAUDECODE`,
 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, the stub first on `PATH`. `--probe` prints the visible skills/plugins/MCP servers and
 fails if a user-level plugin or MCP server is loaded (Claude Code's bundled skills stay visible, as for any user).
-The agent can write only inside its per-run copy by convention, not by sandbox: bypassPermissions is on, so run this only
-on a machine without real orch config or credentials (the dev sandbox).
+Permissions: no bypassPermissions. In `-p` mode with `--permission-mode default` anything not in `run.ALLOWED_TOOLS` is
+denied: Bash only for `orch` (the stub), cat, ls, grep, head, tail, wc, find, echo, pwd, python3 and read-only git
+(status, log, diff); Read, Glob, Grep, Skill; Edit and Write (tasks edit src/ and wiki/ files), which Claude Code confines
+to the run workspace (the cwd) in default mode. python3 can still run arbitrary code, so keep this to a dev machine
+without real orch config or credentials. A denied call shows in `stream.jsonl`; if a new task needs another command, add
+it to `ALLOWED_TOOLS` deliberately.
 
 ## Cost
 

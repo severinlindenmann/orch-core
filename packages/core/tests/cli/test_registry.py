@@ -14,6 +14,7 @@ from orch.ops.workflows import WORKFLOWS
 SECTION_10_3 = [
     *"status describe help show list search next inbox new claim release handoff submit ask wait set".split(),
     "follow-up", "follow-up cancel", "follow-up reschedule", "follow-up undo", "follow-up show", "follow-up list",
+    "schedule add", "schedule cancel", "schedule list", "schedule show",
     "webhook new",
     "section set", "ac add", "ac edit",
     *(f"task {v}" for v in "list next add edit start done skip block reopen".split()),
@@ -171,6 +172,7 @@ def test_operation_errors_are_declared_once_known_and_complete():
     # V3-D38: no registry op creates a workspace any more; these come from the genesis library `orch setup` uses
     control_only |= {"host.busy", "custody.unsafe_mode", "host.unavailable"}
     # #1198 R1-5: returned by the dashboard server's remote listener (route gate, passkey login, enrollment), no op
+    control_only |= {"cosmetic.conflict"}  # run 13 D6: host op workspace.cosmetic.set
     control_only |= {"remote.refused", "passkey.invalid", "enroll.expired", "passkey.stepup_required"}
     unused = (
         set(ERRORS) - used - set(GLOBAL_ERRORS) - {"wait.timeout", "quick.unlabelled"} - control_only - later

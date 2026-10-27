@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { api } from '@/api/client'
 import { hubQueries, type HubRule, type HubPreview, type HubShare } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
@@ -52,7 +53,7 @@ export function ShareRules({ ws, onBack }: { ws: string; onBack: () => void }) {
         {share.data.rules.filter(r => r.kind !== 'needs_you' && r.kind !== 'questions').map((r, i) => <div key={r.kind + ':' + r.value} className="flex flex-wrap items-center justify-between gap-3 border-t border-border py-3">
           <div className="min-w-0"><p className="capitalize">{r.kind} rule · {r.count ? r.count + ' matching items' : 'None yet, future matches shared'}</p>
             {r.kind !== 'ticket' && <Raw>{r.value ?? ''}</Raw>}
-            <details><summary data-testid={'hub-rule-details-' + i}>Technical details</summary><Raw>{r.value ?? ''}</Raw></details>
+            <InfoDrawer testId={'hub-rule-details-' + i}><Raw>{r.value ?? ''}</Raw></InfoDrawer>
           </div>
           <Action id={'hub-rule-remove-' + i} onClick={() => { setRemove({ kind: r.kind, value: r.value } as HubRule); setAdding(false) }}>Stop sharing</Action>
         </div>)}
@@ -69,19 +70,22 @@ export function ShareRules({ ws, onBack }: { ws: string; onBack: () => void }) {
           <div className="flex flex-wrap gap-2"><Badge className="bg-warning-soft text-warning">{current.new} now visible</Badge><Badge className="bg-success-soft text-success">{current.revoked} no longer shared</Badge></div>
           <p>Preview from the hub, not signed.</p>
           <ul className="space-y-1">{current.items.map((item, i) => <li key={i}><Raw>{item.kind === 'ticket' ? item.line.replace(/^ticket [^:]+:\s*/, '') : item.line}</Raw></li>)}</ul>
-          <details><summary data-testid="hub-preview-details">Technical details</summary>{current.items.map((item, i) => <p key={i}><Raw>{item.line}</Raw></p>)}{current.rules.map((rule, i) => <p key={i}><Raw>{rule}</Raw></p>)}</details>
+          <InfoDrawer testId="hub-preview-details">{current.items.map((item, i) => <p key={i}><Raw>{item.line}</Raw></p>)}{current.rules.map((rule, i) => <p key={i}><Raw>{rule}</Raw></p>)}</InfoDrawer>
           {current.more > 0 && <p>and {current.more} more</p>}
         </>}
         <Action id="hub-share-review" disabled={!change || !current || !!error} onClick={() => setReview(change)}>Review change</Action>
       </Panel>
       {share.data.tickets_complete && share.data.tickets.length > 0 && <Panel title="Stop sharing a single ticket">
-        <p>Ask the hub to delete one shared ticket. Choose the ticket in Technical details.</p>
-        <details><summary data-testid="hub-ticket-details">Technical details</summary><div className="space-y-2">{share.data.tickets.map((ticket, i) => <div key={ticket} className="flex flex-wrap items-center gap-2"><Raw>{ticket}</Raw><Action id={'hub-ticket-revoke-' + i} onClick={() => setRevoke(ticket)}>Stop sharing this ticket</Action></div>)}</div></details>
+        <p>Ask the hub to delete one shared ticket. The exact ticket key is behind the i.</p>
+        <ul className="space-y-2" data-testid="hub-ticket-list">{share.data.tickets.map((ticket, i) => <li key={ticket} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
+          <div className="flex min-w-0 items-center gap-1"><p>Shared ticket {i + 1}</p><InfoDrawer testId={'hub-ticket-details-' + i}><Raw>{ticket}</Raw></InfoDrawer></div>
+          <Action id={'hub-ticket-revoke-' + i} onClick={() => setRevoke(ticket)}>Stop sharing this ticket</Action>
+        </li>)}</ul>
       </Panel>}
     </>}
     {review && <Flow title="Review sharing change" onClose={() => setReview(undefined)}><TerminalStep ws={ws} request={review.add ? { kind: 'share_add', rule: review.add } : { kind: 'share_remove', rule: review.remove }}>
       <p>{review.add ? 'Add this sharing rule. Matching items, including future matches, become visible to the hub.' : 'Remove this sharing rule. Items covered by other rules remain shared.'}</p>
-      <p>Rule: {(review.add ?? review.remove).kind === 'ticket' ? 'single ticket (exact key in Technical details)' : <><Raw>{(review.add ?? review.remove).kind}</Raw> · <Raw>{(review.add ?? review.remove).value ?? ''}</Raw></>}</p>
+      <p>Rule: {(review.add ?? review.remove).kind === 'ticket' ? 'single ticket (exact key behind the i)' : <><Raw>{(review.add ?? review.remove).kind}</Raw> · <Raw>{(review.add ?? review.remove).value ?? ''}</Raw></>}</p>
       {current && <p>{current.count} items after saving · {current.new} now visible · {current.revoked} no longer shared. Preview from the hub, not signed.</p>}
       <p className="text-danger">{caveat}</p>
     </TerminalStep></Flow>}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from webapi_helpers import ORIGIN, WS, WS_SEL, Web
 
@@ -116,6 +118,36 @@ def test_redeem_needs_the_owner_alias(w):
         ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
 
 
+def test_switch_redeems_only_for_the_owner_alias_and_a_refusal_does_not_use_the_ticket(w):
+    """Contract (E4): `hub.switch` redeem answers only a ticket made for the workspace's OWNER alias. The dashboard's
+    identity rule relies on it (the ticket's user can only be the owner). Anyone else's ticket is refused, unused."""
+    assert w.reg.owner_alias(WS) == w.ann
+    for other in (w.admin, w.env.user("bob")):
+        t = w.sw.issue_to_ws(other, WS, "/x")
+        for _ in range(2):  # refused every time: the refusal itself used nothing
+            with pytest.raises(Refused) as e:
+                ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
+            assert e.value.code == "bad_ticket"
+        assert w.sw.peek(t, "to_ws")["user"] == other  # still live, still bound to the same person and workspace
+    w.reg.ws[WS]["owner"] = None  # no owner alias at all: nobody's ticket redeems
+    t = w.sw.issue_to_ws(w.ann, WS, "/x")
+    with pytest.raises(Refused):
+        ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
+    assert w.sw.peek(t, "to_ws")["user"] == w.ann
+    w.reg.ws[WS]["owner"] = w.ann
+    assert ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))["user_id"] == w.ann  # the owner's: once
+    with pytest.raises(Refused):
+        ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
+
+
+def test_a_ticket_presented_at_another_workspace_is_still_spent(w):
+    t = w.sw.issue_to_ws(w.admin, WS, "/x")  # not the owner of WS_SEL either
+    with pytest.raises(Refused):
+        ops.switch_redeem(ctx(w, WS_SEL, "switch_redeem", {"ticket": t}))
+    with pytest.raises(SwitchError):
+        w.sw.peek(t, "to_ws")  # the wrong place spends it, whoever it was for
+
+
 def test_web_ticket_refusals(w):
     token = w.login(w.ann)
     body = {"workspace_id": WS, "return_to": "/", "kind": "open"}
@@ -127,6 +159,50 @@ def test_web_ticket_refusals(w):
     assert (s, o["error"]) == (403, "forbidden_role")
     s, o, _ = w.call("POST", "/switch/ticket", body)
     assert s == 401
+
+
+def _mint(w, token, method="POST", **headers):
+    h = {"host": "127.0.0.1:9000", "cookie": f"{w.api._cookie_name}={token}", "x-orch-csrf": "1", **headers}
+    body = json.dumps({"workspace_id": WS, "return_to": "/", "kind": "open"}).encode()
+    h.setdefault("content-type", "application/json")
+    status, _, out = w.api.handle(method, "/api/v1/switch/ticket", {k: v for k, v in h.items() if v}, body)
+    return status, json.loads(out)
+
+
+def test_a_ticket_is_minted_only_on_a_same_origin_authenticated_post(w):
+    """E4: a cross-site page cannot make the hub mint a switch ticket (and so cannot land the person silently)."""
+    w.sw.set_origin(WS, DASH)
+    token = w.login(w.ann)
+    s, o = _mint(w, token, origin=ORIGIN, **{"sec-fetch-site": "same-origin"})
+    assert s == 200 and o["url"].startswith(DASH + "/#t=")
+    s, o = _mint(w, token, origin=ORIGIN)  # an older browser without Fetch Metadata, same origin
+    assert s == 200
+    for refused in (
+        {"origin": "https://evil.test", "sec-fetch-site": "cross-site"},  # a cross-site page
+        {"origin": ORIGIN, "sec-fetch-site": "cross-site"},  # a forged Origin cannot hide the browser's own label
+        {"origin": ORIGIN, "sec-fetch-site": "same-site"},  # a sibling subdomain is not the console
+        {"origin": ORIGIN, "sec-fetch-site": "none"},  # typed or bookmarked: no page asked for it
+        {"origin": None},  # no Origin at all with the ambient cookie
+        {"origin": ORIGIN, "x-orch-csrf": None},  # a simple (form) POST
+    ):
+        s, o = _mint(w, token, **refused)
+        assert (s, o["error"]) == (403, "not_allowed"), refused
+    # the same session as a bearer token (a script, not the console page), even with every browser label right
+    for site in ("same-origin", "cross-site", None):
+        s, o = _mint(w, "", origin=ORIGIN, cookie=None, authorization=f"Bearer {token}", **{"sec-fetch-site": site})
+        assert (s, o["error"]) == (403, "not_allowed"), site
+    s, o, _ = w.call(
+        "POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/", "kind": "open"}, token=token, cookie=False
+    )
+    assert (s, o["error"]) == (403, "not_allowed")
+    app = w.login(w.ann, client="app")  # the app's own bearer (pairing): refused by scope, as on every full-only route
+    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/", "kind": "open"}, token=app)
+    assert (s, o["error"]) == (403, "forbidden_role")
+    assert len(w.sw._tickets) == 2  # only the two allowed mints above made a ticket
+    s, o = _mint(w, token, method="GET", origin=ORIGIN, **{"sec-fetch-site": "same-origin"})
+    assert s == 404 and o["error"] == "unknown_op"  # there is no GET mint
+    s, o = _mint(w, "", origin=ORIGIN, **{"sec-fetch-site": "same-origin"})
+    assert s == 401  # unauthenticated
 
 
 def test_workspace_to_hub_redeem_sets_cookie_once(w):

@@ -564,6 +564,8 @@ class Host:
         if service is not None:
             if getattr(service, "followups", None):
                 await service.followups.close()
+            if getattr(service, "schedules", None):
+                await service.schedules.close()
             await asyncio.to_thread(service.close)
             await asyncio.to_thread(served_marker, service.entry.root, False, self.state_dir)
 
@@ -684,6 +686,10 @@ class Host:
             return
         service.followups = FollowupRunner(service, clock=self.clock, mono=time.monotonic, tick_s=2 if dev else 30)
         service.followups.start()
+        from .schedules import ScheduleRunner
+
+        service.schedules = ScheduleRunner(service, clock=self.clock, mono=time.monotonic, tick_s=2 if dev else 30)
+        service.schedules.start()
 
     async def _check_loop(self) -> None:
         while True:
@@ -752,6 +758,8 @@ class Host:
             service = self.services.pop(workspace_id)
             if getattr(service, "followups", None):
                 await service.followups.close()
+            if getattr(service, "schedules", None):
+                await service.schedules.close()
             await asyncio.to_thread(service.close)
         self._release_host_lock()
 

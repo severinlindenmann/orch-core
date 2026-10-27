@@ -81,6 +81,7 @@ def _minimal_args(op) -> list[str]:
         "gate": "plan", "outcome": "pass", "question": "Q1", "grant": GRANT.split(".")[0], "person": "p_" + "a" * 32,
         "role": "member", "name": "x", "prefix": "DEMO", "path": "/x", "ref": "1", "pk": "k", "cert": "-",
         "message": "m", "id": "fu_" + "0" * 26, "when": "2026-10-28T12:00:00Z",
+        "at": "2026-10-28 12:00",
     }  # fmt: skip
     schema_in = op.input
     out: list[str] = []

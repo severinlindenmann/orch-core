@@ -295,6 +295,15 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _invalid_config(err: Exception) -> StoreError:
+    """D6 review: a ``config.json`` that does not parse or is not schema ``workspace`` is refused (fail closed), never
+    replaced by the defaults: its agents roles and ``name`` are in no event, the defaults would widen who may run
+    agents."""
+    text = str(err)
+    reason = text.splitlines()[0][:200] if text else type(err).__name__
+    return StoreError("trust.genesis_mismatch", f"config.json is not valid: {reason}")
+
+
 def _verb_events() -> dict[str, frozenset[str]]:
     """What each operation emits, from the registry: the table that turns a grant's operation names into event types."""
     from orch.ops import verb_events
@@ -781,7 +790,6 @@ class Store:
                 verb_events=_verb_events(),
                 invalidations=(uid, note),
                 hub_dev=self.hub_dev,
-                hub_only=True,
             )
 
     def _flush(self, uid: str, *, cause: str | None = None) -> list[dict[str, Any]]:
@@ -1058,7 +1066,6 @@ class Store:
             expected_genesis=self._pin,
             verb_events=_verb_events(),
             hub_dev=self.hub_dev,
-            hub_only=True,
         )
         ws = self._state.workspace
         if ws_events and ws.genesis is None:
@@ -1087,7 +1094,11 @@ class Store:
                 continue
             invalid = {i.id for i in self._state._core.logs[uid].invalid}
             for e in events:
-                if e["type"] == "followup.fired" and e["id"] not in invalid and e["grant"] in ws.grants:
+                if (
+                    e["type"] in ("followup.fired", "schedule.fired")
+                    and e["id"] not in invalid
+                    and e["grant"] in ws.grants
+                ):
                     self._grant_hashes.setdefault(e["grant"], e["secret_hash"])
         self._json_cache = {}
         try:
@@ -2221,16 +2232,55 @@ class Store:
         g = genesis or self._genesis_event
         if g is None or state.workspace.genesis is None:
             return b""
-        name, run_for = self._name or state.workspace.prefix, ["owner", "maintainer", "member"]
+        name, run_for, icon = self._name or state.workspace.prefix, ["owner", "maintainer", "member"], None
         cur = self._config_json()
-        if cur is not None:  # `name` and `agents.run_for` are in no event: whatever the file says (if valid) stays
-            with contextlib.suppress(ValueError, KeyError, TypeError, schema.SchemaError):
+        if cur is not None:  # `name` and `agents.run_for` are in no event: whatever the file says stays
+            # D6: fail closed. The defaults (run_for: owner, maintainer, member) are only for a file that does not exist
+            # yet; an invalid one is refused, never replaced by them (that would widen who may run agents).
+            try:
                 doc = loads(cur)
                 schema.validate("workspace", doc)
                 name, run_for = doc["workspace"]["name"], doc["agents"]["run_for"]
+                icon = doc["workspace"].get("icon")
+            except (ValueError, KeyError, TypeError, RecursionError, schema.SchemaError) as err:
+                raise _invalid_config(err) from None
         return render.render_config(
-            state.workspace, host_id=g["host_id"], wsk_pub=g["wsk_pub"], name=name, run_for=run_for
+            state.workspace, host_id=g["host_id"], wsk_pub=g["wsk_pub"], name=name, run_for=run_for, icon=icon
         )
+
+    def set_cosmetic(
+        self, want: dict[str, Any], current: dict[str, Any], before: Callable[[], None] | None = None
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        """D6: change the unsigned name and/or icon in ``config.json`` if it still holds ``current`` (``{name, icon}``).
+        Returns ``(old, new)``; ``old`` is ``None`` (and ``new`` the values now) when ``current`` is stale. Compare and
+        write happen under the store lock, the file is replaced atomically and every other field is kept. ``before``
+        runs first under the same lock (the host's rate check: it may raise, and then nothing is read or written)."""
+        with self._locked():
+            if before is not None:
+                before()
+            raw = self._config_json()
+            if raw is None:
+                raise StoreError("trust.genesis_mismatch", "config.json is missing")
+            try:
+                doc = loads(raw)
+                schema.validate("workspace", doc)
+            except (ValueError, TypeError, RecursionError, schema.SchemaError) as err:
+                raise _invalid_config(err) from None
+            ws = doc["workspace"]
+            have = {"name": ws["name"], "icon": ws.get("icon")}
+            if have != {"name": current["name"], "icon": current["icon"]}:
+                return None, have
+            if "name" in want:
+                ws["name"] = want["name"]
+            if "icon" in want:
+                if want["icon"] is None:
+                    ws.pop("icon", None)
+                else:
+                    ws["icon"] = {"icon": want["icon"]["icon"], "colour": want["icon"]["colour"]}
+            schema.validate("workspace", doc)
+            self.fs.write_atomic("config.json", render._pretty(doc))  # noqa: SLF001
+            self._known_config = None
+            return have, {"name": ws["name"], "icon": ws.get("icon")}
 
     def _keys_bytes(self, extra: tuple[str, str, str] | None = None) -> bytes:
         """``keys.jsonl`` for every ticket log there is (key and creation time from its first line, a hint that the
@@ -2322,7 +2372,7 @@ class Store:
             self._load()  # replay from here on carries the pin (the State built so far has none)
             if self._pins is not None and new.workspace.genesis:
                 self._pins.pin_genesis(new.workspace.genesis)
-        if typ in ("grant.issued", "followup.fired"):
+        if typ in ("grant.issued", "followup.fired", "schedule.fired"):
             self._grant_hashes.setdefault(ev["grant"], ev["secret_hash"])
         if self._pins is not None:
             info = self._logs[log]

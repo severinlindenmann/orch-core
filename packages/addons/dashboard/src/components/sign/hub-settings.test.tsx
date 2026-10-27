@@ -1,9 +1,8 @@
-import { cleanup, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore, resetMockStoreForTests } from '@/api/client'
 import { setFeatures } from '@/api/features'
 import type { HubSignInfo } from '@/api/hubsign'
-import { ApiError } from '@/api/types'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render } from '@testing-library/react'
 import { spies } from '@/test/handoffHarness'
@@ -20,7 +19,7 @@ async function mount(action: HandoffAction) {
   const ws = mockStore.workspaces[0].id
   setFeatures({ features: ['identity', 'today', 'tickets', 'board', 'ticket', 'actions'], workspaces: { [ws]: ['identity', 'today', 'tickets', 'board', 'ticket', 'actions'] } })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  render(<QueryClientProvider client={client}><SignPopover ws={ws} title="Change the workspace settings" action={action} autoStart onClose={() => {}} /></QueryClientProvider>)
+  render(<QueryClientProvider client={client}><SignPopover forceHub ws={ws} title="Change the workspace settings" action={action} autoStart onClose={() => {}} /></QueryClientProvider>)
 }
 const INFO: HubSignInfo = {
   mode: 'full', kind: 'settings', short_hash: null,
@@ -59,15 +58,5 @@ describe('a settings change in a Full-mode workspace', () => {
     expect(off).toHaveTextContent('the allowed ways to approve')
     expect(off).toHaveTextContent('leave the hub')
     expect(hub).not.toHaveBeenCalled()
-  })
-
-  it('a stale workspace card: the host\'s sign.hub_only turns the review into the hub approval', async () => {
-    vi.spyOn(api, 'hubSign').mockResolvedValue(INFO)
-    vi.spyOn(api, 'prepareClick').mockRejectedValue(new ApiError(403, { code: 'sign.hub_only', message: 'Approvals go through the hub in this workspace: approve on your phone or in the hub.', retryable: false }))
-    vi.spyOn(api, 'prepareHandoff').mockRejectedValue(new ApiError(403, { code: 'sign.hub_only', message: 'Approvals go through the hub in this workspace: approve on your phone or in the hub.', retryable: false }))
-    await mount({ action: 'settings_set', grant_hours: 24 })
-    const dialog = await screen.findByRole('dialog', {}, T)
-    await waitFor(() => expect(within(dialog).getByTestId('hub-settings')).toBeVisible(), T)
-    expect(within(dialog).getByTestId('hub-link')).toHaveAttribute('href', INFO.url)
   })
 })

@@ -39,8 +39,6 @@ class Code(StrEnum):
     DEVICE_SCOPE = "device.scope"
     DEVICE_LOCKOUT = "device.lockout"  # #1198 C15: the last working device of an owner stays
     SIGN_METHOD = "sign.method"
-    SIGN_HUB_ONLY = "sign.hub_only"  # C8/C11: a local signature in a joined full-mode position (D78, D81)
-    SIGN_KEY_EXPOSED = "sign.key_exposed"  # #1097: a device key with evidence of convenience custody signs a gated act
     DEVICE_CERT = "device.cert"
     GRANT_INVALID = "grant.invalid"
     GRANT_SCOPE = "grant.scope"
@@ -88,6 +86,7 @@ class Code(StrEnum):
     SOURCE_UNLINKED = "source.unlinked"
     SOURCE_NOT_NEW = "source.not_new"
     # --- claims, tasks, artifacts, questions
+    SCHEDULE_DENIED = "schedule.denied"
     FOLLOWUP_DENIED = "followup.denied"
     CLAIM_NOT_LIVE = "claim.not_live"
     CLAIM_EXISTS = "claim.exists"

@@ -39,6 +39,10 @@ serve `index.html` for app paths. See AGENTS.md for worktree ports and cache tro
 - **Routing:** TanStack Router with browser history and permanent `/w/<PREFIX>/…` URLs (tickets at `/w/<PREFIX>/ticket/<KEY>`); tests use memory history.
 - **Clock:** the mock "now" starts at 2026-10-09 11:30 UTC to match the fixtures.
 
+## Workspace name and icon
+
+The workspace name and icon (Settings › General) are unsigned and owner only: they live in the host's `config.json`, no event carries them, and only the owner can change them, from a full session (`PUT /api/w/{ws}/workspace/cosmetic`); the hub does not get them and always shows the default icon.
+
 ## Layout
 
 ```

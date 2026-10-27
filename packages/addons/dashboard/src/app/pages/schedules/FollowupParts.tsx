@@ -3,6 +3,7 @@
 // button is not drawn (never a button that fails). On the mock the actions run through the Schedules add-on's actions; on
 // a real host Cancel, Reschedule and Undo are signed clicks (core's review) and Run now is the ordinary Start agent dialog.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { DateTimePicker } from '@/components/pickers/DateTimePicker'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
@@ -275,14 +276,7 @@ export function RescheduleButton({ row, ws, canMove, size = 'sm' }: { row: Follo
           </div>
           {custom && (
             <div className="space-y-1.5">
-              <input
-                type="datetime-local"
-                aria-label="Date and time"
-                value={value}
-                min={localInput(new Date(nowMs() + 3_600_000))}
-                onChange={(e) => setValue(e.target.value)}
-                className="h-8 w-full rounded-md border border-border bg-bg px-2 text-[13px]"
-              />
+              <DateTimePicker value={value} min={localInput(new Date(nowMs() + 3_600_000))} onChange={setValue} now={new Date(nowMs())} />
               <Button type="button" size="sm" disabled={busy || !valid} onClick={() => void move(picked)}>
                 Move it
               </Button>

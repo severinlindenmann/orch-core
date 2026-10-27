@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, safeDestination } from './bootstrap'
+import * as boot from './bootstrap'
+import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, landSwitch, safeDestination } from './bootstrap'
 
 beforeEach(() => {
   sessionStorage.clear()
@@ -11,8 +12,64 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
 const TICKET = 'a'.repeat(32) + '.' + 'b'.repeat(32)
 
-vi.mock('./trustedKey', () => ({ enrolBrowser: vi.fn(async () => {}), upgradeSession: vi.fn(async () => null) }))
-import { upgradeSession } from './trustedKey'
+vi.mock('./trustedKey', () => ({ enrolBrowser: vi.fn(async () => {}), switchProof: vi.fn(async () => ({ name: null, proof: null })) }))
+import { switchProof } from './trustedKey'
+
+const PROOF = { key_id: 'c'.repeat(32), sig: 'S'.repeat(86) }
+const unverified = () => Response.json({ ok: false, error: { code: 'switch.unverified' } }, { status: 401 })
+
+describe('hub switch link, E4: the key proves itself before the ticket is used', () => {
+  it('a proven browser lands with one request that carries the proof, and no confirm', async () => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    vi.mocked(switchProof).mockResolvedValueOnce({ name: 'Product', proof: PROOF })
+    const bodies: unknown[] = []
+    const fetcher = vi.fn(async (_u, init) => {
+      bodies.push(JSON.parse(String(init?.body)))
+      return Response.json({ token: 'full-token', expires_at: 'x', return_to: '/w/a', workspace_id: 'w' })
+    }) as unknown as typeof fetch
+    expect(await landSwitch(fetcher)).toEqual({ kind: 'landed', to: '/w/a' })
+    expect(switchProof).toHaveBeenCalledWith(TICKET, fetcher)
+    expect(bodies).toEqual([{ t: TICKET, ...PROOF }])
+    expect(sessionStorage.getItem('orch-session')).toBe('full-token')
+    expect(getPendingSwitch()).toBeNull()
+  })
+  it('no key: the ticket is not sent at all and the one confirm names the workspace', async () => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    vi.mocked(switchProof).mockResolvedValueOnce({ name: 'Product', proof: null })
+    const fetcher = vi.fn()
+    expect(await landSwitch(fetcher as unknown as typeof fetch)).toEqual({ kind: 'confirm', name: 'Product' })
+    expect(fetcher).not.toHaveBeenCalled()
+    expect(getPendingSwitch()).toBe(TICKET) // still unused: Open can use it
+  })
+  it('a refused proof keeps the ticket for the confirm; Open then uses it without a proof', async () => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    vi.mocked(switchProof).mockResolvedValueOnce({ name: null, proof: PROOF })
+    expect(await landSwitch(vi.fn(async () => unverified()) as unknown as typeof fetch)).toEqual({ kind: 'confirm', name: null })
+    expect(getToken()).toBeNull()
+    expect(getPendingSwitch()).toBe(TICKET)
+    const fetcher = vi.fn(async (_u, init) => {
+      expect(init?.body).toBe(JSON.stringify({ t: TICKET }))
+      return Response.json({ token: 'switch-token', expires_at: 'x', return_to: '/', workspace_id: 'w' })
+    }) as unknown as typeof fetch
+    expect(await confirmSwitch(fetcher)).toBe('/')
+    expect(sessionStorage.getItem('orch-session')).toBe('switch-token')
+  })
+  it('an invalid or expired link with a good proof is the error page, never the confirm', async () => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    vi.mocked(switchProof).mockResolvedValueOnce({ name: 'Product', proof: PROOF })
+    const refused = Response.json({ ok: false, error: { code: 'session.required' } }, { status: 401 })
+    expect(await landSwitch(vi.fn(async () => refused) as unknown as typeof fetch)).toEqual({ kind: 'failed' })
+    expect(getPendingSwitch()).toBeNull()
+    expect(getToken()).toBeNull()
+  })
+  it('the upgrade path is gone', () => {
+    expect('adoptToken' in boot).toBe(false)
+  })
+})
 
 describe('hub switch link (H1)', () => {
   it('strips the ticket at once and signs nobody in until the person confirms', async () => {
@@ -32,7 +89,7 @@ describe('hub switch link (H1)', () => {
     await bootstrap(vi.fn())
     expect(getPendingSwitch()).toBeNull()
   })
-  it('Continue uses the ticket once and lands on a path of this site', async () => {
+  it('Open uses the ticket once and lands on a path of this site', async () => {
     history.replaceState(null, '', `/#t=${TICKET}`)
     await bootstrap(vi.fn())
     const fetcher = vi.fn(async (_u, init) => {
@@ -43,15 +100,6 @@ describe('hub switch link (H1)', () => {
     expect(sessionStorage.getItem('orch-session')).toBe('demo-not-a-real-token')
     expect(await confirmSwitch(fetcher)).toBeUndefined()
     expect(fetcher).toHaveBeenCalledTimes(1)
-  })
-  it('a browser that signed in here before turns the switch into a full session with no prompt', async () => {
-    history.replaceState(null, '', `/#t=${TICKET}`)
-    await bootstrap(vi.fn())
-    vi.mocked(upgradeSession).mockResolvedValueOnce('full-session-token')
-    const fetcher = vi.fn(async () => Response.json({ token: 'switch-token', expires_at: 'x', return_to: '/w/a', workspace_id: 'w' })) as unknown as typeof fetch
-    expect(await confirmSwitch(fetcher)).toBe('/w/a')
-    expect(upgradeSession).toHaveBeenCalledWith('switch-token', fetcher)
-    expect(sessionStorage.getItem('orch-session')).toBe('full-session-token')
   })
   it('a refused ticket signs nobody in; a sign-out ticket ends this tab\'s session', async () => {
     history.replaceState(null, '', `/#t=${TICKET}`)

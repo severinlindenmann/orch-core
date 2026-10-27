@@ -12,7 +12,8 @@ DIGEST_V1 = "deb64fba742883b0daef32a9e9170991353f139eefad78c4db14089a51970d87"
 DIGEST_V2 = "66a7375e81ae5d462aa4246333c0a31fcfedfbbb142fd2fb592cf5029de357f2"
 DIGEST_V3 = "da2b8b56cd3cc9fae37737c80c4d23665b0dafb10e90b0fb1acb40610efc950e"
 # V3-D38 dropped `init` from all three tables and from HUMAN_ONLY (nothing is in production: no new version)
-HUMAN_ONLY_V1 = "19ba36a3eec5aef666b8e2627c345edf20a36453e665f18471c01fc3db5f3504"
+# schedule.add / schedule.cancel joined HUMAN_ONLY (V5); neither is a V1 key, so no V1 verdict changes
+HUMAN_ONLY_V1 = "0b3d0184c15d1035f9eb0df4b247913c89fdd7ff79f7f7f9cb13d7d5d07a8ab6"
 
 
 def digest(table):
@@ -44,7 +45,6 @@ def test_v3_adds_only_task_edit_and_the_model_still_reads_v1():
 
 
 def test_v4_adds_followups():
-    assert emits.CURRENT is emits.EMITS_V4
     assert digest(emits.EMITS_V4) == "78fa644b591f7f15b8b4a9eda6106fc080d3e193f667127ae97f9a9b50d7a7e8"
     assert {k for k in emits.EMITS_V4 if emits.EMITS_V4[k] != emits.EMITS_V3.get(k)} == {
         "follow_up",
@@ -52,6 +52,17 @@ def test_v4_adds_followups():
         "follow_up.reschedule",
         "follow_up.undo",
     }
+
+
+def test_v5_adds_manual_schedules_as_person_operations():
+    assert emits.CURRENT is emits.EMITS_V5
+    assert digest(emits.EMITS_V5) == "37f2f4c633103e003b613edfe0f4c6aef342b31cd964e872fefa24b641107616"
+    assert {k for k in emits.EMITS_V5 if emits.EMITS_V5[k] != emits.EMITS_V4.get(k)} == {
+        "schedule.add",
+        "schedule.cancel",
+    }
+    assert {"schedule.add", "schedule.cancel"} <= emits.HUMAN_ONLY
+    assert not {"schedule.add", "schedule.cancel"} & set(emits.EMITS_V1)  # no replay verdict changes
 
 
 def test_the_live_registry_matches_the_current_table():

@@ -31,6 +31,10 @@ ACTOR_RULES: dict[str, str] = {
     "visibility.changed": "P",
     "people.changed": "P",
     "policy.changed": "P",
+    "schedule.set": "P",
+    "schedule.cancelled": "P",
+    "schedule.fired": "H",
+    "schedule.outcome": "H",
     "followup.set": "G",
     "followup.fired": "H",
     "followup.outcome": "H",
@@ -180,7 +184,7 @@ def person_has_valid_device(ws: WsCore, person: str, at: int) -> bool:
     return any(d.person == person and device_valid(d, d.cert, at, False) is None for d in ws.devices.values())
 
 
-def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hub_only: bool = True) -> Refusal | None:
+def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Refusal | None:
     ws, a, typ, at = core.ws, e["actor"], e["type"], ts(e["at"])
     m = ws.members.get(a["id"])
     if m is None:
@@ -196,10 +200,6 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hu
     if (r := device_valid(dev, cert, at, typ in OPERATE)) is not None:
         return r
     if (r := method_refusal(ws, e)) is not None:
-        return r
-    if (
-        hub_only and (r := breakglass.local_refusal(ws, e)) is not None
-    ):  # C8/D78: a joined full-mode position signs through the hub
         return r
     if m.role == "viewer" and typ not in VIEWER_MAY:
         return Refusal(Code.ROLE_DENIED, "a viewer cannot write")
@@ -335,9 +335,14 @@ def authorize_agent(
             return Refusal(Code.GRANT_SCOPE, "follow-up grants belong to one session family")
         from .followups import chain_valid
         from .followups_wire import grant_chain
+        from .schedules_wire import root_valid
 
+        chain = grant_chain(ws, g.id)
+        if chain and not root_valid(core, chain[-1].id, at):
+            return Refusal(Code.GRANT_INVALID, "schedule root is no longer live")
         if not chain_valid(
             grant_chain(ws, g.id),
+            at=at,
             root_person_active=identity.member_role(ws, g.person) in ("owner", "maintainer", "member"),
         ):
             return Refusal(Code.GRANT_INVALID, "the follow-up grant chain is revoked")

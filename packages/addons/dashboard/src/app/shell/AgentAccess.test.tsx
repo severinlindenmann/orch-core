@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { openInfo } from '@/test/info'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { AgentAccess } from './AgentAccess'
@@ -37,6 +38,7 @@ it('with 15 to 60 minutes left it says when access ends and offers Allow agents'
   fireEvent.click(screen.getByRole('button', { name: 'Allow agents' }))
   expect(screen.getByRole('heading', { name: 'Allow agents' })).toBeInTheDocument()
   expect(screen.getByText(/replaces your current access/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'More information' })).toBeTruthy()
   expect(await screen.findByRole('button', { name: 'Complete runner' })).toBeInTheDocument()
 })
 it('with no agent access (also after a reload) it says agents cannot start yet', async () => {
@@ -54,9 +56,9 @@ it('the Stop review says whose access and until when in plain words, the id only
   fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
   await screen.findByRole('button', { name: 'Sign stop runner' })
   expect(screen.getByText(/This ends the agent access for you, which runs until/)).toBeInTheDocument()
-  const details = screen.getByText('Technical details').closest('details')!
+  const details = await openInfo()
   expect(details).toHaveTextContent('Access id: runner')
-  expect(screen.getByText(/This ends the agent access/).closest('details')).toBeNull()
+  expect(screen.getByText(/This ends the agent access/).closest('[data-testid="info-drawer-content"]')).toBeNull()
 })
 it('confirms Stop and signs each own grant separately with progress', async () => {
   show()

@@ -340,7 +340,7 @@
           "oneOf": [
             {
               "type": "object",
-              "description": "The workspace icon shown in menus (dashboard, hub): an icon and a colour from closed lists, nothing else. null clears it (the default comes from the workspace id).",
+              "description": "Legacy (before D6): the workspace icon was once a signed setting. Still accepted so older logs replay, and ignored: the icon now lives unsigned in config.json (workspace.icon).",
               "properties": {
                 "icon": {
                   "enum": [

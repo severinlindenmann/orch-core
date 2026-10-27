@@ -72,16 +72,6 @@ def mode_of(gateway: Gateway, ws: str) -> str | None:
         return None
 
 
-def refuse_if_hub_only(gateway: Gateway, ws: str) -> None:
-    """`sign.hub_only` before any local signing is prepared: full (or unknown) hub mode takes no click signature."""
-    if mode_of(gateway, ws) in HUB_ONLY:
-        raise fail(
-            "sign.hub_only",
-            "Approvals go through the hub in this workspace: approve on your phone or in the hub.",
-            exit=3,
-        )
-
-
 def addon_panel(got: dict) -> dict:
     """FB15: of the host's add-on answer only the closed fields, each checked (the link by the host's grammar)."""
     s, short, url = got.get("summary"), got.get("short_hash"), got.get("url")

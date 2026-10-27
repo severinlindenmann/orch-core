@@ -28,6 +28,10 @@ export type HandoffAction =
   | { action: 'followup_cancel'; key: string; id: string }
   | { action: 'followup_reschedule'; key: string; id: string; when: string }
   | { action: 'followup_undo'; key: string; id: string }
+  /** Schedule a run of a ticket (`schedule.add`, a click): once, or every day, week (weekdays, Monday = 0) or month (day 1..31). */
+  | { action: 'schedule_add'; key: string; brief: string; at: string; every?: 'day' | 'week' | 'month'; tz: string; weekdays?: number[]; day?: number; run_hours?: number }
+  /** Cancel one of the person's schedules (`schedule.cancel`, one click). */
+  | { action: 'schedule_cancel'; key: string; id: string }
   /** Return unclaimed work to backlog or open (host `move`, H6b): owners and maintainers. */
   | { action: 'move'; key: string; to: 'backlog' | 'open'; reason?: string }
   /** A person's `new` carries the title and type only. Everything else is a follow-up hand-off (`details`, `section`). */
@@ -52,8 +56,6 @@ export type HandoffAction =
 
   /** Reduced workspace settings (M4). Repos have their own actions (`repo_set`, `repo_remove`). */
   | { action: 'settings_set'; sign_methods?: import('./signing').SignMethod[]; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
-  /** The workspace icon (`settings.set` of `icon`, a click): an icon and a colour of the closed lists, or null for the automatic one. */
-  | { action: 'icon_set'; icon: { icon: string; colour: string } | null }
   /** Add or change one workspace repository (Repos add-on); the host checks the folder before anything is signed. */
   | { action: 'repo_set'; name: string; path: string; remote?: string; default_branch?: string }
   /** Take one repository off the list. The folder and its files stay on disk. */

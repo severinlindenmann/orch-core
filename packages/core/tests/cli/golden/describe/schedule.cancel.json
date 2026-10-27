@@ -1,0 +1,147 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "schedule.cancel",
+    "name": "schedule.cancel",
+    "cli": "orch schedule cancel",
+    "summary": "Cancel a schedule and end its run grants.",
+    "who": "human",
+    "usage": "orch schedule cancel ID [--dry-run]",
+    "pre": [],
+    "emits": [
+      "schedule.cancelled"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Cancel a schedule and end its run grants.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "schedule ID"
+        }
+      },
+      "x-positional": [
+        "id"
+      ],
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} schedule.cancelled {id} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "addon.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "tell the person; do not work around it",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
+      },
+      {
+        "code": "custody.no_key",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch setup sets up your device key",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.no_prompt",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run this command yourself, in your own terminal",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.wrong_passphrase",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run the command again and type your passphrase",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "human_only",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch ask or orch wait",
+        "fix": [
+          "orch",
+          "describe",
+          "ask"
+        ]
+      },
+      {
+        "code": "schedule.denied",
+        "exit": 3,
+        "retryable": false,
+        "hint": "read the denial and correct the schedule",
+        "fix": [
+          "orch",
+          "schedule",
+          "list"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "members.stale",
+        "exit": 9,
+        "retryable": true,
+        "hint": "retry; the person re-signs",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

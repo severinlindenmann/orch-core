@@ -1,39 +1,50 @@
-import { confirmSwitch, declineSwitch } from './bootstrap'
+import { confirmSwitch } from './bootstrap'
 
 /**
- * A hub switch link was opened here. Nobody is signed in by a link alone (a stranger could send you one): this plain
- * page asks first. DOM only, like the boot failure page: no framework runs and the CSP allows no inline script.
+ * A hub switch link was opened here and this browser could not prove its key for this dashboard (a fresh profile, a
+ * browser that never signed in on this computer, or a link meant for someone else). Nobody is signed in by a link
+ * alone, and the ticket is still unused: this plain page asks once, "Open <name>?", with one button. DOM only, like the
+ * boot failure page: no framework runs and the CSP allows no inline script.
  */
-export function showSwitchConfirm(root: HTMLElement | null = document.getElementById('root')) {
+export function showSwitchConfirm(name: string | null, root: HTMLElement | null = document.getElementById('root')) {
   if (!root) return
   const box = document.createElement('div')
   box.className = 'boot'
   box.setAttribute('role', 'dialog')
   const title = document.createElement('b')
-  title.textContent = 'Continue from your hub?'
+  title.textContent = `Open ${name ?? 'this workspace'}?`
   const why = document.createElement('span')
-  why.textContent = 'You followed a link from your company hub. Only continue if you just clicked it there.'
+  why.textContent = 'This browser could not be verified here.'
   const go = document.createElement('button')
   go.type = 'button'
   go.className = 'boot-retry'
-  go.textContent = 'Continue'
-  const cancel = document.createElement('button')
-  cancel.type = 'button'
-  cancel.className = 'boot-retry'
-  cancel.textContent = 'Cancel'
+  go.textContent = 'Open'
   go.addEventListener('click', () => {
-    go.disabled = cancel.disabled = true
+    go.disabled = true
     void confirmSwitch().then((to) => {
-      if (to === undefined) {
-        title.textContent = 'This link expired'
-        why.textContent = 'Go back to the hub and click again.'
-        box.replaceChildren(title, why, cancel)
-        cancel.disabled = false
-        cancel.textContent = 'Open the dashboard'
-      } else location.replace(to ?? '/')
-    }).catch(() => { title.textContent = 'This link could not be used'; cancel.disabled = false })
+      if (to === undefined) showSwitchFailed(root)
+      else location.replace(to ?? '/')
+    }).catch(() => showSwitchFailed(root))
   })
-  cancel.addEventListener('click', () => { declineSwitch(); location.replace('/') })
-  box.append(title, why, go, cancel)
+  box.append(title, why, go)
+  root.replaceChildren(box)
+}
+
+/** The link is not good (expired, already used, or not for this dashboard's person): an error page, nothing opened. */
+export function showSwitchFailed(root: HTMLElement | null = document.getElementById('root')) {
+  if (!root) return
+  const box = document.createElement('div')
+  box.className = 'boot'
+  box.setAttribute('role', 'alert')
+  const title = document.createElement('b')
+  title.textContent = 'This link expired'
+  const why = document.createElement('span')
+  why.textContent = 'Go back to the hub and click again.'
+  const home = document.createElement('button')
+  home.type = 'button'
+  home.className = 'boot-retry'
+  home.textContent = 'Open the dashboard'
+  home.addEventListener('click', () => location.replace('/'))
+  box.append(title, why, home)
   root.replaceChildren(box)
 }

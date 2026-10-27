@@ -16,6 +16,7 @@ import { CommandPalette } from './palette'
 import { ShellUiProvider } from './ShellUi'
 import { useShortcuts } from './shortcuts'
 import { ShellToaster } from './ShellToaster'
+import { NeedsYouNotifier } from './NeedsYouNotifier'
 import { CompanyRail } from './CompanyRail'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
@@ -117,6 +118,7 @@ export function Shell() {
           <NewTicketHost />
           <HelpSheet />
           <ShellToaster />
+          <NeedsYouNotifier />
         </TooltipProvider>
       </ShellUiProvider>
     </WorkspaceProvider>

@@ -196,6 +196,25 @@
   }
 }
 
+@keyframes needs-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes needs-pulse {
+  from {
+    box-shadow: 0 0 0 0 var(--warning);
+  }
+  to {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+
 @keyframes orch-nav-slide {
   from {
     transform: translateX(-100%);
@@ -224,6 +243,10 @@
   .orch-fade-in {
     animation: orch-fade-in 160ms var(--ease-out) both;
   }
+  /* A new "needs you" card slides in, then pulses a warning ring once. */
+  .needs-new {
+    animation: needs-in 200ms var(--ease-out), needs-pulse 200ms ease-out 200ms 3;
+  }
   /* Toasts: sonner's 400 ms is slow for a status line. Coupled to sonner's own attribute (sonner 2.x): if an upgrade renames it, this rule silently stops applying. */
   [data-sonner-toast] {
     transition-duration: 200ms !important;
@@ -236,6 +259,9 @@
   .orch-nav-bar-fill {
     width: 100%;
     opacity: 0.5;
+  }
+  .needs-new {
+    animation: none;
   }
   *,
   ::before,

@@ -13,9 +13,9 @@ export function HubChip({ ws }: { ws?: string }) {
   const short = chip.label === 'Local only' ? label : chip.short
   const Icon = chip.icon === 'alert' ? AlertTriangle : null
   const tooltip = status.data?.not_told ? 'You left the hub, but the hub does not know yet. It may still show this workspace as joined.' :
-    status.data?.reachable === false ? (status.data.mode === 'full' ? 'Approvals are paused while the hub is offline.' : 'Keep working and signing locally. Shared updates wait for the hub.') :
+    status.data?.reachable === false ? 'Keep working and signing here. Sharing and phone approvals resume when the hub is back.' :
     chip.tone === 'amber' ? 'The hub connection needs attention. Open Hub settings for details.' :
-    status.data?.mode === 'full' ? 'Connected to the hub. It can read every ticket, file and note, and hub admins act as admins here (see Settings → Hub). Approvals use your phone or passkey.' :
+    status.data?.mode === 'full' ? 'Connected to the hub. It can read every ticket, file and note, and hub admins can approve from the hub (see Settings → Hub). You can approve here or on your phone.' :
     status.data?.mode === 'selective' ? 'Connected to the hub. It only gets what you pick, plus needs-you notes and questions (see Settings → Hub). You keep signing locally.' :
     'This workspace works fully on its own: tickets, agents and signing in your terminal. Connect a hub for your phone, publishing and handoffs.'
   const tone = chip.tone === 'amber' ? 'border-warning/40 bg-warning-soft text-warning' : 'border-border bg-surface-2 text-text-muted'

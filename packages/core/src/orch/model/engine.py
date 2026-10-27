@@ -30,6 +30,7 @@ from . import (
     identity,
     lifecycle,
     questions,
+    schedules_wire,
     source,
     tasks,
     visibility,
@@ -78,9 +79,6 @@ class Ctx:
     expected_genesis: str | None = None
     admit: bool = False  # pre-append: no host_sig yet, ws_seq must be the workspace head
     verb_events: Any = None  # operation name -> event types it emits (grant verbs are operation names, F1 10.1)
-    #: C8/D78: judge local person events in a joined full-mode position (``breakglass.local_refusal``). A host
-    #: configuration like ``hub_dev``: the Store always sets it; model-only tests opt in.
-    hub_only: bool = True
     hub_dev: bool = False  # C3b 15.3: the reader is a dev workspace (host configuration, never a field of an event)
 
 
@@ -188,7 +186,21 @@ def _scratch(core: Core, log: str, e: dict[str, Any]) -> Core:
     is_ws = log == WORKSPACE
     sc = Core(
         ws=copy.deepcopy(core.ws)
-        if (is_ws or unattended or "via" in a or _names_users(e) or typ in ("followup.fired", "followup.outcome"))
+        if (
+            is_ws
+            or unattended
+            or "via" in a
+            or _names_users(e)
+            or typ
+            in (
+                "followup.fired",
+                "followup.outcome",
+                "schedule.set",
+                "schedule.fired",
+                "schedule.outcome",
+                "schedule.cancelled",
+            )
+        )
         else core.ws,
         tickets=dict(core.tickets),
         keys=dict(core.keys) if typ == "ticket.created" else core.keys,
@@ -214,6 +226,10 @@ def _ticket_handler(core: Core, t: TCore, lc: LogCore, e: dict[str, Any]) -> Ref
         "visibility.changed": lambda: visibility.changed(ws, t, e),
         "people.changed": lambda: lifecycle.people_changed(ws, t, e),
         "policy.changed": lambda: lifecycle.policy_changed(ws, t, e),
+        "schedule.set": lambda: schedules_wire.set_event(core, t, e),
+        "schedule.fired": lambda: schedules_wire.fired_event(core, t, e),
+        "schedule.outcome": lambda: schedules_wire.outcome_event(core, t, e),
+        "schedule.cancelled": lambda: schedules_wire.cancelled_event(core, t, e),
         "followup.set": lambda: followups_wire.set_event(core, t, e),
         "followup.fired": lambda: followups_wire.fired_event(core, t, e),
         "followup.outcome": lambda: followups_wire.outcome_event(core, t, e),
@@ -311,10 +327,10 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
     if a["kind"] == "person":
         if e["type"] in authz.HUB_ONLY:  # C10: these two exist only as hub-signed requests (hub protocol 8.8)
             return Refusal(Code.EVENT_BAD_ACTOR, f"{e['type']} is signed through a hub only")
-        if (r := authz.authorize_person(core, log, e, ctx.verifier, hub_only=ctx.hub_only)) is not None:
+        if (r := authz.authorize_person(core, log, e, ctx.verifier)) is not None:
             return r
     elif a["kind"] == "agent":
-        if ctx.hub_only and (r := breakglass.agent_refusal(ws, e)) is not None:  # C8: same choke point as people
+        if (r := breakglass.agent_refusal(ws, e)) is not None:  # I6: every joined hub mode
             return r
         if a.get("unattended") is True:
             if (r := authz.authorize_unattended(ws, t, e)) is not None:

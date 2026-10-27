@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
 import { hubQueries, type HubCommandRequest, type HubStatus } from '@/api/hub'
@@ -40,7 +41,7 @@ export function TerminalStep({ ws, request, children, onStatus }: { ws: string; 
     <p className="text-text-muted">Finish on your computer: open a terminal on the computer that runs this workspace. This dashboard is not where you sign: it never sees your passphrase or your key.</p>
     <h3 className="font-semibold">Copy this command into the terminal</h3>
     {command ? <ExactCommandLine command={command} testId="hub-command" /> : error ? <div role="alert"><p className="text-danger">{error}</p><Action id="hub-command-retry" onClick={() => setRetry(n => n + 1)}>Try again</Action></div> : <p role="status">Preparing command…</p>}
-    <details><summary data-testid="hub-technical-details" className="cursor-pointer text-text-muted">Technical details</summary><div className="mt-2 space-y-2 break-all"><p>Workspace: <Raw>{ws}</Raw></p><Raw>{JSON.stringify(request, null, 2)}</Raw></div></details>
+    <InfoDrawer testId="hub-technical-details"><div className="mt-2 space-y-2 break-all"><p>Workspace: <Raw>{ws}</Raw></p><Raw>{JSON.stringify(request, null, 2)}</Raw></div></InfoDrawer>
     {command && <Action id="hub-ran-it" disabled={checking} onClick={() => void check()}>{checking ? 'Checking…' : 'I ran it'}</Action>}
     {notice && <p role="status">{notice}</p>}
   </div>

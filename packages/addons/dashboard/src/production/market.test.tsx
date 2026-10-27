@@ -2,6 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { openInfo } from '@/test/info'
 import { market, stage, installedAddon, updateStage } from '@/test/fixtures/market'
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
@@ -106,7 +107,7 @@ it('marketplaces explain each publisher state and hub refusal', async () => {
   ws().market = { markets: (['unsigned', 'new', 'known', 'changed'] as const).map((key, i) => market({ url: `${market().url}${i}`, publisher_key: key })) }
   show('/w/DEMO/addons?tab=marketplaces')
   await screen.findByText('Publisher key matches the one previously saved on this computer', {}, T)
-  for (const name of ['Allowed by', 'Added by', 'Publisher signature', 'Repo', 'Last refreshed']) expect(screen.getByRole('columnheader', { name })).toBeInTheDocument()
+  expect(screen.getAllByRole('button', { name: 'About this marketplace' })).toHaveLength(4)
   for (const text of ['Unsigned', 'First use - key will be remembered', 'Key changed - review required']) expect(screen.getByText(text)).toBeInTheDocument()
   const add = screen.getByRole('button', { name: '+ Add marketplace' })
   expect(add).toBeDisabled()
@@ -142,10 +143,18 @@ it.each(['member', 'no-actions'] as const)('hides every write control for %s', a
   await screen.findByText('Available', {}, T)
   expect(screen.queryByRole('button', { name: 'Install...' })).toBeNull()
   await userEvent.click(screen.getByRole('button', { name: 'Installed' }))
-  await screen.findByText('1.0.0')
+  // The version sits behind the row's "i": informational only, the drawer holds no control.
+  const versionInfo = await openInfo(await screen.findByTestId('addon-calendar', {}, T))
+  expect(versionInfo).toHaveTextContent('Version 1.0.0')
+  expect(within(versionInfo).queryAllByRole('button')).toHaveLength(0)
+  await userEvent.keyboard('{Escape}')
   expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Update...' })).toBeNull()
   await userEvent.click(screen.getByRole('button', { name: 'Marketplaces' }))
+  await userEvent.click(await screen.findByRole('button', { name: 'About this marketplace' }, T))
+  const about = await screen.findByTestId('info-drawer-content')
+  expect(about).toHaveTextContent('Allowed by:')
+  expect(within(about).queryAllByRole('button')).toHaveLength(0)
   expect(screen.queryByRole('button', { name: '+ Add marketplace' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
 })

@@ -50,6 +50,10 @@ def test_the_addon_operations_are_declared(ws):
         "follow_up.reschedule": "schedules",
         "follow_up.undo": "schedules",
         "webhook.new": "schedules",
+        "schedule.add": "schedules",
+        "schedule.cancel": "schedules",
+        "schedule.list": "schedules",
+        "schedule.show": "schedules",
     }
     for op in all_ops():
         if op.addon:

@@ -17,7 +17,9 @@ from . import (
     addon_routes,
     addon_switches,
     agents,
+    claude_trust_routes,
     click,
+    cosmetic_routes,
     focus_routes,
     followups,
     handoff,
@@ -47,6 +49,7 @@ from .auth import Auth
 from .errors import HostError, fail, host_response, response
 from .explorer import routes as explorer_routes
 from .gateway import Gateway, state_dir
+from .hostlink import REQUEST_MEMO
 from .live import Live, SessionStream
 from .policy import LOOPBACK, loopback_policy
 from .security import Security
@@ -134,6 +137,24 @@ SPA_PATH = re.compile(
 ROOT_FILES = frozenset({"favicon.svg", "loading.css"})
 
 
+class RequestMemo:
+    """Gives every HTTP request its own empty memo (see hostlink.REQUEST_MEMO); it ends with the request."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        memo: dict = {}
+        token = REQUEST_MEMO.set(memo)
+        try:
+            return await self.app(scope, receive, send)
+        finally:
+            memo["closed"] = True  # a task that inherited this context must not keep reading the request's answers
+            REQUEST_MEMO.reset(token)
+
+
 def create_app(
     port: int,
     gateway=None,
@@ -174,6 +195,7 @@ def create_app(
     app.add_middleware(
         Security, auth=auth, policy=app.state.policies[LOOPBACK], registry=app.state.policies, router=app.router
     )
+    app.add_middleware(RequestMemo)
 
     # Passkey login and enrollment exist only where a remote policy does; `passkeys` is the store (tests pass a
     # temporary one), by default the person's own file. `app.state.enroll` mints an enrollment code (R1-7, R1-6).
@@ -303,7 +325,8 @@ def create_app(
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
     switch.register(app, gateway, auth)
-    trust_routes.register(app, auth)
+    trust_routes.register(app, auth, gateway)
+    claude_trust_routes.register(app, gateway, auth)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
     signprefs.register(app, gateway)
@@ -311,6 +334,7 @@ def create_app(
     phone.register(app, gateway)
     addon_routes.register(app, gateway)
     market_routes.register(app, gateway)
+    cosmetic_routes.register(app, gateway)
     activity_routes.register(app, gateway)
     terminals.register(app, gateway, tickets)
     agents.register(app, gateway)

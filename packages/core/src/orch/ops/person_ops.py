@@ -35,7 +35,6 @@ from orch.ops.base import Context, Operation, Result
 from orch.ops.errors import GLOBAL_ERRORS, OrchError
 from orch.ops.human import Human
 from orch.ops.runtime import Call, Workspace
-from orch.wsicons import COLOUR_LABELS, ICON_LABELS
 
 __all__ = ["OPS", "get"]
 
@@ -74,17 +73,6 @@ _ORIGIN = {
     "pattern": r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
     r"|http://(?:localhost|127\.0\.0\.1|10\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|172\.(?:1[6-9]|2[0-9]|3[01])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|192\.168\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]))(?::[1-9][0-9]{0,4})?)(?![\s\S])",
 }
-_ICON = {  # the workspace icon: an icon and a colour of the closed lists, or null to clear it
-    "oneOf": [
-        {
-            "type": "object",
-            "properties": {"icon": {"enum": list(ICON_LABELS)}, "colour": {"enum": list(COLOUR_LABELS)}},
-            "required": ["icon", "colour"],
-            "additionalProperties": False,
-        },
-        {"type": "null"},
-    ]
-}
 _SET = {
     "type": "object",
     "properties": {
@@ -117,7 +105,6 @@ _SET = {
             "propertyNames": {"pattern": r"^[a-z][a-z0-9-]{0,39}(?![\s\S])"},
             "additionalProperties": {"oneOf": [{"type": "object"}, {"type": "null"}]},
         },
-        "icon": _ICON,
         "repos": {
             "type": "object",
             "minProperties": 1,

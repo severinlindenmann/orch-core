@@ -95,6 +95,15 @@ _SPECS = [
         ["orch", "show"],
         "the model refused the follow-up",
     ),
+    _e(
+        "schedule.denied",
+        3,
+        False,
+        "the model refused the schedule",
+        "read the denial and correct the schedule",
+        ["orch", "schedule", "list"],
+        "the model refused the schedule",
+    ),
     # 1 internal
     _e(
         "internal",
@@ -210,17 +219,6 @@ _SPECS = [
         "A convenience signature is refused while another current reader (a device, another member's core, a relay) "
         "is below reader level 1; the reason (other_member, phone_device, relay_paired) names them "
         "(orch-v2-host 0.8.6 item 9.9).",
-    ),
-    _e(
-        "sign.hub_only",
-        3,
-        False,
-        "this workspace is joined to a hub in full mode: approve on your phone or in the hub",
-        "approve in the hub or on your phone; to leave the hub (break-glass): orch hub leave",
-        ["orch", "hub", "status"],
-        "Full hub mode (D78, D81): the hub's role gate decides every human verb and a channel signs it; no local key, "
-        "click signer or relay device does. Only the owner's break-glass leave is signed locally. Verbs the hub cannot "
-        "build yet are not signable here either.",
     ),
     _e(
         "sign.key_exposed",
@@ -804,6 +802,7 @@ _MARKET = (
     ),
     ("market.refresh_running", 9, True, "a refresh of this marketplace is already running", "try again in a moment"),
     ("market.already_added", 3, False, "this marketplace is already added", "orch market refresh"),
+    ("cosmetic.conflict", 3, False, "the workspace name or icon changed meanwhile", "look at it again, then change it"),
     # V3 G3: install, update, remove
     ("market.not_installed", 3, False, "this add-on was not installed from a marketplace", "orch addon install ID"),
     ("market.ambiguous_addon", 3, False, "more than one added marketplace lists this id", "name one with --from URL"),
@@ -833,8 +832,6 @@ GLOBAL_ERRORS = (
     # H12d-2 (§0.8.6 item 9.4): any person op signed with convenience custody (direct mode too) is refused while a
     # reader of the workspace is below level 1
     "sign.convenience_unavailable",
-    # V3 C11 (D78/D81): any person op signed locally is refused while the workspace is in full hub mode
-    "sign.hub_only",
     # #1097: a gated act signed by a device key that was in convenience custody (hub join/leave/mode, keys.rotate)
     "sign.key_exposed",
 )

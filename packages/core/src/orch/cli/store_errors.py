@@ -42,7 +42,6 @@ TABLE: dict[str, str] = {
     **dict.fromkeys(_REFUSED, "invalid.input"),
     "store.busy": "retry.later",
     "members.stale": "members.stale",
-    "sign.hub_only": "sign.hub_only",  # C8: the model rule (D78) keeps C11's code
     "sign.key_exposed": "sign.key_exposed",  # #1097
     "quota.unattended": "quota.unattended",
     "gate.stale": "gate.stale",

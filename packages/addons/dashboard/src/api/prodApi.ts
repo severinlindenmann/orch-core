@@ -11,7 +11,7 @@ import type { SignDefault, SignMethod } from './signing'
 import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
 import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, GithubCredential, GithubSave, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
-import type { QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
+import type { ClaudeTrust, QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
 import { activityQuery, type ActivityPage, type ActivityParams } from './activity'
 import type { MarketList, MarketInstalled, StageInput, StageResult } from './market'
 import { uploadFor, type ArtifactImage, type PastedRef } from './pasteImage'
@@ -32,6 +32,8 @@ import {
   type Workspace,
   type WorkspaceIdentity,
   type OrchEvent,
+  type Cosmetic,
+  type CosmeticBody,
 } from './types'
 
 interface ServerWorkspace {
@@ -274,6 +276,10 @@ const reads = {
 const records = {
   recordsCommit: (ws: string, push: boolean) => call<RecordsRun>(`${w(ws)}/records/commit`, 'POST', { push }),
   recordsAutoOff: (ws: string) => call<RecordsRun>(`${w(ws)}/records/auto-off`, 'POST'),
+  recordsAutoOn: (ws: string) => call<RecordsRun>(`${w(ws)}/records/auto-on`, 'POST', {}),
+  /** Whether Claude Code may open this workspace's folders without asking, and the plain grant (no signature). */
+  getClaudeTrust: (ws: string) => call<ClaudeTrust>(`${w(ws)}/claude-trust`),
+  grantClaudeTrust: (ws: string, allowParent: boolean) => call<{ on: true }>(`${w(ws)}/claude-trust`, 'POST', { allow_parent: allowParent }),
   /** #1198 C15: the admin clicks. The address is the one the review showed; the tool refuses if git now resolves to another. */
   recordsInit: (ws: string) => call<RecordsRun>(`${w(ws)}/records/init`, 'POST', {}),
   recordsMark: (ws: string, url: string | null) => call<RecordsRun>(`${w(ws)}/records/remote`, 'POST', url === null ? { on: false } : { on: true, url }),
@@ -355,7 +361,15 @@ const click = {
     call<{ done: true } & ClickCard>(`${w(ws)}/click/rotate`, 'POST', body),
 }
 
-const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records }
+/**
+ * D6: the workspace name and icon, unsigned and owner only (no hand-off). `if_current` is what the page showed; the host
+ * answers the new values, or 409 `cosmetic.conflict` when it is stale.
+ */
+const cosmetic = {
+  setCosmetic: (ws: string, body: CosmeticBody) => call<Cosmetic>(`${w(ws)}/workspace/cosmetic`, 'PUT', body),
+}
+
+const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records, ...cosmetic }
 
 /** Every other method of the mock's api refuses plainly: a control that reaches one is a bug, not a silent no-op. */
 export const api = new Proxy(implemented, {

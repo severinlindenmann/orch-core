@@ -6,6 +6,7 @@
 // mutation cache (`send` is a plain call, never `useMutation`), not logged, not in a toast, not in an error text. The
 // dialog cannot be dismissed by Escape or a click outside: only "Done" ends it, so one stray key cannot lose a link.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
 import { Check, Copy, Loader2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
@@ -267,15 +268,14 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
               {s.files.length} file{s.files.length === 1 ? '' : 's'}, {fmtSize(sum)} in all.
             </p>
             <Where server={server} share={share} />
-            <details className="text-[12px] text-text-muted">
-              <summary className="cursor-pointer select-none">Technical details</summary>
+            <InfoDrawer>
               <p className="mt-1 break-all font-mono">Prepared copy {s.staged_id}</p>
               {s.files.map((f) => (
                 <p key={f.name} className="break-all font-mono">
                   {f.name}: sha256 {f.sha256}
                 </p>
               ))}
-            </details>
+            </InfoDrawer>
           </div>
           <DialogFooter>
             <Button
@@ -332,11 +332,10 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
           )}
           {err && <Failure text={err.text} />}
           {err?.unknown && data && (
-            <details className="text-[12px] text-text-muted">
-              <summary className="cursor-pointer select-none">Technical details</summary>
+            <InfoDrawer>
               <p className="mt-1">The server’s admin runs:</p>
               <p className="break-all font-mono">{adminCommand(data.workspace, data.owner)}</p>
-            </details>
+            </InfoDrawer>
           )}
           {err && (
             <DialogFooter>

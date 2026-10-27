@@ -45,6 +45,10 @@ def needs_of(ws: WsCore, t: TCore, frozen: bool = False) -> list[Need]:
             out.append(Need("no_eligible", t.uid, owners, g))
         elif gate_waiting(ws, t, g):
             out.append(Need("approve", t.uid, tuple(policies.eligible_persons(ws, t, g)), g))
+    for rec in t.schedules.values():
+        for occurrence, row in rec.occurrences.items():
+            if row.get("outcome") == "did_not_run":
+                out.append(Need("schedule", t.uid, (rec.person,), rec.id + "/" + occurrence, row.get("reason") or ""))
     if frozen:
         owners = tuple(sorted(p for p, m in ws.members.items() if m.role == "owner"))
         out.append(Need("acknowledge", t.uid, owners, None, "invalid event in the ticket log"))

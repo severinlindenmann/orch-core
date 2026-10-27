@@ -63,6 +63,8 @@ TECHNICAL_KEYS = frozenset(
 
 #: per event type, the payload keys the plain view shows (in a section, a list or a field row)
 SHOWN: dict[str, frozenset[str]] = {
+    "schedule.set": frozenset({"schedule", "rule", "starts", "ends", "brief", "run_hours", "label"}),
+    "schedule.cancelled": frozenset({"schedule"}),
     "addon.disabled": frozenset({"name"}),
     "addon.purged": frozenset({"name"}),
     "addon.granted": frozenset(
@@ -518,38 +520,6 @@ def _addons_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> str 
         f"{one(name)} gets exactly these values when orch runs it; keys go through 'orch addon login', not here."
     )
     return f"Settings of {one(name)} (add-on)"
-
-
-def _icon_word(v: Any) -> str | None:
-    """``Rocket, Pink`` for a plain pair of the closed lists, else ``None``."""
-    from orch.wsicons import COLOUR_LABELS, ICON_LABELS
-
-    if (
-        not isinstance(v, Mapping)
-        or set(v) != {"icon", "colour"}
-        or not isinstance(v["icon"], str)
-        or not isinstance(v["colour"], str)
-        or v["icon"] not in ICON_LABELS
-        or v["colour"] not in COLOUR_LABELS
-    ):
-        return None
-    return f"{ICON_LABELS[v['icon']]}, {COLOUR_LABELS[v['colour']]}"
-
-
-def _icon_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> bool:
-    """``settings.changed`` ``set.icon``: the workspace icon in words (``Rocket, Pink``); ``None`` removes it. ``False``
-    (the generic row, every byte) when the value, or the host's current one, is not a plain pair of the closed lists."""
-    new = "(removed: default icon)" if value is None else _icon_word(value)
-    if new is None:
-        return False
-    old = "(default icon)" if before is None else _icon_word(before)
-    if old is None:
-        return False
-    _row(out, "Workspace icon", new, old, ctx.note(False))
-    out.setdefault("notes", []).append(
-        "The icon is shown beside the workspace name in menus. It never replaces the prefix."
-    )
-    return True
 
 
 _LINK_KEYS = frozenset({"repos", "branches", "prs", "external"})
@@ -1205,6 +1175,20 @@ def _event(
     ctx: _Ctx,
 ) -> str:
     """The headline of one event; everything it shows is added to ``out``."""
+    if typ == "schedule.set":
+        from orch.ops.schedule import RISK, describe
+
+        for key in ("schedule", "starts", "ends", "run_hours", "label"):
+            if key in ev:
+                _row(out, key, ev[key])
+        out.setdefault("sections", []).append(
+            {"id": "brief", "title": "Instructions for each run", "text": _s(ev["brief"])}
+        )
+        out.setdefault("notes", []).extend([RISK, "No click or confirmation is required at firing time."])
+        return describe(ev["rule"], ref, ev["ends"])
+    if typ == "schedule.cancelled":
+        _row(out, "schedule", ev["schedule"])
+        return f"Cancel automatic sessions on {ref} and end their run grants"
     if typ == "ticket.created":
         title = _s(ev.get("title"))
         out["ticket"] = {**(out.get("ticket") or {}), "key": _s(ev.get("key")), "title": one(title)}
@@ -1273,8 +1257,6 @@ def _event(
             if key == "repos" and _repo_rows(out, value, before.get(key), ctx):
                 continue
             if key == "publish" and _publish_rows(out, value, before.get(key), ctx):
-                continue
-            if key == "icon" and _icon_rows(out, value, before.get(key), ctx):
                 continue
             _row(out, key, value, before.get(key), ctx.note(False))
         if "grant_hours" in (ev.get("set") or {}):  # B8: the longest agent access, in days/hours

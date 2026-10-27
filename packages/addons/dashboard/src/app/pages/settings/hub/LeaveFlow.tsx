@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Action, Flow, NoOneClick, caveat, useHubRefresh, useOneClick } from './shared'
 import { TerminalStep } from './TerminalStep'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { HubStep } from '../host/HubStep'
 
 // Leaving uses HubStep while One click is on. The terminal path remains for an unreachable hub.
@@ -13,8 +14,8 @@ export function LeaveFlow({ ws, hubDown = false, onClose }: { ws: string; hubDow
   const consequences = <div className="space-y-2">
     <p>Your work stays on this computer. You can keep working locally.</p>
     <p>Phone access, publishing and handoffs stop. Hub members lose access here.</p>
-    <p className="text-warning">{caveat}</p>
-    {hubDown && <p className="text-warning">Your terminal asks you to sign and may ask you to unlock your key. The hub will not be told until it is reachable. It may still list this workspace and keep copies of what it read.</p>}
+    <p className="flex items-center gap-1 text-text-muted">{caveat}
+      {hubDown && <InfoDrawer label="More about leaving"><p>Your terminal asks you to sign and may ask you to unlock your key. The hub will not be told until it is reachable. It may still list this workspace and keep copies of what it read.</p></InfoDrawer>}</p>
   </div>
   const here = !terminal && oneClick === 'on'
   return <Flow title={hubDown ? 'Leave without the hub' : 'Leave the hub'} onClose={onClose} finish={hubDown ? 'terminal' : 'here'}>

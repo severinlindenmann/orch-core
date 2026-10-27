@@ -110,6 +110,12 @@ def prompt(
         raise HostError("launch.invalid", "a mode needs a ticket")
     if mode == "followup":
         fu = task.get("followup") if isinstance(task, dict) else None
+        if isinstance(fu, str) and re.fullmatch(r"sc_[0-7][0-9A-HJKMNP-TV-Z]{25}", fu):
+            return (
+                f"Run orch status. You were started by schedule {fu} on ticket {key}. "
+                f"Run orch schedule show {fu}, then orch show {key}. "
+                "Claim the ticket and follow the schedule brief."
+            )
         if not isinstance(fu, str) or not re.fullmatch(r"fu_[0-7][0-9A-HJKMNP-TV-Z]{25}", fu):
             raise HostError("launch.invalid", "mode followup needs a valid follow-up id")
         from orch.instructions.harness import AGENTS_FILE

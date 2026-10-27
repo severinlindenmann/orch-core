@@ -491,6 +491,10 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `people.changed` | P | `role`: `owner`, `assignees`, `reviewers` or `watchers`; `add`: [person id]; `remove`: [person id] | For `owner`, `add` has exactly one id and the old owner is removed. On `done`/`closed` refused for roles a gate policy names. |
 | `policy.changed` | P | `gates`: {gate: policy} | In the ticket log: an override, intersected with the workspace policy (§5.7). |
 | `claim.taken` | A | `takeover?`: {`from_session`: session id, `reason`: str} | Agents only. One claim per ticket. Refused on `done`/`closed`. |
+| `schedule.set` | P | `schedule`: sc_ ULID; `rule`: `{every: once, day, week or month; at: HH:MM; tz: IANA zone; weekdays?: [0..6]; day?: 1..31; date?: YYYY-MM-DD}`; `starts`: timestamp; `ends`: timestamp, at most 30 days after `starts`; `brief`: str, at most 4096 bytes; `run_hours`: 1..8; `label?`: line | Bounded manual calendar rule on this ticket; a person authority root (non-viewer, live device). |
+| `schedule.fired` | H | `schedule`: sc_ ULID; `occurrence`: UTC timestamp; `grant`: grant id; `secret_hash`: hash; `run`: r_ ULID | Derives a fresh one-run grant scoped to this ticket; role, device, access and claim re-checked; each occurrence at most once and never before the `schedule.set` `at` plus the minimum scheduling lead (a backdated `starts` reaches no earlier occurrence). Clears the setter's own lapsed claim and then marks the occurrence `released`; only that occurrence's live grant may `claim.taken` without the ordinary rule. |
+| `schedule.outcome` | H | `schedule`: sc_ ULID; `occurrence`: UTC timestamp; `outcome`: ran, failed or did_not_run; `reason?`: follow-up outcome reason, role_lost, device_lost, access_lost, ticket_closed, claimed_by_other, busy (the setter's own session holds a live claim under any live grant; the next occurrence tries again), missed or addon_disabled | Same occurrence floor as `schedule.fired`. Ends the run grant; a claim under it lapses (`grant_ended`). |
+| `schedule.cancelled` | P | `schedule`: sc_ ULID | Setter or owner/admin cancels atomically and ends all derived grants; Undo is a new set. |
 | `followup.set` | A | `followup`: fu_ ULID; `trigger`: time, orch, addon or webhook; `due?`: timestamp; `deadline?`: timestamp; `brief`: str, at most 4096 bytes; `label?`: line; `on?`: event match `{source, kind, status, ref?, hook?}` (orch and webhook triggers); `hook?`: sha256 hex of the webhook id | Agents only. Creates a follow-up and releases the claim; see orch-v2-followups FU1–FU16. |
 | `followup.fired` | H | `followup`: fu_ ULID; `grant`: grant id; `trigger`: time, orch, addon, webhook or deadline; `fallback?`: no_event, no_ring or addon_silent; `event?`: the waking event `{source, kind, ref, status, at}`; `secret_hash`: hash; `run`: r_ ULID | Derives a one-run grant scoped to this ticket. |
 | `followup.outcome` | H | `followup`: fu_ ULID; `outcome`: ran, failed or did_not_run; `reason?`: follow-up outcome reason; `run?`: r_ ULID | Ends the run grant. |
@@ -571,7 +575,7 @@ with an old role.
 | `grant.issued`, `grant.revoked` | §10.1 A3 (D60) |
 | `grant.requested` | any role with a grant (hub `edit` and `admin`), through the hub only (C10) |
 
-**Unknown types.** The prefixes `ticket`, `status`, `visibility`, `people`, `policy`, `claim`, `followup`, `task`, `handoff`,
+**Unknown types.** The prefixes `ticket`, `status`, `visibility`, `people`, `policy`, `claim`, `followup`, `schedule`, `task`, `handoff`,
 `log`, `question`, `gate`, `verdict`, `branch`, `artifact`, `edit`, `projection`, `restore`, `workspace`, `member`,
 `role`, `device`, `settings`, `grant`, `addon`, `invalid`, `hub` and `relay` are reserved: no addon may take one of these names, and an
 unknown type under one of them is refused. Custom `<addon>.<verb>` events are deferred (A5); in P1 they are
@@ -1905,8 +1909,6 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `device.scope` | §5.3 the certificate lacks `decide` (or `operate`), or has a `drop:` scope |
 | `device.lockout` | a `device.removed` of an owner's last device that can sign now (not removed or revoked, certificate not expired at the event's `at`, with `decide`, held by a member) |
 | `sign.method` | B6: the person event's `auth` is a way (`convenience` is `click`, `secure-enclave-unlocked` is `phone`) that the workspace's `settings.sign_methods` leaves out, judged by the state at the event's own position; honest labels only |
-| `sign.hub_only` | C8/C11 (D78, D81): a person event that is not `auth: "hub"` at a position where the workspace is joined to a hub in **full** mode, and whose type is not a break-glass event (`hub.left`, signed by an owner without the click or convenience signer); judged by the state at the event's own position, append and replay alike. The break-glass set is `orch.model.breakglass.BREAK_GLASS` |
-| `sign.key_exposed` | #1097: a device key with a signed `device.exposed` mark signs a full-mode `hub.joined` (also with an `auth: "convenience"` label, marked or not; first join, selective to full, the `hub.mode` re-affirmation) or a break-glass event (`hub.left`); judged by the state before the event, append and replay alike. A key with no such evidence is clean. The way out is `device.rotated` (`orch keys custody passphrase --rotate`) |
 | `device.cert` | §5.3 an embedded certificate or revocation is not signed by the person key, or is for another person |
 | `grant.invalid` | §10.1 the grant is unknown, expired, revoked, ended, another person's, or its person may not run agents |
 | `grant.scope` | §10.1 the grant's scope does not cover the ticket, or the person can't see it |
@@ -1952,6 +1954,7 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `source.unlinked` | §5.7 the repo is not in `links.repos` |
 | `source.not_new` | §5.7 `branch.pushed` repeats the projection, has a wrong `before`, or changes a ref on a done ticket |
 | `followup.denied` | FU1–FU16 follow-up rule refused; detail names the pure rule denial |
+| `schedule.denied` | a manual schedule rule refused (set, fired, outcome or cancelled); detail names the denial |
 | `claim.not_live` | §5.2 no live claim of that session (or takeover of nothing) |
 | `claim.exists` | §5.4.1 the ticket is claimed and no takeover was given |
 | `claim.not_holder` | §5.4.1 an agent acts under another session's claim |
@@ -3229,10 +3232,9 @@ Tasks 4–7 = PR B; tasks 5 and 6 need the Opus security pass (custody, authorit
 `hub.left` at its position also (a) voids the counting decisions signed by any `hub:<hub_id>/*` key in a generation that
 is still open, on every unsettled ticket (`generations.void_hub`; a settled ticket keeps its state and lists them as
 revoked, like a revoked device), and (b) ends every grant whose request was a line of that hub (`Grant.hub_id`, set by
-the C10 host-actor `grant.issued`; state, no new line). The break-glass set is `orch.model.breakglass.BREAK_GLASS`
-(`hub.leave`, `hub.repin` recovery key only, `keys.rotate`). In a joined **full**-mode position every person event that
-is not `auth: "hub"` and not a break-glass event by an owner is refused (`sign.hub_only`); the model's default is ON
-(`Ctx.hub_only`; C10 flipped it from off, L2-C8i-5), model-only tests opt out (`World.hub_only = False`).
+the C10 host-actor `grant.issued`; state, no new line). A local person signature is valid in every hub mode (A1, D83: the workspace roster decides who may
+sign locally; the hub is an additional signer). The earlier full-mode refusal (`sign.hub_only`, `Ctx.hub_only`, the
+break-glass table) is removed.
 
 ### C10 hub-signed grants, devices, policy, settings and the H5 switch (V3, design-c10, hub protocol 8.8)
 

@@ -129,7 +129,7 @@
 "tests/host/test_hub_handoff.py": 10.7,
 "tests/host/test_hub_join_real.py": 3.6,
 "tests/host/test_hub_link.py": 1.9,
-"tests/host/test_hub_only.py": 14.9,
+"tests/host/test_hub_optional.py": 14.9,
 "tests/host/test_hub_ops.py": 6.5,
 "tests/host/test_hub_owner_proof.py": 4.2,
 "tests/host/test_hub_unknown.py": 0.2,

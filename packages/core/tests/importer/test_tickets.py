@@ -2,11 +2,40 @@
 
 from __future__ import annotations
 
-from orch.ops import import_run
+import shutil
+
+import pytest
+
+from orch.ops import human, import_run
+from tests.importer.conftest import FIXTURE
 from tests.importer.helpers import replays_clean, snapshot, tree, types, with_repo
-from tests.ops.humans import agent, hws, me  # noqa: F401
+from tests.ops.helpers import Cli
+from tests.ops.humans import HumanWs, agent, hws, me  # noqa: F401
 
 KEYS = [f"DEMO-000{n}" for n in range(1, 9)]
+
+
+@pytest.fixture(scope="module")
+def shared(tmp_path_factory):
+    """The fixture imported once for the tests below that only read the result (``hws, imported = shared``); the tests
+    that change the workspace or re-run the import keep the per-test ``imported``."""
+    tmp = tmp_path_factory.mktemp("imported")
+    dst = tmp / "v1-project"
+    shutil.copytree(FIXTURE, dst)
+    with pytest.MonkeyPatch.context() as mp:
+        w = HumanWs(tmp)
+        w.bootstrap()
+        mp.setattr(human, "open_backend", w.backend)
+        mp.setattr(human, "show_secret", w.shown_secrets.append)
+        mp.setattr(human, "review_prompt", w.review_prompt)
+        w.provider.requests.clear()
+        w.provider.shown.clear()
+        with_repo(w)
+        r = Cli(w, grant=False, session=None)("import", "v1", str(dst))
+        assert r.code == 0, r.err + r.out
+    yield w, r
+    if w.store is not None:
+        w.store.close()
 
 
 def test_a_dry_run_writes_nothing_and_says_what_it_would_do(hws, me, v1):  # noqa: F811
@@ -20,7 +49,8 @@ def test_a_dry_run_writes_nothing_and_says_what_it_would_do(hws, me, v1):  # noq
     assert hws.reviews == [] and hws.provider.requests == []  # no review, no passphrase
 
 
-def test_every_ticket_is_imported_with_its_v1_key_and_status(imported, hws):
+def test_every_ticket_is_imported_with_its_v1_key_and_status(shared):
+    hws, imported = shared
     status = {k: hws.view(k).status for k in KEYS}
     assert status == {
         "DEMO-0001": "backlog",
@@ -36,7 +66,8 @@ def test_every_ticket_is_imported_with_its_v1_key_and_status(imported, hws):
     assert imported.first == "ok import.v1 8 tickets (39 events)"
 
 
-def test_fields_labels_links_and_references(imported, hws):
+def test_fields_labels_links_and_references(shared):
+    hws, imported = shared
     t = hws.ticket_json("DEMO-0003")
     assert (t["priority"], t["size"], t["due"], t["parent"]) == ("high", "s", "2026-10-30", "DEMO-0002")
     assert t["labels"] == ["imported-v1", "needs-review"]
@@ -50,7 +81,8 @@ def test_fields_labels_links_and_references(imported, hws):
     assert hws.ticket_json("DEMO-0001")["priority"] == "medium"  # v1 normal
 
 
-def test_criteria_tasks_and_questions(imported, hws):
+def test_criteria_tasks_and_questions(shared):
+    hws, imported = shared
     t = hws.ticket_json("DEMO-0003")
     assert [(a["id"], a["text"]) for a in t["acceptance"]] == [
         ("AC1", "Loads in 5 s."),
@@ -68,7 +100,8 @@ def test_criteria_tasks_and_questions(imported, hws):
     assert [x.state for x in v.tasks] == ["open", "open", "open"]  # no task state is carried over
 
 
-def test_sections_and_the_note(imported, hws):
+def test_sections_and_the_note(shared):
+    hws, imported = shared
     body = (hws.store_dir / "tickets" / hws.uid("DEMO-0003") / "body.md").read_text()
     assert "## Context" in body and "Show cost by month." in body and "## Out of scope" in body
     assert "Imported from v1 as DEMO-0003 (v1 status: in-progress" in body
@@ -82,7 +115,8 @@ def test_sections_and_the_note(imported, hws):
     assert "Ask (v1):\n\nPick one.\n\nSome context." in ask
 
 
-def test_nothing_v1_decided_counts_in_v2(imported, hws):
+def test_nothing_v1_decided_counts_in_v2(shared):
+    hws, imported = shared
     v = hws.view("DEMO-0003")  # v1 had approved its requirements
     assert {g: (s.hash is None or True) for g, s in v.gates.items()}  # the gates exist...
     for key in KEYS:
@@ -91,7 +125,8 @@ def test_nothing_v1_decided_counts_in_v2(imported, hws):
         assert hws.view(key).status != "done"
 
 
-def test_closed_tickets_keep_why(imported, hws):
+def test_closed_tickets_keep_why(shared):
+    hws, imported = shared
     ev = {
         k: [e for e in hws.events(k) if e["type"] == "ticket.closed"][0]
         for k in ("DEMO-0005", "DEMO-0006", "DEMO-0007")
@@ -249,7 +284,8 @@ def test_a_ticket_the_model_refuses_is_skipped_whole(hws, me, v1):  # noqa: F811
     assert hws.ticket_json("DEMO-0003")["parent"] is None
 
 
-def test_the_imported_workspace_replays_clean(imported, hws):
+def test_the_imported_workspace_replays_clean(shared):
+    hws, imported = shared
     s = replays_clean(hws)
     s.load_all()
     assert len(s.state.tickets) == 8

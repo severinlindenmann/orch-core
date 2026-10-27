@@ -204,7 +204,7 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
       <FollowupBanner ticket={ticket} />
       {!wide && <FollowupLine ticket={ticket} />}
-      <TicketProgress ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} />
+      <TicketProgress ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
       <GateNotes ticket={ticket} viewer={viewer} />
       {!wide && <PropertiesStrip ticket={ticket} viewer={viewer} />}
 

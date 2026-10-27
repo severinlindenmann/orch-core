@@ -24,9 +24,10 @@ def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
     # An unfinished gate cannot be approved and raises no need for the person: say so while the agent can still fix it.
     lines: list[str] = []
     gate = views.open_gate(p.view)
-    if gate is not None and views.fill_hint(p.view, gate) is not None:
-        lacks = ", ".join(m for m in p.view.gates[gate].missing if not m.startswith("artifact:"))
-        fix = views.fill_hint(p.view, gate)
+    fix = views.fill_hint(p.view, gate) if gate is not None else None
+    missing = p.view.gates[gate].missing if gate is not None else []
+    lacks = ", ".join(m for m in missing if not m.startswith("artifact:"))
+    if fix is not None and lacks:
         lines.append(
             f"warning: the {gate} gate is not ready for approval, it still lacks: {lacks}. "
             f"The person cannot approve it yet; add it first ({fix})."

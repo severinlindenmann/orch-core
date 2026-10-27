@@ -147,6 +147,13 @@ export function TodayPage() {
   )
 }
 
+/** Follow-ups are said once: with nothing else, the follow-ups clause alone; "Nothing needs you" only when both are 0. */
+export function needsLine(n: number, followups: number): string {
+  const follow = followups ? `${plural(followups, 'follow-up', 'follow-ups')} to look at` : ''
+  if (n > 0) return follow ? `${n} need you · ${follow}` : `${n} need you`
+  return follow || 'Nothing needs you'
+}
+
 function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, attention, generation }: {
   generation: string
   items: NeedsYouItem[]
@@ -290,8 +297,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
   // A host that does not serve agent sessions says nothing about them: no count, no panel.
   const agentsKnown = hasFeature('agents', ws)
   const n = attention.needsYou.total
-  // Any card on screen (a follow-up too) means something is there to look at.
-  const count = n + followups.cards.length
+  const needs = needsLine(n, followups.cards.length)
   const counts = attention.agents
   const waiting = attention.waitingOnOthers
   const whoWaits = waiting.who.map((p) => displayName(dir, p)).join(', ')
@@ -305,7 +311,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
         <span>
           {readOnly
             ? `${dateLine(now)} · Nothing needs you · ${waiting.count} open in the workspace`
-            : `${dateLine(now)} · ${n === 0 ? (count > 0 ? `${count} to look at` : 'Nothing needs you') : `${n} need you`}${followups.cards.length ? ` · ${plural(followups.cards.length, 'follow-up', 'follow-ups')} to look at` : ''}${agentsKnown ? ` · ${plural(counts.working, 'agent', 'agents')} working` : ''}`}
+            : `${dateLine(now)} · ${needs}${agentsKnown ? ` · ${plural(counts.working, 'agent', 'agents')} working` : ''}`}
         </span>
         {readOnly && (
           <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-muted">

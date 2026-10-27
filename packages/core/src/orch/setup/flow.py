@@ -630,6 +630,11 @@ def main(
     if not wi.TERMINAL.available():
         err.write("orch setup: needs your own terminal (/dev/tty)\n")
         return 3
+    from orch.prune.check import older_install
+
+    if (found := older_install(env, mark=True)) is not None:  # an older install's identity must not meet a new setup
+        err.write(f"orch setup: {found}\n")
+        return 3
     set_no_core_dumps()
     ictx = install_ctx or _install_ctx(env, out, err, ask=role_arg is None)
     if ictx is not None and (role_arg is not None or ictx.interactive) and not _server_installed(ictx):

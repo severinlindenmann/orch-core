@@ -67,6 +67,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     secret.add_argument("hook_id")
     secret.add_argument("--state", type=Path)
+    sub.add_parser(
+        "prune",
+        help="remove orch from this computer (services, parts, state, keys, releases, workspace files); "
+        "orch host prune --help-prune lists the flags",
+        add_help=False,
+    )
     inst = sub.add_parser("install", help="install this code as an immutable release")
     inst.add_argument("--version")
     unit = sub.add_parser("unit", help="print a launchd or systemd unit (installing it is the setup helper's job)")
@@ -202,6 +208,10 @@ def _check_dev_runner(foreground: bool, run_dir: Path, env: Mapping[str, str]) -
 def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO | None = None) -> int:
     env = os.environ if env is None else env
     out = sys.stdout if out is None else out
+    if argv[:1] == ["prune"]:  # take orch off this computer (orch.prune): a person's job, its own flags
+        from orch.prune.cli import main as prune_main
+
+        return prune_main(argv[1:], env=env, out=out, err=sys.stderr)
     args = _parser().parse_args(argv)
     try:
         if args.cmd == "run":

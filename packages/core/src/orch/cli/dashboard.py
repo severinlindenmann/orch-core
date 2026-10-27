@@ -76,7 +76,10 @@ def _absolute_path(value: str | None) -> str:
 def find_entry_point(env: Mapping[str, str], err: TextIO | None = None) -> list[str] | None:
     """The command that starts the dashboard addon, or ``None`` when it is not installed. Order: the console script
     beside this interpreter, the module of this interpreter (``python -P -m``: the current directory is not put on
-    ``sys.path``), then ``PATH`` (absolute entries only; the resolved path is written to ``err``)."""
+    ``sys.path``), then ``PATH`` (absolute entries only; the resolved path is written to ``err``). The lookup always
+    uses :func:`_launch_env`'s environment, so no caller can skip that sanitizing; a caller that RUNS the command
+    passes :func:`launch_env` too."""
+    env = _launch_env(env)
     beside = Path(sys.executable).parent / SCRIPT
     if beside.is_file() and os.access(beside, os.X_OK):
         return [str(beside)]
@@ -92,6 +95,11 @@ def find_entry_point(env: Mapping[str, str], err: TextIO | None = None) -> list[
 
 def _exec(argv: list[str], env: Mapping[str, str]) -> None:  # a seam: tests replace it
     os.execve(argv[0], argv, dict(env))
+
+
+def launch_env(env: Mapping[str, str]) -> dict[str, str]:
+    """The environment to run the dashboard command with (``PYTHONPATH`` reduced to absolute entries)."""
+    return _launch_env(env)
 
 
 def _launch_env(env: Mapping[str, str]) -> dict[str, str]:

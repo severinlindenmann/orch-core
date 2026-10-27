@@ -74,7 +74,7 @@ def test_off(cli):
     claimed(cli)
     for args in [("--in", "2d", "--brief", "later"), ("list",), ("show", "fu_missing"), ("cancel", "1")]:
         r = cli.j("follow-up", *args)
-        assert r.err_code == "followup.off", r.out
+        assert r.err_code == "addon.off", r.out
 
 
 def test_list_and_cancel(ws, cli, schedules):

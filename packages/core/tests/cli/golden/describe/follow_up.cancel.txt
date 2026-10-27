@@ -9,8 +9,8 @@ args:
 errors:
   ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
   not_found (exit 2): orch list
+  addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
   followup.denied (exit 3): read the denial code and resolve it before retrying | fix: orch show
-  followup.off (exit 3): ask an owner to turn Schedules on in Add-ons | fix: orch addon list
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
   lock.busy (exit 4 retry): retry in a moment | fix: orch status

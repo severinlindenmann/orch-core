@@ -165,6 +165,34 @@ def run(parsed: parser.Parsed, ctx: Context, records: MemoryRecords, hooks: Hook
     return res
 
 
+def _addons_on(env: Mapping[str, str], workspace: Any, ctx: Context) -> dict[str, dict[str, Any]] | None:
+    """The add-ons that are on in the workspace of this call, as ``{name: grant fields}``, for ``help`` and
+    ``describe`` (which list an add-on's commands only while it is on). Read from the store in direct mode, from the
+    host's ``addon.list`` when the host serves the workspace. ``None`` (every command is listed) when there is no
+    workspace or it cannot be read: help must always answer."""
+    from orch import hostclient
+
+    try:
+        if workspace.root is None:
+            return None
+        target = hostclient.locate(env, workspace)
+        if target is None:
+            from orch.addons.install import as_addons
+
+            granted = as_addons(workspace.store.state.workspace.addons)
+            return {
+                n: {k: dict(v) for k, v in a.fields.items()} for n, a in granted.items() if a.enabled and not a.purged
+            }
+        rows = run_hosted(parser.parse(["addon", "list"]), ctx, target).data["addons"]
+        return {
+            r["name"]: r.get("fields") or {}
+            for r in rows
+            if r["state"] not in ("disabled", "purged", "not_granted", "paused")
+        }
+    except Exception:  # noqa: BLE001 - a workspace that cannot be read is no reason for help to fail
+        return None
+
+
 def run_hosted(parsed: parser.Parsed, ctx: Context, target: Any) -> Result:
     """The same call as a request to the host (H4b, :mod:`orch.hostclient`). The checks that need no store stay here
     (input, who, grant shape), so a bad call fails the same way in both modes and without a round trip; the stop rule,
@@ -430,6 +458,8 @@ def main(
             )
             from orch import hostclient
 
+            if op.name in ("help", "describe"):
+                ctx = dataclasses.replace(ctx, addons_on=_addons_on(env, workspace, ctx))
             target = None if op.name in hostclient.LOCAL_OPS else hostclient.locate(env, workspace)
             if target is not None:
                 hosted = True

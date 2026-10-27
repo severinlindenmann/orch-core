@@ -93,10 +93,10 @@ _SET = {
         "lease_ttl_min": {"type": "integer", "minimum": 5, "maximum": 1440},
         "sign_methods": {  # B6: terminal always; touchid is reserved
             "type": "array",
-            "items": {"enum": ["terminal", "click", "phone"]},
+            "items": {"enum": ["terminal", "click", "phone", "hub"]},
             "uniqueItems": True,
             "minItems": 1,
-            "maxItems": 3,
+            "maxItems": 4,
             "contains": {"const": "terminal"},
         },
         "publish": {  # the Publish add-on's server: an address pair, or null to remove it

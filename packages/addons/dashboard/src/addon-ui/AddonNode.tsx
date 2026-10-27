@@ -40,6 +40,7 @@ import { useMe } from '@/app/useMe'
 const ThemedForm = lazyWithPreload(() => import('./AddonForm'))
 // The whole terminal module (xterm included) loads on first use, so the main bundle does not grow.
 const DecisionNode = lazyWithPreload(() => import('./DecisionNode'))
+const FollowupsList = lazyWithPreload(() => import('@/app/pages/schedules/FollowupsPanel'))
 const TerminalView = lazyWithPreload(() => import('@/app/terminal/TerminalView'))
 // Ticket widgets (parser, core types, template frames) load on first use too.
 const WidgetNodeView = lazyWithPreload(() => import('@/app/pages/ticket/widgets/WidgetNode'))
@@ -47,7 +48,7 @@ const WidgetIndexView = lazyWithPreload(() => import('@/app/pages/ticket/widgets
 
 /** Loads the renderers above (and markdown, charts) ahead of use: see preloadNodes.ts. Never rejects. */
 export function preloadAddonNodes(): Promise<void> {
-  const all = [ThemedForm, DecisionNode, TerminalView, WidgetNodeView, WidgetIndexView, SafeMarkdownChunk, AddonChartChunk]
+  const all = [ThemedForm, DecisionNode, FollowupsList, TerminalView, WidgetNodeView, WidgetIndexView, SafeMarkdownChunk, AddonChartChunk]
   return Promise.allSettled(all.map((c) => c.preload())).then(() => undefined)
 }
 
@@ -216,6 +217,12 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
           <GuardedDecision addon={addon} id={n.id} />
         </Suspense>
       )
+    case 'followups':
+      return addon === 'schedules' ? (
+        <Suspense fallback={<Skeleton className="h-24 w-full" />}>
+          <FollowupsList />
+        </Suspense>
+      ) : null
     case 'widget':
       return (
         <Suspense fallback={<Skeleton className="h-24 w-full" />}>

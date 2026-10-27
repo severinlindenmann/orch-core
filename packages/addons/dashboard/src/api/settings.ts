@@ -167,6 +167,8 @@ export interface HostGrant {
   /** `read_ext/2`; null = the host does not say. Capped at 100 by the host. */
   session_ids: string[] | null
   sessions_more: boolean | null
+  /** A follow-up run's grant (`fgr_`) names the grant it was derived from; absent for every other grant. */
+  parent?: string | null
 }
 
 /** Is this value a whole number in the closed range? */

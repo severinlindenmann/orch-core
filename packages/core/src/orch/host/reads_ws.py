@@ -370,6 +370,8 @@ def grant_list(ctx: ReadCtx) -> dict[str, Any]:
             "sessions": len(recs),
             "session_ids": [r.session for r in recs[:SESSION_IDS]],
         }
+        if grant.parent:
+            entry["parent"] = grant.parent  # a follow-up grant names the grant it was derived from (Schedules, #720)
         if gid in revoked:
             entry["revoked"] = revoked[gid]
         if len(recs) > SESSION_IDS:

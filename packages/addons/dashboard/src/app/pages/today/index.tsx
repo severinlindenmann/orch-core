@@ -22,6 +22,7 @@ import type { HumanAction } from '../ticket/shared'
 import { QueueGroup } from './groups'
 import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, toEntries, type Entry, type Row } from './queue'
 import { ReloginGroup } from './relogin'
+import { FollowupCards, useTodayFollowups } from '../schedules/TodayFollowups'
 import { ApprovalRow, DecisionRow, FoldRow, NewItemContext, NoticeRow, SigningContext, QuestionRow, TerminalWaitRow, VerdictRow } from './rows'
 import { AgentsBar, AgentsPanel, Glance, GLANCE_TILES, Recently } from './side'
 import { displayName, useSessionState, useTodayWide, type Directory } from './shared'
@@ -195,6 +196,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
     else setOrder((o) => pruneOrder(o, entries))
   }, [shown.length, fresh.length, entries, takeFresh])
   const groups = useMemo(() => buildGroups(shown), [shown])
+  const followups = useTodayFollowups()
 
   // Exactly one open row: on load the first blocking question, else the first row.
   const [expanded, setExpanded] = useState<string | null>(() => {
@@ -331,6 +333,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
         )}
       </div>
       <ReloginGroup now={now} />
+      {!readOnly && <FollowupCards today={followups} />}
       {readOnly ? [...byPerson].map(([person, personEntries]) => (
         <PersonSummary key={person} person={person} entries={personEntries} scope={scope} renderRow={renderRow} />
       )) : groups.map((g) => (
@@ -345,7 +348,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
           reveal={reveal.groups.includes(g.id) ? reveal.n : 0}
         />
       ))}
-      {groups.length === 0 && (
+      {groups.length === 0 && followups.cards.length === 0 && (
         <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
           <p className="text-[15px] font-medium text-text">{readOnly ? 'Nothing is open in the workspace' : 'Nothing needs you right now'}</p>
           <p className="mt-1 text-[13px] text-text-muted">

@@ -554,7 +554,7 @@ class QuickStart(Action):
 # repo editing, and `extra="forbid"` refuses it. `grant` (issuing) is not an action: the signer draws the secret.
 
 Person = Annotated[str, StringConstraints(pattern=r"^p_[0-9a-f]{32}$")]
-GrantId = Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+GrantId = Annotated[str, StringConstraints(pattern=r"^f?gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Role = Literal["owner", "maintainer", "member", "viewer"]
 OneLine = AfterValidator(no_hidden)  # no control, bidi, zero-width or other hidden characters (by Unicode category)
 Token = Literal["owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers"]

@@ -694,6 +694,12 @@
                       }
                     ]
                   }
+                },
+                {
+                  "id": "followups",
+                  "label": "Follow-ups",
+                  "count": { "$ref": "addon.followupCount" },
+                  "node": { "type": "followups" }
                 }
               ]
             }
@@ -706,7 +712,11 @@
       "disarm": { "minRole": "maintainer", "confirm": "sign", "label": "Disable a schedule" },
       "run_now": { "minRole": "member", "label": "Run now" },
       "open_run": { "minRole": "viewer", "label": "Open run", "kind": "navigation" },
-      "finding": { "minRole": "maintainer", "decision": true }
+      "finding": { "minRole": "maintainer", "decision": true },
+      "fu_cancel": { "minRole": "member", "label": "Cancel a follow-up" },
+      "fu_undo": { "minRole": "member", "label": "Undo a cancel" },
+      "fu_reschedule": { "minRole": "member", "label": "Move a follow-up" },
+      "fu_run_now": { "minRole": "member", "label": "Run a follow-up now" }
     }
   },
   {

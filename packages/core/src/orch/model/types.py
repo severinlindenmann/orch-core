@@ -117,6 +117,7 @@ class Grant:
     #: that hub's ``hub.left`` (state, no new line). Set by the C10 host-actor ``grant.issued`` that names its request.
     hub_id: str | None = None
     parent: str | None = None
+    root_kind: str = "grant"  # schedule roots have no bearer credential
     #: a follow-up grant that has served its run (its outcome is recorded): unusable, but not a revocation, so
     #: later follow-ups set during that run keep a valid chain
     ended: bool = False
@@ -286,6 +287,25 @@ class FollowupRec:
 
 
 @dataclass
+class ScheduleRec:
+    id: str
+    set_event: str
+    person: str
+    device: str
+    rule: dict[str, Any]
+    starts: str
+    ends: str
+    brief: str
+    run_hours: int
+    set_at: str  # the `at` of schedule.set: no occurrence before set_at + min lead is ever fired or settled
+    label: str | None = None
+    cancelled: bool = False
+    # occurrence -> {"fired_at", "grant", "run", "released"?: true when the firing cleared the setter's claim,
+    # "outcome"?, "reason"?}
+    occurrences: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+@dataclass
 class TCore:
     uid: str
     key: str
@@ -298,6 +318,7 @@ class TCore:
     )
     overrides: dict[str, dict[str, Any]] = field(default_factory=dict)
     gates: dict[str, GateCore] = field(default_factory=lambda: {g: GateCore() for g in GATES})
+    schedules: dict[str, ScheduleRec] = field(default_factory=dict)
     followups: dict[str, FollowupRec] = field(default_factory=dict)
     fu_chain: dict[str, Any] = field(default_factory=dict)
     fu_sessions: dict[str, str] = field(default_factory=dict)

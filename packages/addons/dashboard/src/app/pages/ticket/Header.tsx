@@ -202,7 +202,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false
 }
 
 /** The header's one primary button: what the viewer should do next (a quiet status when an agent works and nothing waits). */
-function PrimaryButton({ ticket, viewer, sign, jump, start, signing, phase }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase }) {
+function PrimaryButton({ ticket, viewer, jump, start, signing, phase }: { ticket: TicketDocument; viewer: Viewer; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase }) {
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
@@ -229,18 +229,18 @@ function PrimaryButton({ ticket, viewer, sign, jump, start, signing, phase }: { 
         </span>
       </span>
     )
+  // The next-step card under the header owns Approve and Give verdict (B6): one place for the one next thing.
+  if (p && (p.kind === 'approve' || p.kind === 'verdict')) return null
   if (!p) return !busy && agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
   const run = () => {
-    if (p.kind === 'verdict') sign({ kind: 'verdict' })
-    else if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
-    else if (p.kind === 'start') start.run()
-    else sign({ kind: 'approve', gate: p.gate })
+    if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
+    else start.run()
   }
   // A real host: Start agent is a split button, the main part starts at once, the chevron changes the agent or model first.
   if (p.kind === 'start' && start.choose && workspace) return <StartAgentSplit harness={lastHarness(workspace.id)} onStart={start.run} onChoose={start.choose} />
   return (
     <Button size="sm" onClick={run}>
-      {p.kind === 'answer' ? <CircleHelp /> : p.kind === 'start' ? <Bot /> : <Check />}
+      {p.kind === 'answer' ? <CircleHelp /> : <Bot />}
       {primaryLabel(p, av)}
     </Button>
   )
@@ -409,7 +409,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
-          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} phase={phase} />
+          <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} />
           <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} />
           {start.node}
         </div>

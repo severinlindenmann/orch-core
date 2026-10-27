@@ -95,6 +95,15 @@ _SPECS = [
         ["orch", "show"],
         "the model refused the follow-up",
     ),
+    _e(
+        "schedule.denied",
+        3,
+        False,
+        "the model refused the schedule",
+        "read the denial and correct the schedule",
+        ["orch", "schedule", "list"],
+        "the model refused the schedule",
+    ),
     # 1 internal
     _e(
         "internal",
@@ -793,6 +802,7 @@ _MARKET = (
     ),
     ("market.refresh_running", 9, True, "a refresh of this marketplace is already running", "try again in a moment"),
     ("market.already_added", 3, False, "this marketplace is already added", "orch market refresh"),
+    ("cosmetic.conflict", 3, False, "the workspace name or icon changed meanwhile", "look at it again, then change it"),
     # V3 G3: install, update, remove
     ("market.not_installed", 3, False, "this add-on was not installed from a marketplace", "orch addon install ID"),
     ("market.ambiguous_addon", 3, False, "more than one added marketplace lists this id", "name one with --from URL"),

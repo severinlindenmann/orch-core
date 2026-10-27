@@ -321,6 +321,9 @@ def test_one_runner_per_service_even_when_started_twice_at_once(env, monkeypatch
         def start(self):
             pass
 
+        async def close(self):  # the host closes it, then the schedule runner started next to it
+            pass
+
     monkeypatch.setattr(mod, "FollowupRunner", Counting)
     env.w.service.followups = None
     start = type(env.w.h.host)._start_followups

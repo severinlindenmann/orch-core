@@ -82,8 +82,8 @@ export interface Workspace {
   /** Default agent grant length in hours (absent: 8); also the longest grant a member may sign for themselves. */
   grant_hours?: number
   /**
-   * The workspace icon, owner-signed (`settings.changed` `set.icon`, core `wsicons`): an icon and a colour of the closed lists.
-   * Absent or null: none signed, the id-derived default is shown. Values outside the lists are ignored by the reader.
+   * The workspace icon, owner-set and unsigned (D6, `PUT workspace/cosmetic`; core `wsicons`): an icon and a colour of the closed lists.
+   * Absent or null: none set, the id-derived default is shown. Values outside the lists are ignored by the reader.
    */
   icon?: { icon: string; colour: string } | null
   /** Whether the host reports the `icon` setting (the picker is offered only then); the mockup always does. */
@@ -642,6 +642,11 @@ export interface WorkspaceIdentity {
   /** A real host only: `whoami.runner`, null when the host does not say. */
   runner?: { connected: boolean; enabled: boolean; terminals: boolean } | null
 }
+
+/** PUT /api/w/:ws/workspace/cosmetic (D6): the workspace name and icon as they are, unsigned and owner only. */
+export type Cosmetic = { name: string; icon: { icon: string; colour: string } | null }
+/** Only what changes, and `if_current`: the values the page showed (the host refuses a stale one, `cosmetic.conflict`). */
+export type CosmeticBody = { name?: string; icon?: Cosmetic['icon']; if_current: Cosmetic }
 
 // ---------------------------------------------------------------- relay & devices (simulated; orch v2 P2/P3)
 

@@ -261,6 +261,7 @@ RESERVED_ADDON_NAMES = frozenset(
         "policy",
         "claim",
         "followup",
+        "schedule",
         "task",
         "handoff",
         "log",

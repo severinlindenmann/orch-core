@@ -50,8 +50,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, "/api/trusted/enrol"): (REFUSED, "browser keys are enrolled on this computer by a real local sign-in"),
     (GET, "/api/trusted"): (REFUSED, "trusted browsers are managed on this computer"),
     (DELETE, "/api/trusted/{kid}"): (REFUSED, "trusted browsers are managed on this computer"),
-    (POST, "/api/auth/challenge"): (REFUSED, "a browser key lives on the loopback origin of this computer"),
-    (POST, "/api/auth/upgrade"): (REFUSED, "a browser key lives on the loopback origin of this computer"),
+    (POST, "/auth/switch/challenge"): (REFUSED, "E4: browser keys live on loopback; remote never redeems silently"),
     (POST, "/auth/switch"): (PRE_LOGIN, "H1: a one-use hub switch ticket (the host asks the hub over its link)"),
     (POST, "/auth/passkey/options"): (PRE_LOGIN, "login challenge"),
     (POST, "/auth/passkey/login"): (PRE_LOGIN, "login assertion"),
@@ -170,6 +169,8 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/records/push-initial"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/records/commit"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/records/auto-off"): (ALLOWED, "turning off"),
+    # --- the workspace name and icon (unsigned cosmetic settings, owner only; the host checks the role)
+    (PUT, W + "/workspace/cosmetic"): (ALLOWED, "owner, plain click, no signature (run 13 D6)"),
     (POST, W + "/records/auto-on"): (REFUSED, "starts a timer on this computer: local only"),
     (GET, W + "/claude-trust"): (REFUSED, "what Claude Code may open is decided on this computer"),
     (POST, W + "/claude-trust"): (REFUSED, "what Claude Code may open is decided on this computer"),

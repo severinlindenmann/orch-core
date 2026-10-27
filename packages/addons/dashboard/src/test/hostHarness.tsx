@@ -196,8 +196,6 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.role', { type: 'role.changed', person: body.person, role: body.role })
     case 'member_remove':
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
-    case 'icon_set':
-      return workspaceRequest('settings.set', { type: 'settings.changed', set: { icon: body.icon } })
     case 'publish_setup':
       return workspaceRequest('settings.set', { type: 'settings.changed', set: { publish: { server: body.server, share: body.share } } })
     case 'publish_share':
@@ -296,6 +294,12 @@ export class FakeHost {
     if (rest === 'versions') return ws.versions === undefined ? missing() : json(ws.versions)
     if (rest === 'add-ons') return ws.addOns === undefined ? missing() : json(ws.addOns)
     if (rest === 'grants') return json(new URLSearchParams(query).get('active') === 'false' ? ws.grants : ws.grants.filter((g) => !g.revoked))
+    // D6: the name and icon, one unsigned PUT; it answers the new values.
+    if (rest === 'workspace/cosmetic' && method === 'PUT') {
+      if (typeof body?.name === 'string') ws.name = body.name
+      const icon = body?.icon !== undefined ? body.icon : ((body?.if_current as { icon?: unknown } | undefined)?.icon ?? null)
+      return json({ name: ws.name, icon })
+    }
     if (rest === 'repos/check' && method === 'POST') {
       return String(body?.path).startsWith('/refused')
         ? json({ ok: false, error: { code: 'invalid.input', message: 'This folder is not a git repository.', retryable: false } }, 400)

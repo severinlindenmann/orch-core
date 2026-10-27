@@ -1,11 +1,12 @@
-// Trusted browser (run 12). A normal sign-in on this computer makes a key pair with WebCrypto and keeps the private half
-// NON-extractable in IndexedDB (origin-scoped: another port is another origin; a cookie would ignore ports). The server
-// gets the public half. A hub switch later signs a one-use challenge with it, which turns the read-mostly switch session
-// into a full one. Everything here is best effort: no WebCrypto (plain http on a LAN address) just means no upgrade.
+// Trusted browser (run 12, E4). A normal sign-in on this computer makes a key pair with WebCrypto and keeps the private
+// half NON-extractable in IndexedDB (origin-scoped: another port is another origin; a cookie would ignore ports). The
+// server gets the public half. A hub switch link later signs a one-use challenge bound to the ticket's hash BEFORE the
+// ticket is used: a good proof lands with a full session and no question. Everything here is best effort: no WebCrypto
+// (plain http on a LAN address) or no key just means the "Open <name>?" confirm and a read-mostly session.
 const DB = 'orch-trust'
 const STORE = 'keys'
 const SLOT = 'browser'
-const DOMAIN = 'orch-switch-upgrade-v1\0'
+const DOMAIN = 'orch-switch-redeem-v1\0'
 
 interface Held { pair: CryptoKeyPair }
 
@@ -64,24 +65,41 @@ export async function enrolBrowser(token: string, fetcher: typeof fetch = fetch)
   } catch { /* no key: a hub switch stays read-mostly */ }
 }
 
-/** A switch session proves it holds this browser's enrolled key. The new full session's token, or null. Never throws. */
-export async function upgradeSession(token: string, fetcher: typeof fetch = fetch): Promise<string | null> {
+const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes)).map((b) => b.toString(16).padStart(2, '0')).join('')
+const sha256 = async (text: string) => hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))
+
+export interface SwitchProof {
+  /** The workspace's name for "Open <name>?", or null when the server did not say. */
+  name: string | null
+  /** This browser's proof for this ticket, or null (no WebCrypto, no key, no challenge). */
+  proof: { key_id: string; sig: string } | null
+}
+
+/**
+ * Before a hub switch ticket is used: ask the server for a one-use nonce bound to the ticket's hash and this origin, and
+ * sign `orch-switch-redeem-v1\0nonce\0origin\0ws_id\0sha256(t)\0key_id` with this browser's enrolled key. The ticket
+ * itself is not sent and not used here. Never throws.
+ */
+export async function switchProof(ticket: string, fetcher: typeof fetch = fetch): Promise<SwitchProof> {
+  const none: SwitchProof = { name: null, proof: null }
   try {
-    if (!supported()) return null
+    if (!supported()) return none
+    const ws = ticket.split('.')[0]
+    const tHash = await sha256(ticket)
+    const ch = await fetcher('/auth/switch/challenge', {
+      method: 'POST', credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(20_000),
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ticket_hash: tHash, workspace_id: ws }),
+    })
+    if (!ch.ok) return none
+    const got = await ch.json() as { nonce?: unknown; name?: unknown }
+    const name = typeof got.name === 'string' && got.name ? got.name : null
+    if (typeof got.nonce !== 'string') return { name, proof: null }
     const held = await load()
-    if (!held) return null
+    if (!held) return { name, proof: null }
     const jwk = await crypto.subtle.exportKey('jwk', held.pair.publicKey)
-    const canon = JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y })
-    const keyId = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(canon)))).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32)
-    const ch = await json(token, '/api/auth/challenge', 'POST', {}, fetcher)
-    if (!ch.ok) return null
-    const { nonce } = await ch.json() as { nonce?: string }
-    if (typeof nonce !== 'string') return null
-    const msg = new TextEncoder().encode(`${DOMAIN}${nonce}\0${location.origin}`)
+    const keyId = (await sha256(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y }))).slice(0, 32)
+    const msg = new TextEncoder().encode(`${DOMAIN}${[got.nonce, location.origin, ws, tHash, keyId].join('\0')}`)
     const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, held.pair.privateKey, msg)
-    const up = await json(token, '/api/auth/upgrade', 'POST', { key_id: keyId, signature: b64u(sig) }, fetcher)
-    if (!up.ok) return null
-    const body = await up.json() as { token?: string }
-    return typeof body.token === 'string' ? body.token : null
-  } catch { return null }
+    return { name, proof: { key_id: keyId, sig: b64u(sig) } }
+  } catch { return none }
 }

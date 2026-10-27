@@ -137,6 +137,7 @@ class TicketView:
     frozen: bool  # an unacknowledged invalid event freezes person decisions on this ticket
     handoff: str | None
     followups: tuple[Mapping[str, Any], ...] = ()
+    schedules: tuple[Mapping[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -340,6 +341,23 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
             )
             for r in t.followups.values()
         ),
+        tuple(
+            freeze(
+                {
+                    "id": r.id,
+                    "person": r.person,
+                    "rule": r.rule,
+                    "starts": r.starts,
+                    "ends": r.ends,
+                    "brief": r.brief,
+                    "run_hours": r.run_hours,
+                    "label": r.label,
+                    "state": "cancelled" if r.cancelled else "expired" if now > ts(r.ends) else "live",
+                    "occurrences": r.occurrences,
+                }
+            )
+            for r in t.schedules.values()
+        ),
     )
 
 
@@ -386,6 +404,7 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
                     g.parent,
                 )
                 for i, g in ws.grants.items()
+                if g.root_kind != "schedule"
             }
         ),
         freeze(ws.policies),

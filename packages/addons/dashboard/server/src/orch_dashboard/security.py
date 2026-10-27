@@ -32,10 +32,8 @@ SWITCH_GLOBAL = frozenset(
         ("GET", "/api/events"),  # only with ?ws=<bound>
         ("GET", "/api/host"),  # the closed dev facts of the host (Settings › General); read only
         ("POST", "/auth/logout"),
-        # run 12: the way UP. A switch session proves it holds a browser key that a real local sign-in enrolled
-        # (`Auth.upgrade`); nothing else is opened by these two.
-        ("POST", "/api/auth/challenge"),
-        ("POST", "/api/auth/upgrade"),
+        # E4: there is no way up from a switch session. A full session comes only from a browser key proof made
+        # BEFORE the ticket is used (`/auth/switch`); a step-up adopts a new token from a launch link.
     }
 )
 
@@ -200,7 +198,7 @@ class Security:
         )
         limit = (
             1024
-            if path in ("/auth/session", "/auth/switch") or records_step
+            if path in ("/auth/session", "/auth/switch", "/auth/switch/challenge") or records_step
             else 8192
             if records_admin
             else CLICK_BODY_LIMIT

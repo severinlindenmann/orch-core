@@ -479,11 +479,20 @@ def switch_redeem(c: OpContext) -> dict[str, Any]:
 
     _require_bound(c)  # a link that did not pass the join checks (a dev host against a real hub) has no binding
     sw = _switch(c)
+    owner = c.registry.owner_alias(c.workspace_id)
+    try:
+        held = sw.peek(c.body["ticket"], "to_ws")
+    except SwitchError:
+        held = None  # unknown, used or expired: `redeem` below gives the one refusal
+    if held is not None and held["ws"] == c.workspace_id and held["user"] != owner:
+        # Only the workspace owner's hub alias redeems here. A ticket for anyone else is refused WITHOUT being used
+        # (it stays bound to this workspace and dies in 30 s); one presented at another workspace is still spent.
+        raise Refused("bad_ticket")
     try:
         r = sw.redeem(c.body["ticket"], "to_ws", ws=c.workspace_id)
     except SwitchError as e:
         raise Refused(e.code) from None
-    if r["user"] != c.registry.owner_alias(c.workspace_id):
+    if r["user"] != owner:
         raise Refused("bad_ticket")  # only the workspace owner's dashboard takes a hub ticket
     name = next((u["name"] for u in c.access.users() if u["user_id"] == r["user"]), None)
     return {"user_id": r["user"], "name": name, "return_to": r["rt"], "kind": r["kind"]}

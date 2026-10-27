@@ -313,7 +313,7 @@ class FollowupRunner:
             launch=plan["_launch"],
             cwd=plan["cwd"],
             spec=plan["spec"],
-            idem=rec.id,
+            idem=rec.run if rec.id.startswith("sc_") else rec.id,
             policy=plan["policy"],
             subagent_model=None,
             label=None,
@@ -349,22 +349,8 @@ class FollowupRunner:
         try:
             self.intents[rec.id]["state"] = "fired"
             await self.service.call(self._save)
-            # Read the derived expiry from the admitted ledger event, never from parent expiry.
-            until = await self.service.call(lambda: self.service.store.state._core.ws.grants[rec.grant].expires_at)
-            await hub.command(
-                "grant.put_run",
-                {
-                    "run": run,
-                    "workspace_id": self.service.workspace_id,
-                    "person": rec.person,
-                    "grant": rec.grant,
-                    "secret": secret,
-                    "until": until,
-                },
-            )
+            await self._deposit_start(uid, key, rec, hub, secret)
             del secret, token
-            call, data, _ = await self.service.call(self._plan, uid, key, rec, hub)
-            await agents._start(call, hub, data)
             return True
         except Exception as exc:  # noqa: BLE001 - a fired follow-up must settle, never retry
             code = getattr(exc, "code", None) or ""
@@ -388,3 +374,20 @@ class FollowupRunner:
                 await hub.command("grant.drop", {"grant": rec.grant})
             await self._outcome(uid, rec, "did_not_run", reason)
             return False
+
+    async def _deposit_start(self, uid, key, rec, hub, secret):
+        # Read the derived expiry from the admitted ledger event, never from parent expiry.
+        until = await self.service.call(lambda: self.service.store.state._core.ws.grants[rec.grant].expires_at)
+        await hub.command(
+            "grant.put_run",
+            {
+                "run": rec.run,
+                "workspace_id": self.service.workspace_id,
+                "person": rec.person,
+                "grant": rec.grant,
+                "secret": secret,
+                "until": until,
+            },
+        )
+        call, data, _ = await self.service.call(self._plan, uid, key, rec, hub)
+        await agents._start(call, hub, data)

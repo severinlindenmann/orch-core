@@ -125,13 +125,18 @@ def render_ticket(uid: str, key: str, fields: Mapping[str, Any]) -> bytes:
     return _pretty(ticket_doc(uid, key, fields))
 
 
-def render_config(view: Any, *, host_id: str, wsk_pub: str, name: str, run_for: list[str]) -> bytes:
+def render_config(view: Any, *, host_id: str, wsk_pub: str, name: str, run_for: list[str], icon: Any = None) -> bytes:
     """``config.json`` (§2) from a :class:`~orch.model.WorkspaceView` and the genesis' ``host_id`` and ``wsk_pub``.
-    ``name`` and ``agents.run_for`` are not in any event: they come from the existing file (or the creator's
-    default)."""
+    ``name``, ``icon`` (the cosmetic settings, D6) and ``agents.run_for`` are not in any event: they come from the
+    existing file (or the creator's default)."""
     doc = {
         "schema": "orch.workspace/2",
-        "workspace": {"id": view.workspace_id, "prefix": view.prefix, "name": name},
+        "workspace": {
+            "id": view.workspace_id,
+            "prefix": view.prefix,
+            "name": name,
+            **({"icon": icon} if icon is not None else {}),
+        },
         "host": {"id": host_id, "wsk_pub": wsk_pub},
         "members": [{"person": m.person, "name": m.name, "role": m.role} for m in view.members.values()],
         "gates": {g: _ordered("policy", thaw(view.policies[g])) for g in ("requirements", "plan", "verify", "code")},
@@ -141,7 +146,6 @@ def render_config(view: Any, *, host_id: str, wsk_pub: str, name: str, run_for: 
             "lease_ttl_min": view.settings["lease_ttl_min"],
             **({"sign_methods": list(view.settings["sign_methods"])} if "sign_methods" in view.settings else {}),
             **({"publish": dict(view.settings["publish"])} if "publish" in view.settings else {}),
-            **({"icon": thaw(view.settings["icon"])} if "icon" in view.settings else {}),
             **({ADDONS_KEY: thaw(view.settings[ADDONS_KEY])} if ADDONS_KEY in view.settings else {}),
             "repos": {r: dict(sorted(p.items())) for r, p in sorted(view.repos.items())},
         },

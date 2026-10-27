@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
 import { missingOf } from '@/api/gates'
 import { availableActions, lackText, primaryAction } from './actions'
-import { GatesStrip } from './Gates'
+import { TicketProgress } from './NextStep'
 
 // B11 (owner run 2, quick task): the plan gate said "Waiting for your approval" with no plan written, and Approve plan
 // was refused with gate.incomplete. Core's completeness rule (`missing`) now decides: never offer Approve while it lacks.
@@ -30,8 +30,8 @@ it('never offers Approve for a gate whose plan is missing, and says what it wait
   expect(av.approve).not.toContain('plan')
   expect(av.requestChanges).not.toContain('plan')
   expect(primaryAction(av)).not.toMatchObject({ kind: 'approve' })
-  render(<GatesStrip ticket={doc} viewer={viewer as never} />)
-  expect(screen.getByTestId('gate-plan')).toHaveAccessibleName('Plan: Waiting for the agent to write the plan')
+  render(<TicketProgress ticket={doc} viewer={viewer as never} sign={() => {}} jump={() => {}} />)
+  expect(screen.queryByRole('button', { name: /Approve plan/ })).toBeNull()
 })
 
 it('never offers Approve requirements while acceptance criteria are missing', async () => {

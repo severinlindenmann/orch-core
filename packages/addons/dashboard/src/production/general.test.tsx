@@ -1,7 +1,7 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
-import { OWNER, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { OWNER, TOM, show, useFakeHost, workspace } from '@/test/hostHarness'
 
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
@@ -31,16 +31,43 @@ it('shows the workspace name and numbering with identity inside the closed Advan
   expect(screen.getAllByText(ID).every(node => advanced.contains(node))).toBe(true)
 })
 
-it('opens the icon picker in a popover and saves the chosen icon through the hand-off', async () => {
-  state.host.override = path => path === '/api/workspaces' ? Response.json([{ id: ID, prefix: 'DEMO', name: 'Dev workspace', members: state.host.workspaces[0].roster.map(m => ({ person: m.person, name: m.name, role: m.role, devices: m.devices.length })), needs_you: 0, host_state: 'ok', features: state.host.workspaces[0].features, icon_known: true, icon: { icon: 'cloud', colour: 'teal' } }]) : undefined
+const puts = () => state.host.calls.filter(c => c.method === 'PUT')
+
+it('opens the icon picker in a popover and saves the chosen icon with one click (D6)', async () => {
+  state.host.override = path => path === '/api/workspaces' ? Response.json([{ id: ID, prefix: 'DEMO', name: 'Dev workspace', members: state.host.workspaces[0].roster.map(m => ({ person: m.person, name: m.name, role: m.role, devices: m.devices.length })), needs_you: 0, host_state: 'ok', features: state.host.workspaces[0].features, icon_known: true, icon: null }]) : undefined
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
   expect(screen.queryByRole('group', { name: 'Symbol' })).toBeNull()
   await user.click(await screen.findByRole('button', { name: 'Change' }, T))
   await user.click(within(screen.getByRole('group', { name: 'Symbol' })).getByRole('button', { name: 'Star' }))
   await user.click(screen.getByRole('button', { name: 'Save' }))
-  await screen.findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map(c => c.body)).toEqual([{ action: 'icon_set', icon: { icon: 'star', colour: 'teal' } }])
+  await waitFor(() => expect(puts()).toHaveLength(1), T)
+  expect(puts()).toEqual([{ method: 'PUT', path: `/api/w/${ID}/workspace/cosmetic`, body: { icon: { icon: 'star', colour: 'pink' }, if_current: { name: 'Dev workspace', icon: null } } }])
+  expect(state.host.posts()).toEqual([])
+  expect(state.host.calls.some(c => c.path.endsWith('/click/prepare'))).toBe(false)
+})
+
+it('lets an owner rename the workspace with one click', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/general')
+  await user.click(await screen.findByRole('button', { name: 'Rename' }, T))
+  const input = screen.getByRole('textbox', { name: 'Workspace name' })
+  expect(input).toHaveAttribute('maxlength', '80')
+  await user.clear(input)
+  await user.type(input, 'Team space')
+  await user.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() => expect(puts()).toHaveLength(1), T)
+  expect(puts()[0].path).toBe(`/api/w/${ID}/workspace/cosmetic`)
+  expect(puts()[0].body).toEqual({ name: 'Team space', if_current: { name: 'Dev workspace', icon: null } })
+  expect(state.host.posts()).toEqual([])
+})
+
+it('offers no Rename to a non-owner', async () => {
+  state.host.workspaces[0].me = TOM
+  state.host.workspaces[0].role = 'member'
+  show('/w/DEMO/settings/general')
+  expect(await screen.findByRole('heading', { name: 'Dev workspace' }, T)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Rename' })).toBeNull()
 })
 
 it.each([

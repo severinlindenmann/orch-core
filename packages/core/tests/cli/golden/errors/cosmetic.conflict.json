@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "cosmetic.conflict",
+    "message": "the workspace name or icon changed meanwhile",
+    "hint": "look at it again, then change it",
+    "fix": {
+      "argv": [
+        "orch",
+        "market",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

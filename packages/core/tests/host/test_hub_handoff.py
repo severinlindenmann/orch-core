@@ -214,3 +214,30 @@ def test_the_op_is_a_person_read_with_no_network_class():
 
     assert "hub.handoff" in hubops.HUB_OPS and "hub.handoff" not in hubops.NETWORK_OPS
     assert dispatch.op_kind("hub.handoff") == ("person_read", "read")
+
+
+def test_a_settings_change_gets_one_fragment_link_with_the_terms(served, full):
+    import base64
+
+    data = ok(handoff(served, {"kind": "settings", "set": {"grant_hours": 24}}))["data"]
+    assert data["kind"] == "settings" and data["short_hash"] is None
+    assert data["summary"] == {"kind": "settings", "set": {"grant_hours": 24}}
+    head, frag = data["url"].split("/settings/")
+    assert head.startswith(f"https://{ADDR}/#/w/") and data["url"].count("#") == 1
+    terms = json.loads(base64.urlsafe_b64decode(frag + "=" * (-len(frag) % 4)))
+    assert terms["set"] == {"grant_hours": 24} and set(terms) == {"set", "exp"}
+    assert 0 < terms["exp"] - served.service.clock() <= hubhandoff.SETTINGS_LINK_TTL
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"kind": "settings"},
+        {"kind": "settings", "set": {}},
+        {"kind": "settings", "set": {"sign_methods": ["click"]}},
+        {"kind": "settings", "set": {"grant_hours": 500}},
+        {"kind": "settings", "set": {"grant_hours": 1}, "ticket": "X"},
+    ],
+)
+def test_a_settings_change_off_the_channel_is_invalid_input(served, full, bad):
+    assert err(handoff(served, bad)) == "invalid.input"

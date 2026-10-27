@@ -30,7 +30,7 @@ it('keeps hub in the saved list when the workspace approves through a hub (no bo
   vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 1 })
   mount(true, true, 'convenience', ['terminal', 'click', 'phone', 'hub'])
   const phone = await screen.findByLabelText('Phone (Face ID)')
-  await waitFor(() => expect(screen.getByTestId('hub-approvals')).toBeTruthy())
+  await waitFor(() => expect(screen.getByTestId('hub-approvals-methods')).toBeTruthy())
   fireEvent.click(phone)
   fireEvent.click(screen.getByRole('button', { name: 'Save allowed methods' }))
   expect(ask).toHaveBeenCalledWith(expect.objectContaining({ action: { action: 'settings_set', sign_methods: ['terminal', 'click', 'hub'] } }))

@@ -36,6 +36,7 @@ COPY: dict[str, tuple[str, ...]] = {
     "handoff.written": ("text",),
     "addon.disabled": ("name",),
     "addon.purged": ("name",),
+    "settings.changed": ("set",),  # §8.8: the three timings; the action already passed check_action
     "addon.requested": ("name", "version", "package_sha256", "capabilities", "runtime", "handoff"),  # FB15 (§8.8b)
     # D15b: the action's own fields; the derived ones (gate_gen, policy_hash, source_sha, from) come from P
     "gate.approved": ("gate", "hash"),

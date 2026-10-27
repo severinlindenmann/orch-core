@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { pairServed } from '@/api/pairing'
 import { queries } from '@/api/queries'
+import { hubOnly } from '@/api/hubsign'
 import { methodLabel, type SignMethod } from '@/api/signing'
 import { useSignMethods } from '@/components/sign/SignMethods'
 import { Button } from '@/components/ui/button'
@@ -22,6 +23,7 @@ export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
   // Approving through the hub is switched on by One click setup has no box here: saving this list keeps it.
   const hostSettings = useQuery(queries.hostSettings(ws))
   const hubOn = (hostSettings.data?.sign_methods as string[] | null | undefined)?.includes('hub') === true
+  const hubNote = hubOn || hubOnly(workspaces.data?.find(w => w.id === ws))
   const [draft, setDraft] = useState<SignMethod[] | null>(null)
   const [method, setMethod] = useState<SignMethod | null>(null)
   const [fallback, setFallback] = useState<SignMethod | '' | null>(null)
@@ -54,7 +56,7 @@ export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
         {unrestricted && <p>No limit is set: every way below that is set up can be used.</p>}
         <p className="text-text-muted">Choose which methods people can use in this workspace.</p>
         {(['terminal', 'click', 'phone'] as const).filter(m => setUp(m) || selected.includes(m)).map(m => <div key={m} className="flex flex-wrap items-center gap-x-2"><label className="flex items-center gap-2"><input type="checkbox" checked={selected.includes(m)} disabled={!owner || !allowed || m === 'terminal'} onChange={e => setDraft(e.target.checked ? [...selected, m] : selected.filter(x => x !== m))} />{m === 'terminal' ? 'Terminal (always)' : m === 'click' ? 'One click on this computer' : 'Phone (Face ID)'}</label></div>)}
-        {hubOn && <p className="text-text-muted" data-testid="hub-approvals">Approving through your hub is on.</p>}
+        {hubNote && <p className="text-text-muted" data-testid="hub-approvals-methods">Approving through your hub is on.</p>}
         {!clickSetUp && <p className="text-text-muted" data-testid="click-next-step">One click is not set up on this computer. Turn it on with the switch under Approving above, or run <code>orch setup</code> in this folder.</p>}
         {!phonePaired && <p className="text-text-muted">{pairServed(ws) ? 'Phone: no phone is paired yet.' : 'Phone: add the Phone add-on first.'}</p>}
         {readOnly && <p className="text-text-muted">{readOnly}</p>}

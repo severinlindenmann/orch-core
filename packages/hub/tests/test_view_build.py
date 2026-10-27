@@ -287,3 +287,30 @@ def test_addon_requested_is_built_and_signed_by_the_real_engine_and_core_accepts
     # a reserved name never reaches the view (the hub refuses it as malformed)
     assert code(env.prepare, {**a, "name": "ticket"}) == "malformed"
     assert code(env.prepare, {**a, "fields": {}}) == "malformed"
+
+
+def test_settings_changed_is_built_and_signed_by_the_real_engine(env):
+    """27 Oct (8.8): a settings change from the hub page is built on the workspace log with exactly the `set` it was sent."""
+    a = {"type": "settings.changed", "log": "workspace", "set": {"grant_hours": 24, "claim_ttl_min": 60}}
+    p, ev = sign(env, a)
+    e = p.ctx["event"]
+    assert (
+        p.ctx["log"] == "workspace" and e["set"] == a["set"] and e["based_on"] == env.vs.service.head(WS, "workspace")
+    )
+    assert env.delivered[-1][1] == "workspace" and ev["sig"]
+    assert code(env.prepare, {**a, "set": {"sign_methods": ["click"]}}) == "malformed"
+    assert code(env.prepare, {**a, "set": {"grant_hours": 999}}) == "malformed"
+
+
+@pytest.mark.parametrize("role", ["edit", "read", None])
+def test_settings_changed_below_admin_is_refused_by_the_hub(tmp_path, role):
+    """Opus review of #1481: who may sign is the hub's role table (workspace log, lowest role admin), checked at prepare."""
+    from custodial_helpers import Env as CEnv
+
+    e = CEnv(tmp_path, role=role)
+    try:
+        with pytest.raises(Refused) as r:
+            e.prepare({"type": "settings.changed", "log": "workspace", "set": {"grant_hours": 24}})
+        assert r.value.code == "forbidden_role"
+    finally:
+        e.close()

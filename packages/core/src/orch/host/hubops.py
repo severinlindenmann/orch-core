@@ -115,7 +115,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "hub.handoff": {  # V3 C11: a read; see host/hubhandoff.py
         "type": "object",
         "properties": {
-            "kind": {"enum": ["gate", "verdict", "question", "status", "grant", "addon"]},
+            "kind": {"enum": ["gate", "verdict", "question", "status", "grant", "addon", "settings"]},
             "ticket": {"type": "string", "minLength": 1, "maxLength": 64},
             "gate": {"enum": ["requirements", "plan", "code", "verify"]},
             "question": {"type": "string", "minLength": 1, "maxLength": 64},
@@ -127,6 +127,17 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "cancel": {"const": True},
             # kind addon (FB15): the prepared hand-off request (op addon.grant) the hub link is for
             "request": {"type": "string", "pattern": "^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+            # kind settings (27 Oct): the 1-3 settings the hub channel may change (protocol 8.8)
+            "set": {
+                "type": "object",
+                "properties": {
+                    "grant_hours": {"type": "integer", "minimum": 1, "maximum": 168},
+                    "claim_ttl_min": {"type": "integer", "minimum": 15, "maximum": 1440},
+                    "lease_ttl_min": {"type": "integer", "minimum": 5, "maximum": 1440},
+                },
+                "minProperties": 1,
+                "additionalProperties": False,
+            },
         },
         "required": ["kind"],
         "additionalProperties": False,

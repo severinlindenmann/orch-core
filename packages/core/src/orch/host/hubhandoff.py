@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 __all__ = ["KINDS", "build_url", "handoff"]
 
-KINDS = ("gate", "verdict", "question", "status", "grant", "addon")
+KINDS = ("gate", "verdict", "question", "status", "grant", "addon", "settings")
 _GATES = ("requirements", "plan", "code", "verify")
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _WID = re.compile(r"[0-9a-f]{32}")
@@ -197,6 +197,39 @@ def _addon(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
     )
 
 
+def build_settings_url(addr: str, workspace_id: str, change: dict[str, int]) -> str:
+    """The link of a settings change (27 Oct): ``https://<hub>/#/w/<workspace_id>/settings/<b64u(JSON set)>``. The hub's
+    page parses the change strictly, shows it in words and signs only after a click (``settings.changed``, 8.8)."""
+    import json
+
+    from orch.crypto.encoding import b64u
+
+    body = json.dumps(change, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return f"{build_root_url(addr, workspace_id)}/settings/{b64u(body)}"
+
+
+def _settings(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str, Any]:
+    """``kind: settings``: Mission Control's Save of a setting in a full-mode workspace. Only the three keys the hub's
+    channel may set (hub protocol 8.8); ``sign_methods``, ``repos``, ``models``, the icon and the like are off the
+    channel and refused here (the dashboard says so before it asks). A pure read: nothing is prepared or logged."""
+    from .workspace import ok_result
+
+    allowed = {"kind", "set"}
+    change = args.get("set")
+    if set(args) - allowed or not isinstance(change, dict) or not change:
+        raise HostError("invalid.input", "hub.handoff: a settings change takes exactly set: 1-3 settings")
+    return ok_result(
+        {
+            "mode": mode,
+            "where": "hub",
+            "kind": "settings",
+            "summary": {"kind": "settings", "set": dict(sorted(change.items()))},
+            "short_hash": None,
+            "url": build_settings_url(state.addr, call.service.workspace_id, dict(change)),
+        }
+    )
+
+
 def _role(service: Any, person: str) -> str | None:
     m = service.store.state.workspace.members.get(person)
     return m.role if m is not None else None
@@ -223,6 +256,8 @@ def handoff(call: Call, args: dict[str, Any], state: Any) -> dict[str, Any]:
         return _grant(call, args, state, mode)
     if kind == "addon":
         return _addon(call, args, state, mode)
+    if kind == "settings":
+        return _settings(call, args, state, mode)
     if "ticket" not in args:
         raise HostError("invalid.input", f"hub.handoff: a {kind} needs a ticket")
     if {"scope", "verbs", "hours", "label", "cancel"} & set(args):

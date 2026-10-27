@@ -751,12 +751,8 @@ class Projection:
         if addon is not None and self.capture is None:
             # the lock is held: the add-on may have been turned off since the check at the start of the call
             from orch.ops import addon_gate
-            from orch.store import StoreError
 
-            try:
-                c.store.refresh()  # re-entrant lock, re-reads only what changed on disk
-            except (OSError, StoreError):
-                pass  # the append below reports a store that cannot be read, with its own code
+            c.store.refresh()  # re-entrant lock, re-reads only what changed on disk; a failure stops the commit
             addon_gate.require_on(c.store.state.workspace.addons, addon)
         if self.capture is not None:
             from orch.ops.prepare import Captured

@@ -276,3 +276,20 @@ def test_the_field_name_is_checked_in_the_handler_too(ws, cli):
         with pytest.raises(OrchError) as e:
             addon_field_value(c, None, key, "1")
         assert e.value.code == "invalid.input"
+
+
+def test_a_failing_refresh_stops_the_commit_and_writes_nothing(ws, cli, monkeypatch):
+    """The re-check under the lock fails closed: a store that cannot be refreshed is never judged on stale state."""
+    from orch.store import Store, StoreError
+
+    grant(ws, "schedules")
+    claimed(cli)
+
+    def broken(self):
+        raise StoreError("store.unreadable", "cannot re-read the log")
+
+    monkeypatch.setattr(Store, "refresh", broken)
+    r = cli.j("follow-up", "--in", "2d", "--brief", "x")
+    assert r.code != 0 and "store.unreadable" in r.out, r.out
+    monkeypatch.undo()
+    assert not ws.view("1").followups

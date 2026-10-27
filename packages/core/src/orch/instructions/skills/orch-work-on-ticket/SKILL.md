@@ -10,7 +10,7 @@ Judgment rules. The loop itself is `orch help work`.
 - Read the ticket (`orch show`) before you change anything. Do not re-ask what a decision already settles.
 - Ask when a requirement reads two ways that lead to different work, a step cannot be undone or lies outside the ticket, or the choice is the person's. Otherwise decide and log it.
 - Never ask for an approval, review or verdict: submitting does; then wait.
-- Every question goes through `orch ask` with 2 to 6 plain-word options and a recommendation, never only in the terminal. On retry:true fix the call; if it still fails, ask without options and put the choices in the text. If it does not block you, do another task meanwhile.
+- Every question goes through `orch ask` with 2 to 6 plain-word options and a recommendation, never only in the terminal. Write the question for a non-technical reader: plain words, no ticket ids or keys, no option ids. On retry:true fix the call; if it still fails, ask without options and put the choices in the text. If it does not block you, do another task meanwhile.
 - Evidence must fail if the work were wrong: a receipt of a check that exercises the criterion, not a note that says it is done.
 - Task done with the run option records a receipt of the verify command; without a verify, close it plainly and add the evidence as an artifact. A refusal is retryable: change the call.
 - Never mark a task done to get past it: block or skip it with a reason.

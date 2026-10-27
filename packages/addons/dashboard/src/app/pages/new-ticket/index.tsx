@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useBlocker, useNavigate } from '@tanstack/react-router'
-import { ChevronRight, Lock, TriangleAlert, X } from 'lucide-react'
+import { Dropdown } from '@/components/pickers/Dropdown'
+import { DatePicker } from '@/components/pickers/DatePicker'
+import { ChevronDown, ChevronRight, Lock, TriangleAlert, X } from 'lucide-react'
 import { RadioGroup as RadioGroupPrimitive } from 'radix-ui'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
@@ -19,15 +21,16 @@ import { ApiError, type BodySections, type Me, type NewTicketRequest, type Prior
 import { Button } from '@/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkspace } from '../../workspace'
 import { usePageHeader } from '../../shell/ShellUi'
 import { PRIORITY_RANK } from '../board/lib'
-import { PeoplePicker, fieldCls, type PeopleValue } from './PeoplePicker'
+import { PeoplePicker, type PeopleValue } from './PeoplePicker'
 import { SectionsEditor } from './SectionsEditor'
-import { AgentLine, NotSignedBlock } from './AgentLine'
+import { ChangeDialog, AgentLine, NotSignedBlock } from './AgentLine'
 import { harnessName } from '@/components/agents/AgentChoice'
 import type { StartPlan } from './useStartPlan'
 import { StartAgentDialog, type StartInitial } from '@/app/terminal/real/StartAgentDialog'
@@ -376,8 +379,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     if (!plan.available || !plan.needsGrant) return false
     return accessTooMany(draft, me.person, plan.hours)
   }, [plan.available, plan.needsGrant, plan.hours, draft, me.person])
+  const [pickAgent, setPickAgent] = useState(false)
   const startPossible = plan.available && !tooMany
-  const startFirst = startPossible && plan.pref.start
 
   const create = useMutation({
     mutationFn: (req: NewTicketRequest) => api.createTicket(workspace.id, req),
@@ -513,7 +516,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     setAttempted(false)
   }
 
-  const primaryLabel = startFirst ? 'Review and start agent' : startPossible || tooMany ? 'Only create' : handoffOn ? 'Create ticket' : 'Create'
+  const primaryLabel = startPossible ? 'Create and start' : handoffOn ? 'Create ticket' : 'Create'
   const summary = attempted && check.count ? `${check.count === 1 ? 'One thing needs' : `${check.count} things need`} your attention before the ticket can be created.` : null
 
   return (
@@ -525,7 +528,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault()
-          void submit(false, startFirst, primaryRef.current)
+          void submit(false, startPossible, primaryRef.current)
         }
       }}
     >
@@ -582,24 +585,11 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
               extra={
                 <div className="grid gap-4 sm:grid-cols-2" aria-label="Properties" role="group">
                   <Field label="Priority" htmlFor="nt-priority">
-                    <select id="nt-priority" className={fieldCls} value={draft.priority} onChange={(e) => patch({ priority: e.target.value as Priority })}>
-                      {PRIORITIES.map((p) => (
-                        <option key={p} value={p}>
-                          {p[0].toUpperCase() + p.slice(1)}
-                        </option>
-                      ))}
-                    </select>
+                    <Dropdown id="nt-priority" ariaLabel="Priority" value={draft.priority} onChange={(v) => patch({ priority: v as Priority })} options={PRIORITIES.map((p) => ({ value: p, label: p[0].toUpperCase() + p.slice(1) }))} />
                   </Field>
                   {(hasFeature('estimate', workspace.id) || draft.size) && (
                     <Field label="Size" htmlFor="nt-size">
-                      <select id="nt-size" className={fieldCls} value={draft.size ?? ''} onChange={(e) => patch({ size: (e.target.value || null) as Size | null })}>
-                        <option value="">Not sized</option>
-                        {SIZES.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
+                      <Dropdown id="nt-size" ariaLabel="Size" value={draft.size ?? ''} onChange={(v) => patch({ size: (v || null) as Size | null })} options={[{ value: '', label: 'Not sized' }, ...SIZES.map((s) => ({ value: s, label: s }))]} />
                     </Field>
                   )}
                   <Field label="Labels">
@@ -607,18 +597,11 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                   </Field>
                   {draft.type !== 'epic' && (
                     <Field label="Parent epic" htmlFor="nt-parent">
-                      <select id="nt-parent" className={fieldCls} value={draft.parent ?? ''} onChange={(e) => patch({ parent: e.target.value || null })}>
-                        <option value="">None</option>
-                        {epics.map((t) => (
-                          <option key={t.key} value={t.key}>
-                            {t.key} · {t.title}
-                          </option>
-                        ))}
-                      </select>
+                      <Dropdown id="nt-parent" ariaLabel="Parent epic" value={draft.parent ?? ''} onChange={(v) => patch({ parent: v || null })} options={[{ value: '', label: 'None' }, ...epics.map((t) => ({ value: t.key, label: `${t.key} · ${t.title}` }))]} />
                     </Field>
                   )}
                   <Field label="Due" htmlFor="nt-due">
-                    <Input id="nt-due" type="date" value={draft.due} onChange={(e) => patch({ due: e.target.value })} className="h-8 text-[13px]" />
+                    <DatePicker id="nt-due" ariaLabel="Due" placeholder="No due date" allowClear value={draft.due} onChange={(due) => patch({ due })} />
                   </Field>
                   <div className="sm:col-span-2">
                     <PeoplePicker members={workspace.members} creator={me.person} people={draft.people} onPeople={(people) => patch({ people })} visibility={draft.visibility} onVisibility={(visibility) => patch({ visibility })} />
@@ -647,11 +630,6 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
               <Button type="button" variant="ghost" onClick={() => (overlay ? onCancel?.() : void navigate({ to: '/tickets' }))}>
                 Cancel
               </Button>
-              {startPossible && (
-                <Button ref={secondaryRef} type="button" variant="outline" onClick={() => void submit(false, !startFirst, secondaryRef.current)} disabled={!canCreate || create.isPending || !!handoffNew || busyAfter}>
-                  {startFirst ? 'Only create' : 'Review and start agent'}
-                </Button>
-              )}
               <SignButton
                 ref={primaryRef}
                 label={primaryLabel}
@@ -660,14 +638,28 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                 after={after.state.kind === 'running' ? 'Starting agent…' : null}
                 slowLabel="Still starting…"
                 data-testid="nt-primary"
-                onClick={() => void submit(false, startFirst, primaryRef.current)}
+                onClick={() => void submit(false, startPossible, primaryRef.current)}
                 disabled={!canCreate || create.isPending || (!!handoffNew && !signing) || busyAfter}
               />
+              {startPossible && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button ref={secondaryRef} type="button" variant="outline" size="icon" aria-label="More ways to create" disabled={!canCreate || create.isPending || !!handoffNew || busyAfter}>
+                      <ChevronDown className="size-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => void submit(false, false, secondaryRef.current)}>Create without starting</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => setPickAgent(true)}>Choose agent…</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
             </div>
           </div>
         </div>
       </div>
 
+      {pickAgent && <ChangeDialog plan={plan} onClose={() => setPickAgent(false)} />}
       {handoffNew && (
         <SignPopover
           key={`${handoffNew.n}-${handoffNew.start?.withAccess ? plan.hours : 0}`}

@@ -34,7 +34,7 @@ export const itemId = (i: NeedsYouItem) => (i.kind === 'verdict' ? `verdict:${i.
 export const decisionId = (d: AddonDecision) => `addon:${d.id}`
 
 // Kinds Today has no row for (handoff, expiring) are left out, as before.
-const GROUP_OF: Partial<Record<NeedsYouItem['kind'], CoreEntry['group']>> = { question: 'questions', approval: 'approvals', verdict: 'verdicts', terminal_wait: 'questions' }
+const GROUP_OF: Partial<Record<NeedsYouItem['kind'], CoreEntry['group']>> = { question: 'questions', approval: 'approvals', verdict: 'verdicts' } // terminal_wait hints are not shown: normal users never see "check its terminal" (run-13 A10)
 
 export function toEntries(items: NeedsYouItem[], decisions: AddonDecision[]): Entry[] {
   return [

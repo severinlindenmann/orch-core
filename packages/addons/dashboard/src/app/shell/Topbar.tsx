@@ -1,5 +1,4 @@
 import { HubChip } from './HubChip'
-import { TerminalWaitChip } from './TerminalWaitChip'
 import { AgentAccess } from './AgentAccess'
 import { useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -84,7 +83,6 @@ export function Topbar() {
       </div>
       <DevBadge />
       <HubChip ws={workspace?.id} />
-      <TerminalWaitChip ws={workspace?.id} />
       <div className="flex-1" />
  {!isRealHost() && (
       <div className="flex max-w-full items-center gap-1">

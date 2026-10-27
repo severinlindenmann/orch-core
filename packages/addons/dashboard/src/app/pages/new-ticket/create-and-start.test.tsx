@@ -82,17 +82,21 @@ async function open(storage: Record<string, string> = {}) {
   return { r, sheet }
 }
 const sent = async () => JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
-const startBtn = (sheet: HTMLElement) => within(sheet).findByRole('button', { name: 'Review and start agent' }, T)
+const createOnly = async (r: { user: { click: (e: Element) => Promise<void> } }, sheet: HTMLElement) => {
+  await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
+  await r.user.click(await screen.findByRole('menuitem', { name: 'Create without starting' }, T))
+}
+const startBtn = (sheet: HTMLElement) => within(sheet).findByRole('button', { name: 'Create and start' }, T)
 
 beforeEach(() => { GRANT = { ...GRANT, until: inHours(48) }; setup() })
 
 describe('the form', () => {
-  it('offers Create and start agent first and Only create second, with one agent line', async () => {
+  it('offers Create and start as the one main button, with a quiet menu and no agent sentence', async () => {
     const { sheet } = await open()
     await startBtn(sheet)
-    expect(within(sheet).getByRole('button', { name: 'Only create' })).toBeInTheDocument()
-    const line = await within(sheet).findByTestId('agent-line', {}, T)
-    expect(line).toHaveTextContent('Claude Code will draft a plan for you to approve. Change')
+    expect(within(sheet).getByRole('button', { name: 'More ways to create' })).toBeInTheDocument()
+    expect(within(sheet).queryByTestId('agent-line')).toBeNull()
+    expect(sheet).not.toHaveTextContent('will draft a plan')
   })
 
   it('shows only Create, and says why, when the runner is not connected', async () => {
@@ -100,19 +104,7 @@ describe('the form', () => {
     const { sheet } = await open()
     expect(await within(sheet).findByTestId('agent-line-off', {}, T)).toHaveTextContent('No agent runner is connected.')
     expect(within(sheet).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
-    expect(within(sheet).queryByRole('button', { name: 'Review and start agent' })).toBeNull()
-  })
-
-  it('Change opens the shared picker; the choice is remembered for this workspace', async () => {
-    const { r, sheet } = await open()
-    await r.user.click(await within(sheet).findByRole('button', { name: 'Change' }, T))
-    const dlg = await screen.findByTestId('agent-change')
-    await r.user.click(within(dlg).getByRole('radio', { name: 'Codex' }))
-    await r.user.selectOptions(within(dlg).getByLabelText('What it does'), 'refine')
-    await r.user.click(within(dlg).getByRole('button', { name: 'Done' }))
-    expect(within(sheet).getByTestId('agent-line')).toHaveTextContent('Codex will draft a plan for you to approve.')
-    const stored = JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}')
-    expect(stored).toMatchObject({ harness: 'codex', mode: 'refine', start: true })
+    expect(within(sheet).queryByRole('button', { name: 'Create and start' })).toBeNull()
   })
 
   it('a new ticket defaults to writing the requirements and plan; a kind of work the person picked is remembered, an old default is not', async () => {
@@ -126,17 +118,6 @@ describe('the form', () => {
     localStorage.setItem(key, JSON.stringify({ start: true, harness: 'claude-code', mode: 'fix', model: '' }))
     expect(readPref(key).mode).toBe('fix')
     localStorage.removeItem(key)
-  })
-
-  it('remembers Only create as the default button for this workspace', async () => {
-    const { r, sheet } = await open()
-    await r.user.click(await within(sheet).findByRole('button', { name: 'Only create' }, T))
-    expect((await sent()).agent).toBeUndefined()
-    expect(JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}').start).toBe(false)
-    cleanup()
-    const again = await open({ [`orch.dashboard.new-ticket.agent.p_sev.${WS()}`]: JSON.stringify({ start: false, harness: 'claude-code', mode: 'work', model: '' }) })
-    expect(await within(again.sheet).findByRole('button', { name: 'Only create' }, T)).toBeInTheDocument()
-    expect(within(again.sheet).getByRole('button', { name: 'Review and start agent' })).toBeInTheDocument()
   })
 })
 
@@ -165,7 +146,7 @@ describe('what is signed', () => {
   it('Only create never asks for agent access', async () => {
     setup({ grant: null })
     const { r, sheet } = await open()
-    await r.user.click(await within(sheet).findByRole('button', { name: 'Only create' }, T))
+    await createOnly(r, sheet)
     expect((await sent()).agent).toBeUndefined()
     await r.user.click(screen.getByRole('button', { name: 'signed' }))
     await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
@@ -179,13 +160,13 @@ describe('what is signed', () => {
       sections: { summary: 'a', context: 'b', requirements: 'c', out_of_scope: 'd', plan: 'e', decisions: 'f' }, acceptance: ['1', '2', '3'].concat(['4', '5', '6', '7']) } // 1 + 1 + 6 + 7 = 15 (+1 access = 16)
     const key = `orch.dashboard.new-ticket.draft.p_sev.${WS()}`
     const fits = await open({ [key]: JSON.stringify(draft) })
-    await within(fits.sheet).findByRole('button', { name: 'Review and start agent' }, T)
+    await within(fits.sheet).findByRole('button', { name: 'Create and start' }, T)
     expect(within(fits.sheet).queryByTestId('agent-too-many')).toBeNull()
     cleanup()
     const over = await open({ [key]: JSON.stringify({ ...draft, acceptance: [...draft.acceptance, '8'] }) }) // 16 + 1 access = 17
     expect(await within(over.sheet).findByTestId('agent-too-many', {}, T)).toHaveTextContent('too many parts')
-    expect(within(over.sheet).queryByRole('button', { name: 'Review and start agent' })).toBeNull()
-    await over.r.user.click(within(over.sheet).getByRole('button', { name: 'Only create' }))
+    expect(within(over.sheet).queryByRole('button', { name: 'Create and start' })).toBeNull()
+    await over.r.user.click(within(over.sheet).getByRole('button', { name: 'Create ticket' }))
     expect((await sent()).agent).toBeUndefined()
   })
 })

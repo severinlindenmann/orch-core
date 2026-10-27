@@ -207,11 +207,10 @@ function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClick
     void click.sign()
   }
   return (
-    <section data-testid="answer-strip" aria-label="You are answering" className="space-y-3 rounded-md border border-border bg-bg p-3">
+    <section data-testid="answer-strip" aria-label="Your answer" className="space-y-3 rounded-md border border-border bg-bg p-3">
       <p role="status" className="sr-only" data-testid="strip-live">
         <Said text={liveText(click.phase, armed)} />
       </p>
-      <h3 className="text-[12px] font-medium text-text-muted">You are answering</h3>
       {showWorkspace && view.workspace?.name && (
         <p data-testid="strip-workspace" className="text-[12px] text-text-muted">
           Workspace <Raw>{view.workspace.name}</Raw>

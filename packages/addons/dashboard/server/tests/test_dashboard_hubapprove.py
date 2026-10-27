@@ -196,3 +196,50 @@ def test_the_error_code_is_allowed_through_and_is_a_403():
     res = host_response(fail("sign.hub_only", exit=3))
     assert res.status_code == 403
     assert ORIGIN
+
+
+RID = "hr_01J9ZP0000000000000000HND1"
+ADDON = {
+    "mode": "full", "where": "hub", "kind": "addon", "pending": True,
+    "summary": {"kind": "addon", "name": "wiki", "version": "1.2.0", "package_sha256": "sha256:" + "a" * 64,
+                "capabilities": ["network"]},
+    "short_hash": "aaaa aaaa aaaa",
+    "url": f"https://hub.example.test:4443/#/w/{WS}/addon/eyJhIjoxfQ",
+}  # fmt: skip
+
+
+def test_an_add_on_approval_is_relayed_with_a_closed_shape():
+    link = Link({"hub.handoff": ADDON})
+    res = post(app_for(link), {"kind": "addon", "request": RID})
+    assert res.status_code == 200
+    summary = {"kind": "addon", "name": "wiki", "version": "1.2.0", "capabilities": ["network"]}
+    assert res.json() == {"mode": "full", "kind": "addon", "summary": summary, "short_hash": "aaaa aaaa aaaa",
+                          "url": ADDON["url"]}  # fmt: skip
+    assert link.calls == [("hub.handoff", {"kind": "addon", "request": RID})]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"kind": "addon"},
+        {"kind": "addon", "request": "x"},
+        {"kind": "addon", "request": RID, "ticket": "DEMO-0001"},
+        {"kind": "gate", "request": RID},
+        {"kind": "gate"},
+    ],
+)
+def test_an_add_on_approval_and_a_ticket_approval_never_mix(body):
+    assert post(app_for(Link({"hub.handoff": ADDON})), body).status_code in (400, 422)
+
+
+BAD_ADDON = [
+    {"url": f"https://hub.example.test/#/w/{WS}/addon/a b"},
+    {"url": "https://evil.example/x"},
+    {"summary": {"name": 1}},
+]
+
+
+@pytest.mark.parametrize("bad", BAD_ADDON)
+def test_an_add_on_answer_off_the_grammar_is_dropped(bad):
+    res = post(app_for(Link({"hub.handoff": {**ADDON, **bad}})), {"kind": "addon", "request": RID})
+    assert res.status_code == 500 or res.json()["error"]["code"] == "internal"

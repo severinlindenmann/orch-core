@@ -47,6 +47,22 @@ MAX_LIST = 32
 _OPNAME = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?")
 _GRANT = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _DEVICE = re.compile(r"d_[0-9a-f]{32}")
+#: FB15 (8.8b): the value grammars of ``addon.requested`` (the add-on name of the manifest, a semver, the capabilities)
+_ADDON_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
+
+
+def _reserved_addon_names() -> frozenset[str]:
+    """The names core's schema refuses for an add-on (``common#/$defs/addonName`` ``not.enum``): the one list."""
+    from orch import schema
+
+    return frozenset(schema.load("common")["$defs"]["addonName"]["not"]["enum"])
+
+
+RESERVED_ADDON_NAMES = _reserved_addon_names()
+_SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+CAPABILITIES = ("serve_http", "spawn_agent", "pty", "network", "git_push", "choose_model", "credential")
+_HANDOFF = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+RUNTIME_KINDS = ("python-requirements", "node-package-lock")
 APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
 POLICY_GATES = ("requirements", "plan", "verify", "code")
 
@@ -218,6 +234,17 @@ def _settings(x: Any) -> bool:
     return type(x) is dict and len(x) >= 1 and all(k in SETTINGS_SET and SETTINGS_SET[k](v) for k, v in x.items())
 
 
+def _runtime(x: Any) -> bool:
+    """``addon.requested`` ``runtime``: exactly the signed ``runtime`` of the grant (kind, lock path, package count)."""
+    return (
+        type(x) is dict
+        and set(x) == {"kind", "lock", "packages"}
+        and x["kind"] in RUNTIME_KINDS
+        and text_ok(x["lock"], 200)
+        and _int_in(1, 1000)(x["packages"])
+    )
+
+
 #: Fields every custodial event carries besides the hub fields (8.1): the envelope the hub derives.
 COMMON_REQUIRED: dict[str, Check] = {
     "v": lambda x: x == 2 and type(x) is int,
@@ -283,6 +310,16 @@ PAYLOAD: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
         {"label": _text(200)},
     ),
     "grant.revoked": ({"grant": _re(_GRANT)}, {"reason": _text(500)}),
+    "addon.requested": (
+        {
+            "name": lambda x: _re(_ADDON_NAME)(x) and x not in RESERVED_ADDON_NAMES,
+            "version": _re(_SEMVER),
+            "package_sha256": _hash,
+            "capabilities": _sorted_unique(_enum(*CAPABILITIES), 0, len(CAPABILITIES)),
+            "handoff": _re(_HANDOFF),
+        },
+        {"runtime": lambda x: _runtime(x)},
+    ),
     "device.excluded": ({"device": _re(_DEVICE), "reason": _enum("lost", "retired", "compromised")}, {}),
     "policy.changed": ({"gates": _gates}, {}),
     "settings.changed": ({"set": _settings}, {}),

@@ -362,7 +362,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 250,
-      "description": "a git branch name: no leading -, HEAD, @, refs/ prefix or Unicode 16.0 Cc/Cf/Co/Zs/Zl/Zp/Cn characters, M* mark at the start of any slash-separated component, variation selectors or named invisible look-alikes (F1 \u00a72) (checked by validate())",
+      "description": "a git branch name: no leading -, HEAD, @, refs/ prefix or Unicode 16.0 Cc/Cf/Co/Zs/Zl/Zp/Cn characters, M* mark at the start of any slash-separated component, variation selectors or named invisible look-alikes (F1 §2) (checked by validate())",
       "pattern": "^(?!-|refs/|(?:HEAD|@)(?![\\s\\S]))[\\s\\S]*(?![\\s\\S])"
     },
     "httpsUrl": {
@@ -1112,6 +1112,11 @@
       "type": "string",
       "maxLength": 64,
       "pattern": "^[A-Za-z0-9._:-]*(?![\\s\\S])"
+    },
+    "handoffId": {
+      "type": "string",
+      "pattern": "^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}(?![\\s\\S])",
+      "description": "The id of a host's prepared hand-off request (FB15, hub protocol 8.8b)."
     }
   }
 }

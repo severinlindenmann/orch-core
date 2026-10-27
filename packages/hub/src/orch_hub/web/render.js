@@ -73,6 +73,40 @@ export const DECISIONS = {
   "gate.changes_requested": ["gate", "hash", "text", "gate_gen", "policy_hash"],
   "verdict.given": ["outcome", "hash", "text", "gate_gen", "policy_hash", "source_sha"],
 };
+// FB15 (protocol 8.8b): the owner's ask to turn an add-on on. The words here are this page's own: the host's text never
+// reaches the sentence. Unknown capability tokens, any other field or any other shape is "cannot render", never a guess.
+export const ADDON_REQUEST = ["name", "version", "package_sha256", "capabilities", "runtime", "handoff"];
+export const CAPABILITY_WORDS = {
+  serve_http: "Run a small web page on the computer that hosts the workspace",
+  spawn_agent: "Start agents",
+  pty: "Open terminals",
+  network: "Use the network",
+  git_push: "Push code to git",
+  choose_model: "Choose which AI model runs",
+  credential: "Keep a secret key for the workspace",
+};
+const CAPS = Object.keys(CAPABILITY_WORDS);
+const RUNTIME_KINDS = { "python-requirements": "Python packages", "node-package-lock": "Node packages" };
+/** True only for exactly the six fields of protocol 8.8b, each in its grammar (the hub's check_action, mirrored). */
+export function addonTermsOk(t) {
+  if (!isObj(t) || !Object.keys(t).every((k) => ADDON_REQUEST.includes(k))) return false;
+  const str = (x, re) => typeof x === "string" && re.test(x);
+  if (!str(t.name, /^[a-z][a-z0-9-]{0,39}$/) || !str(t.version, /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/)) return false;
+  if (!str(t.package_sha256, /^sha256:[0-9a-f]{64}$/) || !str(t.handoff, /^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$/)) return false;
+  if (!Array.isArray(t.capabilities) || t.capabilities.length > CAPS.length || !t.capabilities.every((c) => CAPS.includes(c))) return false;
+  if (t.capabilities.join() !== [...new Set(t.capabilities)].sort().join()) return false;
+  if (!("runtime" in t)) return true;
+  const r = t.runtime;
+  return isObj(r) && Object.keys(r).sort().join() === "kind,lock,packages" && Object.hasOwn(RUNTIME_KINDS, r.kind) && typeof r.lock === "string" && r.lock !== "" && r.lock.length <= 200 && renderText(r.lock) === r.lock && Number.isInteger(r.packages) && r.packages >= 1 && r.packages <= 1000;
+}
+/** The rows a person reads before signing an add-on request, from the terms only. */
+export function addonFacts(t) {
+  const rows = [["Add-on", renderText(t.name) + " " + renderText(t.version)]];
+  rows.push(["It may", t.capabilities.length ? t.capabilities.map((c) => CAPABILITY_WORDS[c]).join("; ") : "Nothing beyond reading and writing its own add-on data"]);
+  if (t.runtime) rows.push(["It installs", String(t.runtime.packages) + " " + RUNTIME_KINDS[t.runtime.kind] + " (list: " + renderText(t.runtime.lock) + ")"]);
+  rows.push(["Package fingerprint", renderText(t.package_sha256)]);
+  return rows;
+}
 // D15b: the two status moves a prompt may offer; `from` is the host's own value, copied by the hub from P.
 export const MOVES = {
   "status.changed": ["to", "from", "reason"],
@@ -210,6 +244,8 @@ export function facts(type, ev, qv = null) {
         out.push(["Code", ok ? renderText(e.repo) + " " + renderText(e.sha.slice(0, 8)) : r(e)]);
       }
     }
+  } else if (type === "addon.requested") {
+    out.push(...addonFacts(ev));
   } else if (type in MOVES) {
     out.push(["Status", r(ev.from) + " \u2192 " + r(ev.to)]);
   }
@@ -221,6 +257,8 @@ const SENTENCE_STRINGS = ["from", "to", "reason", "gate", "outcome", "text", "op
 function sentence(type, log, ev, qv = null) {
   const on = "ticket " + renderText(log);
   switch (type) {
+    case "addon.requested":
+      return "I allow the add-on " + q(ev.name + " " + ev.version) + " to be installed and turned on in this workspace.";
     case "gate.approved":
       return "I approve the " + q(ev.gate) + " gate of " + on + ".";
     case "gate.changes_requested":
@@ -242,7 +280,8 @@ function sentence(type, log, ev, qv = null) {
 export function describe(ctx, digest, sent = null, qv = null) {
   const ev = ctx.event;
   const type = typeof ev.type === "string" ? ev.type : "";
-  const known = Object.hasOwn(DECISIONS, type) ? DECISIONS[type] : Object.hasOwn(MOVES, type) ? MOVES[type] : undefined;
+  const isAddon = type === "addon.requested";
+  const known = isAddon ? ADDON_REQUEST : Object.hasOwn(DECISIONS, type) ? DECISIONS[type] : Object.hasOwn(MOVES, type) ? MOVES[type] : undefined;
   const fields = Object.keys(ev)
     .filter((k) => k !== "channel_cert" && k !== "uk_cert")
     .sort()
@@ -255,7 +294,8 @@ export function describe(ctx, digest, sent = null, qv = null) {
   const moveOk = !Object.hasOwn(MOVES, type) || (sent?.action?.type === type && sent.action.to === ev.to && sent.action.reason === ev.reason);
   // an answer that picks an option is signable only against the verified question that lists it: never a blind label
   const answerOk = type !== "question.answered" || answerFits(ev, qv);
-  const signable = Boolean(known) && answerOk && extra.length === 0 && stringsOk && moveOk && typeof ctx.log === "string" && ctx.log !== "workspace";
+  const addonOk = !isAddon || (ctx.log === "workspace" && addonTermsOk(Object.fromEntries(ADDON_REQUEST.filter((k) => k in ev).map((k) => [k, ev[k]]))));
+  const signable = Boolean(known) && answerOk && addonOk && extra.length === 0 && stringsOk && moveOk && typeof ctx.log === "string" && (isAddon ? ctx.log === "workspace" : ctx.log !== "workspace");
   return {
     type: renderText(type),
     signable,
@@ -281,9 +321,10 @@ export function checkBindings(ctx, me, sent) {
   if (ev.channel_factor !== "password+totp" || ev.channel_cert?.o?.factor !== "password+totp") bad();
   if (sent) {
     if (ctx.workspace_id !== sent.workspaceId || ctx.log !== sent.action.log || ev.type !== sent.action.type) bad();
-    for (const k of ["hash", "question", "gate", "option", "text", "outcome", "to", "reason"]) {
+    for (const k of ["hash", "question", "gate", "option", "text", "outcome", "to", "reason", "name", "version", "package_sha256", "handoff"]) {
       if (k in sent.action && ev[k] !== sent.action[k]) bad();
     }
+    if (ev.type === "addon.requested") for (const k of ["capabilities", "runtime"]) if ((k in ev) !== (k in sent.action) || (k in ev && cj(ev[k]) !== cj(sent.action[k]))) bad();
     // an answer carries exactly the option/text keys that were sent, never one more (an added note or option)
     if (ev.type === "question.answered") for (const k of ["option", "text"]) if ((k in ev) !== (k in sent.action)) bad();
   }

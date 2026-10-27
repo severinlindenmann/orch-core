@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 __all__ = ["KINDS", "build_url", "handoff"]
 
-KINDS = ("gate", "verdict", "question", "status", "grant")
+KINDS = ("gate", "verdict", "question", "status", "grant", "addon")
 _GATES = ("requirements", "plan", "code", "verify")
 _ULID = re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _WID = re.compile(r"[0-9a-f]{32}")
@@ -115,6 +115,78 @@ def _grant(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
     )
 
 
+def prepared_event(record: dict[str, Any]) -> dict[str, Any]:
+    """The one unsigned event of a prepared add-on grant request."""
+    return record["prepared"]["events"][0]
+
+
+def build_addon_url(addr: str, workspace_id: str, terms: dict[str, Any]) -> str:
+    """The one link of an add-on approval (FB15): ``https://<hub>/#/w/<workspace_id>/addon/<b64u(JSON terms)>``. The
+    terms are what the person is asked to approve (:data:`ADDON_TERMS`); the page parses them strictly, shows them and
+    signs only after a click. A fragment, so nothing reaches a server log. The host matches the signed answer against
+    its own prepared request, never against this link."""
+    import json
+
+    from orch.crypto.encoding import b64u
+
+    root = build_root_url(addr, workspace_id)
+    body = json.dumps(terms, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return f"{root}/addon/{b64u(body)}"
+
+
+#: the fields of an ``addon.requested`` action (hub protocol 8.8b); ``handoff`` is the prepared request's id
+ADDON_TERMS = ("name", "version", "package_sha256", "capabilities", "runtime", "handoff")
+
+
+def _addon(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str, Any]:
+    """``kind: addon`` (FB15): Mission Control's "turn on / install" in a full-mode workspace waits for an
+    ``addon.requested`` the hub's channel signs. The wait IS the prepared hand-off request (op ``addon.grant``, made by
+    ``human.prepare {handoff: true}``): this read names it, checks it is the calling person's, still open and an
+    add-on grant, and returns the terms and the one link. No log line, no link call."""
+    others = {"ticket", "gate", "question", "scope", "verbs", "hours", "label", "cancel"}
+    if others & set(args) or "request" not in args:
+        raise HostError("invalid.input", "hub.handoff: an add-on takes exactly the prepared request")
+    service = call.service
+    record = service.requests.load(args["request"], call.principal)
+    if (
+        record.get("op") != "addon.grant"
+        or record.get("state") != "prepared"
+        or record.get("person") != call.viewer
+        or record.get("workspace_id") != service.workspace_id
+    ):
+        raise HostError("not_found", "no such add-on request waiting for the hub")
+    if record.get("hub_handoff") is not True or record.get("submit") or service.requests.lapsed(record):
+        raise HostError("not_found", "no such add-on request waiting for the hub")
+    ev = prepared_event(record)
+    if ev.get("type") != "addon.granted":
+        raise HostError("not_found", "no such add-on request waiting for the hub")
+    terms = {
+        "name": ev["name"],
+        "version": ev["version"],
+        "package_sha256": ev["package_sha256"],
+        "capabilities": list(ev["capabilities"]),
+        "handoff": record["id"],
+    }
+    if ev.get("runtime") is not None:
+        terms["runtime"] = dict(ev["runtime"])
+    from orch.hubclient import shorthash
+
+    from .workspace import ok_result
+
+    return ok_result(
+        {
+            "mode": mode,
+            "where": "hub",
+            "kind": "addon",
+            "pending": True,
+            "valid_for_s": max(0, int(record["expires"] - service.clock())),
+            "summary": {"kind": "addon", **{k: v for k, v in terms.items() if k != "handoff"}},
+            "short_hash": shorthash.short_hash(terms["package_sha256"]),
+            "url": build_addon_url(state.addr, service.workspace_id, terms),
+        }
+    )
+
+
 def _role(service: Any, person: str) -> str | None:
     m = service.store.state.workspace.members.get(person)
     return m.role if m is not None else None
@@ -139,6 +211,8 @@ def handoff(call: Call, args: dict[str, Any], state: Any) -> dict[str, Any]:
         raise HostError("hub.not_joined", "approvals go through the hub only in full hub mode, once connected")
     if kind == "grant":
         return _grant(call, args, state, mode)
+    if kind == "addon":
+        return _addon(call, args, state, mode)
     if "ticket" not in args:
         raise HostError("invalid.input", f"hub.handoff: a {kind} needs a ticket")
     if {"scope", "verbs", "hours", "label", "cancel"} & set(args):

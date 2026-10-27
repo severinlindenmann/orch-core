@@ -634,9 +634,9 @@ class Human:
         person, device = self.who()
         self.store.refresh()
         stamp = self.store.peek_stamp(log)
-        from orch.ops.prepare import accepting
+        from orch.ops.prepare import judging
 
-        state = accepting(self.store.state)
+        state = judging(self.store.state, self.call.ctx.prepare)
         probe = self._envelope(event, log, person, device)
         probe.update(sig="x", seq=stamp["seq"], prev=stamp["prev"], at=stamp["at"])
         if "ws_seq" in stamp:

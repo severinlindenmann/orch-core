@@ -560,9 +560,69 @@ def device_excluded(core: Core, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
+def addon_requested(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """``addon.requested`` (hub protocol 8.8b, FB15): a hub-signed ask to turn an add-on on. It changes no add-on by
+    itself; it records the exact terms (the package digest, version, capabilities, runtime) and the canonical signer the
+    host will use for the host-actor ``addon.granted`` that answers it. Owner only, like the grant it asks for."""
+    sg = identity.signer(ws, e)
+    if isinstance(sg, Refusal):
+        return sg
+    if sg.role != "owner" or sg.person not in ws.members:
+        return Refusal(Code.ROLE_DENIED, "addon.requested is for a workspace owner")
+    if e["id"] in ws.addon_requests:
+        return Refusal(Code.GRANT_EXISTS, e["id"])
+    ws.addon_requests[e["id"]] = {
+        "person": sg.person,
+        "role": sg.role,
+        **_addon_terms(e),
+        "handoff": e["handoff"],
+        "at": e["at"],
+        "hub_id": e["hub_id"],
+        "used": False,
+    }
+    return None
+
+
+def _addon_terms(e: dict[str, Any]) -> dict[str, Any]:
+    """What a request and the grant that answers it must agree on, byte for byte."""
+    return {
+        "name": e["name"],
+        "version": e["version"],
+        "package_sha256": e["package_sha256"],
+        "capabilities": copy.deepcopy(e["capabilities"]),
+        "runtime": copy.deepcopy(e.get("runtime")),
+    }
+
+
+def _host_addon_grant(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """The host-actor ``addon.granted`` (FB15): valid only when it names an admitted ``addon.requested`` of the same
+    terms, not answered yet, ``0 <= at - request.at <= 300 s``. The declarations (fields, sections, artifact kinds)
+    are the host's, read from the package whose digest the request names; replay checks them as for any grant."""
+    req = ws.addon_requests.get(e.get("request"))
+    if req is None:
+        return Refusal(Code.GRANT_TERMS, "a host-made add-on grant names an admitted addon.requested")
+    if req["used"]:
+        return Refusal(Code.GRANT_TERMS, "this request was answered already")
+    if any(o is not req and o["handoff"] == req["handoff"] and o["used"] for o in ws.addon_requests.values()):
+        return Refusal(Code.GRANT_TERMS, "this hand-off was answered already")  # one hand-off, one grant
+    holder = ws.members.get(req["person"])
+    if holder is None or holder.role != "owner":
+        return Refusal(Code.ROLE_DENIED, "the person who asked is not an owner now")
+    if _addon_terms(e) != {k: req[k] for k in ("name", "version", "package_sha256", "capabilities", "runtime")}:
+        return Refusal(Code.GRANT_TERMS, "the grant is not what was requested")
+    if not 0 <= ts(e["at"]) - ts(req["at"]) <= 300:
+        return Refusal(Code.GRANT_TERMS, "the request is too old (300 s)")
+    return None
+
+
 def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
     ws, typ, name = core.ws, e["type"], e["name"]
-    if (r := _owner_only(ws, e)) is not None:
+    if typ == "addon.granted" and e["actor"]["kind"] == "host":
+        if (r := _host_addon_grant(ws, e)) is not None:
+            return r
+    elif typ == "addon.granted" and "request" in e:
+        return Refusal(Code.GRANT_TERMS, "only the host answers a request")
+    elif (r := _owner_only(ws, e)) is not None:
         return r
     old = ws.addons.get(name)
     if typ != "addon.granted" and old is None:
@@ -571,6 +631,8 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
     if typ == "addon.granted":
         if (r := addon_rules.check_headings(name, e["sections"], ws.addons)) is not None:
             return r
+        if e["actor"]["kind"] == "host":
+            ws.addon_requests[e["request"]]["used"] = True  # checked above; consumed once the grant is admitted
         new = Addon(
             name,
             e["version"],

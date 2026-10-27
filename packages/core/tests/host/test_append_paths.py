@@ -33,11 +33,13 @@ PATHS: dict[tuple[str, str], tuple[int, str]] = {
         "exempt: orch import v1 builds a new workspace from v1 history, which has no convenience events",
     ),
     ("host/hubdeliver.py", "StoreLanding.land"): (
-        3,
+        4,
         "exempt: a hub-signed event is a custodial type only (authz.HUB_TYPES: never member, role or device add, "
         "never grant.issued) with auth hub, so it adds no reader and no convenience event; the other calls are the "
         "host's own hub.pinned ledger line and the host-actor grant.issued that answers an admitted grant.requested "
-        "(the model admits it only with that request: a grant adds no reader and no convenience event)",
+        "(the model admits it only with that request: a grant adds no reader and no convenience event), and the "
+        "host-actor addon.granted that answers an admitted addon.requested (FB15: the model admits it only with that "
+        "request, once per hand-off; an add-on grant adds no reader and no convenience event)",
     ),
     ("host/followups.py", "FollowupRunner._append"): (
         1,

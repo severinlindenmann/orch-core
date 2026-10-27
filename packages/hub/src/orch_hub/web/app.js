@@ -8,7 +8,7 @@ import { adminView } from "./admin.js";
 import { servicesView } from "./services.js";
 import { workspacesView } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl, ticketFromHash } from "./switch.js";
-import { Refusal, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
+import { Refusal, addonFacts, addonTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
 const state = { user: null, me: null, channels: [], notice: null, rail: { hubName: "Hub", rows: [] }, menu: false };
@@ -77,7 +77,7 @@ function loginView(err) {
       const r = await api("POST", "/session", { user_id: id.value.trim(), password: pw.value, totp: code.value.trim(), client: "browser" });
       pw.value = code.value = "";
       if (r.status !== 200) return loginView(say(r.body.error));
-      await home();
+      await afterLogin();
     },
   }, field("User id", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
   show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, form);
@@ -385,6 +385,35 @@ function reviewDecision(it, c) {
   );
 }
 
+// After a sign-in: an add-on approval link keeps its fragment, everything else goes Home.
+async function afterLogin() {
+  const a = /^#\/w\/([0-9a-f]{32})\/addon\/([\w-]+)$/.exec(location.hash);
+  return a ? addonView(a[1], a[2]) : home();
+}
+
+// FB15 (protocol 8.8b): the link a workspace's Mission Control builds, #/w/<workspace>/addon/<b64u(JSON terms)>. The terms
+// are parsed strictly and rendered from this page's own words; the signature still goes through the same prepare -> review
+// -> sign prompt, whose digest is recomputed here. A link that names a workspace this person does not hold is refused.
+async function addonView(wsId, raw) {
+  let terms = null;
+  try {
+    const b = atob(raw.replaceAll("-", "+").replaceAll("_", "/"));
+    terms = parseStrict(new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(b, (c) => c.charCodeAt(0))));
+  } catch { terms = null; }
+  const back = h("p", { class: "small" }, h("a", { href: "#", text: "\u2190 Back to your list", onclick: (e) => { e.preventDefault(); location.hash = ""; home(); } }));
+  if (!(await refresh())) return loginView();
+  const ws = await api("GET", "/me/workspaces");
+  const mine = ws.status === 200 ? ws.body.workspaces.find((w) => w.workspace_id === wsId) : null;
+  if (!addonTermsOk(terms) || !mine) return shell("home", h("div", {}, back, banner("bad", "This link cannot be used", "It does not describe an add-on request this page can show safely.")));
+  const action = { type: "addon.requested", log: "workspace", ...terms };
+  shell("home", h("div", {}, back,
+    h("h1", { text: "Approve an add-on" }),
+    h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? wsId.slice(0, 8)) + " asks to install and turn on " + renderText(terms.name) + "." }),
+    h("dl", { class: "facts" }, addonFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
+    h("p", { class: "small muted", text: "Approving here lets the workspace's computer install exactly this package. You can check the fingerprint against the one shown in the workspace." }),
+    h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
+}
+
 function advancedForm(workspaces) {
   const ws = h("select", {}, workspaces.filter((w) => w.can_start).map((w) => h("option", { value: w.workspace_id, text: renderText(w.name ?? w.workspace_id.slice(0, 8)) })));
   const type = h("select", {}, Object.keys(DECISIONS).filter((t) => t !== "question.answered").map((t) => h("option", { value: t, text: t })));
@@ -474,5 +503,7 @@ function promptView(me, p, digest, d) {
   if (t) return landFromTicket(t);
   const m = /^#setup=([\w-]+)$/.exec(location.hash);
   if (m) return setupView(m[1]);
+  const a = /^#\/w\/([0-9a-f]{32})\/addon\/([\w-]+)$/.exec(location.hash);
+  if (a) return addonView(a[1], a[2]);
   try { if (!(await refresh())) return loginView(); await home(); } catch { loginView("Something went wrong."); }
 })();

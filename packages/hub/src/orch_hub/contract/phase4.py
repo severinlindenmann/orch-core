@@ -248,6 +248,60 @@ def _visibility(x: Any) -> bool:
 _OPNAME = re.compile(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?")
 _GRANT = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _DEVICE = re.compile(r"d_[0-9a-f]{32}")
+#: FB15 (§8.8b): the grammars of ``addon.requested`` (core's add-on name, semver and capability schemas)
+_ADDON_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
+#: names core refuses for an add-on (core schema common#/$defs/addonName not.enum); the vectors and
+#: tests/test_addon_reserved_names.py hold this list equal to core's file
+RESERVED_ADDON_NAMES = frozenset(
+    [
+        "ticket",
+        "status",
+        "visibility",
+        "people",
+        "policy",
+        "claim",
+        "followup",
+        "task",
+        "handoff",
+        "log",
+        "question",
+        "gate",
+        "verdict",
+        "branch",
+        "artifact",
+        "edit",
+        "projection",
+        "restore",
+        "workspace",
+        "member",
+        "role",
+        "device",
+        "settings",
+        "grant",
+        "addon",
+        "invalid",
+        "hub",
+        "relay",
+    ]
+)
+_SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+_HANDOFF = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+CAPABILITIES = ("serve_http", "spawn_agent", "pty", "network", "git_push", "choose_model", "credential")
+RUNTIME_KINDS = ("python-requirements", "node-package-lock")
+
+
+def _runtime(x: Any) -> bool:
+    """``runtime`` exactly as the signed ``addon.granted`` holds it: the lockfile kind, its path, the package count."""
+    return (
+        type(x) is dict
+        and set(x) == {"kind", "lock", "packages"}
+        and x["kind"] in RUNTIME_KINDS
+        and _text(200)(x["lock"])
+        and type(x["packages"]) is int
+        and 1 <= x["packages"] <= 1000
+    )
+
+
 APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
 POLICY_GATES = ("requirements", "plan", "verify", "code")
 SETTINGS_SET: dict[str, Any] = {
@@ -344,6 +398,16 @@ ACTIONS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
         {"label": _text(200)},
     ),
     "grant.revoked": ({"grant": _re(_GRANT)}, {"reason": _text(500)}),
+    "addon.requested": (
+        {
+            "name": lambda x: _re(_ADDON_NAME)(x) and x not in RESERVED_ADDON_NAMES,
+            "version": _re(_SEMVER),
+            "package_sha256": _re(_HASH),
+            "capabilities": _sorted_unique(_enum(*CAPABILITIES), 0, len(CAPABILITIES)),
+            "handoff": _re(_HANDOFF),
+        },
+        {"runtime": _runtime},
+    ),
     "device.excluded": ({"device": _re(_DEVICE), "reason": _enum("lost", "retired", "compromised")}, {}),
     "policy.changed": ({"gates": lambda x: _gates(x)}, {}),
     "settings.changed": ({"set": lambda x: _settings(x)}, {}),

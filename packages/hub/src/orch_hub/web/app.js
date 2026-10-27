@@ -47,7 +47,6 @@ async function api(method, path, body) {
 }
 const WORDS = {
   no_session: "Your sign-in ended. Sign in again.",
-  ambiguous_name: "More than one person has this name. Type your user id instead.",
   bad_credentials: "Wrong user id, password or code. A code works once; wait for the next one.",
   rate_limited: "Too many tries. Wait a moment.",
   event_changed: "The request changed while you were deciding.",

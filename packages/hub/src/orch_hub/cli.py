@@ -69,7 +69,7 @@ def _parser() -> argparse.ArgumentParser:
     sv.add_argument("--invite", action="append", default=[], help="invite code accepted once (repeatable)")
     sv.add_argument(
         "--web-listen",
-        help="host:port of the web API: loopback (the edge fronts it) or one private/NetBird IP of this computer (dev, plain http); default: no web API",
+        help="host:port of the web API: loopback (the edge fronts it) or one private network address of this computer (dev, plain http); default: no web API",
     )
     sv.add_argument(
         "--relay-url",

@@ -331,12 +331,24 @@ def test_sign_in_by_name_or_id_and_wrong_names_are_generic(w):
         assert (s, o) == (401, {"error": "bad_credentials"}), who
 
 
-def test_ambiguous_name_asks_for_the_id(w):
+def test_shared_name_signs_in_the_matching_user_and_reveals_nothing(w):
     other = w.env.user("ann")
     assert other != w.ann
-    s, o, _ = w.call(
-        "POST", "/session", {"user_id": "ann", "password": "x" * 12, "totp": "000000", "client": "app"}, origin=None
-    )
-    assert (s, o) == (409, {"error": "ambiguous_name"})
-    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann))  # the id still works
-    assert s == 200
+    bad = {"user_id": "ann", "password": "x" * 12, "totp": "000000", "client": "app"}
+    s, o, _ = w.call("POST", "/session", bad, origin=None)
+    assert (s, o) == (401, {"error": "bad_credentials"})  # same answer as an unknown name
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app") | {"user_id": "ann"}, origin=None)
+    assert s == 200 and o["user_id"] == w.ann
+
+
+def test_unknown_name_is_charged_to_the_limiter(w):
+    codes = []
+    for i in range(25):
+        s, _o, _ = w.call(
+            "POST",
+            "/session",
+            {"user_id": f"ghost{i}", "password": "x" * 12, "totp": "000000", "client": "app"},
+            origin=None,
+        )
+        codes.append(s)
+    assert 429 in codes  # guessing names cannot bypass the per-source cap

@@ -88,7 +88,6 @@ STATUS = {
     "unknown_snapshot": 409,
     "no_session": 401,
     "bad_credentials": 401,
-    "ambiguous_name": 409,
     "unauthorized": 403,
     "bad_channel_proof": 403,
     "forbidden_role": 403,
@@ -717,20 +716,17 @@ class WebApi:
                 self._busy.discard(c.source)
         return result
 
-    def _resolve_user(self, who: str) -> str:
-        """Sign-in takes the user id or the name chosen at setup (run-11 #10). Anything that is neither is the one
-        generic ``bad_credentials`` (never ``malformed``, run-11 #11); two users with one name: ask for the id."""
+    def _candidates(self, who: str) -> list[str]:
+        """Sign-in takes the user id or the name chosen at setup (run-11 #10). A name nobody has yields a placeholder id,
+        so the password hash still runs and the answer is the same ``bad_credentials`` as a wrong password. Two users
+        with one name are both tried: the one whose password and code match signs in, nobody learns the name is shared."""
         who = who.strip()
         if _HEX32.fullmatch(who):
-            return who
+            return [who]
         hits = [
             u["user_id"] for u in self.d.access.users() if u["name"] is not None and u["name"].lower() == who.lower()
         ]
-        if len(hits) > 1:
-            raise ApiError("ambiguous_name")
-        if not hits:
-            raise ApiError("bad_credentials")
-        return hits[0]
+        return hits or ["0" * 32]
 
     def _h_sign_in(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, user_id=str, password=str, totp=str)
@@ -739,14 +735,21 @@ class WebApi:
             raise ApiError("malformed")
         if client == "browser" and c.origin is None:  # a cookie is only ever set for a request the browser labelled
             raise ApiError("not_allowed")
-        uid = self._resolve_user(b["user_id"])
-        s = self._guarded_credentials(
-            c,
-            uid,
-            lambda: self.d.channels.sign_in(
-                uid, b["password"], b["totp"], c.source, scope="full" if client == "browser" else "pairing"
-            ),
-        )
+        who = b["user_id"].strip()[:64]
+        scope = "full" if client == "browser" else "pairing"
+
+        def attempt() -> Any:  # run inside the caps: they are charged before any lookup
+            failure: ChannelError | None = None
+            for uid in self._candidates(who):
+                try:
+                    return self.d.channels.sign_in(uid, b["password"], b["totp"], c.source, scope=scope)
+                except ChannelError as e:
+                    if e.code != "bad_credentials":
+                        raise
+                    failure = e
+            raise failure  # type: ignore[misc]  # _candidates never returns an empty list
+
+        s = self._guarded_credentials(c, who, attempt)
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}
         if client == "app":  # the phone keeps the token itself and sends it as a bearer
             out["token"] = s["token"]

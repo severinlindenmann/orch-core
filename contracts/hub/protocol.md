@@ -2303,7 +2303,6 @@ Hub web API (local, `/api/v1`, V3-D13; answers are `{"error": code}`; none of th
 | Code | Status | Meaning |
 |---|---|---|
 | `bad_credentials` | 401 | sign-in: user id or name, password or TOTP wrong (one code for all, and for an unknown user or name) |
-| `ambiguous_name` | 409 | sign-in: the name belongs to more than one user; sign in with the user id |
 | `rate_limited` | 429 | sign-in (per user and source, per source, all sources, or all hash slots busy), prepare, sign |
 | `unknown_prepared` | 404 | `prepared_id` unknown, used, or another user's (same answer) |
 | `prepared_expired` | 410 | the prepared request is past `expires_ms` |

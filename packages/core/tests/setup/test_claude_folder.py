@@ -16,6 +16,10 @@ def _home(tmp_path: Path, doc) -> tuple[Path, dict[str, str]]:
     home.mkdir()
     if doc is not None:
         (home / ".claude.json").write_text(json.dumps(doc))
+    exe = home / ".local" / "bin" / "claude"  # a claude in a usual install dir, so the tests do not need a real one
+    exe.parent.mkdir(parents=True)
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
     return home, {"HOME": str(home), "PATH": os.environ.get("PATH", "")}
 
 

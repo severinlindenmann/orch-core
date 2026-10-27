@@ -13,38 +13,39 @@ const now = Date.parse('2026-10-16T12:00:00Z')
 let runner: Runner
 beforeEach(() => {
   setClock(() => now)
-  runner = { enabled: true, connected: true, grant: { id: 'runner', scope: 'workable', until: '2026-10-16T13:00:00Z' } } as Runner
+  runner = { enabled: true, connected: true, grant: { id: 'runner', scope: 'workable', until: '2026-10-16T12:45:00Z' } } as Runner
   vi.spyOn(agentsApi, 'runner').mockImplementation(async () => ({ runner }))
   vi.spyOn(api, 'listHostGrants').mockResolvedValue([
-    { id: 'runner', person: 'me', issued_at: '2026-10-16T05:00:00Z', expires_at: '2026-10-16T13:00:00Z', revoked: null },
+    { id: 'runner', person: 'me', issued_at: '2026-10-16T05:00:00Z', expires_at: '2026-10-16T12:45:00Z', revoked: null },
     { id: 'terminal', person: 'me', expires_at: '2026-10-17T13:00:00Z', revoked: null },
     { id: 'other', person: 'someone-else', expires_at: '2026-10-17T13:00:00Z', revoked: null },
   ] as Awaited<ReturnType<typeof api.listHostGrants>>)
 })
-const pillButton = () => screen.findByRole('button', { name: /^Agent access/ })
-async function openPill() { fireEvent.click(await pillButton()) }
-async function stopFromPill() { await openPill(); fireEvent.click(await screen.findByRole('button', { name: 'Stop' })) }
+async function stopFromPill() { fireEvent.click(await screen.findByRole('button', { name: 'Stop' })) }
 function show() { return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AgentAccess ws="ws" /></QueryClientProvider>) }
-it('shows the runner expiry and short-grant reminder and opens Extend', async () => {
+it('hides itself while access has an hour or more left', async () => {
+  runner.grant = { id: 'runner', scope: 'workable', until: '2026-10-16T20:00:00Z' } as Runner['grant']
+  const view = show()
+  await waitFor(() => expect(vi.mocked(agentsApi.runner)).toHaveBeenCalled())
+  await new Promise(r => setTimeout(r, 50))
+  expect(view.container.querySelector('.agent-access')?.textContent ?? '').toBe('')
+  expect(screen.queryByRole('button', { name: 'Allow agents' })).not.toBeInTheDocument()
+})
+it('with 15 to 60 minutes left it says when access ends and offers Allow agents', async () => {
   show()
-  // one hour of an 8-hour access is left: the pill calmly says it ends soon
-  expect(await pillButton()).toHaveTextContent('Agent access ends in 1 h')
-  await openPill()
-  expect(await screen.findByText(/Agents may work for you until/)).toBeInTheDocument()
-  expect(screen.getByRole('list', { name: 'Your agent access' })).toHaveTextContent('Agents on this computer · until')
-  fireEvent.click(screen.getByRole('button', { name: 'Extend agent access' }))
-  expect(screen.getByRole('heading', { name: 'Extend agent access' })).toBeInTheDocument()
-  expect(screen.getByText(/counted from now and replaces your current access/)).toBeInTheDocument()
-  expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
+  expect(await screen.findByText(/Agent access ends at/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Allow agents' }))
+  expect(screen.getByRole('heading', { name: 'Allow agents' })).toBeInTheDocument()
+  expect(screen.getByText(/replaces your current access/)).toBeInTheDocument()
   expect(await screen.findByRole('button', { name: 'Complete runner' })).toBeInTheDocument()
 })
-it('with no agent access at all (also after a reload) the pill offers to let agents work', async () => {
+it('with no agent access (also after a reload) it says agents cannot start yet', async () => {
   runner.grant = null
   show()
-  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent('Agents off')
+  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent("Agents can't start yet")
   expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
-  expect(screen.getByRole('heading', { name: 'Allow agent access' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Allow agents' }))
+  expect(screen.getByRole('heading', { name: 'Allow agents' })).toBeInTheDocument()
   expect(await screen.findByRole('button', { name: 'Complete new grant' })).toBeInTheDocument()
 })
 it('the Stop review says whose access and until when in plain words, the id only under Technical details', async () => {
@@ -68,15 +69,14 @@ it('confirms Stop and signs each own grant separately with progress', async () =
   fireEvent.click(screen.getByRole('button', { name: 'Sign stop terminal' }))
   expect(screen.queryByText('Stopping access 2 of 2. 1 stopped.')).not.toBeInTheDocument()
 })
-it('shows stopped after a completed Extend with no live runner grant, and Start again opens a new flow', async () => {
+it('shows the cannot-start line after a completed Extend with no live runner grant, and Allow agents opens a new flow', async () => {
   show()
-  await openPill()
-  fireEvent.click(await screen.findByRole('button', { name: 'Extend agent access' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Allow agents' }))
   runner = { ...runner, grant: null }
   fireEvent.click(screen.getByRole('button', { name: 'Complete runner' }))
-  await screen.findByText('Agents stopped')
+  await screen.findByText("Agents can't start yet")
   fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
-  fireEvent.click(await screen.findByRole('button', { name: 'Start again' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Allow agents' }))
   expect(await screen.findByRole('button', { name: 'Complete new grant' })).toBeInTheDocument()
 })
 
@@ -97,43 +97,27 @@ it.each(['Reject stop', 'Close stop', 'Reject click stop'])('retains partial Sto
   expect(screen.queryByRole('button', { name: 'Sign stop runner' })).not.toBeInTheDocument()
 })
 
-it('keeps "Agents stopped · Start again" after Stop completes', async () => {
+it('says agents cannot start yet after Stop completes', async () => {
   show()
   await stopFromPill()
   fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Sign stop runner' }))
   runner = { ...runner, grant: null }
   fireEvent.click(screen.getByRole('button', { name: 'Sign stop terminal' }))
-  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent('Agents stopped')
-  fireEvent.click(screen.getByRole('button', { name: 'Start again' }))
+  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent("Agents can't start yet")
+  fireEvent.click(screen.getByRole('button', { name: 'Allow agents' }))
   expect(await screen.findByRole('button', { name: 'Complete new grant' })).toBeInTheDocument()
 })
 
-it('K3: cancelling the first Stop signature restores the normal pill, no "Stopped 0 of 2"', async () => {
+it('K3: cancelling the first Stop signature restores the normal line, no "Stopped 0 of 2"', async () => {
   show()
   await stopFromPill()
   fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Close stop' }))
   expect(screen.queryByText(/Stopped 0 of/)).toBeNull()
   expect(screen.queryByRole('button', { name: 'Stop again' })).toBeNull()
-  await openPill()
-  expect(await screen.findByRole('button', { name: 'Extend agent access' })).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: 'Allow agents' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
-})
-
-it('K8: the pill shows the soonest end of all own access, with "+1 more"', async () => {
-  runner = { ...runner, grant: { id: 'runner', scope: 'workable', until: '2026-10-19T13:00:00Z' } } as Runner
-  vi.mocked(api.listHostGrants).mockResolvedValue([
-    { id: 'runner', person: 'me', issued_at: '2026-10-16T05:00:00Z', expires_at: '2026-10-19T13:00:00Z', revoked: null },
-    { id: 'terminal', person: 'me', expires_at: '2026-10-16T20:00:00Z', revoked: null },
-  ] as Awaited<ReturnType<typeof api.listHostGrants>>)
-  show()
-  const pill = await pillButton()
-  await waitFor(() => expect(pill.querySelector('time')?.getAttribute('datetime')).toBe('2026-10-16T20:00:00.000Z'))
-  fireEvent.click(pill)
-  const list = await screen.findByRole('list', { name: 'Your agent access' })
-  expect(list.querySelectorAll('li')).toHaveLength(2)
-  expect(screen.getByText(/The other access keeps its own end time/)).toBeInTheDocument()
 })
 
 it('F8: after a stop the run list is refreshed, and the Stop dialog says a started run needs its own Stop', async () => {

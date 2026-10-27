@@ -245,7 +245,7 @@
   }
   /* A new "needs you" card slides in, then pulses a warning ring once. */
   .needs-new {
-    animation: needs-in 300ms var(--ease-out), needs-pulse 1.6s ease-out 300ms 1;
+    animation: needs-in 200ms var(--ease-out), needs-pulse 200ms ease-out 200ms 3;
   }
   /* Toasts: sonner's 400 ms is slow for a status line. Coupled to sonner's own attribute (sonner 2.x): if an upgrade renames it, this rule silently stops applying. */
   [data-sonner-toast] {

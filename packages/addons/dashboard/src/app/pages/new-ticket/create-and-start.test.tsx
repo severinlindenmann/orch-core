@@ -6,7 +6,7 @@ import { agentsApi, LOGIN_NOTICE, type AgentPreview } from '@/api/agents'
 import { api, mockStore } from '@/api/client'
 import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { ApiError } from '@/api/types'
-import { markOf } from '@/app/pages/ticket/progress'
+import { clearMark, markOf } from '@/app/pages/ticket/progress'
 import { fakeRequest, state } from '@/test/handoffHarness'
 import { renderApp } from '@/test/renderApp'
 import { nowMs } from '@/lib/time'
@@ -80,7 +80,7 @@ async function open(storage: Record<string, string> = {}) {
 const sent = async () => JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
 const startBtn = (sheet: HTMLElement) => within(sheet).findByRole('button', { name: 'Review and start agent' }, T)
 
-beforeEach(() => { GRANT = { ...GRANT, until: inHours(48) }; setup() })
+beforeEach(() => { clearMark(WS(), 'DEMO-0044'); GRANT = { ...GRANT, until: inHours(48) }; setup() })
 
 describe('the form', () => {
   it('offers Create and start agent first and Only create second, with one agent line', async () => {

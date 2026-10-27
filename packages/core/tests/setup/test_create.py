@@ -406,3 +406,17 @@ def test_b3_refresh_restarts_a_runner_of_another_release(tmp_path, monkeypatch):
     monkeypatch.setattr(hostcli, "_restart_stale_runner", fake)
     out = hostcli.refresh_stale_runner(tmp_path, {"HOME": str(tmp_path)})
     assert out == {"runner_restarted": True} and seen["mine"]
+
+
+def test_item5_a_custody_refusal_shows_the_reason_and_the_fix(tmp):
+    from orch.custody.base import CustodyError
+
+    ports = FakePorts()
+
+    def refuse(wid):
+        raise CustodyError("/h/.config/orch/person is writable by others (mode 770); run: chmod 700 /h/.config/orch/person")
+
+    ports.convenience_on = refuse
+    f, ports, p, _ = run_ok(tmp, CLICK, ports=ports)
+    msg = p["error"]["message"]
+    assert p["error"]["code"] == "custody.error" and "chmod 700" in msg and "CustodyError" not in msg

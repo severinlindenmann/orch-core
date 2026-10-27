@@ -532,9 +532,12 @@ class Creator:
         except SetupError as e:
             self._fail(e, post_genesis)
         except CustodyError as e:
-            self._fail(SetupError("custody.error", f"the key custody refused ({type(e).__name__})", 409), post_genesis)
+            why = self._safe(str(e), 300) or type(e).__name__  # B2/5: the reason and the fix, in words
+            self._fail(SetupError("custody.error", f"the key custody refused: {why}", 409), post_genesis)
         except BaseException as e:  # noqa: BLE001 - the thread must report, never die silently
-            self._fail(SetupError("internal", f"setup failed ({type(e).__name__})", 500), post_genesis)
+            why = self._safe(str(e), 300)
+            tail = f": {why}" if why else ""
+            self._fail(SetupError("internal", f"setup failed ({type(e).__name__}){tail}", 500), post_genesis)
         finally:
             if self.run.error is not None:
                 self._rescue_passphrase()  # before the wipe: never leave a one-click key under an unseen passphrase

@@ -2242,7 +2242,7 @@ class Store:
         with self._locked():
             raw = self._config_json()
             if raw is None:
-                raise StoreError("store.config_missing", "config.json is missing")
+                raise StoreError("trust.genesis_mismatch", "config.json is missing")
             doc = loads(raw)
             schema.validate("workspace", doc)
             ws = doc["workspace"]

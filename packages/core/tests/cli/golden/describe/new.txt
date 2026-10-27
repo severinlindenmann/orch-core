@@ -18,8 +18,8 @@ errors:
   addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
-  sign.cancelled (exit 3): run the command again to review | fix: 
-  tty.required (exit 3): run the command in your terminal | fix: 
+  sign.cancelled (exit 3): run it again to review | fix: orch help
+  tty.required (exit 3): run it in your terminal | fix: orch help
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   parse.text (exit 6): orch describe new
 out: ok {key} ticket.created {ticket_type} seq={seq} / next: {next}

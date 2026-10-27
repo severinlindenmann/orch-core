@@ -66,7 +66,7 @@ def test_terminal_default_has_no_settings_item_and_no_word(flow):
 def test_r2_long_agent_hours_and_a_runner_grant_need_no_typed_word(flow):
     out = to_review(flow, {**PROFILE, "agent_hours": 24})
     assert "typed_word" not in out
-    assert "settings" not in [i["id"] for i in out["items"]]
+    assert [i["id"] for i in out["items"]][:1] == ["settings"]
     row = out["items"][0]
     assert any("grant_hours" in line and "24" in line for line in row["lines"])
     f2 = rev_flow(flow)

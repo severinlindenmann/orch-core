@@ -3,7 +3,13 @@
   "error": {
     "code": "sign.cancelled",
     "message": "nothing was signed",
-    "hint": "run the command again to review",
+    "hint": "run it again to review",
+    "fix": {
+      "argv": [
+        "orch",
+        "help"
+      ]
+    },
     "retryable": false
   }
 }

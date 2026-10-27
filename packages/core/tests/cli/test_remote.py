@@ -205,7 +205,7 @@ def test_a_root_side_problem_is_shown_in_the_dry_run_and_stops_the_real_run(rig)
 def test_declining_the_confirm_changes_nothing(rig):
     rig.answer = "n"
     code, out, _ = rig.go("enable", "--name", NAME)
-    assert code == 1 and rig.asked == ["Make these changes? [y/N] "] and rig.calls == [] and rig.files() == []
+    assert code == 1 and rig.asked == ["Make these changes?"] and rig.calls == [] and rig.files() == []
     rig.answer = ""
     assert rig.go("enable", "--name", NAME)[0] == 1 and rig.calls == []
 
@@ -347,7 +347,7 @@ def test_disable_asks_first(rig):
     _enabled(rig)
     rig.answer = "no"
     assert rig.go("disable")[0] == 1 and rig.calls == [] and (rig.state / "dashboard" / "remote.json").exists()
-    assert rig.asked[-1] == "Take remote access away? [y/N] "
+    assert rig.asked[-1] == "Take remote access away?"
 
 
 def test_disable_when_the_root_step_fails_has_still_taken_remote_json_away(rig):

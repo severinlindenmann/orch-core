@@ -1,1 +1,1 @@
-err tty.required signing requires a controlling terminal · retry:false · next: run the command in your terminal
+err tty.required signing requires a controlling terminal · retry:false · next: run it in your terminal · fix: orch help

@@ -13,8 +13,8 @@ errors:
   not_found (exit 2): orch list
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
-  sign.cancelled (exit 3): run the command again to review | fix: 
-  tty.required (exit 3): run the command in your terminal | fix: 
+  sign.cancelled (exit 3): run it again to review | fix: orch help
+  tty.required (exit 3): run it in your terminal | fix: orch help
   claim.required (exit 4): orch claim
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   parse.text (exit 6): orch describe handoff

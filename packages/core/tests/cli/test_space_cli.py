@@ -86,13 +86,13 @@ def test_share_shows_the_members_and_sends_exactly_that_list(host):
     assert host.called[-1] == ("space.share", {"space_id": SID, "members": [WS1, WS2]})
     host.yes = False
     n = len(host.called)
-    assert run(["share", SID])[0] == 5 and host.called[n:] == [("space.list", {})]  # not approved: nothing stored
+    assert run(["share", SID])[0] == 3 and host.called[n:] == [("space.list", {})]  # not approved: nothing stored
 
 
 def test_accept_always_asks_and_shows_the_transition(host):
     argv = ["accept", SID, "--epoch", "2", "--prev-members", WS1, "--members", f"{WS1},{WS2}"]
     host.yes = False
-    assert run(argv)[0] == 5 and host.called == []
+    assert run(argv)[0] == 3 and host.called == []
     prompt = host.asked[-1]
     assert SID in prompt and "epoch 2" in prompt and WS1 in prompt and WS2 in prompt
     host.yes = True
@@ -121,13 +121,13 @@ def test_share_with_members_still_asks_and_the_list_must_be_the_hubs_current_one
     code, out = run(["share", SID, "--members", WS1])  # not what the hub lists now: refused before any prompt
     assert code == 5 and len(host.asked) == asked and [c[0] for c in host.called[n:]] == ["space.list"]
     host.yes = False
-    assert run(["share", SID, "--members", f"{WS1},{WS2}"])[0] == 5 and host.called[-1][0] == "space.list"
+    assert run(["share", SID, "--members", f"{WS1},{WS2}"])[0] == 3 and host.called[-1][0] == "space.list"
 
 
 def test_accept_prompt_shows_the_signed_hashes(host):
     run(["accept", SID, "--epoch", "2", "--prev-members", WS1, "--members", f"{WS1},{WS2}"])
     from orch.hubclient.spaces import members_hash
 
-    prompt = host.asked[-1][0]
+    prompt = host.asked[-1]
     assert members_hash([WS1])[:16] in prompt and members_hash(sorted([WS1, WS2]))[:16] in prompt
     assert "hub admin" in prompt

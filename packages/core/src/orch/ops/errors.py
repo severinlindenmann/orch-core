@@ -55,8 +55,8 @@ _SPECS = [
         3,
         False,
         "signing requires a controlling terminal",
-        "run the command in your terminal",
-        [],
+        "run it in your terminal",
+        ["orch", "help"],
         "No controlling terminal; nothing signed.",
     ),
     _e(
@@ -64,8 +64,8 @@ _SPECS = [
         3,
         False,
         "nothing was signed",
-        "run the command again to review",
-        [],
+        "run it again to review",
+        ["orch", "help"],
         "The signing review was cancelled.",
     ),
     _e(

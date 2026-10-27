@@ -350,7 +350,7 @@ def test_sync_shows_what_is_new_and_binds_the_plan(share_host):
     assert share_host.called == [("share.preview", {}), ("share.sync", {"expect": "p" * 43})]
     share_host.called.clear()
     share_host.yes = False
-    assert run(["share", "sync"], {}, as_json=True)[0] == 5 and [op for op, _ in share_host.called] == ["share.preview"]
+    assert run(["share", "sync"], {}, as_json=True)[0] == 3 and [op for op, _ in share_host.called] == ["share.preview"]
 
 
 # --- C8 goldens: keys rotate and hub history (exact output; both are host ops, so no registry golden file) -----------

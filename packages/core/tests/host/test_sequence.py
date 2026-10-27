@@ -8,6 +8,7 @@ import pytest
 
 from orch.host import sequence, signer
 from orch.host.sequence import Aborted, Driver, Port, Sessions
+from orch.ops.errors import OrchError
 from tests.host import human_helpers
 from tests.host.human_helpers import ok
 
@@ -340,7 +341,7 @@ def test_terminal_not_confirmed_signs_nothing(human, served, tmp_path):
     rig = Rig(human, tmp_path)
     p = handoff_first(rig)
     shown = Shown(answer=False)
-    with pytest.raises(__import__("orch.ops.errors", fromlist=["OrchError"]).OrchError, match="nothing was signed"):
+    with pytest.raises(OrchError, match="nothing was signed"):
         terminal(rig, served, shown, p["request"]["id"])
     assert human.backend.payloads == []
 
@@ -426,8 +427,9 @@ def test_the_terminal_review_shows_a_newline_in_a_text_only_as_marked_lines(huma
     rig = Rig(human, tmp_path, intent)
     p = handoff_first(rig)
     shown = Shown(answer=False)
-    with pytest.raises(signer.SignerRefused):
+    with pytest.raises(OrchError, match="nothing was signed") as err:
         terminal(rig, served, shown, p["request"]["id"])
+    assert err.value.code == "sign.cancelled"
     plain = shown.plain[0]
     assert "  | line one" in plain and "  | line two" in plain and "  | line four" in plain
     assert "\x1b" not in plain and "\r" not in plain

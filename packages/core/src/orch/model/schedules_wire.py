@@ -5,11 +5,22 @@ from datetime import UTC, datetime
 from . import claims, identity, schedules
 from . import followups as fu
 from .codes import Code, Refusal
+from .followups_wire import enabled
 from .types import Grant, ScheduleRec, ts
 
 
 def denied(detail):
     return Refusal(Code.SCHEDULE_DENIED, detail)
+
+
+def addon_off(core):
+    """The Schedules add-on was turned off or purged: every live run grant ends for good, so turning it on again
+    never revives one (the next occurrence fires with a fresh grant)."""
+    for ticket in core.tickets.values():
+        for rec in ticket.schedules.values():
+            for row in rec.occurrences.values():
+                if row.get("grant") and not row.get("outcome"):
+                    core.ws.grants[row["grant"]].ended = True
 
 
 def device_live(ws, person, device, now):
@@ -41,6 +52,8 @@ def set_event(core, t, e):
     ws, now, a = core.ws, ts(e["at"]), e["actor"]
     if a["kind"] != "person":
         return denied("only a person may set a schedule")
+    if not enabled(ws):
+        return denied("addon_off: the Schedules add-on must be enabled")
     signer = identity.signer(ws, e)
     if signer.role not in ("owner", "maintainer", "member") or not device_live(
         ws, signer.person, a.get("device", ""), now
@@ -89,6 +102,8 @@ def fired_event(core, t, e):
     now, occurrence = ts(e["at"]), ts(e["occurrence"])
     if e["actor"]["kind"] != "host" or rec is None or rec.cancelled:
         return denied("schedule is not live")
+    if not enabled(core.ws):
+        return denied("addon_off: the Schedules add-on must be enabled")
     if e["occurrence"] in rec.occurrences:
         return denied("occurrence already recorded")
     if not ts(rec.starts) <= now < ts(rec.ends):
@@ -192,6 +207,7 @@ def root_valid(core, root_id, now):
             if rec.set_event == root_id:
                 return (
                     not rec.cancelled
+                    and enabled(core.ws)
                     and ts(rec.starts) <= now < ts(rec.ends)
                     and blocked(core, ticket, rec, now) not in ("role_lost", "device_lost")
                 )

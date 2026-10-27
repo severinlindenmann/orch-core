@@ -13,7 +13,7 @@ from .followups import FU_BRIEF_MAX_BYTES, FU_RUN_HOURS
 from .followups import REASONS as FU_REASONS
 
 MAX_DAYS = 30
-REASONS = (*FU_REASONS, "role_lost", "device_lost", "ticket_closed", "claimed_by_other", "missed")
+REASONS = (*FU_REASONS, "role_lost", "device_lost", "ticket_closed", "claimed_by_other", "missed", "addon_disabled")
 
 
 def validate_rule(rule):

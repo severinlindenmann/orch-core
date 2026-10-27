@@ -3,13 +3,28 @@
 from datetime import timedelta
 
 from orch import canon
-from orch.model import advance
+from orch.model import Code, advance
 from orch.model.types import ts
-from tests.model.world import World, stamp
+from tests.model.world import World, digest, refused, stamp
+
+
+def grant_addon(w):
+    w.wev(
+        "addon.granted",
+        "sev",
+        name="schedules",
+        version="1.0.0",
+        package_sha256=digest("schedules"),
+        capabilities=[],
+        fields={},
+        sections=[],
+        artifact_kinds=[],
+    )
 
 
 def setup():
     w = World().bootstrap({"tom": "member"})
+    grant_addon(w)
     uid = w.ticket(owner="tom")
     due = w.clock.replace(second=0) + timedelta(hours=2)
     e, result = w.try_(
@@ -96,8 +111,6 @@ def test_device_loss_and_outcome_needs_you():
 
 
 def test_grant_works_only_on_ticket_and_ends_at_cancel():
-    from tests.model.world import refused
-
     w, uid, e, due = setup()
     w.clock = due
     fired, result = fire(w, uid, e, due)
@@ -109,6 +122,87 @@ def test_grant_works_only_on_ticket_and_ends_at_cancel():
     assert refused(w, other, "log.added", actor, text="wrong scope") is not None
     w.tev(uid, "schedule.cancelled", "tom", schedule=e["schedule"])
     assert refused(w, uid, "log.added", actor, text="after cancel") is not None
+
+
+def test_addon_off_refuses_and_ends_run_grants_and_on_again_fires_fresh():
+    from orch.model.followups import chain_valid
+    from orch.model.followups_wire import grant_chain
+    from orch.model.schedules_wire import root_valid
+
+    w = World().bootstrap({"tom": "member"})
+    grant_addon(w)
+    uid = w.ticket(owner="tom")
+    due = w.clock.replace(second=0) + timedelta(hours=2)
+    e, result = w.try_(
+        uid,
+        "schedule.set",
+        "tom",
+        schedule="sc_" + w.nid(),
+        brief="Daily check",
+        rule={"every": "day", "at": due.strftime("%H:%M"), "tz": "UTC"},
+        starts=w.at(),
+        ends=stamp(due + timedelta(days=2, hours=1)),
+        run_hours=2,
+    )
+    assert not hasattr(result, "code"), result
+    w.clock = due
+    fired, result = fire(w, uid, e, due)
+    assert not hasattr(result, "code"), result
+    actor = w.agent("tom", fired["grant"])
+    assert refused(w, uid, "log.added", actor, text="scheduled work") is None
+
+    w.clock = due + timedelta(minutes=10)
+    w.wev("addon.disabled", "sev", name="schedules")
+    core, now = w.state()._core, ts(w.at())
+    chain = grant_chain(core.ws, fired["grant"])
+    assert chain and not root_valid(core, chain[-1].id, now)
+    assert core.ws.grants[fired["grant"]].ended
+    assert refused(w, uid, "log.added", actor, text="add-on off") is not None
+    payload = {k: e[k] for k in ("brief", "rule", "ends", "run_hours")}
+    _, result = w.try_(uid, "schedule.set", "tom", schedule="sc_" + w.nid(), starts=w.at(), **payload)
+    assert "addon_off" in result.detail
+
+    second = due + timedelta(days=1)
+    w.clock = second
+    result = fire(w, uid, e, second)[1]
+    assert result.code == Code.SCHEDULE_DENIED and "addon_off" in result.detail
+    _, result = w.try_(
+        uid,
+        "schedule.outcome",
+        w.HOST,
+        schedule=e["schedule"],
+        occurrence=stamp(second),
+        outcome="did_not_run",
+        reason="addon_disabled",
+    )
+    assert not hasattr(result, "code"), result
+
+    w.clock = second + timedelta(hours=1)
+    grant_addon(w)
+    # On again: the occurrence missed while off stays did_not_run and the old run grant stays ended.
+    assert hasattr(fire(w, uid, e, second)[1], "code")
+    assert refused(w, uid, "log.added", actor, text="revived?") is not None
+    third = due + timedelta(days=2)
+    w.clock = third
+    again, result = fire(w, uid, e, third)
+    assert not hasattr(result, "code"), result
+    assert again["grant"] != fired["grant"]
+    core, now = w.state()._core, ts(w.at())
+    chain = grant_chain(core.ws, again["grant"])
+    assert root_valid(core, chain[-1].id, now) and chain_valid(chain, at=now, root_person_active=True)
+    assert refused(w, uid, "log.added", w.agent("tom", again["grant"]), text="fresh run") is None
+
+
+def test_purge_ends_schedule_root():
+    from orch.model.schedules_wire import root_valid
+
+    w, uid, e, due = setup()
+    w.clock = due
+    fired, result = fire(w, uid, e, due)
+    assert not hasattr(result, "code"), result
+    w.wev("addon.purged", "sev", name="schedules")
+    assert not root_valid(w.state()._core, e["id"], ts(w.at()))
+    assert refused(w, uid, "log.added", w.agent("tom", fired["grant"]), text="purged") is not None
 
 
 def test_fabricated_occurrence_and_early_outcome_refused():

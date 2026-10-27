@@ -322,8 +322,7 @@
           ]
         },
         "at": {
-          "type": "string",
-          "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9](?![\\s\\S])"
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/timeOfDay"
         },
         "tz": {
           "type": "string",
@@ -345,8 +344,7 @@
           "maximum": 31
         },
         "date": {
-          "type": "string",
-          "format": "date"
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/date"
         }
       },
       "required": [

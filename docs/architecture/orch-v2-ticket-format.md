@@ -491,9 +491,9 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `people.changed` | P | `role`: `owner`, `assignees`, `reviewers` or `watchers`; `add`: [person id]; `remove`: [person id] | For `owner`, `add` has exactly one id and the old owner is removed. On `done`/`closed` refused for roles a gate policy names. |
 | `policy.changed` | P | `gates`: {gate: policy} | In the ticket log: an override, intersected with the workspace policy (§5.7). |
 | `claim.taken` | A | `takeover?`: {`from_session`: session id, `reason`: str} | Agents only. One claim per ticket. Refused on `done`/`closed`. |
-| `schedule.set` | P | `schedule`: sc_ ULID; `rule`: `{every: once, day, week or month; at: HH:MM; tz: IANA zone; weekdays?: [0..6]; day?: 1..31; date?: YYYY-MM-DD}`; `starts`, `ends`: timestamps, at most 30 days apart; `brief`: str, at most 4096 bytes; `run_hours`: 1..8; `label?`: line | Bounded manual calendar rule on this ticket; a person authority root (non-viewer, live device). |
+| `schedule.set` | P | `schedule`: sc_ ULID; `rule`: `{every: once, day, week or month; at: HH:MM; tz: IANA zone; weekdays?: [0..6]; day?: 1..31; date?: YYYY-MM-DD}`; `starts`: timestamp; `ends`: timestamp, at most 30 days after `starts`; `brief`: str, at most 4096 bytes; `run_hours`: 1..8; `label?`: line | Bounded manual calendar rule on this ticket; a person authority root (non-viewer, live device). |
 | `schedule.fired` | H | `schedule`: sc_ ULID; `occurrence`: UTC timestamp; `grant`: grant id; `secret_hash`: hash; `run`: r_ ULID | Derives a fresh one-run grant scoped to this ticket; role, device and claim re-checked; each occurrence at most once. |
-| `schedule.outcome` | H | `schedule`: sc_ ULID; `occurrence`: UTC timestamp; `outcome`: ran, failed or did_not_run; `reason?`: follow-up outcome reason, role_lost, device_lost, ticket_closed, claimed_by_other or missed | Ends the run grant. |
+| `schedule.outcome` | H | `schedule`: sc_ ULID; `occurrence`: UTC timestamp; `outcome`: ran, failed or did_not_run; `reason?`: follow-up outcome reason, role_lost, device_lost, ticket_closed, claimed_by_other, missed or addon_disabled | Ends the run grant. |
 | `schedule.cancelled` | P | `schedule`: sc_ ULID | Setter or owner/admin cancels atomically and ends all derived grants; Undo is a new set. |
 | `followup.set` | A | `followup`: fu_ ULID; `trigger`: time, orch, addon or webhook; `due?`: timestamp; `deadline?`: timestamp; `brief`: str, at most 4096 bytes; `label?`: line; `on?`: event match `{source, kind, status, ref?, hook?}` (orch and webhook triggers); `hook?`: sha256 hex of the webhook id | Agents only. Creates a follow-up and releases the claim; see orch-v2-followups FU1–FU16. |
 | `followup.fired` | H | `followup`: fu_ ULID; `grant`: grant id; `trigger`: time, orch, addon, webhook or deadline; `fallback?`: no_event, no_ring or addon_silent; `event?`: the waking event `{source, kind, ref, status, at}`; `secret_hash`: hash; `run`: r_ ULID | Derives a one-run grant scoped to this ticket. |
@@ -575,7 +575,7 @@ with an old role.
 | `grant.issued`, `grant.revoked` | §10.1 A3 (D60) |
 | `grant.requested` | any role with a grant (hub `edit` and `admin`), through the hub only (C10) |
 
-**Unknown types.** The prefixes `ticket`, `status`, `visibility`, `people`, `policy`, `claim`, `followup`, `task`, `handoff`,
+**Unknown types.** The prefixes `ticket`, `status`, `visibility`, `people`, `policy`, `claim`, `followup`, `schedule`, `task`, `handoff`,
 `log`, `question`, `gate`, `verdict`, `branch`, `artifact`, `edit`, `projection`, `restore`, `workspace`, `member`,
 `role`, `device`, `settings`, `grant`, `addon`, `invalid`, `hub` and `relay` are reserved: no addon may take one of these names, and an
 unknown type under one of them is refused. Custom `<addon>.<verb>` events are deferred (A5); in P1 they are

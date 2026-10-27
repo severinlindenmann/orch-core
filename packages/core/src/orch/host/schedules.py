@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from orch.identity import new_grant, new_ulid
 from orch.model import followups as rules
 from orch.model import schedules, schedules_wire
-from orch.model.followups_wire import caps_of
+from orch.model.followups_wire import caps_of, enabled
 from orch.model.types import ts
 
 from .followups import FollowupRunner
@@ -38,6 +38,9 @@ class ScheduleRunner(FollowupRunner):
         if not self._owns(store, core):
             return [], 0, 0
         rows, today = [], 0
+        # Add-on off or purged: nothing fires; an occurrence that comes due meanwhile is settled did_not_run
+        # (addon_disabled), never backfilled when the add-on is on again.
+        on = enabled(core.ws)
         for ticket in core.tickets.values():
             for rec in ticket.schedules.values():
                 for occurrence, row in rec.occurrences.items():
@@ -49,9 +52,11 @@ class ScheduleRunner(FollowupRunner):
                     continue
                 after = max((ts(o) for o in rec.occurrences), default=ts(rec.starts) - 1)
                 due = schedules.occurrences(rec.rule, ts(rec.starts), ts(rec.ends), after)
-                if due is not None and now >= due - caps_of(core.ws).early_s:
+                if due is not None and now >= due - (caps_of(core.ws).early_s if on else 0):
                     reason = (
-                        "missed"
+                        "addon_disabled"
+                        if not on
+                        else "missed"
                         if now > due + rules.FU_LATE_S or now >= ts(rec.ends)
                         else schedules_wire.blocked(core, ticket, rec, now)
                     )

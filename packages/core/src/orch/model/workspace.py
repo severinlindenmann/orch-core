@@ -682,6 +682,10 @@ def addon_event(core: Core, e: dict[str, Any]) -> Refusal | None:
         generations.mark(t, *named)
 
     cross(core, change, per_ticket)
+    if name == "schedules" and typ != "addon.granted":
+        from .schedules_wire import addon_off
+
+        addon_off(core)
     return None
 
 

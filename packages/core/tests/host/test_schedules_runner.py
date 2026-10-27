@@ -85,6 +85,124 @@ async def _once_restart_cancel(monkeypatch, tmp_path, cancelled):
         assert commands[0][1]["secret"]
 
 
+def test_addon_off_skips_firing_settles_due_and_on_again_fires_fresh(monkeypatch, tmp_path):
+    asyncio.run(_addon_off_on(monkeypatch, tmp_path))
+
+
+async def _addon_off_on(monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    from orch.host import agents
+    from orch.host.followups import FollowupRunner
+    from orch.model.followups_wire import grant_chain
+    from orch.model.schedules_wire import root_valid
+    from orch.model.types import ts
+    from tests.model.test_schedules_wire import grant_addon
+    from tests.model.world import World, stamp
+
+    w = World().bootstrap({"tom": "member"})  # noqa: F811 - imported fixture
+    grant_addon(w)
+    uid = w.ticket(owner="tom")
+    due = w.clock.replace(second=0) + timedelta(hours=2)
+    event, result = w.try_(
+        uid,
+        "schedule.set",
+        "tom",
+        schedule="sc_" + w.nid(),
+        brief="Daily check",
+        rule={"every": "day", "at": due.strftime("%H:%M"), "tz": "UTC"},
+        starts=w.at(),
+        ends=stamp(due + timedelta(days=2, hours=1)),
+        run_hours=2,
+    )
+    assert not hasattr(result, "code"), result
+    commands = []
+
+    class Store:
+        def refresh(self):
+            pass
+
+        def load_all(self):
+            pass
+
+        @property
+        def state(self):
+            return w.state()
+
+        def append(self, payload, log):
+            e, result = w.try_(
+                log, payload["type"], w.HOST, **{k: v for k, v in payload.items() if k not in ("type", "actor")}
+            )
+            assert not hasattr(result, "code"), result
+            return NS(event=e)
+
+    async def call(fn, *args):
+        return fn(*args)
+
+    async def command(name, payload):
+        commands.append((name, payload))
+
+    async def launch(call, hub, data):
+        hub.store.records[data["run"]] = {"state": "running"}
+
+    hub = NS(connected=True, store=NS(records={}), command=command)
+    service = NS(
+        state_dir=tmp_path,
+        workspace_id=w.workspace_id,
+        host_uid=__import__("os").getuid(),
+        store=Store(),
+        state="ok",
+        closing=False,
+        call=call,
+        sync=lambda: None,
+        runners=hub,
+    )
+    monkeypatch.setattr(FollowupRunner, "_owns", lambda *a: True)
+    monkeypatch.setattr(FollowupRunner, "_plan", lambda self, uid, key, rec, hub: (None, {"run": rec.run}, None))
+    monkeypatch.setattr(agents, "_start", launch)
+    clock = [due]
+    runner = ScheduleRunner(service, clock=lambda: clock[0].timestamp(), mono=lambda: 0)
+
+    def occurrences():
+        return w.state()._core.tickets[uid].schedules[event["schedule"]].occurrences
+
+    def tick(at):
+        clock[0] = w.clock = at
+        return runner.tick_once()
+
+    await tick(due)
+    assert len(commands) == 1
+    first = commands[0][1]["grant"]
+
+    w.clock = due + timedelta(minutes=10)
+    w.wev("addon.disabled", "sev", name="schedules")
+    core = w.state()._core
+    chain = grant_chain(core.ws, first)
+    assert chain and not root_valid(core, chain[-1].id, ts(w.at())) and core.ws.grants[first].ended
+
+    second = due + timedelta(days=1)
+    await tick(second - timedelta(minutes=2))  # inside the early window: nothing fires and nothing is settled yet
+    assert len(commands) == 1 and stamp(second) not in occurrences()
+    await tick(second)
+    assert len(commands) == 1
+    row = occurrences()[stamp(second)]
+    assert (row["outcome"], row["reason"], row.get("grant")) == ("did_not_run", "addon_disabled", None)
+
+    w.clock = second + timedelta(hours=1)
+    grant_addon(w)
+    await tick(second + timedelta(hours=1))
+    assert len(commands) == 1  # no backfill of the occurrence missed while off
+    assert w.state()._core.ws.grants[first].ended
+
+    third = due + timedelta(days=2)
+    await tick(third)
+    assert len(commands) == 2
+    fresh = commands[1][1]["grant"]
+    assert fresh != first and occurrences()[stamp(third)]["grant"] == fresh
+    core = w.state()._core
+    assert not core.ws.grants[fresh].ended and root_valid(core, grant_chain(core.ws, fresh)[-1].id, ts(w.at()))
+
+
 def test_real_store_deposit_and_closed_prompt(env):  # noqa: F811 - imported fixture
     from datetime import UTC, datetime
 

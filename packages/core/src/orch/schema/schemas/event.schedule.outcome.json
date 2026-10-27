@@ -328,7 +328,8 @@
         "device_lost",
         "ticket_closed",
         "claimed_by_other",
-        "missed"
+        "missed",
+        "addon_disabled"
       ]
     }
   },

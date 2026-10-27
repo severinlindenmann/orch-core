@@ -387,8 +387,10 @@ function MarketWorkspace() {
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                           <div className="min-w-0 flex-1 basis-64">
                             <div className="flex min-w-0 items-center gap-2">
-                              <span className="min-w-0 truncate font-medium" title={visible(name)}>
-                                <Inline>{name}</Inline>
+                              <span className="min-w-0 max-w-full font-medium" title={visible(name)}>
+                                <AddonFrame addon="marketplace" title="From the marketplace" compact>
+                                  <Inline>{name}</Inline>
+                                </AddonFrame>
                               </span>
                               {m.cache === 'invalid' ? <span className="shrink-0 text-xs text-warning">Needs refresh</span> : m.cache === 'not_fetched' ? <span className="shrink-0 text-xs text-text-muted">Not read yet</span> : m.stale && <span className="shrink-0 text-xs text-warning">Out of date - refresh</span>}
                               {m.class === 'official' && (

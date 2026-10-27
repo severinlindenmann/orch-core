@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import logging
 import re
+import socket
 import time
 from pathlib import Path
 
@@ -49,7 +50,7 @@ def set_secret(state_dir: Path, host_uid: int, hook_id: str, secret: str) -> Non
 class HookReceiver:
     def __init__(self, host, listen: str, *, clock=time.monotonic):
         addr, _, port = listen.rpartition(":")
-        self.addr, self.port = addr or "127.0.0.1", int(port)
+        self.addr, self.port = addr.strip("[]") or "127.0.0.1", int(port)
         self.host, self.clock = host, clock
         self.server: asyncio.base_events.Server | None = None
         self._seen: dict[str, list[float]] = {}
@@ -58,7 +59,13 @@ class HookReceiver:
 
     async def start(self) -> None:
         self.server = await asyncio.start_server(self._handle, self.addr, self.port)
-        self.addr, self.port = self.server.sockets[0].getsockname()[:2]  # what was really bound
+        socks = self.server.sockets
+        sock = next((s for s in socks if s.family == socket.AF_INET), socks[0])  # several (localhost): prefer IPv4
+        self.addr, self.port = sock.getsockname()[:2]  # what was really bound
+
+    def url(self) -> str:
+        host = f"[{self.addr}]" if ":" in self.addr else self.addr
+        return f"http://{host}:{self.port}"
         LOG.info("webhook receiver listening on %s:%s", self.addr, self.port)
 
     async def close(self) -> None:

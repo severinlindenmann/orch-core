@@ -410,7 +410,7 @@ class Host:
                     raise HostError(
                         "invalid.input", "--hook-listen on every address needs --hook-url (the address agents use)"
                     )
-                self.hook_url = f"http://{self.hooks.addr}:{self.hooks.port}"
+                self.hook_url = self.hooks.url()
         self.bus.start()
         for entry in self.registry.entries():
             if self.skipped(entry.workspace_id):

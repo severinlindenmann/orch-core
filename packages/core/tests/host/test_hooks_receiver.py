@@ -206,6 +206,10 @@ def test_b4_advertised_url_for_port_zero_a_named_port_and_a_wildcard():
     assert url == f"http://127.0.0.1:{free}" and port == free
     with pytest.raises(HostError, match="--hook-url"):
         _host_with("0.0.0.0:0")
+    url, port = _host_with("[::1]:0")
+    assert url == f"http://[::1]:{port}"  # IPv6 is bracketed
+    url, port = _host_with("localhost:0")
+    assert url == f"http://127.0.0.1:{port}"  # several sockets: the IPv4 one
     url, _ = _host_with("0.0.0.0:0", hook_url="http://hooks.example:9000")  # told explicitly: fine
     assert url == "http://hooks.example:9000"
 
@@ -269,3 +273,16 @@ def test_per_peer_cap_does_not_block_another_address():
     assert fifth.out == hooks.ANSWER and fifth.closed
     assert other.out == hooks.ANSWER
     assert receiver._open == {}
+
+
+def test_mask_hooks_keeps_types_and_never_raises():
+    from pathlib import Path
+
+    from orch.host.outcomes import _mask_hooks
+
+    hid = fe.new_hook_id()
+    out = _mask_hooks(
+        {"on": [f"webhook:{hid}", ("x", f"webhook:{hid}")], "p": Path("/a"), "n": {"k": f"{hid}"}, "o": object}
+    )
+    assert hid not in str(out)
+    assert out["p"] == Path("/a") and out["on"][1][0] == "x" and isinstance(out["on"][1], tuple)

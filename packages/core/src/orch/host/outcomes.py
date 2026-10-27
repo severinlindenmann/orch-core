@@ -41,7 +41,6 @@ import base64
 import binascii
 import contextlib
 import hashlib
-import json
 import logging
 import os
 import re
@@ -168,9 +167,20 @@ def request_idem(op: str, opts: Mapping[str, Any] | None) -> str | None:
 _HOOK_ID = re.compile(r"hk_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 
 
+def _mask(value: Any) -> Any:
+    """The hk_ regex over every string in dicts, lists and tuples; other values pass as they are (never raises)."""
+    if isinstance(value, str):
+        return _HOOK_ID.sub("hk_…", value)
+    if isinstance(value, dict):
+        return {k: _mask(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_mask(v) for v in value)
+    return value
+
+
 def _mask_hooks(args: Mapping[str, Any]) -> dict[str, Any]:
     """A webhook address is shown to the agent once and never written to disk: the record keeps ``hk_…`` only."""
-    return json.loads(_HOOK_ID.sub("hk_…", json.dumps(args)))  # any depth
+    return _mask(args)
 
 
 def principal_of(uid: int, column: str, grant: str | None = None) -> str:

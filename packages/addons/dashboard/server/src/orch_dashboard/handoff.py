@@ -1369,6 +1369,7 @@ def expected(action: Action, person: str | None = None):
         case FollowupCancel():
             return lambda ev: one(ev, "followup.cancelled", followup=action.id, reason="person")
         case FollowupReschedule():
+
             def rescheduled(ev):
                 if not one(ev, "followup.rescheduled", followup=action.id):
                     return False
@@ -1381,6 +1382,7 @@ def expected(action: Action, person: str | None = None):
                     and re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z", value) is not None
                     and value[:19] == action.when[:19]
                 )
+
             return rescheduled
         case FollowupUndo():
             return lambda ev: one(ev, "followup.restored", followup=action.id)

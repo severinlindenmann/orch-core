@@ -109,11 +109,19 @@ def test_a_follow_up_grant_is_listed_with_its_parent():
     assert [g.parent for g in out] == [None, parent]
 
 
-@pytest.mark.parametrize("cls,action,extra,args", [
-    (FollowupCancel, "followup_cancel", {}, {"id_or_ref": FU}),
-    (FollowupReschedule, "followup_reschedule", {"when": "2026-10-28T09:00:00Z"}, {"id": FU, "when": "2026-10-28T09:00:00Z"}),
-    (FollowupUndo, "followup_undo", {}, {"id": FU}),
-])
+@pytest.mark.parametrize(
+    "cls,action,extra,args",
+    [
+        (FollowupCancel, "followup_cancel", {}, {"id_or_ref": FU}),
+        (
+            FollowupReschedule,
+            "followup_reschedule",
+            {"when": "2026-10-28T09:00:00Z"},
+            {"id": FU, "when": "2026-10-28T09:00:00Z"},
+        ),
+        (FollowupUndo, "followup_undo", {}, {"id": FU}),
+    ],
+)
 def test_cancel_names_the_ticket_the_follow_up_is_on(gateway, stub, monkeypatch, cls, action, extra, args):
     import pytest
 
@@ -172,6 +180,7 @@ def test_reschedule_is_one_fixed_op_and_exact_event(field):
 @pytest.mark.parametrize("when", ["2026-10-28", "2026-10-28T09:00:00+00:00", "tomorrow"])
 def test_reschedule_requires_utc_instant(when):
     from pydantic import ValidationError
+
     from orch_dashboard.handoff import FollowupReschedule
 
     with pytest.raises(ValidationError):
@@ -205,7 +214,10 @@ def test_action_support_flags(client, token, stub, gateway, fu_host, monkeypatch
     def call(op, args=None, **kwargs):
         if op == "member.list":
             data = original(op, args, **kwargs)
-            return {**data, "members": [{**m, "role": role} if m["person"] == stub.person else m for m in data["members"]]}
+            return {
+                **data,
+                "members": [{**m, "role": role} if m["person"] == stub.person else m for m in data["members"]],
+            }
         return original(op, args, **kwargs)
 
     monkeypatch.setattr(link, "call", call)

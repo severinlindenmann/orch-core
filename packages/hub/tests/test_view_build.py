@@ -287,3 +287,14 @@ def test_addon_requested_is_built_and_signed_by_the_real_engine_and_core_accepts
     # a reserved name never reaches the view (the hub refuses it as malformed)
     assert code(env.prepare, {**a, "name": "ticket"}) == "malformed"
     assert code(env.prepare, {**a, "fields": {}}) == "malformed"
+
+
+def test_settings_changed_is_built_and_signed_by_the_real_engine(env):
+    """27 Oct (8.8): a settings change from the hub page is built on the workspace log with exactly the `set` it was sent."""
+    a = {"type": "settings.changed", "log": "workspace", "set": {"grant_hours": 24, "claim_ttl_min": 60}}
+    p, ev = sign(env, a)
+    e = p.ctx["event"]
+    assert p.ctx["log"] == "workspace" and e["set"] == a["set"] and e["based_on"] == env.vs.service.head(WS, "workspace")
+    assert env.delivered[-1][1] == "workspace" and ev["sig"]
+    assert code(env.prepare, {**a, "set": {"sign_methods": ["click"]}}) == "malformed"
+    assert code(env.prepare, {**a, "set": {"grant_hours": 999}}) == "malformed"

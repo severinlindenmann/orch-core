@@ -46,5 +46,5 @@ test("bindings: the signed terms must equal the action this page sent", () => {
 
 test("the sign prompt heading says what is being approved", async () => {
   const src = await (await import("node:fs/promises")).readFile(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
-  assert.match(src, /d\.type === "addon\.requested" \? "Approve an add-on" : "Review your answer"/);
+  assert.match(src, /d\.type === "addon\.requested" \? "Approve an add-on" : d\.type === "settings\.changed" \? "Approve a settings change" : "Review your answer"/);
 });

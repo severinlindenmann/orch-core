@@ -1,5 +1,5 @@
 import { CheckCircle2, CircleHelp, OctagonAlert } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { QuestionStatus } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -61,7 +61,7 @@ function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus;
   )
 }
 
-function QuestionCard({ q, viewer, sign, ticketKey, agentLive }: { q: QuestionStatus; viewer: Viewer; sign: TabProps['sign']; ticketKey: string; agentLive: boolean }) {
+function QuestionCard({ q, viewer, sign, ticketKey, agentLive, isNew }: { q: QuestionStatus; viewer: Viewer; sign: TabProps['sign']; ticketKey: string; agentLive: boolean; isNew: boolean }) {
   const [viewText, setViewText] = useState<string | null>(null)
   const open = q.state === 'open'
   const stale = q.state === 'stale'
@@ -71,7 +71,12 @@ function QuestionCard({ q, viewer, sign, ticketKey, agentLive }: { q: QuestionSt
     <li
       id={`question-${q.id}`}
       data-state={q.state}
-      className={cn('scroll-mt-4 rounded-lg border bg-surface p-4', open && q.blocking ? 'border-warning/50' : 'border-border')}
+      className={cn(
+        'scroll-mt-4 rounded-lg border bg-surface p-4',
+        open && q.blocking ? 'border-warning/50' : 'border-border',
+        // A question that arrived after the page opened slides in and pulses once.
+        open && isNew && 'needs-new',
+      )}
     >
       <div className="flex flex-wrap items-center gap-2">
         <Mono className="text-text-muted">{q.id}</Mono>
@@ -114,7 +119,7 @@ function QuestionCard({ q, viewer, sign, ticketKey, agentLive }: { q: QuestionSt
       {answered && (
         <div className="mt-3 rounded-md border border-success/30 bg-success-soft px-3 py-2 text-[13px]">
           <p className="font-medium text-text" data-testid="answered-line">
-            Answered: {chosen ? chosen.label : answered.text}
+            {answered.by === viewer.person ? 'You answered' : 'Answered'}: {chosen ? chosen.label : answered.text}
             {agentLive && ' · the agent continues'}
           </p>
           {chosen && answered.text && <p className="mt-0.5 text-text-muted">{answered.text}</p>}
@@ -137,12 +142,14 @@ function QuestionCard({ q, viewer, sign, ticketKey, agentLive }: { q: QuestionSt
 
 export function Questions({ ticket, viewer, sign }: TabProps) {
   const qs = ticket.questions_state
+  // The questions that were here when the page opened: any other one is new.
+  const first = useRef<Set<string>>(new Set(qs.map((q) => q.id)))
   if (qs.length === 0) return <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-[13px] text-text-faint">No questions on this ticket.</p>
   const ordered = [...qs].sort((a, b) => Number(b.state === 'open') - Number(a.state === 'open'))
   return (
     <ul className="space-y-3" aria-label="Questions">
       {ordered.map((q) => (
-        <QuestionCard key={q.id} q={q} viewer={viewer} sign={sign} ticketKey={ticket.key} agentLive={!!ticket.claim && ticket.claim.live !== false} />
+        <QuestionCard key={q.id} q={q} viewer={viewer} sign={sign} ticketKey={ticket.key} agentLive={!!ticket.claim && ticket.claim.live !== false} isNew={!first.current.has(q.id)} />
       ))}
     </ul>
   )

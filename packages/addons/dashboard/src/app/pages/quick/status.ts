@@ -12,7 +12,7 @@ export interface TaskState {
 /** Pure: the row's words from what the host says about the ticket, plus what this page knows (a start it is making or that failed). */
 export function taskState(row: QuickRow, o: { starting?: boolean; failed?: boolean } = {}): TaskState {
   if (row.status === 'done' || row.status === 'closed') return { word: 'Finished', tone: 'quiet', action: null, actionLabel: null }
-  if (o.starting) return { word: 'Starting agent…', tone: 'live', action: null, actionLabel: null }
+  if (o.starting) return { word: 'Getting started…', tone: 'live', action: null, actionLabel: null }
   if (o.failed) return { word: 'Couldn’t start', tone: 'bad', action: 'retry', actionLabel: 'Try again' }
   if (row.open_questions > 0) return { word: 'Needs your answer', tone: 'attention', action: 'answer', actionLabel: 'Answer' }
   if (row.claim && row.claim.live !== false) return { word: 'Working', tone: 'live', action: null, actionLabel: null }

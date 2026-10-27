@@ -26,5 +26,5 @@ export const WIKI_PREVIEW_PAGES: { id: string; title: string; markdown: string; 
   { id: 'reconciliation-tolerance', title: 'Reconciliation tolerance', badge: '1 linked ticket', markdown: '# Reconciliation tolerance\n\nPayments within **0.05 CHF** of the invoice amount count as matched.\n\n- Rounding differences below the tolerance are booked automatically.\n- Anything above goes to the review queue.\n' },
   { id: 'release-checklist', title: 'Release checklist', markdown: '# Release checklist\n\n- [ ] Tests are green on develop\n- [ ] Changelog updated\n- [ ] Owner has approved the release ticket\n' },
   { id: 'glossary', title: 'Glossary', markdown: '# Glossary\n\n**Ticket**: one piece of work with a clear end.\n\n**Gate**: a check a person must approve before work moves on.\n' },
-  { id: 'imported-from-old-wiki', title: 'Imported from old wiki', markdown: '# Imported from old wiki\n\nKept for reference. Needle for the search test: the reconciliation job runs nightly.\n' },
+  { id: 'imported-from-old-wiki', title: 'Imported from old wiki', markdown: '# Imported from old wiki\n\nKept for reference. The reconciliation job runs nightly.\n' },
 ]

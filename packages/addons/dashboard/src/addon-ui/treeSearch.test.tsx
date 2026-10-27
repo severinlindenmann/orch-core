@@ -97,7 +97,7 @@ describe('tree', () => {
     expect(screen.getByRole('treeitem', { name: /Page b/ })).toHaveAttribute('aria-selected', 'true')
     expect(calls.some((c) => c.includes('/view/wiki.page?id=b'))).toBe(true)
     // on a phone the tree gives way to the page, with a way back
-    await user.click(screen.getByRole('button', { name: /All items/ }))
+    await user.click(screen.getByRole('button', { name: /Back to wiki pages/ }))
     expect(await screen.findByText('Choose an item to read it.')).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
@@ -209,7 +209,7 @@ describe('tree', () => {
     const user = userEvent.setup()
     await user.click(await screen.findByRole('treeitem', { name: /Page big/ }))
     expect(await screen.findByText('Too large.')).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /All items/ }))
+    await user.click(screen.getByRole('button', { name: /Back to wiki pages/ }))
     await user.click(await screen.findByRole('treeitem', { name: /Page gone/ }))
     expect(await screen.findByText('This item is no longer there.')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Back to the list' }))
@@ -226,6 +226,46 @@ describe('tree', () => {
     expect(container.querySelector('script')).toBeNull()
     expect(container.querySelector('img[onerror]')).toBeNull()
     vi.unstubAllGlobals()
+  })
+})
+
+describe('focus and edges', () => {
+  it('moves focus to the page when opening an item hides the list, and back to the row on Back', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    handler = (name, q) => (name === 'wiki.tree' ? tree([entry('a'), entry('b')]) : page(q.get('id') as string))
+    show(TREE)
+    const user = userEvent.setup()
+    const b = await screen.findByRole('treeitem', { name: /Page b/ })
+    await user.click(b)
+    await screen.findByText('Body of b.')
+    document.body.focus() // what a browser does when the focused row goes display:none
+    await user.click(screen.getByRole('button', { name: /Back to wiki pages/ }))
+    await waitFor(() => expect(screen.getByRole('treeitem', { name: /Page b/ })).toHaveFocus())
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps the arrows from scrolling at the edges and from jumping to a sibling while children load', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    let release: (v: unknown) => void = () => {}
+    const slow = new Promise((r) => (release = r))
+    handler = (name, q) => (name === 'wiki.tree' ? (q.get('parent') ? slow : tree([entry('dir', { children: true }), entry('z')])) : page('x'))
+    show(TREE)
+    const user = userEvent.setup()
+    const dir = await screen.findByRole('treeitem', { name: /Page dir/ })
+    dir.focus()
+    await user.keyboard('{ArrowUp}')
+    expect(dir).toHaveFocus()
+    await user.keyboard('{ArrowRight}{ArrowRight}')
+    expect(dir).toHaveFocus() // the next row is a sibling, not a child: stay
+    release(tree([entry('kid')]))
+    vi.unstubAllGlobals()
+  })
+
+  it('a search hides when the tree it opens into has nothing to list', async () => {
+    handler = () => tree([])
+    show(stack(SEARCH, TREE))
+    await screen.findByTestId('tree-empty')
+    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
   })
 })
 
@@ -257,6 +297,19 @@ describe('search', () => {
     expect(await screen.findByText('Body of b.')).toBeInTheDocument()
     expect(screen.queryByRole('list', { name: 'Search results' })).not.toBeInTheDocument()
     expect(screen.getByRole('searchbox')).toHaveValue('')
+    vi.unstubAllGlobals()
+  })
+
+  it('gives the phone the hits instead of a second list while a query is open', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    handler = (name) => (name === 'wiki.tree' ? tree([entry('a')]) : { results: [{ id: 'a', label: 'Page a' }], total: 1, cut: false })
+    show(stack(SEARCH, TREE))
+    const tree1 = await screen.findByRole('tree')
+    expect(tree1.parentElement).not.toHaveClass('max-md:hidden')
+    await userEvent.setup().type(screen.getByRole('searchbox'), 'a')
+    await screen.findByRole('list', { name: 'Search results' })
+    expect(screen.getByRole('tree').parentElement).toHaveClass('max-md:hidden')
+    expect(screen.getByText('1 result')).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
 

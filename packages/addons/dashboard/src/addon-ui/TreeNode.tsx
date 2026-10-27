@@ -12,7 +12,7 @@ import { ReadFailed, ReadLoading } from './ReadState'
 import { SafeMarkdown } from './SafeMarkdown'
 import type { NodeOf } from './nodes'
 import { detailResult, treeResult, useViewRead, type TreeEntry } from './viewRead'
-import { selectionKey, useSelection } from './viewSelection'
+import { selectionKey, setTreeEmpty, useSearching, useSelection } from './viewSelection'
 
 /** Rows drawn before "Show more": a long folder never becomes one endless list. */
 export const TREE_PAGE = 100
@@ -46,7 +46,7 @@ function Row({ entry, level, parent, gutter }: { entry: TreeEntry; level: number
         onClick={() => c.select(entry.id)}
         style={{ paddingLeft: `${0.5 + (level - 1) * 1}rem` }}
         className={cn(
-          'flex min-h-9 cursor-pointer items-center gap-1.5 rounded-md border-l-2 border-transparent py-1.5 pr-2 text-[13px] text-text outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand md:min-h-8',
+          'flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border-l-2 border-transparent py-1.5 pr-2 text-[13px] text-text outline-none hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand md:min-h-8',
           on && 'border-brand bg-surface-2 font-medium',
         )}
       >
@@ -69,7 +69,7 @@ function Row({ entry, level, parent, gutter }: { entry: TreeEntry; level: number
         <span className="min-w-0 flex-1 truncate">
           <Inline>{entry.label}</Inline>
         </span>
-        {entry.badge && <span className="shrink-0 text-[11px] text-text-muted">{entry.badge}</span>}
+        {entry.badge && <span className="shrink-0 text-[12px] text-text-muted">{entry.badge}</span>}
       </div>
       {entry.children && isOpen && <Children parent={entry.id} level={level + 1} />}
     </>
@@ -169,17 +169,41 @@ const wide = () => typeof window !== 'undefined' && typeof window.matchMedia ===
 export function TreeNode({ node, addon, ws, renderOffer }: { node: NodeOf<'tree'>; addon: string; ws: string | undefined; renderOffer: (offer: { label: string; action: string }) => ReactNode }) {
   const key = selectionKey(ws, addon, node.id)
   const [selected, setSelected] = useSelection(key)
+  const searching = useSearching(key)
   const [open, setOpen] = useState<Set<string>>(() => new Set())
   const [count, setCount] = useState(TREE_PAGE)
   const [focused, setFocused] = useState<string | null>(null)
   const box = useRef<HTMLDivElement>(null)
   const roots = useViewRead(addon, node.read, {}, treeResult)
   const first = roots.data?.nodes[0]?.id ?? null
+  const none = !!roots.data && roots.data.nodes.length === 0
+  useEffect(() => {
+    setTreeEmpty(key, none)
+    return () => setTreeEmpty(key, false)
+  }, [key, none])
 
   // Next to the tree the pane is never empty: the first item opens by itself. On a phone the list comes first.
   useEffect(() => {
     if (node.detail && selected === null && first !== null && wide()) setSelected(first)
   }, [first, selected, node.detail, setSelected])
+
+  // The remembered row can disappear (its folder closed, the list changed): then the first row takes the tab stop again.
+  useEffect(() => {
+    if (focused !== null && box.current && !box.current.querySelector(`[role="treeitem"][data-id="${CSS.escape(focused)}"]`)) setFocused(null)
+  })
+
+  // Opening an item can hide the control that had focus (a phone shows the page instead of the list, a search hit closes
+  // its list), and so can going back: focus then moves to where the person is going instead of falling to the page top.
+  const lost = () => !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected
+  const pane = useRef<HTMLElement>(null)
+  const before = useRef<string | null>(selected)
+  useEffect(() => {
+    const was = before.current
+    before.current = selected
+    if (was === selected) return
+    if (selected !== null && lost()) pane.current?.focus()
+    else if (selected === null && was !== null && lost()) box.current?.querySelector<HTMLElement>(`[role="treeitem"][data-id="${CSS.escape(was)}"]`)?.focus()
+  }, [selected])
 
   const ctx = useMemo<Ctx>(
     () => ({
@@ -204,9 +228,8 @@ export function TreeNode({ node, addon, ws, renderOffer }: { node: NodeOf<'tree'
     const cur = items[i]
     const id = cur.dataset.id as string
     const to = (el?: HTMLElement) => {
-      if (!el) return
-      e.preventDefault()
-      el.focus()
+      e.preventDefault() // at an edge too: the arrow must not scroll the page under the person
+      el?.focus()
     }
     switch (e.key) {
       case 'ArrowDown':
@@ -221,7 +244,10 @@ export function TreeNode({ node, addon, ws, renderOffer }: { node: NodeOf<'tree'
         if (cur.getAttribute('aria-expanded') === 'false') {
           e.preventDefault()
           ctx.toggle(id)
-        } else if (cur.getAttribute('aria-expanded') === 'true') to(items[i + 1])
+        } else if (cur.getAttribute('aria-expanded') === 'true') {
+          const next = items[i + 1]
+          to(next?.dataset.parent === id ? next : undefined) // the children may still be loading: stay put then
+        }
         return
       case 'ArrowLeft':
         if (cur.getAttribute('aria-expanded') === 'true') {
@@ -268,17 +294,17 @@ export function TreeNode({ node, addon, ws, renderOffer }: { node: NodeOf<'tree'
   }
 
   // The pane has nothing to say while the list is loading, failed or empty: the list's own message stands alone.
-  const pane = !!node.detail && !!roots.data && roots.data.nodes.length > 0
+  const showPane = !!node.detail && !!roots.data && roots.data.nodes.length > 0
   return (
     <TreeCtx.Provider value={ctx}>
-      <div className={cn('grid min-w-0 items-start gap-4', pane && 'md:grid-cols-[minmax(13rem,17rem)_minmax(0,1fr)]')}>
-        <div className={cn('min-w-0 rounded-lg border border-border bg-surface p-1.5 md:max-h-[calc(100dvh-13rem)] md:overflow-y-auto', pane && selected && 'max-md:hidden')}>{list}</div>
-        {pane && node.detail && (
-          <section aria-label="Open item" className={cn('min-w-0 rounded-lg border border-border bg-surface p-4 md:p-5', !selected && 'max-md:hidden')}>
+      <div className={cn('grid min-w-0 items-start gap-4', showPane && 'md:grid-cols-[minmax(13rem,17rem)_minmax(0,1fr)]')}>
+        <div className={cn('min-w-0 rounded-lg border border-border bg-surface p-1.5 md:max-h-[calc(100dvh-13rem)] md:overflow-y-auto', showPane && (selected || searching) && 'max-md:hidden')}>{list}</div>
+        {showPane && node.detail && (
+          <section ref={pane} tabIndex={-1} aria-label="Open item" className={cn('min-w-0 outline-none max-md:p-0 md:rounded-lg md:border md:border-border md:bg-surface md:p-5', (!selected || searching) && 'max-md:hidden')}>
             {selected ? (
               <>
-                <Button variant="ghost" size="sm" className="-ml-2 mb-2 md:hidden" onClick={() => setSelected(null)}>
-                  <ArrowLeft className="size-4" aria-hidden /> All items
+                <Button variant="ghost" size="sm" className="-ml-2 mb-2 max-md:h-11 md:hidden" onClick={() => setSelected(null)}>
+                  <ArrowLeft className="size-4" aria-hidden /> Back to {node.label.toLowerCase()}
                 </Button>
                 <Detail key={selected} addon={addon} cfg={node.detail} id={selected} onBack={() => setSelected(null)} />
               </>

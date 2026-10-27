@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { ReadFailed } from './ReadState'
 import type { NodeOf } from './nodes'
 import { searchResult, useViewRead } from './viewRead'
-import { selectionKey, setSelection } from './viewSelection'
+import { selectionKey, setSearching, setSelection, useTreeEmpty } from './viewSelection'
 
 export const SEARCH_PAUSE_MS = 250
 const MAX_QUERY = 200
@@ -28,7 +28,15 @@ export function SearchNode({ node, addon, ws }: { node: NodeOf<'search'>; addon:
     if (node.target) setSelection(selectionKey(ws, addon, node.target), id)
     clear()
   }
+  const nothingToSearch = useTreeEmpty(node.target ? selectionKey(ws, addon, node.target) : null)
+  const targetKey = node.target ? selectionKey(ws, addon, node.target) : null
+  useEffect(() => {
+    if (!targetKey) return
+    setSearching(targetKey, q !== '')
+    return () => setSearching(targetKey, false)
+  }, [targetKey, q])
   const waiting = q !== '' && (res.isPending || text.trim() !== q)
+  if (nothingToSearch) return null
   return (
     <div className="space-y-2">
       <div className="relative">
@@ -63,10 +71,13 @@ export function SearchNode({ node, addon, ws }: { node: NodeOf<'search'>; addon:
             </p>
           ) : res.data ? (
             <>
-              <ul aria-label="Search results" className="divide-y divide-border">
+              <p className="px-2 pb-1 pt-0.5 text-[12px] text-text-muted">
+                {res.data.results.length === 1 ? '1 result' : `${res.data.results.length}${res.data.cut || res.data.total > res.data.results.length ? '+' : ''} results`}
+              </p>
+              <ul aria-label="Search results" className="divide-y divide-border border-t border-border">
                 {res.data.results.slice(0, node.limit).map((r) => (
                   <li key={r.id}>
-                    <button type="button" onClick={() => open(r.id)} className="flex w-full min-w-0 flex-col items-start gap-0.5 rounded-md px-2 py-2 text-left hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-ring">
+                    <button type="button" onClick={() => open(r.id)} className="flex min-h-11 w-full min-w-0 flex-col items-start justify-center gap-0.5 rounded-md px-2 py-2 text-left md:min-h-0 hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-ring">
                       <span className="max-w-full truncate text-[13px] font-medium text-text">
                         <Inline>{r.label}</Inline>
                       </span>

@@ -76,11 +76,13 @@ describe('the Hub tab has a different page for each mode', () => {
     status.mockRestore()
   })
 
-  it('left but not told: offers only Stop telling (no retry command yet), in amber', async () => {
+  it('left but not told: says it keeps trying, offers no terminal step and no retry', async () => {
     hubPage('nottold')
     expect(await screen.findByText('You left the hub, but the hub does not know yet', {}, T)).toBeTruthy()
+    expect(screen.getByText('The workspace keeps trying to tell the hub whenever it is reachable.')).toBeTruthy()
     expect(screen.queryByTestId('hub-not-told-try')).toBeNull() // no retry command in core yet
-    expect(screen.getByTestId('hub-not-told-stop')).toBeTruthy()
+    expect(screen.queryByTestId('hub-not-told-stop')).toBeNull() // stopping was a terminal hand-off (removed)
+    expect(screen.queryByTestId('hub-command')).toBeNull()
   })
 })
 
@@ -141,8 +143,9 @@ describe('leaving (A3.5 / A3.6)', () => {
     expect(within(banner).getByText('Hub offline, working locally')).toBeTruthy()
     await view.user.click(within(banner).getByTestId('hub-leave-down'))
     expect(await screen.findByText('Leave without the hub', {}, T)).toBeTruthy()
-    expect((await screen.findByTestId('hub-command', {}, T)).textContent).toBe('orch hub leave')
-    expect(screen.queryByTestId('hub-backup-input')).toBeNull() // the hub cannot be reached: a terminal only
+    expect(screen.getByText('One click is not ready for leaving while the hub is unreachable.')).toBeTruthy()
+    expect(screen.queryByTestId('hub-command')).toBeNull() // no terminal hand-off
+    expect(screen.queryByTestId('hub-backup-input')).toBeNull() // the hub cannot be reached: nothing to sign here
     cleanup()
     hubPage('selective', '/w/DEMO')
     await screen.findByTestId('hub-chip', {}, T)
@@ -151,7 +154,7 @@ describe('leaving (A3.5 / A3.6)', () => {
 })
 
 describe('share rules (A3.3)', () => {
-  it('previews a rule live, then hands over the command, with the honest caveat', async () => {
+  it('previews a rule live, then reviews it with the honest caveat and no terminal command', async () => {
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
     expect(await screen.findByText('Choose what to share', {}, T)).toBeTruthy()
@@ -160,11 +163,13 @@ describe('share rules (A3.3)', () => {
     await type(view, 'hub-rule-value', 'team')
     await waitFor(() => expect(screen.getByText(/1 now visible/)).toBeTruthy(), T)
     await view.user.click(screen.getByTestId('hub-share-review'))
-    expect((await screen.findByTestId('hub-command', {}, T)).textContent).toBe('orch hub share rule add --type team')
+    expect(await screen.findByText('One click is not ready for changing sharing rules.', {}, T)).toBeTruthy()
+    expect(screen.getByText(/Add this sharing rule\./)).toBeTruthy()
+    expect(screen.queryByTestId('hub-command')).toBeNull()
     expect(screen.getAllByText(/cannot be taken back/).length).toBeGreaterThan(0)
   })
 
-  it('a value with shell characters is quoted in the command', async () => {
+  it('a value with shell characters is never put into a command', async () => {
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
     await view.user.click(await screen.findByTestId('hub-rule-add', {}, T))
@@ -172,7 +177,9 @@ describe('share rules (A3.3)', () => {
     await view.user.click(await screen.findByTestId('hub-share-review', {}, T).then((b) => { return b }))
     await waitFor(() => expect((screen.getByTestId('hub-share-review') as HTMLButtonElement).disabled).toBe(false), T)
     await view.user.click(screen.getByTestId('hub-share-review'))
-    expect((await screen.findByTestId('hub-command', {}, T)).textContent).toContain("'a; rm -rf ~'")
+    expect(await screen.findByText('One click is not ready for changing sharing rules.', {}, T)).toBeTruthy()
+    expect(screen.queryByTestId('hub-command')).toBeNull()
+    for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('orch hub')
   })
 })
 
@@ -268,9 +275,9 @@ describe('by click (#1198 C11)', () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
     await pasteLink()
-    expect(await screen.findByTestId('hub-no-one-click', {}, T)).toHaveTextContent(/One click is off/)
+    expect(await screen.findByTestId('hub-no-one-click', {}, T)).toHaveTextContent('One click is not ready.')
     expect(screen.queryByTestId('hub-backup-input')).toBeNull()
-    expect(screen.getByTestId('hub-settings-link')).toHaveTextContent('Settings')
+    expect(screen.getByTestId('hub-settings-link')).toHaveTextContent('Turn on One click')
     expect(screen.queryByTestId('hub-join-terminal-instead')).toBeNull()
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
   })
@@ -307,8 +314,8 @@ describe('by click (#1198 C11)', () => {
     setMockOneClick(false)
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-leave', {}, T))
-    expect(await screen.findByTestId('hub-no-one-click', {}, T)).toHaveTextContent(/One click is off/)
-    expect(screen.getByTestId('hub-settings-link')).toBeTruthy()
+    expect(await screen.findByTestId('hub-no-one-click', {}, T)).toHaveTextContent('One click is not ready.')
+    expect(screen.getByTestId('hub-settings-link')).toHaveTextContent('Turn on One click')
     expect(screen.queryByTestId('hub-leave-terminal')).toBeNull()
   })
 })

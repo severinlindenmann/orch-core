@@ -380,8 +380,16 @@ def invitee():
 
 
 def test_add_a_member_from_a_certificate_file(world, api):
+    from tests.identity.reader_helpers import decl
+
     person, pk, cert = invitee()
-    _, final = api.sign({"action": "member_add", "name": "Nia", "role": "member", "pk": pk, "cert": cert})
+    # the workspace signs by one click, so a new reader comes with its declaration (`orch keys reader declare
+    # --enrol`, orch-v2-host §0.8.6 item 9.4); without it core refuses sign.convenience_readers no_declaration
+    body = {"action": "member_add", "name": "Nia", "role": "member", "pk": pk, "cert": cert}
+    reader_decl = json.dumps(decl(person, world.ws.ws_id, via="enrol", created_ms=int(time.time() * 1000)))
+    res = api.post("/click/prepare", {**body, "retry": new_retry()})
+    assert res.status_code == 409 and res.json()["error"]["code"] == "sign.convenience_readers", res.text
+    _, final = api.sign({**body, "reader_decl": reader_decl})
     assert final["state"] == "submitted", final
     members = {m["person"]: m for m in api.get("/members").json()}
     assert members[person.ref]["name"] == "Nia" and members[person.ref]["role"] == "member"

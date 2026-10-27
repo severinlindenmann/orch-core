@@ -109,7 +109,8 @@ export function SignPopover(p: SignPopoverProps) {
   }
   return <SignShell inline={p.inline} anchor={anchor} open={!(p.onSigning && click.phase === 'signing')} onDismiss={() => void close()} title={<Inline>{click.view?.view.content?.title ?? click.view?.view.headline ?? p.title}</Inline>} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
     {p.controls}{p.lead}{!click.view && p.summary}
-    {!canClick ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}</> : <>
+    {/* The switch is read before the press; a request already open keeps its review (the signer refuses it if the switch moved). */}
+    {!canClick && click.phase === 'idle' ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}</> : <>
       {click.phase === 'idle' && <>{p.children}{p.hint && <p>{p.hint}</p>}<Button disabled={!p.action || !!p.hint} onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.start(p.action) }}>{p.confirmLabel ?? story?.signLabel ?? p.title}</Button></>}
       {['preparing', 'viewing'].includes(click.phase) && <p role="status">Reading the review…</p>}
       {(click.phase === 'ready' || click.phase === 'signing') && click.view && <ClickSignPanel ws={p.ws} answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={() => void close()} waitUntil={waitUntil} story={story} label={p.confirmLabel} />}

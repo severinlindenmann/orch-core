@@ -5,6 +5,7 @@ import type { Workspace } from './types'
 import { ApiError } from './types'
 import type { HandoffAction } from './handoff'
 import { DEV_REFUSED, devRefusedSentence, refusalOf, refusalSentence } from './refusals'
+import { addFirst, missingOf } from './gates'
 
 /** Verbatim risk notice: enable time and Settings, with a tooltip in sign dialogs. */
 export const CLICK_RISK = 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.'
@@ -303,7 +304,7 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
       // The switch moved after the page chose its way: nothing is wrong, the next try follows the host's current answer.
-      if (r.reason === 'disabled') return { title: 'One click is off', body: 'Turn on One click in Settings.', next: 'unavailable', devices: r.devices }
+      if (r.reason === 'disabled') return { title: 'One click is off', body: `${refusalSentence(r)} Turn on One click in Settings.`, next: 'unavailable', devices: r.devices }
       return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'unavailable', devices: r.devices }
     }
     case DEV_REFUSED:
@@ -313,6 +314,11 @@ export function clickProblem(e: unknown): ClickProblem {
     case 'addon.already':
       // The add-on is already as asked: plain words, nothing to sign, nothing to "do again".
       return { title: 'Already done', body: e.message, next: 'open' }
+    case 'gate.incomplete': {
+      // B11 (#14): what the gate lacks, in words; never the raw code or a CLI pointer (`fix`).
+      const lacking = missingOf(e.message)
+      return { title: 'Not ready to approve', body: lacking?.length ? addFirst(lacking) : e.message, next: 'unavailable' }
+    }
     case 'intent.failed':
       return { title: 'The earlier attempt did not land', body: e.message, next: 'prepare' }
     case 'lock.busy':

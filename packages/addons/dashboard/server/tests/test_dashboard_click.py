@@ -346,6 +346,36 @@ def test_a_member_add_sends_the_certificate_as_a_file(client, token, stub, scrip
     args = [c for c in script.clients[0].calls if c[0] == "prepare"][0][1]
     assert args["op"] == "member.add" and args["args"]["cert"] == "-"
     assert base64.b64decode(args["files"]["cert"]["b64"]) == cert.encode()
+    assert "reader_decl" not in args["args"] and set(args["files"]) == {"cert"}
+
+
+def test_a_member_add_sends_the_reader_declaration_as_its_own_file(client, token, stub, script):
+    import base64
+    import json
+
+    pk = base64.urlsafe_b64encode(b"\x04" + b"a" * 64).rstrip(b"=").decode()
+    cert, decl = json.dumps({"v": 1}), json.dumps({"o": {"kind": "reader_decl"}, "sig": "x"})
+    body = {"action": "member_add", "name": "Mara", "role": "member", "pk": pk, "cert": cert, "reader_decl": decl}
+    res = prepare(client, token, stub, body)
+    assert res.status_code == 200, res.text
+    args = [c for c in script.clients[0].calls if c[0] == "prepare"][0][1]
+    assert args["args"]["cert"] == "-" and args["args"]["reader_decl"] not in ("-", None)
+    assert base64.b64decode(args["files"]["reader_decl"]["b64"]) == decl.encode()
+    assert base64.b64decode(args["files"]["cert"]["b64"]) == cert.encode()
+
+
+@pytest.mark.parametrize("decl", ["[]", "{", '{"a": 1.5}', '{"a": 1, "a": 2}', '{"o": "' + "x" * 4096 + '"}'])
+def test_a_member_add_with_a_reader_declaration_that_is_no_strict_json_object_is_refused(
+    client, token, stub, script, decl
+):
+    import base64
+    import json
+
+    pk = base64.urlsafe_b64encode(b"\x04" + b"a" * 64).rstrip(b"=").decode()
+    body = {"action": "member_add", "name": "Mara", "role": "member", "pk": pk, "cert": json.dumps({"v": 1})}
+    res = prepare(client, token, stub, {**body, "reader_decl": decl})
+    assert res.status_code == 400, res.text
+    assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
 
 
 def test_view_is_the_signers_view_unchanged(client, token, stub, script):

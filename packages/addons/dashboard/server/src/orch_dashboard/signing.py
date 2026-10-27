@@ -577,6 +577,8 @@ PolicyGate = Literal["requirements", "plan", "verify", "code"]
 TicketType = Literal["feature", "bug", "chore", "spike", "epic"]
 MAX_PK = 87  # base64url of a 65-byte public key, no padding
 MAX_CERT_BYTES = 16384  # a device certificate is a few hundred bytes; anything near this is not one
+MAX_READER_DECL_BYTES = 4096  # core `member_add.DECL_FILE_MAX`: the host refuses a longer declaration file
+READER_DECL_FILE = "reader_decl.json"  # its logical file name (the certificate is `-`; the host wants distinct names)
 PK_BYTES = 65
 
 
@@ -706,13 +708,18 @@ class MemberAdd(Action):
     """`member.add`: the invitee made their own key and first device certificate; the owner signs the roster change.
 
     The public key and the certificate are the invitee's own files, uploaded by the person (host contract R9: the
-    certificate goes through `human.prepare`'s `files`, the key is an argument). Nothing is read from a path."""
+    certificate goes through `human.prepare`'s `files`, the key is an argument). Nothing is read from a path.
+
+    `reader_decl`: the invitee's reader declaration (`orch keys reader declare --enrol`, orch-v2-host §0.8.6 item 9.4),
+    a file like the certificate. A workspace with one-click signatures admits a new reader only with it (core refuses
+    `sign.convenience_readers` without); the host verifies it, this server only checks it is a strict JSON object."""
 
     action: Literal["member_add"]
     name: Annotated[str, StringConstraints(min_length=1, max_length=64), OneLine]
     role: Role
     pk: Annotated[str, StringConstraints(min_length=MAX_PK, max_length=MAX_PK, pattern=r"^[A-Za-z0-9_-]+$")]
     cert: Annotated[str, StringConstraints(min_length=2, max_length=MAX_CERT_BYTES)]
+    reader_decl: Annotated[str, StringConstraints(min_length=2, max_length=MAX_READER_DECL_BYTES)] | None = None
 
     @model_validator(mode="after")
     def check_files(self):
@@ -727,6 +734,13 @@ class MemberAdd(Action):
         if len(self.cert.encode("utf-8", "strict")) > MAX_CERT_BYTES:
             raise ValueError("the certificate is too large")
         _strict_json_object(self.cert)
+        if self.reader_decl is not None:
+            if len(self.reader_decl.encode("utf-8", "strict")) > MAX_READER_DECL_BYTES:
+                raise ValueError("the reader declaration is too large")
+            try:
+                _strict_json_object(self.reader_decl)
+            except ValueError:
+                raise ValueError("the reader declaration is not a strict JSON object") from None
         return self
 
 
@@ -1200,8 +1214,11 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case PolicySet():
             return "policy.set", {"gates": {action.gate: action.policy.canonical()}}
         case MemberAdd():
-            # `cert` names the file (`-`); its bytes travel in `files` (host_files). `pk` is a plain argument.
-            return "member.add", {"name": action.name, "role": action.role, "pk": action.pk, "cert": "-"}
+            # `cert` names the file (`-`), `reader_decl` its own; their bytes travel in `files` (host_files). `pk` is a
+            # plain argument.
+            return "member.add", {"name": action.name, "role": action.role, "pk": action.pk, "cert": "-"} | (
+                {"reader_decl": READER_DECL_FILE} if action.reader_decl is not None else {}
+            )
         case MemberRole():
             return "member.role", {"person": action.person, "role": action.role}
         case MemberRemove():
@@ -1260,9 +1277,13 @@ WORKSPACE_OPS = (
 
 
 def host_files(action: Action) -> dict | None:
-    """The inner op's files for `human.prepare` (R9): only a member's certificate, inline as `b64`."""
+    """The inner op's files for `human.prepare` (R9): only a member's certificate and its reader declaration, inline
+    as `b64`."""
     if isinstance(action, MemberAdd):
-        return {"cert": {"b64": base64.b64encode(action.cert.encode()).decode()}}
+        files = {"cert": {"b64": base64.b64encode(action.cert.encode()).decode()}}
+        if action.reader_decl is not None:
+            files["reader_decl"] = {"b64": base64.b64encode(action.reader_decl.encode()).decode()}
+        return files
     return None
 
 

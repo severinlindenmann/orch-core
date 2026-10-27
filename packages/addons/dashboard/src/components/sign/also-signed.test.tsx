@@ -105,9 +105,6 @@ describe('the quick review', () => {
   })
 })
 
-describe('run-9 feedback 3.8: the terminal path folds the quick task too', () => {
-})
-
 describe('the compact summary layout', () => {
   it('shows facts and the risk line, keeps the exact values in a closed fold, and no arrow table', () => {
     render(<SignContent content={{

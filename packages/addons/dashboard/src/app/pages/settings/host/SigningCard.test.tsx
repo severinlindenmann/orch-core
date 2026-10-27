@@ -60,7 +60,7 @@ describe('Sign in the dashboard', () => {
   it('shows the risk line and Off, and switches on with the passphrase', async () => {
     const sw = vi.spyOn(api, 'switchClick').mockResolvedValue(ON)
     mount(OFF)
-    expect(await screen.findByTestId('signing-state')).toHaveTextContent(/^Off/)
+    expect(await screen.findByTestId('signing-state')).toHaveTextContent(/^One click is off\.$/)
     expect(screen.getByTestId('click-risk')).toBeInTheDocument()
     fireEvent.click(await openSwitch())
     const field = screen.getByLabelText(/Enter the passphrase/)
@@ -82,7 +82,7 @@ describe('Sign in the dashboard', () => {
     expect(await screen.findByTestId('signing-error')).toHaveTextContent('That passphrase was refused. Nothing changed.')
     expect(screen.getByRole('dialog')).toContainElement(screen.getByTestId('signing-error'))
     expect(screen.getByLabelText(/Enter the passphrase/)).toHaveValue('')
-    expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/)
+    expect(screen.getByTestId('signing-state')).toHaveTextContent(/^One click is off\.$/)
   })
 
   it('a dev sandbox host refusing the switch says why, and an unknown reason stays generic', async () => {
@@ -150,7 +150,7 @@ describe('Sign in the dashboard', () => {
     const env = (body.sealed as Record<string, Record<string, unknown>>)['custody.passphrase']
     expect(Object.keys(env).sort()).toEqual(['alg', 'ct', 'epk', 'v'])
     expect(JSON.stringify(body)).not.toContain('violet')
-    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/))
+    await waitFor(() => expect(screen.getByTestId('signing-state')).toHaveTextContent(/^One click is off\.$/))
     expect(screen.queryByLabelText('New passphrase again')).toBeNull()
   })
 
@@ -213,10 +213,11 @@ describe('Sign in the dashboard', () => {
     await waitFor(() => expect(sw).toHaveBeenCalledWith(WS, { on: false }))
   })
 
-  it('a key already held with signing off is switched on in the terminal, never with a passphrase here', async () => {
+  it('a key already held with signing off points to the switch, never to a passphrase or a terminal command', async () => {
     const sw = vi.spyOn(api, 'switchClick')
     mount({ custody: 'convenience', enabled: false, available: false, problem: 'disabled', switchable: true })
-    expect(await screen.findByTestId('signing-terminal-on')).toHaveTextContent('orch host convenience on --workspace INT')
+    expect(await screen.findByTestId('signing-terminal-on')).toHaveTextContent('Use the switch to turn on One click.')
+    expect(document.querySelectorAll('code')).toHaveLength(0)
     expect(screen.queryByRole('button', { name: /Turn on/ })).toBeNull()
     expect(document.querySelectorAll('input[type=password]')).toHaveLength(0)
     expect(sw).not.toHaveBeenCalled()
@@ -225,7 +226,7 @@ describe('Sign in the dashboard', () => {
   it('says in plain words that One click switched itself off after idle hours', async () => {
     mount({ custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true })
     expect(await screen.findByTestId('signing-idle-off')).toHaveTextContent('One click switched itself off after 12 hours without use. Turn it on again to continue.')
-    expect(screen.getByTestId('signing-state')).toHaveTextContent('Off: you approve in the terminal')
+    expect(screen.getByTestId('signing-state')).toHaveTextContent('One click is off.')
   })
 
   it('turns One click on again with a plain click after the review and the risk notice, no passphrase', async () => {
@@ -247,12 +248,13 @@ describe('Sign in the dashboard', () => {
     expect(screen.getByTestId('signing-resume')).toHaveTextContent('switches itself off again after 24 hours')
   })
 
-  it('a refused resume (not a dashboard on this computer) keeps the terminal command', async () => {
+  it('a refused resume (not a dashboard on this computer) points to the host computer, no terminal command', async () => {
     vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(403, { code: 'custody.terminal_needed', message: 'needs this computer', retryable: false }))
     mount({ custody: 'convenience', enabled: false, available: false, problem: 'idle', idle_hours: 12, switchable: true })
     fireEvent.click(await openSwitch())
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
-    expect(await screen.findByTestId('signing-error')).toHaveTextContent('orch host convenience on --workspace INT')
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent('One click needs setup on the host computer.')
+    expect(document.querySelectorAll('code')).toHaveLength(0)
   })
 
   it('the on form shows what moves where, and the field asks for the current passphrase', async () => {
@@ -272,13 +274,14 @@ describe('Sign in the dashboard', () => {
     expect(screen.getByLabelText(/Enter the passphrase/)).toHaveAttribute('autocomplete', 'current-password')
   })
 
-  it('the signer asking for the terminal names the command', async () => {
+  it('the signer asking for the terminal points to the host computer, no command', async () => {
     vi.spyOn(api, 'switchClick').mockRejectedValue(new ApiError(409, { code: 'custody.terminal_needed', message: 'x', retryable: false }))
     mount(OFF)
     fireEvent.click(await openSwitch())
     fireEvent.change(screen.getByLabelText(/Enter the passphrase/), { target: { value: 'pw' } })
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
-    expect(await screen.findByTestId('signing-error')).toHaveTextContent('orch host convenience on --workspace INT')
+    expect(await screen.findByTestId('signing-error')).toHaveTextContent('One click needs setup on the host computer.')
+    expect(document.querySelectorAll('code')).toHaveLength(0)
   })
 
   it('only an owner sees the switch', async () => {
@@ -287,35 +290,29 @@ describe('Sign in the dashboard', () => {
     expect(screen.queryByRole('button', { name: /Turn/ })).toBeNull()
   })
 
-  it('an older signer names the terminal command instead', async () => {
+  it('an older signer asks for an update, no terminal command', async () => {
     mount({ ...OFF, switchable: false })
-    expect(await screen.findByTestId('signing-update')).toHaveTextContent('orch host convenience on --workspace INT')
+    expect(await screen.findByTestId('signing-update')).toHaveTextContent('Update orch to turn on One click here.')
+    expect(document.querySelectorAll('code')).toHaveLength(0)
     expect(screen.queryByRole('button', { name: /Turn/ })).toBeNull()
   })
 
   // -- orch-9d's review of #578 (M1, M2, L1-L5) -----------------------------------------------------------------------
 
-  it('a hostile prefix is never put into a command (M1)', async () => {
+  it('a hostile prefix is never shown in the turn-off dialog (M1)', async () => {
     mount({ ...ON, custody: 'passphrase' }, true, HOSTILE)
     fireEvent.click(await openSwitch())
-    expect(screen.getByTestId('signing-move-back')).toHaveTextContent(/can't be put in a command safely/)
-    for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('rm -rf')
+    expect(screen.getByTestId('signing-move-back')).toHaveTextContent('Manage key custody on the host computer.')
+    expect(document.querySelectorAll('code')).toHaveLength(0)
+    expect(document.body.textContent).not.toContain('rm -rf')
     expect(screen.queryByRole('button', { name: /Copy/ })).toBeNull()
   })
 
-  it('a hostile prefix gets no terminal-on command either (M1)', async () => {
+  it('a hostile prefix is never shown next to the switch either (M1)', async () => {
     mount({ custody: 'convenience', enabled: false, available: false, problem: 'disabled', switchable: true }, true, HOSTILE)
-    expect(await screen.findByTestId('signing-terminal-on')).toHaveTextContent(/can't be put in a command safely/)
-    for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('rm -rf')
-  })
-
-  it('the commands have a copy button (L1)', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
-    mount({ ...ON, custody: 'passphrase' })
-    fireEvent.click(await openSwitch())
-    fireEvent.click(screen.getByRole('button', { name: 'Copy the command' }))
-    expect(writeText).toHaveBeenCalledWith('orch keys custody passphrase --workspace INT --in-place')
+    expect(await screen.findByTestId('signing-terminal-on')).toHaveTextContent('Use the switch to turn on One click.')
+    expect(document.querySelectorAll('code')).toHaveLength(0)
+    expect(document.body.textContent).not.toContain('rm -rf')
   })
 
   it('every error reloads the card: a stale form gives way to what the signer says now (M2)', async () => {
@@ -330,7 +327,7 @@ describe('Sign in the dashboard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Turn on' }))
     await waitFor(() => expect(status.mock.calls.length).toBeGreaterThanOrEqual(2))
     // the refetched state replaces the stale form: the terminal-on view, no form, no error
-    expect(await screen.findByTestId('signing-terminal-on')).toHaveTextContent('orch host convenience on --workspace INT')
+    expect(await screen.findByTestId('signing-terminal-on')).toHaveTextContent('Use the switch to turn on One click.')
     expect(screen.queryByLabelText(/Enter the passphrase/)).toBeNull()
     expect(screen.queryByTestId('signing-error')).toBeNull()
   })

@@ -18,10 +18,3 @@ export function AnswerSend({ canSend, fallback, type = 'button',
 }) {
   return <div className="flex justify-end"><Button type={type} size="sm" disabled={!canSend} onClick={type === 'submit' ? undefined : fallback}>Send answer</Button></div>
 }
-/** What the live region says for a phase of the strip (nothing for a refusal: its own message is on screen). */
-export function liveText(phase: string, armed: boolean): string {
-  if (phase === 'signing' || phase === 'settling') return 'Sending your answer.'
-  if (phase === 'done') return 'Answer sent.'
-  if (phase !== 'ready') return ''
-  return armed ? 'Send answer is ready.' : 'Review loaded. Send answer turns on in a moment.'
-}

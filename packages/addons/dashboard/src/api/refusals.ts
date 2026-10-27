@@ -57,7 +57,7 @@ export const DECL_INVALID_SENTENCE =
 export const SIGNER_PROBLEM_SENTENCE: Record<string, string> = {
   idle: 'One click switched itself off after a while without use. Turn it on again to continue.',
   readers_old:
-    'Click-to-sign is paused: another device or member of this workspace has an orch app too old to read click-signed entries. Update orch there (it then declares what it reads) or remove that device; Settings → Devices shows which. ',
+    'Click-to-sign is paused: another device or member of this workspace has an orch app too old to read click-signed entries. Update orch there (it then declares what it reads) or remove that device; Settings → Devices shows which.',
   disabled: 'Click-to-sign is switched off for this workspace.',
   dev_host: DEV_HOST_SENTENCE,
   not_convenience: 'Your key for this workspace is not held for click-to-sign.',

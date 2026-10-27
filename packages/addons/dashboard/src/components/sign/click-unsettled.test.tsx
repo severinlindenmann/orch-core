@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { CLICK_RISK, unknownOutcome } from '@/api/click'
@@ -15,7 +15,12 @@ function Probe({ ws, onRun }: { ws: string; onRun: (r: ReturnType<typeof useClic
   return <p>{run.phase}{run.leftUnsettled ? ' left' : ''}{run.switched ? ' switched' : ''}</p>
 }
 
-afterEach(() => vi.restoreAllMocks())
+// Unmounting with a request open cancels it one tick later (useClickSign): let that land on this test's spies, not the next one's.
+afterEach(async () => {
+  cleanup()
+  await act(async () => { await new Promise(r => setTimeout(r, 0)) })
+  vi.restoreAllMocks()
+})
 
 describe('switching workspace', () => {
   const setup = async () => {

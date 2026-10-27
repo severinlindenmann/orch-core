@@ -1,5 +1,6 @@
 """Read one follow-up from the verified ticket view."""
 
+from orch.model import followup_events as fe
 from orch.ops import followup, views
 from orch.ops._dsl import S, err, operation
 from orch.ops.base import Result
@@ -13,6 +14,22 @@ def handle(ctx, args):
     data = dict(rec)
     lines = [f"{name}: {rec.get(name) or '-'}" for name in ("state", "trigger", "due", "deadline")]
     lines += [f"set by: {rec['person']} ({rec['setter_session']})"]
+    on = rec.get("on")
+    if on:
+        lines += [
+            "waiting for: "
+            + (
+                f"webhook (hook {rec['hook'][:8]})"
+                if on["source"] == "webhook"
+                else f"{on['kind']}.{on['status']}" + (f":{on['ref']}" if on.get("ref") else "")
+            )
+        ]
+    # the closed wake reason comes before the brief, rendered by core from closed values only
+    if wake := fe.wake_line(
+        rec["trigger"] if not rec.get("fallback") else "deadline", rec.get("fallback"), rec.get("event")
+    ):
+        lines += [wake]
+        data["wake"] = wake
     lines += views.fence(rec["brief"], "follow-up brief")
     lines += [
         f"outcome: {rec['outcome'] or '-'}",

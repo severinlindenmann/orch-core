@@ -1,0 +1,5 @@
+Make a doorbell address that wakes one follow-up when an outside job calls it.
+usage: orch webhook new [REF] --label LABEL
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+  --label LABEL  what it is for (required)
+more: orch describe webhook.new

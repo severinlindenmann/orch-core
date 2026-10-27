@@ -118,7 +118,7 @@ RELAY_OPS = frozenset(
     {
         # registry read ops
         "addon.list", "artifact.list", "check", "describe", "help", "inbox", "list", "next", "quick.list", "search",
-        "show", "status", "task.list", "task.next", "follow_up.show", "follow_up.list",
+        "show", "status", "task.list", "task.next", "follow_up.show", "follow_up.list", "webhook.new",
         # host reads, filtered for the viewer exactly as P (F6)
         "ticket.query", "ticket.get", "needs", "activity.list", "diff", "artifact.get", "workspace.show",
         "member.list", "ticket.text", "artifact.query", "commit.list", "workspace.settings",

@@ -57,7 +57,7 @@ def mode_of(gateway: Gateway, ws: str) -> str | None:
         return None
 
 
-#: what the hub cannot sign yet: `addon.granted` is not a custodial type (protocol.md section 8.5, "Not custodial in hv 0")
+#: what the hub cannot sign yet: `addon.granted` is not a custodial type (protocol.md, "Not custodial in hv 0")
 NOT_IN_HUB = ("addon_grant", "market_grant")
 
 

@@ -171,6 +171,10 @@ def _days(hours: int) -> str:
     return f"{hours // 24} days" if hours % 24 == 0 and hours >= 48 else f"{hours} hours"
 
 
+#: what a new One click workspace allows (setup does not narrow phone or hub: they come with the owner's later join)
+ONE_CLICK_SIGN_METHODS = ("terminal", "click", "phone", "hub")
+
+
 def plan(
     profile: Mapping[str, Any],
     directory: str,
@@ -192,7 +196,9 @@ def plan(
     sets: dict[str, Any] = {}
     if profile["method"] == "click":
         if facts is None:
-            sets["sign_methods"] = ["terminal", "click"]  # terminal stays allowed until the conversion is done
+            # terminal stays allowed until the conversion is done; phone and hub too: one click on this computer
+            # must not silently refuse the owner's later phone or hub join (run 12a: every hub answer was dropped)
+            sets["sign_methods"] = list(ONE_CLICK_SIGN_METHODS)
         elif facts.sign_methods is not None and "click" not in facts.sign_methods:
             sets["sign_methods"] = [*facts.sign_methods, "click"]  # M1: only what is actually missing
     if profile["agent_hours"] != 8 and (facts is None or not facts.grant_hours_set):

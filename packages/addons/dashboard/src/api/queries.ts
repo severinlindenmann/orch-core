@@ -88,6 +88,8 @@ export const queries = {
     }),
   /** Records status (owners, maintainers: the host refuses anyone else). Refused answers are not retried. */
   records: (ws: string) => queryOptions({ queryKey: ['records', ws], queryFn: () => api.getRecords(ws), retry: false }),
+  /** Whether Claude Code may open this workspace's folders without asking. */
+  claudeTrust: (ws: string) => queryOptions({ queryKey: ['claude-trust', ws], queryFn: () => api.getClaudeTrust(ws), retry: false }),
   identity: (ws: string) => queryOptions({ queryKey: ['identity', ws], queryFn: () => api.getIdentity(ws) }),
   people: (ws: string) => queryOptions({ queryKey: ['people', ws], queryFn: () => api.listPeople(ws) }),
   /** The relay state with the time it was read (the page polls while something moves). */

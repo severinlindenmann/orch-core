@@ -223,11 +223,13 @@ def agents_rel(root: Path, store: Path | None) -> str:
     return _where(root, store, AGENTS_FILE)
 
 
-def check_targets(root: Path, store: Path | None = None) -> list[str]:
+def check_targets(root: Path, store: Path | None = None, addons: Sequence[AddonRow] = ()) -> list[str]:
     """Why the instruction files cannot be written safely into ``root`` and ``store`` (the directory that holds
-    ``AGENTS.orch.md``; ``None``: ``root``) (empty when they can)."""
+    ``AGENTS.orch.md``; ``None``: ``root``) (empty when they can). ``addons``: the set whose skills are written too."""
+    from .addon_skills import skill_rels
+
     problems = []
-    rels = [AGENTS_FILE, "AGENTS.md", "CLAUDE.md", ".gitignore", *workspace_files()]
+    rels = [AGENTS_FILE, "AGENTS.md", "CLAUDE.md", ".gitignore", *workspace_files(addons), *skill_rels(addons)]
     link = _claude_is_agents_link(root)
     for rel in dict.fromkeys(rels):
         if rel == "CLAUDE.md" and link:
@@ -315,6 +317,8 @@ def write_workspace_files(
     dry_run: bool = False,
     store: Path | None = None,
     addons: Sequence[AddonRow] = (),
+    worktrees: Sequence[Path | str] = (),
+    now: float | None = None,
 ) -> tuple[list[str], list[str]]:
     """Write the instruction files into ``root``. Returns ``(changed, kept)``: the relative paths that changed (or
     would, with ``dry_run``) and a line for each file left alone and why.
@@ -328,7 +332,9 @@ def write_workspace_files(
     the shipped text, and a ``SKILL.md`` that differs from the shipped text at the same ``skill_version`` (edited by
     hand) unless ``force``. Nothing is written through a symbolic link: :class:`UnsafePath`. ``store``: the store
     directory (``.orch``); ``AGENTS.orch.md`` is written there, everything else under ``root``. ``addons``: the
-    workspace's add-on set (:func:`orch.instructions.addon_set.collect_rows`), written as the add-on block."""
+    workspace's add-on set (:func:`orch.instructions.addon_set.collect_rows`), written as the add-on block; the skills
+    of its active add-ons are written to ``root`` and each of ``worktrees`` and those of add-ons that are not active
+    are removed or quarantined (:mod:`orch.instructions.addon_skills`)."""
     if not dry_run and store is not None and store != root:  # the store folder is never made here
         try:
             mode = os.lstat(store).st_mode
@@ -380,21 +386,37 @@ def write_workspace_files(
     if pointers and ignore_line not in gitignore_have.split("\n"):
         if dry_run or _ensure_line(root, ".gitignore", ignore_line):
             changed.append(".gitignore")
+    if owned is None:  # the add-on skills are part of the files orch owns, unless the caller names its own set
+        from .addon_skills import reconcile
+
+        c, lines = reconcile(root, addons, store=store, worktrees=worktrees, force=force, dry_run=dry_run, now=now)
+        changed += [x for x in c if x not in changed]
+        kept += lines
     return changed, kept
 
 
 def sync_addon_part(
-    root: Path, addons: Sequence[AddonRow], *, store: Path | None = None, dry_run: bool = False
+    root: Path,
+    addons: Sequence[AddonRow],
+    *,
+    store: Path | None = None,
+    worktrees: Sequence[Path | str] = (),
+    force: bool = False,
+    dry_run: bool = False,
+    now: float | None = None,
 ) -> tuple[list[str], list[str]]:
-    """The add-on part of ``instructions sync`` (design D2): ``AGENTS.orch.md`` with the block for ``addons``. Returns
-    ``(changed, kept)`` like :func:`write_workspace_files`. Nothing else is touched; an unsafe path is
-    :class:`UnsafePath` before anything is written."""
+    """The add-on part of ``instructions sync`` (design D2): ``AGENTS.orch.md`` with the block for ``addons`` and the
+    add-on skills of ``root`` and ``worktrees``. Returns ``(changed, kept)`` like :func:`write_workspace_files`. The
+    built-in skills and the pointer files are not touched; an unsafe path in ``root`` is :class:`UnsafePath`."""
+    from .addon_skills import reconcile, skill_rels
+
     where = _where(root, store, AGENTS_FILE)
-    _check_chain(root, where)
+    for rel in (where, *skill_rels(addons)):
+        _check_chain(root, rel)
     text = render_agents_md(addons)
-    if dry_run:
-        return ([where] if safe_read(root, where) != text else []), []
-    return ([where] if _write(root, where, text) else []), []
+    changed = [where] if (safe_read(root, where) != text if dry_run else _write(root, where, text)) else []
+    c, kept = reconcile(root, addons, store=store, worktrees=worktrees, force=force, dry_run=dry_run, now=now)
+    return changed + [x for x in c if x not in changed], kept
 
 
 def _skill_dir(rel: str) -> str | None:

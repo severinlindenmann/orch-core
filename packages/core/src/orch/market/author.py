@@ -49,7 +49,7 @@ def scaffold(name: str) -> dict[str, bytes]:
         "schema": "orch.addon/3", "name": name, "version": "0.1.0", "title": title, "api": ">=1.1,<2",
         "min_core": CORE_VERSION, "capabilities": [], "entry": {"cmd": ["{python}", "{pkg}/main.py"]},
         "fields": {"note": {"type": "string", "max_len": 200, "set_by": ["addon", "member"]}},
-        "agents_md": f"{title}: the field {name}.note is a one-line note this add-on proposes.",
+        "agents_md": f"Use when the person wants the one-line note {name}.note. Not for long text (use the body).",
     }  # fmt: skip
     main = f'''"""orch add-on {name}: one JSON-RPC request on stdin, one response on stdout.
 The host sends the ticket's key, type, status and this add-on's own fields. The add-on holds no key: it proposes,
@@ -146,6 +146,7 @@ class Packed:
     entry: dict[str, Any]
     placeholder_git: bool
     files: dict[str, bytes]
+    warnings: tuple[str, ...] = ()  # the skill and agents_md conventions that are not errors (addon-skills D1)
 
 
 def pack(repo: str, rev: str | None = None, *, subdir: str | None = None, git: str | None = None) -> Packed:
@@ -164,4 +165,6 @@ def pack(repo: str, rev: str | None = None, *, subdir: str | None = None, git: s
         raise AuthorError("invalid.input", str(exc)[:300]) from None
     pkg, manifest = check_files(files)
     entry = index_entry(manifest, pkg, git=git or PLACEHOLDER_GIT, commit=commit, subdir=subdir)
-    return Packed(commit, pkg.digest, entry, git is None, files)
+    from orch.addons import skill
+
+    return Packed(commit, pkg.digest, entry, git is None, files, tuple(skill.warnings(manifest, pkg.files)))

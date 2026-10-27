@@ -9,7 +9,14 @@ from orch.ops.runtime import Call, Workspace
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
-    from orch.instructions import INSTRUCTIONS_REV, AddonBlockError, UnsafePath, collect_rows, write_workspace_files
+    from orch.instructions import (
+        INSTRUCTIONS_REV,
+        AddonBlockError,
+        UnsafePath,
+        collect_rows,
+        known_worktrees,
+        write_workspace_files,
+    )
 
     ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
     root = ws.require_root()
@@ -18,7 +25,13 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     rows = collect_rows(c.store.layout.store, c.store.state.workspace.addons)  # the log's add-ons and their packages
     try:
         changed, kept = write_workspace_files(
-            root, pointers=False, force=bool(args.get("force")), dry_run=dry, store=ws.store_dir, addons=rows
+            root,
+            pointers=False,
+            force=bool(args.get("force")),
+            dry_run=dry,
+            store=ws.store_dir,
+            addons=rows,
+            worktrees=known_worktrees(ctx.caps),
         )
     except AddonBlockError as e:
         raise OrchError("invalid.input", f"nothing written: {e}", hint=e.hint) from e

@@ -5,7 +5,7 @@ cannot name a command that does not exist (core §2, ticket-format §10.2). The 
 40 lines, the session-start text at most 7, each skill under a fixed size.
 """
 
-from .addon_set import addons_line, collect_rows
+from .addon_set import addons_line, collect_rows, known_worktrees
 from .agents_md import (
     ADDON_BLOCK_MAX_CHARS,
     ADDON_BLOCK_MAX_LINES,
@@ -52,6 +52,7 @@ __all__ = [
     "addon_fingerprint",
     "addons_line",
     "collect_rows",
+    "known_worktrees",
     "stamp_set",
     "AGENTS_MAX_LINES",
     "INSTRUCTIONS_REV",

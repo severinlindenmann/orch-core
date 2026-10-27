@@ -86,3 +86,41 @@ def test_a_publisher_key_seen_for_the_first_time_is_widened():
 
 def test_an_old_package_that_cannot_be_read_counts_as_widened():
     assert d(None, m(version="1.0.1"))["widened"] is True
+
+
+# ---- addon-skills D1: the update diff compares the BYTES of SKILL.md
+
+SKILL_A = b"---\nname: orch-addon-x\ndescription: Use when a. Not for b.\n---\n# X\n\n1. Run `orch show`.\n"
+
+
+def test_an_unchanged_skill_adds_nothing():
+    got = mi.diff(m(), m(version="1.0.1"), PREV, facts(), None, None, SKILL_A, SKILL_A)
+    assert got["widened"] is False and got["skill"] == {"changed": False, "diff": []}
+
+
+def test_one_changed_byte_is_a_changed_skill_and_widens():
+    new = SKILL_A.replace(b"show", b"stat")
+    got = mi.diff(m(), m(version="1.0.1"), PREV, facts(), None, None, SKILL_A, new)
+    assert got["widened"] is True and "skill text changed" in got["changes"]
+    assert got["skill"]["changed"] is True
+    assert "-1. Run `orch show`." in got["skill"]["diff"] and "+1. Run `orch stat`." in got["skill"]["diff"]
+
+
+def test_a_skill_that_arrives_or_goes_is_a_change():
+    added = mi.diff(m(), m(version="1.0.1"), PREV, facts(), None, None, None, SKILL_A)
+    assert added["widened"] is True and "+1. Run `orch show`." in added["skill"]["diff"]
+    gone = mi.diff(m(), m(version="1.0.1"), PREV, facts(), None, None, SKILL_A, None)
+    assert gone["skill"]["changed"] is True
+
+
+def test_a_whitespace_only_change_is_still_a_change_even_if_the_diff_looks_empty():
+    got = mi.diff(m(), m(version="1.0.1"), PREV, facts(), None, None, SKILL_A, SKILL_A + b"\n")
+    assert got["skill"]["changed"] is True and got["widened"] is True
+
+
+def test_the_text_diff_is_short_and_ascii():
+    big = b"\n".join(b"line %d \xc3\xa9" % i for i in range(200))
+    got = mi.diff(m(), m(version="1.0.1"), PREV, facts(), None, None, b"", big)
+    shown = got["skill"]["diff"]
+    assert len(shown) == mi.SKILL_DIFF_LINES + 1 and shown[-1].startswith("... ")
+    assert all(x.isascii() and len(x) <= mi.SKILL_DIFF_WIDTH for x in shown[:-1])

@@ -205,7 +205,7 @@ def test_the_owner_reads_what_runs_before_the_passphrase(hws, me):
         pkg_digest,
         "command /usr/bin/env-python '{pkg}/addon.py' --flag 'a b'",  # shlex-quoted: a space inside an argument shows
         "capabilities serve_http",
-        "agents see: - addon echo (hint, grants nothing): Estimates are hints only.",
+        "agents see: - echo: Estimates are hints only.",
         "needs rule big for owner: large",
         "field mood (enum) set by owner, bound to plan, verify",
         "section echo.notes for bug, feature",
@@ -416,3 +416,21 @@ def test_preview_is_read_only_and_equals_the_grant_that_follows(hws, me):
     assert read_package(d).digest == before.doc["data"]["grant"]["package_sha256"]
     missing = me("addon", "preview", "nope", "--json")
     assert missing.code != 0 and missing.doc["error"]["code"] == "not_found"
+
+
+def test_the_install_review_shows_the_skill_text(hws, me):
+    from tests.addons.helpers import manifest as base_manifest
+
+    text = "---\nname: orch-addon-echo\ndescription: Use when echo. Not for x.\n---\n# Echo\n\n1. Run `orch show`.\n"
+    man = base_manifest(
+        schema="orch.addon/3", api=">=1.2,<2", min_core="2.0.0.dev0", skill="skills/main", capabilities=[]
+    )
+    installed_package(hws, man=man, files={"skills/main/SKILL.md": text.encode()})
+    assert me("addon", "grant", "echo").code == 0
+    review = hws.reviews[-1]
+    assert "skill orch-addon-echo (" in review and "  | 1. Run `orch show`." in review
+    # direct mode: the signed grant brings the files along (design D2)
+    assert (hws.root / ".agents/skills/orch-addon-echo/SKILL.md").read_text() == text
+    assert "orch-addon-echo" in (hws.store_dir / "AGENTS.orch.md").read_text()
+    assert me("addon", "disable", "echo").code == 0
+    assert not (hws.root / ".agents/skills/orch-addon-echo").exists()

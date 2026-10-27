@@ -150,7 +150,12 @@ def review_lines(
 
         out += market_deps.lines(deps, show)
     if manifest.agents_md:
-        out.append(f"agents see: - addon {manifest.name} (hint, grants nothing): {show(manifest.agents_md)}")
+        out.append(f"agents see: - {manifest.name}: {show(manifest.agents_md)}")
+    if manifest.skill is not None:
+        raw = package.files.get(manifest.skill + "/SKILL.md", b"")
+        text = raw.decode("utf-8", "replace")
+        out.append(f"skill orch-addon-{manifest.name} ({len(text)} chars), read by agents before they use the add-on:")
+        out += [f"  | {show(x)}" for x in text.split("\n")]
     for rule in manifest.needs:
         out.append(f"needs rule {rule['id']} for {', '.join(rule['who'])}: {show(rule['text'])}")
     for fname, spec in event["fields"].items():

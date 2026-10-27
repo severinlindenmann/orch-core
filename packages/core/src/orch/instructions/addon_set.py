@@ -15,7 +15,7 @@ from typing import Any
 
 from .agents_md import AddonRow
 
-__all__ = ["addons_line", "collect_rows"]
+__all__ = ["addons_line", "collect_rows", "known_worktrees"]
 
 
 def collect_rows(store_root: str | os.PathLike[str], view: Mapping[str, Any]) -> list[AddonRow]:
@@ -62,3 +62,16 @@ def addons_line(rows: Sequence[AddonRow]) -> str | None:
     if not on and not off:
         return None
     return f"add-ons: {', '.join(on) or 'none'} · off: {', '.join(off) or 'none'} · read a skill before using one"
+
+
+def known_worktrees(caps: Any) -> list[str]:
+    """The registered worktree paths of the workspace as the host's git reader knows them (``worktree add``): the
+    places besides the workspace root where an agent works. ``[]`` when git is not available (direct mode, a host
+    without a reader), or on any problem reading the registrations: the sync then covers the root only."""
+    try:
+        git = caps.git
+        if not git.enabled or git.reader is None:
+            return []
+        return sorted({slot["reg"]["path"] for _uid, _repo, slot in git.reader.pins.worktrees()})
+    except Exception:  # noqa: BLE001 - a hint of where to also write; never a reason to fail a sync
+        return []

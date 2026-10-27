@@ -87,3 +87,16 @@ def test_the_fingerprint_makes_the_stamp_stale_and_sync_fixes_it(tmp_path):
     assert addon_fingerprint(rows) in (tmp_path / "AGENTS.orch.md").read_text().splitlines()[1]
     assert f"r{INSTRUCTIONS_REV}" in (tmp_path / "AGENTS.orch.md").read_text().splitlines()[1]
     assert "Add-ons here" in render_agents_md(rows)
+
+
+def test_known_worktrees_come_from_the_hosts_git_reader_and_never_fail():
+    from types import SimpleNamespace as NS
+
+    from orch.instructions import known_worktrees
+
+    pins = NS(worktrees=lambda: [("u1", "r", {"reg": {"path": "/w/b"}}), ("u2", "r", {"reg": {"path": "/w/a"}})])
+    caps = NS(git=NS(enabled=True, reader=NS(pins=pins)))
+    assert known_worktrees(caps) == ["/w/a", "/w/b"]
+    assert known_worktrees(NS(git=NS(enabled=False, reader=None))) == []  # direct mode: the root only
+    assert known_worktrees(NS(git=NS(enabled=True, reader=None))) == []
+    assert known_worktrees(object()) == []  # anything unexpected is no reason to fail a sync

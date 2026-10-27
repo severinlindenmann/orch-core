@@ -254,6 +254,7 @@ def _pack(a: argparse.Namespace) -> dict[str, Any]:
     return {
         "name": packed.entry["id"], "version": packed.entry["version"], "commit": packed.commit,
         "package_sha256": packed.digest, "entry": packed.entry, "placeholder_git": packed.placeholder_git,
+        "warnings": list(packed.warnings),
     }  # fmt: skip
 
 
@@ -272,6 +273,7 @@ def _author_text(a: argparse.Namespace, data: dict[str, Any]) -> str:
     ]
     if data["placeholder_git"]:
         lines.append('note: "source.git" is a placeholder; pass --git https://github.com/<you>/<repo> or edit it')
+    lines += [f"warning: {w}" for w in data.get("warnings", [])]
     lines.append(
         "note: the commit is what installs; push it so the marketplace can fetch it. Uncommitted files are not in it."
     )

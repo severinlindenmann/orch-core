@@ -42,9 +42,9 @@ def bad(**over):
 
 
 def test_core_declares_api_1_1_and_a_1_1_add_on_needs_it():
-    assert ADDON_API == "1.1"
+    assert ADDON_API == "1.2"
     assert incompatibility(load(), "2.0.0.dev0") is None
-    m = load_manifest(json.dumps(manifest(schema="orch.addon/3", api=">=1.2,<2")).encode())
+    m = load_manifest(json.dumps(manifest(schema="orch.addon/3", api=">=1.3,<2")).encode())
     assert incompatibility(m, "2.0.0.dev0") is not None
 
 

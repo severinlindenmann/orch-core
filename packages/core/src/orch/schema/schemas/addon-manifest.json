@@ -554,6 +554,11 @@
       "maxItems": 0,
       "description": "reserved for P2: accepted only empty"
     },
+    "skill": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,63}){0,3}(?![\\s\\S])",
+      "description": "addon-api 1.2, orch.addon/3 only: the package folder of the add-on's one skill (skills/main), which holds exactly SKILL.md; checked further in validate() and by the package reader"
+    },
     "agents_md": {
       "type": "string",
       "maxLength": 200,
@@ -646,6 +651,11 @@
             {
               "required": [
                 "runtime"
+              ]
+            },
+            {
+              "required": [
+                "skill"
               ]
             }
           ]

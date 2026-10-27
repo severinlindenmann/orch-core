@@ -10,12 +10,13 @@ functions give the answer ``tests/addons/market_ref.install`` gives on the same 
 
 from __future__ import annotations
 
+import difflib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from orch import canon
-from orch.addons import builtin
+from orch.addons import builtin, skill
 from orch.addons.install import read_lock
 from orch.addons.lockfile import Planned
 from orch.addons.manifest import Manifest, ManifestError, _core_key, declarations, incompatibility, load_manifest
@@ -162,12 +163,36 @@ def check_package(facts: Facts, pkg: Package, core_version: str) -> Manifest:
             raise MarketError("market.package_invalid")  # bundled code is code the lock does not list
     if incompatibility(manifest, core_version) is not None:
         raise MarketError("market.manifest_mismatch")
+    try:
+        skill.check_package(manifest, pkg.files)  # addon-skills D1: the folder, the file, the command lint
+    except skill.SkillError:
+        raise MarketError("market.package_invalid") from None
     return manifest
 
 
 # ------------------------------------------------------------------------------------------------ the update diff
 
 _DOC_KEYS = ("entry", "cli", "skills", "agents_md")
+
+
+SKILL_DIFF_LINES = 40
+SKILL_DIFF_WIDTH = 110
+
+
+def skill_diff(old: bytes | None, new: bytes | None) -> dict[str, Any]:
+    """``{changed, diff}``: whether the bytes of ``SKILL.md`` differ and a short unified diff of the text (at most
+    :data:`SKILL_DIFF_LINES` lines of :data:`SKILL_DIFF_WIDTH` characters, printable ASCII, author's text)."""
+    if old == new:
+        return {"changed": False, "diff": []}
+
+    def lines(raw: bytes | None) -> list[str]:
+        return [] if raw is None else raw.decode("utf-8", "replace").split("\n")
+
+    raw = list(difflib.unified_diff(lines(old), lines(new), lineterm="", n=1))[2:]  # without the file header lines
+    shown = [ascii(x)[1:-1][:SKILL_DIFF_WIDTH] for x in raw[:SKILL_DIFF_LINES]]
+    if len(raw) > SKILL_DIFF_LINES:
+        shown.append(f"... {len(raw) - SKILL_DIFF_LINES} more lines")
+    return {"changed": True, "diff": shown}
 
 
 def _set_by(f: Mapping[str, Any]) -> set[str]:
@@ -181,6 +206,8 @@ def diff(
     facts: Facts,
     old_plan: Sequence[Planned] | None = None,
     new_plan: Sequence[Planned] | None = None,
+    old_skill: bytes | None = None,
+    new_skill: bytes | None = None,
 ) -> dict[str, Any]:
     """What the update changes against the add-on that is installed (``old``, read from its directory; ``None`` when it
     cannot be read: everything then counts as widened) and the install record ``prev``. ``changes`` are lines for a
@@ -190,6 +217,8 @@ def diff(
     runtime that is added or changes kind, or any locked package that is added or re-versioned (removals do not widen).
     ``old_plan``/``new_plan`` are the planned rows of each side for this computer (``None``: no lock, or the old one is
     unreadable); a package whose install status or flags change counts as changed, not unchanged.
+    ``old_skill``/``new_skill`` are the BYTES of each side's ``SKILL.md`` (``None``: no skill): a byte that differs is a
+    changed skill, which widens (it is text every agent reads) and comes with a short text diff in ``skill``.
     The host labels it as index-derived where it comes from the index."""
     ev_new = declarations(new)
     added: dict[str, list[str]] = {k: [] for k in ("capabilities", "fields", "sections", "needs", "artifact_kinds")}
@@ -229,6 +258,10 @@ def diff(
                 changes.append(f"{k.replace('_', ' ')} changed")
                 widened = True  # a new command, hint, CLI or skills: what the add-on tells agents or runs
         widened = widened or any(added[k] for k in ("capabilities", "fields", "sections", "needs", "artifact_kinds"))
+    skill = skill_diff(old_skill, new_skill)
+    if skill["changed"]:
+        changes.append("skill text changed")
+        widened = True
     dep = deps.diff(
         None if old is None or old.runtime is None else old.runtime["kind"],
         old_plan,
@@ -261,4 +294,5 @@ def diff(
         "widened": widened,
         "publisher": publisher,
         "deps": {k: dep[k] for k in ("runtime", "added", "removed", "changed", "lines")},
+        "skill": skill,
     }

@@ -581,6 +581,7 @@ def _check_manifest(obj: dict[str, Any]) -> None:
         seen_headings.add(heading_key(h))
     _check_manifest_needs(obj)
     _check_manifest_api_1_1(obj)
+    _check_manifest_api_1_2(obj)
     line = obj.get("agents_md", "")
     if line and (not _AGENTS_LINE.fullmatch(line) or _AGENTS_BAD & set(line)):
         raise SchemaError(
@@ -618,6 +619,15 @@ def _check_manifest_api_1_1(obj: dict[str, Any]) -> None:
             check_settings_schema(obj["settings"]["schema"])
         except SettingsSchemaError as e:
             raise SchemaError("addon-manifest", _pointer(["settings", "schema", *e.path]), str(e)) from None
+
+
+def _check_manifest_api_1_2(obj: dict[str, Any]) -> None:
+    """addon-api 1.2 (addon-skills D1): ``skill`` needs an API range that excludes 1.1 (a core that only has 1.1 would
+    read the key as unknown and show the add-on as active without its skill)."""
+    from orch.addons.manifest import _api_in_range
+
+    if "skill" in obj and _api_in_range((1, 1), obj.get("api", ">=1.0,<2")) is not False:
+        raise SchemaError("addon-manifest", "/api", "skill needs add-on API 1.2: set api to a range that excludes 1.1")
 
 
 _AGENTS_LINE = re.compile(r"(?![0-9]+[.)] )[A-Za-z0-9][\x20-\x7e]{0,199}(?![\s\S])")

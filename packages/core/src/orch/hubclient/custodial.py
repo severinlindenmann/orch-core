@@ -18,6 +18,7 @@ The registration label ``orch/v2/hub-channel-reg|`` is never a custodial proof: 
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
@@ -562,4 +563,11 @@ def accept_event_deliver(
                 raise
             return attempt()
     except LandRefused as e:
-        raise HubRefused(reply_code(e.refusal)) from None
+        code = reply_code(e.refusal)
+        # The wire code is coarse (most model refusals read "forbidden_role"): the host log keeps the real reason
+        # (FB15 round 3: an add-on request was dropped with no way to tell why).
+        logging.getLogger("orch.hubclient.custodial").warning(
+            "event_deliver %s refused: reply %s, model %s (%s)",
+            event.get("type"), code, e.refusal.code.value, str(e.refusal.detail)[:200],
+        )  # fmt: skip
+        raise HubRefused(code) from None

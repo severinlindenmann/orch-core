@@ -44,7 +44,7 @@ export function groupHash(h: unknown): string | null {
 /** A host link is shown only when it is exactly the host's closed grammar. */
 export const safeHubUrl = (u: unknown): string | null => (typeof u === 'string' && (URL_OK.test(u) || ADDON_URL_OK.test(u)) ? u : null)
 
-const ADDON_URL_OK = /^https:\/\/(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])(?::[0-9]{1,5})?\/#\/w\/[0-9a-f]{32}\/addon\/[A-Za-z0-9_-]{1,8192}$/
+const ADDON_URL_OK = /^https?:\/\/(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])(?::[0-9]{1,5})?\/#\/w\/[0-9a-f]{32}\/addon\/[A-Za-z0-9_-]{1,8192}$/
 
 /** The add-on actions that a full-mode workspace approves in the hub (FB15). */
 export const isAddonGrant = (a: HandoffAction | null | undefined): a is Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' }> => a?.action === 'addon_grant' || a?.action === 'market_grant'

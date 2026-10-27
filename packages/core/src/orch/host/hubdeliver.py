@@ -375,6 +375,7 @@ def deliver(service: WorkspaceService, state: Any, log: str, event: dict[str, An
         _warn_policy(event)
         return None
     except HubRefused as exc:
+        _log.warning("event_deliver %s refused: %s", event.get("type"), exc.code)
         return exc.code
     except StoreError as exc:
         _log.warning("event_deliver: the store refused: %s (%s)", exc.code, exc.detail)

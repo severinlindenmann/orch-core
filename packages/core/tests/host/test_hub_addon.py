@@ -137,6 +137,15 @@ def test_an_expired_hand_off_is_inert(env):
     assert granted(env) == [] and not addon_dir(env.served).exists()
 
 
+def test_a_refusal_names_its_real_reason_in_the_host_log(env, caplog):
+    """FB15 round 3: the wire code of most model refusals is "forbidden_role"; the host log says which one it was."""
+    prepared, ev = prepare_handoff(env)
+    assert M.mfiles(env.served).drop_stage(env.st["stage"])
+    with caplog.at_level("WARNING"):
+        assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is not None
+    assert any("addon.requested refused" in r.message and "model grant.terms" in r.message for r in caplog.records)
+
+
 def test_a_changed_stage_is_refused_and_nothing_lands(env):
     prepared, ev = prepare_handoff(env)
     f = M.mfiles(env.served)

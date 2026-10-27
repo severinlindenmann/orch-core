@@ -43,3 +43,8 @@ test("bindings: the signed terms must equal the action this page sent", () => {
   assert.throws(() => checkBindings(full(ev({ capabilities: ["network"] })), me, sent));
   assert.throws(() => checkBindings(full(ev({ package_sha256: "sha256:" + "b".repeat(64) })), me, sent));
 });
+
+test("the sign prompt heading says what is being approved", async () => {
+  const src = await (await import("node:fs/promises")).readFile(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  assert.match(src, /d\.type === "addon\.requested" \? "Approve an add-on" : "Review your answer"/);
+});

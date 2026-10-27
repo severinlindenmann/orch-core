@@ -311,7 +311,7 @@ def scenarios(e: Env, log=print) -> dict[str, str]:
         t_off = time.time()
         e.ws.human("addon", "disable", "schedules")
         refused = e.ws.unattended("follow-up", "show", fid, ok=False)
-        assert "followup.off" in refused, refused  # every follow-up verb says so while the add-on is off
+        assert "addon.off" in refused, refused  # every follow-up verb says so while the add-on is off
         time.sleep(max(0, 60 + 10 - (time.time() - t_off)))  # past its due time, with the add-on off
         assert not (e.out / f"run-{fid}.json").exists(), "a follow-up fired with the add-on off"
 

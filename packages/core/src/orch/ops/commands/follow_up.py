@@ -17,7 +17,6 @@ def handle(ctx, args):
 
 
 def build(c, p, args):
-    followup.require_on(c.store.state.workspace.addons)
     stamp = followup.due(args, c.now)
     if ("brief" in args) == ("brief_file" in args):
         raise OrchError("invalid.input", "give exactly one of --brief or --brief-file")
@@ -71,7 +70,6 @@ OP = operation(
     errors=tuple(
         err(c)
         for c in (
-            "followup.off",
             "followup.denied",
             "followup.too_soon",
             "followup.too_far",
@@ -81,5 +79,6 @@ OP = operation(
         )
     ),
     handler=handle,
+    addon="schedules",
 )
 OP.declaration["input"]["allOf"] = [{"oneOf": [{"required": ["brief"]}, {"required": ["brief_file"]}]}]

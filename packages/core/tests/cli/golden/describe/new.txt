@@ -15,9 +15,9 @@ args:
   --dry-run  say what would happen, append nothing
 errors:
   not_found (exit 2): the parent does not exist | fix: orch list
+  addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
-  quick.off (exit 3): ask an owner to turn Quick tasks on in Settings, Add-ons | fix: orch addon list
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   parse.text (exit 6): orch describe new
 out: ok {key} ticket.created {ticket_type} seq={seq} / next: {next}

@@ -15,7 +15,7 @@ OP = operation(
         "properties": {"target": STR, "name": STR, "cli": STR, "summary": STR, "who": STR},
         "required": ["target"],
     },
-    errors=(err("not_found", "orch describe lists the commands", ["orch", "describe"]),),
+    errors=(err("not_found", "orch describe lists the commands", ["orch", "describe"]), err("addon.off")),
 )
 
 

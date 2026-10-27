@@ -78,15 +78,6 @@ _SPECS = [
         "brief must be non-empty clean text of at most 4096 bytes",
     ),
     _e(
-        "followup.off",
-        3,
-        False,
-        "Schedules is switched off in this workspace; an owner can turn it on in Add-ons",
-        "ask an owner to turn Schedules on in Add-ons",
-        ["orch", "addon", "list"],
-        "Schedules is switched off in this workspace; an owner can turn it on in Add-ons",
-    ),
-    _e(
         "followup.no_receiver",
         3,
         False,
@@ -331,14 +322,14 @@ _SPECS = [
         "A grant with a list of verbs names operations, matched exactly (F1 10.1); this operation is not in it.",
     ),
     _e(
-        "quick.off",
+        "addon.off",
         3,
         False,
-        "Quick tasks is switched off in this workspace",
-        "ask an owner to turn Quick tasks on in Settings, Add-ons",
+        "the add-on is off in this workspace",
+        "tell the person; do not work around it",
         ["orch", "addon", "list"],
-        "The built-in quick add-on is not granted or is switched off: no new quick task can be made (dashboard, "
-        "orch quick, agents). Existing quick tasks stay readable.",
+        "The command belongs to an add-on (quick tasks, schedules, ...) that is not granted or is switched off here. "
+        "Nothing was changed. Existing data stays readable; an owner turns the add-on on in Add-ons.",
     ),
     _e(
         "role.denied",

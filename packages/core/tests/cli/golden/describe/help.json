@@ -76,6 +76,17 @@
           "orch",
           "help"
         ]
+      },
+      {
+        "code": "addon.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "tell the person; do not work around it",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
       }
     ]
   },

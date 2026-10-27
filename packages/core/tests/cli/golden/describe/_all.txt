@@ -1,7 +1,7 @@
 ok describe all
 Context: status, describe, help, widgets types|check
-Read: show, list, quick list, search, next, inbox, follow-up show|list
-Lifecycle: new, claim, release, follow-up, follow-up cancel, webhook new, handoff, submit, ask, wait
+Read: show, list, quick list, search, next, inbox, follow-up show|list, schedule list|show
+Lifecycle: new, claim, release, follow-up, follow-up cancel, schedule add|cancel, webhook new, handoff, submit, ask, wait
 Edit: set, section set, ac add|edit, task list|next|add|edit|start|done|skip|block|reopen, artifact add|replace|list, log, apply
 Human only: approve, request-changes, verdict, answer, close, follow-up reschedule|undo, reopen, grant, grant revoke, member add|remove|role
 Admin: doctor, check, instructions sync|hook, import v1, addon list|grant|preview|disable|purge

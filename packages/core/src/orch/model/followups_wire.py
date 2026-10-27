@@ -12,11 +12,32 @@ from .codes import Code, Refusal
 from .types import Core, FollowupRec, Grant, TCore, WsCore, ts
 
 
+def stamp(at: int) -> str:
+    """The canonical ledger timestamp of epoch seconds (UTC, ``Z``, no fraction); ``ts`` reads it back."""
+    return datetime.fromtimestamp(at, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def canonical_ts(s: object) -> bool:
+    """True iff ``s`` is a timestamp in its one canonical spelling (``stamp(ts(s)) == s``)."""
+    try:
+        return isinstance(s, str) and stamp(ts(s)) == s
+    except (ValueError, OverflowError, OSError):
+        return False
+
+
 def grant_chain(ws: WsCore, gid: str):
     return fu.ancestors(
         {
             g.id: fu.GrantTerms(
-                g.id, g.person, g.scope, g.verbs, ts(g.issued_at), ts(g.expires_at), g.parent, g.revoked
+                g.id,
+                g.person,
+                g.scope,
+                g.verbs,
+                ts(g.issued_at),
+                ts(g.expires_at),
+                g.parent,
+                g.revoked,
+                root_kind=g.root_kind,
             )
             for g in ws.grants.values()
         },
@@ -59,6 +80,7 @@ def view_state(core: Core, t: TCore, rec: FollowupRec, now: int) -> tuple[str, s
     ws = core.ws
     reason = fu.derived_cancel_reason(
         state=rec.state,
+        at=now,
         replaced=False,
         ticket_status=t.status,
         claimed_by_other=bool(t.claim and not claims.in_family(t.claim.session, rec.setter_session)),
@@ -187,6 +209,27 @@ def fired_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     if wake is not None and (e["trigger"] in ("time", "deadline") or not fe.matches(rec.on or {}, wake)):
         return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event does not match the follow-up")
     assert chain
+    from .schedules_wire import root_valid
+
+    if not root_valid(core, chain[-1].id, now):
+        return Refusal(Code.FOLLOWUP_DENIED, "schedule root is no longer live")
+    schedule_live = sum(
+        bool(o.get("grant")) and not o.get("outcome") and not ws.grants[o["grant"]].ended
+        for ticket in core.tickets.values()
+        for schedule in ticket.schedules.values()
+        for o in schedule.occurrences.values()
+    )
+    if (
+        schedule_live
+        and schedule_live
+        + sum(
+            r.state == "fired" and r.grant is not None and not ws.grants[r.grant].ended
+            for ticket in core.tickets.values()
+            for r in ticket.followups.values()
+        )
+        >= fu.FU_CONCURRENT_RUNS
+    ):
+        return Refusal(Code.FOLLOWUP_DENIED, "concurrent_cap")
     g = fu.derive_grant(
         chain[0],
         ticket_uid=t.uid,
@@ -194,10 +237,6 @@ def fired_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         fired_at=now,
         secret_hash=e["secret_hash"].removeprefix("sha256:"),
     )
-
-    def stamp(at):
-        return datetime.fromtimestamp(at, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
     ws.grants[g.id] = Grant(g.id, g.person, g.scope, g.verbs, stamp(g.issued_at), stamp(g.expires_at), parent=g.parent)
     rec.state, rec.fired_at, rec.grant, rec.run, rec.fallback = "fired", e["at"], g.id, e["run"], e.get("fallback")
     rec.event = wake

@@ -98,6 +98,7 @@ class GrantTerms:
     parent: str | None
     revoked: bool = False
     secret_hash: str | None = None  # FU1: set by derive_grant from followup.fired; None on person-issued grants
+    root_kind: str = "grant"  # schedule roots enforce their signed interval, unlike expiring parent grants
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,9 +217,12 @@ def ancestors(grants: Mapping[str, GrantTerms], grant_id: str) -> tuple[GrantTer
     return tuple(result)
 
 
-def chain_valid(chain: Sequence[GrantTerms] | None, *, root_person_active: bool) -> bool:
-    """FU4: expiry of every grant is intentionally ignored."""
+def chain_valid(chain: Sequence[GrantTerms] | None, *, root_person_active: bool, at: int | None = None) -> bool:
+    """FU4: parent-grant expiry is ignored; a schedule authority root ends at its signed end."""
     if not chain or root_person_active is not True or chain[-1].parent is not None:
+        return False
+    root = chain[-1]
+    if root.root_kind == "schedule" and (type(at) is not int or not root.issued_at <= at < root.expires_at):
         return False
     # Fail closed on a broken list: each grant must name the next one as its parent.
     linked = all(g.parent == nxt.id for g, nxt in zip(chain, chain[1:], strict=False))
@@ -242,7 +246,7 @@ def fgrant_usable(
         and grant.issued_at <= at < grant.expires_at
         and bool(chain)
         and chain[0] == grant
-        and chain_valid(chain, root_person_active=root_person_active)
+        and chain_valid(chain, root_person_active=root_person_active, at=at)
     )
 
 
@@ -471,7 +475,7 @@ def check_fired(
         return Denial("bad_trigger", "firing trigger does not match")
     if not _is_hash(fired.secret_hash):
         return Denial("bad_secret_hash", "a 64-character lowercase hex secret hash is required")
-    if not chain_valid(chain, root_person_active=root_person_active):
+    if not chain_valid(chain, root_person_active=root_person_active, at=fired.at):
         return Denial("chain_invalid", "grant chain is not active")
     deadline = fu.due if fu.trigger == "time" and fu.deadline is None else fu.deadline
     if fired.trigger == "deadline":
@@ -520,6 +524,7 @@ def derived_cancel_reason(
     member_removed: bool,
     addon_enabled: bool,
     chain_needs_person: bool,
+    at: int | None = None,
 ) -> str | None:
     """FU4/FU14: first matching cancellation wins, independent of parent expiry."""
     if state not in ("pending", "needs_person"):
@@ -527,7 +532,7 @@ def derived_cancel_reason(
     for applies, reason in (
         (replaced is not False, "replaced"),
         (member_removed is not False, "member_removed"),
-        (not chain_valid(chain, root_person_active=root_person_active), "grant_revoked"),
+        (not chain_valid(chain, root_person_active=root_person_active, at=at), "grant_revoked"),
         (addon_enabled is not True, "addon_disabled"),
         (ticket_status != "in_progress", "ticket_left_in_progress"),
         (claimed_by_other is not False, "claimed_by_other"),

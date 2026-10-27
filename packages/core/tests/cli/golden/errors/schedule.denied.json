@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "schedule.denied",
+    "message": "the model refused the schedule",
+    "hint": "read the denial and correct the schedule",
+    "fix": {
+      "argv": [
+        "orch",
+        "schedule",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

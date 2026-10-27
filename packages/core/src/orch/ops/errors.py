@@ -95,6 +95,15 @@ _SPECS = [
         ["orch", "show"],
         "the model refused the follow-up",
     ),
+    _e(
+        "schedule.denied",
+        3,
+        False,
+        "the model refused the schedule",
+        "read the denial and correct the schedule",
+        ["orch", "schedule", "list"],
+        "the model refused the schedule",
+    ),
     # 1 internal
     _e(
         "internal",

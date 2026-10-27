@@ -28,6 +28,10 @@ export type HandoffAction =
   | { action: 'followup_cancel'; key: string; id: string }
   | { action: 'followup_reschedule'; key: string; id: string; when: string }
   | { action: 'followup_undo'; key: string; id: string }
+  /** Schedule a run of a ticket (`schedule.add`, a click): once, or every day, week (weekdays, Monday = 0) or month (day 1..31). */
+  | { action: 'schedule_add'; key: string; brief: string; at: string; every?: 'day' | 'week' | 'month'; tz: string; weekdays?: number[]; day?: number; run_hours?: number }
+  /** Cancel one of the person's schedules (`schedule.cancel`, one click). */
+  | { action: 'schedule_cancel'; key: string; id: string }
   /** Return unclaimed work to backlog or open (host `move`, H6b): owners and maintainers. */
   | { action: 'move'; key: string; to: 'backlog' | 'open'; reason?: string }
   /** A person's `new` carries the title and type only. Everything else is a follow-up hand-off (`details`, `section`). */

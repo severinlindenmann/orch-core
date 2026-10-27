@@ -1,0 +1,64 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "schedule.show",
+    "name": "schedule.show",
+    "cli": "orch schedule show",
+    "summary": "Show a schedule and its signed brief.",
+    "who": "read",
+    "usage": "orch schedule show ID",
+    "pre": [],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "Show a schedule and its signed brief.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "schedule ID"
+        }
+      },
+      "x-positional": [
+        "id"
+      ],
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} schedule {id}",
+      "json": {
+        "type": "object"
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "addon.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "tell the person; do not work around it",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

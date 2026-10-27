@@ -34,7 +34,7 @@ export const itemId = (i: NeedsYouItem) => (i.kind === 'verdict' ? `verdict:${i.
 export const decisionId = (d: AddonDecision) => `addon:${d.id}`
 
 // Kinds Today has no row for (handoff, expiring) are left out, as before.
-const GROUP_OF: Partial<Record<NeedsYouItem['kind'], CoreEntry['group']>> = { question: 'questions', approval: 'approvals', verdict: 'verdicts' } // terminal_wait hints are not shown: normal users never see "check its terminal" (run-13 A10)
+const GROUP_OF: Partial<Record<NeedsYouItem['kind'], CoreEntry['group']>> = { question: 'questions', approval: 'approvals', verdict: 'verdicts', terminal_wait: 'questions' }
 
 export function toEntries(items: NeedsYouItem[], decisions: AddonDecision[]): Entry[] {
   return [
@@ -46,7 +46,7 @@ export function toEntries(items: NeedsYouItem[], decisions: AddonDecision[]): En
   ]
 }
 
-/** "Agent may need you: check its terminal": a hint from the host, not a question. */
+/** "Agent is waiting for you": a hint from the host, not a question (shown in plain words, run-13 A10). */
 export const isTerminalWait = (e: Entry) => e.group !== 'addons' && e.item.kind === 'terminal_wait'
 
 /** Blocking first, then the oldest `since`, then the id: the same items always give the same order. */

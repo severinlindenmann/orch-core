@@ -1,6 +1,5 @@
-// The agent line of the New ticket form ("Agent: Claude Code · Do the work · Opus · Change"), the
-// access length when the person has no usable agent access yet, and the "not signed" block of the review.
-import { useState } from 'react'
+// The notes of the New ticket form about the agent (no agent can start here, too many parts to sign with access), the
+// dialog to choose the agent, and the "not signed" block of the review.
 import { modelLabel } from '@/api/modelRouting'
 import { AgentPick, harnessName, MODE_LABEL, ModelPick } from '@/components/agents/AgentChoice'
 import { Button } from '@/components/ui/button'
@@ -15,7 +14,6 @@ export function modelText(plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>)
 }
 
 export function AgentLine({ plan, tooMany }: { plan: StartPlan; tooMany: boolean }) {
-  const [open, setOpen] = useState(false)
   if (!plan.feature) return null
   if (!plan.available) {
     return plan.reason ? <p className="text-[12px] text-text-muted" data-testid="agent-line-off">No agent can start here. {plan.reason} The ticket is created without starting one.</p> : null
@@ -28,7 +26,6 @@ export function AgentLine({ plan, tooMany }: { plan: StartPlan; tooMany: boolean
           This ticket has too many parts to sign together with agent access, so it will be created without starting an agent. Start one from the ticket afterwards, or leave some text or criteria for later.
         </p>
       )}
-      {open && <ChangeDialog plan={plan} onClose={() => setOpen(false)} />}
     </div>
   )
 }

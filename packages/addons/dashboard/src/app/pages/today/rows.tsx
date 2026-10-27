@@ -4,7 +4,7 @@ import { VerdictEvidence } from '../ticket/EvidenceView'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, FileSearch, HelpCircle, Loader2, ShieldAlert, ShieldCheck, SquareTerminal } from 'lucide-react'
+import { ChevronDown, FileSearch, HelpCircle, Hourglass, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { diffstat } from '@/api/gates'
@@ -282,21 +282,22 @@ export function NoticeRow({ item, now }: { item: NeedsYouItem; now: string }) {
   )
 }
 
-// ------------------------------------------------------------------ agent may need you (terminal)
+// ------------------------------------------------------------------ agent is waiting for you
 
-/** The host thinks the agent waits for you in its terminal (hook or quiet terminal). Orch cannot read what it printed,
- *  so the words are a hint and the only action opens the terminal; it goes away when the agent moves on. */
+/** The host thinks the agent waits for the person (hook or quiet session). Orch cannot read what it printed, so the
+ *  row says it in plain words (never the host's "check its terminal", run-13 A10) and the only action opens the
+ *  agent; it goes away when the agent moves on. */
 export function TerminalWaitRow({ item, now }: { item: NeedsYouItem; now: string }) {
   return (
     <RowShell
       testId={`card-terminal_wait:${item.ticket}`}
-      icon={<SquareTerminal className="size-4" aria-label="terminal" />}
-      ask={item.text}
+      icon={<Hourglass className="size-4" aria-label="waiting" />}
+      ask="Agent is waiting for you"
       sub={<TicketLine ticket={item.ticket} title={item.title} />}
       age={ageOf(item, now)}
       action={
         <Button size="sm" onClick={() => item.ref && openDockOn(item.ref)}>
-          Open terminal
+          Open agent
         </Button>
       }
     />

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AddonDecision, NeedsYouItem } from '@/api/types'
-
-
+import { countAttention } from '@/api/attention'
+import { terminalWaitsOf } from '@/app/attention'
 import { acceptOrder, buildGroups, foldLabel, pruneOrder, reconcile, sortEntries, toEntries } from './queue'
 
 const q = (ticket: string, since: string, blocking = false, ref = 'Q1'): NeedsYouItem => ({ kind: 'question', ticket, title: `T ${ticket}`, text: 'Which?', since, ref, blocking })
@@ -43,9 +43,23 @@ describe('today queue: grouping and order', () => {
 })
 
 describe('today queue: terminal_wait ("Agent may need you")', () => {
-  it('is not shown at all: normal users never see "check its terminal"', () => {
-    const tw: NeedsYouItem = { kind: 'terminal_wait', ticket: 'D-1', title: 'T D-1', text: 'Agent may need you: check its terminal', since: '2026-10-01T09:00:00Z', ref: 'r_1' } as NeedsYouItem
-    expect(toEntries([tw, q('D-2', '2026-10-09T10:00:00Z')], []).map((e) => e.id)).toEqual(['question:D-2:Q1'])
+  const tw = (ticket: string, since: string): NeedsYouItem => ({ kind: 'terminal_wait', ticket, title: `T ${ticket}`, text: 'Agent may need you: check its terminal', since, ref: 'r_1' })
+
+  it('sits in Questions but never above a real question, even an older or newer one', () => {
+    const entries = sortEntries(toEntries([tw('D-1', '2026-10-01T09:00:00Z'), q('D-2', '2026-10-09T10:00:00Z')], []))
+    expect(entries.map((e) => e.id)).toEqual(['question:D-2:Q1', 'terminal_wait:D-1:r_1'])
+    expect(buildGroups(entries).map((g) => g.id)).toEqual(['questions'])
+    expect(acceptOrder(toEntries([tw('D-1', '2026-10-01T09:00:00Z'), q('D-2', '2026-10-09T10:00:00Z')], []), new Set(['terminal_wait:D-1:r_1', 'question:D-2:Q1']))[0]).toBe('question:D-2:Q1')
+  })
+
+  it('is gone when the host stops sending it', () => {
+    const all = toEntries([tw('D-1', '2026-10-01T09:00:00Z')], [])
+    expect(reconcile(acceptOrder(all), toEntries([], [])).shown).toEqual([])
+  })
+
+  it('is not counted as needing the person', () => {
+    expect(countAttention([tw('D-1', '2026-10-01T09:00:00Z'), q('D-2', '2026-10-09T10:00:00Z')], []).core).toBe(1)
+    expect(terminalWaitsOf([tw('D-1', '2026-10-01T09:00:00Z')])).toEqual({ count: 1, run: 'r_1' })
   })
 })
 

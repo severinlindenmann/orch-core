@@ -31,7 +31,7 @@ import { PRIORITY_RANK } from '../board/lib'
 import { PeoplePicker, type PeopleValue } from './PeoplePicker'
 import { SectionsEditor } from './SectionsEditor'
 import { ChangeDialog, AgentLine, NotSignedBlock } from './AgentLine'
-import { harnessName } from '@/components/agents/AgentChoice'
+import { harnessName, MODE_LABEL } from '@/components/agents/AgentChoice'
 import type { StartPlan } from './useStartPlan'
 import { StartAgentDialog, type StartInitial } from '@/app/terminal/real/StartAgentDialog'
 import { cn } from '@/lib/utils'
@@ -381,6 +381,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   }, [plan.available, plan.needsGrant, plan.hours, draft, me.person])
   const [pickAgent, setPickAgent] = useState(false)
   const startPossible = plan.available && !tooMany
+  // The person's auto-start preference (default on) decides which action of the pair is the main button.
+  const startFirst = startPossible && plan.pref.start
 
   const create = useMutation({
     mutationFn: (req: NewTicketRequest) => api.createTicket(workspace.id, req),
@@ -516,7 +518,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     setAttempted(false)
   }
 
-  const primaryLabel = startPossible ? 'Create and start' : handoffOn ? 'Create ticket' : 'Create'
+  const createLabel = handoffOn ? 'Create ticket' : 'Create'
+  const primaryLabel = startFirst ? 'Create and start' : createLabel
   const summary = attempted && check.count ? `${check.count === 1 ? 'One thing needs' : `${check.count} things need`} your attention before the ticket can be created.` : null
 
   return (
@@ -528,7 +531,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault()
-          void submit(false, startPossible, primaryRef.current)
+          void submit(false, startFirst, primaryRef.current)
         }
       }}
     >
@@ -626,6 +629,11 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <AgentLine plan={plan} tooMany={tooMany} />
             <div className="ml-auto flex flex-wrap items-center gap-2">
+              {startPossible && (
+                <span className="text-[12px] text-text-muted" data-testid="nt-agent-summary">
+                  {harnessName(plan.choice.harness)} · {MODE_LABEL[plan.choice.mode]}
+                </span>
+              )}
               {footerExtra}
               <Button type="button" variant="ghost" onClick={() => (overlay ? onCancel?.() : void navigate({ to: '/tickets' }))}>
                 Cancel
@@ -638,7 +646,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                 after={after.state.kind === 'running' ? 'Starting agent…' : null}
                 slowLabel="Still starting…"
                 data-testid="nt-primary"
-                onClick={() => void submit(false, startPossible, primaryRef.current)}
+                onClick={() => void submit(false, startFirst, primaryRef.current)}
                 disabled={!canCreate || create.isPending || (!!handoffNew && !signing) || busyAfter}
               />
               {startPossible && (
@@ -649,7 +657,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => void submit(false, false, secondaryRef.current)}>Create without starting</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => void submit(false, !startFirst, secondaryRef.current)}>{startFirst ? 'Create without starting' : 'Create and start'}</DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => setPickAgent(true)}>Choose agent…</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>

@@ -91,12 +91,46 @@ const startBtn = (sheet: HTMLElement) => within(sheet).findByRole('button', { na
 beforeEach(() => { GRANT = { ...GRANT, until: inHours(48) }; setup() })
 
 describe('the form', () => {
-  it('offers Create and start as the one main button, with a quiet menu and no agent sentence', async () => {
-    const { sheet } = await open()
+  it('offers Create and start as the main button, Create without starting in the menu, and a quiet agent summary', async () => {
+    const { r, sheet } = await open()
     await startBtn(sheet)
-    expect(within(sheet).getByRole('button', { name: 'More ways to create' })).toBeInTheDocument()
     expect(within(sheet).queryByTestId('agent-line')).toBeNull()
     expect(sheet).not.toHaveTextContent('will draft a plan')
+    expect(within(sheet).getByTestId('nt-agent-summary')).toHaveTextContent('Claude Code · Write requirements and plan')
+    expect(within(sheet).queryByRole('button', { name: 'Change' })).toBeNull()
+    await r.user.click(within(sheet).getByRole('button', { name: 'More ways to create' }))
+    expect(await screen.findByRole('menuitem', { name: 'Create without starting' }, T)).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Choose agent…' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Create and start' })).toBeNull()
+  })
+
+  it('Choose agent… opens the shared picker; the footer summary follows the choice, which is remembered for this workspace', async () => {
+    const { r, sheet } = await open()
+    await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
+    await r.user.click(await screen.findByRole('menuitem', { name: 'Choose agent…' }, T))
+    const dlg = await screen.findByTestId('agent-change')
+    await r.user.click(within(dlg).getByRole('radio', { name: 'Codex' }))
+    await r.user.selectOptions(within(dlg).getByLabelText('What it does'), 'work')
+    await r.user.click(within(dlg).getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(screen.queryByTestId('agent-change')).toBeNull(), T)
+    expect(within(sheet).getByTestId('nt-agent-summary')).toHaveTextContent('Codex · Do the work')
+    const stored = JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}')
+    expect(stored).toMatchObject({ harness: 'codex', mode: 'work', start: true })
+  })
+
+  it('remembers Create without starting: next time Create is the main button and Create and start is in the menu', async () => {
+    const { r, sheet } = await open()
+    await createOnly(r, sheet)
+    expect((await sent()).agent).toBeUndefined()
+    expect(JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}').start).toBe(false)
+    cleanup()
+    const again = await open({ [`orch.dashboard.new-ticket.agent.p_sev.${WS()}`]: JSON.stringify({ start: false, harness: 'claude-code', mode: 'work', model: '' }) })
+    expect(await within(again.sheet).findByRole('button', { name: 'Create ticket' }, T)).toBeInTheDocument()
+    expect(within(again.sheet).queryByRole('button', { name: 'Create and start' })).toBeNull()
+    await again.r.user.click(within(again.sheet).getByRole('button', { name: 'More ways to create' }))
+    await again.r.user.click(await screen.findByRole('menuitem', { name: 'Create and start' }, T))
+    expect(await screen.findByTestId('not-signed-start')).toBeInTheDocument()
+    expect(JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}').start).toBe(true)
   })
 
   it('shows only Create, and says why, when the runner is not connected', async () => {

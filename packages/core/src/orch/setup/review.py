@@ -82,7 +82,7 @@ RECORDS_TEXT = "Keep a history of your tickets on this computer, saved automatic
 
 
 #: what the review says about Claude Code's folder trust (one entry, this folder only)
-TRUST_TEXT = "Let Claude Code trust this folder, so it does not ask again here."
+TRUST_TEXT = "Let Claude Code open this folder without asking. It only holds orch's files, no one else's settings."
 
 
 @dataclass

@@ -10,11 +10,37 @@ import shutil
 from collections.abc import Mapping
 from pathlib import Path
 
-__all__ = ["claude_installed", "trust_folder"]
+__all__ = ["claude_installed", "foreign_config", "offered", "trust_folder"]
 
 
 def claude_installed(env: Mapping[str, str]) -> bool:
     return shutil.which("claude", path=env.get("PATH")) is not None
+
+
+def foreign_config(root: str | os.PathLike[str], env: Mapping[str, str], *, own_instructions: bool = False) -> bool:
+    """True when Claude Code would read somebody else's project config for ``root``: hooks and settings (``.claude``),
+    MCP servers, memory files, in the folder or in any folder above it (the home folder's own config is the person's).
+    ``own_instructions``: after setup wrote its CLAUDE.md into the root, that one file there is orch's own."""
+    from orch.runner.claude_trust import FOREIGN, _holds_foreign_config
+
+    real = os.path.realpath(root)
+    here = [n for n in FOREIGN if not (own_instructions and n == "CLAUDE.md")]
+    if any(os.path.lexists(os.path.join(real, n)) for n in here):
+        return True
+    home = os.path.realpath(env["HOME"]) if env.get("HOME", "").startswith("/") else None
+    parent = os.path.dirname(real)
+    while parent != os.path.dirname(parent):
+        if parent == home:
+            break
+        if _holds_foreign_config(parent):
+            return True
+        parent = os.path.dirname(parent)
+    return False
+
+
+def offered(env: Mapping[str, str], root: str | os.PathLike[str]) -> bool:
+    """Setup offers the trust only when claude is installed and the folder holds no foreign project config."""
+    return claude_installed(env) and not foreign_config(root, env)
 
 
 def trust_folder(env: Mapping[str, str], root: str | os.PathLike[str]) -> bool:
@@ -25,6 +51,8 @@ def trust_folder(env: Mapping[str, str], root: str | os.PathLike[str]) -> bool:
 
     real = os.path.realpath(root)
     cfg = _config_path(env)
+    if foreign_config(real, env, own_instructions=True):  # the fence: never pre-accept somebody else's hooks / MCP
+        return False
     if cfg is None or not _root_ok(real, env) or os.path.islink(cfg) or not os.path.isfile(cfg):
         return False
     for _ in (1, 2):

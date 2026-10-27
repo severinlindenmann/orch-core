@@ -208,7 +208,9 @@ class SetupFlow:
             "click_risk": CONVENIENCE_RISK,
             "agent_hours": list(AGENT_HOURS),
             "git": facts.git_state(Path(self.dir)) if self.dir else {"repo": True},
-            "claude": {"available": claude_folder.claude_installed(self.e.env)},
+            "claude": {
+                "available": bool(self.dir) and self.mode == "new" and claude_folder.offered(self.e.env, self.dir)
+            },
             "relay": {"available": bool(relay.get("available")), "enabled": bool(relay.get("enabled"))},
             "missing": missing,
             "missing_words": [facts.label(m, self.addons) for m in missing],
@@ -269,6 +271,11 @@ class SetupFlow:
         if p["git_init"] and (self.mode != "new" or not self.dir or facts_mod.git_state(Path(self.dir))["repo"]):
             raise SetupError("invalid.input", "git init is offered for a new workspace in a folder without git", 400,
                              field="git_init")  # fmt: skip
+        if p["trust_folder"] and (
+            self.mode != "new" or not self.dir or not claude_folder.offered(self.e.env, self.dir)
+        ):
+            raise SetupError("invalid.input", "Claude Code trust is not offered for this folder", 400,
+                             field="trust_folder")  # fmt: skip
         prior = self.profile
         self.profile, self.review = p, None  # a new profile voids every earlier review_id
         if self.mode == "finish":

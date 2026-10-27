@@ -1026,7 +1026,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                 <label className="toggle">
                   <span>
                     Let Claude Code trust this folder
-                    <small>So it does not ask again here. Only this folder.</small>
+                    <small>Claude Code will open this folder without asking. It only holds orch’s files.</small>
                   </span>
                   <input
                     type="checkbox"

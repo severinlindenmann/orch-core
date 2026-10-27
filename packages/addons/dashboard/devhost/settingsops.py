@@ -75,7 +75,9 @@ def settings(host, store, ws, person: str, args: dict[str, Any]) -> dict[str, An
         "next_page": nxt,
         "gates": thaw(ws.policies),
         "defaults": [k for k in DURATIONS if k not in set_by_event],
-        "sign_methods": list(ws.settings["sign_methods"]) if "sign_methods" in ws.settings else None,  # B6: null: not set
+        "sign_methods": list(ws.settings["sign_methods"])
+        if "sign_methods" in ws.settings
+        else None,  # B6: null: not set
         "settings_at": _last(store, "settings.changed"),
         "policy_at": _last(store, "policy.changed"),
         "sub_cursor": host.cursor,
@@ -208,8 +210,13 @@ def settings_set(builder, args):
             _check_repos(builder.store.layout, v)
             continue
         if k == "sign_methods":
-            if not isinstance(v, list) or "terminal" not in v or len(set(v)) != len(v) or set(v) - {"terminal", "click", "phone"}:
-                raise invalid("sign_methods is terminal plus click or phone, once each")
+            if (
+                not isinstance(v, list)
+                or "terminal" not in v
+                or len(set(v)) != len(v)
+                or set(v) - {"terminal", "click", "phone", "hub"}
+            ):
+                raise invalid("sign_methods is terminal plus click, phone or hub, once each")
             continue
         low, high = DURATIONS[k]
         if type(v) is not int or not low <= v <= high:
@@ -219,7 +226,11 @@ def settings_set(builder, args):
     before = {k: builder.store.state.workspace.settings.get(k) for k in given if k not in ("sign_methods", "repos")}
     if "repos" in given:  # core's: the host's current entry of each named repo (null: none)
         before["repos"] = {n: thaw(builder.store.state.workspace.repos.get(n)) for n in given["repos"]}
-    before.update({"sign_methods": builder.store.state.workspace.settings.get("sign_methods") or ["terminal"]} if "sign_methods" in given else {})
+    before.update(
+        {"sign_methods": thaw(builder.store.state.workspace.settings.get("sign_methods")) or ["terminal"]}
+        if "sign_methods" in given
+        else {}
+    )
     events = [builder.envelope(event, "workspace")]
     return events, "workspace", builder.payload_material(None, events, before=before, ticket=None)
 

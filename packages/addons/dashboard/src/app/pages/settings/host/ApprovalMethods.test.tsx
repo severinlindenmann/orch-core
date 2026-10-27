@@ -6,9 +6,9 @@ import { ApprovalMethods } from './ApprovalMethods'
 const ask = vi.fn()
 vi.mock('./useSettingsHandoff', () => ({ useSettingsHandoff: () => ({ ask, dialog: null }) }))
 afterEach(() => { cleanup(); vi.restoreAllMocks(); ask.mockReset() })
-function mount(owner = true, supported: boolean | null = true, custody: 'convenience' | 'passphrase' | 'none' = 'convenience') {
+function mount(owner = true, supported: boolean | null = true, custody: 'convenience' | 'passphrase' | 'none' = 'convenience', signed: string[] = ['terminal', 'click', 'phone']) {
   vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: 'w', click: { custody, enabled: custody === 'convenience', available: true } }] as unknown as Awaited<ReturnType<typeof api.getWorkspaces>>)
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue((supported === null ? { sign_methods: null } : supported ? { sign_methods: ['terminal', 'click', 'phone'] } : {}) as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue((supported === null ? { sign_methods: null } : supported ? { sign_methods: signed } : {}) as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(api, 'getSignDefault').mockImplementation(async () => { if (supported === false) throw new Error('Absent'); return { method: 'click', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false } })
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ApprovalMethods ws="w" owner={owner} /></QueryClientProvider>)
 }
@@ -25,6 +25,15 @@ it('saves allowed methods through the signed settings flow and keeps reserved me
   fireEvent.click(phone)
   fireEvent.click(screen.getByRole('button', { name: 'Save allowed methods' }))
   expect(ask).toHaveBeenCalledWith(expect.objectContaining({ action: { action: 'settings_set', sign_methods: ['terminal', 'click'] } }))
+})
+it('keeps hub in the saved list when the workspace approves through a hub (no box for it)', async () => {
+  vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 1 })
+  mount(true, true, 'convenience', ['terminal', 'click', 'phone', 'hub'])
+  const phone = await screen.findByLabelText('Phone (Face ID)')
+  await waitFor(() => expect(screen.getByTestId('hub-approvals')).toBeTruthy())
+  fireEvent.click(phone)
+  fireEvent.click(screen.getByRole('button', { name: 'Save allowed methods' }))
+  expect(ask).toHaveBeenCalledWith(expect.objectContaining({ action: { action: 'settings_set', sign_methods: ['terminal', 'click', 'hub'] } }))
 })
 it('saves personal default and fallback without a workspace signature', async () => {
   const put = vi.spyOn(api, 'putSignDefault').mockResolvedValue({ method: 'terminal', fallback: 'click', allowed: ['terminal', 'click', 'phone'], is_default: false })

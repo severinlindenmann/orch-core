@@ -360,6 +360,7 @@ class Ports(Protocol):
     def git_init(self, root: Path) -> None: ...
     def runner_enable(self, wid: str, prefix: str, terminals: bool) -> None: ...
     def runner_hello(self, wid: str, timeout: float) -> bool: ...
+    def runner_refresh(self) -> None: ...
     def records_setup(self, wid: str, root: Path) -> None: ...
     def workspace(self, wid: str) -> Any: ...  # a connection: .call(op, args, **kw) -> result dict; .close()
     def unlock(self, wid: str, passphrase: str | None, digest: str, fields: tuple[tuple[str, str], ...]) -> Any: ...
@@ -531,9 +532,12 @@ class Creator:
         except SetupError as e:
             self._fail(e, post_genesis)
         except CustodyError as e:
-            self._fail(SetupError("custody.error", f"the key custody refused ({type(e).__name__})", 409), post_genesis)
+            why = self._safe(str(e), 300) or type(e).__name__  # B2/5: the reason and the fix, in words
+            self._fail(SetupError("custody.error", f"the key custody refused: {why}", 409), post_genesis)
         except BaseException as e:  # noqa: BLE001 - the thread must report, never die silently
-            self._fail(SetupError("internal", f"setup failed ({type(e).__name__})", 500), post_genesis)
+            why = self._safe(str(e), 300)
+            tail = f": {why}" if why else ""
+            self._fail(SetupError("internal", f"setup failed ({type(e).__name__}){tail}", 500), post_genesis)
         finally:
             if self.run.error is not None:
                 self._rescue_passphrase()  # before the wipe: never leave a one-click key under an unseen passphrase
@@ -669,6 +673,8 @@ class Creator:
     # -- runner flags, hello (R4)
     def _runner(self) -> None:
         assert self.wid is not None
+        with contextlib.suppress(Exception):
+            self.ports.runner_refresh()  # an older install's runner would answer runner.stale to every start
         wants = any(f["id"] == "runner" for f in self.plan.flags)
         grant = next((i for i in self.items if i.id == "runner_grant"), None)
         if not wants:  # nothing to switch on (already on, Finish setup): a grant still waits for the runner's hello
@@ -1034,6 +1040,12 @@ class RealPorts:
         res = runner_cli.enable(runner_cli._parser().parse_args(argv), self.env, io.StringIO(), confirmed=True)
         if not res.get("ok"):
             raise SetupError("runner.unavailable", str((res.get("error") or {}).get("message", "runner")), 500)
+
+    def runner_refresh(self) -> None:
+        """A runner left over from an older orch is restarted onto this release (B3: "runner.stale")."""
+        from orch.host.cli import refresh_stale_runner
+
+        refresh_stale_runner(self.state, self.env)
 
     def runner_hello(self, wid: str, timeout: float) -> bool:
         from orch.runner import enablement

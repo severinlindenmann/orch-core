@@ -24,7 +24,8 @@ TUNNEL_CODE_TTL = 300
 
 #: Session lifetimes in seconds, (absolute, idle), by how the session was opened. A kind this table does not know gets
 #: the local numbers (fail closed on the route gates, not here: an unknown kind is never "local" anywhere else).
-LIFETIMES = {"local": (86400, 43200), "remote": (43200, 7200)}  # remote: 12 h absolute, 2 h idle (host spec 0.8.6 10.3)
+# remote: 12 h absolute, 2 h idle (host spec 0.8.6 10.3); switch (H1): the same
+LIFETIMES = {"local": (86400, 43200), "remote": (43200, 7200), "switch": (43200, 7200)}
 #: The listener a kind of session belongs to. A session works only on the listener that opened it (#1198 R1-4): a
 #: remote bearer presented on loopback (or a local one on the front) is as unknown as a made-up token.
 KIND_LISTENER = {"local": LOOPBACK, "remote": REMOTE}
@@ -42,6 +43,7 @@ REMOTE_GLOBAL = 600
 #: Live remote sessions are capped (#1198 R1-5): at most 20 in all and 5 per source, the oldest evicted first, so
 #: logins from the internet cannot pile up state, and one source cannot push the owner's own session out alone.
 REMOTE_SESSIONS = 20
+SWITCH_SESSIONS = 20  # H1: sessions opened by a hub switch ticket
 REMOTE_SESSIONS_PER_SOURCE = 5
 #: Tracked sources are bounded; past this, new sources share one bucket (shared means stricter, never looser).
 REMOTE_MAX_SOURCES = 10_000
@@ -216,6 +218,18 @@ class Auth:
                 self.credentials[minted["token"]] = credential_id
             return minted
 
+    def open_switch(self, listener):
+        """H1 (27 Oct): a session born from a hub switch ticket (the hub vouched for the workspace owner; the browser
+        presented a one-use ticket). Kind ``switch`` is NOT ``local``: the local-only gates and the step-up rule treat
+        it like a remote session (a passkey touch for the sensitive actions). It works on the listener it was
+        redeemed on, 12 h / 2 h idle like a remote one; at most ``SWITCH_SESSIONS`` live, the oldest evicted first."""
+        with self.lock:
+            now = self.clock()
+            self._drop_dead(now)
+            self._evict("switch", SWITCH_SESSIONS - 1)
+            minted = self._mint(now, "switch", listener)
+            return minted
+
     def _evict(self, kind, keep, source=None):
         """Hold ``self.lock``. Drop the oldest sessions of ``kind`` (of one ``source`` when given) until at most
         ``keep`` remain."""
@@ -243,12 +257,12 @@ class Auth:
             for token in [t for t in table if t not in self.sessions]:
                 del table[token]
 
-    def _mint(self, now, kind):
+    def _mint(self, now, kind, listener=None):
         """Hold ``self.lock``."""
         token = secrets.token_urlsafe(32)
         self.sessions[token] = now, now
         self.kinds[token] = kind
-        self.listeners[token] = KIND_LISTENER[kind]
+        self.listeners[token] = listener or KIND_LISTENER[kind]
         absolute = LIFETIMES[kind][0]
         return {"token": token, "expires_at": datetime.fromtimestamp(now + absolute, UTC).isoformat()}
 

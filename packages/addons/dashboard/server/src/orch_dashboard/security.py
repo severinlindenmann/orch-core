@@ -162,7 +162,7 @@ class Security:
         )
         limit = (
             1024
-            if path == "/auth/session" or records_step
+            if path in ("/auth/session", "/auth/switch") or records_step
             else 8192
             if records_admin
             else CLICK_BODY_LIMIT

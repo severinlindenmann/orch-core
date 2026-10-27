@@ -31,6 +31,7 @@ from . import (
     shares,
     signprefs,
     stepup_routes,
+    switch,
     terminals,
     testrun,
     usage,
@@ -286,6 +287,7 @@ def create_app(
     stepup_routes.register(app, gateway)
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
+    switch.register(app, gateway, auth)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
     signprefs.register(app, gateway)

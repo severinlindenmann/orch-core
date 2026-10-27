@@ -1,0 +1,135 @@
+"""H1: the hub switch routes. The hub is the authority for a ticket; this process only relays the host's answer and
+opens a `switch` session (not `local`) for an `open` ticket."""
+
+import pytest
+from conftest import ORIGIN, PORT
+from fastapi.testclient import TestClient
+
+from orch_dashboard.app import create_app
+from orch_dashboard.auth import Auth
+from orch_dashboard.errors import fail
+from orch_dashboard.gateway import Gateway
+
+WS = "a" * 32
+TICKET = WS + "." + "b" * 32
+
+
+class Link:
+    def __init__(self):
+        self.calls, self.answers = [], {}
+
+    def supports(self, op, cap="ops/1"):
+        return op == "hub.switch"
+
+    def call(self, op, args=None, **kw):
+        self.calls.append(args)
+        got = self.answers.get(args["kind"])
+        if isinstance(got, Exception):
+            raise got
+        return got
+
+
+class Gw(Gateway):
+    def __init__(self, link, state):
+        super().__init__(state)
+        self._l = link
+
+    def enabled(self, ws):
+        if ws != WS:
+            raise fail("not_found")
+        return self._l
+
+
+@pytest.fixture
+def link():
+    return Link()
+
+
+@pytest.fixture
+def auth():
+    return Auth()
+
+
+@pytest.fixture
+def client(link, auth, tmp_path):
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("<html></html>")
+    with TestClient(create_app(PORT, Gw(link, state), auth, static), base_url=ORIGIN) as c:
+        yield c
+
+
+H = {"Origin": ORIGIN}
+
+
+def test_an_open_ticket_opens_a_switch_session_that_is_not_local(client, link, auth):
+    link.answers["redeem"] = {"user_id": "u", "name": "Ann", "return_to": "/w/x/tickets", "kind": "open"}
+    res = client.post("/auth/switch", json={"t": TICKET}, headers=H)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["return_to"] == "/w/x/tickets" and body["workspace_id"] == WS
+    assert auth.login_kind(body["token"]) == "switch"
+    assert link.calls == [{"kind": "redeem", "ticket": TICKET}]
+
+
+@pytest.mark.parametrize("bad", ["//evil.test", "https://evil.test", "/a/../b", "/a\\b", "x"])
+def test_the_landing_path_is_ours_only(client, link, bad):
+    link.answers["redeem"] = {"user_id": "u", "name": None, "return_to": bad, "kind": "open"}
+    assert client.post("/auth/switch", json={"t": TICKET}, headers=H).json()["return_to"] == "/"
+
+
+def test_a_signout_ticket_opens_nothing(client, link, auth):
+    link.answers["redeem"] = {"user_id": "u", "name": None, "return_to": "/", "kind": "signout"}
+    assert client.post("/auth/switch", json={"t": TICKET}, headers=H).json() == {"signed_out": True}
+    assert not auth.sessions
+
+
+def test_a_refused_ticket_is_one_plain_401(client, link, auth):
+    link.answers["redeem"] = fail("hub.refused", "the hub is refused: bad_ticket")
+    res = client.post("/auth/switch", json={"t": TICKET}, headers=H)
+    assert res.status_code == 401 and not auth.sessions
+    other = "c" * 32 + "." + "d" * 32  # a workspace this dashboard does not serve
+    assert client.post("/auth/switch", json={"t": other}, headers=H).status_code == 401
+
+
+@pytest.mark.parametrize("t", ["x", WS, WS + "." + "B" * 32, TICKET + "0"])
+def test_a_malformed_ticket_never_reaches_the_host(client, link, t):
+    assert client.post("/auth/switch", json={"t": t}, headers=H).status_code == 400
+    assert link.calls == []
+
+
+def test_ticket_and_rail_need_a_session_and_relay_closed_bodies(client, link, auth):
+    token = client.post("/auth/session", json={"code": auth.launch(PORT)["code"]}, headers=H).json()["token"]
+    h = {"Authorization": "Bearer " + token, "Origin": ORIGIN}
+    assert client.post(f"/api/w/{WS}/hub/switch", json={}, headers={"Origin": ORIGIN}).status_code == 401
+    link.answers["ticket"] = {"ticket": "t" * 32, "url": "https://hub.test/#t=" + "t" * 32}
+    got = client.post(f"/api/w/{WS}/hub/switch", json={"return_to": "//evil", "kind": "signout"}, headers=h)
+    assert got.json() == {"url": "https://hub.test/#t=" + "t" * 32}
+    assert link.calls[-1] == {"kind": "ticket", "origin": ORIGIN, "return_to": "/", "ticket_kind": "signout"}
+    link.answers["rail"] = {
+        "hub": {"name": "Acme", "origin": "https://hub.test"},
+        "user_id": "u",
+        "workspaces": [
+            {"workspace_id": WS, "name": "Product", "role": "owner", "online": True, "badge": 3,
+             "origin": ORIGIN, "current": True, "secret": "x"},
+            {"workspace_id": "w2", "name": None, "role": "edit", "online": False, "badge": -4,
+             "origin": "javascript:1", "current": False},
+        ],
+    }  # fmt: skip
+    rail = client.get(f"/api/w/{WS}/hub/rail", headers=h).json()
+    assert rail["hub"] == {"name": "Acme", "origin": "https://hub.test"}
+    assert rail["workspaces"][0] == {
+        "workspace_id": WS, "name": "Product", "role": "owner", "online": True, "badge": 3,
+        "origin": ORIGIN,
+        "current": True,
+    }  # fmt: skip
+    assert rail["workspaces"][1]["origin"] is None and rail["workspaces"][1]["badge"] == 0
+
+
+def test_no_hub_means_an_empty_rail(client, link, auth):
+    token = client.post("/auth/session", json={"code": auth.launch(PORT)["code"]}, headers=H).json()["token"]
+    link.answers["rail"] = fail("hub.not_joined")
+    got = client.get(f"/api/w/{WS}/hub/rail", headers={"Authorization": "Bearer " + token})
+    assert got.json() == {"hub": None, "workspaces": []}

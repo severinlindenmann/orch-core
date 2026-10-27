@@ -56,6 +56,7 @@ def test_the_passkey_routes_are_the_only_ones_before_login():
         ("POST", "/auth/passkey/login"),
         ("POST", "/auth/enroll/options"),
         ("POST", "/auth/enroll/register"),
+        ("POST", "/auth/switch"),  # H1: a one-use hub switch ticket, checked by the hub
     }
 
 

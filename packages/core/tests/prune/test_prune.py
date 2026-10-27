@@ -534,3 +534,57 @@ def test_files_orch_created_alone_are_deleted(tmp_path):
     assert m.prune("--yes", "--workspaces", "keep") == 0, m.err.getvalue()
     assert not (m.ws / "AGENTS.md").exists() and not (m.ws / "CLAUDE.md").exists()
     assert (m.ws / "notes.txt").exists()
+
+
+def test_a_unit_loaded_from_another_file_is_left_running(m):
+    def run(argv):
+        m.calls.append(list(argv))
+        if argv[:3] == ["launchctl", "print", "gui/501/io.orch.host"]:
+            return 0, "io.orch.host = {\n\tpath = /Users/other/Library/LaunchAgents/io.orch.host.plist\n}\n"
+        if argv[:3] == ["uv", "tool", "list"]:
+            return 0, "orch-core v2\n"
+        return 0, ""
+
+    m.run = run
+    assert m.prune("--yes", "--workspaces", "keep") == 0
+    assert ["launchctl", "bootout", "gui/501/io.orch.host"] not in m.calls  # the other install keeps running
+    assert ["launchctl", "bootout", "gui/501/io.orch.runner"] in m.calls
+    assert "left running" in m.out.getvalue()
+    assert not (m.home / "Library/LaunchAgents/io.orch.host.plist").exists()  # our own file is still removed
+
+
+def test_a_host_started_by_hand_is_reported(m, monkeypatch):
+    import socket
+
+    from orch.prune import inventory
+
+    sock_dir = Path("/tmp") / f"hk{os.getpid()}"  # short: a unix socket path holds ~100 bytes
+    sock_dir.mkdir(exist_ok=True)
+    srv = socket.socket(socket.AF_UNIX)
+    srv.bind(str(sock_dir / "h.sock"))
+    srv.listen(1)
+    try:
+        assert inventory._answers(sock_dir / "h.sock")
+        assert not inventory._answers(sock_dir / "nobody.sock")
+    finally:
+        srv.close()
+        os.unlink(sock_dir / "h.sock")
+        sock_dir.rmdir()
+    monkeypatch.setattr(inventory, "_answers", lambda p: True)
+    assert any("not a service" in w for w in gather(m.ctx()).warnings)
+
+
+def test_a_part_is_stopped_by_the_runner_its_record_names(tmp_path):
+    from orch.install import service
+
+    m = Machine(tmp_path)
+    rec = json.loads((m.state / "install" / "install.json").read_text())
+    rec["parts"]["hub"]["runner"] = "pidfile"
+    (m.state / "install" / "install.json").write_text(json.dumps(rec))
+    ctx = m.ctx()
+    ctx.runner = None
+    from orch.install.state import Layout
+    from orch.prune.inventory import install_runner
+
+    assert isinstance(install_runner(ctx, Layout(ctx.env), "pidfile"), service.PidfileRunner)
+    assert isinstance(install_runner(ctx, Layout(ctx.env), "launchd"), service.LaunchdRunner)

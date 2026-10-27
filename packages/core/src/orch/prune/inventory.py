@@ -44,6 +44,7 @@ STATE_LABELS = {
     "setup": "setup page state",
     "addon-env": "environments of installed add-ons",
     "records.json": "records tips",
+    "person-key": "your person key file",
 }
 #: the root-owned files orch's setup writes on Linux (osusers, osapply, osfront, oslauncher); macOS helper dirs
 OS_ROOT_PATHS = {
@@ -141,6 +142,19 @@ def gather(ctx: Ctx, extra_workspaces: Iterable[str] = ()) -> Inventory:
 # --------------------------------------------------------------------------------------------------------- services
 
 
+def install_runner(ctx: Ctx, layout: Any, kind: str | None) -> Any:
+    """The runner that started a part: the one its install record names (a part started by the pidfile runner is
+    stopped by it, whatever this computer's default is); ``ctx.runner`` when a test or caller fixed one."""
+    if ctx.runner is not None:
+        return ctx.runner
+    from orch.install import service
+
+    cls = {"launchd": service.LaunchdRunner, "systemd": service.SystemdRunner, "pidfile": service.PidfileRunner}.get(
+        kind or ""
+    )
+    return cls(layout) if cls is not None else service.pick_runner(layout, ctx.env)
+
+
 def _services(ctx: Ctx, inv: Inventory) -> None:
     from orch.host import units as host_units
     from orch.records import timer as records_timer
@@ -183,19 +197,15 @@ def _services(ctx: Ctx, inv: Inventory) -> None:
 
     layout = Layout(ctx.env)
     if layout.file.exists():
-        runner = ctx.runner
-        if runner is None:
-            from orch.install.service import pick_runner
-
-            runner = ctx.runner = pick_runner(layout, ctx.env)
         st = load(layout)
         names = [p for p in ("hub", "relay", "publish") if p in st.get("parts", {})]
         if st.get("dashboard"):
             names.append("dashboard")
         for part in names:
             rec = (st["parts"].get(part) if part != "dashboard" else st["dashboard"]) or {}
+            kind = rec.get("runner") if isinstance(rec.get("runner"), str) else None
             try:
-                running = "running" if runner.info(part).get("running") else "stopped"
+                running = "running" if install_runner(ctx, layout, kind).info(part).get("running") else "stopped"
             except Exception:  # noqa: BLE001 - a broken service manager must not hide the rest of the inventory
                 running = "unknown"
             inv.items.append(
@@ -204,7 +214,7 @@ def _services(ctx: Ctx, inv: Inventory) -> None:
                     "part",
                     f"{part} service ({running})",
                     note=str(rec.get("url") or ""),
-                    data={"part": part, "service": rec.get("service")},
+                    data={"part": part, "service": rec.get("service"), "runner": kind},
                 )
             )
     control = inv.state / "run" / "control" / "host.sock"

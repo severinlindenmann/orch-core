@@ -124,7 +124,7 @@ def _do(ctx: Ctx, inv: Inventory, fence: Fence, it: Item, res: Result) -> None:
     elif k == "part":
         _part(ctx, it)
     elif k == "launcher":
-        entry = ctx.dashboard_entry() if ctx.dashboard_entry else None
+        entry = ctx.dashboard_entry() if ctx.dashboard_entry else _dashboard_entry(ctx)
         if entry:
             ctx.run([*entry, "stop"])  # best effort: the dashboard may already be gone
     elif k in ("tree", "folder"):
@@ -161,6 +161,12 @@ def _do(ctx: Ctx, inv: Inventory, fence: Fence, it: Item, res: Result) -> None:
                 raise PruneError(f"`uv tool uninstall orch-core` failed: {out.strip()[-300:]}")
     else:
         raise PruneError(f"internal: unknown step {k}")
+
+
+def _dashboard_entry(ctx: Ctx) -> list[str] | None:
+    from orch.cli.dashboard import find_entry_point
+
+    return find_entry_point(ctx.env)
 
 
 def _rmdir_if_empty(fence: Fence, d: Path) -> None:
@@ -209,11 +215,12 @@ def _unit(ctx: Ctx, res: Result, fence: Fence, it: Item) -> None:
 
 
 def _part(ctx: Ctx, it: Item) -> None:
-    runner = ctx.runner
-    if runner is None:
-        raise PruneError("internal: no install runner")
+    from orch.install.state import Layout
+
+    from .inventory import install_runner
+
     try:
-        runner.stop(it.data["part"])
+        install_runner(ctx, Layout(ctx.env), it.data.get("runner")).stop(it.data["part"])
     except Exception as e:  # noqa: BLE001 - the runner may be launchctl/systemctl/os.kill
         raise PruneError(f"could not stop the {it.data['part']} service: {e}") from None
 

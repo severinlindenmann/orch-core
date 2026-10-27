@@ -128,6 +128,8 @@ def report(ctx: Ctx, inv: Inventory, res: Result) -> int:
             f"\nDone: {len(res.done)} steps. orch is off this computer"
             + (" (except the notes below)." if res.admin or inv.remote else ".")
         )
+    for note in res.notes:
+        say(f"\nNote: {note}")
     if res.admin:
         say("\nStill to do by hand (needs an administrator or cannot be done by the program itself):")
         for c in res.admin:

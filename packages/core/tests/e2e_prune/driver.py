@@ -84,12 +84,17 @@ class W(K.Workspace):
     def stop_dashboard(self, wait: float = 15.0) -> None:  # prune stops it
         return None
 
+    def make_dirs(self) -> None:  # the kit's .orch-dev marker files are not part of a clean install
+        for path in (self.base, self.state, self.home, self.home / ".config", self.root):
+            path.mkdir(mode=0o700, parents=True, exist_ok=True)
+
 
 def snapshot(root: Path) -> list[str]:
+    """Every path below ``root`` except what a running host rewrites by itself (its sockets and logs)."""
     out = []
     for dp, dn, fn in os.walk(root):
-        out += [os.path.join(dp, n) for n in dn + fn]
-    return sorted(out)
+        out += [os.path.join(dp, n) for n in dn + fn if not n.endswith((".log", ".tmp"))]
+    return sorted(p for p in out if "/.config/orch/run/" not in p and "/.cache/" not in p)
 
 
 def traces(root: Path) -> list[str]:

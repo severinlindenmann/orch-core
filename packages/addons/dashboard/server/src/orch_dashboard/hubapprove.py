@@ -57,9 +57,20 @@ def mode_of(gateway: Gateway, ws: str) -> str | None:
         return None
 
 
-def refuse_if_hub_only(gateway: Gateway, ws: str) -> None:
+#: what the hub cannot sign yet: `addon.granted` is not a custodial type (protocol.md section 8.5, "Not custodial in hv 0")
+NOT_IN_HUB = ("addon_grant", "market_grant")
+
+
+def refuse_if_hub_only(gateway: Gateway, ws: str, action: str | None = None) -> None:
     """`sign.hub_only` before any local signing is prepared: full (or unknown) hub mode takes no click signature."""
     if mode_of(gateway, ws) in HUB_ONLY:
+        if action in NOT_IN_HUB:  # run-11 FB15: never point to a hub screen that does not exist
+            raise fail(
+                "sign.hub_only",
+                "This workspace signs through the hub, and the hub cannot approve add-on installs yet. "
+                "Leave the hub first to install add-ons here.",
+                exit=3,
+            )
         raise fail(
             "sign.hub_only",
             "Approvals go through the hub in this workspace: approve on your phone or in the hub.",

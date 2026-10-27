@@ -172,6 +172,20 @@ def test_leaving_the_hub_is_prepared_in_full_mode(client, token, stub, script, b
     assert script.prepared == 1  # the signer was asked: the full-mode refusal did not fire
 
 
+def test_addon_install_in_full_mode_does_not_point_to_a_hub_screen(client, token, stub, script, monkeypatch):
+    """Run-11 FB15: the hub cannot sign `addon.granted`, so the refusal must not say "approve in the hub"."""
+    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "full")
+    res = client.post(
+        f"/api/w/{stub.ws}/click/prepare",
+        json={"action": "market_grant", "name": "model-routing", "staged": "st_" + "0" * 32},
+        headers=hdr(token),
+    )
+    err = res.json()["error"]
+    assert res.status_code == 403 and err["code"] == "sign.hub_only"
+    assert "cannot approve add-on installs" in err["message"] and "in the hub" not in err["message"]
+    assert script.prepared == 0
+
+
 def test_unknown_mode_is_refused_like_full(client, token, stub, script, monkeypatch):
     monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "unknown")
     assert prepare(client, token, stub).json()["error"]["code"] == "sign.hub_only"

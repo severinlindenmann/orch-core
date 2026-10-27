@@ -52,7 +52,7 @@ _ADDON_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
 
 
 def _reserved_addon_names() -> frozenset[str]:
-    """The names core's schema refuses for an add-on (``common#/$defs/addonName`` ``not.enum``): one list, read from it."""
+    """The names core's schema refuses for an add-on (``common#/$defs/addonName`` ``not.enum``): the one list."""
     from orch import schema
 
     return frozenset(schema.load("common")["$defs"]["addonName"]["not"]["enum"])

@@ -138,7 +138,8 @@ def _addon(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
     ``addon.requested`` the hub's channel signs. The wait IS the prepared hand-off request (op ``addon.grant``, made by
     ``human.prepare {handoff: true}``): this read names it, checks it is the calling person's, still open and an
     add-on grant, and returns the terms and the one link. No log line, no link call."""
-    if {"ticket", "gate", "question", "scope", "verbs", "hours", "label", "cancel"} & set(args) or "request" not in args:
+    others = {"ticket", "gate", "question", "scope", "verbs", "hours", "label", "cancel"}
+    if others & set(args) or "request" not in args:
         raise HostError("invalid.input", "hub.handoff: an add-on takes exactly the prepared request")
     service = call.service
     record = service.requests.load(args["request"], call.principal)

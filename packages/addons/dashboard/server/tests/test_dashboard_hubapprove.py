@@ -212,21 +212,34 @@ def test_an_add_on_approval_is_relayed_with_a_closed_shape():
     link = Link({"hub.handoff": ADDON})
     res = post(app_for(link), {"kind": "addon", "request": RID})
     assert res.status_code == 200
-    assert res.json() == {"mode": "full", "kind": "addon", "summary": {"kind": "addon", "name": "wiki", "version": "1.2.0",
-                          "capabilities": ["network"]}, "short_hash": "aaaa aaaa aaaa", "url": ADDON["url"]}
+    summary = {"kind": "addon", "name": "wiki", "version": "1.2.0", "capabilities": ["network"]}
+    assert res.json() == {"mode": "full", "kind": "addon", "summary": summary, "short_hash": "aaaa aaaa aaaa",
+                          "url": ADDON["url"]}  # fmt: skip
     assert link.calls == [("hub.handoff", {"kind": "addon", "request": RID})]
 
 
 @pytest.mark.parametrize(
     "body",
-    [{"kind": "addon"}, {"kind": "addon", "request": "x"}, {"kind": "addon", "request": RID, "ticket": "DEMO-0001"},
-     {"kind": "gate", "request": RID}, {"kind": "gate"}],
+    [
+        {"kind": "addon"},
+        {"kind": "addon", "request": "x"},
+        {"kind": "addon", "request": RID, "ticket": "DEMO-0001"},
+        {"kind": "gate", "request": RID},
+        {"kind": "gate"},
+    ],
 )
 def test_an_add_on_approval_and_a_ticket_approval_never_mix(body):
     assert post(app_for(Link({"hub.handoff": ADDON})), body).status_code in (400, 422)
 
 
-@pytest.mark.parametrize("bad", [{"url": f"https://hub.example.test/#/w/{WS}/addon/a b"}, {"url": "https://evil.example/x"}, {"summary": {"name": 1}}])
+BAD_ADDON = [
+    {"url": f"https://hub.example.test/#/w/{WS}/addon/a b"},
+    {"url": "https://evil.example/x"},
+    {"summary": {"name": 1}},
+]
+
+
+@pytest.mark.parametrize("bad", BAD_ADDON)
 def test_an_add_on_answer_off_the_grammar_is_dropped(bad):
     res = post(app_for(Link({"hub.handoff": {**ADDON, **bad}})), {"kind": "addon", "request": RID})
     assert res.status_code == 500 or res.json()["error"]["code"] == "internal"

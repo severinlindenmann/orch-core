@@ -625,7 +625,7 @@ def test_person_events_need_signature_auth_and_roster_version():
 
 def test_agent_and_host_never_stand_in_for_a_person():
     for t in ("gate.approved", "verdict.given", "question.answered", "ticket.closed", "restore", "grant.requested",
-              "member.added", "invalid.acknowledged", "settings.changed"):  # fmt: skip  (addon.granted: the host, with request)
+              "member.added", "invalid.acknowledged", "settings.changed"):  # fmt: skip
         e = ex.EVENTS[t]
         log = log_of(t)
         for kind in ("agent", "unattended", "host"):

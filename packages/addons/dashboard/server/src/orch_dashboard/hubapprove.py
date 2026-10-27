@@ -128,5 +128,5 @@ def register(app: FastAPI, gateway: Gateway):
         if not link.supports("hub.handoff", "hub/1"):
             raise fail("click.contract", "Update orch-core: it cannot hand an approval to the hub yet.", exit=9)
         if (body.kind == "addon") != (body.request is not None) or (body.kind == "addon") == (body.ticket is not None):
-            raise fail("invalid.input", "An add-on approval names its request; a ticket approval names its ticket.", exit=5)
+            raise fail("invalid.input", "An add-on names its request; a ticket approval names its ticket.", exit=5)
         return panel(link.call("hub.handoff", body.model_dump(exclude_none=True)))

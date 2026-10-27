@@ -240,7 +240,8 @@ class StoreLanding:
         try:
             marketinstall.recheck(self.service, record, [grant])  # the staged bytes as they are now (C2), before append
         except Exception as exc:  # noqa: BLE001 - a changed stage or a revoked package: refuse, nothing is written
-            raise LandRefused(Refusal(Code.GRANT_TERMS, str(getattr(exc, "code", "the staged package changed")))) from None
+            why = str(getattr(exc, "code", "the staged package changed"))
+            raise LandRefused(Refusal(Code.GRANT_TERMS, why)) from None
         prev = canon.event_head(request)
         return {**grant, "based_on": prev, "seq": seq + 1, "prev": prev, "at": at}, record
 
@@ -405,7 +406,7 @@ def _to_runner(service: WorkspaceService, landing: StoreLanding) -> None:
 def _finish_addons(service: WorkspaceService, landing: StoreLanding) -> None:
     """FB15: after an ``addon.granted`` the hub's request caused: put the granted bytes in place (idempotent, by digest,
     as ``human.finish`` does) and end the prepared request ``submitted``. Outside the store lock; failures are logged,
-    never raised (the registry fails closed on a directory whose digest is not the grant's, and start-up finishes it)."""
+    never raised (the registry fails closed on a directory whose digest is not the grant's; start-up finishes it)."""
     from . import marketinstall
     from .workspace import ok_result
 

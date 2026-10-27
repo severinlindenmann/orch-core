@@ -377,3 +377,35 @@ def test_addon_list_is_read_once_per_request_and_a_write_clears_it():
         assert Link.calls == 2
     finally:
         REQUEST_MEMO.reset(token)
+
+
+def test_a_task_started_in_a_request_reads_fresh_after_the_request_ends():
+    import asyncio
+
+    from orch_dashboard.app import RequestMemo
+    from orch_dashboard.gateway import Gateway
+
+    class Link:
+        calls = 0
+
+        def call(self, op, args=None, **kw):
+            Link.calls += 1
+            return {"addons": []}
+
+    link, box = Link(), {}
+
+    async def inner(scope, receive, send):
+        Gateway.addon_rows(link)
+        box["task"] = asyncio.create_task(later())  # inherits this request's context, as live.py's tasks used to
+
+    async def later():
+        await asyncio.sleep(0.05)  # the request is over by now
+        Gateway.addon_rows(link)
+        Gateway.addon_rows(link)
+
+    async def main():
+        await RequestMemo(inner)({"type": "http"}, None, None)
+        await box["task"]
+
+    asyncio.run(main())
+    assert Link.calls == 3  # one in the request, then one per call: the closed memo is never used

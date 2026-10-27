@@ -144,10 +144,12 @@ class RequestMemo:
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-        token = REQUEST_MEMO.set({})
+        memo: dict = {}
+        token = REQUEST_MEMO.set(memo)
         try:
             return await self.app(scope, receive, send)
         finally:
+            memo["closed"] = True  # a task that inherited this context must not keep reading the request's answers
             REQUEST_MEMO.reset(token)
 
 

@@ -241,7 +241,7 @@ class Gateway:
     def addon_rows(link):
         """`addon.list` once per HTTP request (a write clears it): the gates of one request share one read."""
         memo = REQUEST_MEMO.get()
-        if memo is None:
+        if memo is None or memo.get("closed"):
             return link.call("addon.list")["addons"]
         key = ("addon.list", id(link))
         if key not in memo:

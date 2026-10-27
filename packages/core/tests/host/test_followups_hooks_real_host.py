@@ -41,15 +41,15 @@ class HookEnv(Env):
     def __init__(self, base: Path):
         super().__init__(base)
         self.port = free_port()
-        inner = self.ws.orch
+        # run 12 (6.5): no flags on `host run`; the persisted `orch host webhooks on` setting is all the host gets,
+        # as with an installed service unit. Written before the host starts.
+        import subprocess
 
-        def orch(*a):
-            argv = inner(*a)
-            if a[:3] == ("host", "run", "--foreground"):
-                argv = [*argv, "--hook-listen", f"127.0.0.1:{self.port}", "--hook-url", f"http://127.0.0.1:{self.port}"]
-            return argv
-
-        self.ws.orch = orch  # type: ignore[method-assign]
+        r = subprocess.run(
+            self.ws.orch("host", "webhooks", "on", "--port", str(self.port)),
+            env=self.ws.env(), capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+        assert r.returncode == 0 and f"127.0.0.1:{self.port}" in r.stdout, r.stdout + r.stderr
 
     def new_hook(self, key: str) -> tuple[str, str]:
         self.as_session_of(key)

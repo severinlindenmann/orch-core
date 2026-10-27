@@ -87,17 +87,17 @@ def _bind(e: Env, here: tuple[str, str | None]) -> tuple[tuple[str, str | None] 
 
 
 def table(e: Env, svcs: list[Svc]) -> None:
-    e.say(f"{'service':<22}{'state':<14}notes")
+    e.say(f"{'service':<22}{'state':<14}{'version':<10}notes")
     for s in svcs:
         if s.kind == "unsupported":
-            e.say(f"{s.label:<22}{'-':<14}not available on this system")
+            e.say(f"{s.label:<22}{'-':<14}{'-':<10}not available on this system")
         elif not s.installed:
-            e.say(f"{s.label:<22}{'not installed':<14}")
+            e.say(f"{s.label:<22}{'not installed':<14}{'-':<10}")
         else:
             note = s.detail
             if s.state == "stopped" and s.name in stopped_by_orch(e.state):
                 note = (note + "  " if note else "") + "stopped by orch stop, orch start brings it back"
-            e.say(f"{s.label:<22}{STATE_WORDS.get(s.state, s.state):<14}{note}")
+            e.say(f"{s.label:<22}{STATE_WORDS.get(s.state, s.state):<14}{s.version or '-':<10}{note}")
     ws = known_workspaces(e)
     if ws:
         host = next((s for s in svcs if s.key == "host"), None)
@@ -125,6 +125,7 @@ def _svcs_json(svcs: list[Svc]) -> list[dict[str, Any]]:
             "installed": s.installed and s.kind != "unsupported",
             "state": s.state if s.installed else None,
             "address": s.detail or None,
+            "version": s.version or None,
         }
         for s in svcs
     ]

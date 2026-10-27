@@ -3,7 +3,7 @@
   "error": {
     "code": "followup.no_receiver",
     "message": "this host does not receive webhooks",
-    "hint": "ask an owner to start the host with --hook-listen and --hook-url",
+    "hint": "ask an owner to run orch host webhooks on, then orch host restart",
     "fix": {
       "argv": [
         "orch",

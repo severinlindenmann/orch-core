@@ -399,6 +399,12 @@ class Host:
         server = Server(listener, self.registry, self.limits, ControlGate(self), welcome)
         self.servers["control"] = (server, asyncio.create_task(server.serve()))
         await self._serve_runner()
+        if not self.hook_listen:  # the persisted setting of `orch host webhooks on` (the unit carries no flags)
+            from .hooks import read_settings
+
+            saved = read_settings(self.state_dir, os.getuid())
+            if saved:
+                self.hook_listen, self.hook_url = saved["listen"], saved.get("url") or None
         if self.hook_listen:
             from .hooks import HookReceiver
 

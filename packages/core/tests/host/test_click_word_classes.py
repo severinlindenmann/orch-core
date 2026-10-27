@@ -56,7 +56,7 @@ def test_settings_classes():
 
 
 @pytest.mark.parametrize(
-    "op", ["member.add", "member.role", "member.remove", "policy.set", "people.set", "addon.purge"]
+    "op", ["member.add", "member.role", "member.remove", "policy.set", "people.set", "addon.purge", "follow_up.cancel"]
 )
 def test_every_former_word_op_is_a_plain_click(op):
     assert op in CLICK_OPS

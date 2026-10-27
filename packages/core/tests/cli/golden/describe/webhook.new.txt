@@ -9,6 +9,6 @@ errors:
   ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
   not_found (exit 2): orch list
   addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
-  followup.no_receiver (exit 3): ask an owner to start the host with --hook-listen and --hook-url | fix: orch follow-up --help
+  followup.no_receiver (exit 3): ask an owner to run orch host webhooks on, then orch host restart | fix: orch follow-up --help
   parse.text (exit 6): orch describe webhook.new
 out: ok {key} webhook {label}

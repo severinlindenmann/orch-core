@@ -7,9 +7,7 @@ from orch.ops.base import Result
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
 
-HINT = (
-    "this host does not receive webhooks: an owner starts it with: orch host run --hook-listen HOST:PORT --hook-url URL"
-)
+HINT = "this host does not receive webhooks: an owner runs: orch host webhooks on, then orch host restart"
 
 
 def handle(ctx, args):

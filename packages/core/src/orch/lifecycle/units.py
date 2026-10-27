@@ -100,6 +100,7 @@ class Svc:
     timer: bool = False  # runs on a schedule: "running" means loaded
     detail: str = ""
     runner_kind: str | None = None  # for parts: the runner that started it
+    version: str = ""  # as `orch install status` shows it: the part's record, else the installed orch-core
 
 
 # ------------------------------------------------------------------------------------------------------ discovery
@@ -166,8 +167,19 @@ def discover(e: Env) -> list[Svc]:
     return out
 
 
+def _dist_version(dist: str) -> str:
+    from importlib import metadata
+
+    for name in (dist, "orch-core"):
+        try:
+            return metadata.version(name)
+        except metadata.PackageNotFoundError:
+            continue
+    return ""
+
+
 def _unit(e: Env, kind: str, key: str, label: str, name: str, path: Path, timer: bool) -> Svc:
-    s = Svc(key, label, PERSON, kind, name=name, path=path, timer=timer)
+    s = Svc(key, label, PERSON, kind, name=name, path=path, timer=timer, version=_dist_version("orch-core"))
     if not os.path.lexists(path):
         s.installed = False
         return s
@@ -188,7 +200,10 @@ def _unit_state(e: Env, s: Svc) -> str:
 
 def _part(e: Env, key: str, label: str, group: str, rec: dict[str, Any]) -> Svc:
     kind = rec.get("runner") if isinstance(rec.get("runner"), str) else None
-    s = Svc(key, label, group, "part", name=key, detail=str(rec.get("url") or ""), runner_kind=kind)
+    ver = rec.get("version") if isinstance(rec.get("version"), str) else ""
+    if not ver and key == "dashboard":
+        ver = _dist_version("orch-dashboard")
+    s = Svc(key, label, group, "part", name=key, detail=str(rec.get("url") or ""), runner_kind=kind, version=ver)
     try:
         s.state = "running" if _runner(e, kind).info(key).get("running") else "stopped"
     except Exception:  # noqa: BLE001 - a broken service manager must not hide the other rows

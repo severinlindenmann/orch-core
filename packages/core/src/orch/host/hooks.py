@@ -47,6 +47,35 @@ def set_secret(state_dir: Path, host_uid: int, hook_id: str, secret: str) -> Non
     custody.write_private(path, doc)
 
 
+def settings_path(state_dir: Path) -> Path:
+    return Path(state_dir) / "hosts" / "hook-settings.json"
+
+
+def read_settings(state_dir: Path, host_uid: int) -> dict | None:
+    """The persisted receiver setting (``orch host webhooks on``): ``{"listen": "A:P", "url": "..."}`` or None."""
+    doc = custody.read_json(settings_path(state_dir), host_uid)
+    if isinstance(doc, dict) and isinstance(doc.get("listen"), str) and doc["listen"]:
+        return doc
+    return None
+
+
+def write_settings(state_dir: Path, host_uid: int, listen: str | None, url: str | None = None) -> None:
+    """Persist (``listen`` set) or clear (None) the receiver setting; the host reads it when it starts."""
+    path = settings_path(state_dir)
+    if listen is None:
+        path.unlink(missing_ok=True)
+        return
+    Path(state_dir).mkdir(parents=True, mode=0o700, exist_ok=True)  # before the host ever ran
+    custody.ensure_private_dir(path.parent, host_uid)
+    custody.write_private(path, {"listen": listen, "url": url or ""})
+
+
+def free_port(addr: str) -> int:
+    with socket.socket(socket.AF_INET6 if ":" in addr else socket.AF_INET) as s:
+        s.bind((addr, 0))
+        return s.getsockname()[1]
+
+
 class HookReceiver:
     def __init__(self, host, listen: str, *, clock=time.monotonic):
         addr, _, port = listen.rpartition(":")

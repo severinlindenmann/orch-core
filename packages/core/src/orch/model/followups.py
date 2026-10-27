@@ -340,6 +340,8 @@ def check_reschedule(state: str, req: SetRequest, caps: Caps, *, old_deadline: i
         return Denial("too_soon", "due is before the minimum scheduling lead")
     if req.due is not None and deadline < req.due:
         return Denial("deadline_before_due", "deadline must be at or after due")
+    if req.trigger != "time" and deadline < req.at + caps.min_lead_s:
+        return Denial("too_soon", "deadline is before the minimum scheduling lead")
     if deadline > req.at + caps.max_days * 86400:
         return Denial("too_far", "deadline exceeds the scheduling horizon")
     if deadline <= req.at:

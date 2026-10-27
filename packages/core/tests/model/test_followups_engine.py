@@ -9,6 +9,7 @@ import pytest
 from orch import canon, crypto
 from orch.host.auth import build_auth
 from orch.model import Code, advance, replay
+from orch.model import followups as fu
 from orch.model.types import ts
 from tests.model.world import World, digest, refused, stamp, ulid
 
@@ -329,10 +330,9 @@ def test_reschedule_changes_fire_window(env):
 
 def test_reschedule_needs_person_and_manager(env):
     w, uid, a = env
-    first = set_followup(w, uid, a)
-    w.tev(uid, "followup.rescheduled", "sev", followup=first["followup"], due=stamp(w.clock + timedelta(hours=3)))
-    for _ in range(6):
-        w.tev(uid, "claim.taken", a)
+    for i in range(6):
+        if i:
+            w.tev(uid, "claim.taken", a)
         e = set_followup(w, uid, a)
     assert w.view(uid).followups[-1]["state"] == "needs_person"
     payload = dict(followup=e["followup"], due=stamp(w.clock + timedelta(hours=3)))
@@ -445,3 +445,68 @@ def test_reschedule_of_needs_person_counts_the_workspace_pending_cap(env, monkey
     _one_pending_cap(monkeypatch)
     due = stamp(w.clock + timedelta(hours=3))
     assert refused(w, uid, "followup.rescheduled", "tom", followup=e["followup"], due=due) == Code.FOLLOWUP_DENIED
+
+
+def _two_people(*, needs_person=False):
+    w = World().bootstrap({"tom": "member", "mara": "maintainer"})
+    w.wev(
+        "addon.granted", "sev", name="schedules", version="1.0.0", package_sha256=digest("schedules"),
+        capabilities=[], fields={}, sections=[], artifact_kinds=[],
+    )  # fmt: skip
+    uid = w.ticket(owner="tom")
+    a = w.claim(uid, "tom")
+    for i in range(6 if needs_person else 1):
+        if i:
+            w.tev(uid, "claim.taken", a)
+        e = set_followup(w, uid, a)
+    return w, uid, a, e
+
+
+def test_a_manager_cancel_cannot_be_undone(env):
+    w, uid, a, e = _two_people(needs_person=True)
+    assert w.view(uid).followups[-1]["state"] == "needs_person"
+    w.tev(uid, "followup.cancelled", "mara", followup=e["followup"], reason="person")
+    assert refused(w, uid, "followup.restored", "mara", followup=e["followup"]) == Code.FOLLOWUP_DENIED
+    assert w.view(uid).followups[-1]["state"] == "cancelled"
+
+
+def test_a_manager_reschedule_keeps_the_persons_chain_and_cannot_resume_needs_person():
+    w, uid, a, e = _two_people(needs_person=True)
+    due = stamp(w.clock + timedelta(hours=3))
+    assert refused(w, uid, "followup.rescheduled", "mara", followup=e["followup"], due=due) == Code.FOLLOWUP_DENIED
+    assert w.view(uid).followups[-1]["state"] == "needs_person"  # the guard ran: note_event comes after the handler
+    assert w.state()._core.tickets[uid].fu_chain.get("sets")  # the refused event did not reset the chain
+    w2, uid2, a2, e2 = _two_people()
+    w2.tev(uid2, "followup.rescheduled", "mara", followup=e2["followup"], due=stamp(w2.clock + timedelta(hours=3)))
+    assert w2.state()._core.tickets[uid2].fu_chain.get("sets")  # an allowed manager reschedule keeps it too
+
+
+def test_reschedule_after_grant_revoked_is_refused(env):
+    w, uid, a = env
+    e = set_followup(w, uid, a)
+    due = stamp(w.clock + timedelta(hours=3))
+    w.wev("grant.revoked", "tom", grant=a["grant"])
+    assert refused(w, uid, "followup.rescheduled", "tom", followup=e["followup"], due=due) == Code.FOLLOWUP_DENIED
+
+
+def test_reschedule_after_ticket_left_in_progress_is_refused(env):
+    w, uid, a = env
+    e = set_followup(w, uid, a)
+    w.tev(uid, "ticket.closed", "sev", resolution="other")
+    due = stamp(w.clock + timedelta(hours=3))
+    assert refused(w, uid, "followup.rescheduled", "tom", followup=e["followup"], due=due) == Code.FOLLOWUP_DENIED
+
+
+def test_negative_undo_window_is_refused(env):
+    w, uid, a = env
+    e = set_followup(w, uid, a)
+    w.clock += timedelta(seconds=30)
+    w.tev(uid, "followup.cancelled", "tom", followup=e["followup"], reason="person")
+    w.clock -= timedelta(seconds=60)  # an `at` before the cancel
+    assert refused(w, uid, "followup.restored", "tom", followup=e["followup"]) is not None
+
+
+def test_event_trigger_reschedule_needs_the_minimum_lead():
+    caps = fu.effective_caps({})
+    req = fu.SetRequest(0, "orch", None, 60, "x")
+    assert fu.check_reschedule("pending", req, caps).code == "too_soon"

@@ -275,7 +275,8 @@ def rescheduled_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None
         return r
     deadline = e.get("deadline")
     if rec.trigger == "time" and deadline is None and rec.deadline is not None:
-        deadline = max(rec.deadline, e["due"])
+        # one computation on integers, stored in the canonical form (the same value check_reschedule judged)
+        deadline = datetime.fromtimestamp(max(ts(rec.deadline), ts(e["due"])), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     rec.due, rec.deadline = e.get("due"), deadline
     rec.state = "pending"
     return None
@@ -292,10 +293,11 @@ def restored_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         rec is None
         or a["kind"] != "person"
         or a["id"] != rec.cancelled_by
+        or rec.cancelled_by != rec.person  # a manager's Cancel is not undone: it must not bring back needs_person
         or rec.state != "cancelled"
         or rec.cancel_reason != "person"
         or rec.cancelled_at is None
-        or now - ts(rec.cancelled_at) > fu.FU_UNDO_S
+        or not 0 <= now - ts(rec.cancelled_at) <= fu.FU_UNDO_S
         or rec.cancel_prev_state not in ("pending", "needs_person")
     ):
         return Refusal(Code.FOLLOWUP_DENIED, "only the canceller may undo a person cancellation within 120 seconds")
@@ -313,6 +315,9 @@ def restored_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
 def note_event(t: TCore, e: dict[str, Any]) -> None:
     now = ts(e["at"])
     if e["actor"]["kind"] == "person":
+        rec = t.followups.get(e.get("followup", "")) if e["type"].startswith("followup.") else None
+        if rec is not None and e["actor"]["id"] != rec.person:
+            return  # a manager acting on someone else's follow-up does not restart that person's chain (FU7)
         t.fu_chain = {"since": now}
     elif e["type"] == "followup.set":
         if not t.fu_chain.get("sets"):

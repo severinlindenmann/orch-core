@@ -46,7 +46,7 @@ export function toEntries(items: NeedsYouItem[], decisions: AddonDecision[]): En
   ]
 }
 
-/** "Agent may need you: check its terminal": a hint from the host, not a question. */
+/** "Agent is waiting for you": a hint from the host, not a question (shown in plain words, run-13 A10). */
 export const isTerminalWait = (e: Entry) => e.group !== 'addons' && e.item.kind === 'terminal_wait'
 
 /** Blocking first, then the oldest `since`, then the id: the same items always give the same order. */

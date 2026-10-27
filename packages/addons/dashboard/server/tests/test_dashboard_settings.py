@@ -903,3 +903,24 @@ def test_concurrent_path_checks_cannot_pass_the_limit(worlds, team):
     with ThreadPoolExecutor(8) as pool:
         codes = list(pool.map(lambda _: world.post(url, body).status_code, range(40)))
     assert codes.count(400) == 20 and codes.count(503) == 20
+
+
+def test_a_settings_change_signed_through_the_hub_still_reads_back():
+    """Run 12 rerun 3, 5.3: after a hub-signed settings.changed the host names the hub user (`u_...`) as `by`; the read
+    answered 500 "do not match its contract" and Settings showed "Could not load settings"."""
+    hub_user = "u_" + "0123456789abcdef" * 2
+    first = {
+        "settings": {"grant_hours": 24, "claim_ttl_min": 120, "lease_ttl_min": 60, "repos": {}},
+        "next_page": None,
+        "gates": {},
+        "defaults": ["claim_ttl_min", "lease_ttl_min"],
+        "settings_at": {"seq": 9, "at": "2026-10-27T15:00:00Z", "by": hub_user},
+        "policy_at": None,
+    }
+    got = adapters.settings.settings(first, [], False)
+    assert got.grant_hours == 24 and got.settings_at.by == hub_user
+    for by in ("x_abc", "u_", "u_bad id", "P_abc"):  # still closed: nothing else passes
+        first["settings_at"]["by"] = by
+        with pytest.raises(Exception) as caught:
+            adapters.settings.settings(first, [], False)
+        assert getattr(caught.value, "error", {}).get("code") == "internal"

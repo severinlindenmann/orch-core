@@ -23,6 +23,8 @@ DURATIONS = {"grant_hours": (1, 168), "claim_ttl_min": (15, 1440), "lease_ttl_mi
 APPROVER_TOKENS = ("owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers")
 TICKET_TYPES = ("feature", "bug", "chore", "spike", "epic")
 PERSON = re.compile(r"^p_[A-Za-z0-9]{1,64}$")
+#: who signed a stamp: a workspace person, or the hub user a hub-signed event names (`u_<user id>`, hub protocol 8.8)
+SIGNER = re.compile(r"^[pu]_[A-Za-z0-9]{1,64}$")
 REPO = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 # No control, bidi, zero-width or byte-order characters in anything shown from the host (they could reorder a line).
 BRANCH = re.compile(r"^.{1,255}$")
@@ -117,7 +119,7 @@ def stamp(value) -> Stamp | None:
         not isinstance(value, dict)
         or type(value.get("seq")) is not int
         or not TIME.fullmatch(str(value.get("at")))
-        or not PERSON.fullmatch(str(value.get("by")))
+        or not SIGNER.fullmatch(str(value.get("by")))
     ):
         raise bad()
     return Stamp(seq=value["seq"], at=value["at"], by=value["by"])

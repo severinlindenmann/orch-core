@@ -22,7 +22,10 @@ def handle(ctx, args):
     rows.sort(key=lambda f: (f["due"] or f["deadline"] or "", f["id"]))
     return Result(
         data={"rows": rows, "total": len(rows)},
-        lines=[f"{f['key']} {f['id']} due={f['due']} state={f['state']}" for f in rows],
+        lines=[
+            f"{f['key']} {f['id']} due={f['due'] or f['deadline']} trigger={f['trigger']} state={f['state']}"
+            for f in rows
+        ],
     )
 
 

@@ -107,6 +107,7 @@ def ok_result(data: Any, *, seq: int = 0, duplicate: bool = False) -> dict[str, 
 class WorkspaceService:
     def __init__(self, entry: Entry, state_dir: Path, host_uid: int, *, clock: Callable[[], float] = time.time):
         self.entry = entry
+        self.hook_base: str | None = None  # #717: the public base URL of the host's webhook receiver, if any
         self.state_dir = Path(state_dir)
         self.host_uid = host_uid
         self.clock = clock
@@ -451,7 +452,12 @@ class WorkspaceService:
                     )
                 except (OSError, ValueError, Unavailable):
                     git = None  # an unreadable pin file is never replaced by fresh pins: git is denied (fail closed)
-            self.caps = Capabilities.host((os.fspath(self.entry.store_dir),), env={}, clock=self.clock, git=git)
+            self.caps = Capabilities.host(
+                (os.fspath(self.entry.store_dir),),
+                env={"ORCH_HOOK_BASE": self.hook_base} if self.hook_base else {},
+                clock=self.clock,
+                git=git,
+            )
         return self.caps
 
     def sync_git(self) -> None:

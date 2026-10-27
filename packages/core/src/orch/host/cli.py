@@ -51,6 +51,22 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--state", type=Path)
     run.add_argument("--run", type=Path)
+    run.add_argument(
+        "--hook-listen",
+        metavar="HOST:PORT",
+        help="receive webhook doorbells for follow-ups here (POST /h/<hook id>); off by default",
+    )
+    run.add_argument(
+        "--hook-url",
+        metavar="URL",
+        help="the public base URL agents are told for --hook-listen (default http://HOST:PORT)",
+    )
+    secret = sub.add_parser(
+        "hook-secret",
+        help="keep the HMAC secret of a webhook (GitHub X-Hub-Signature-256) on this host; read from stdin",
+    )
+    secret.add_argument("hook_id")
+    secret.add_argument("--state", type=Path)
     inst = sub.add_parser("install", help="install this code as an immutable release")
     inst.add_argument("--version")
     unit = sub.add_parser("unit", help="print a launchd or systemd unit (installing it is the setup helper's job)")
@@ -204,7 +220,14 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
                 devmode.check_launch(args.foreground, env, run_dir, state)
                 dev = devmode.prove(state, env)
             preload()
-            host = Host(state, run_dir, dev_runner=args.dev_runner, dev=dev)
+            host = Host(
+                state,
+                run_dir,
+                dev_runner=args.dev_runner,
+                dev=dev,
+                hook_listen=args.hook_listen,
+                hook_url=args.hook_url,
+            )
             if dev is not None:
                 from .devmode import status_line
 
@@ -215,6 +238,15 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
                     "admitted without a service manager (dev and tests only)\n"
                 )
             asyncio.run(host.run())
+            return 0
+        if args.cmd == "hook-secret":
+            from . import hooks
+
+            value = sys.stdin.readline().strip()
+            if not value:
+                raise HostError("invalid.input", "give the secret on standard input")
+            hooks.set_secret(_state(args.state, env), os.getuid(), args.hook_id, value)
+            out.write("ok: the secret stays on this host\n")
             return 0
         if args.cmd == "install":
             from .release import install_release

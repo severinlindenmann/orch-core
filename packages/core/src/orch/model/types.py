@@ -274,6 +274,9 @@ class FollowupRec:
     fallback: str | None = None
     cancel_reason: str | None = None
     label: str | None = None
+    on: dict[str, Any] | None = None  # the event match of an orch/webhook follow-up
+    hook: str | None = None  # sha256 of the webhook id (never the id)
+    event: dict[str, Any] | None = None  # the event that woke it (closed shape)
 
 
 @dataclass

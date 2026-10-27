@@ -1,0 +1,14 @@
+ok describe webhook.new
+Make a doorbell address that wakes one follow-up when an outside job calls it.
+usage: orch webhook new [REF] --label LABEL
+who: read · emits: -
+args:
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+  --label LABEL  what it is for (required)
+errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
+  not_found (exit 2): orch list
+  followup.no_receiver (exit 3): ask an owner to start the host with --hook-listen and --hook-url | fix: orch follow-up --help
+  followup.off (exit 3): ask an owner to turn Schedules on in Add-ons | fix: orch addon list
+  parse.text (exit 6): orch describe webhook.new
+out: ok {key} webhook {label}

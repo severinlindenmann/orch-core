@@ -1,0 +1,120 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "webhook.new",
+    "name": "webhook.new",
+    "cli": "orch webhook new",
+    "summary": "Make a doorbell address that wakes one follow-up when an outside job calls it.",
+    "who": "read",
+    "usage": "orch webhook new [REF] --label LABEL",
+    "pre": [],
+    "emits": [],
+    "input": {
+      "type": "object",
+      "description": "Make a doorbell address that wakes one follow-up when an outside job calls it.",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "ticket REF (DEMO-0043, 43); default: your claim",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        },
+        "label": {
+          "type": "string",
+          "description": "what it is for",
+          "maxLength": 200
+        }
+      },
+      "x-positional": [
+        "ref"
+      ],
+      "required": [
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} webhook {label}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "url",
+          "label"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "ambiguous_ref",
+        "exit": 2,
+        "retryable": false,
+        "hint": "name the ticket REF, for example DEMO-0043",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "followup.no_receiver",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask an owner to start the host with --hook-listen and --hook-url",
+        "fix": [
+          "orch",
+          "follow-up",
+          "--help"
+        ]
+      },
+      {
+        "code": "followup.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "ask an owner to turn Schedules on in Add-ons",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
+      },
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe webhook.new",
+        "fix": [
+          "orch",
+          "describe",
+          "webhook.new"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

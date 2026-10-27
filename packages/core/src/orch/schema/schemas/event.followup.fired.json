@@ -326,6 +326,52 @@
     },
     "run": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/runId"
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "enum": [
+            "orch",
+            "webhook"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "question",
+            "ticket",
+            "gate",
+            "task",
+            "hook"
+          ]
+        },
+        "status": {
+          "enum": [
+            "asked",
+            "answered",
+            "changed",
+            "closed",
+            "approved",
+            "changes_requested",
+            "done",
+            "rang"
+          ]
+        },
+        "ref": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/eventRef"
+        },
+        "at": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
+        }
+      },
+      "required": [
+        "source",
+        "kind",
+        "status",
+        "ref",
+        "at"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [

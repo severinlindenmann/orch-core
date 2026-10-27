@@ -135,3 +135,40 @@ def test_all_keeps_only_recent_terminal_records(ws, cli, anon, schedules):
     ws.tick(31 * 86400)
     assert anon.j("follow-up", "list", "--all").data["total"] == 0
     assert anon.j("follow-up", "show", fid).data["state"] == "cancelled"
+
+
+def test_on_event_and_webhook_follow_ups(ws, cli, schedules):
+    claimed(cli)
+    r = cli.j("follow-up", "--in", "2d", "--on", "question.answered:q1", "--brief", "after the answer")
+    assert r.code == 0, r.out
+    assert r.data["trigger"] == "orch" and r.data["state"] == "pending"
+    rec = ws.view("1").followups[0]
+    assert rec["on"]["ref"] == "q1" and rec["due"] is None and rec["deadline"]
+    shown = cli("follow-up", "show", r.data["id"])
+    assert "waiting for: question.answered:q1" in shown.out
+    assert "trigger=orch" in cli("follow-up", "list").out
+
+
+def test_on_bad_and_addon_values(cli, schedules):
+    claimed(cli)
+    assert cli.j("follow-up", "--in", "2d", "--on", "nope.nothing", "--brief", "x").err_code == "invalid.input"
+    assert cli.j("follow-up", "--in", "2d", "--on", "webhook:hk_short", "--brief", "x").err_code == "invalid.input"
+
+
+def test_webhook_new_and_bind(ws, cli, schedules):
+    from orch.model import followup_events as fe
+
+    claimed(cli)
+    r = cli.j("webhook", "new", "1", "--label", "backfill done")
+    assert r.err_code == "followup.no_receiver", r.out  # no receiver on this host
+    cli.env_kw["ORCH_HOOK_BASE"] = "https://hooks.example:9000/"
+    r = cli.j("webhook", "new", "1", "--label", "backfill done")
+    assert r.code == 0, r.out
+    hid = r.data["id"]
+    assert r.data["url"] == f"https://hooks.example:9000/h/{hid}"
+    bound = cli.j("follow-up", "--in", "2d", "--on", f"webhook:{hid}", "--brief", "after the ring")
+    assert bound.code == 0 and bound.data["trigger"] == "webhook", bound.out
+    rec = ws.view("1").followups[0]
+    assert rec["hook_prefix"] == fe.hook_hash(hid, ws.store.workspace_id)[:8]
+    assert "hook" not in rec["on"] and "hook" not in rec  # the hash is not shown to readers
+    assert hid not in str(ws.events("1")[-1])  # only the hash is in the ledger

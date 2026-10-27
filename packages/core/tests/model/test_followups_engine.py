@@ -211,13 +211,74 @@ def test_claim_verdicts_of_a_ticket_without_follow_ups_are_unchanged(env):
     assert refused(w, uid, "claim.taken", other) is None  # released by the set: a waiting ticket may be picked up
 
 
-def test_non_time_triggers_are_refused_until_wired(env):
-    w, uid, a = env
-    _, result = w.try_(
-        uid, "followup.set", a, followup="fu_" + w.nid(), trigger="orch", deadline=stamp(w.clock + timedelta(hours=3)),
-        brief="x",
+def _event_set(w, uid, a, on, trigger, **over):
+    deadline = stamp(w.clock + timedelta(hours=3))
+    return w.try_(
+        uid, "followup.set", a, followup="fu_" + w.nid(), trigger=trigger, deadline=deadline, brief="x", on=on, **over
+    )
+
+
+def _fire_with(w, uid, e, trigger, **extra):
+    return w.try_(
+        uid, "followup.fired", w.HOST, followup=e["followup"], grant="gr_" + w.nid(), trigger=trigger,
+        secret_hash=canon.grant_secret_hash(b"s" * 32), run="r_" + w.nid(), **extra,
     )  # fmt: skip
+
+
+def test_addon_and_unmatched_triggers_are_refused(env):
+    w, uid, a = env
+    on = {"source": "orch", "kind": "question", "status": "answered"}
+    _, result = _event_set(w, uid, a, on, "addon")
+    assert result.code == Code.FOLLOWUP_DENIED and "addon" in result.detail
+    for bad in (None, {"source": "webhook", "kind": "hook", "status": "rang", "hook": "0" * 64}):
+        _, result = _event_set(w, uid, a, bad, "orch")
+        assert result.code == Code.FOLLOWUP_DENIED
+    _, result = _event_set(w, uid, a, on, "webhook")
     assert result.code == Code.FOLLOWUP_DENIED
+
+
+def test_an_orch_follow_up_fires_on_its_event_only(env):
+    w, uid, a = env
+    on = {"source": "orch", "kind": "question", "status": "answered", "ref": "q1"}
+    e, result = _event_set(w, uid, a, on, "orch")
+    assert not hasattr(result, "code"), result
+    assert w.view(uid).followups[0]["on"]["ref"] == "q1"
+    w.clock += timedelta(minutes=5)
+    other = {"source": "orch", "kind": "question", "ref": "q2", "status": "answered", "at": stamp(w.clock)}
+    _, result = _fire_with(w, uid, e, "orch", event=other)
+    assert result.code == Code.FOLLOWUP_DENIED
+    wake = {**other, "ref": "q1"}
+    _, result = _fire_with(w, uid, e, "orch", event=wake)
+    assert not hasattr(result, "code"), result
+    v = w.view(uid).followups[0]
+    assert v["state"] == "fired" and v["event"]["ref"] == "q1"
+
+
+def test_a_webhook_follow_up_fires_on_a_ring_and_falls_back_at_the_deadline(env):
+    from orch.model import followup_events as fe
+
+    w, uid, a = env
+    hid = fe.new_hook_id()
+    on = fe.parse_on("webhook:" + hid, "w1")
+    e, result = _event_set(w, uid, a, on, "webhook", hook=on["hook"])
+    assert not hasattr(result, "code"), result
+    w.clock += timedelta(minutes=5)
+    ring = fe.webhook_event(on["hook"], stamp(w.clock))
+    _, result = _fire_with(w, uid, e, "webhook", event=ring)
+    assert not hasattr(result, "code"), result
+    assert w.view(uid).followups[0]["state"] == "fired"
+    # a second follow-up: nothing rings, the deadline fires it with a fallback reason
+    uid, a2 = w.ticket(owner="tom"), None
+    a2 = w.claim(uid, "tom")
+    on2 = fe.parse_on("webhook:" + fe.new_hook_id(), "w1")
+    e2, result = _event_set(w, uid, a2, on2, "webhook", hook=on2["hook"])
+    assert not hasattr(result, "code"), result
+    w.clock += timedelta(hours=3)
+    _, result = _fire_with(w, uid, e2, "deadline", fallback="no_event")
+    assert result.code == Code.FOLLOWUP_DENIED  # the reason must be the webhook's own
+    _, result = _fire_with(w, uid, e2, "deadline", fallback="no_ring")
+    assert not hasattr(result, "code"), result
+    assert w.view(uid).followups[-1]["fallback"] == "no_ring"
 
 
 def test_the_claim_of_a_follow_up_session_is_not_live_after_its_outcome(env):

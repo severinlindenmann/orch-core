@@ -602,6 +602,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   }, [api])
   // Worktrees need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
   const offersTrust = state?.mode === 'new' && state.claude?.available === true
+  const parentConfig = state?.claude?.parent_config ?? ''
   const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
   const update = (value: Partial<Profile>) => {
     setProfile((p) => ({ ...p, ...value }))
@@ -612,7 +613,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     setStep(5)
   }
   async function approveProfile() {
-    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true, records: state?.mode !== 'finish' && profile.records !== false, trust_folder: offersTrust && profile.trust_folder !== false })
+    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true, records: state?.mode !== 'finish' && profile.records !== false, trust_folder: offersTrust && (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false), trust_parent: offersTrust && !!parentConfig && profile.trust_parent === true })
     if (state?.mode === 'finish' || confirmed.current) await getReview()
     else {
       const revealed = await api.call<Secrets>('secrets/reveal', {})
@@ -1023,7 +1024,24 @@ export function Setup({ api }: { api: SetupAPI }) {
                   />
                 </label>
               )}
-              {offersTrust && (
+              {offersTrust && parentConfig && (
+                <label className="toggle">
+                  <span>
+                    Trust anyway
+                    <small>
+                      Found Claude Code settings in {parentConfig}: they would apply to this folder too. Off means
+                      Claude Code asks each time.
+                    </small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={profile.trust_parent === true}
+                    onChange={(e) => update({ trust_parent: e.target.checked })}
+                  />
+                </label>
+              )}
+              {offersTrust && !parentConfig && (
                 <label className="toggle">
                   <span>
                     Let Claude Code trust this folder

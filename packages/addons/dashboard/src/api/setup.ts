@@ -25,7 +25,7 @@ export interface SetupState {
   /** The folder is (or lies in) a git working copy; absent in older cores (nothing is offered then). */
   git?: { repo: boolean }
   /** Claude Code is installed here: setup offers to let it trust the new folder. */
-  claude?: { available: boolean }
+  claude?: { available: boolean; why_not?: string; parent_config?: string }
   missing: string[]
   /** `missing` in words, same order (core's wording; the page shows these, never the ids) */
   missing_words?: string[]
@@ -60,6 +60,8 @@ export interface Profile {
   records?: boolean
   /** Let Claude Code trust this folder (offered only when the claude CLI is installed). */
   trust_folder?: boolean
+  /** "Trust anyway": Claude Code settings in a folder above this one apply too (default off). */
+  trust_parent?: boolean
 }
 export interface Secrets {
   passphrase: string | null

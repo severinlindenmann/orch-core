@@ -404,7 +404,12 @@ class Host:
 
             self.hooks = HookReceiver(self, self.hook_listen)
             await self.hooks.start()
-            if not self.hook_url:  # B4: advertise what was really bound
+            if not self.hook_url:  # B4: advertise what was really bound, never a wildcard address
+                if self.hooks.addr in ("0.0.0.0", "::"):
+                    await self.hooks.close()
+                    raise HostError(
+                        "invalid.input", "--hook-listen on every address needs --hook-url (the address agents use)"
+                    )
                 self.hook_url = f"http://{self.hooks.addr}:{self.hooks.port}"
         self.bus.start()
         for entry in self.registry.entries():

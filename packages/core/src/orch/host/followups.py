@@ -33,6 +33,7 @@ class FollowupRunner:
         #: hook hashes of this workspace's pending webhook follow-ups, refreshed by every read; the receiver asks this
         #: set first so an unknown id never costs a store read
         self.hooks = frozenset()
+        self.intents.pop("_rings", None)  # rings used to live here; they have their own file now
         self.task = None
         self._wall, self._mono = clock(), mono()
         self._last_tick, self._slept_s, self._blocked = None, 0, {}

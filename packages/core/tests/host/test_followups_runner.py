@@ -434,3 +434,12 @@ def test_webhook_ring_fires_once_and_later_rings_are_ignored(env):
     assert len([c for c in e.hub.commands if c[0] == "spawn"]) == 1
     assert hid not in json.dumps(e.hub.commands) + e.runner.path.read_text()
     assert e.runner.rings_path.exists() and "_rings" not in e.runner.path.read_text()  # rings have their own file
+
+
+def test_a_stale_rings_key_is_dropped_on_load(env):
+    from orch.host.followups import FollowupRunner
+
+    env.runner.intents["_rings"] = {"x": "2026-01-01T00:00:00Z"}
+    env.runner._save()
+    fresh = FollowupRunner(env.w.service, clock=lambda: 0, mono=lambda: 0)
+    assert "_rings" not in fresh.intents

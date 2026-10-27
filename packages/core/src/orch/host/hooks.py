@@ -28,6 +28,7 @@ MAX_HEAD = 16 * 1024
 MAX_BODY = 64 * 1024
 PATH = re.compile(rb"/h/(hk_[0-7][0-9A-HJKMNP-TV-Z]{25})")
 RATE_PER_MIN = 60  # per source address
+PER_PEER = 4  # open requests per source address, counted before a global slot is taken
 MAX_CONNECTIONS = 32  # open requests at once; more get the same answer and are closed
 RING_TIMEOUT = 10  # seconds for everything after the head
 
@@ -53,10 +54,11 @@ class HookReceiver:
         self.server: asyncio.base_events.Server | None = None
         self._seen: dict[str, list[float]] = {}
         self._slots = asyncio.Semaphore(MAX_CONNECTIONS)
+        self._open: dict[str, int] = {}
 
     async def start(self) -> None:
         self.server = await asyncio.start_server(self._handle, self.addr, self.port)
-        self.port = self.server.sockets[0].getsockname()[1]
+        self.addr, self.port = self.server.sockets[0].getsockname()[:2]  # what was really bound
         LOG.info("webhook receiver listening on %s:%s", self.addr, self.port)
 
     async def close(self) -> None:
@@ -76,13 +78,20 @@ class HookReceiver:
         return len(hits) > RATE_PER_MIN
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        if self._slots.locked():  # over the cap: the same answer, nothing read
+        peer = (writer.get_extra_info("peername") or ("?",))[0]
+        if self._open.get(peer, 0) >= PER_PEER or self._slots.locked():  # over a cap: the same answer, nothing read
             with contextlib.suppress(Exception):
                 writer.write(ANSWER)
                 writer.close()
             return
-        async with self._slots:
-            await self._serve(reader, writer)
+        self._open[peer] = self._open.get(peer, 0) + 1
+        try:
+            async with self._slots:
+                await self._serve(reader, writer)
+        finally:
+            self._open[peer] -= 1
+            if not self._open[peer]:
+                del self._open[peer]
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
@@ -94,6 +103,8 @@ class HookReceiver:
                 head = b""
             if head and len(head) <= MAX_HEAD and not self._limited(peer):
                 await asyncio.wait_for(self._ring(head, reader), RING_TIMEOUT)
+        except TimeoutError:
+            LOG.info("webhook request timed out")
         except Exception:  # noqa: BLE001 - a bad request must not look different from a good one
             LOG.warning("webhook request failed", exc_info=True)
         finally:

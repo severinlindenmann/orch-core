@@ -158,36 +158,114 @@ def test_non_ascii_signature_header_is_just_a_bad_signature(rx):
     assert rx.runner.rings == []
 
 
-def test_b4_the_default_hook_url_is_what_was_bound():
-    import shutil
-    import tempfile
-    from pathlib import Path
-
-    from orch.host.service import Host
-
-    tmp_path = Path(tempfile.mkdtemp(prefix=".tb4-", dir=Path.home()))  # short path: unix socket limit
-
-    async def go():
-        host = Host(tmp_path / "s", tmp_path / "r", hook_listen=":0")
-        await host.start()
-        try:
-            return host.hook_url, host.hooks.port
-        finally:
-            await host.close()
-
-    (tmp_path / "s").mkdir(mode=0o700)
-    (tmp_path / "r").mkdir(mode=0o711)
-    (tmp_path / "r").chmod(0o711)
-    try:
-        url, port = asyncio.run(go())
-    finally:
-        shutil.rmtree(tmp_path, ignore_errors=True)
-    assert url == f"http://127.0.0.1:{port}" and port != 0
-
-
 def test_the_op_journal_never_keeps_a_raw_hook_id():
     from orch.host.outcomes import _mask_hooks
 
     hid = fe.new_hook_id()
     masked = _mask_hooks({"on": f"webhook:{hid}", "in": "3d", "n": 3})
     assert hid not in str(masked) and masked["on"] == "webhook:hk_…" and masked["n"] == 3
+
+
+def _host_with(tmp_listen, hook_url=None):
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from orch.host.service import Host
+
+    tmp = Path(tempfile.mkdtemp(prefix=".tb4-", dir=Path.home()))
+    (tmp / "s").mkdir(mode=0o700)
+    (tmp / "r").mkdir(mode=0o711)
+    (tmp / "r").chmod(0o711)
+
+    async def go():
+        host = Host(tmp / "s", tmp / "r", hook_listen=tmp_listen, hook_url=hook_url)
+        try:
+            await host.start()
+            return host.hook_url, host.hooks.port
+        finally:
+            await host.close()
+
+    try:
+        return asyncio.run(go())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_b4_advertised_url_for_port_zero_a_named_port_and_a_wildcard():
+    import socket
+
+    from orch.host.errors import HostError
+
+    url, port = _host_with(":0")
+    assert url == f"http://127.0.0.1:{port}" and port > 0
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        free = s.getsockname()[1]
+    url, port = _host_with(f":{free}")
+    assert url == f"http://127.0.0.1:{free}" and port == free
+    with pytest.raises(HostError, match="--hook-url"):
+        _host_with("0.0.0.0:0")
+    url, _ = _host_with("0.0.0.0:0", hook_url="http://hooks.example:9000")  # told explicitly: fine
+    assert url == "http://hooks.example:9000"
+
+
+def test_reads_never_carry_the_full_hook_hash():
+    from orch.host import readmodel
+    from orch.ops import views
+
+    hid = fe.new_hook_id()
+    h = fe.hook_hash(hid, "w1")
+    e = {
+        "type": "followup.set",
+        "seq": 4,
+        "at": "2026-10-27T10:00:00Z",
+        "actor": {"kind": "agent", "for": "p_x"},
+        "followup": "fu_x",
+        "trigger": "webhook",
+        "brief": "b",
+        "hook": h,
+        "on": fe.parse_on("webhook:" + hid, "w1"),
+    }
+    assert h not in str(readmodel.log_data(e)) + readmodel.summary(e) + views.event_line(
+        dict(e), {"acceptance": {}, "tasks": {}}
+    )
+
+
+def test_per_peer_cap_does_not_block_another_address():
+    class Writer:
+        def __init__(self, ip):
+            self.ip, self.out, self.closed = ip, b"", False
+
+        def get_extra_info(self, name):
+            return (self.ip, 1)
+
+        def write(self, data):
+            self.out += data
+
+        async def drain(self):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    receiver = hooks.HookReceiver(NS(state_dir=None, host_uid=0, services={}), "127.0.0.1:0")
+
+    async def go():
+        silent = [asyncio.StreamReader() for _ in range(hooks.PER_PEER)]  # heads that never finish
+        tasks = [asyncio.create_task(receiver._handle(r, Writer("10.0.0.1"))) for r in silent]
+        await asyncio.sleep(0.05)
+        fifth = Writer("10.0.0.1")
+        await asyncio.wait_for(receiver._handle(asyncio.StreamReader(), fifth), 1)  # refused at once, nothing read
+        other_reader, other = asyncio.StreamReader(), Writer("10.0.0.2")
+        other_reader.feed_data(b"GET / HTTP/1.1\r\n\r\n")
+        await asyncio.wait_for(receiver._handle(other_reader, other), 1)  # served normally
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return fifth, other
+
+    fifth, other = asyncio.run(go())
+    assert fifth.out == hooks.ANSWER and fifth.closed
+    assert other.out == hooks.ANSWER
+    assert receiver._open == {}

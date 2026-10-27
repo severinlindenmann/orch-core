@@ -41,6 +41,7 @@ import base64
 import binascii
 import contextlib
 import hashlib
+import json
 import logging
 import os
 import re
@@ -169,7 +170,7 @@ _HOOK_ID = re.compile(r"hk_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 
 def _mask_hooks(args: Mapping[str, Any]) -> dict[str, Any]:
     """A webhook address is shown to the agent once and never written to disk: the record keeps ``hk_…`` only."""
-    return {k: _HOOK_ID.sub("hk_…", v) if isinstance(v, str) else v for k, v in args.items()}
+    return json.loads(_HOOK_ID.sub("hk_…", json.dumps(args)))  # any depth
 
 
 def principal_of(uid: int, column: str, grant: str | None = None) -> str:

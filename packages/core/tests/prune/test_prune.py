@@ -1232,3 +1232,48 @@ def test_the_live_hub_status_reader_understands_the_cli_answers(tmp_path, monkey
     ):
         monkeypatch.setattr(model.subprocess, "run", fake(text))
         assert model._hub_joined(tmp_path, {"HOME": str(tmp_path)}) is want, text
+
+
+def test_only_the_tool_left_asks_whether_to_remove_the_tool(tmp_path):
+    m = Machine(tmp_path / "a")
+
+    def run(argv, env=None):
+        m.calls.append(list(argv))
+        return (
+            (1, "")
+            if argv[:2] == ["launchctl", "print"]
+            else (0, "orch-core v2\n" if argv[:3] == ["uv", "tool", "list"] else "")
+        )
+
+    m.run = run
+    assert m.go("--workspaces", "keep") == 0
+    m.answers = ["n"]
+    assert m.prune(interactive=True) == 5
+    assert any("Remove the orch tool too?" in a for a in m.asked) and not any(
+        a.strip().startswith("Remove all of this?") for a in m.asked[-1:]
+    )
+    m.asked.clear()
+    m.answers = ["y"]
+    assert m.prune(interactive=True) == 0 and ["uv", "tool", "uninstall", "orch-core"] in m.calls
+
+
+def test_a_hub_that_ran_on_this_computer_is_not_listed_as_a_membership_to_leave(m):
+    rec = json.loads((m.state / "install" / "install.json").read_text())
+    rec["parts"]["hub"].update(port=8100, link_port=8105)
+    (m.state / "install" / "install.json").write_text(json.dumps(rec))
+    (m.state / "hosts" / WID / "hub" / "state.json").write_text(json.dumps({"link": {"addr": "100.64.1.2:8105"}}))
+    inv = gather(m.ctx())
+    assert inv.workspaces[0].local_hub and not inv.workspaces[0].hub
+    assert any("its hub was on this computer and is removed with it" in r for r in inv.remote)
+    assert not any("hub membership" in r for r in inv.remote)
+    m.left = []
+    m.answers = ["y", "n"]
+    assert m.prune(interactive=True) == 0
+    assert m.left == [] and not any("Tell the hub" in a for a in m.asked)
+    assert "hub membership" not in m.out.getvalue()
+
+
+def test_a_hub_on_another_computer_is_still_listed(m):
+    (m.state / "hosts" / WID / "hub" / "state.json").write_text(json.dumps({"link": {"addr": "10.1.1.1:9999"}}))
+    inv = gather(m.ctx())
+    assert inv.workspaces[0].hub and any("hub membership" in r for r in inv.remote)

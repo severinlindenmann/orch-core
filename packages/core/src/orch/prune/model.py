@@ -69,7 +69,8 @@ class WorkspaceInv:
     files: int = 0
     size: int = 0
     folder_refusal: str = ""  # why the whole folder can never be deleted by prune ("" = it may be asked)
-    hub: bool = False
+    hub: bool = False  # on a hub somewhere else (one that prune does not remove)
+    local_hub: bool = False  # its hub is installed on this computer and goes with this prune
 
 
 @dataclass

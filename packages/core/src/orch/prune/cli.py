@@ -223,7 +223,8 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         if not ctx.interactive:
             err.write("orch host prune: needs a terminal to ask; use --yes to run without asking (or --dry-run)\n")
             return 2
-        if not _confirm(ctx, "\nRemove all of this? [y/N] "):
+        question = "\nRemove the orch tool too? [y/N] " if only_tool else "\nRemove all of this? [y/N] "
+        if not _confirm(ctx, question):
             ctx.say("Nothing was removed.")
             return 5
     notes: list[str] = []

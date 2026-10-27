@@ -24,6 +24,8 @@ export interface HubSignInfo {
   short_hash: string | null
   /** Built by the host from its pinned hub address; the page only checks it and never makes one. */
   url: string
+  /** Add-on only: the same page by the hub's address for other devices, when `url` is the form for this computer. */
+  other_url?: string
 }
 
 const SHORT = /^[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}$/

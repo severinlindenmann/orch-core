@@ -257,6 +257,19 @@ def test_the_add_on_link_is_moved_to_the_hubs_web_console_origin(monkeypatch):
     assert ("hub.switch", {"kind": "rail", "origin": "http://127.0.0.1:8200"}) in link.calls
 
 
+def test_the_add_on_link_for_this_computer_names_the_other_device_form(monkeypatch):
+    from orch_dashboard import switch
+
+    monkeypatch.setattr(switch, "browser_origin", lambda request: "http://127.0.0.1:8200")
+    rail = {"hub": {"name": "Hub", "origin": "http://127.0.0.1:8100", "network_origin": "http://100.71.14.98:8100"}}
+    res = post(app_for(Link({"hub.handoff": ADDON, "hub.switch": rail})), {"kind": "addon", "request": RID})
+    assert res.json()["url"] == f"http://127.0.0.1:8100/#/w/{WS}/addon/eyJhIjoxfQ"
+    assert res.json()["other_url"] == f"http://100.71.14.98:8100/#/w/{WS}/addon/eyJhIjoxfQ"
+    rail["hub"]["network_origin"] = "javascript:alert(1)"  # off the origin grammar: dropped
+    res = post(app_for(Link({"hub.handoff": ADDON, "hub.switch": rail})), {"kind": "addon", "request": RID})
+    assert "other_url" not in res.json()
+
+
 def test_without_a_console_origin_the_hosts_link_stands():
     res = post(
         app_for(Link({"hub.handoff": ADDON, "hub.switch": RuntimeError("no rail")})), {"kind": "addon", "request": RID}

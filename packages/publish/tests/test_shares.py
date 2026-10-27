@@ -579,3 +579,11 @@ def test_admin_sweep_command(two, capsys):
     out = capsys.readouterr().out
     assert "expired=1" in out
     assert two.sql("SELECT state FROM shares")[0]["state"] == "expired"
+
+
+def test_healthz_is_the_one_unsigned_answer_and_names_the_version(two):
+    import pubsrv
+
+    r = two.c.get("/healthz")
+    assert (r.status_code, r.json()) == (200, {"ok": True, "version": pubsrv.__version__})
+    assert two.c.post("/healthz", content=b"{}").status_code != 200  # only GET

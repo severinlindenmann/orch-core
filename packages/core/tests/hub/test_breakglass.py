@@ -99,3 +99,17 @@ def test_the_review_lists_hub_made_policy_settings_devices_and_grants_first_with
     assert r["stuck"] == [{"ticket": "T-2", "gate": "code"}]
     assert [x["type"] for x in r["other"]] == ["question.answered"]  # then the rest, since the last 7 days
     assert all(x["id"] != "e7" and x["id"] != "e8" for x in r["first"] + r["other"])  # not the hub's / not admitted
+
+
+def test_the_snapshot_floor_survives_leave_and_rejoin():
+    """An old snapshot is never pinned again after a rejoin; the active projection starts empty."""
+    w = _world()
+    pin(w, snap(5))
+    w.tick()
+    w.wev("hub.left", "sev", hub_id=HUB, binding_seq=1)
+    w.tick()
+    join(w, seq=2, aliases=[{"person_id": w.people["mara"][2:], "user_id": U2}])
+    assert w.state()._core.ws.hub["ledger"][HUB]["snapshot"] is None
+    r = pin(w, snap(3))[1]
+    assert (r.code, r.detail) == (Code.HUB_INVALID, "stale_snapshot")
+    assert not hasattr(pin(w, snap(6))[1], "code")

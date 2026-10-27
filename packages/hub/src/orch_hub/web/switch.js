@@ -61,6 +61,8 @@ export function safeUrl(url) {
 export function landing(status, body) {
   if (status !== 200 || !body || typeof body !== "object") return { kind: "expired" };
   if (body.kind === "signout") return { kind: "signout" };
+  const ws = openTarget(body.return_to);
+  if (ws) return { kind: "forward", workspace_id: ws };
   const p = safeReturn(body.return_to);
   return p && p !== "/" ? { kind: "path", path: p } : { kind: "home" };
 }
@@ -73,4 +75,11 @@ export function landingPlan(peek) {
   const cur = peek.signed_in_as;
   if (!cur) return "confirm";
   return cur.user_id === peek.user_id ? "redeem" : "conflict";
+}
+
+/** A return_to of "/open/<workspace id>" (the dashboard's rail sends other workspaces through the hub): the workspace id, else null.
+ * It is never navigated to as a path: the page asks for a fresh ticket for that workspace. */
+export function openTarget(path) {
+  const m = /^\/open\/([0-9a-f]{32})$/.exec(typeof path === "string" ? path : "");
+  return m ? m[1] : null;
 }

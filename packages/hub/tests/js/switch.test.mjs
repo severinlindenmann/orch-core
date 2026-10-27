@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { colour, initials, landing, landingPlan, railRows, safeReturn, safeUrl, ticketFromHash } from "../../src/orch_hub/web/switch.js";
+import { colour, initials, landing, landingPlan, openTarget, railRows, safeReturn, safeUrl, ticketFromHash } from "../../src/orch_hub/web/switch.js";
 
 test("ticketFromHash takes only a well formed #t= fragment", () => {
   const ok = "a".repeat(32) + "." + "b".repeat(32);
@@ -55,4 +55,12 @@ test("landingPlan never signs in silently", () => {
   assert.equal(landingPlan({ kind: "open", user_id: "u", signed_in_as: { user_id: "v" } }), "conflict");
   assert.equal(landingPlan(null), "confirm");
   assert.equal(landingPlan({ kind: "open" }), "confirm");
+});
+
+test("openTarget matches only /open/<32 hex> and landing forwards it, never as a path", () => {
+  const id = "ab".repeat(16);
+  assert.equal(openTarget("/open/" + id), id);
+  for (const bad of ["/open/" + id + "/x", "/open/ABC", "/open/" + id.slice(1), "//open/" + id, "/x/open/" + id, null]) assert.equal(openTarget(bad), null, String(bad));
+  assert.deepEqual(landing(200, { user_id: "u", kind: "open", return_to: "/open/" + id }), { kind: "forward", workspace_id: id });
+  assert.equal(safeReturn("/open/" + id), null);
 });

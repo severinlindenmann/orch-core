@@ -182,6 +182,11 @@ async function redeemTicket(t, replace) {
   if (l.kind === "signout") { state.user = null; return plain(h("h1", { text: "You are signed out" }), h("p", { class: "muted", text: "Your hub session ended." }), h("button", { class: "pri", text: "Sign in again", onclick: () => loginView() })); }
   if (l.kind === "expired") return expiredView();
   if (l.kind === "path") return location.replace(l.path);
+  if (l.kind === "forward") {
+    const o = await api("POST", "/switch/ticket", { workspace_id: l.workspace_id, return_to: "/", kind: "open" });
+    const url = o.status === 200 ? safeUrl(o.body.url) : null;
+    if (url) return location.assign(url);
+  }
   await home();
 }
 

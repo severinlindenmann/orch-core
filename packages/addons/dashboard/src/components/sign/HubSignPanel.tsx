@@ -124,6 +124,7 @@ export function HubAddonPanel({ ws, action, onDone }: { ws: string; action: Extr
   if (q.isError || !q.data) return <p role="alert" className="text-[13px] text-text-muted">The hub link could not be made. Nothing was changed.</p>
   const info = q.data
   const url = safeHubUrl(info.url)
+  const otherUrl = safeHubUrl(info.other_url)
   const caps = info.summary.capabilities ?? []
   return (
     <div data-testid="hub-addon" className="space-y-3 text-[13px]">
@@ -139,6 +140,11 @@ export function HubAddonPanel({ ws, action, onDone }: { ws: string; action: Extr
           Open the hub to approve <ExternalLink className="size-3.5" aria-hidden />
         </a>
       ) : <p className="text-text-muted">The host sent no link.</p>}
+      {url && otherUrl && (
+        <p data-testid="hub-link-other" className="break-all text-[12px] text-text-muted">
+          That link is for this computer. To approve from another device, open <span className="font-mono">{otherUrl}</span> there.
+        </p>
+      )}
       <p className="flex items-center gap-2 text-text-muted" role="status"><Loader2 className="size-3.5 animate-spin" aria-hidden /> Waiting for your approval in the hub. This page updates by itself.</p>
     </div>
   )

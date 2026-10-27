@@ -501,8 +501,11 @@ def rail_get(c: OpContext) -> dict[str, Any]:
         sw.set_origin(c.workspace_id, c.body["origin"])
     except SwitchError as e:
         raise Refused(e.code) from None
+    origin = sw.hub_origin_for(c.body.get("origin"), c.same_computer)
+    other = sw.hub_origin()
     return {
-        "hub": {"name": sw.hub_name, "origin": sw.hub_origin_for(c.body.get("origin"), c.same_computer)},
+        # `network_origin`: the address other devices use, named only when this answer is the same-computer form
+        "hub": {"name": sw.hub_name, "origin": origin, "network_origin": other if other and other != origin else None},
         "user_id": user,
         "workspaces": sw.rail_rows(c.registry, c.access, user, current=c.workspace_id),
     }

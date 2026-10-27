@@ -108,13 +108,18 @@ def with_console_origin(info: dict, link, request) -> dict:
 
     try:
         raw = link.call("hub.switch", {"kind": "rail", "origin": browser_origin(request)})
-        origin = rail_view(raw)["hub"]["origin"]
+        hub = rail_view(raw)["hub"]
+        origin = hub["origin"]
+        other = raw["hub"].get("network_origin") if isinstance(raw.get("hub"), dict) else None
     except Exception:  # noqa: BLE001 - advisory: the host's own link still stands
         return info
     if not isinstance(origin, str) or not CONSOLE_ORIGIN.fullmatch(origin):
         return info
     rest = info["url"].split("/#/", 1)[1]
-    return {**info, "url": f"{origin}/#/{rest}"}
+    out = {**info, "url": f"{origin}/#/{rest}"}
+    if isinstance(other, str) and other != origin and CONSOLE_ORIGIN.fullmatch(other):
+        out["other_url"] = f"{other}/#/{rest}"  # the same page for another device (this computer got the 127.0.0.1 form)
+    return out
 
 
 def panel(got: dict) -> dict:

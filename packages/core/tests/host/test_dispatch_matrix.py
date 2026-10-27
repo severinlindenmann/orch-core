@@ -14,6 +14,7 @@ import orch.ops as ops
 from orch.host import frames
 from orch.host.agents import AGENT_OPS
 from orch.host.columns import Column, refusal, resolve
+from orch.host.cosmeticops import COSMETIC_OPS
 from orch.host.dispatch import (
     FILE_OPS,
     GIT_OPS,
@@ -101,6 +102,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(SPACE_OPS)  # V3 C13
     host |= set(MARKET_OPS)  # V3 G2
     host |= set(SHARE_OPS)  # V3 C6
+    host |= set(COSMETIC_OPS)  # run 13 D6
     host |= set(GRANT_OPS) | set(AGENT_OPS)  # H11c
     host |= {"reader.declare"}  # H12d-2
     host |= {"phone.request", "phone.cancel"}  # B10 Part B
@@ -245,6 +247,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
                 if op in ("hub.status", "hub.handoff", "hub.link", "hub.switch")
                 else ("person_write", "write")
             )
+        elif op in COSMETIC_OPS:  # D6: column P only (owner role)
+            assert kind == ("person_write", "write")
         elif op in SHARE_OPS:  # V3 C6: column P only (owner role)
             assert kind == (("person_read", "read") if op in SHARE_READS else ("person_write", "write"))
         elif op in MARKET_OPS:  # V3 G2: P and G; the op refuses an agent's add and --commit itself

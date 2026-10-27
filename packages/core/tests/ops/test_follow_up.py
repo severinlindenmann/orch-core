@@ -169,5 +169,6 @@ def test_webhook_new_and_bind(ws, cli, schedules):
     bound = cli.j("follow-up", "--in", "2d", "--on", f"webhook:{hid}", "--brief", "after the ring")
     assert bound.code == 0 and bound.data["trigger"] == "webhook", bound.out
     rec = ws.view("1").followups[0]
-    assert rec["hook"] == fe.hook_hash(hid)
+    assert rec["hook_prefix"] == fe.hook_hash(hid, ws.store.workspace_id)[:8]
+    assert "hook" not in rec["on"] and "hook" not in rec  # the hash is not shown to readers
     assert hid not in str(ws.events("1")[-1])  # only the hash is in the ledger

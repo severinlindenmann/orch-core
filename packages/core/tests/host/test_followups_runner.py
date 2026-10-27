@@ -392,7 +392,7 @@ def test_deadline_fallback_for_event_and_webhook(env):
     e = env
     uid, _, _, deadline = e.schedule_on(fe.parse_on("gate.approved:plan"), "orch")
     hid = fe.new_hook_id()
-    on = fe.parse_on("webhook:" + hid)
+    on = fe.parse_on("webhook:" + hid, e.w.wid)
     uid2, _, _, deadline2 = e.schedule_on(on, "webhook", hook=on["hook"])
     e.w.lab.ws.clock[0] = min(deadline, deadline2) - 60
     e.tick()
@@ -410,15 +410,27 @@ def test_webhook_ring_fires_once_and_later_rings_are_ignored(env):
 
     e = env
     hid = fe.new_hook_id()
-    on = fe.parse_on("webhook:" + hid)
+    on = fe.parse_on("webhook:" + hid, e.w.wid)
     uid, _, fid, _ = e.schedule_on(on, "webhook", hook=on["hook"])
-    assert e.w.h.run(e.runner.ring(fe.hook_hash(fe.new_hook_id()))) is False  # unknown hook
+    e.tick()  # the runner learns the pending hook hashes on a read
+    calls = []
+    real = e.w.service.call
+
+    async def counting(*a):
+        calls.append(a)
+        return await real(*a)
+
+    e.w.service.call = counting
+    assert e.w.h.run(e.runner.ring(fe.hook_hash(fe.new_hook_id(), e.w.wid))) is False  # unknown hook
+    assert not calls, "an unknown hook must not cost a store read (B2)"
+    e.w.service.call = real
     assert e.w.h.run(e.runner.ring(on["hook"])) is True
     e.tick()
     rec = e.view(uid)
     assert rec["state"] == "fired" and rec["trigger"] == "webhook" and rec["event"]["status"] == "rang"
-    assert rec["event"]["ref"] == on["hook"] and not rec.get("fallback")
+    assert rec["event"]["ref"] == on["hook"][:8] and not rec.get("fallback")
     assert e.w.h.run(e.runner.ring(on["hook"])) is False  # no longer pending: ignored
     e.tick()
     assert len([c for c in e.hub.commands if c[0] == "spawn"]) == 1
     assert hid not in json.dumps(e.hub.commands) + e.runner.path.read_text()
+    assert e.runner.rings_path.exists() and "_rings" not in e.runner.path.read_text()  # rings have their own file

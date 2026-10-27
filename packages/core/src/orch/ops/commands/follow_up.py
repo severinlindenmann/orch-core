@@ -26,7 +26,7 @@ def build(c, p, args):
     event = {"type": "followup.set", "followup": fid, "brief": brief}
     if "on" in args:
         try:
-            on = fe.parse_on(args["on"])
+            on = fe.parse_on(args["on"], c.store.workspace_id)
         except ValueError as e:
             raise OrchError("invalid.input", str(e)) from None
         # an event follow-up carries its deadline (the fallback); `due` stays absent

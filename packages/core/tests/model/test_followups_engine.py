@@ -259,7 +259,7 @@ def test_a_webhook_follow_up_fires_on_a_ring_and_falls_back_at_the_deadline(env)
 
     w, uid, a = env
     hid = fe.new_hook_id()
-    on = fe.parse_on("webhook:" + hid)
+    on = fe.parse_on("webhook:" + hid, "w1")
     e, result = _event_set(w, uid, a, on, "webhook", hook=on["hook"])
     assert not hasattr(result, "code"), result
     w.clock += timedelta(minutes=5)
@@ -270,7 +270,7 @@ def test_a_webhook_follow_up_fires_on_a_ring_and_falls_back_at_the_deadline(env)
     # a second follow-up: nothing rings, the deadline fires it with a fallback reason
     uid, a2 = w.ticket(owner="tom"), None
     a2 = w.claim(uid, "tom")
-    on2 = fe.parse_on("webhook:" + fe.new_hook_id())
+    on2 = fe.parse_on("webhook:" + fe.new_hook_id(), "w1")
     e2, result = _event_set(w, uid, a2, on2, "webhook", hook=on2["hook"])
     assert not hasattr(result, "code"), result
     w.clock += timedelta(hours=3)

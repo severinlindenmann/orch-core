@@ -330,11 +330,10 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
                     "person": r.person,
                     "setter_session": r.setter_session,
                     **({"label": r.label} if r.label is not None else {}),
-                    **{
-                        k: v
-                        for k, v in (("on", r.on), ("hook", r.hook), ("event", r.event), ("fallback", r.fallback))
-                        if v
-                    },
+                    **{k: v for k, v in (("event", r.event), ("fallback", r.fallback)) if v},
+                    # the hook hash is not shown to readers (B3): the match without it, and a short prefix
+                    **({"on": {k: v for k, v in r.on.items() if k != "hook"}} if r.on else {}),
+                    **({"hook_prefix": r.hook[:8]} if r.hook else {}),
                 }
             )
             for r in t.followups.values()

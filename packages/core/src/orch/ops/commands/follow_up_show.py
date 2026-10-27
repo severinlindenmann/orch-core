@@ -19,7 +19,7 @@ def handle(ctx, args):
         lines += [
             "waiting for: "
             + (
-                f"webhook (hook {rec['hook'][:8]})"
+                f"webhook (hook {rec['hook_prefix']})"
                 if on["source"] == "webhook"
                 else f"{on['kind']}.{on['status']}" + (f":{on['ref']}" if on.get("ref") else "")
             )

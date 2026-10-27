@@ -404,6 +404,8 @@ class Host:
 
             self.hooks = HookReceiver(self, self.hook_listen)
             await self.hooks.start()
+            if not self.hook_url:  # B4: advertise what was really bound
+                self.hook_url = f"http://{self.hooks.addr}:{self.hooks.port}"
         self.bus.start()
         for entry in self.registry.entries():
             if self.skipped(entry.workspace_id):

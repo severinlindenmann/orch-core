@@ -28,6 +28,11 @@ class FollowupRunner:
         self.service, self.clock, self.mono, self.tick_s = service, clock, mono, tick_s
         self.path = service.state_dir / "hosts" / service.workspace_id / "followups.json"
         self.intents = custody.read_json(self.path, service.host_uid) or {}
+        self.rings_path = self.path.with_name("hook-rings.json")  # rings live apart from the run intents
+        self.rings = custody.read_json(self.rings_path, service.host_uid) or {}
+        #: hook hashes of this workspace's pending webhook follow-ups, refreshed by every read; the receiver asks this
+        #: set first so an unknown id never costs a store read
+        self.hooks = frozenset()
         self.task = None
         self._wall, self._mono = clock(), mono()
         self._last_tick, self._slept_s, self._blocked = None, 0, {}
@@ -57,6 +62,10 @@ class FollowupRunner:
     def status(self):
         return {"last_tick": self._last_tick, "slept_s": self._slept_s, "blocked": dict(self._blocked)}
 
+    def _save_rings(self):
+        custody.ensure_private_dir(self.rings_path.parent, self.service.host_uid)
+        custody.write_private(self.rings_path, self.rings)
+
     def _save(self):
         custody.ensure_private_dir(self.path.parent, self.service.host_uid)
         custody.write_private(self.path, self.intents)
@@ -80,14 +89,17 @@ class FollowupRunner:
         core = store.state._core
         if not self._owns(store, core):
             return [], 0, (0, rules.FU_TIME_EARLY_S)
-        rows, today = [], 0
+        rows, today, hooks = [], 0, set()
         for ticket in core.tickets.values():
             for rec in ticket.followups.values():
                 if rec.fired_at and ts(rec.fired_at) // 86400 == now // 86400:
                     today += 1
                 state = wire.view_state(core, ticket, rec, now)[0]
+                if state == "pending" and rec.hook:
+                    hooks.add(rec.hook)
                 if state == "fired" or (state == "pending" and rec.trigger in ("time", "orch", "webhook")):
                     rows.append((ticket.uid, ticket.key, copy.copy(rec)))
+        self.hooks = frozenset(hooks)
         caps = wire.caps_of(core.ws)
         return rows, today, (caps.runs_per_day, caps.early_s)
 
@@ -157,7 +169,7 @@ class FollowupRunner:
         if rec.trigger == "time":
             return ("time", None, None) if now >= ts(rec.due) - early else None
         if rec.trigger == "webhook":
-            rang = self.intents.get("_rings", {}).get(rec.hook)
+            rang = self.rings.get(rec.hook)
             if rang is not None:
                 return ("webhook", None, fe.webhook_event(rec.hook, rang))
         else:
@@ -204,14 +216,13 @@ class FollowupRunner:
 
     async def ring(self, hook_hash):
         """True when a pending follow-up of this workspace is bound to the hook. Only the first ring counts."""
-        if not await self.service.call(self._hook_pending, hook_hash):
+        if hook_hash not in self.hooks or not await self.service.call(self._hook_pending, hook_hash):
             LOG.info("webhook ring ignored: no pending follow-up for hook %s", hook_hash[:8])
             return False
         LOG.info("webhook ring accepted for hook %s", hook_hash[:8])
-        rings = self.intents.setdefault("_rings", {})
-        if hook_hash not in rings:
-            rings[hook_hash] = datetime.fromtimestamp(self.clock(), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-            await self.service.call(self._save)
+        if hook_hash not in self.rings:
+            self.rings[hook_hash] = datetime.fromtimestamp(self.clock(), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            await self.service.call(self._save_rings)
         self._wake.set()
         return True
 
@@ -311,7 +322,8 @@ class FollowupRunner:
         )
         rec.run, rec.grant = run, token.grant_id
         if rec.hook:
-            self.intents.get("_rings", {}).pop(rec.hook, None)
+            self.rings.pop(rec.hook, None)
+            await self.service.call(self._save_rings)
         LOG.info("follow-up %s fired run %s", rec.id, run)
         try:
             self.intents[rec.id]["state"] = "fired"

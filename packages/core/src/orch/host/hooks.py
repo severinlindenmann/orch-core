@@ -28,6 +28,8 @@ MAX_HEAD = 16 * 1024
 MAX_BODY = 64 * 1024
 PATH = re.compile(rb"/h/(hk_[0-7][0-9A-HJKMNP-TV-Z]{25})")
 RATE_PER_MIN = 60  # per source address
+MAX_CONNECTIONS = 32  # open requests at once; more get the same answer and are closed
+RING_TIMEOUT = 10  # seconds for everything after the head
 
 
 def secrets_path(state_dir: Path) -> Path:
@@ -39,7 +41,7 @@ def set_secret(state_dir: Path, host_uid: int, hook_id: str, secret: str) -> Non
     path = secrets_path(state_dir)
     custody.ensure_private_dir(path.parent, host_uid)
     doc = custody.read_json(path, host_uid) or {}
-    doc[fe.hook_hash(hook_id)] = secret
+    doc[fe.secret_key(hook_id)] = secret
     custody.write_private(path, doc)
 
 
@@ -50,6 +52,7 @@ class HookReceiver:
         self.host, self.clock = host, clock
         self.server: asyncio.base_events.Server | None = None
         self._seen: dict[str, list[float]] = {}
+        self._slots = asyncio.Semaphore(MAX_CONNECTIONS)
 
     async def start(self) -> None:
         self.server = await asyncio.start_server(self._handle, self.addr, self.port)
@@ -73,6 +76,15 @@ class HookReceiver:
         return len(hits) > RATE_PER_MIN
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if self._slots.locked():  # over the cap: the same answer, nothing read
+            with contextlib.suppress(Exception):
+                writer.write(ANSWER)
+                writer.close()
+            return
+        async with self._slots:
+            await self._serve(reader, writer)
+
+    async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             peer = (writer.get_extra_info("peername") or ("?",))[0]
             try:
@@ -81,7 +93,7 @@ class HookReceiver:
                 LOG.info("webhook request without a complete head: %s", type(exc).__name__)
                 head = b""
             if head and len(head) <= MAX_HEAD and not self._limited(peer):
-                await self._ring(head, reader)
+                await asyncio.wait_for(self._ring(head, reader), RING_TIMEOUT)
         except Exception:  # noqa: BLE001 - a bad request must not look different from a good one
             LOG.warning("webhook request failed", exc_info=True)
         finally:
@@ -97,22 +109,24 @@ class HookReceiver:
         if m is None:
             LOG.info("webhook request ignored: not POST /h/<id>")
             return
-        hook_hash = fe.hook_hash(m.group(1).decode())
+        hook_id = m.group(1).decode()
         headers = {}
         for line in lines[1:]:
             name, _, value = line.partition(b":")
             headers[name.strip().lower()] = value.strip()
-        secret = (custody.read_json(secrets_path(self.host.state_dir), self.host.host_uid) or {}).get(hook_hash)
+        secret = (custody.read_json(secrets_path(self.host.state_dir), self.host.host_uid) or {}).get(
+            fe.secret_key(hook_id)
+        )
         if secret is not None and not await self._signed(headers, reader, secret):
             LOG.info("webhook ring refused: bad or missing signature")
             return
         # the body (if any) is never read past this point: the doorbell carries nothing
+        # every workspace gets the ring under its own hash (B3); a service without a runner yet is skipped, its
+        # follow-up then runs at its deadline. A runner answers only for hashes it already knows (in memory).
         for service in list(self.host.services.values()):
-            if getattr(service, "followups", None) is None and hasattr(self.host, "_start_followups"):
-                await self.host._start_followups(service)  # the journal check may not have started it yet
             runner = getattr(service, "followups", None)
-            if runner and await runner.ring(hook_hash):
-                return
+            if runner:
+                await runner.ring(fe.hook_hash(hook_id, service.workspace_id))
 
     @staticmethod
     async def _signed(headers: dict, reader: asyncio.StreamReader, secret: str) -> bool:
@@ -125,4 +139,4 @@ class HookReceiver:
             return False
         body = await asyncio.wait_for(reader.readexactly(size), 10) if size else b""
         want = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-        return hmac.compare_digest(sig.removeprefix("sha256="), want)
+        return hmac.compare_digest(sig.removeprefix("sha256=").encode(), want.encode())

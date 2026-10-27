@@ -49,10 +49,18 @@ def new_hook_id() -> str:
     return "hk_" + "".join(_CROCKFORD[(n >> (5 * i)) & 31] for i in range(25, -1, -1))
 
 
-def hook_hash(hook_id: str) -> str:
+def secret_key(hook_id: str) -> str:
+    """The workspace-free digest the host keeps an HMAC secret under (host-local file only)."""
     if not HOOK_RE.fullmatch(hook_id or ""):
         raise ValueError("not a webhook id")
     return hashlib.sha256(HOOK_LABEL + hook_id.encode()).hexdigest()
+
+
+def hook_hash(hook_id: str, workspace_id: str) -> str:
+    """H(label | workspace id | hook id): the same address hashes differently in every workspace (B3)."""
+    if not HOOK_RE.fullmatch(hook_id or "") or not workspace_id:
+        raise ValueError("not a webhook id")
+    return hashlib.sha256(HOOK_LABEL + workspace_id.encode() + b"|" + hook_id.encode()).hexdigest()
 
 
 def _clean_ref(ref: Any) -> str:
@@ -60,7 +68,7 @@ def _clean_ref(ref: Any) -> str:
     return ref if REF_RE.fullmatch(ref) else ""
 
 
-def parse_on(text: str) -> dict[str, str]:
+def parse_on(text: str, workspace_id: str = "") -> dict[str, str]:
     """``question.answered``, ``ticket.changed:testing``, ``gate.approved:requirements`` or ``webhook:<hook id>``."""
     text = (text or "").strip()
     if text.startswith("webhook:"):
@@ -68,7 +76,7 @@ def parse_on(text: str) -> dict[str, str]:
             "source": "webhook",
             "kind": "hook",
             "status": "rang",
-            "hook": hook_hash(text.removeprefix("webhook:")),
+            "hook": hook_hash(text.removeprefix("webhook:"), workspace_id),
         }
     head, _, ref = text.partition(":")
     kind, _, status = head.partition(".")
@@ -110,7 +118,7 @@ def matches(match: Mapping[str, Any], event: Mapping[str, Any]) -> bool:
         return False
     if any(match[k] != event[k] for k in ("source", "kind", "status")):
         return False
-    want = match.get("hook") if match["source"] == "webhook" else match.get("ref")
+    want = match["hook"][:8] if match["source"] == "webhook" else match.get("ref")
     return want is None or want == event["ref"]
 
 
@@ -127,7 +135,8 @@ def from_ledger(event: Mapping[str, Any]) -> dict[str, str] | None:
 
 
 def webhook_event(hash_: str, at: str) -> dict[str, str]:
-    return {"source": "webhook", "kind": "hook", "ref": hash_, "status": "rang", "at": at}
+    # the ref is a short prefix only: a reader of the ledger or a view never sees the whole hash
+    return {"source": "webhook", "kind": "hook", "ref": hash_[:8], "status": "rang", "at": at}
 
 
 FALLBACK_TEXT = {

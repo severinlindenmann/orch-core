@@ -67,6 +67,29 @@ class HookEnv(Env):
         with urllib.request.urlopen(req, timeout=10) as r:
             return r.status
 
+    def ring_until_fired(self, url: str, fid: str, headers: dict | None = None, timeout=90) -> None:
+        """Ring until the follow-up leaves `pending`. A ring that reaches a workspace whose follow-up runner has not
+        started yet is dropped on purpose (it never starts one), so a sender may have to ring again."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            assert self.ring(url, headers) == 204
+            time.sleep(3)
+            if self.show(fid)["state"] != "pending":
+                return
+        raise AssertionError("the ring never fired the follow-up")
+
+    def raw_id_on_disk(self, hook_id: str) -> list[str]:
+        """Files under the sandbox that hold the raw hook id (the agent output is not kept)."""
+        hits = []
+        for f in self.base.rglob("*"):
+            if f.is_file() and f.parent != self.out and f.stat().st_size < 50_000_000:
+                try:
+                    if hook_id.encode() in f.read_bytes():
+                        hits.append(str(f))
+                except OSError:
+                    pass
+        return hits
+
     def runs(self) -> list[str]:
         return sorted(p.name for p in self.out.glob("run-*.json"))
 
@@ -102,7 +125,7 @@ def scenarios(e: HookEnv, log=print) -> dict[str, str]:
         pending = e.show(fid)
         assert pending["state"] == "pending" and pending["trigger"] == "webhook", pending
         assert hid not in json.dumps(pending), "the hook id must never be stored"
-        assert e.ring(url) == 204
+        e.ring_until_fired(url, fid)
         rec = e.wait_state(fid, ("ran", "failed", "did_not_run"), timeout=90)
         assert rec["state"] == "ran" and rec["trigger"] == "webhook" and not rec.get("fallback"), json.dumps(rec)
         assert rec["event"]["source"] == "webhook" and rec["event"]["status"] == "rang", json.dumps(rec)
@@ -110,6 +133,7 @@ def scenarios(e: HookEnv, log=print) -> dict[str, str]:
         assert "BRIEF-RING" in h["brief_seen"] and "woken by webhook event" in h["brief_seen"], h
         assert "INJECT-ME" not in json.dumps(h) and "INJECT-ME" not in json.dumps(rec), "the request body leaked"
         state["url"] = url
+        assert e.raw_id_on_disk(hid) == [], e.raw_id_on_disk(hid)  # not in the ledger, journal or logs
 
     def second_ring_ignored():
         before = e.runs()
@@ -140,13 +164,13 @@ def scenarios(e: HookEnv, log=print) -> dict[str, str]:
         assert done.returncode == 0, done.stdout + done.stderr
         e.ws.start_host()
         e.wait_runner()
-        fid = e.bind(k_hmac, hid, "BRIEF-HMAC signed")
+        fid = e.bind(k_hmac, hid, "BRIEF-HMAC signed", delay="4m")
         bad = {"X-Hub-Signature-256": "sha256=" + hmac.new(b"wrong", BODY, hashlib.sha256).hexdigest()}
         assert e.ring(url, bad) == 204 and e.ring(url) == 204  # same answer for a bad or missing signature
         time.sleep(6)
         assert e.show(fid)["state"] == "pending", "an unsigned or badly signed ring fired it"
         good = {"X-Hub-Signature-256": "sha256=" + hmac.new(b"s3cret", BODY, hashlib.sha256).hexdigest()}
-        assert e.ring(url, good) == 204
+        e.ring_until_fired(url, fid, good)
         rec = e.wait_state(fid, ("ran", "failed", "did_not_run"), timeout=90)
         assert rec["state"] == "ran" and not rec.get("fallback"), rec
 

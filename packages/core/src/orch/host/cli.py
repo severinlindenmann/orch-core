@@ -220,9 +220,13 @@ def main(argv: list[str], *, env: Mapping[str, str] | None = None, out: TextIO |
                 devmode.check_launch(args.foreground, env, run_dir, state)
                 dev = devmode.prove(state, env)
             preload()
-            hook_url = args.hook_url or (f"http://{args.hook_listen}" if args.hook_listen else None)
             host = Host(
-                state, run_dir, dev_runner=args.dev_runner, dev=dev, hook_listen=args.hook_listen, hook_url=hook_url
+                state,
+                run_dir,
+                dev_runner=args.dev_runner,
+                dev=dev,
+                hook_listen=args.hook_listen,
+                hook_url=args.hook_url,
             )
             if dev is not None:
                 from .devmode import status_line

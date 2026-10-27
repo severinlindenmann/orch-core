@@ -22,10 +22,10 @@ def test_parse_on_refuses(bad):
 def test_hook_ids_and_hash():
     a, b = fe.new_hook_id(), fe.new_hook_id()
     assert a != b and fe.HOOK_RE.fullmatch(a)
-    m = fe.parse_on("webhook:" + a)
-    assert m["hook"] == fe.hook_hash(a) and len(m["hook"]) == 64 and a not in str(m)
+    m = fe.parse_on("webhook:" + a, "w1")
+    assert m["hook"] == fe.hook_hash(a, "w1") and len(m["hook"]) == 64 and a not in str(m)
     with pytest.raises(ValueError):
-        fe.parse_on("webhook:hk_short")
+        fe.parse_on("webhook:hk_short", "w1")
 
 
 def test_matches_and_from_ledger():
@@ -43,9 +43,11 @@ def test_matches_and_from_ledger():
 
 def test_webhook_match_is_by_hash():
     hid = fe.new_hook_id()
-    on = fe.parse_on("webhook:" + hid)
-    assert fe.matches(on, fe.webhook_event(fe.hook_hash(hid), "2026-10-27T10:00:00Z"))
-    assert not fe.matches(on, fe.webhook_event(fe.hook_hash(fe.new_hook_id()), "2026-10-27T10:00:00Z"))
+    on = fe.parse_on("webhook:" + hid, "w1")
+    assert fe.matches(on, fe.webhook_event(fe.hook_hash(hid, "w1"), "2026-10-27T10:00:00Z"))
+    assert not fe.matches(on, fe.webhook_event(fe.hook_hash(hid, "w2"), "2026-10-27T10:00:00Z"))  # B3: per workspace
+    assert fe.hook_hash(hid, "w1") != fe.hook_hash(hid, "w2")
+    assert not fe.matches(on, fe.webhook_event(fe.hook_hash(fe.new_hook_id(), "w1"), "2026-10-27T10:00:00Z"))
 
 
 def test_wake_line_uses_closed_values_only():

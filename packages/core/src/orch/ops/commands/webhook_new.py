@@ -27,7 +27,7 @@ def handle(ctx, args):
         f"url: {url}",
         "shown once: put it where the outside job ends, e.g. curl -X POST <url> as the last step",
         f"then: orch follow-up {view.key} --on webhook:{hook} --in 3d --brief-file brief.md",
-        "the body of a request is never read; a ring only wakes the follow-up",
+        "a ring only wakes the follow-up: nothing a request carries is stored or passed on",
     ]
     return Result(data={"id": hook, "url": url, "label": label}, key=view.key, lines=lines)
 

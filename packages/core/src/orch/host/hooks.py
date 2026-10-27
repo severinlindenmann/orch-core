@@ -62,11 +62,11 @@ class HookReceiver:
         socks = self.server.sockets
         sock = next((s for s in socks if s.family == socket.AF_INET), socks[0])  # several (localhost): prefer IPv4
         self.addr, self.port = sock.getsockname()[:2]  # what was really bound
+        LOG.info("webhook receiver listening on %s:%s", self.addr, self.port)
 
     def url(self) -> str:
         host = f"[{self.addr}]" if ":" in self.addr else self.addr
         return f"http://{host}:{self.port}"
-        LOG.info("webhook receiver listening on %s:%s", self.addr, self.port)
 
     async def close(self) -> None:
         if self.server is not None:

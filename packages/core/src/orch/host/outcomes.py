@@ -171,10 +171,12 @@ def _mask(value: Any) -> Any:
     """The hk_ regex over every string in dicts, lists and tuples; other values pass as they are (never raises)."""
     if isinstance(value, str):
         return _HOOK_ID.sub("hk_…", value)
-    if isinstance(value, dict):
-        return {k: _mask(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return type(value)(_mask(v) for v in value)
+    if isinstance(value, Mapping):
+        return {_mask(k): _mask(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_mask(v) for v in value)  # plain tuple: a namedtuple's constructor would raise
     return value
 
 

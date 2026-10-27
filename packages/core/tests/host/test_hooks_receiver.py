@@ -286,3 +286,15 @@ def test_mask_hooks_keeps_types_and_never_raises():
     )
     assert hid not in str(out)
     assert out["p"] == Path("/a") and out["on"][1][0] == "x" and isinstance(out["on"][1], tuple)
+
+
+def test_mask_hooks_covers_mappings_keys_and_namedtuples():
+    from collections import namedtuple
+    from types import MappingProxyType
+
+    from orch.host.outcomes import _mask_hooks
+
+    hid = fe.new_hook_id()
+    pair = namedtuple("pair", "a b")
+    out = _mask_hooks(MappingProxyType({f"k{hid}": pair(f"webhook:{hid}", 1), "m": MappingProxyType({"x": hid})}))
+    assert hid not in str(out)

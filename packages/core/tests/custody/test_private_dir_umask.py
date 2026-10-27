@@ -48,3 +48,22 @@ def test_custody_tightens_a_loose_person_dir_it_owns(tmp_path):
     fd = secure_dir(root, ("ws",), create=True)
     os.close(fd)
     assert _mode(root) == 0o700
+
+
+def test_custody_refuses_and_names_the_fix_when_others_can_write(tmp_path):
+    from orch.custody.base import CustodyError
+
+    root = tmp_path / "person"
+    root.mkdir()
+    root.chmod(0o770)
+    with pytest.raises(CustodyError, match=f"chmod 700 {root}"):
+        secure_dir(root, ("ws",), create=True)
+    assert _mode(root) == 0o770  # untouched
+
+    root.chmod(0o702)
+    sub = root
+    root.chmod(0o700)
+    (root / "ws").mkdir()
+    (root / "ws").chmod(0o757)
+    with pytest.raises(CustodyError, match=f"chmod 700 {root / 'ws'}"):
+        secure_dir(root, ("ws",), create=True)

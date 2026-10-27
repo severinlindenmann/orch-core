@@ -75,7 +75,7 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
       <Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Allow agents</Button>
       <Button size="xs" variant="ghost" className="text-text-muted" disabled={!hasFeature('do:grant.revoke', ws)} onClick={() => setAskStop(true)}>Stop</Button>
     </div> : line.kind === 'missing' ? <div className={`${pill}${live || idle || stopped ? ' whitespace-nowrap' : ''}`} role="group" aria-label="Agent access">
-      {live || idle || stopped ? <><span role="status">Agents can't start yet</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Allow agents</Button></> : <span>Checking agent access…</span>}
+      {live || idle || stopped ? <><span role="status">Agents can't start yet</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Allow agents</Button>{live && <Button size="xs" variant="ghost" className="text-text-muted" disabled={!hasFeature('do:grant.revoke', ws)} onClick={() => setAskStop(true)}>Stop</Button>}</> : <span>Checking agent access…</span>}
     </div> : null}
     {extend && <Dialog open onOpenChange={open => { if (!open) setExtend(false) }}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>Allow agents</DialogTitle><DialogDescription>Agents may work for you for the time you choose, counted from now.{live ? ' It replaces your current access.' : ''}</DialogDescription></DialogHeader>
       <RunnerGrantCard sheet ws={ws} runner={runner.data?.runner ?? null} loading={runner.isPending} blocked={null} extend={live ?? undefined} onChanged={refresh} onOutcome={outcome} onConfirmed={() => setExtend(false)} />

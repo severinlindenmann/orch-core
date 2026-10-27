@@ -130,3 +130,9 @@ it('F8: after a stop the run list is refreshed, and the Stop dialog says a start
   fireEvent.click(await screen.findByRole('button', { name: 'Sign stop runner' }))
   await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ['runs', 'ws'] }))
 })
+it('with a live grant under 15 minutes left it cannot start agents yet but still offers Stop', async () => {
+  runner.grant = { id: 'runner', scope: 'workable', until: '2026-10-16T12:10:00Z' } as Runner['grant']
+  show()
+  expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent("Agents can't start yet")
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument()
+})

@@ -4,7 +4,7 @@ import { Link } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import { scheduleAddAction, scheduleKey, scheduleSummary, useSchedules, type ScheduleForm, type ScheduleRepeat, type ScheduleRow } from '@/api/schedules'
+import { scheduleAddAction, scheduleKey, scheduleSummary, skippedText, useSchedules, type ScheduleForm, type ScheduleRepeat, type ScheduleRow } from '@/api/schedules'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { DatePicker } from '@/components/pickers/DatePicker'
 import { Dropdown } from '@/components/pickers/Dropdown'
@@ -37,7 +37,23 @@ function nowIn(tz: string, now: Date) {
   return { y: n('year'), m: n('month'), d: n('day'), min: n('hour') * 60 + n('minute') }
 }
 
-/** "Next run Mon 2 Nov, 09:00" for a live schedule, read on the rule's own clock; null when nothing is left to run. */
+/** "Next run Mon 2 Nov, 09:00" from the server's instant, read on the rule's own clock (UTC if the zone is unknown). */
+export function serverNextRunText(iso: string, tz: string): string | null {
+  const when = new Date(iso)
+  if (Number.isNaN(when.getTime())) return null
+  const opts: Intl.DateTimeFormatOptions = { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }
+  let parts: Intl.DateTimeFormatPart[]
+  try {
+    parts = new Intl.DateTimeFormat('en-GB', { ...opts, timeZone: tz }).formatToParts(when)
+  } catch {
+    parts = new Intl.DateTimeFormat('en-GB', { ...opts, timeZone: 'UTC' }).formatToParts(when)
+  }
+  const p = (type: string) => parts.find((x) => x.type === type)?.value ?? ''
+  return `Next run ${p('weekday')} ${p('day')} ${p('month')}, ${p('hour')}:${p('minute')}`
+}
+
+/** Fallback only for a row whose `next_run` the server did not send: the next run worked out here from the rule alone,
+ * which knows nothing of recorded runs; null when nothing is left to run. */
 export function nextRunText(row: ScheduleRow, now = new Date()): string | null {
   if (row.state !== 'live') return null
   const { rule } = row
@@ -115,7 +131,9 @@ function CancelButton({ row, ws }: { row: ScheduleRow; ws: string }) {
 }
 
 function Row({ row, ws }: { row: ScheduleRow; ws: string }) {
-  const next = nextRunText(row)
+  // The server's next run knows the signing lead and the recorded runs; the rule-only sum is for a row without one.
+  const next = row.state !== 'live' ? null : row.next_run === undefined ? nextRunText(row) : row.next_run ? serverNextRunText(row.next_run, row.rule.tz) : null
+  const skipped = skippedText(row.last_outcome)
   return (
     <li className="space-y-1 rounded-md border border-border p-3">
       <div className="flex items-start justify-between gap-3">
@@ -130,6 +148,7 @@ function Row({ row, ws }: { row: ScheduleRow; ws: string }) {
             {row.state !== 'live' ? ` · ${row.state === 'cancelled' ? 'Cancelled' : 'Finished'}` : ''}
           </p>
           {next && <p className="text-[12px] text-text-muted">{next}</p>}
+          {skipped && <p className="text-[12px] text-text-muted">{skipped}</p>}
           <p className="line-clamp-2 text-[12px] text-text-faint">{row.brief}</p>
         </div>
         {row.state === 'live' && row.can_cancel && <CancelButton row={row} ws={ws} />}
@@ -145,7 +164,9 @@ const REPEATS: [ScheduleRepeat, string][] = [
   ['month', 'Every month'],
 ]
 
-function NewScheduleDialog({ ws, tickets, onClose }: { ws: string; tickets?: TicketOption[]; onClose: () => void }) {
+const DEFAULT_RUN_HOURS = 8
+
+function NewScheduleDialog({ ws, tickets, maxHours, onClose }: { ws: string; tickets?: TicketOption[]; maxHours: number; onClose: () => void }) {
   const qc = useQueryClient()
   const found = useQuery({
     queryKey: ['schedule-tickets', ws],
@@ -229,7 +250,7 @@ function NewScheduleDialog({ ws, tickets, onClose }: { ws: string; tickets?: Tic
           <p className="text-[11px] text-text-faint">Time zone {tz}</p>
         </div>
         <p className="text-[13px] font-medium">{summary}</p>
-        <p className="text-[12px] text-text-muted">An agent starts by itself each time, with your rights on this ticket, for up to 8 hours. It stops after 30 days.</p>
+        <p className="text-[12px] text-text-muted">An agent starts by itself each time, with your rights on this ticket, for up to {maxHours} {maxHours === 1 ? 'hour' : 'hours'}. It stops after 30 days.</p>
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="rounded border border-border px-3 py-1.5 text-[13px]">
             Close
@@ -270,6 +291,9 @@ export default function MySchedules({ ws, manager, tickets }: Props) {
   const { data, isLoading } = useSchedules(ws)
   const [adding, setAdding] = useState(false)
   const rows = (data?.rows ?? []).filter((r) => manager || r.mine)
+  // The default run length, cut to the member's grant_hours when the server says it.
+  const cap = data?.grant_hours_cap
+  const maxHours = typeof cap === 'number' && cap >= 1 ? Math.min(DEFAULT_RUN_HOURS, cap) : DEFAULT_RUN_HOURS
   if (data?.available === false) return <p className="text-[13px] text-text-faint">Schedules is not turned on in this workspace.</p>
   return (
     <section className="space-y-3">
@@ -290,7 +314,7 @@ export default function MySchedules({ ws, manager, tickets }: Props) {
       ) : (
         <p className="text-[13px] text-text-faint">No schedules yet.</p>
       )}
-      {adding && <NewScheduleDialog ws={ws} tickets={tickets} onClose={() => setAdding(false)} />}
+      {adding && <NewScheduleDialog ws={ws} tickets={tickets} maxHours={maxHours} onClose={() => setAdding(false)} />}
     </section>
   )
 }

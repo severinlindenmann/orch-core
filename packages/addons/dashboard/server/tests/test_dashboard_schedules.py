@@ -17,8 +17,9 @@ WHEN = 1_900_000_000
 
 
 class FakeGateway:
-    def __init__(self, role="member", addon=True, rows=None):
+    def __init__(self, role="member", addon=True, rows=None, prefix="DEMO"):
         self.addon = addon
+        self.prefix = prefix
         self.rows = rows if rows is not None else []
         self.calls = []
         self._link = SimpleNamespace(welcome={"peer": {"person": ME, "role": role}, "ops": {}})
@@ -36,6 +37,8 @@ class FakeGateway:
         self.calls.append((op, args))
         if op == "schedule.list":
             return {"rows": self.rows, "total": len(self.rows)}
+        if op == "workspace.show":
+            return {"prefix": self.prefix}
         if op == "ticket.get":
             if args["ref"] == "ORCH-404":
                 raise HostError({"code": "not_found", "message": "no"}, exit=2)
@@ -62,7 +65,14 @@ def row(**over):
 
 @pytest.fixture(autouse=True)
 def fixed_next(monkeypatch):
-    monkeypatch.setattr("orch.model.schedules.occurrences", lambda rule, starts, ends, after: WHEN)
+    afters = []
+
+    def fake(rule, starts, ends, after):
+        afters.append(after)
+        return WHEN
+
+    monkeypatch.setattr("orch.model.schedules.occurrences", fake)
+    return afters
 
 
 def test_off_without_the_addon():
@@ -108,6 +118,61 @@ def test_a_viewer_cannot_add():
 def test_no_next_run_unless_live():
     out = schedules.build(FakeGateway(rows=[row(state="cancelled"), row(state="expired")]), "w")
     assert [r["next_run"] for r in out["rows"]] == [None, None]
+
+
+def _epoch(text):
+    return int(datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp())
+
+
+def test_next_run_never_precedes_first_allowed_or_a_recorded_occurrence(fixed_next):
+    from orch.model import followups as fu
+
+    start = _epoch("2030-01-01T00:00:00Z")
+    # signed at `starts`: the first allowed instant is set_at plus the minimum lead; a dev sandbox has a shorter lead
+    schedules.build(FakeGateway(rows=[row(set_at="2030-01-01T00:00:00Z")]), "w", now=1)
+    assert fixed_next[-1] == start + fu.FU_MIN_LEAD_S - 1
+    schedules.build(FakeGateway(rows=[row(set_at="2030-01-01T00:00:00Z")], prefix="SBX"), "w", now=1)
+    assert fixed_next[-1] == start + fu.DEV_MIN_LEAD_S - 1
+    # now and the latest recorded occurrence (fired or settled) both push it later
+    schedules.build(FakeGateway(rows=[row(set_at="2030-01-01T00:00:00Z")]), "w", now=start + 10**6)
+    assert fixed_next[-1] == start + 10**6
+    held = {"2031-01-01T00:00:00Z": {"fired_at": "x"}, "2030-06-01T00:00:00Z": {"outcome": "ran"}}
+    schedules.build(FakeGateway(rows=[row(set_at="2030-01-01T00:00:00Z", occurrences=held)]), "w", now=1)
+    assert fixed_next[-1] == _epoch("2031-01-01T00:00:00Z")
+
+
+def test_next_run_is_null_when_nothing_is_left(monkeypatch):
+    monkeypatch.setattr("orch.model.schedules.occurrences", lambda *a: None)
+    assert schedules.build(FakeGateway(rows=[row()]), "w")["rows"][0]["next_run"] is None
+
+
+def test_last_outcome_with_a_reason_only_from_the_closed_list():
+    outcomes = [
+        {"occurrence": "2030-01-02T09:00:00Z", "outcome": "ran", "reason": None},
+        {"occurrence": "2030-01-03T09:00:00Z", "outcome": "did_not_run", "reason": "busy"},
+    ]
+    out = schedules.build(
+        FakeGateway(rows=[row(outcomes=outcomes), row(outcomes=[{**outcomes[1], "reason": "<b>"}])]), "w"
+    )
+    first, second = out["rows"]
+    assert first["last_outcome"] == {"at": "2030-01-03T09:00:00Z", "outcome": "did_not_run", "reason": "busy"}
+    assert second["last_outcome"]["reason"] is None
+    held = {"2030-01-02T09:00:00Z": {"outcome": "failed", "reason": "harness_failed"}, "2030-01-04T09:00:00Z": {}}
+    out = schedules.build(FakeGateway(rows=[row(occurrences=held), row()]), "w")
+    assert out["rows"][0]["last_outcome"] == {
+        "at": "2030-01-02T09:00:00Z",
+        "outcome": "failed",
+        "reason": "harness_failed",
+    }
+    assert out["rows"][1]["last_outcome"] is None
+
+
+def test_max_run_hours_is_capped_by_the_setters_grant_hours():
+    rows = [row(grant_hours_cap=3, run_hours=8), row(grant_hours_cap=8, run_hours=2), row(run_hours=5)]
+    out = schedules.build(FakeGateway(rows=rows), "w")
+    assert [r["max_run_hours"] for r in out["rows"]] == [3, 2, 5]
+    assert out["grant_hours_cap"] == 3
+    assert schedules.build(FakeGateway(rows=[row(person=OTHER, grant_hours_cap=2)]), "w")["grant_hours_cap"] is None
 
 
 def test_unreadable_ticket_has_no_title():

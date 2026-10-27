@@ -576,6 +576,23 @@ def test_live_claim_of_the_setter_under_an_ordinary_grant_is_busy():
     assert w.view(uid).claim.session == a["session"]
 
 
+def test_schedule_view_row_carries_set_at_outcomes_and_grant_hours_cap():
+    from orch.store.render import thaw
+
+    w, uid, e, due = setup()
+    row = w.view(uid).schedules[0]
+    assert row["set_at"] == e["at"] and row["outcomes"] == () and row["grant_hours_cap"] == 8
+    w.clock = due
+    fire(w, uid, e, due)
+    w.tev(uid, "schedule.outcome", w.HOST, schedule=e["schedule"], occurrence=stamp(due), outcome="ran")
+    row = w.view(uid).schedules[0]
+    assert thaw(row["outcomes"]) == [{"occurrence": stamp(due), "outcome": "ran", "reason": None}]
+    w.wev("settings.changed", "sev", set={"grant_hours": 3})
+    assert w.view(uid).schedules[0]["grant_hours_cap"] == 3
+    w.wev("role.changed", "sev", person=w.people["tom"], role="maintainer")
+    assert w.view(uid).schedules[0]["grant_hours_cap"] == 8
+
+
 def test_ended_run_grant_lapses_the_runs_claim():
     from orch.model import claims
 

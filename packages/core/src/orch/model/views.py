@@ -9,7 +9,19 @@ from typing import Any
 
 from orch.canon import gate_hash
 
-from . import claims, followups, followups_wire, gates, generations, needs, policies, questions, source, tasks
+from . import (
+    claims,
+    followups,
+    followups_wire,
+    gates,
+    generations,
+    needs,
+    policies,
+    questions,
+    schedules_wire,
+    source,
+    tasks,
+)
 from .needs import Need
 from .types import GATES, WORKSPACE, Core, TCore, WsCore, ts
 
@@ -353,7 +365,16 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
                     "run_hours": r.run_hours,
                     "label": r.label,
                     "state": "cancelled" if r.cancelled else "expired" if now > ts(r.ends) else "live",
+                    "set_at": r.set_at,
                     "occurrences": r.occurrences,
+                    # every settled occurrence, oldest first, as a plain list: the last one is the latest outcome
+                    "outcomes": [
+                        {"occurrence": o, "outcome": row["outcome"], "reason": row.get("reason")}
+                        for o, row in sorted(r.occurrences.items())
+                        if row.get("outcome")
+                    ],
+                    # the longest the firing lets this setter's run last (the member's grant_hours, at most 8)
+                    "grant_hours_cap": schedules_wire.grant_hours_cap(ws, r.person),
                 }
             )
             for r in t.schedules.values()

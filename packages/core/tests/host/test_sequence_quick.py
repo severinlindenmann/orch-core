@@ -22,7 +22,7 @@ pytestmark = pytest.mark.slow
 
 @pytest.fixture(autouse=True)
 def _quick_on(served):
-    """Quick tasks is a built-in add-on: without its grant the sequence is refused (quick.off)."""
+    """Quick tasks is a built-in add-on: without its grant the sequence is refused (addon.off)."""
     hws = served.lab.ws
     hws.tick()
     served.append(

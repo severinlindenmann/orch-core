@@ -78,6 +78,17 @@
         ]
       },
       {
+        "code": "addon.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "tell the person; do not work around it",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
+      },
+      {
         "code": "followup.denied",
         "exit": 3,
         "retryable": false,
@@ -85,17 +96,6 @@
         "fix": [
           "orch",
           "show"
-        ]
-      },
-      {
-        "code": "followup.off",
-        "exit": 3,
-        "retryable": false,
-        "hint": "ask an owner to turn Schedules on in Add-ons",
-        "fix": [
-          "orch",
-          "addon",
-          "list"
         ]
       },
       {

@@ -614,10 +614,11 @@ class HumanOps:
         except sequence.SequenceInvalid as exc:
             raise HostError("invalid.input", f"sequence: {exc}") from None
         if checked["step"] == 0 and checked["intent"]["kind"] == sequence.QUICK:
+            from orch.ops import addon_gate
             from orch.ops import quick as quick_core
 
-            if not quick_core.is_on(store.state.workspace.addons):
-                raise HostError("quick.off", "Quick tasks is switched off in this workspace; turn it on in Add-ons")
+            if not addon_gate.is_on(store.state.workspace.addons, quick_core.ADDON):
+                raise HostError("addon.off", addon_gate.off_message(quick_core.ADDON))
         if checked["step"] == 0 and checked["intent"]["kind"] == sequence.ADDON:
             from . import seqaddon
 

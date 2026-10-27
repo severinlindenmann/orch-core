@@ -1519,7 +1519,7 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     link = gateway.link(ws)
     key = getattr(body, "key", None)
     data = gateway.call(ws, "ticket.get", {"ref": key}) if key is not None else None
-    if isinstance(body, (FollowupCancel, FollowupReschedule, FollowupUndo)):
+    if isinstance(body, FollowupCancel | FollowupReschedule | FollowupUndo):
         # the signature is for a follow-up of THIS ticket; one on another ticket is refused before any request exists
         rows = gateway.call(ws, "follow_up.list", {"ref": key, "all": True}).get("rows") or []
         if not any(isinstance(r, dict) and r.get("id") == body.id for r in rows):

@@ -11,7 +11,7 @@ field the page renders as text, never as a link.
 import re
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from .errors import fail
@@ -31,6 +31,8 @@ URL = re.compile(
 ADDON_URL = re.compile(
     r"^https://(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])(?::[0-9]{1,5})?/#/w/[0-9a-f]{32}/addon/[A-Za-z0-9_-]{1,8192}$"
 )
+#: the same link on the hub's web console (the origin the person signs in to), set by `with_console_origin`
+CONSOLE_ORIGIN = re.compile(r"^https?://(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])(?::[0-9]{1,5})?$")
 RequestId = Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Qid = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.-]{1,64}$")]
 
@@ -97,6 +99,24 @@ def addon_panel(got: dict) -> dict:
     }
 
 
+def with_console_origin(info: dict, link, request) -> dict:
+    """FB15 round 3: the host builds the add-on link from its hub LINK address (the host-to-hub port), which a browser
+    cannot open. The page the person signs in to is the hub's web console: its origin is what the hub's `rail` answer
+    names (the same one the hub switch uses). Only the origin is replaced; the path and fragment stay the host's. No
+    console origin known: the host's link is kept."""
+    from .switch import browser_origin, rail_view  # lazy: switch imports reads, which imports this module's siblings
+
+    try:
+        raw = link.call("hub.switch", {"kind": "rail", "origin": browser_origin(request)})
+        origin = rail_view(raw)["hub"]["origin"]
+    except Exception:  # noqa: BLE001 - advisory: the host's own link still stands
+        return info
+    if not isinstance(origin, str) or not CONSOLE_ORIGIN.fullmatch(origin):
+        return info
+    rest = info["url"].split("/#/", 1)[1]
+    return {**info, "url": f"{origin}/#/{rest}"}
+
+
 def panel(got: dict) -> dict:
     """Of the host's answer only the closed fields, each checked; anything off is the dashboard's own `internal`."""
     if got.get("kind") == "addon":
@@ -122,11 +142,12 @@ def panel(got: dict) -> dict:
 
 def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/hubsign")
-    def hubsign_read(body: HubSign, ws: str = Depends(workspace)):
+    def hubsign_read(body: HubSign, request: Request, ws: str = Depends(workspace)):
         """A read: what to show for an approval that the hub's channel signs. Nothing is prepared, signed or logged."""
         link = gateway.enabled(ws)
         if not link.supports("hub.handoff", "hub/1"):
             raise fail("click.contract", "Update orch-core: it cannot hand an approval to the hub yet.", exit=9)
         if (body.kind == "addon") != (body.request is not None) or (body.kind == "addon") == (body.ticket is not None):
             raise fail("invalid.input", "An add-on names its request; a ticket approval names its ticket.", exit=5)
-        return panel(link.call("hub.handoff", body.model_dump(exclude_none=True)))
+        shown = panel(link.call("hub.handoff", body.model_dump(exclude_none=True)))
+        return with_console_origin(shown, link, request) if shown.get("kind") == "addon" else shown

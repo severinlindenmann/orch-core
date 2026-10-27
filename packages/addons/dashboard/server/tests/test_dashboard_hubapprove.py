@@ -243,3 +243,22 @@ BAD_ADDON = [
 def test_an_add_on_answer_off_the_grammar_is_dropped(bad):
     res = post(app_for(Link({"hub.handoff": {**ADDON, **bad}})), {"kind": "addon", "request": RID})
     assert res.status_code == 500 or res.json()["error"]["code"] == "internal"
+
+
+def test_the_add_on_link_is_moved_to_the_hubs_web_console_origin(monkeypatch):
+    """Round 3: the host's link names the hub LINK port; the person signs in at the web console."""
+    from orch_dashboard import switch
+
+    monkeypatch.setattr(switch, "browser_origin", lambda request: "http://127.0.0.1:8200")
+    rail = {"hub": {"name": "Hub", "origin": "http://127.0.0.1:8100"}, "workspaces": []}
+    link = Link({"hub.handoff": ADDON, "hub.switch": rail})
+    res = post(app_for(link), {"kind": "addon", "request": RID})
+    assert res.json()["url"] == f"http://127.0.0.1:8100/#/w/{WS}/addon/eyJhIjoxfQ"
+    assert ("hub.switch", {"kind": "rail", "origin": "http://127.0.0.1:8200"}) in link.calls
+
+
+def test_without_a_console_origin_the_hosts_link_stands():
+    res = post(
+        app_for(Link({"hub.handoff": ADDON, "hub.switch": RuntimeError("no rail")})), {"kind": "addon", "request": RID}
+    )
+    assert res.json()["url"] == ADDON["url"]

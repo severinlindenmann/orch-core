@@ -487,7 +487,7 @@ function promptView(me, p, digest, d) {
     }
   });
   dialog(
-    h("h1", { text: "Review your answer" }),
+    h("h1", { text: d.type === "addon.requested" ? "Approve an add-on" : "Review your answer" }),
     h("p", { class: "sentence", text: d.sentence }),
     h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.facts.length ? d.facts.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: k === "Content reference" ? "fp" : "", text: v })]) : d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
     h("details", {}, h("summary", { text: "Signed details" }), factsList(d.fields)),

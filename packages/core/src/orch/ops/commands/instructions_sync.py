@@ -24,15 +24,16 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     c = Call.of(ctx, "instructions.sync")
     rows = collect_rows(c.store.layout.store, c.store.state.workspace.addons)  # the log's add-ons and their packages
     try:
-        changed, kept = write_workspace_files(
-            root,
-            pointers=False,
-            force=bool(args.get("force")),
-            dry_run=dry,
-            store=ws.store_dir,
-            addons=rows,
-            worktrees=known_worktrees(ctx.caps),
-        )
+        with c.store.locked():  # one writer of the generated files at a time (the host and the hook take it too)
+            changed, kept = write_workspace_files(
+                root,
+                pointers=False,
+                force=bool(args.get("force")),
+                dry_run=dry,
+                store=ws.store_dir,
+                addons=rows,
+                worktrees=known_worktrees(ctx.caps),
+            )
     except AddonBlockError as e:
         raise OrchError("invalid.input", f"nothing written: {e}", hint=e.hint) from e
     except UnsafePath as e:

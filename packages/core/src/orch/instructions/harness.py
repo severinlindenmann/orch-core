@@ -347,6 +347,15 @@ def write_workspace_files(
             raise UnsafePath(f"{store} is not a store folder; nothing was written")
     changed: list[str] = []
     kept: list[str] = []
+    if owned is None:  # the add-on skills are part of the files orch owns, unless the caller names its own set
+        from .addon_skills import reconcile, skill_rels
+
+        for rel in skill_rels(addons):  # before anything is written
+            _check_chain(root, rel)
+        # skills first, AGENTS.orch.md (with the stamp of the set) in the loop below
+        c, lines = reconcile(root, addons, store=store, worktrees=worktrees, force=force, dry_run=dry_run, now=now)
+        changed += c
+        kept += lines
     skip_dirs: set[str] = set()
     checked: set[str] = set()
     files = dict(owned) if owned is not None else workspace_files(addons)
@@ -387,12 +396,6 @@ def write_workspace_files(
     if pointers and ignore_line not in gitignore_have.split("\n"):
         if dry_run or _ensure_line(root, ".gitignore", ignore_line):
             changed.append(".gitignore")
-    if owned is None:  # the add-on skills are part of the files orch owns, unless the caller names its own set
-        from .addon_skills import reconcile
-
-        c, lines = reconcile(root, addons, store=store, worktrees=worktrees, force=force, dry_run=dry_run, now=now)
-        changed += [x for x in c if x not in changed]
-        kept += lines
     return changed, kept
 
 
@@ -414,9 +417,11 @@ def sync_addon_part(
     where = _where(root, store, AGENTS_FILE)
     for rel in (where, *skill_rels(addons)):
         _check_chain(root, rel)
-    text = render_agents_md(addons)
-    changed = [where] if (safe_read(root, where) != text if dry_run else _write(root, where, text)) else []
+    # the skills first, AGENTS.orch.md last: its stamp (the fingerprint of the set) is the commit marker, so a skill
+    # that could not be written leaves the old stamp and the next session start tries again
     c, kept = reconcile(root, addons, store=store, worktrees=worktrees, force=force, dry_run=dry_run, now=now)
+    text = render_agents_md(addons)  # over budget: AddonBlockError, after the removals above have run
+    changed = [where] if (safe_read(root, where) != text if dry_run else _write(root, where, text)) else []
     return changed + [x for x in c if x not in changed], kept
 
 
@@ -424,17 +429,23 @@ def sync_if_changed(
     root: Path, addons: Sequence[AddonRow], *, store: Path | None = None, worktrees: Sequence[Path | str] = ()
 ) -> bool:
     """The session-start half of the sync (design D2): when ``AGENTS.orch.md`` was written by this orch for another
-    add-on set (its stamp's fingerprint differs), run :func:`sync_addon_part`. A file that is missing, unstamped or
+    add-on set (its stamp's fingerprint differs), or a skill folder of the root or a worktree is not what the set
+    says, run :func:`sync_addon_part`. A file that is missing, unstamped or
     from another revision is the full ``instructions sync``'s business and is left alone. True if it ran and wrote;
     a problem (a link, an add-on block over budget, a read-only folder) is False, and the stale line says why."""
+    from .addon_skills import problems
+
     try:
         text = safe_read(root, _where(root, store, AGENTS_FILE))
-        if text is None or stamp_rev(text) != INSTRUCTIONS_REV or stamp_set(text) == addon_fingerprint(addons):
+        if text is None or stamp_rev(text) != INSTRUCTIONS_REV:
             return False
-        changed, _kept = sync_addon_part(root, addons, store=store, worktrees=worktrees)
+        bases = [root, *(Path(w) for w in worktrees if Path(w).is_absolute() and Path(w).is_dir())]
+        if stamp_set(text) == addon_fingerprint(addons) and not any(problems(b, addons) for b in bases):
+            return False
+        changed, kept = sync_addon_part(root, addons, store=store, worktrees=worktrees)
     except (OSError, UnicodeDecodeError, ValueError):  # UnsafePath and AddonBlockError are among them
         return False
-    return bool(changed)
+    return bool(changed or any(x.startswith(("removed", "moved")) for x in kept))
 
 
 def _skill_dir(rel: str) -> str | None:

@@ -685,7 +685,7 @@ class Human:
             from orch.host import addonsync  # D2: AGENTS.orch.md and the add-on skills follow the log
 
             addonsync.refresh(
-                Path(self.call.ws.root), self.store
+                Path(self.call.ws.root), self.store, getattr(self.ctx, "caps", None)
             )  # a failure is logged; `orch instructions sync` retries
         return done
 

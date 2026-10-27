@@ -24,14 +24,18 @@ def _tuple(version: str) -> tuple[int, ...]:
 
 
 def stale_findings(
-    root: Path, store: Path | None = None, addons: Sequence[AddonRow] | None = None
+    root: Path,
+    store: Path | None = None,
+    addons: Sequence[AddonRow] | None = None,
+    worktrees: Sequence[Path | str] = (),
 ) -> list[dict[str, str]]:
     """``[{"where", "what"}]`` for every installed instruction file that is missing, unstamped, older or newer than
     this CLI's generator; empty when everything is current. Two roots: ``AGENTS.orch.md`` is read from ``store`` (the
     ``.orch`` directory, or the project itself in the legacy layout; ``None``: ``root``), the skills from the project
     ``root`` (``.agents/skills``, ``.claude/skills`` stay where harnesses look for them). ``addons`` is the workspace's
     add-on set (:func:`orch.instructions.addon_set.collect_rows`); when given, a file written for another set (names,
-    states, package digests) is stale. ``None``: the set is not known here and is not checked."""
+    states, package digests) is stale, and so is a skill folder of the root or of a worktree that is missing or
+    left over from an add-on that is not active. ``None``: the set is not known here and is not checked."""
     out: list[dict[str, str]] = []
     try:
         text = safe_read(root, agents_rel(root, store))
@@ -85,4 +89,11 @@ def stale_findings(
                         "orch.skill.json to keep it, or run orch instructions sync --force)",
                     }
                 )
+    if addons is not None:
+        from .addon_skills import problems
+
+        for base in [root, *(Path(w) for w in worktrees if Path(w).is_absolute() and Path(w).is_dir())]:
+            for line in problems(base, addons):
+                where, _, what = line.partition(": ")
+                out.append({"where": where if base == root else f"{base}/{where}", "what": what})
     return out

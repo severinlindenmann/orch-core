@@ -96,7 +96,7 @@ def test_the_frontmatter_is_exactly_name_and_description():
 @pytest.mark.parametrize("desc", ["x" * 301, "has a tab\there", "bell\x07"])
 def test_the_description_is_1_to_300_printable_characters(desc):
     text = GOOD.replace(GOOD.splitlines()[2], f"description: {desc}")
-    refused(text, "description|frontmatter")
+    refused(text, "description|frontmatter|not printable")
 
 
 def test_the_description_at_300_passes():
@@ -223,3 +223,45 @@ def test_warnings_for_the_conventions():
     assert any('start with "Use when"' in w for w in got) and any('"Not for' in w for w in got)
     assert any('"Steps" section' in w for w in got) and any('"Do not use when" section' in w for w in got)
     assert not any('"Use when" section' in w or '"If orch refuses"' in w for w in got)
+
+
+# ---- lint hardening (review of #1327)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "run `cd x && orch bogus`\n",
+        "run `ORCH_X=1 orch bogus`\n",
+        'run `bash -c "orch bogus"`\n',
+        "```\ncd x && orch bogus\n```\n",
+        "~~~\norch bogus\n~~~\n",
+        "Example:\n\n    orch bogus\n",
+        "Then orch task frobnicate runs.\n",
+        '`orch set "other.note=v"`\n',
+    ],
+)
+def test_the_lint_finds_a_bad_command_wherever_it_hides(bad):
+    refused(GOOD + bad, "not an orch command|own fields")
+
+
+def test_a_tilde_fence_and_prose_with_the_word_orch_are_fine():
+    check(GOOD + "~~~\norch show\n~~~\nIf orch refuses, stop. The orch tool is strict.\n`orch`\n")
+
+
+@pytest.mark.parametrize("ch", ["\u200b", "\u202e", "\u2060", "\ufeff"])
+def test_invisible_characters_anywhere_in_the_text_are_refused(ch):
+    refused(GOOD + f"run `orch{ch} bogus`\n", "not printable")
+
+
+@pytest.mark.parametrize("bad", ["Tickets/ABC-1", "ORCH-ADDON-OTHER", "See .ORCH/x", "ORCH-TICKETS"])
+def test_forbidden_names_match_without_regard_to_case(bad):
+    refused(GOOD + bad + "\n", "ticket files|another skill|built-in skill")
+
+
+def test_an_addon_whose_name_ends_in_a_dash_may_name_its_own_skill():
+    text = (
+        GOOD.replace("orch-addon-notes", "orch-addon-foo-").replace("notes.note", "foo-.note")
+        + "See orch-addon-foo-.\n"
+    )
+    skill.check_skill("foo-", text.encode(), {"note": {}})

@@ -95,3 +95,33 @@ def test_an_update_rewrites_the_skill_and_the_review_shows_the_diff(served, huma
     prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
     ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
     assert skill_file(served).read_text() == new
+
+
+def test_the_files_are_written_from_the_state_after_the_append(served, human, installed):
+    """The stamp is the fingerprint of the set the log has now, not of the one before the event."""
+    from orch.instructions import addon_fingerprint, collect_rows
+
+    store = served.service.store
+
+    def now_rows():
+        return collect_rows(store.layout.store, store.state.workspace.addons)
+
+    assert stamp_set(agents_text(served)) == addon_fingerprint(now_rows()) != ""
+    prepared = human.prepare("addon.disable", {"name": "standup"})
+    ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
+    assert stamp_set(agents_text(served)) == addon_fingerprint(now_rows())
+    assert [r.state for r in now_rows()] == ["disabled"]
+
+
+def test_a_failing_refresh_never_fails_the_signed_request(served, human, net, monkeypatch):
+    from orch.host import addonsync
+
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(addonsync, "refresh", boom)
+    net.add("standup", "1.0.0", pkg=files("standup", "1.0.0", agents_md=TRIGGER))
+    add_market(served, net)
+    _st, _prepared, res = do_install(served, human)
+    assert any(x.startswith("could not refresh the agent instructions") for x in res["lines"])
+    assert "standup" in served.service.store.state.workspace.addons

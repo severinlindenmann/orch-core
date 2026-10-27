@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 
 import pytest
@@ -258,3 +259,164 @@ def test_reconcile_reports_in_the_form_the_sync_prints(root):
 def test_the_addon_sidecar_is_exact(bad):
     with pytest.raises(SkillError):
         check_sidecar(bad)
+
+
+# ---- review of #1327: order, budget, worktrees in the stale check, names, legacy layout
+
+
+def test_the_stamp_is_the_commit_marker_a_failed_skill_leaves_the_old_one(root, tmp_path_factory):
+    from orch.instructions import render_agents_md, stamp_set
+
+    sync(root, [])
+    before = (root / ".orch/AGENTS.orch.md").read_text()
+    (root / ".agents").mkdir()
+    (root / ".agents/skills").symlink_to(tmp_path_factory.mktemp("elsewhere"))
+    with pytest.raises(UnsafePath):
+        sync(root, [row()])
+    assert (root / ".orch/AGENTS.orch.md").read_text() == before and stamp_set(before) == ""
+    assert stamp_set(render_agents_md([row()])) != ""
+
+
+def test_write_workspace_files_checks_the_skill_paths_before_it_writes(root, tmp_path_factory):
+    (root / ".claude").mkdir()
+    (root / ".claude/skills").symlink_to(tmp_path_factory.mktemp("elsewhere"))
+    with pytest.raises(UnsafePath):
+        write_workspace_files(root, store=root / ".orch", addons=[row()])
+    assert not (root / ".orch/AGENTS.orch.md").exists() and not (root / ".agents").exists()
+
+
+def test_removals_run_even_when_the_block_is_over_budget(root):
+    from orch.instructions import AddonBlockError
+
+    sync(root, [row()])
+    many = [AddonRow(f"a{i:02d}", "active", "1", DIGEST, "Use when x.", None) for i in range(13)]
+    with pytest.raises(AddonBlockError):
+        sync(root, [*many, row(state="disabled")])
+    assert not (root / CANON).exists() and not (root / CLAUDE).exists()  # the disabled add-on's skill went anyway
+    with pytest.raises(AddonBlockError):
+        write_workspace_files(root, store=root / ".orch", addons=[*many])
+
+
+def test_the_off_line_is_capped_with_a_count():
+    from orch.instructions import render_agents_md
+
+    off = [AddonRow(f"addon-number-{i:03d}", "disabled", "1", DIGEST, "Use when x.") for i in range(200)]
+    text = render_agents_md([row(), *off])
+    line = next(x for x in text.splitlines() if x.startswith("Off here:"))
+    assert " more. If a request" in line and len(text) < 3000 and "addon-number-000 (disabled)" in line
+
+
+def test_names_that_are_no_addon_names_are_never_a_folder():
+    from orch.instructions.addon_skills import wanted
+
+    bad = [row("../x"), row("a/b"), row("Notes"), row("a" * 41), row("x\n")]
+    assert wanted(bad) == {} and list(wanted([row("ok-1")])) == ["orch-addon-ok-1"]
+
+
+def test_a_listing_ignores_folders_whose_suffix_is_no_addon_name(root):
+    odd = root / ".agents/skills/orch-addon-Odd_Name"
+    odd.mkdir(parents=True)
+    (odd / "orch.skill.json").write_text("{}")
+    sync(root, [])
+    assert odd.exists()
+
+
+def test_the_legacy_layout_makes_no_store_folder_for_a_quarantine(tmp_path):
+    sync_addon_part(tmp_path, [row()], store=None, now=NOW)
+    (tmp_path / CANON / "SKILL.md").write_text("edited\n")
+    _, kept = sync_addon_part(tmp_path, [row(state="disabled")], store=None, now=NOW)
+    assert any(x.startswith(f"kept {CANON} (edited by hand, could not move it") for x in kept)
+    assert not (tmp_path / ".orch").exists() and (tmp_path / CANON / "SKILL.md").read_text() == "edited\n"
+
+
+def test_an_unreadable_folder_is_a_line_not_a_crash(root, monkeypatch):
+    sync(root, [row()])
+    real = os.listdir
+
+    def listdir(path):
+        if str(path).endswith(CANON):
+            raise PermissionError(13, "denied")
+        return real(path)
+
+    monkeypatch.setattr(os, "listdir", listdir)
+    _, kept = sync(root, [row(state="disabled")])
+    assert any(x.startswith(f"kept {CANON} (cannot be read") for x in kept)
+
+
+def test_the_stale_check_covers_each_worktree_and_session_start_repairs_it(root, tmp_path_factory):
+    from orch.instructions import sync_if_changed
+
+    def addon_findings(*a):  # the built-in skills are not written by the add-on part of the sync
+        return [
+            f
+            for f in stale_findings(*a)
+            if "orch-tickets" not in f["where"] and "orch-work" not in f["where"] and "orch-refine" not in f["where"]
+        ]
+
+    wt = tmp_path_factory.mktemp("wt")
+    rows = [row()]
+    sync(root, rows, worktrees=[wt])
+    assert addon_findings(root, root / ".orch", rows, [wt]) == []
+    # a new worktree appears, an old copy of a disabled add-on survives in another
+    new = tmp_path_factory.mktemp("new")
+    found = addon_findings(root, root / ".orch", rows, [wt, new])
+    assert [(f["where"], f["what"]) for f in found] == [(f"{new}/{CANON}", "missing"), (f"{new}/{CLAUDE}", "missing")]
+    assert sync_if_changed(root, rows, store=root / ".orch", worktrees=[wt, new])  # the stamp matches; the check fails
+    assert (new / CANON / "SKILL.md").read_text() == TEXT and addon_findings(
+        root, root / ".orch", rows, [wt, new]
+    ) == []
+    off = [row(state="disabled")]
+    assert [f["what"] for f in addon_findings(root, root / ".orch", off, [wt])][:1] == [
+        "the add-ons changed since it was written"
+    ]
+    sync(root, off, worktrees=[wt])
+    (wt / CANON).mkdir(parents=True)
+    (wt / CANON / "SKILL.md").write_text(TEXT)
+    (wt / CANON / "orch.skill.json").write_text(
+        json.dumps(
+            {"scope": "addon", "addon": "notes", "version": "1", "package_sha256": DIGEST, "text_sha256": sha(TEXT)}
+        )
+    )
+    assert any(f["what"] == "the add-on is not active" for f in addon_findings(root, root / ".orch", off, [wt]))
+    assert sync_if_changed(root, off, store=root / ".orch", worktrees=[wt])
+    assert not (wt / CANON).exists()
+
+
+class FakeStore:
+    def __init__(self, root, addons):
+        from types import SimpleNamespace as NS
+
+        self.layout = NS(store=root / ".orch")
+        self.state = NS(workspace=NS(addons=addons))
+        self.locks = 0
+
+    def locked(self):
+        import contextlib
+
+        @contextlib.contextmanager
+        def cm():
+            self.locks += 1
+            yield
+
+        return cm()
+
+
+def test_the_host_refresh_takes_the_store_lock_and_tells_about_a_quarantine(root):
+    from orch.host import addonsync
+    from orch.model.types import Addon
+
+    store = FakeStore(root, {})
+    sync(root, [row()])
+    (root / CANON / "SKILL.md").write_text("edited\n")
+    lines = addonsync.refresh(root, store)
+    assert store.locks == 1 and any(x.startswith(f"moved {CANON}") for x in lines)
+    assert not any(x.startswith("removed") for x in lines)
+    assert Addon  # (the model type the real store holds)
+
+
+def test_after_never_raises_whatever_the_service_looks_like():
+    from orch.host import addonsync
+
+    assert addonsync.after(object(), [{"type": "ticket.created"}]) == []
+    got = addonsync.after(object(), [{"type": "addon.granted"}])
+    assert got and got[0].startswith("could not refresh the agent instructions")

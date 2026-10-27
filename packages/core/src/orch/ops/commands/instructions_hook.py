@@ -113,14 +113,15 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         # a change pulled from another machine (or made while no session ran) is picked up here, once per change
         if not ctx.hosted:  # the host syncs after add-on events; a hosted read hook has no side effect
             # only the root and the worktrees the git reader registered: never a path the agent's env names
-            sync_if_changed(ws.root, rows, store=ws.store_dir, worktrees=known_worktrees(ctx.caps))
+            with c.store.locked():  # the host and the sync command do not interleave with this
+                sync_if_changed(ws.root, rows, store=ws.store_dir, worktrees=known_worktrees(ctx.caps))
         lines = session_start_lines(
             person=flat(st.data["person"]),
             grant=st.data.get("grant"),
             claim=st.data.get("claim"),
             claim_line=short(claim_line, 110) if claim_line else None,
             unread=[short(u, 60) for u in unread],
-            stale=bool(stale_findings(ws.root, ws.store_dir, rows)),
+            stale=bool(stale_findings(ws.root, ws.store_dir, rows, known_worktrees(ctx.caps))),
             next_hint=st.hints[0] if st.hints else "orch status",
             addons=line,
         )

@@ -12,15 +12,15 @@ rest of the harness files (:class:`~orch.instructions.harness.UnsafePath`).
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import json
 import os
+import re
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-
-from orch.layout import STORE_DIR
 
 from .agents_md import AddonRow
 from .harness import (
@@ -35,12 +35,13 @@ from .harness import (
 )
 from .skills import SIDECAR_NAME, SKILL_NAME, SkillError, check_sidecar
 
-__all__ = ["IGNORE_LINES", "PREFIX", "reconcile", "skill_rels", "wanted"]
+__all__ = ["IGNORE_LINES", "PREFIX", "problems", "reconcile", "skill_rels", "wanted"]
 
 PREFIX = "orch-addon-"
 #: the lines of the ``.gitignore`` of the workspace: generated skills are never committed
 IGNORE_LINES = (f"{SKILLS_DIR}/{PREFIX}*/", f"{CLAUDE_SKILLS_DIR}/{PREFIX}*/")
 _ROOTS = (SKILLS_DIR, CLAUDE_SKILLS_DIR)
+_ADDON_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")  # the name rule of a package (orch.addons.install), whole string
 
 
 @dataclass(frozen=True)
@@ -57,7 +58,7 @@ def wanted(rows: Sequence[AddonRow]) -> dict[str, Wanted]:
     """``{skill folder name: Wanted}`` for every active add-on whose package has a skill."""
     out: dict[str, Wanted] = {}
     for row in rows:
-        if row.active and row.skill is not None:
+        if row.active and row.skill is not None and _ADDON_NAME.fullmatch(row.name):
             try:
                 out[row.skill_name] = Wanted(row, row.skill.decode("utf-8"))
             except UnicodeDecodeError:
@@ -68,6 +69,37 @@ def wanted(rows: Sequence[AddonRow]) -> dict[str, Wanted]:
 def skill_rels(rows: Sequence[AddonRow]) -> list[str]:
     """The paths below a project root the skills of ``rows`` are written to (for the pre-write safety check)."""
     return [f"{base}/{name}/{leaf}" for name in wanted(rows) for base in _ROOTS for leaf in (SKILL_NAME, SIDECAR_NAME)]
+
+
+def problems(base: Path, rows: Sequence[AddonRow]) -> list[str]:
+    """Why the skill folders below ``base`` (the workspace root or a worktree) are not what ``rows`` say, read only: a
+    wanted folder that is missing, or core's own and written for another package; a folder core wrote for an add-on
+    that is not active. An edited folder of an active add-on is the owner's and is not a problem."""
+    want = wanted(rows)
+    out: list[str] = []
+    for root_rel in _ROOTS:
+        try:
+            names = _listing(base, root_rel)
+        except OSError:
+            return [f"{root_rel}: cannot be read"]
+        for name in names:
+            if name not in want and _ours(base, f"{root_rel}/{name}") is not None:
+                out.append(f"{root_rel}/{name}: the add-on is not active")
+        for name, w in want.items():
+            folder = f"{root_rel}/{name}"
+            if name not in names:
+                out.append(f"{folder}: missing")
+                continue
+            side = _ours(base, folder)
+            if side is None or side["addon"] != w.row.name:
+                continue  # not core's: left alone, not a problem to report
+            try:
+                text = safe_read(base, f"{folder}/{SKILL_NAME}")
+            except (OSError, UnicodeDecodeError):
+                text = None
+            if text is not None and _sha(text) == side["text_sha256"] and side["package_sha256"] != w.row.digest:
+                out.append(f"{folder}: written for another package")
+    return out
 
 
 def _copy_text(base: str, text: str) -> str:
@@ -100,19 +132,22 @@ def _listing(base: Path, root_rel: str) -> list[str]:
     """Names of ``orch-addon-*`` entries below ``base / root_rel`` ([] when it does not exist)."""
     path = _check_chain(base, root_rel)
     try:
-        return sorted(n for n in os.listdir(path) if n.startswith(PREFIX))
+        return sorted(n for n in os.listdir(path) if n.startswith(PREFIX) and _ADDON_NAME.fullmatch(n[len(PREFIX) :]))
     except (FileNotFoundError, NotADirectoryError):
         return []
 
 
 def _quarantine(root: Path, store: Path | None, base: Path, folder: str, now: float) -> str:
     """Move ``base / folder`` to ``<store>/removed-skills/<name>-<ts>`` below the workspace ``root``; the new path."""
-    store_rel = store.relative_to(root).as_posix() if store is not None and store != root else STORE_DIR
-    parent_rel = f"{store_rel}/removed-skills"
+    if store is None or store == root:  # the old layout has no store folder, and one is never made here
+        raise OSError(errno.ENOENT, "there is no store folder to move it to")
+    parent_rel = f"{store.relative_to(root).as_posix()}/removed-skills"
     cur = root
-    for part in Path(parent_rel).parts:  # make the missing directories one by one, each checked after it exists
+    for i, part in enumerate(Path(parent_rel).parts):  # only the last part is made; the store folder must exist
         cur = cur / part
         if not cur.exists():
+            if i < len(Path(parent_rel).parts) - 1:
+                raise OSError(errno.ENOENT, "the store folder is missing")
             cur.mkdir()
         _check_chain(root, str(cur.relative_to(root)))
     name = folder.rsplit("/", 1)[1]
@@ -163,7 +198,11 @@ def _reconcile_one(
                 current = safe_read(base, f"{folder}/{SKILL_NAME}")
             except UnicodeDecodeError:
                 current = None
-            entries = set(os.listdir(base / folder))
+            try:
+                entries = set(os.listdir(base / folder))
+            except OSError as e:
+                lines.append(f"kept {at(folder)} (cannot be read: {e.strerror or 'error'})")
+                continue
             untouched = (
                 current is not None and _sha(current) == side["text_sha256"] and entries <= {SKILL_NAME, SIDECAR_NAME}
             )

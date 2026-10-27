@@ -1656,9 +1656,10 @@ def finish(service: WorkspaceService, requests: RequestStore, record: dict[str, 
     result["key"] = view.key if view is not None else template.get("key")
     result["hints"] = list(template.get("hints") or [])[:8]
     result["lines"] = [str(line) for line in template.get("lines") or []][:10000]  # a record before H7 has none
-    result["lines"] += addonsync.after(service, signed)  # D2: AGENTS.orch.md and the add-on skills follow the log
     outcome = {"state": "committed", "result": result, "exit": 0}
     requests.write({**record, "state": "submitted", "done_at": now, "outcome": outcome})
+    # D2, after the outcome is recorded: AGENTS.orch.md and the add-on skills follow the log (best effort)
+    result["lines"] += addonsync.after(service, signed)
     return result
 
 

@@ -153,6 +153,26 @@ _OFF_TAIL = (
 )
 
 
+OFF_NAMES_MAX_CHARS = 600
+
+
+def _off_names(off: Sequence[AddonRow]) -> str:
+    """``a (disabled), b (missing)``, cut after :data:`OFF_NAMES_MAX_CHARS` characters with ``+N more``: the Off line
+    must not be able to burst the block's budget when many add-ons are switched off."""
+    if not off:
+        return "none"
+    shown: list[str] = []
+    size = 0
+    for r in off:
+        item = f"{r.name} ({r.state})"
+        if shown and size + len(item) + 2 > OFF_NAMES_MAX_CHARS:
+            break
+        shown.append(item)
+        size += len(item) + 2
+    more = len(off) - len(shown)
+    return ", ".join(shown) + (f", +{more} more" if more else "")
+
+
 def addon_block(rows: Sequence[AddonRow]) -> list[str]:
     """The ``## Add-ons here`` block (design D3) as lines, led by the blank separator line; ``[]`` when no add-on has
     anything to say and none is off. Sorted by name. More than :data:`ADDON_MAX_ACTIVE` active lines, or a block over
@@ -175,7 +195,7 @@ def addon_block(rows: Sequence[AddonRow]) -> list[str]:
     for r in active:
         text = r.agents_md.strip() or "see its skill."
         lines.append(f"- {r.name}: {text}" + (f" Skill: {r.skill_name}." if r.skill is not None else ""))
-    names = ", ".join(f"{r.name} ({r.state})" for r in off) or "none"
+    names = _off_names(off)
     lines.append(f"Off here: {names}. {_OFF_TAIL}")
     chars = len("\n".join(lines)) + 1
     if len(lines) > ADDON_BLOCK_MAX_LINES or chars > ADDON_BLOCK_MAX_CHARS:

@@ -18,10 +18,12 @@ from typing import Any
 __all__ = ["SkillError", "check_package", "check_skill", "skill_name", "skill_path", "warnings"]
 
 DESCRIPTION_MAX = 300
-_FORBIDDEN_PATH = re.compile(r"(tickets|\.orch)/")  # the ticket files and the store folder, as path starts
+_FORBIDDEN_PATH = re.compile(r"(tickets|\.orch)/", re.I)  # the ticket files and the store folder, as path starts
 _SPAN = re.compile(r"`([^`\n]+)`")
 _FIELD_TOKEN = re.compile(r"([a-z][a-z0-9-]*)\.([A-Za-z_][A-Za-z0-9_]*)=")
-_OTHER_SKILL = re.compile(r"orch-addon-[a-z0-9-]*[a-z0-9]")
+_OTHER_SKILL = re.compile(r"orch-addon-[a-z0-9-]+", re.I)
+_ORCH = re.compile(r"(?<![\w./-])orch(?![\w-])")
+_SHELL_BREAK = re.compile(r"&&|\|\||[;|&)]")
 _SECTIONS = ("Use when", "Do not use when", "Steps", "If orch refuses")
 
 
@@ -43,46 +45,73 @@ def _commands() -> list[tuple[str, ...]]:
     return sorted((tuple(o.cli.split()) for o in ops.all()), key=len, reverse=True)
 
 
-def _lint_command(text: str, addon: str, fields: Mapping[str, Any], known: list[tuple[str, ...]]) -> None:
-    tokens = text.split()
-    if tokens[:1] != ["orch"]:
-        return
-    rest = tokens[1:]
-    match = next((c for c in known if tuple(rest[: len(c)]) == c), None)
+def _resolve(tokens: list[str], addon: str, fields: Mapping[str, Any], known: list[tuple[str, ...]]) -> None:
+    match = next((c for c in known if tuple(tokens[: len(c)]) == c), None)
     if match is None:
-        raise SkillError(f"the command `{text[:60]}` is not an orch command")
+        raise SkillError(f"the command `orch {' '.join(tokens)[:60]}` is not an orch command")
     if match == ("set",):
-        for token in rest:
+        for token in tokens:
             m = _FIELD_TOKEN.match(token)
-            if m is None:
-                continue
-            if m[1] != addon or m[2] not in fields:
+            if m is not None and (m[1] != addon or m[2] not in fields):
                 raise SkillError(f"`orch set` may name only this add-on's own fields, not {m[1]}.{m[2]}")
+
+
+def _tokens_after(segment: str, start: int) -> list[str]:
+    """The words of the command that begins after ``orch`` at ``start``: up to the next shell separator, quotes cut."""
+    part = _SHELL_BREAK.split(segment[start:], 1)[0]
+    return [t for t in (x.strip("\"'") for x in part.split()) if t]
+
+
+def _lint_code(segment: str, addon: str, fields: Mapping[str, Any], known: list[tuple[str, ...]]) -> None:
+    """Code: every ``orch`` anywhere in it (after ``cd x &&``, ``VAR=1``, ``bash -c "..."``) is a command to resolve."""
+    for m in _ORCH.finditer(segment):
+        tokens = _tokens_after(segment, m.end())
+        if tokens:  # a bare `orch` names the tool, not a command
+            _resolve(tokens, addon, fields, known)
+
+
+def _lint_prose(line: str, addon: str, fields: Mapping[str, Any], known: list[tuple[str, ...]]) -> None:
+    """Prose: "orch refuses" is English, so only a command group that is named with a word that is no command of it
+    ("orch task frobnicate") is an error here; anything strict is in code."""
+    firsts = {c[0] for c in known}
+    for m in _ORCH.finditer(line):
+        tokens = [t.strip(".,:;!?()") for t in _tokens_after(line, m.end())[:3]]
+        if tokens and tokens[0] in firsts:
+            _resolve(tokens, addon, fields, known)
 
 
 def _lint(addon: str, body: str, fields: Mapping[str, Any]) -> None:
     from orch.instructions.skills import SKILL_NAMES
 
     known = _commands()
-    fenced = False
+    fence: str | None = None
     for line in body.split("\n"):
         stripped = line.strip()
-        if stripped.startswith("```"):
-            fenced = not fenced
+        marker = stripped[:3] if stripped[:3] in ("```", "~~~") else None
+        if fence is not None:
+            if marker == fence:
+                fence = None
+            else:
+                _lint_code(stripped.removeprefix("$ "), addon, fields, known)
             continue
-        if fenced:
-            _lint_command(stripped.removeprefix("$ "), addon, fields, known)
-        else:
-            for m in _SPAN.finditer(line):
-                _lint_command(m[1].strip(), addon, fields, known)
+        if marker is not None:
+            fence = marker
+            continue
+        if line.startswith("    "):  # an indented code block
+            _lint_code(stripped.removeprefix("$ "), addon, fields, known)
+            continue
+        for m in _SPAN.finditer(line):
+            _lint_code(m[1], addon, fields, known)
+        _lint_prose(_SPAN.sub(" ", line), addon, fields, known)
     if _FORBIDDEN_PATH.search(body):
         raise SkillError("the skill must not name the ticket files or the store folder (agents never touch them)")
     own = skill_name(addon)
     for m in _OTHER_SKILL.finditer(body):
-        if m[0] != own:
+        if m[0].lower() != own:
             raise SkillError(f"the skill names another skill ({m[0]})")
+    low = body.lower()
     for name in SKILL_NAMES:
-        if name in body:
+        if name in low:
             raise SkillError(f"the skill names a built-in skill ({name})")
 
 
@@ -101,6 +130,8 @@ def check_skill(
         raise SkillError("SKILL.md is not UTF-8") from None
     if "\x00" in text or "\r" in text:
         raise SkillError("SKILL.md holds a NUL or a CR")
+    if any(ch != "\n" and not ch.isprintable() for ch in text):  # also zero-width and other format characters
+        raise SkillError("SKILL.md holds a character that is not printable (control, zero-width, direction marks)")
     if len(text) > SKILL_MAX_CHARS:
         raise SkillError(f"SKILL.md has {len(text)} characters, the limit is {SKILL_MAX_CHARS}")
     try:

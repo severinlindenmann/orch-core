@@ -1,6 +1,6 @@
 import { takeTrustedPress } from '@/components/sign/trustedPress'
-// The terminal dock on a real host (M7a): the person's own runs from `run.list` + `run.sub`, a New terminal that shows
-// the host's preview before anything starts, Stop, and one RealTerminal for the selected run. Same frame as the
+// The terminal dock on a real host (M7a): the person's own runs from `run.list` + `run.sub`, a New terminal that opens
+// in one press (the host's preview, then open; a blocked preview or a failure is said), Stop, and one RealTerminal for the selected run. Same frame as the
 // mockup's dock (header, tabs, resize edge). Start agent (M7b) opens core's Start agent dialog when the host serves it
 // (feature `agent_start`); the agent's run then appears here like a shell and attaches the same way.
 
@@ -9,7 +9,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { MoreHorizontal, PanelBottomClose, X, PanelRightClose, Plus, SquareTerminal, Square } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { hasFeature } from '@/api/features'
-import { cleanupDoubt, exitText, newIdem, outputGone, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
+import { cleanupDoubt, exitText, outputGone, runQueries, runsApi, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { addonHairline, addonRule } from '@/addon-ui/addonClasses'
@@ -29,6 +29,7 @@ import { EXECUTION_LINE } from './executionLine'
 import { PreviewDialog } from './PreviewDialog'
 import { runName } from './runName'
 import { StartAgentDialog } from './StartAgentDialog'
+import { useOpenTerminal } from './useOpenTerminal'
 
 export { EXECUTION_LINE }
 
@@ -56,8 +57,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   // The run this mount opened itself: its first attach takes the lease (nobody else can hold a run that was just created).
   const [opened, setOpened] = useState<string | null>(null)
   const [doubt, setDoubt] = useState<Record<string, boolean>>({})
-  const [preview, setPreview] = useState<{ args: { ticket?: string }; data: TermPreview | null; error: string; idem: string } | null>(null)
-  const [busy, setBusy] = useState(false)
+  const terminal = useOpenTerminal(ws ?? '', (run) => { setOpened(run.run); setSelected(run.run) })
   const [agent, setAgent] = useState<'start' | 'choose' | null>(null)
   const agents = !!ws && hasFeature('agent_start', ws)
   const [error, setError] = useState('')
@@ -74,23 +74,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   useEffect(() => { if (autoPreview && ws && takeTrustedPress()) void ask(false) }, [autoPreview, ws])
 
   const resize = (px: number) => setPrefs((p) => ({ ...p, [side]: Math.round(Math.min(dockMax(side, view, area), Math.max(DOCK_LIMITS[side].min, px))) }))
-  const ask = async (inTicket: boolean) => {
-    if (!ws || busy) return
-    const args = inTicket && ticket ? { ticket } : {}
-    setBusy(true)
-    const idem = newIdem()
-    try {
-      const data = await runsApi.preview(ws, args)
-      if (data.blocked) { setPreview({ args, data, error: data.blocked.message ?? 'The host refused.', idem }); return }
-      const { run } = await runsApi.open(ws, args, data.spec, idem)
-      setOpened(run.run)
-      setSelected(run.run)
-      setPreview(null)
-      void qc.invalidateQueries({ queryKey: ['runs', ws] })
-    } catch (e) {
-      setPreview({ args, data: null, error: e instanceof ApiError ? e.message : 'The host did not answer.', idem })
-    } finally { setBusy(false) }
-  }
+  const ask = (inTicket: boolean) => terminal.ask(inTicket && ticket ? { ticket } : {})
   const stop = async (run: Run) => {
     if (!ws) return
     setError('')
@@ -176,7 +160,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
           ) : ws ? <RealTerminal key={current.run} ws={ws} run={current} initial={opened === current.run ? 'write' : 'read'} /> : null}
       </div>
       {ws && agents && ticket && <StartAgentDialog key={agent ?? 'none'} ws={ws} ticket={ticket} open={!!agent} choose={agent === 'choose'} onClose={() => setAgent(null)} onStarted={(run) => setSelected(run.run)} />}
-      <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} />
+      <PreviewDialog {...terminal} />
     </section>
   )
 }

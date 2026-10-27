@@ -1,4 +1,4 @@
-// "+ Add marketplace" (#1237 pick 4.1a): a picker of the sources the host offers, one Add click then one Approve click.
+// "+ Add marketplace" (#1237 pick 4.1a): a picker of the sources the host offers; Add is a single click.
 // An address field exists only behind a closed fold and only where the workspace policy allows any marketplace
 // (the host says so with `open_address`); otherwise the plain policy message and a way to the workspace admins.
 import { Link } from '@tanstack/react-router'

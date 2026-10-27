@@ -6,7 +6,7 @@ import { ApiError } from '@/api/types'
 import { DASHBOARD_EXECUTION_LINE } from '@/api/quickRecords'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
 import { queryClient } from '@/production/Shell'
-import { DO, MARA, OWNER, READS, TOM, roster, settingsOf, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { DO, MARA, OWNER, READS, TOM, clickOn, prepareByClick, roster, settingsOf, show, useFakeHost, workspace } from '@/test/hostHarness'
 
 // The production app on a fake server that speaks the M6 routes (quick tasks, records, the runner line).
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
@@ -115,7 +115,8 @@ it('the form is one input and one button; details and checks are folded', async 
   expect(screen.queryByRole('button', { name: 'Create without starting' })).toBeNull()
 })
 
-it('creating on a terminal workspace is ONE hand-off with the whole task: title, details, checks', async () => {
+it('creating is ONE One click signature with the whole task: title, details, checks', async () => {
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await user.type(await screen.findByLabelText('What needs doing?', {}, T), 'Fix the typo in CONTRIBUTING')
@@ -124,33 +125,44 @@ it('creating on a terminal workspace is ONE hand-off with the whole task: title,
   await user.type(screen.getByLabelText('Check 1'), 'The typo is gone')
   await user.type(screen.getByLabelText('Check 1 command'), 'test -z "$(grep -w teh CONTRIBUTING.md)"')
   await user.click(screen.getByRole('button', { name: 'Sign and create task' }))
-  const first = await screen.findByRole('dialog', {}, T)
-  await within(first).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts()).toHaveLength(1)
-  expect(state.host.posts()[0].body).toEqual({
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Sign and create task')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{
     action: 'quick_start',
     title: 'Fix the typo in CONTRIBUTING',
     description: 'It says teh.',
     checks: [{ text: 'The typo is gone', cmd: 'test -z "$(grep -w teh CONTRIBUTING.md)"' }],
-  })
-  expect(other('/click/')).toEqual([]) // the terminal path only: no click route on a workspace where it is off
+  }])
+  expect(state.host.posts()).toEqual([]) // no terminal hand-off
 }, 30000)
 
-it('with an agent runner and no access: "Sign and start task" signs the access in the same request; "Create without starting" never does', async () => {
+it('without One click nothing is prepared: the review says so and links to turning it on', async () => {
+  const user = userEvent.setup()
+  show('/w/DEMO/quick')
+  await user.type(await screen.findByLabelText('What needs doing?', {}, T), 'Fix the typo in CONTRIBUTING')
+  await user.click(screen.getByRole('button', { name: 'Sign and create task' }))
+  const dialog = await screen.findByRole('dialog', {}, T)
+  expect(dialog).toHaveTextContent('One click is not ready on this computer.')
+  expect(within(dialog).getByRole('link', { name: 'Turn on One click' })).toBeInTheDocument()
+  expect(state.host.posts()).toEqual([])
+  expect(other('/click/prepare')).toEqual([])
+})
+
+it('with an agent runner and no access: "Create without starting" signs the task without the access', async () => {
   state.host.workspaces[0].features = [...FEATURES, 'agent_start']
   state.host.workspaces[0].settings = settingsOf({ grant_hours: 72 })
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await user.type(await screen.findByLabelText('What needs doing?', {}, T), 'Water the plants')
   await user.click(await screen.findByRole('button', { name: 'Create without starting' }, T))
-  await screen.findByRole('dialog', {}, T)
-  await waitFor(() => expect(state.host.posts()).toHaveLength(1), T)
-  expect(state.host.posts()[0].body).toEqual({ action: 'quick_start', title: 'Water the plants' })
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Sign and create task')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'quick_start', title: 'Water the plants' }])
 }, 30000)
 
 it('with an agent runner and no access the review carries the access length as a select (capped by the workspace)', async () => {
   state.host.workspaces[0].features = [...FEATURES, 'agent_start']
   state.host.workspaces[0].settings = settingsOf({ grant_hours: 72 })
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await user.type(await screen.findByLabelText('What needs doing?', {}, T), 'Water the plants')
@@ -158,11 +170,10 @@ it('with an agent runner and no access the review carries the access length as a
   const dialog = await screen.findByRole('dialog', {}, T)
   const select = await within(dialog).findByLabelText('Give agents access for', {}, T)
   expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
-  expect(state.host.posts()).toEqual([]) // on the terminal path nothing is prepared until the choice is made
+  expect(state.host.clickPrepares()).toEqual([]) // nothing is prepared until the choice is made and the outcome pressed
   await user.selectOptions(select, '24')
-  await user.click(within(dialog).getByRole('button', { name: /Sign in a terminal|Start task|Sign and start/ }))
-  await waitFor(() => expect(state.host.posts().length).toBeGreaterThan(0), T)
-  expect(state.host.posts()[0].body).toEqual({ action: 'quick_start', title: 'Water the plants', agent: { hours: 24 } })
+  await prepareByClick(screen.getByRole('dialog'), 'Sign and start task')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'quick_start', title: 'Water the plants', agent: { hours: 24 } }])
 }, 30000)
 
 it('adding where click-to-sign is on goes through the click routes, not a hand-off, with no terminal choice', async () => {
@@ -209,17 +220,18 @@ it('a title that is empty or has a line break is never submitted', async () => {
   expect(screen.getByRole('alert')).toHaveTextContent('at most 120')
 })
 
-it('Close (in the row menu) prepares the existing close hand-off for that key', async () => {
+it('Close (in the row menu) signs the close for that key', async () => {
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await user.click(await screen.findByRole('button', { name: 'More for DEMO-0010' }, T))
   await user.click(await screen.findByRole('menuitem', { name: 'Close' }, T))
-  const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts()[0].body).toMatchObject({ action: 'close', key: 'DEMO-0010' })
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Close DEMO-0010')
+  expect(state.host.clickPrepares()[0].body).toMatchObject({ action: 'close', key: 'DEMO-0010' })
 })
 
 it('Make a normal ticket (in the row menu) reads fresh labels and sets exactly the remaining labels', async () => {
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   show('/w/DEMO/quick')
   await screen.findByRole('list', { name: 'Active quick tasks' }, T)
@@ -227,10 +239,10 @@ it('Make a normal ticket (in the row menu) reads fresh labels and sets exactly t
   await user.click(await screen.findByRole('button', { name: 'More for DEMO-0014' }, T))
   await user.click(await screen.findByRole('menuitem', { name: 'Make a normal ticket' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts()[0].body).toMatchObject({ action: 'details', key: 'DEMO-0014', labels: ['docs', 'web', 'new-label'] })
   expect(dialog).toHaveTextContent('Labels removed: quick')
   expect(dialog).toHaveTextContent('Labels kept: docswebnew-label')
+  await prepareByClick(dialog, 'Make DEMO-0014 a normal ticket')
+  expect(state.host.clickPrepares()[0].body).toMatchObject({ action: 'details', key: 'DEMO-0014', labels: ['docs', 'web', 'new-label'] })
 })
 
 // ---------------------------------------------------------------- records
@@ -494,15 +506,16 @@ it('records: hostile failure prose is isolated in a labelled tool-output block',
 
 
 it('quick alone becomes an empty label set', async () => {
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   state.host.override = (path) => path.endsWith('/tickets/DEMO-0010') ? Response.json({ ...ticket, key: 'DEMO-0010', labels: ['quick'] }) : undefined
   show('/w/DEMO/quick')
   await user.click(await screen.findByRole('button', { name: 'More for DEMO-0010' }, T))
   await user.click(await screen.findByRole('menuitem', { name: 'Make a normal ticket' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
   expect(dialog).toHaveTextContent('Labels kept: none')
-  expect(state.host.posts()[0].body).toMatchObject({ action: 'details', labels: [] })
+  await prepareByClick(dialog, 'Make DEMO-0010 a normal ticket')
+  expect(state.host.clickPrepares()[0].body).toMatchObject({ action: 'details', labels: [] })
 })
 
 it.each(['not-private', 'mismatch', 'failure', 'null', 'hidden'])('records current check: %s', async (kind) => {

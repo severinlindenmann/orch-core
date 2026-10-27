@@ -52,25 +52,29 @@ export type HandoffAction =
   | { action: 'repo_remove'; name: string }
   /** The workspace default policy of one gate (F1 5.7 `Policy`, exactly). The code gate: `not` has `assignees`, `independent` is true. */
   | { action: 'policy_set'; gate: 'requirements' | 'plan' | 'verify' | 'code'; policy: { approvers: string[]; count: number; not: string[]; applies: 'all' | 'off' | string[]; independent: boolean } }
-  /** The invitee's own public key (base64url, 65 bytes) and first device certificate (strict JSON text): their files, uploaded by the person. */
-  | { action: 'member_add'; name: string; role: 'owner' | 'maintainer' | 'member' | 'viewer'; pk: string; cert: string }
+  /**
+   * The invitee's own public key (base64url, 65 bytes), first device certificate and reader declaration (strict JSON text):
+   * their files, uploaded by the person. The declaration is required: the dashboard signs by one click only, and a
+   * One click workspace admits a new reader only with it (core `sign.convenience_readers`).
+   */
+  | { action: 'member_add'; name: string; role: 'owner' | 'maintainer' | 'member' | 'viewer'; pk: string; cert: string; reader_decl: string }
   | { action: 'member_role'; person: string; role: 'owner' | 'maintainer' | 'member' | 'viewer' }
   | { action: 'member_remove'; person: string }
   /** #1198 C15: one click. Core refuses the device that signs and an owner's last working device (`device.lockout`, plain words). */
   | { action: 'device_remove'; device: string }
   | { action: 'grant_revoke'; grant: string; reason?: string }
-  /** R2-2: turn a shipped add-on on (`addon.grant`, the typed word) or off (`addon.disable`, one click). */
+  /** R2-2: turn a shipped add-on on (`addon.grant`) or off (`addon.disable`), one click each. */
   | { action: 'addon_grant'; name: AddonSwitchName }
   | { action: 'addon_disable'; name: AddonSwitchName }
   /** The remove sheet's "Also delete its data" (`addon.purge`). */
   | { action: 'addon_purge'; name: AddonSwitchName }
   /** One add-on's settings (`settings.set {addons: {name: value}}`); `null` removes them. */
   | { action: 'addon_settings'; name: AddonSwitchName; value: Record<string, unknown> | null }
-  /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence). Publish: terminal only. */
+  /** Turn on an add-on that needs settings: the settings and the grant in ONE review (`addon_enable` sequence), one click. */
   | { action: 'addon_enable'; name: 'publish'; publish: { server: string; share: string } }
-  /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`). Terminal only. */
+  /** Publish (P6): where shared files are sent and where a link opens (`settings.set` of `publish`), one click. */
   | { action: 'publish_setup'; server: string; share: string }
-  /** Publish (P6): a person's signature over the exact words of one staged copy (`publish.share`). Terminal only. */
+  /** Publish (P6): a person's signature over the exact words of one staged copy (`publish.share`), one click. */
   | { action: 'publish_share'; key: string; staged_id: string }
   /** The runner grant, deposited by the signer. */
   | { action: 'runner_grant'; hours: number; scope: 'workable' | 'all'; extend?: string }

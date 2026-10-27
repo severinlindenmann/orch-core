@@ -389,10 +389,18 @@ def test_add_a_member_from_a_certificate_file(world, api):
     reader_decl = json.dumps(decl(person, world.ws.ws_id, via="enrol", created_ms=int(time.time() * 1000)))
     res = api.post("/click/prepare", {**body, "retry": new_retry()})
     assert res.status_code == 409 and res.json()["error"]["code"] == "sign.convenience_readers", res.text
+    # the page says it in one plain line from the closed reason (refusals.ts READERS_SENTENCE.no_declaration)
+    assert res.json()["error"].get("detail", {}).get("reason") == "no_declaration", res.text
+    # the click path carries the declaration file beside the certificate, as the Add person form sends it
     _, final = api.sign({**body, "reader_decl": reader_decl})
     assert final["state"] == "submitted", final
     members = {m["person"]: m for m in api.get("/members").json()}
     assert members[person.ref]["name"] == "Nia" and members[person.ref]["role"] == "member"
+    # the host kept the new device's declaration: it reads the workspace at the level One click requires
+    readers = api.get("/readers").json()
+    assert readers["available"] and readers["required_reader"] == 1, readers
+    nia = [r for r in readers["readers"] if r["person"] == person.ref]
+    assert len(nia) == 1 and nia[0]["level"] >= readers["required_reader"], readers
 
 
 def test_revoke_a_grant(world, api):

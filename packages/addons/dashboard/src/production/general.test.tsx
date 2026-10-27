@@ -1,7 +1,7 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
-import { OWNER, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { OWNER, clickOn, prepareByClick, show, useFakeHost, workspace } from '@/test/hostHarness'
 
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
@@ -31,16 +31,18 @@ it('shows the workspace name and numbering with identity inside the closed Advan
   expect(screen.getAllByText(ID).every(node => advanced.contains(node))).toBe(true)
 })
 
-it('opens the icon picker in a popover and saves the chosen icon through the hand-off', async () => {
-  state.host.override = path => path === '/api/workspaces' ? Response.json([{ id: ID, prefix: 'DEMO', name: 'Dev workspace', members: state.host.workspaces[0].roster.map(m => ({ person: m.person, name: m.name, role: m.role, devices: m.devices.length })), needs_you: 0, host_state: 'ok', features: state.host.workspaces[0].features, icon_known: true, icon: { icon: 'cloud', colour: 'teal' } }]) : undefined
+it('opens the icon picker in a popover and signs the chosen icon with One click', async () => {
+  clickOn(state.host.workspaces[0])
+  state.host.override = path => path === '/api/workspaces' ? Response.json([{ id: ID, prefix: 'DEMO', name: 'Dev workspace', members: state.host.workspaces[0].roster.map(m => ({ person: m.person, name: m.name, role: m.role, devices: m.devices.length })), needs_you: 0, host_state: 'ok', features: state.host.workspaces[0].features, click: state.host.workspaces[0].click, icon_known: true, icon: { icon: 'cloud', colour: 'teal' } }]) : undefined
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
   expect(screen.queryByRole('group', { name: 'Symbol' })).toBeNull()
   await user.click(await screen.findByRole('button', { name: 'Change' }, T))
   await user.click(within(screen.getByRole('group', { name: 'Symbol' })).getByRole('button', { name: 'Star' }))
   await user.click(screen.getByRole('button', { name: 'Save' }))
-  await screen.findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map(c => c.body)).toEqual([{ action: 'icon_set', icon: { icon: 'star', colour: 'teal' } }])
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Change the workspace icon')
+  expect(state.host.clickPrepares().map(c => c.body)).toEqual([{ action: 'icon_set', icon: { icon: 'star', colour: 'teal' } }])
+  expect(state.host.posts()).toEqual([]) // no terminal hand-off
 })
 
 it.each([
@@ -78,6 +80,7 @@ it('explains a missing records folder and keeps its error code under closed Deta
 })
 
 it('saves agent access separately from changed reservation times', async () => {
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   await openRecords()
   const reserved = screen.getByLabelText('Ticket reserved for (minutes)')
@@ -85,10 +88,12 @@ it('saves agent access separately from changed reservation times', async () => {
   await user.type(reserved, '90')
   await user.selectOptions(screen.getByRole('combobox', { name: 'Longest agent access you can give' }), '24')
   await user.click(screen.getByRole('button', { name: 'Save' }))
-  await screen.findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map(c => c.body)).toEqual([{ action: 'settings_set', grant_hours: 24 }])
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Change the workspace settings')
+  expect(state.host.clickPrepares().map(c => c.body)).toEqual([{ action: 'settings_set', grant_hours: 24 }])
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
   await user.click(screen.getByRole('button', { name: 'Save settings' }))
-  await screen.findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map(c => c.body)).toEqual([{ action: 'settings_set', grant_hours: 24 }, { action: 'settings_set', claim_ttl_min: 90 }])
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Change the workspace settings')
+  expect(state.host.clickPrepares().map(c => c.body)).toEqual([{ action: 'settings_set', grant_hours: 24 }, { action: 'settings_set', claim_ttl_min: 90 }])
+  expect(state.host.posts()).toEqual([])
 })

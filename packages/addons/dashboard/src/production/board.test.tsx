@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
-import { DO, READS, useFakeHost, workspace, show } from '@/test/hostHarness'
+import { DO, READS, clickOn, prepareByClick, useFakeHost, workspace, show } from '@/test/hostHarness'
 
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
@@ -11,7 +11,8 @@ const ID = 'a'.repeat(32)
 const T = { timeout: 5000 }
 const state = useFakeHost(() => [workspace({ id: ID, features: [...READS, ...DO, 'actions', 'move'] })])
 
-it('a move on a real host is a hand-off for backlog or open, and nothing moves until it is signed', async () => {
+it('a move on a real host is signed with one click for backlog or open, and nothing moves until it is signed', async () => {
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   show('/w/DEMO/board')
   const card = await screen.findByTestId('card-DEMO-0001', {}, T)
@@ -19,9 +20,13 @@ it('a move on a real host is a hand-off for backlog or open, and nothing moves u
   await user.keyboard('m')
   await user.click(await screen.findByRole('menuitem', { name: /Backlog/ }))
   const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
   expect(dialog).toHaveTextContent('Move DEMO-0001 to Backlog')
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'move', key: 'DEMO-0001', to: 'backlog' }])
+  expect(state.host.clickPrepares()).toEqual([]) // nothing is prepared before the outcome button is pressed
+  await prepareByClick(dialog, /Move/)
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'move', key: 'DEMO-0001', to: 'backlog' }])
+  expect(state.host.posts()).toEqual([]) // no terminal hand-off
+  expect(state.host.clickSigned).toEqual([])
+  expect(within(dialog).queryByTestId('handoff-command')).toBeNull()
 })
 
 it('a host that does not serve move offers no move at all', async () => {

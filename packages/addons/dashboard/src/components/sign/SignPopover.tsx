@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { lastTrigger, SignShell } from './SignShell'
 import { Inline } from './visible'
 import { ClickSignPanel } from './ClickSignPanel'
-import { ClickProblemBox } from './RefusalDevices'
+import { ClickProblemBox, RefusalDevices } from './RefusalDevices'
 import { settledAs, useClickSign, type ClickPhase } from './useClickSign'
 import { storyOf } from './story'
 import { takeTrustedPress, trustedPress } from './trustedPress'
@@ -118,7 +118,7 @@ export function SignPopover(p: SignPopoverProps) {
       {['preparing', 'viewing'].includes(click.phase) && <p role="status">Reading the review…</p>}
       {(click.phase === 'ready' || click.phase === 'signing') && click.view && <ClickSignPanel ws={p.ws} answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={() => void close()} waitUntil={waitUntil} story={story} label={p.confirmLabel} />}
       {click.phase === 'settling' && <p role="status">The outcome is not certain yet. Do not sign again. {click.settleNote}</p>}
-      {click.phase === 'failed' && click.problem && (click.problem.next === 'unavailable' ? <p>{click.problem.body}</p> : <ClickProblemBox problem={click.problem} ws={p.ws} />)}
+      {click.phase === 'failed' && click.problem && (click.problem.next === 'unavailable' ? <><p>{click.problem.body}</p>{p.ws && click.problem.devices && <RefusalDevices ws={p.ws} ids={click.problem.devices} />}</> : <ClickProblemBox problem={click.problem} ws={p.ws} />)}
       {click.phase === 'cancelled' && <p role="status">Nothing was signed.</p>}
       {['cancelled', 'failed', 'settling'].includes(click.phase) && <div className="flex flex-wrap justify-end gap-2">
         {/* An ended or unsettled attempt can always be left: Cancel withdraws a request still open, Close just closes. */}

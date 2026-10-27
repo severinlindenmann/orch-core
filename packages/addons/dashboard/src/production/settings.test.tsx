@@ -1,8 +1,10 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { agentsApi } from '@/api/agents'
-import { DO, GRANT_A, GRANT_B, MARA, OWNER, READS, TOM, grant, policy, settingsOf, useFakeHost, workspace, show } from '@/test/hostHarness'
+import { ARM_MS } from '@/api/click'
+import { READERS_SENTENCE } from '@/api/refusals'
+import { DO, GRANT_A, GRANT_B, MARA, OWNER, READS, TOM, clickOn as clickOnFor, grant, policy, prepareByClick, settingsOf, useFakeHost, workspace, show } from '@/test/hostHarness'
 
 // Every page of the app reads through the production api, as the build wires it (vite.config.ts alias).
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
@@ -12,6 +14,7 @@ vi.mock('@/api/useLiveUpdates', async (original) => ({ ...(await original<typeof
 const ID = 'a'.repeat(32)
 const T = { timeout: 5000 }
 const state = useFakeHost(() => [workspace({ id: ID })])
+afterEach(() => vi.restoreAllMocks())
 
 it('the Settings link is offered when the host serves it, with only the reduced sections', async () => {
   show('/w/DEMO/settings/general')
@@ -51,6 +54,7 @@ it('General shows what the host says, marks defaults and lists repositories with
 })
 
 it('Repositories: adding one validates in the form, then hands the typed action to the signer', async () => {
+  clickOn()
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
   await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
@@ -66,12 +70,13 @@ it('Repositories: adding one validates in the form, then hands the typed action 
   await user.type(within(form).getByLabelText('Folder on this computer'), '/work/api')
   await user.clear(within(form).getByLabelText(/Remote/))
   await user.click(within(form).getByRole('button', { name: 'Review and sign' }))
-  const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'repo_set', name: 'api', path: '/work/api' }])
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Add repository api')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'repo_set', name: 'api', path: '/work/api' }])
+  expect(state.host.posts()).toEqual([])
 })
 
-it('Repositories: removing one hands off repo_remove, and a name already listed is refused in the form', async () => {
+it('Repositories: removing one signs repo_remove, and a name already listed is refused in the form', async () => {
+  clickOn()
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
   await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
@@ -83,8 +88,8 @@ it('Repositories: removing one hands off repo_remove, and a name already listed 
   expect(within(form).getByRole('alert')).toHaveTextContent('already in the list')
   await user.click(within(form).getByRole('button', { name: 'Cancel' }))
   await user.click(screen.getByRole('button', { name: 'Remove code' }))
-  await within(await screen.findByRole('dialog', {}, T)).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'repo_remove', name: 'code' }])
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Remove repository code')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'repo_remove', name: 'code' }])
 })
 
 it('Repositories: the host\'s refusal of a folder stays in the form, before any signing step', async () => {
@@ -102,6 +107,7 @@ it('Repositories: the host\'s refusal of a folder stays in the form, before any 
 })
 
 it('Repositories: removing a repo that tickets link warns with their keys before anything is signed', async () => {
+  clickOn()
   const user = userEvent.setup()
   state.host.workspaces[0].settings = settingsOf({ repos: [{ name: 'code', default_branch: 'main', remote: null, tickets: ['DEMO-0001', 'DEMO-0004'] }] })
   show('/w/DEMO/settings/general')
@@ -109,12 +115,13 @@ it('Repositories: removing a repo that tickets link warns with their keys before
   await user.click(await screen.findByRole('button', { name: 'Remove code' }, T))
   const warn = await screen.findByRole('dialog', {}, T)
   expect(warn).toHaveTextContent('DEMO-0001, DEMO-0004')
-  expect(state.host.posts()).toEqual([])
+  expect(state.host.clickPrepares()).toEqual([])
   await user.click(within(warn).getByRole('button', { name: 'Keep it' }))
-  expect(state.host.posts()).toEqual([])
+  expect(state.host.clickPrepares()).toEqual([])
   await user.click(screen.getByRole('button', { name: 'Remove code' }))
   await user.click(within(await screen.findByRole('dialog', {}, T)).getByRole('button', { name: /Continue to review and sign/ }))
-  await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'repo_remove', name: 'code' }]), T)
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Remove repository code')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'repo_remove', name: 'code' }])
 })
 
 it('Repositories: a member sees the list and no way to change it', async () => {
@@ -139,7 +146,8 @@ it('a host without the settings cap says so and shows no value', async () => {
   expect(screen.getByText('This host does not say which repositories there are.')).toBeInTheDocument()
 })
 
-it('changing the grant length opens the hand-off with the typed action, and shows the host material, not the form', async () => {
+it('changing the grant length signs the typed action with One click and shows the signer\'s View, not the form', async () => {
+  clickOn()
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
   await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
@@ -147,17 +155,16 @@ it('changing the grant length opens the hand-off with the typed action, and show
   await user.selectOptions(input, '168')
   await user.click(screen.getByRole('button', { name: 'Save' }))
   const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 168 }])
-  expect(within(dialog).getByTestId('handoff-command')).toHaveTextContent('orch sign 7F3K-Q2MA')
-  expect(dialog).toHaveTextContent('Change to the workspace settings')
-  expect(dialog).toHaveTextContent('In your terminal you type DEMO~aaaaaaaa/SETTINGS to continue.')
-  expect(dialog).toHaveTextContent('HOST-BEFORE-VALUE') // the host's "current value, not signed", labelled as such
-  expect(dialog).toHaveTextContent('Current values according to the host, not signed')
-  expect(within(dialog).queryByLabelText(/passphrase/i)).toBeNull()
-  // The three durations are validated before any request exists.
+  expect(state.host.clickPrepares()).toEqual([]) // nothing before the outcome button
+  const panel = await prepareByClick(dialog, 'Change the workspace settings')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 168 }])
+  expect(panel).toHaveTextContent('FROM-THE-SIGNER settings.set')
+  expect(dialog).not.toHaveTextContent(/orch sign|In your terminal|HOST-BEFORE-VALUE/)
+  expect(within(dialog).queryByRole('textbox')).toBeNull() // nothing is typed
+  expect(state.host.posts()).toEqual([])
   await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
-  await waitFor(() => expect(state.host.deletes().length).toBe(1))
+  await waitFor(() => expect(state.host.clickCancelled).toHaveLength(1), T)
+  expect(state.host.clickSigned).toEqual([])
 })
 
 it('out-of-range durations never reach the host', async () => {
@@ -192,7 +199,8 @@ it('a host that does not list settings.set cannot change settings: the control s
   expect(screen.getAllByText('This host cannot change settings yet.')[0]).toBeInTheDocument()
 })
 
-it('Members lists the people with what they can do and no last-seen, and a role change is a hand-off', async () => {
+it('Members lists the people with what they can do and no last-seen, and a role change is signed with One click', async () => {
+  clickOn()
   const user = userEvent.setup()
   show('/w/DEMO/settings/members')
   expect(await screen.findByRole('heading', { name: 'People' }, T)).toBeInTheDocument()
@@ -205,11 +213,11 @@ it('Members lists the people with what they can do and no last-seen, and a role 
   expect(within(list).queryByText(/operate/)).not.toBeInTheDocument()
   await user.selectOptions(screen.getByLabelText('Role of Tom'), 'maintainer')
   const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
   expect(dialog).toHaveTextContent('Make Tom a maintainer')
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'member_role', person: TOM, role: 'maintainer' }])
-  expect(dialog).toHaveTextContent('Change of a member')
-  expect(dialog).toHaveTextContent(`In your terminal you type ${TOM} to continue.`)
+  const panel = await prepareByClick(dialog, 'Make Tom a maintainer')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'member_role', person: TOM, role: 'maintainer' }])
+  expect(panel).toHaveTextContent('FROM-THE-SIGNER member.role')
+  expect(state.host.posts()).toEqual([])
 })
 
 it('a device below the required level gets the "needs an update" chip; the signing device and a workspace without a requirement never do', async () => {
@@ -251,15 +259,15 @@ it('a member whose host name has invisible characters shows by id with a note, a
   expect(screen.getByLabelText(`Remove ${TOM}`)).toBeInTheDocument()
 })
 
-it('removing a member is a hand-off; you cannot remove yourself or the last owner', async () => {
+it('removing a member is signed with One click; you cannot remove yourself or the last owner', async () => {
+  clickOn()
   const user = userEvent.setup()
   show('/w/DEMO/settings/members')
   await screen.findByRole('list', { name: 'People' }, T)
   expect(screen.getByRole('button', { name: 'Remove Sev' })).toBeDisabled()
   await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
-  const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'member_remove', person: TOM }])
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Remove Tom')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'member_remove', person: TOM }])
 })
 
 it('a maintainer adds members and viewers, removes the same, and changes no roles', async () => {
@@ -279,26 +287,90 @@ it('a maintainer adds members and viewers, removes the same, and changes no role
 const PK = 'B' + 'x'.repeat(86)
 const CERT = JSON.stringify({ o: { device_id: '4'.repeat(32) }, sig: 'demo-not-a-real-signature' })
 
-it('adding a member takes the invitee\'s own files, checks them, and the host shows what the certificate says', async () => {
-  const user = userEvent.setup()
+const DECL = JSON.stringify({ o: { v: 1, kind: 'reader_decl', bind: { via: 'enrol' } }, sig: 'demo-not-a-real-signature' })
+function clickOn() {
+  state.host.workspaces[0].features = [...READS, ...DO, 'actions']
+  clickOnFor(state.host.workspaces[0]) // One click on; fireEvent is untrusted: trustedPress stands in for a real press
+}
+const openAdd = async (user: ReturnType<typeof userEvent.setup>) => {
   show('/w/DEMO/settings/members')
   await screen.findByRole('list', { name: 'People' }, T)
   await user.click(screen.getByRole('button', { name: /Add person/ }))
   const form = await screen.findByRole('dialog')
   await user.type(within(form).getByLabelText('Name'), 'Nia')
   await user.upload(within(form).getByLabelText('Public key file'), new File([PK + '\n'], 'nia.pk', { type: 'text/plain' }))
-  await user.upload(within(form).getByLabelText('Device certificate file'), new File([CERT], 'nia.cert.json', { type: 'application/json' }))
+  return form
+}
+
+it('adding a member is signed with One click and sends the invitee\'s certificate with their One click confirmation', async () => {
+  clickOn()
+  const user = userEvent.setup()
+  const form = await openAdd(user)
+  // The certificate and its confirmation chosen together: each lands in its own field, nothing extra to do.
+  await user.upload(within(form).getByLabelText('Device certificate file'), [new File([CERT], 'nia.cert.json', { type: 'application/json' }), new File([DECL], 'nia.reader.json', { type: 'application/json' })])
   expect(within(form).getByLabelText('Public key')).toHaveValue(PK + '\n')
+  expect(within(form).getByLabelText('Device certificate')).toHaveValue(CERT)
+  expect(within(form).getByLabelText('One click confirmation')).toHaveValue(DECL)
+  expect(form).toHaveTextContent('Nia needs to confirm they understand One click signatures')
+  expect(form).not.toHaveTextContent(/orch keys|reader declare|terminal|--reader-decl/)
   await user.click(within(form).getByRole('button', { name: 'Prepare to add' }))
   const dialog = await screen.findByRole('dialog', { name: /Add Nia/ }, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'member_add', name: 'Nia', role: 'member', pk: PK, cert: CERT }])
-  // What the host read in the certificate is what the person is shown, with the person id to compare out of band.
-  expect(dialog).toHaveTextContent('Add a member')
-  expect(dialog).toHaveTextContent('p_' + 'd'.repeat(32))
-  expect(dialog).toHaveTextContent('d_' + '4'.repeat(32))
-  expect(dialog).toHaveTextContent('operate')
-  expect(dialog).toHaveTextContent(`In your terminal you type p_${'d'.repeat(32)} to continue.`)
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'Add Nia' }, T))
+  const panel = await within(dialog).findByTestId('click-panel', {}, T)
+  expect(panel).toHaveTextContent('FROM-THE-SIGNER member.add')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'member_add', name: 'Nia', role: 'member', pk: PK, cert: CERT, reader_decl: DECL }])
+  expect(state.host.posts()).toEqual([]) // no hand-off is ever prepared
+  const sign = within(dialog).getByRole('button', { name: /^Sign( |$)/ })
+  await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  fireEvent.pointerDown(sign)
+  fireEvent.click(sign)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+})
+
+it('the One click confirmation can be chosen or dropped on its own field', async () => {
+  clickOn()
+  const user = userEvent.setup()
+  const form = await openAdd(user)
+  await user.upload(within(form).getByLabelText('Device certificate file'), new File([CERT], 'nia.cert.json', { type: 'application/json' }))
+  fireEvent.drop(within(form).getByLabelText('One click confirmation'), { dataTransfer: { files: [new File([DECL], 'nia.reader.json', { type: 'application/json' })] } })
+  await waitFor(() => expect(within(form).getByLabelText('One click confirmation')).toHaveValue(DECL))
+  await user.click(within(form).getByRole('button', { name: 'Prepare to add' }))
+  const dialog = await screen.findByRole('dialog', { name: /Add Nia/ }, T)
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'Add Nia' }, T))
+  await within(dialog).findByTestId('click-panel', {}, T)
+  expect(state.host.clickPrepares().map((c) => c.body?.reader_decl)).toEqual([DECL])
+})
+
+it('adding a member without their One click confirmation is refused with one plain line and nothing is sent', async () => {
+  clickOn()
+  const user = userEvent.setup()
+  const form = await openAdd(user)
+  await user.upload(within(form).getByLabelText('Device certificate file'), new File([CERT], 'nia.cert.json', { type: 'application/json' }))
+  await user.click(within(form).getByRole('button', { name: 'Prepare to add' }))
+  expect(within(form).getAllByRole('alert').map((a) => a.textContent)).toEqual(['Nia needs to confirm they understand One click signatures. Add the confirmation file their orch app made with the certificate.'])
+  // A file that is not one is said so; a certificate dropped on the confirmation goes to the certificate field.
+  await user.type(within(form).getByLabelText('One click confirmation'), '{{"v":1}')
+  await user.click(within(form).getByRole('button', { name: 'Prepare to add' }))
+  expect(within(form).getAllByRole('alert').map((a) => a.textContent)).toEqual(['This file is not a One click confirmation. Add the confirmation file their orch app made with the certificate.'])
+  expect(state.host.clickPrepares()).toEqual([])
+  expect(state.host.posts()).toEqual([])
+})
+
+it('a host refusal for a missing confirmation stays plain: no command in the sentence', async () => {
+  clickOn()
+  const user = userEvent.setup()
+  const form = await openAdd(user)
+  await user.upload(within(form).getByLabelText('Device certificate file'), [new File([CERT], 'c.json'), new File([DECL], 'd.json')])
+  // The host refuses as if the confirmation had not come (e.g. an older dashboard server dropped it).
+  state.host.override = (path, method) =>
+    path.endsWith('/click/prepare') && method === 'POST'
+      ? Response.json({ ok: false, exit: 3, error: { code: 'sign.convenience_readers', message: 'not declared', retryable: false, fix: 'orch member add --reader-decl PATH', detail: { reason: 'no_declaration', devices: [] } } }, { status: 409 })
+      : undefined
+  await user.click(within(form).getByRole('button', { name: 'Prepare to add' }))
+  const dialog = await screen.findByRole('dialog', { name: /Add Nia/ }, T)
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'Add Nia' }, T))
+  await waitFor(() => expect(dialog).toHaveTextContent(READERS_SENTENCE.no_declaration), T)
+  expect(dialog).not.toHaveTextContent(/orch member|--reader-decl|terminal/)
 })
 
 it('the member form refuses a key or certificate that cannot be one, before any request', async () => {
@@ -309,18 +381,23 @@ it('the member form refuses a key or certificate that cannot be one, before any 
   const form = await screen.findByRole('dialog')
   await user.type(within(form).getByLabelText('Name'), 'Nia')
   await user.click(within(form).getByRole('button', { name: 'Prepare to add' }))
-  expect(within(form).getAllByRole('alert').map((a) => a.textContent)).toEqual(['Choose or paste their public key.', 'Choose or paste their device certificate.'])
+  const noDecl = 'Nia needs to confirm they understand One click signatures. Add the confirmation file their orch app made with the certificate.'
+  expect(within(form).getAllByRole('alert').map((a) => a.textContent)).toEqual(['Choose or paste their public key.', 'Choose or paste their device certificate.', noDecl])
   await user.type(within(form).getByLabelText('Public key'), 'short')
   await user.type(within(form).getByLabelText('Device certificate'), '[[1')
   await user.click(within(form).getByRole('button', { name: 'Prepare to add' }))
-  expect(within(form).getAllByRole('alert').map((a) => a.textContent)).toEqual(['A public key is 87 characters of base64url (65 bytes).', 'The certificate file is not JSON.'])
+  expect(within(form).getAllByRole('alert').map((a) => a.textContent)).toEqual(['A public key is 87 characters of base64url (65 bytes).', 'The certificate file is not JSON.', noDecl])
   // A file larger than the field takes is refused before it is read.
   await user.upload(within(form).getByLabelText('Device certificate file'), new File(['x'.repeat(16385)], 'big.json', { type: 'application/json' }))
   expect(within(form).getByText(/big.json is larger than 16384 bytes/)).toBeInTheDocument()
+  await user.upload(within(form).getByLabelText('One click confirmation file'), new File(['x'.repeat(4097)], 'big-decl.json', { type: 'application/json' }))
+  expect(within(form).getByText(/big-decl.json is larger than 4096 bytes/)).toBeInTheDocument()
   expect(state.host.posts()).toEqual([])
+  expect(state.host.clickPrepares()).toEqual([])
 })
 
 it('Gates: the code review is never approved by the assignees and always independent; the policy goes out in full', async () => {
+  clickOn()
   const user = userEvent.setup()
   show('/w/DEMO/settings/gates')
   expect(await screen.findByRole('heading', { name: 'Who approves what?' }, T)).toBeInTheDocument()
@@ -332,14 +409,15 @@ it('Gates: the code review is never approved by the assignees and always indepen
   await user.click(screen.getByRole('radio', { name: 'Every ticket' }))
   await user.click(screen.getByRole('button', { name: 'Change code review policy' }))
   const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([
+  const panel = await prepareByClick(dialog, 'Change the code review gate')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([
     { action: 'policy_set', gate: 'code', policy: { approvers: ['maintainer', 'owner'], count: 1, not: ['assignees'], applies: 'all', independent: true } },
   ])
-  expect(dialog).toHaveTextContent('Change to a gate policy')
+  expect(panel).toHaveTextContent('FROM-THE-SIGNER policy.set')
 })
 
 it('Gates: another gate changes approvers and count; a policy with no approver is not saved', async () => {
+  clickOn()
   const user = userEvent.setup()
   show('/w/DEMO/settings/gates')
   await screen.findByRole('heading', { name: 'Who approves what?' }, T)
@@ -353,9 +431,9 @@ it('Gates: another gate changes approvers and count; a policy with no approver i
   await user.clear(count)
   await user.type(count, '2')
   await user.click(screen.getByRole('button', { name: 'Change plan policy' }))
-  await screen.findByRole('dialog', {}, T)
-  await waitFor(() => expect(state.host.posts().length).toBe(1))
-  expect(state.host.posts()[0].body).toMatchObject({ action: 'policy_set', gate: 'plan', policy: { approvers: ['maintainer', 'owner'], count: 2, not: [], applies: 'all', independent: false } })
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Change the plan gate')
+  expect(state.host.clickPrepares()).toHaveLength(1)
+  expect(state.host.clickPrepares()[0].body).toMatchObject({ action: 'policy_set', gate: 'plan', policy: { approvers: ['maintainer', 'owner'], count: 2, not: [], applies: 'all', independent: false } })
 })
 
 it('Gates: a non-owner reads the policies and cannot change them', async () => {
@@ -369,7 +447,8 @@ it('Gates: a non-owner reads the policies and cannot change them', async () => {
   expect(screen.getByRole('switch', { name: 'Require a code review before changes are added' })).toBeDisabled()
 })
 
-it('Agent access: an owner stops any active access in one step (a reason, one button), by hand-off', async () => {
+it('Agent access: an owner stops any active access in one step (a reason, one button), signed with One click', async () => {
+  clickOn()
   const user = userEvent.setup()
   show('/w/DEMO/settings/grants')
   expect(await screen.findByRole('heading', { name: 'Agent access' }, T)).toBeInTheDocument()
@@ -384,10 +463,10 @@ it('Agent access: an owner stops any active access in one step (a reason, one bu
   await user.click(screen.getByRole('button', { name: 'Stop access for Tom' }))
   const form = await screen.findByRole('dialog')
   await user.type(within(form).getByLabelText('Why (optional)'), 'no longer needed')
-  await user.click(within(form).getByRole('button', { name: 'Stop access' }))
-  await within(await screen.findByRole('dialog')).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'grant_revoke', grant: GRANT_B, reason: 'no longer needed' }])
-  expect(screen.getByRole('dialog')).toHaveTextContent('In your terminal you type GRANT.REVOKE to continue.')
+  const panel = await prepareByClick(form, 'Stop access')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'grant_revoke', grant: GRANT_B, reason: 'no longer needed' }])
+  expect(panel).toHaveTextContent('FROM-THE-SIGNER grant.revoke')
+  expect(state.host.posts()).toEqual([])
 })
 
 it('Agent access: a member gets the access the host gives them and stops only their own', async () => {

@@ -1,11 +1,12 @@
 import { effectiveState } from '@/api/shares'
 import { QueryClient } from '@tanstack/react-query'
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import ticket from '@/test/fixtures/server-m2/ticket.json'
+import { ARM_MS } from '@/api/click'
 import { setFeatures } from '@/api/features'
-import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { READS, clickOn, prepareByClick, show, useFakeHost, workspace } from '@/test/hostHarness'
 import { queryClient } from '@/production/Shell'
 
 // The production app on a fake server that speaks the Shares routes (Publish add-on). The link rule is tested here:
@@ -170,6 +171,7 @@ it('with the add-on off there is no Shares entry, no ticket box, and no call to 
 
 it('share files end to end: pick, prepare, read every file with its size, sign, then the link shows ONCE', async () => {
   route()
+  clickOn(state.host.workspaces[0])
   window.innerWidth = 1400
   const user = userEvent.setup()
   const setItem = vi.spyOn(Storage.prototype, 'setItem')
@@ -199,13 +201,11 @@ it('share files end to end: pick, prepare, read every file with its size, sign, 
   expect(within(files).getByRole('link', { name: 'Open report.md on the ticket' })).toHaveAttribute('href', expect.stringContaining('/ticket/DEMO-0001'))
   expect(calls('/shares/send')).toEqual([]) // nothing sent before the signature
   await user.click(within(confirm).getByRole('button', { name: 'Continue to approval' }))
-  await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
-  expect(calls('/handoff')[0].body).toMatchObject({ action: 'publish_share', key: 'DEMO-0001', staged_id: STAGED })
-  expect(calls('/shares/send')).toEqual([])
-  await screen.findByText('Waiting for approval in a terminal…', {}, T)
-  const rid = [...state.host.requests.keys()][0]
-  act(() => void state.host.submitted.set(rid, 'DEMO-0001')) // the person signed in the terminal
+  const sign = await readyToSign()
+  expect(calls('/shares/send')).toEqual([]) // nothing sent before the signature
+  sign()
   const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
+  expect(state.host.clickSigned).toHaveLength(1)
   expect(calls('/shares/send')).toHaveLength(1)
   expect(calls('/shares/send')[0].body).toMatchObject({ staged_id: STAGED })
   expect((within(dialog).getByLabelText('Link') as HTMLInputElement).value).toBe(LINK)
@@ -253,10 +253,12 @@ it('cancelling at the review drops the prepared copy and sends nothing', async (
   await waitFor(() => expect(calls('/shares/discard')).toHaveLength(1), T)
   expect(calls('/shares/send')).toEqual([])
   expect(calls('/handoff').filter((c) => c.method === 'POST')).toEqual([])
+  expect(state.host.clickPrepares()).toEqual([])
 })
 
 it('a server that does not know the workspace is said in words, with the admin step behind Technical details', async () => {
   route()
+  clickOn(state.host.workspaces[0])
   sendRefusal = { code: 'publish.server_refused', reason: 'unknown_workspace' }
   window.innerWidth = 1400
   const user = userEvent.setup()
@@ -267,9 +269,7 @@ it('a server that does not know the workspace is said in words, with the admin s
   expect(box).toHaveTextContent('prepared by an agent')
   await user.click(within(box).getByRole('button', { name: 'Review and sign' }))
   await user.click(await screen.findByRole('button', { name: 'Continue to approval' }, T))
-  await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
-  await screen.findByText('Waiting for approval in a terminal…', {}, T)
-  act(() => void state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001'))
+  ;(await readyToSign())()
   const alert = await screen.findByRole('alert', {}, { timeout: 9000 })
   expect(alert).toHaveTextContent('has not allowed this workspace yet')
   expect(alert).toHaveTextContent('Ask the person who runs the server to allow it')
@@ -279,6 +279,7 @@ it('a server that does not know the workspace is said in words, with the admin s
 
 it('Settings: the addresses in words, and the registration message when the server does not know the workspace', async () => {
   route()
+  clickOn(state.host.workspaces[0])
   registerRefusal = { code: 'publish.server_refused', reason: 'unknown_workspace' }
   const user = userEvent.setup()
   show('/w/DEMO/addons')
@@ -292,7 +293,7 @@ it('Settings: the addresses in words, and the registration message when the serv
   expect(reg).not.toHaveTextContent('publish.server_refused')
   expect((reg.textContent ?? '').match(/Ask the person who runs the server/g)).toHaveLength(1)
   expect(within(reg).getByText('Technical details').closest('details')).toHaveTextContent('orch-publish admin ws allow')
-  // changing the addresses is a signed hand-off with both addresses
+  // changing the addresses is signed with One click, with both addresses
   await user.click(within(box).getByRole('button', { name: 'Edit server' }))
   const dlg = await screen.findByRole('dialog', { name: 'Where shared files go' })
   await user.clear(within(dlg).getByLabelText('Files are sent to'))
@@ -304,8 +305,10 @@ it('Settings: the addresses in words, and the registration message when the serv
   await user.clear(within(dlg).getByLabelText('Links open at'))
   await user.type(within(dlg).getByLabelText('Links open at'), 'https://apps.example.org')
   await user.click(within(dlg).getByRole('button', { name: 'Review and sign' }))
-  await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
-  expect(calls('/handoff')[0].body).toEqual({ action: 'publish_setup', server: 'https://pub.example.org', share: 'https://apps.example.org' })
+  const outcome = await screen.findByRole('button', { name: 'Choose where shared files go' }, T)
+  await prepareByClick(outcome.closest('[role="dialog"]') as HTMLElement, 'Choose where shared files go')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'publish_setup', server: 'https://pub.example.org', share: 'https://apps.example.org' }])
+  expect(calls('/handoff').filter((c) => c.method === 'POST')).toEqual([])
 })
 
 it('Settings: the Publish row says what it needs; Check connection is a read-only probe with honest states; Open Shares links on', async () => {
@@ -333,14 +336,31 @@ it('Settings: an unconfigured Publish says it needs a server address', async () 
   expect(within(box).getByRole('button', { name: 'Set up' })).toBeInTheDocument()
 })
 
-/** Share through to the signature on the ticket page; returns when the host has been told it is signed. */
 /** Publish's settings open in place under its row. */
 async function openPublish() {
   await userEvent.setup().click(await screen.findByTestId('addon-publish-expand', {}, T))
   return await screen.findByTestId('publish-server', {}, T)
 }
 
+/** The approval step after "Continue to approval": its outcome button prepares through the signer (no terminal hand-off);
+ * returns the press of the armed Sign. */
+async function readyToSign() {
+  const outcome = await screen.findByRole('button', { name: 'Share files of DEMO-0001' }, T)
+  const dialog = outcome.closest('[role="dialog"]') as HTMLElement
+  await prepareByClick(dialog, 'Share files of DEMO-0001')
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'publish_share', key: 'DEMO-0001', staged_id: STAGED }])
+  expect(calls('/handoff').filter((c) => c.method === 'POST')).toEqual([])
+  const sign = within(dialog).getByRole('button', { name: /^Sign( |$)/ })
+  await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  return () => {
+    fireEvent.pointerDown(sign)
+    fireEvent.click(sign)
+  }
+}
+
+/** Share through to the armed signature on the ticket page; returns its press. */
 async function signedShare(user: ReturnType<typeof userEvent.setup>) {
+  clickOn(state.host.workspaces[0])
   window.innerWidth = 1400
   show('/w/DEMO/ticket/DEMO-0001')
   await user.click(within(await screen.findByTestId('ticket-shares', {}, T)).getByRole('button', { name: 'Share files' }))
@@ -348,14 +368,13 @@ async function signedShare(user: ReturnType<typeof userEvent.setup>) {
   await user.click(within(form).getByRole('checkbox', { name: /report\.md/ }))
   await user.click(within(form).getByRole('button', { name: 'Review selected files' }))
   await user.click(within(await screen.findByRole('dialog', { name: 'Review your share' }, T)).getByRole('button', { name: 'Continue to approval' }))
-  await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
-  await screen.findByText('Waiting for approval in a terminal…', {}, T)
+  return readyToSign()
 }
 
 it('the link stays on screen until Done when the list cannot be read after the send', async () => {
   route()
   const user = userEvent.setup()
-  await signedShare(user)
+  const sign = await signedShare(user)
   const inner = state.host.override!
   state.host.override = (path, method, body) => {
     if (path.endsWith('/shares/send')) {
@@ -368,7 +387,7 @@ it('the link stays on screen until Done when the list cannot be read after the s
     }
     return inner(path, method, body)
   }
-  act(() => void state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001'))
+  sign()
   const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
   await act(async () => {
     await queryClient.invalidateQueries({ queryKey: ['shares'] })
@@ -382,8 +401,7 @@ it('the link stays on screen until Done when the list cannot be read after the s
 it('the link stays on screen until Done when the Publish feature flips off after the send', async () => {
   route()
   const user = userEvent.setup()
-  await signedShare(user)
-  act(() => void state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001'))
+  ;(await signedShare(user))()
   const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
   const inner = state.host.override!
   state.host.override = (p, m, b) => (p.endsWith('/shares') && m === 'GET' ? Response.json({ available: false }) : inner(p, m, b))
@@ -399,20 +417,20 @@ it('the link stays on screen until Done when the Publish feature flips off after
 
 it('on the Shares page the link also stays until Done when the list then fails to load', async () => {
   route()
+  clickOn(state.host.workspaces[0])
   staged = [{ staged_id: STAGED, ticket: 'DEMO-0001', kind: 'secret', days: 7, views: 0, origin: 'agent', files: [FILE], created_at: '2026-10-18T08:00:00Z' }]
   const user = userEvent.setup()
   show('/w/DEMO/shares')
   await user.click(await screen.findByRole('button', { name: 'Review and sign' }, T))
   await user.click(await screen.findByRole('button', { name: 'Continue to approval' }, T)) // the dialog's own
-  await waitFor(() => expect(calls('/handoff').filter((c) => c.method === 'POST')).toHaveLength(1), T)
-  await within(await screen.findByRole('dialog', {}, T)).findByText('Waiting for approval in a terminal…', {}, T)
+  const sign = await readyToSign()
   const inner = state.host.override!
   state.host.override = (p, m, b) => {
     const res = inner(p, m, b)
     if (p.endsWith('/shares/send')) state.host.override = (p2, m2, b2) => (p2.endsWith('/shares') && m2 === 'GET' ? Response.json({ ok: false, error: { code: 'host.unavailable', message: 'x', retryable: true } }, { status: 503 }) : inner(p2, m2, b2))
     return res
   }
-  act(() => void state.host.submitted.set([...state.host.requests.keys()][0], 'DEMO-0001'))
+  sign()
   const dialog = await screen.findByRole('dialog', { name: 'Your link' }, { timeout: 9000 })
   await act(async () => {
     await queryClient.invalidateQueries({ queryKey: ['shares'] })

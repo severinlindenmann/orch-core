@@ -332,8 +332,10 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
     case 'sign.convenience_readers': {
       const r = refusalOf(e)!
-      // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays.
-      return { title: 'This would add a reader', body: [r.reason ? refusalSentence(r) : e.message, e.hint, typeof e.fix === 'string' ? e.fix : e.fix ? JSON.stringify(e.fix) : null].filter(Boolean).join(' '), next: 'unavailable', devices: r.devices }
+      // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays. The host's
+      // hint and fix name terminal commands: folded under the technical details, never in the sentence.
+      const tech = [e.hint, typeof e.fix === 'string' ? e.fix : e.fix ? JSON.stringify(e.fix) : null].filter(Boolean).join(' ')
+      return { title: 'This would add a reader', body: r.reason ? refusalSentence(r) : e.message, next: 'unavailable', devices: r.devices, ...(tech ? { details: tech } : {}) }
     }
     case 'reader.decl_invalid':
       return { title: 'The reader declaration did not verify', body: refusalSentence(refusalOf(e)!), next: 'unavailable' }

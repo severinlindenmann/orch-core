@@ -2,7 +2,7 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { uuid8 } from '@/api/workspaces'
-import { useFakeHost, workspace, show } from '@/test/hostHarness'
+import { clickOn, prepareByClick, useFakeHost, workspace, show } from '@/test/hostHarness'
 
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
@@ -114,7 +114,8 @@ it('the workspace list keeps working when one host stops while the page is open'
   expect(screen.getByText('Real P1 ticket')).toBeInTheDocument()
 })
 
-it('switching workspace with a hand-off panel open cancels that request at the host', async () => {
+it('switching workspace with a One click review open cancels that request at the host', async () => {
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
   await screen.findByRole('list', { name: 'People' }, T)
@@ -124,25 +125,35 @@ it('switching workspace with a hand-off panel open cancels that request at the h
   await waitFor(() => expect(location.search).toBe(`?ws=${uuid8(A)}`))
   await user.click(await screen.findByRole('button', { name: 'Remove Tom' }, T))
   const dialog = await screen.findByRole('dialog', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().length).toBe(1)
-  expect(state.host.deletes()).toEqual([])
+  await prepareByClick(dialog, /Remove/)
+  expect(state.host.clickPrepares().length).toBe(1)
+  expect(state.host.clickPrepares()[0].path).toBe(`/api/w/${A}/click/prepare`)
+  expect(state.host.clickCancelled).toEqual([])
   act(() => history.back()) // another workspace, by the address (Back, a pasted link)
   await waitFor(() => expect(location.search).toBe(`?ws=${uuid8(B)}`), T)
-  await waitFor(() => expect(state.host.cancelled.length).toBe(1), T)
-  expect(state.host.cancelled[0].startsWith(`${A}:hr_`)).toBe(true) // cancelled in the workspace it was prepared in
+  await waitFor(() => expect(state.host.clickCancelled.length).toBe(1), T)
+  expect(state.host.clickCancelled[0].startsWith(`${A}:hr_`)).toBe(true) // cancelled in the workspace it was prepared in
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), T)
-  expect(state.host.deletes().length).toBe(1)
+  expect(state.host.clickSigned).toEqual([])
+  expect(state.host.posts()).toEqual([]) // no terminal hand-off
 })
 
-it('the trigger and the hand-off dialog say which workspace when the prefix is shared', async () => {
+/** Remove Tom in workspace B with One click: the signer's review, with its workspace line. */
+const reviewWorkspace = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
+  const panel = await prepareByClick(await screen.findByRole('dialog', {}, T), /Remove/)
+  return within(panel).getByTestId('click-workspace')
+}
+
+it('the trigger and the review say which workspace when the prefix is shared', async () => {
+  clickOn(state.host.workspaces[1])
   const user = userEvent.setup()
   show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
   await screen.findByRole('list', { name: 'People' }, T)
   expect(document.querySelector('[data-ws-uuid-current]')).toHaveTextContent(uuid8(B))
-  await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
-  const dialog = await screen.findByRole('dialog', {}, T)
-  expect(within(dialog).getByTestId('handoff-workspace')).toHaveTextContent(`DEMO id ${uuid8(B)} · Mobile`)
+  const line = await reviewWorkspace(user)
+  expect([...line.querySelectorAll(':scope > bdi')].map((b) => b.textContent)).toEqual(['DEMO', 'Mobile'])
+  expect(line.querySelector('[data-ws-id]')?.textContent).toBe(`id ${B}`)
 })
 
 it('a ticket address with a shared prefix and no matching hint reads no ticket', async () => {
@@ -167,17 +178,16 @@ it('an older link with the FIRST 8 characters of the id names nothing: it asks w
 
 it('a name with a bidi override is shown escaped and cannot fake or reorder the short id', async () => {
   const user = userEvent.setup()
+  clickOn(state.host.workspaces[1])
   state.host.workspaces[1].name = 'Main\u202e (a1b2c3d4)'
   show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
   await screen.findByRole('list', { name: 'People' }, T)
-  await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
-  const dialog = await screen.findByRole('dialog', {}, T)
-  const line = within(dialog).getByTestId('handoff-workspace')
+  const line = await reviewWorkspace(user)
   expect(line.textContent).toContain('\\u{202e}')
   expect(line.textContent).not.toContain('\u202e')
   expect(line.querySelector('bdi')).not.toBeNull() // the name is isolated
-  expect(line.querySelector('[data-ws-id]')?.textContent).toBe(`id ${uuid8(B)}`) // the real id, in its own element
-  await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+  expect(line.querySelector('[data-ws-id]')?.textContent).toBe(`id ${B}`) // the real id, in its own element
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
   await user.click(screen.getByRole('button', { name: 'Switch workspace' }))
   const row = await screen.findByRole('button', { name: new RegExp(`${uuid8(A)}`) })
   expect(row).toBeInTheDocument()
@@ -188,14 +198,13 @@ it('a name with a bidi override is shown escaped and cannot fake or reorder the 
 
 it('a name that looks like an id comes after the real id, which sits in its own badge', async () => {
   const user = userEvent.setup()
+  clickOn(state.host.workspaces[1])
   state.host.workspaces[1].name = `Main id ${uuid8(A)}`
   show(`/w/DEMO/settings/members?ws=${uuid8(B)}`)
   await screen.findByRole('list', { name: 'People' }, T)
-  await user.click(screen.getByRole('button', { name: 'Remove Tom' }))
-  const dialog = await screen.findByRole('dialog', {}, T)
-  const line = within(dialog).getByTestId('handoff-workspace')
-  expect(line.textContent?.indexOf(`id ${uuid8(B)}`)).toBeLessThan(line.textContent!.indexOf('Main'))
-  expect(line.querySelector('[data-ws-id]')?.textContent).toBe(`id ${uuid8(B)}`)
+  const line = await reviewWorkspace(user)
+  expect(line.textContent?.indexOf(`id ${B}`)).toBeLessThan(line.textContent!.indexOf('Main'))
+  expect(line.querySelector('[data-ws-id]')?.textContent).toBe(`id ${B}`)
 })
 
 it('default-ignorable and private-use characters in a name are shown by number in the trigger', async () => {

@@ -84,7 +84,7 @@ describe('Complete details after a signed new ticket', () => {
     s.prepare
       .mockResolvedValueOnce({ request_id: REQ(3), expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'set', confirm: 'click' })
       .mockResolvedValueOnce({ request_id: REQ(4), expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'section.set', confirm: 'click' })
-    s.view.mockImplementation(async (_ws, id) => view(id === REQ(3) ? 'Set DEMO-0044 priority high' : 'Set DEMO-0044 requirements'))
+    s.view.mockImplementation(async (_ws: string, id: string) => view(id === REQ(3) ? 'Set DEMO-0044 priority high' : 'Set DEMO-0044 requirements'))
     s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: KEY, seq: 5 })
     const { onFinish } = mount([DETAILS, SECTION])
     fireEvent.click(await screen.findByRole('button', { name: 'Prepare details' }))

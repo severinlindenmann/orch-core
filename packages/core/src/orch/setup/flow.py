@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import claude_folder
 from . import facts as facts_mod
 from . import review as review_mod
 from .protocol import AGENT_HOURS, METHODS, SetupError, validate_profile
@@ -207,6 +208,7 @@ class SetupFlow:
             "click_risk": CONVENIENCE_RISK,
             "agent_hours": list(AGENT_HOURS),
             "git": facts.git_state(Path(self.dir)) if self.dir else {"repo": True},
+            "claude": {"available": claude_folder.claude_installed(self.e.env)},
             "relay": {"available": bool(relay.get("available")), "enabled": bool(relay.get("enabled"))},
             "missing": missing,
             "missing_words": [facts.label(m, self.addons) for m in missing],
@@ -361,6 +363,8 @@ class SetupFlow:
             ids += ["custody", "flags"]
         if any(f["id"] == "records" for f in plan.flags):
             ids.append("records")
+        if any(f["id"] == "trust" for f in plan.flags):
+            ids.append("trust")
         return ids
 
     def _work(self, creator: Creator) -> None:

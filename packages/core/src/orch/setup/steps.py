@@ -362,6 +362,7 @@ class Ports(Protocol):
     def runner_hello(self, wid: str, timeout: float) -> bool: ...
     def runner_refresh(self) -> None: ...
     def records_setup(self, wid: str, root: Path) -> None: ...
+    def trust_folder(self, root: Path) -> bool | None: ...
     def workspace(self, wid: str) -> Any: ...  # a connection: .call(op, args, **kw) -> result dict; .close()
     def unlock(self, wid: str, passphrase: str | None, digest: str, fields: tuple[tuple[str, str], ...]) -> Any: ...
     def convenience_on(self, wid: str) -> None: ...
@@ -441,6 +442,7 @@ STEP_LABELS = {
     "runner_grant": "Letting agents start on this computer",
     "custody": "Storing your key for one-click approval",
     "records": "Setting up the records history on this computer",
+    "trust": "Letting Claude Code trust this folder",
 }
 HELLO_SECONDS = 30.0
 
@@ -526,6 +528,7 @@ class Creator:
             self._custody()  # the key moves into click custody FIRST ...
             self._flags()  # ... and the convenience flag is set LAST: never "flag on, key not held"
             self._records()
+            self._trust()
             self.run.done = True
         except KeyboardInterrupt:
             self._fail(SetupError("stop", "setup was stopped from the terminal", 409), post_genesis)
@@ -640,6 +643,17 @@ class Creator:
             self.run.set("git", "failed")
             raise SetupError("git.init_failed", f"git init failed ({type(exc).__name__})", 500) from None
         self.run.set("git", "done")
+
+    def _trust(self) -> None:
+        """Claude Code's folder trust for the new folder (run-12a FB16). Best effort: a failure never stops setup."""
+        if not any(f["id"] == "trust" for f in self.plan.flags):
+            return
+        self.run.set("trust", "doing")
+        try:
+            ok = self.ports.trust_folder(self.root)
+        except Exception:  # noqa: BLE001 - Claude Code simply asks itself, as before
+            ok = False
+        self.run.set("trust", "skipped" if ok is False else "done")
 
     def _records(self) -> None:
         """The records step (run 8, owner 1.8): the same code as ``orch records init``, then local auto-commit on (never
@@ -1012,6 +1026,11 @@ class RealPorts:
     # -- the runner (D-P2-31)
     def git_init(self, root: Path) -> None:
         init_repository(root)
+
+    def trust_folder(self, root: Path) -> bool:
+        from .claude_folder import trust_folder
+
+        return trust_folder(self.env, root)
 
     def records_setup(self, wid: str, root: Path) -> None:
         """``orch records init`` and ``orch records auto on`` (no ``--push``): the records tool's own code, with the

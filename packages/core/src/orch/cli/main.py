@@ -317,6 +317,10 @@ def main(
         from orch.setup.flow import main as setup_main
 
         return setup_main(args[1:], env=env, out=out, err=err)
+    if args[:1] in (["stop"], ["start"], ["services"]):  # stop/start what orch runs here (orch.lifecycle)
+        from orch.lifecycle.cli import main as lifecycle_main
+
+        return lifecycle_main(args[1:], env=env, out=out, err=err, cmd=args[0])
     if args[:1] == ["install"]:  # hub, relay and publish as background services of this person (run-9 fb 6)
         from orch.install.cli import main as install_main
 

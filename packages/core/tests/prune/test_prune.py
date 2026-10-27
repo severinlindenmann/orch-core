@@ -170,6 +170,8 @@ class Machine:
                 return [f"{WID}/d_{'1' * 32}", "something-else"]
 
             def delete(self, account):
+                if getattr(m, "kc_refuse", False):
+                    raise RuntimeError("CustodyError: keychain error -25244")
                 m.keychain_deleted.append(account)
 
         return H()
@@ -191,6 +193,7 @@ class Machine:
             euid=1000,
             uid=501,
             root_exists=lambda p: False,
+            hub_status=lambda root, env: getattr(self, "joined", True),
             hub_leave=lambda root, env: (
                 (self.left.append(root) or True, "ok") if hasattr(self, "left") else (True, "ok")
             ),
@@ -845,7 +848,7 @@ def test_b5_a_surprise_in_a_step_still_gives_the_report(m, monkeypatch):
     monkeypatch.setattr(X, "rm_tree", lambda p: (_ for _ in ()).throw(KeyError("boom")))
     assert m.go("--workspaces", "keep") == 1
     out = m.out.getvalue()
-    assert "orch host prune stopped" in out and "KeyError" in out and "Still on this computer" in out
+    assert "could not be removed and were skipped" in out and "KeyError" in out and "fix: Delete" in out
 
 
 def test_b5_a_file_that_is_not_utf8_is_skipped_with_a_note(m):
@@ -913,7 +916,8 @@ def test_b7_a_root_swapped_for_a_link_after_the_inventory_is_refused(m):
     m.ws.rename(moved)
     os.symlink(evil, m.ws)
     res = X.execute(ctx, inv, [s for s in steps if s.kind == "tree" and s.path.startswith(str(m.ws))])
-    assert res.failed is not None and "not the folder prune found" in res.error
+    assert res.skipped and all("not the folder prune found" in why for _, why, _ in res.skipped)
+    assert not res.done
     assert (evil / ".orch" / "keep.txt").read_text() == "precious"
 
 
@@ -1161,3 +1165,70 @@ def test_the_report_never_names_a_vpn_product(m):
     assert m.prune("--dry-run") == 0
     text = m.out.getvalue()
     assert "NetBird" not in text and "private network (VPN)" in text
+
+
+# ------------------------------------------------------------------------------------ run 12a, round 2
+
+
+def test_a_keychain_item_that_refuses_deletion_is_skipped_and_the_run_goes_on(m):
+    m.w(m.home / "Library" / "Keychains" / "login.keychain-db")
+    m.kc_refuse = True
+    assert m.go("--workspaces", "keep") == 1  # non-zero: something was skipped
+    out = m.out.getvalue()
+    assert "Skipped (everything else was removed)" in out and "-25244" in out
+    assert "Open Keychain Access" in out and "security delete-generic-password -s io.orch.device-key -a" in out
+    assert not (m.state / "host").exists() and not (m.home / ".local/share/orch").exists()  # the rest was removed
+    assert not (m.ws / ".orch").exists() and ["uv", "tool", "uninstall", "orch-core"] in m.calls
+    assert "orch host prune stopped" not in out
+
+
+def test_a_service_that_cannot_be_stopped_still_stops_the_run(m):
+    m.runner.fail = "hub"
+    assert m.go("--workspaces", "keep") == 1
+    assert "orch host prune stopped" in m.out.getvalue() and m.state.exists()
+
+
+def test_every_skipped_item_names_its_own_fix(m, monkeypatch):
+    real = X.rm_tree
+    monkeypatch.setattr(
+        X, "rm_tree", lambda p: (_ for _ in ()).throw(OSError("busy")) if p.name == "person" else real(p)
+    )
+    assert m.go("--workspaces", "keep") == 1
+    out = m.out.getvalue()
+    assert f"Delete {m.state / 'person'} by hand" in out
+    assert not (m.state / "host").exists()  # the items that do not depend on it went
+
+
+def test_a_workspace_with_leftover_hub_files_that_already_left_gets_no_question(m):
+    m.joined = False
+    m.left = []
+    m.answers = ["y", "n"]  # remove all; keep the folder. A hub question would consume the next answer
+    assert m.prune(interactive=True) == 0
+    assert not any("Tell the hub" in a for a in m.asked) and m.left == []
+    assert "left its hub earlier" in m.out.getvalue()
+    assert "hub membership" not in m.out.getvalue().split("Done:")[-1]
+
+
+def test_a_workspace_whose_hub_status_cannot_be_read_is_not_asked_either(m):
+    m.joined = None
+    m.left = []
+    m.answers = ["y", "n"]
+    assert m.prune(interactive=True) == 0
+    assert not any("Tell the hub" in a for a in m.asked) and "could not read its hub status" in m.out.getvalue()
+
+
+def test_the_live_hub_status_reader_understands_the_cli_answers(tmp_path, monkeypatch):
+    from orch.prune import model
+
+    def fake(out):
+        return lambda *a, **k: type("R", (), {"stdout": out, "stderr": ""})()
+
+    for text, want in (
+        ('{"hub_id": "h1", "joined": true}', True),
+        ('{"hub_id": "h1", "joined": false}', False),
+        ('{"ok": true, "result": {"data": {"hub_id": null}}}', False),
+        ("error hub.not_joined: this workspace is not joined to a hub", False),
+        ("garbage", None),
+    ):
+        monkeypatch.setattr(model.subprocess, "run", fake(text))
+        assert model._hub_joined(tmp_path, {"HOME": str(tmp_path)}) is want, text

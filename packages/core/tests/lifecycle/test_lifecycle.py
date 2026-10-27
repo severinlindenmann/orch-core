@@ -406,7 +406,14 @@ def test_stop_workspace_ends_its_agents_through_the_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_here", lambda env, cwd: (str(tmp_path / "ws1"), WID))
     (e.state / "host").mkdir(parents=True)
     (e.state / "host" / "workspaces.json").write_text(
-        json.dumps({"workspaces": [{"root": str(tmp_path / "ws2"), "workspace_id": OTHER}]})
+        json.dumps(
+            {
+                "workspaces": [
+                    {"root": str(tmp_path / "ws1"), "workspace_id": WID},
+                    {"root": str(tmp_path / "ws2"), "workspace_id": OTHER},
+                ]
+            }
+        )
     )
     write_run(e.state, WID, "r_1", 500)
     e.procs = FakeProcs({500: 4242})
@@ -493,3 +500,28 @@ def test_orch_host_enable_after_orch_stop_enables_the_label_again(tmp_path):
     enable.Manager(unit, fake).start(changed=False)
     assert ["launchctl", "enable", "gui/501/io.orch.host"] in ran
     assert stopped_by_orch(state) == set()
+
+
+def test_a_folder_config_naming_another_workspace_is_refused_and_nothing_is_stopped(tmp_path, monkeypatch):
+    e, m, runner, out, err = machine(tmp_path, "darwin")
+    # the folder's config claims OTHER's id; the host's registry says this folder is WID
+    monkeypatch.setattr(cli, "_here", lambda env, cwd: (str(tmp_path / "ws1"), OTHER))
+    (e.state / "host").mkdir(parents=True)
+    (e.state / "host" / "workspaces.json").write_text(
+        json.dumps({"workspaces": [{"root": str(tmp_path / "ws1"), "workspace_id": WID}]})
+    )
+    write_run(e.state, OTHER, "r_9", 900)
+    e.procs = FakeProcs({900: 99})
+    assert run_cli(e, [], "stop") == 1
+    assert "differs from the one this computer's host has" in err.getvalue()
+    assert e.procs.sent == [] and m.loaded  # the other workspace's agent and every service untouched
+
+
+def test_a_malformed_registry_id_is_refused_before_any_path_is_built(tmp_path, monkeypatch):
+    e, m, runner, out, err = machine(tmp_path, "darwin")
+    monkeypatch.setattr(cli, "_here", lambda env, cwd: (str(tmp_path / "ws1"), None))
+    (e.state / "host").mkdir(parents=True)
+    (e.state / "host" / "workspaces.json").write_text(
+        json.dumps({"workspaces": [{"root": str(tmp_path / "ws1"), "workspace_id": "../../x"}]})
+    )
+    assert run_cli(e, [], "stop") == 1 and "not valid" in err.getvalue()

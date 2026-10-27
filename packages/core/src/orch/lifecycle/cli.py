@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any, TextIO
 
@@ -62,6 +63,27 @@ def _here(env: Mapping[str, str], cwd: str | None) -> tuple[str, str | None] | N
         return None
     wid = ((found.config or {}).get("workspace") or {}).get("id")
     return os.path.abspath(found.path), (wid.removeprefix("w_") if isinstance(wid, str) else None)
+
+
+_WID = re.compile("[0-9a-f]{32}")
+
+
+def _bind(e: Env, here: tuple[str, str | None]) -> tuple[tuple[str, str | None] | None, str]:
+    """``((root, workspace id), "")`` with the id from the host's registry entry of this folder; the folder's own
+    config (which a cloned repo or an agent can write) only found the root. Disagreement: ``(None, why)``."""
+    root, claimed = here
+    reg: str | None = None
+    for r, w in known_workspaces(e):
+        if r == root:
+            reg = w
+    if reg is not None and not _WID.fullmatch(reg):
+        return None, f"the host's registry names a workspace id for {root} that is not valid"
+    if claimed is not None and reg is not None and claimed != reg:
+        return None, (
+            f"the workspace id in {root} differs from the one this computer's host has for that folder; "
+            "nothing was stopped. Look at the folder's .orch/config.json, or run: orch stop all"
+        )
+    return (root, reg), ""
 
 
 def table(e: Env, svcs: list[Svc]) -> None:
@@ -176,6 +198,11 @@ def main(
         return 0
     dry = "--dry-run" in flags
     here = _here(env, cwd)
+    if here is not None:
+        here, why = _bind(e, here)
+        if here is None:
+            err.write(f"orch {cmd}: {why}\n")
+            return 1
     marked = stopped_by_orch(e.state)
     if cmd == "stop":
         if scope_word == "all":

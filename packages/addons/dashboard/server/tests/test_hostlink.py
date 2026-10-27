@@ -3,6 +3,7 @@ import os
 import socket
 import struct
 import threading
+import time
 
 import pytest
 
@@ -219,33 +220,43 @@ def test_hub_reads_are_plain_reads_decided_by_the_listed_op():
         t.join(2)
 
 
-def test_hot_reads_are_cached_per_link_and_a_write_drops_them():
-    """Perf (run 13 F2): addon.list is asked on almost every request; one host round trip serves the repeats."""
+def test_queued_hot_reads_share_one_answer_but_a_later_call_always_asks_again():
+    """Perf (run 13 F2) without a stale gate: callers that queued behind a slow call share one fresh answer; a call that
+    starts after an answer came back (a member removed, an add-on turned off in between) asks the host again."""
     a, b = socket.socketpair()
     seen = []
+    first_in = threading.Event()
 
     def host():
         with b:
             receive(b)
-            b.sendall(encode(welcome(ops={"addon.list": 1, "ticket.new": 1})))
-            for _ in range(3):
+            b.sendall(encode(welcome(ops={"addon.list": 1})))
+            for n in range(1, 4):
                 req = receive(b)
                 seen.append(req["op"])
-                data = {"addons": [{"name": str(len(seen))}]}
+                if n == 1:
+                    first_in.set()
+                    time.sleep(0.4)  # the callers below queue on the link meanwhile
+                data = {"addons": [{"name": str(n)}]}
                 b.sendall(encode({"t": "res", "id": req["id"], "ok": True, "result": {"data": data}}))
 
     t = threading.Thread(target=host)
     t.start()
     link = HostLink(a, os.getuid(), WS)
+    got = []
     try:
-        first = link.call("addon.list")
-        first["addons"].clear()  # a caller changing its copy must not change the cache
-        assert link.call("addon.list") == {"addons": [{"name": "1"}]}
-        assert link.call("addon.list") == {"addons": [{"name": "1"}]}
-        assert seen == ["addon.list"]  # one round trip for three calls
-        link.call("ticket.new", {"title": "x"}, write=True, idem="i1")
-        assert link.call("addon.list") == {"addons": [{"name": "3"}]}  # the write dropped the cache
-        assert seen == ["addon.list", "ticket.new", "addon.list"]
+        threads = [threading.Thread(target=lambda: got.append(link.call("addon.list"))) for _ in range(1)]
+        threads[0].start()
+        first_in.wait(2)
+        waiters = [threading.Thread(target=lambda: got.append(link.call("addon.list"))) for _ in range(3)]
+        for w in waiters:
+            w.start()
+        for w in [*threads, *waiters]:
+            w.join(5)
+        assert seen == ["addon.list", "addon.list"]  # the first call, then ONE request for the three that queued
+        assert sorted(g["addons"][0]["name"] for g in got) == ["1", "2", "2", "2"]
+        first = link.call("addon.list")  # started after the answers: it must ask the host, never reuse
+        assert first == {"addons": [{"name": "3"}]} and len(seen) == 3
     finally:
         link.close()
         t.join(2)

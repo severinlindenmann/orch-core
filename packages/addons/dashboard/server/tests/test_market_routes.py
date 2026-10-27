@@ -40,7 +40,7 @@ class Host:
 def host(gateway, monkeypatch):
     fake = Host()
     monkeypatch.setattr(gateway, "enabled", lambda ws: fake)
-    monkeypatch.setattr(gateway, "new_link", lambda ws: fake)  # remote ops (refresh, add, stage) use a link of their own
+    monkeypatch.setattr(gateway, "new_link", lambda ws: fake)  # remote ops use a link of their own
     return fake
 
 

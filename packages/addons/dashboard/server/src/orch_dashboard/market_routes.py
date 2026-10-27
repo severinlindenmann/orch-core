@@ -78,8 +78,9 @@ def register(app: FastAPI, gateway: Gateway) -> None:
 
     def write(ws: str, op: str, args: dict):
         if op in REMOTE_OPS:
-            # These ops fetch from the network (seconds, or a connect timeout). The workspace's shared host link answers one
-            # call at a time, so on it a slow fetch would freeze every other page of the dashboard: they get a connection of their own (the terminals do the same).
+            # These ops fetch from the network (seconds, or a connect timeout). The workspace's shared host link
+            # answers one call at a time, so on it a slow fetch would freeze every other page of the dashboard: they get
+            # a connection of their own (the terminals do the same).
             gateway.enabled(ws)
             link = gateway.new_link(ws)
             try:

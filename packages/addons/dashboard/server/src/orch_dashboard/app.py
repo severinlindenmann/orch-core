@@ -17,6 +17,7 @@ from . import (
     addon_routes,
     addon_switches,
     agents,
+    claude_trust_routes,
     click,
     focus_routes,
     followups,
@@ -304,6 +305,7 @@ def create_app(
     hub.register(app, gateway)
     switch.register(app, gateway, auth)
     trust_routes.register(app, auth)
+    claude_trust_routes.register(app, gateway, auth)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
     signprefs.register(app, gateway)

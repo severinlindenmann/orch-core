@@ -110,6 +110,10 @@ def register(app, gateway):
     def init(body: Empty, ws: str = Depends(workspace)):
         return admin(ws, "init")
 
+    @app.post("/api/w/{ws}/records/auto-on")
+    def auto_on(body: Empty, ws: str = Depends(workspace)):
+        return admin(ws, "auto-on")
+
     @app.post("/api/w/{ws}/records/remote")
     def remote(body: Mark, ws: str = Depends(workspace)):
         if body.on != (body.url is not None) or (body.url is not None and not valid_url(body.url)):

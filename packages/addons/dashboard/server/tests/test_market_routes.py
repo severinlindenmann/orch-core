@@ -32,11 +32,15 @@ class Host:
             raise answer
         return answer
 
+    def close(self):
+        pass
+
 
 @pytest.fixture
 def host(gateway, monkeypatch):
     fake = Host()
     monkeypatch.setattr(gateway, "enabled", lambda ws: fake)
+    monkeypatch.setattr(gateway, "new_link", lambda ws: fake)  # remote ops use a link of their own
     return fake
 
 

@@ -215,7 +215,6 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str | None]] = {
             "dev_host",
         ),
     },
-    "sign.hub_only": {"reason": ("hub",)},  # V3 C11
     # V3 G4 (design section 4): why a dependency environment was refused or no longer verifies (fixed words)
     "market.env_failed": {
         "reason": (

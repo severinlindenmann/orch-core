@@ -30,10 +30,10 @@ import { SectionsEditor } from './SectionsEditor'
 import { AgentLine, NotSignedBlock } from './AgentLine'
 import { harnessName } from '@/components/agents/AgentChoice'
 import type { StartPlan } from './useStartPlan'
-import { StartAgentDialog, type StartInitial } from '@/app/terminal/real/StartAgentDialog'
+import type { StartInitial } from '@/app/terminal/real/StartAgentDialog'
 import { cn } from '@/lib/utils'
 import { newIdem } from '@/api/runs'
-import { useStartAfterCreate } from './useStartAfterCreate'
+import { failMark, startInBackground } from '../ticket/progress'
 import { useStartPlan } from './useStartPlan'
 import type { Reviewed } from './startAfterCreate'
 import { queries } from '@/api/queries'
@@ -42,6 +42,7 @@ import { useMe } from '@/app/useMe'
 const TYPES: TicketType[] = ['feature', 'bug', 'chore', 'spike', 'epic']
 const PRIORITIES = (Object.keys(PRIORITY_RANK) as Priority[]).sort((a, b) => PRIORITY_RANK[b] - PRIORITY_RANK[a])
 const SIZES: Size[] = ['xs', 's', 'm', 'l', 'xl']
+const NO_ACCESS = 'Agent access is not confirmed yet. Start an agent to give access.'
 /**
  * A new ticket through the hand-off is ONE review and ONE confirmation (B11, finding 9): the title, the type, the
  * fields and every written section go to the signer as one intent. The signer signs `ticket.created`, the fields and one
@@ -368,9 +369,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   const secondaryRef = useRef<HTMLButtonElement>(null)
   const handoffOn = handoffMode(workspace.id)
   const plan = useStartPlan(workspace, me.person)
-  const after = useStartAfterCreate()
   const partialKey = useRef<{ key: string; initial: StartInitial } | null>(null)
-  const busyAfter = after.state.kind !== 'idle'
   // The access would be one signature too many: say so now, and create without starting (no surprise at the click).
   const tooMany = useMemo(() => {
     if (!plan.available || !plan.needsGrant) return false
@@ -473,20 +472,19 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     ticketExists()
     setHandoffNew(null)
     // One click signed the agent access too: only a confirmed hand-over to the runner counts as access given.
-    if (start && ticketKey && start.withAccess && deposit !== undefined && deposit !== 'confirmed') return after.noAccess(ticketKey, initialOf(start))
+    if (start && ticketKey && start.withAccess && deposit !== undefined && deposit !== 'confirmed') {
+      failMark(workspace.id, ticketKey, NO_ACCESS, initialOf(start))
+      return afterCreate(false, ticketKey)
+    }
     // Only the key of this form's own `new` request starts anything; without it the ticket is just created.
     if (start && ticketKey) return void beginStart(ticketKey, start)
     afterCreate(another, ticketKey)
   }
   const initialOf = (snap: StartSnapshot): StartInitial => ({ harness: snap.reviewed.choice.harness, mode: snap.reviewed.choice.mode, ...(snap.reviewed.choice.model ? { model: snap.reviewed.choice.model } : {}) })
-  /** Every signature landed: preview for the ticket's own key and start only if it is what the review showed. */
-  const beginStart = async (ticketKey: string, snap: StartSnapshot) => {
-    const out = await after.run({ ws: workspace.id, key: ticketKey, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds })
-    if (out.kind === 'started') {
-      toast.success(`Created ${ticketKey} and started ${harnessName(snap.reviewed.choice.harness)}`)
-      afterCreate(false, ticketKey)
-    }
-    // not started: the Start agent dialog opens with the same sentence, so no second message here
+  /** Every signature landed: the start runs in the background and the ticket page opens at once with "Getting started…". */
+  const beginStart = (ticketKey: string, snap: StartSnapshot) => {
+    void startInBackground(qc, { ws: workspace.id, key: ticketKey, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds })
+    afterCreate(false, ticketKey)
   }
   const afterCreate = (another: boolean, ticketKey: string | null) => {
     if (another) {
@@ -519,9 +517,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   return (
     <div
       ref={root}
-      // M-1: once the ticket exists and the Start agent dialog (or the "no access" notice) is open, the emptied form is not shown behind it.
-      className={cn(overlay ? 'flex min-h-0 flex-1 flex-col' : 'mx-auto max-w-[1100px]', (after.state.kind === 'ask' || after.state.kind === 'no-access') && 'hidden')}
-      data-ticket-created={after.state.kind === 'ask' || after.state.kind === 'no-access' ? '' : undefined}
+      className={cn(overlay ? 'flex min-h-0 flex-1 flex-col' : 'mx-auto max-w-[1100px]')}
       onKeyDown={(e) => {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault()
@@ -648,7 +644,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                 Cancel
               </Button>
               {startPossible && (
-                <Button ref={secondaryRef} type="button" variant="outline" onClick={() => void submit(false, !startFirst, secondaryRef.current)} disabled={!canCreate || create.isPending || !!handoffNew || busyAfter}>
+                <Button ref={secondaryRef} type="button" variant="outline" onClick={() => void submit(false, !startFirst, secondaryRef.current)} disabled={!canCreate || create.isPending || !!handoffNew}>
                   {startFirst ? 'Only create' : 'Review and start agent'}
                 </Button>
               )}
@@ -657,11 +653,10 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
                 label={primaryLabel}
                 aria-keyshortcuts="Meta+Enter Control+Enter"
                 signing={signing}
-                after={after.state.kind === 'running' ? 'Starting agent…' : null}
                 slowLabel="Still starting…"
                 data-testid="nt-primary"
                 onClick={() => void submit(false, startFirst, primaryRef.current)}
-                disabled={!canCreate || create.isPending || (!!handoffNew && !signing) || busyAfter}
+                disabled={!canCreate || create.isPending || (!!handoffNew && !signing)}
               />
             </div>
           </div>
@@ -691,7 +686,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             const landed = partialKey.current
             partialKey.current = null
             setHandoffNew(null)
-            if (landed) { ticketExists(); after.noAccess(landed.key, landed.initial) }
+            if (landed) { ticketExists(); failMark(workspace.id, landed.key, NO_ACCESS, landed.initial); afterCreate(false, landed.key) }
           }}
           onSettled={(phase, state, request) => {
             const ticketKey = ownKey(state, request)
@@ -703,32 +698,6 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             }
           }}
         />
-      )}
-
-      {after.state.kind === 'ask' && (
-        <StartAgentDialog
-          ws={workspace.id}
-          ticket={after.state.key}
-          open
-          initial={after.state.initial}
-          onClose={() => { const k = after.state.kind === 'ask' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) }}
-        />
-      )}
-      {after.state.kind === 'no-access' && (
-        <Dialog open onOpenChange={(o) => { if (!o) { const k = after.state.kind === 'no-access' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) } }}>
-          <DialogContent data-testid="agent-no-access">
-            <DialogHeader>
-              <DialogTitle>Ticket created</DialogTitle>
-              <DialogDescription>
-                {after.state.key} exists. Agent access is not confirmed yet: the last signature has not arrived, so no agent was started. Start one now to give access, or open the ticket.
-              </DialogDescription>
-            </DialogHeader>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => { const k = after.state.kind === 'no-access' ? after.state.key : null; after.reset(); if (k) afterCreate(false, k) }}>Open the ticket</Button>
-              <Button onClick={() => { if (after.state.kind === 'no-access') after.ask(after.state.key, after.state.initial) }}>Start agent</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       )}
 
       <Dialog open={blocker.status === 'blocked'} onOpenChange={(o) => !o && blocker.reset?.()}>

@@ -1,26 +1,30 @@
-import { cleanup, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api, mockStore, resetMockStoreForTests } from '@/api/client'
 import { setFeatures } from '@/api/features'
 import type { HubSignInfo } from '@/api/hubsign'
-import { ApiError } from '@/api/types'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render } from '@testing-library/react'
 import { spies } from '@/test/handoffHarness'
+import { HubSettingsPanel } from './HubSignPanel'
 import { SignPopover } from './SignPopover'
 import type { HandoffAction } from '@/api/handoff'
 
-// Settings Save in a Full-mode workspace ends in the hub approval (run 12 rerun 2, 4.4): no dead end, no raw refusal.
+// A settings change through the hub (an optional extra path, A1): the change in words and the host's link, no raw refusal.
+// The review itself never routes by the workspace's hub mode: local signing is valid in every mode.
 const T = { timeout: 5000 }
 const W = 'a'.repeat(32)
 
-async function mount(action: HandoffAction) {
+function setup(): { ws: string; client: QueryClient } {
   resetMockStoreForTests()
   mockStore.setViewer('p_sev')
   const ws = mockStore.workspaces[0].id
   setFeatures({ features: ['identity', 'today', 'tickets', 'board', 'ticket', 'actions'], workspaces: { [ws]: ['identity', 'today', 'tickets', 'board', 'ticket', 'actions'] } })
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  render(<QueryClientProvider client={client}><SignPopover ws={ws} title="Change the workspace settings" action={action} onClose={() => {}} /></QueryClientProvider>)
+  return { ws, client: new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }) }
+}
+function mountPanel(action: HandoffAction) {
+  const { ws, client } = setup()
+  render(<QueryClientProvider client={client}><HubSettingsPanel ws={ws} action={action as Extract<HandoffAction, { action: 'settings_set' }>} onDone={() => {}} /></QueryClientProvider>)
 }
 const INFO: HubSignInfo = {
   mode: 'full', kind: 'settings', short_hash: null,
@@ -35,29 +39,38 @@ function full() {
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); setFeatures(null) })
 
-describe('a settings change in a Full-mode workspace', () => {
+describe('a settings change through the hub', () => {
   it('shows the change in words and the hub link, and prepares nothing here', async () => {
     const s = spies()
     const hub = vi.spyOn(api, 'hubSign').mockResolvedValue(INFO)
-    full()
-    await mount({ action: 'settings_set', grant_hours: 24 })
-    const dialog = await screen.findByRole('dialog', {}, T)
-    const panel = await within(dialog).findByTestId('hub-settings', {}, T)
+    mountPanel({ action: 'settings_set', grant_hours: 24 })
+    const panel = await screen.findByTestId('hub-settings', {}, T)
     expect(within(panel).getByText('Longest agent access: 1 day')).toBeVisible()
     expect(within(panel).getByTestId('hub-link')).toHaveAttribute('href', INFO.url)
     expect(hub).toHaveBeenCalledWith(expect.any(String), { kind: 'settings', set: { grant_hours: 24 } })
     expect(s.prepare).not.toHaveBeenCalled()
-    expect(within(dialog).queryByText(/Refused/)).toBeNull()
+    expect(screen.queryByText(/Refused/)).toBeNull()
   })
 
+  it('a setting the hub may not change says so plainly and asks the host for nothing', async () => {
+    const hub = vi.spyOn(api, 'hubSign')
+    mountPanel({ action: 'settings_set', repos: ['x'] } as unknown as HandoffAction)
+    const off = await screen.findByTestId('hub-settings-off', {}, T)
+    expect(off).toHaveTextContent('the code folders')
+    expect(off).toHaveTextContent('leave the hub')
+    expect(hub).not.toHaveBeenCalled()
+  })
+})
 
-  it('a stale workspace card: the host\'s sign.hub_only turns the review into the hub approval', async () => {
-    vi.spyOn(api, 'hubSign').mockResolvedValue(INFO)
-    vi.spyOn(api, 'prepareClick').mockRejectedValue(new ApiError(403, { code: 'sign.hub_only', message: 'Approvals go through the hub in this workspace: approve on your phone or in the hub.', retryable: false }))
-    vi.spyOn(api, 'prepareHandoff').mockRejectedValue(new ApiError(403, { code: 'sign.hub_only', message: 'Approvals go through the hub in this workspace: approve on your phone or in the hub.', retryable: false }))
-    await mount({ action: 'settings_set', grant_hours: 24 })
+describe('a settings change in a Full-mode workspace (A1)', () => {
+  it('the review does not route to the hub by the workspace mode', async () => {
+    const hub = vi.spyOn(api, 'hubSign').mockResolvedValue(INFO)
+    full()
+    const { ws, client } = setup()
+    render(<QueryClientProvider client={client}><SignPopover ws={ws} title="Change the workspace settings" action={{ action: 'settings_set', grant_hours: 24 }} onClose={() => {}} /></QueryClientProvider>)
     const dialog = await screen.findByRole('dialog', {}, T)
-    await waitFor(() => expect(within(dialog).getByTestId('hub-settings')).toBeVisible(), T)
-    expect(within(dialog).getByTestId('hub-link')).toHaveAttribute('href', INFO.url)
+    expect(within(dialog).queryByTestId('hub-settings')).toBeNull()
+    expect(within(dialog).queryByTestId('hub-link')).toBeNull()
+    expect(hub).not.toHaveBeenCalled()
   })
 })

@@ -69,11 +69,25 @@ class RefreshBody(BaseModel):
     url: Url | None = None
 
 
+#: market ops that reach out to a marketplace or an add-on's repository
+REMOTE_OPS = frozenset({"market.refresh", "market.add", "market.stage"})
+
+
 def register(app: FastAPI, gateway: Gateway) -> None:
     def read(ws: str, op: str, args: dict):
         return gateway.enabled(ws).call(op, args)
 
     def write(ws: str, op: str, args: dict):
+        if op in REMOTE_OPS:
+            # These ops fetch from the network (seconds, or a connect timeout). The workspace's shared host link
+            # answers one call at a time, so on it a slow fetch would freeze every other page of the dashboard: they get
+            # a connection of their own (the terminals do the same).
+            gateway.enabled(ws)
+            link = gateway.new_link(ws)
+            try:
+                return link.call(op, args, write=True, idem=new_idem())
+            finally:
+                link.close()
         return gateway.enabled(ws).call(op, args, write=True, idem=new_idem())
 
     @app.get("/api/w/{ws}/market")

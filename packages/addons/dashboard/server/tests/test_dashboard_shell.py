@@ -117,6 +117,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/records/commit",
         "/api/w/{ws}/records/auto-off",
         "/api/w/{ws}/records/init",
+        "/api/w/{ws}/records/auto-on",
+        "/api/w/{ws}/claude-trust",
         "/api/w/{ws}/records/remote",
         "/api/w/{ws}/records/push-initial",
         "/api/w/{ws}/records/current",

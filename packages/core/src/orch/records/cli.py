@@ -6,7 +6,7 @@
     orch records status         [--workspace ID] [--remote NAME] [--json]
     orch records sync-index     [--workspace ID] [--json]
     orch records remote-private [--workspace ID] [--remote NAME] [--off] [--yes] [--json]
-    orch records auto on        [--workspace ID] [--push] [--every MIN] [--dev] [--json]   (terminal only)
+    orch records auto on        [--workspace ID] [--push] [--every MIN] [--dev] [--yes] [--json]   (terminal only)
     orch records auto off       [--workspace ID] [--json]
     orch records auto           [--state DIR] [--json]                                     (the timer's run)
 
@@ -126,6 +126,7 @@ def _parser() -> argparse.ArgumentParser:
             s.add_argument("--every", type=int, default=15, help="minutes between commits, 5 to 1440 (auto on)")
             s.add_argument("--dev", action="store_true", help="allow a source checkout as the timer's program")
             s.add_argument("--replace", action="store_true", help="replace a timer installed for another setup")
+            s.add_argument("--yes", action="store_true", help="do not ask (the click replaces the answer)")
     return p
 
 
@@ -343,7 +344,7 @@ def _do_auto_switch(run: _Run, r: Any) -> dict[str, Any]:
             + (" and pushes" if a.push else "")
             + " for this workspace (a timer of your service manager runs orch records auto)."
         )
-        if not run.confirm(text):
+        if not (getattr(a, "yes", False) or run.confirm(text)):
             raise RecordsError("records.unconfirmed", "not confirmed; auto mode is terminal only")
         previous = r.tips.auto(r.workspace_id)  # restored on rollback (an existing entry is never lost)
         entry: dict[str, Any] = {"on": True, "every_min": a.every, "push": bool(a.push)}

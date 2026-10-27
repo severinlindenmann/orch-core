@@ -36,7 +36,6 @@ __all__ = [
     "finish_convenience",
     "forget",
     "read_selection",
-    "refuse_full_mode",
     "setup_backend",
     "stage_convenience",
     "status",
@@ -47,27 +46,6 @@ __all__ = [
 KEY_ID = "dk"
 SELECTION = "custody.json"
 CUSTODIES = ("convenience", "passphrase")
-
-
-def refuse_full_mode(state_dir: Path, workspace_id: str) -> None:
-    """V3 C11 (L2-C11d-1): the one custody choke point for entering convenience custody. In a workspace in full hub mode
-    (or ``unknown``) the device key stays in passphrase custody, whoever asks (``orch keys custody convenience``, the
-    dashboard switch, Finish setup): :func:`stage_convenience` calls this before the key store is opened. A workspace
-    that is not registered on this host has no hub log, so there is nothing to refuse.
-
-    Why an unregistered workspace is a no-op (L2-C11e-4): every caller resolves the workspace through the host registry
-    first (CLI ``_one``, dashboard ``entry``, setup's ``missing_items``), and a workspace without a host entry has no
-    host hub state either. An unsafe or unreadable registry is not "unregistered": ``read_json`` fails closed
-    (``custody.unsafe_mode``); only a missing registry file means no workspace is registered.
-
-    Also called at the top of :func:`finish_convenience` (L2-C11e-3): the check in stage releases the store lock before
-    the passphrase KDF and the ``transition`` write, so a full join landing in that gap is caught by the second call."""
-    from orch.host import convenience as host_convenience
-
-    uid = os.getuid()
-    entry = host_convenience.registered_entry(state_dir, workspace_id, uid)
-    if entry is not None:
-        host_convenience.refuse_full_mode_entry(state_dir, entry, uid)
 
 
 class TerminalNeeded(CustodyError):
@@ -261,19 +239,9 @@ def convert_to_convenience(
     selection left at step ``written`` is finished without asking again. The device id and certificate do not change.
     The dashboard's switch runs the same two steps itself (:func:`stage_convenience`, then :func:`finish_convenience`
     under the flag lock)."""
-    refuse_full_mode(state_dir, workspace_id)  # V3 C11: also before this function opens the store
     store = store if store is not None else _store(state_dir)
-    before = read_selection(state_dir, workspace_id)
     staged = stage_convenience(state_dir, workspace_id, prefix=prefix, store=store, clock=clock)
-    try:
-        return finish_convenience(state_dir, workspace_id, staged, store=store)
-    except Exception as exc:
-        if getattr(exc, "code", None) != "sign.hub_only" or before is not None and before["transition"] is not None:
-            raise
-        # L2-C11f-2: a full join landed between stage and finish. Put the staged move back (the stored copy goes, the
-        # selection is what it was) instead of leaving a stuck transition with no way out.
-        undo_staged(state_dir, workspace_id, staged, before, store=store)
-        raise
+    return finish_convenience(state_dir, workspace_id, staged, store=store)
 
 
 def stage_convenience(
@@ -293,7 +261,6 @@ def stage_convenience(
     dashboard never resumes."""
     from orch.identity import device_ref
 
-    refuse_full_mode(state_dir, workspace_id)  # V3 C11: not in full hub mode, before the key store is opened
     store = store if store is not None else _store(state_dir)
     sel = read_selection(state_dir, workspace_id)
     if sel is not None and sel["custody"] == "convenience" and sel["transition"] is None:
@@ -347,7 +314,6 @@ def finish_convenience(state_dir: Path, workspace_id: str, staged: Selection, *,
     ``staged`` (another process changed custody in between)."""
     from .convenience import ConvenienceBackend
 
-    refuse_full_mode(state_dir, workspace_id)  # V3 C11 (L2-C11e-3): re-check; a full join may have landed since stage
     store = store if store is not None else _store(state_dir)
     if read_selection(state_dir, workspace_id) != staged:
         raise CustodyError("the custody of this key changed meanwhile; nothing was finished (orch keys custody status)")
@@ -384,7 +350,7 @@ def undo_staged(
 
 
 def _abandon_convenience_stage(state_dir: Path, workspace_id: str, store: Any, *, locked: bool) -> Selection:
-    """L2-C11f-2: a conversion to convenience that never finished (in full hub mode its finish is refused for good) is
+    """L2-C11f-2: a conversion to convenience that never finished is
     abandoned by the way back: the stored copy goes, the passphrase file was never touched. L2-1075-2: under the
     workspace lock (a concurrent unlocked finish would otherwise lose the device key), and only when the passphrase file
     is still there and holds this device's key, so the last copy is never deleted."""
@@ -423,7 +389,7 @@ def downgrade_in_place(
     (``orch keys custody passphrase --in-place``). ``passphrase`` comes only from :func:`turn_off_convenience`
     (V3-D31: the dashboard's "Turn off", in the locked step that takes a one-click authority away; an AST test pins it).
     The key was readable without a factor: anyone who copied it can still sign, with any ``auth`` label. Resumable at
-    step ``written`` (a resume never needs a passphrase). No full-mode or dev-host refusal: this goes toward passphrase
+    step ``written`` (a resume never needs a passphrase). No dev-host refusal: this goes toward passphrase
     custody and must work in every mode."""
     from orch.ops import human
 
@@ -495,7 +461,7 @@ def turn_off_convenience(
     * Without ``passphrase`` and with ``move_key`` the key backend asks on the terminal (``orch host convenience off``).
     * A leftover convenience store key after a finished move (a crash between the selection write and the delete) is
       removed again here, best effort and idempotent.
-    No ``refuse_full_mode`` : turning convenience off is allowed in every mode."""
+    Turning convenience off is allowed in every mode."""
     from orch.host import convenience as host_convenience
 
     from .strength import check_strength

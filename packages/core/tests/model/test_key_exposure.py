@@ -16,7 +16,7 @@ NEW = "d_" + hex32("device-sev-new")
 
 
 def strict(w: World):
-    return replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id, hub_only=True)
+    return replay(w.ws, w.tl, verifier=w.verifier, now=w.at(), expected_workspace_id=w.workspace_id)
 
 
 def codes(w: World) -> list[str]:
@@ -166,3 +166,38 @@ def test_a_failed_verifier_refuses_the_rotation(w):
 
 
 LABELS = [None, "passphrase", "click", "convenience", "secure-enclave-unlocked", "no-such-label"]
+
+
+# --- A1: parity with develop for the exposed-key check (#1097) ------------------------------------------------
+# develop's model refused an exposed (One click) key only as a flavour of the full-mode "hub_only" rule, and exactly
+# there: hub.left by an exposed or convenience key was ALLOWED (the break-glass row lists them), hub.joined was not
+# checked for exposure (that check was disabled for the prototype) and every other local event was refused in full mode.
+# Standalone and selective checked nothing. A1 lifts the full-mode refusal, so the answers below are develop's, and the
+# only change is that other local events of an exposed key are no longer refused in full mode (One click keeps working).
+
+
+def _joined(w, mode, seq):
+    return w.build_unappended(
+        "workspace", "hub.joined", "sev", roster_v=w.roster_v, hub_id=HUB, hk_root_pub=ROOT, mode=mode,
+        binding_seq=seq, aliases=[],
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("auth", [None, "convenience"])
+def test_parity_full_exposed_key_leaves(w, auth):
+    mark(w)  # device A of sev is exposed
+    extra = {} if auth is None else {"auth": auth}
+    assert not hasattr(admit(strict(w), leave(w, "sev", **extra), log="workspace"), "code")  # develop: allowed
+
+
+@pytest.mark.parametrize("mode", ["selective", "standalone"])
+def test_parity_selective_and_standalone_check_nothing(mode):
+    w = World(validate=False).bootstrap({})
+    if mode == "selective":
+        w.wev("hub.joined", "sev", hub_id=HUB, hk_root_pub=ROOT, mode="selective", binding_seq=1, aliases=[])
+    mark(w)
+    seq = 2 if mode == "selective" else 1
+    assert not hasattr(admit(strict(w), _joined(w, "full", seq), log="workspace"), "code")  # develop: allowed
+    if mode == "selective":
+        left = w.build_unappended("workspace", "hub.left", "sev", roster_v=w.roster_v, hub_id=HUB, binding_seq=1)
+        assert not hasattr(admit(strict(w), left, log="workspace"), "code")

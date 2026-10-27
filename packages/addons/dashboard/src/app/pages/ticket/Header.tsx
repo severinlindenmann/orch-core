@@ -3,8 +3,9 @@ import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Tag, Timer } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '@/api/client'
+import { runQueries } from '@/api/runs'
 import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction } from '@/addon-ui'
 import { canSpawnAgent } from '@/addon-ui/capabilities'
@@ -21,6 +22,7 @@ import { VIEWER_REASON } from '@/components/DisabledReason'
 import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
 import { availableActions, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
+import { clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
 import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
@@ -200,12 +202,13 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false
 }
 
 /** The header's one primary button: what the viewer should do next (a quiet status when an agent works and nothing waits). */
-function PrimaryButton({ ticket, viewer, sign, jump, start, signing }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; signing: boolean }) {
+function PrimaryButton({ ticket, viewer, sign, jump, start, signing, phase }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase }) {
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
+  const busy = phase.kind === 'starting' || phase.kind === 'working'
   // A gate that waits for someone else (shown disabled below) comes before offering to start an agent.
-  const p = primaryAction(av, { start: start.startable && !blocked })
+  const p = primaryAction(av, { start: start.startable && !blocked && !busy })
   if (signing)
     return (
       <Button size="sm" disabled aria-busy>
@@ -226,7 +229,7 @@ function PrimaryButton({ ticket, viewer, sign, jump, start, signing }: { ticket:
         </span>
       </span>
     )
-  if (!p) return agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
+  if (!p) return !busy && agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
   const run = () => {
     if (p.kind === 'verdict') sign({ kind: 'verdict' })
     else if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
@@ -275,6 +278,81 @@ function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string)
   )
 }
 
+/** The newest agent run of this ticket, if any. */
+function newestRun(runs: ReadonlyArray<{ ticket?: string | null; kind?: string; state: string; started_at: string }> | undefined, key: string): ProgressRun | null {
+  const mine = (Array.isArray(runs) ? runs : []).filter((r) => r.ticket === key && r.kind === 'agent')
+  const newest = mine.reduce<(typeof mine)[number] | null>((a, r) => (!a || Date.parse(r.started_at) > Date.parse(a.started_at) ? r : a), null)
+  return newest as ProgressRun | null
+}
+
+/** The one status pill for the agent's progress, in plain words, in a live region so changes are announced. */
+function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; start: StartAgent; ticket: TicketDocument; viewer: Viewer; ws?: string }) {
+  const [pending, setPending] = useState(false)
+  const stage = phase.kind === 'starting' && phase.slow ? 'slow' : phase.kind
+  useEffect(() => {
+    setPending(false)
+  }, [stage])
+  useEffect(() => {
+    if (!pending) return
+    const t = setTimeout(() => setPending(false), 3000)
+    return () => clearTimeout(t)
+  }, [pending])
+  const retry = () => {
+    if (pending) return
+    setPending(true)
+    if (ws) {
+      if (phase.kind === 'failed') clearMark(ws, ticket.key)
+      startMark(ws, ticket.key)
+    }
+    start.run()
+  }
+  return (
+    <span role="status" aria-live="polite" className="inline-flex flex-wrap items-center gap-x-3 gap-y-1.5" data-testid={phase.kind === 'idle' ? undefined : 'progress-pill'}>
+      {phase.kind === 'idle' ? (
+        <>
+          <StatusChip status={ticket.status} landing={ticket.landing} />
+          <span className="text-[13px] text-text-muted">
+            Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span>{turnReason(ticket.turn.why)}
+          </span>
+        </>
+      ) : (
+        <span className="sr-only">
+          <StatusChip status={ticket.status} landing={ticket.landing} />
+        </span>
+      )}
+      {phase.kind === 'starting' && (
+        <>
+          <Pill tone={phase.slow ? 'warning' : undefined}>
+            <Loader2 className="animate-spin" aria-hidden />
+            {phase.slow ? 'Taking longer than usual' : 'Getting started…'}
+          </Pill>
+          {phase.slow && (
+            <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[12px]" disabled={pending} onClick={retry}>
+              Try again
+            </Button>
+          )}
+        </>
+      )}
+      {phase.kind === 'working' && (
+        <Pill>
+          <Loader2 className="animate-spin" aria-hidden />
+          Working on it…
+        </Pill>
+      )}
+      {phase.kind === 'needs' && <Pill tone="warning">Needs you</Pill>}
+      {phase.kind === 'failed' && (
+        <>
+          <Pill tone="warning">{phase.reason}</Pill>
+          <Button type="button" size="sm" variant="outline" disabled={pending} onClick={retry}>
+            <Bot />
+            Start agent
+          </Button>
+        </>
+      )}
+    </span>
+  )
+}
+
 export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
   const { workspaces } = useWorkspace()
   // The ticket's own workspace: the rows come from it, so they are keyed by it too and its gone / revoked / ready
@@ -287,6 +365,23 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     enabled: ticket.type === 'epic' && !!home,
   })
   const start = useStartAgent(ticket, viewer)
+  const av = availableActions(ticket, viewer)
+  const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict
+  const runs = useQuery({ ...runQueries.list(home ?? ''), enabled: isRealHost() && !!home })
+  const run = newestRun(runs.data as Parameters<typeof newestRun>[0], ticket.key)
+  const mark = useMark(home ?? '', ticket.key)
+  const tracking = !!mark || run?.state === 'starting' || run?.state === 'running'
+  const [tick, setTick] = useState(() => Date.now())
+  useEffect(() => {
+    if (!tracking) return
+    setTick(Date.now())
+    const t = setInterval(() => setTick(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [tracking])
+  const phase = phaseOf(ticket, { needsYou, mark, run, now: tracking ? tick : Date.now() })
+  useEffect(() => {
+    if (phase.kind === 'working' && home) clearMark(home, ticket.key)
+  }, [phase.kind, home, ticket.key])
   const restricted = ticket.visibility !== 'workspace'
   const shown = ticket.labels.slice(0, MAX_LABELS)
   const more = ticket.labels.length - shown.length
@@ -314,16 +409,13 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
-          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} />
+          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} phase={phase} />
           <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} />
           {start.node}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <StatusChip status={ticket.status} landing={ticket.landing} />
-        <span className="text-[13px] text-text-muted">
-          Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span>{turnReason(ticket.turn.why)}
-        </span>
+        <ProgressPill phase={phase} start={start} ticket={ticket} viewer={viewer} ws={home} />
         {shown.map((l) => (
           <Pill key={l}>
             <Tag />
@@ -365,7 +457,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       )}
 
       <BlockedByConnection ticket={ticket} />
-      <AgentStatus ticket={ticket} viewer={viewer} />
+      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} />}
     </header>
   )
 }

@@ -28,7 +28,7 @@ from . import adapters
 from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
-from .hubapprove import mode_of, refuse_if_hub_only
+from .hubapprove import mode_of
 from .reads import workspace
 from .signing import (
     AddonEnable,
@@ -746,8 +746,6 @@ def register(app: FastAPI, gateway: Gateway):
         if app.state.auth.login_kind(token) == "switch":
             raise fail("session.readonly", "Open a full session to sign.", exit=3)
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
-        if not isinstance(body, HubLeave):  # leaving is the break-glass the host allows by click (e2e-4)
-            refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
         try:

@@ -38,7 +38,7 @@ from jsonschema import Draft202012Validator
 from orch import canon
 from orch.addons.settings_value import KEY as ADDONS_KEY
 
-from . import convenience, hubproof, hubsign, marketinstall, review
+from . import convenience, hubproof, marketinstall, review
 from .errors import HostError
 from .outcomes import Planned, request_idem
 from .requests import (
@@ -434,8 +434,6 @@ class HumanOps:
             convenience.refuse_hub_reader(
                 service, name, inner.get("hub_card"), now_ms=capture.hub.now_ms, dev_mode=capture.hub.dev_mode
             )  # #1198 C9: the hub's card declares a reader level the log's history needs
-            if name == "hub.mode" or inner.get("mode") == "full":  # V3 C11: a full join leaves click-to-sign off
-                hubsign.refuse_full_while_click_on(service)
         ctx = self.backend._context(call, None, False, files, prepare=capture)
         try:
             res = operation.handler(ctx, inner)
@@ -466,12 +464,9 @@ class HumanOps:
         # H12d-2 (§0.8.6 item 9.4): the new reader's declaration against required_reader, early, with a good message
         built = prepared["events"]
         convenience.refuse_reader_op(service, name, events=built, readers=capture.readers)
-        # FB15: in full hub mode an add-on grant may be PREPARED as a hand-off (signer None): nothing is signed here and
-        # no local signature will ever land (submit and append_signed refuse it). The hub's channel signs an
-        # ``addon.requested`` that names this request, and the host answers it (hubdeliver).
-        hub_addon = name == "addon.grant" and handoff and signer is None
-        if not hub_addon and (refused := hubsign.refusal(service, built, None)) is not None:
-            raise refused  # V3 C11: early and friendly; append_signed is the enforcement (under the store lock)
+        # FB15: an add-on grant may be PREPARED as a hub hand-off (signer None, an optional extra path): nothing is
+        # signed here. The hub's channel signs an ``addon.requested`` that names this request, and the host answers it
+        # (hubdeliver). The local signature path is always open (A1, D83).
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks
         from . import cancels as cancel_preview
@@ -1048,8 +1043,6 @@ class HumanOps:
             marketinstall.recheck(
                 service, record, events
             )  # V3 G3 C2: the install record as it is now, before the journal
-            if (refused := hubsign.refusal(service, events, None)) is not None:
-                raise refused  # V3 C11: before the journal write; a join after the prepare lands here
             if record["op"] in hubproof.OPS:  # #1198 C9: every hub event carries a valid proof, checked under the lock
                 for e in events:
                     hubproof.check(
@@ -1459,13 +1452,8 @@ def append_signed(
     relay path ``signed_by`` refuses convenience events except a dev-gated answer (§11A.17.4, ``dev_gate``), which
     writes the mark here like any other.
 
-    **Full hub mode (V3 C11, D78/D81)** is enforced here too, under the same lock and before the first append: in
-    ``full`` (and ``unknown``, which fails closed as full) every event not in the log yet is refused with
-    ``sign.hub_only`` whatever signs it (owner key, another member's device, a relay device, ``auth: convenience``),
-    except the break-glass events of :data:`orch.host.hubsign.BREAK_GLASS` (:func:`orch.host.hubsign.refusal`). The mode
-    is read from the signed log as this append sees it, so a request prepared before the join, a roll forward or a
-    recovery after a restart, the relay path and a race with ``hub.joined`` are all covered. ``hubdeliver.land``
-    (custodial events) does not pass here.
+    **Hub mode (A1, D83)** does not limit who signs here: a local signature is valid in every hub mode, with the hub
+    reachable or not. ``hubdeliver.land`` (custodial events) does not pass here.
 
     **Invariant I (H12d-2, §0.8.6 item 9.4)** is checked here too, under the store lock and before the first append,
     for the events not in the log yet that add a reader (``member.added``, ``device.added``, ``restore``) or carry
@@ -1493,9 +1481,6 @@ def append_signed(
 
         store.append_check = check
         try:
-            if error is None:  # V3 C11 (D78/D81): full hub mode takes no local signature, whoever the signer is
-                error = hubsign.refusal(service, [e for e in events if store.logged_event(log, e.get("id")) is None],
-                                        signed_by)  # fmt: skip
             if error is None:
                 error = _readers_refusal(service, log, events, readers or [])  # H12d-2: invariant I, before anything
             if error is None and any(e.get("auth") == "convenience" for e in events):

@@ -8,6 +8,8 @@ import type { QuickTyped } from './alsoSigned'
 export interface SignStory {
   /** The button: what happens when it is pressed. */
   signLabel: string
+  /** A destructive step: red button. */
+  danger?: boolean
   /** "What happens next", each step true for this action. Empty: nothing is promised. */
   steps: string[]
   /** One plain sentence under the content for a signature with a narrower scope than it may sound. */
@@ -67,7 +69,7 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
     case 'hub_mode_full':
       return { signLabel: 'Sign and let the hub read everything', steps: ['You sign.', 'The hub can read everything in this workspace.'] }
     case 'hub_leave':
-      return { signLabel: 'Sign and leave the hub', steps: ['You sign.', 'This workspace leaves the hub.'] }
+      return { signLabel: 'Leave hub', danger: true, steps: ['You sign.', 'This workspace leaves the hub.'] }
     case 'runner_grant': {
       const length = accessLength(action.hours)
       return action.extend

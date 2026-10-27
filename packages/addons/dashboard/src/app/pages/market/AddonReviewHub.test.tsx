@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { configure, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { configure, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { HubSignInfo } from '@/api/hubsign'
@@ -7,7 +7,7 @@ import { ApiError, type Workspace } from '@/api/types'
 import { workspaceRequest } from '@/test/hostHarness'
 import { state } from '@/test/handoffHarness'
 import { BuiltInAddOns } from '../settings/host/AddOns'
-// FB15 / run 12a: the Add-ons switch in a Full-mode workspace ends in the hub approval, not in a refusal.
+// A1: the Add-ons switch in a Full-mode workspace signs locally; the hub approval is an optional extra.
 configure({ asyncUtilTimeout: 15000 })
 vi.mock('../settings/host/useViewerRole', () => ({ useViewerRole: () => 'owner' }))
 vi.mock('@/api/click', async importOriginal => ({ ...await importOriginal<object>(), clickReady: () => true }))
@@ -27,17 +27,11 @@ function press(workspace: Partial<Workspace>) {
   fireEvent.click(screen.getByRole('switch', { name: 'Wiki' }))
 }
 
-describe('Add-ons switch in a Full-mode workspace', () => {
-  it('shows the hub approval button, no refusal', async () => {
-    const click = vi.spyOn(api, 'prepareClick')
+describe('Add-ons switch in a Full-mode workspace (A1: local signing stays the default)', () => {
+  it('signs locally first and offers the hub approval as an extra', async () => {
+    const click = vi.spyOn(api, 'prepareClick').mockRejectedValue(new ApiError(500, { code: 'internal', message: 'stop here', retryable: false }))
     press({ signing: 'full' })
-    expect(await screen.findByTestId('hub-link')).toHaveAttribute('href', INFO.url)
-    expect(click).not.toHaveBeenCalled()
-    expect(screen.queryByText(/Approvals go through the hub in this workspace/)).toBeNull()
-  })
-  it('a stale workspace card: the host\'s sign.hub_only turns the review into the hub approval', async () => {
-    vi.spyOn(api, 'prepareClick').mockRejectedValue(new ApiError(403, { code: 'sign.hub_only', message: 'Approvals go through the hub in this workspace: approve on your phone or in the hub.', retryable: false }))
-    press({})
-    expect(await screen.findByTestId('hub-link')).toHaveAttribute('href', INFO.url)
+    await waitFor(() => expect(click).toHaveBeenCalled())
+    expect(screen.queryByTestId('hub-link')).toBeNull()
   })
 })

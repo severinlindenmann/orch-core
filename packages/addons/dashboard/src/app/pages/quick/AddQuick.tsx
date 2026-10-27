@@ -13,8 +13,8 @@ import { newIdem } from '@/api/runs'
 import { useMe } from '@/app/useMe'
 import { useWorkspace } from '@/app/workspace'
 import { shownModel, type Reviewed } from '@/app/pages/new-ticket/startAfterCreate'
-import { useStartAfterCreate } from '@/app/pages/new-ticket/useStartAfterCreate'
 import { useStartPlan } from '@/app/pages/new-ticket/useStartPlan'
+import { startInBackground } from '@/app/pages/ticket/progress'
 import { AccessSelect } from '@/components/sign/AccessSelect'
 import { SignButton } from '@/components/sign/SignButton'
 import { SignPopover } from '@/components/sign/SignPopover'
@@ -61,6 +61,10 @@ interface Pending {
   startNow: boolean
   withAccess: boolean
   title: string
+  /** What the form held when the person pressed the button: the form is cleared at once, so the popover reads from here. */
+  text: string
+  details: string
+  steps: Step[]
   reviewed: Reviewed
   idem: string
   priorGrantIds: string[]
@@ -71,7 +75,6 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
   const { workspace } = useWorkspace()
   const me = useMe(ws).data
   const plan = useStartPlan(workspace!, me?.person ?? '')
-  const after = useStartAfterCreate()
   const [text, setText] = useState('')
   const [details, setDetails] = useState('')
   const [steps, setSteps] = useState<Step[]>([{ text: '', cmd: '' }])
@@ -82,6 +85,7 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
   const input = useRef<HTMLInputElement>(null)
   const startBtn = useRef<HTMLButtonElement>(null)
   const plainBtn = useRef<HTMLButtonElement>(null)
+  const doneRef = useRef(false)
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const title = oneLine(text)
   const tooLong = [...text.trim()].length > MAX_QUICK_TITLE
@@ -98,6 +102,16 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
     input.current?.focus()
   }
 
+  // The signature was cancelled or failed: give the person back what they typed, unless they started something new.
+  const restore = (p: Pending) => {
+    if (doneRef.current || text) return
+    setText(p.text)
+    setDetails(p.details)
+    setSteps(p.steps)
+    setMore(!!p.details || p.steps.some((s) => s.text || s.cmd))
+    input.current?.focus()
+  }
+
   const begin = (start: boolean, el: HTMLElement | null) => {
     const fresh = plan.grantNow()
     const startNow = start && canStart
@@ -108,11 +122,12 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
     const choice = { harness: plan.pref.harness, mode: 'work' as const, model: plan.pref.model }
     const reviewed: Reviewed = { choice, model: shownModel(choice), grantId: fresh?.id ?? null }
     setAnchor(el)
-    setPending({ n: (pending?.n ?? 0) + 1, action, startNow, withAccess, title, reviewed, idem: newIdem(), priorGrantIds: plan.priorGrantIds })
+    doneRef.current = false
+    setPending({ n: (pending?.n ?? 0) + 1, action, startNow, withAccess, title, text, details, steps, reviewed, idem: newIdem(), priorGrantIds: plan.priorGrantIds })
+    reset()
   }
 
-  const settled = async (p: Pending, key: string | null, deposit: string | undefined) => {
-    reset()
+  const settled = (p: Pending, key: string | null, deposit: string | undefined) => {
     void qc.invalidateQueries({ queryKey: ['quick', ws] })
     if (!p.startNow) return toast.success('Task created')
     if (!key) return toast.warning('Task created. The agent was not started: the host did not say which task it is.')
@@ -121,24 +136,20 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
       onStartFailed?.(key)
       return toast.warning('Task created. The agent was not started: its access is not confirmed yet.')
     }
-    const out = await after.run({ ws, key, reviewed: p.reviewed, idem: p.idem, priorGrantIds: p.priorGrantIds })
-    onStartDone?.(key)
-    if (out.kind === 'started') toast.success(`Started “${p.title}” with ${HARNESSES.find((h) => h.id === p.reviewed.choice.harness)?.name ?? 'the agent'}`)
-    else {
-      onStartFailed?.(key)
-      toast.warning(out.reason)
-    }
+    void startInBackground(qc, { ws, key, reviewed: p.reviewed, idem: p.idem, priorGrantIds: p.priorGrantIds }).then((out) => {
+      onStartDone?.(key)
+      if (out.kind === 'ask') onStartFailed?.(key)
+    })
   }
 
   const setStep = (i: number, patch: Partial<Step>) => setSteps((all) => all.map((s, n) => (n === i ? { ...s, ...patch } : s)))
-  const starting = after.state.kind === 'running'
   return (
     <section aria-label="Add a quick task" className="min-w-0 space-y-3 rounded-lg border border-border bg-surface p-4">
       <form
         className="space-y-3"
         onSubmit={(e) => {
           e.preventDefault()
-          if (title && !pending && !starting) begin(true, startBtn.current)
+          if (title && !pending) begin(true, startBtn.current)
         }}
       >
         <div className="space-y-1.5">
@@ -185,14 +196,12 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
             label={canStart || plan.pending ? 'Sign and start task' : 'Sign and create task'}
             disabled={!title || !!pending && !signing}
             signing={signing}
-            after={starting ? 'Starting agent…' : null}
-            slowLabel="Still starting…"
             className="min-h-11"
             data-testid="quick-start"
             onClick={() => begin(true, startBtn.current)}
           />
           {(canStart || plan.pending) && (
-            <Button ref={plainBtn} type="button" variant="ghost" className="min-h-11 text-text-muted" disabled={!title || !!pending || starting} onClick={() => begin(false, plainBtn.current)}>
+            <Button ref={plainBtn} type="button" variant="ghost" className="min-h-11 text-text-muted" disabled={!title || !!pending} onClick={() => begin(false, plainBtn.current)}>
               Create without starting
             </Button>
           )}
@@ -204,16 +213,22 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
           key={`${pending.n}-${pending.withAccess ? hoursNow : 0}`}
           title={pending.startNow ? 'Start task' : 'Create task'}
           ws={ws}
-          action={pending.withAccess ? quickAction(text, details, steps, hoursNow) ?? pending.action : pending.action}
+          action={pending.withAccess ? quickAction(pending.text, pending.details, pending.steps, hoursNow) ?? pending.action : pending.action}
           startsAgent={pending.startNow}
           anchor={anchor}
           controls={pending.withAccess ? <AccessSelect hours={hoursNow} onHours={setHours} lengths={lengths} agentName={HARNESSES.find((h) => h.id === pending.reviewed.choice.harness)?.name} prefix={workspace?.prefix} /> : undefined}
           doneToast={pending.startNow ? '' : 'Task created'}
           onSigning={setSigning}
           onSettled={(phase, state, request) => {
-            if (phase === 'done') void settled(pending, quickKey(state, request), state?.deposit)
+            if (phase === 'done') {
+              doneRef.current = true
+              settled(pending, quickKey(state, request), state?.deposit)
+            } else if (phase === 'failed') restore(pending)
           }}
-          onClose={() => setPending(null)}
+          onClose={() => {
+            restore(pending)
+            setPending(null)
+          }}
         />
       )}
     </section>

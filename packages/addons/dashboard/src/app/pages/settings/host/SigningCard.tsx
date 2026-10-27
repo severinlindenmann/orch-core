@@ -17,7 +17,6 @@ import type { ClickCard, ClickSwitch } from '@/api/click'
 import { DEV_HOST_SENTENCE, DEV_REFUSED, devRefusedSentence, signerProblem } from '@/api/refusals'
 import { ApiError, type Workspace } from '@/api/types'
 import { CLICK_RISK } from '@/api/click'
-import { hubOnly } from '@/api/hubsign'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -68,8 +67,6 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const status = useQuery({ queryKey: ['click-status', workspace.id], queryFn: () => api.clickStatus(workspace.id) })
   const card: ClickCard | null = status.data ?? workspace.click ?? null
   const on = !!card && card.enabled
-  // Full mode (joined to a hub): the host signs nothing locally, so the card says approvals go through the hub, in view.
-  const viaHub = hubOnly(workspace)
   const [mode, setMode] = useState<'idle' | 'on' | 'off' | 'resume'>('idle')
   const [pass, setPass] = useState('')
   const [pass2, setPass2] = useState('')
@@ -158,11 +155,8 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
           <summary className="cursor-pointer">Details</summary>
           <p className="mt-1" data-testid="click-risk-full">{CLICK_RISK}</p>
         </details>
-        {viaHub && <p data-testid="hub-approvals" className="font-medium text-text">Approving through your hub is on.</p>}
-        <p data-testid="signing-state" className={on && card?.available && !viaHub ? "sr-only" : "text-text-muted"}>
-          {viaHub
-            ? 'In this workspace approvals go through your hub: you approve in the hub or on your phone, not with one click here.'
-            : on && card?.available
+        <p data-testid="signing-state" className={on && card?.available ? "sr-only" : "text-text-muted"}>
+          {on && card?.available
             ? 'On: you approve here with one click.'
             : on
               ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''}`

@@ -607,9 +607,9 @@ class Human:
         person, device = self.who()
         self.store.refresh()
         stamp = self.store.peek_stamp(log)
-        from orch.ops.prepare import judging
+        from orch.ops.prepare import accepting
 
-        state = judging(self.store.state, self.call.ctx.prepare)
+        state = accepting(self.store.state)
         probe = self._envelope(event, log, person, device)
         probe.update(sig="x", seq=stamp["seq"], prev=stamp["prev"], at=stamp["at"])
         if "ws_seq" in stamp:
@@ -648,38 +648,11 @@ class Human:
         from orch.ops.readers import READER_EVENTS
 
         typ = ev.get("type")
-        precommit = self._hub_only_check(precommit, ev)  # V3 C11: direct mode takes no local signature in full hub mode
         if self.readers or typ in READER_EVENTS or typ == "restore" or ev.get("auth") == "convenience":
             precommit = self._readers_check(precommit, [ev])  # H12d-2: before the mark, so a refusal sets none
         if ev.get("auth") == "convenience":  # #441: the durable mark, inside the append, before the event is written
             precommit = self._mark_seen(precommit)
         return self.store.append(ev, log=log, precommit=precommit, artifacts=artifacts)
-
-    def _hub_only_check(self, inner: Callable[[], None] | None, ev: dict[str, Any]) -> Callable[[], None]:
-        """``precommit`` (V3 C11, D78/D81): in full hub mode, as the signed log says it under the store lock, only the
-        owner's break-glass event (:data:`orch.host.hubsign.BREAK_GLASS`) is signed locally. Direct mode has no host
-        state to read ``hub.json`` from, so this is the log's half of :func:`orch.host.hubops.signing_mode`; the host
-        path refuses at ``append_signed``."""
-        from orch.host import hubsign
-
-        state_dir, wid = self.call.ws.state_dir, self.workspace_id
-
-        def check() -> None:
-            if inner is not None:
-                inner()
-            self.store.refresh()
-            ws = self.store.state.workspace
-            if hubsign.log_hub_only(ws):
-                from types import SimpleNamespace
-
-                # L2-C11d-2b: keep the selection read inside _click_custody. With host_uid=os.getuid() the flag read
-                # fails open (False) when the flag file belongs to another host UID; the selection read still decides.
-                held = SimpleNamespace(state_dir=state_dir, workspace_id=wid, host_uid=os.getuid())
-                if not hubsign.break_glass_allowed(ws, ev, None) or hubsign._click_custody(held):  # noqa: SLF001
-                    err = hubsign.hub_only_error()
-                    raise OrchError(err.code, err.message, hint=err.hint, fix=err.fix)
-
-        return check
 
     def _mark_seen(self, inner: Callable[[], None] | None) -> Callable[[], None]:
         """``precommit`` that also sets the durable ``convenience_seen`` mark (:mod:`orch.ops.readers`); a mark that

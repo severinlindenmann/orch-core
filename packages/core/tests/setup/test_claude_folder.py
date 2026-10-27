@@ -53,7 +53,8 @@ def test_installed_check_follows_path(tmp_path):
     assert claude_folder.claude_installed({"PATH": str(tmp_path)}) is False
 
 
-def test_setup_runs_the_trust_step_only_when_the_profile_asks(tmp):
+def test_setup_runs_the_trust_step_only_when_the_profile_asks(tmp, monkeypatch):
+    monkeypatch.setattr(claude_folder, "claude_installed", lambda env: True)
     f, ports, p, rv = run_ok(tmp, {**AGENT, "trust_folder": True})
     assert any(x["id"] == "trust" for x in rv["flags"]) and "trust_folder" in names(ports)
     assert {s["id"]: s["status"] for s in p["steps"]}["trust"] == "done"

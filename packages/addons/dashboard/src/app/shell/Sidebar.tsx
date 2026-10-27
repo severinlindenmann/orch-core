@@ -39,6 +39,7 @@ import { activeGrantOf } from '@/api/grants'
 import { roleOf } from '@/api/permissions'
 import { useAttention } from '../attention'
 import { useRole } from '../useRole'
+import { HubLogout } from './CompanyRail'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { PreviewChip } from '@/addon-ui/PreviewChip'
 import { useAddons, useSlot } from '@/addon-ui/slots'
@@ -411,6 +412,7 @@ export function Sidebar() {
                   Log out
                 </button>
               )}
+              {showsLogout() && <HubLogout ws={workspace?.id} collapsed={collapsed} onDone={() => qc.clear()} />}
             </div>
           ) : (
           <DropdownMenu>

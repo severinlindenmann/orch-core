@@ -119,7 +119,10 @@ class Machine:
                 self.w(h / ".config" / "systemd" / "user" / name, "[Unit]")
         # the workspace
         (self.ws / ".orch").mkdir(parents=True)
-        self.w(self.ws / ".orch" / "config.json", json.dumps({"schema": "orch.workspace/2"}))
+        self.w(
+            self.ws / ".orch" / "config.json",
+            json.dumps({"schema": "orch.workspace/2", "workspace": {"id": "w_" + WID}}),
+        )
         self.w(self.ws / ".orch" / "tickets" / "T1.md", "ticket")
         self.w(self.ws / ".orch-work" / "PW-0001" / "out.txt", "work")
         self.w(self.ws / "AGENTS.md", USER_AGENTS)
@@ -149,7 +152,7 @@ class Machine:
         self.w(h / ".claude.json", json.dumps(claude))
 
     # -- seams
-    def run(self, argv):
+    def run(self, argv, env=None):
         self.calls.append(list(argv))
         if argv[:3] == ["uv", "tool", "list"]:
             return 0, "orch-core v2.0.0\n- orch\n"
@@ -537,7 +540,7 @@ def test_files_orch_created_alone_are_deleted(tmp_path):
 
 
 def test_a_unit_loaded_from_another_file_is_left_running(m):
-    def run(argv):
+    def run(argv, env=None):
         m.calls.append(list(argv))
         if argv[:3] == ["launchctl", "print", "gui/501/io.orch.host"]:
             return 0, "io.orch.host = {\n\tpath = /Users/other/Library/LaunchAgents/io.orch.host.plist\n}\n"
@@ -601,3 +604,40 @@ def test_the_claude_code_plugin_entries_go_through_claude_itself(m):
     assert ["claude", "plugin", "uninstall", "orch-core@orch-core"] in m.calls
     assert ["claude", "plugin", "marketplace", "remove", "orch-core"] in m.calls
     assert (plug / "installed_plugins.json").exists()  # Claude's files are never edited by prune
+
+
+def test_hub_leave_never_imports_a_file_of_the_workspace(m, tmp_path):
+    from orch.prune.model import _leave
+
+    marker = tmp_path / "hijacked"
+    (m.ws / "orch.py").write_text(f"open({str(marker)!r}, 'w').write('x')\n")
+    (m.ws / "orch").mkdir()
+    (m.ws / "orch" / "__init__.py").write_text(f"open({str(marker)!r}, 'w').write('x')\n")
+    env = {**os.environ, "HOME": str(m.home), "PYTHONPATH": str(m.ws)}
+    _leave(m.ws, env)
+    assert not marker.exists()
+
+
+def test_the_dashboard_lookup_always_sanitizes_pythonpath(monkeypatch):
+    from orch.cli import dashboard
+
+    seen = {}
+    monkeypatch.setattr(dashboard, "_module_installed", lambda env: seen.update(env) or False)
+    monkeypatch.setattr(dashboard.shutil, "which", lambda *a, **k: None)
+    monkeypatch.setattr(dashboard.Path, "is_file", lambda self: False)
+    dashboard.find_entry_point({"PATH": "/usr/bin", "PYTHONPATH": ":rel:/abs/ok"})
+    assert seen["PYTHONPATH"] == "/abs/ok"
+    assert dashboard.launch_env({"PYTHONPATH": ":rel"}) == {}
+
+
+def test_the_dashboard_stop_runs_with_the_sanitized_environment(m):
+    seen = []
+    m.run = lambda argv, env=None: seen.append((argv, env)) or (0, "")
+    m.w(m.state / "dashboard" / "ctl.sock")
+    ctx = m.ctx()
+    ctx.env = {**ctx.env, "PYTHONPATH": ":rel:/abs"}
+    ctx.dashboard_entry = lambda: ["/bin/orch-dashboard"]
+    inv = gather(ctx)
+    X.execute(ctx, inv, [i for i in X.build_steps(inv, set()) if i.kind == "launcher"])
+    [(argv, env)] = [x for x in seen if x[0][-1] == "stop"]
+    assert env["PYTHONPATH"] == "/abs"

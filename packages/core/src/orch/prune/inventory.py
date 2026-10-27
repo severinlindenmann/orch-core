@@ -17,6 +17,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from orch.discovery import read_config
 from orch.layout import STORE_DIR, WORK_DIR
 
 from .model import Ctx, Inventory, Item, WorkspaceInv, measure
@@ -429,9 +430,10 @@ def _workspace(ctx: Ctx, inv: Inventory, root: Path, wid: str | None) -> Workspa
         else:
             ws.items.append(_tree_item("workspace", "orch store (tickets, events, keys of the workspace log)", store))
             if wid is None:
-                cfg = _read_json(store / "config.json")
-                if isinstance(cfg, dict) and isinstance(cfg.get("workspace_id"), str):
-                    ws.wid = wid = cfg["workspace_id"] if _WS_ID.fullmatch(cfg["workspace_id"]) else None
+                cfg = read_config(root)
+                got = ((cfg or {}).get("workspace") or {}).get("id")
+                if isinstance(got, str) and _WS_ID.fullmatch(got.removeprefix("w_")):
+                    ws.wid = wid = got.removeprefix("w_")
     work = root / WORK_DIR
     if os.path.lexists(work):
         if _is_link(work):
@@ -473,7 +475,7 @@ def _workspace(ctx: Ctx, inv: Inventory, root: Path, wid: str | None) -> Workspa
     home = ctx.home
     if root == home or root in home.parents or len(root.parts) < 3:
         ws.folder_refusal = "this folder is your home folder or contains it"
-    elif not os.path.isfile(store / "config.json"):
+    elif read_config(root) is None:
         ws.folder_refusal = "this folder has no orch store, so prune does not recognise it as an orch workspace"
     return ws
 

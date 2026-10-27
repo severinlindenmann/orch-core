@@ -90,9 +90,11 @@ class Inventory:
         return out
 
 
-def _run(argv: Sequence[str], timeout: float = 60.0) -> tuple[int, str]:
+def _run(argv: Sequence[str], timeout: float = 60.0, env: Mapping[str, str] | None = None) -> tuple[int, str]:
     try:
-        r = subprocess.run(list(argv), capture_output=True, text=True, timeout=timeout, check=False)
+        r = subprocess.run(
+            list(argv), capture_output=True, text=True, timeout=timeout, check=False, env=dict(env) if env else None
+        )
     except (OSError, subprocess.SubprocessError) as e:
         return 127, str(e)
     return r.returncode, (r.stdout or "") + (r.stderr or "")
@@ -106,9 +108,14 @@ def _ask(prompt: str) -> str:
 
 
 def _leave(root: Path, env: Mapping[str, str]) -> tuple[bool, str]:
-    """Tell the hub this workspace leaves: ``orch hub leave`` in the person's own terminal (it shows its review)."""
+    """Tell the hub this workspace leaves: ``orch hub leave`` in the person's own terminal (it shows its review).
+    Isolated interpreter (``-I``: no current directory, no PYTHONPATH on ``sys.path``) started from a neutral folder;
+    the workspace is named by ``ORCH_WORKSPACE``, so a file in the workspace (``orch.py``) is never imported."""
+    home = env.get("HOME") or env.get("USERPROFILE") or os.path.expanduser("~")
+    child = {k: v for k, v in env.items() if k not in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP")}
+    child["ORCH_WORKSPACE"] = os.fspath(root)
     try:
-        r = subprocess.run([sys.executable, "-m", "orch", "hub", "leave"], cwd=root, env=dict(env), timeout=600)
+        r = subprocess.run([sys.executable, "-I", "-m", "orch", "hub", "leave"], cwd=home, env=child, timeout=600)
     except (OSError, subprocess.SubprocessError) as e:
         return False, str(e)
     return r.returncode == 0, f"exit {r.returncode}"
@@ -121,7 +128,7 @@ class Ctx:
     err: TextIO
     interactive: bool = False
     platform: str = sys.platform
-    run: Callable[[Sequence[str]], tuple[int, str]] = lambda argv: _run(argv)
+    run: Callable[..., tuple[int, str]] = lambda argv, env=None: _run(argv, env=env)
     ask: Callable[[str], str] = _ask
     hub_leave: Callable[[Path, Mapping[str, str]], tuple[bool, str]] = _leave
     #: install runner (launchd / systemd / pidfile) of the installed parts; ``None``: pick it from the layout

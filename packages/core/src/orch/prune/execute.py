@@ -126,7 +126,9 @@ def _do(ctx: Ctx, inv: Inventory, fence: Fence, it: Item, res: Result) -> None:
     elif k == "launcher":
         entry = ctx.dashboard_entry() if ctx.dashboard_entry else _dashboard_entry(ctx)
         if entry:
-            ctx.run([*entry, "stop"])  # best effort: the dashboard may already be gone
+            from orch.cli.dashboard import launch_env
+
+            ctx.run([*entry, "stop"], env=launch_env(ctx.env))  # best effort: the dashboard may already be gone
     elif k in ("tree", "folder"):
         p = fence.check(it.path)
         if k == "folder":

@@ -617,12 +617,10 @@ class WebApi:
                     raise ApiError("cert_expired")
                 if state != "active":
                     raise ApiError("no_session")
+            if ctx.via_switch and route.handler not in SWITCH_HANDLERS:  # a workspace vouched for this session
+                raise ApiError("reauth_required")
             if route.auth == "admin" and not self.d.access.is_hub_admin(ctx.user_id):
                 raise ApiError("forbidden_role")
-            if (
-                route.auth == "admin" and ctx.via_switch
-            ):  # a workspace vouched for this session: admin needs a real sign-in
-                raise ApiError("reauth_required")
         body = self._body(raw)
         try:
             q = urllib.parse.parse_qs(u.query, keep_blank_values=True, strict_parsing=bool(u.query), max_num_fields=8)

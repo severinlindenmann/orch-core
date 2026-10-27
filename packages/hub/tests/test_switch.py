@@ -244,12 +244,14 @@ def test_the_rail_lists_only_my_workspaces(w):
 
 
 def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_closed(w):
-    from orch_hub.webapi.api import ROUTES, SWITCH_HANDLERS
+    from orch_hub.webapi.api import ROUTES, SWITCH_HANDLERS, route_scopes
 
-    t = w.sw.issue_to_hub(w.admin, WS, "/")
-    s, o, h = w.call("POST", "/switch/redeem", {"t": t})
-    tok = _tok(h)
-    w.browser_tokens.add(tok)
+    def fresh():  # one session per route: sign-out ends its own
+        _, _, h = w.call("POST", "/switch/redeem", {"t": w.sw.issue_to_hub(w.admin, WS, "/")})
+        tok = _tok(h)
+        w.browser_tokens.add(tok)
+        return tok
+
     ws = "a" * 32
     seen = 0
     for rt in ROUTES:
@@ -258,11 +260,19 @@ def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_close
         path = rt.path[len("/api/v1") :]
         for name in ("workspace_id", "item_id", "user_id", "group", "channel_id", "prepared_id"):
             path = path.replace("{" + name + "}", ws)
-        s, o, _ = w.call(rt.method, path, {}, token=tok)
+        s, o, _ = w.call(rt.method, path, {}, token=fresh())
         seen += 1
         reauth = s == 403 and o.get("error") == "reauth_required"
         if rt.handler in SWITCH_HANDLERS:
             assert not reauth, (rt.method, rt.path)
         else:  # closed: asked to sign in for real, or not even reachable with a browser cookie
-            assert reauth or (s in (401, 403) and o.get("error") in ("no_session", "forbidden_role")), (rt.path, s, o)
+            pairing_only = "full" not in route_scopes(
+                rt
+            )  # a pairing-scope route: the cookie session never gets that far
+            assert reauth or (pairing_only and o.get("error") in ("no_session", "forbidden_role")), (
+                rt.method,
+                rt.path,
+                s,
+                o,
+            )
     assert seen > 20

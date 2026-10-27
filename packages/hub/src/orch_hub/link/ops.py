@@ -119,6 +119,7 @@ class OpContext:
     views: ViewService | None = None  # D15's log_sync receiver; None: the op is `unavailable`
     shares: Any = None  # orch_hub.shares.ShareService; None = share ops not served (unknown_op)
     switch: Any = None  # orch_hub.switch.SwitchService; None = switch/rail ops not served (unknown_op)
+    same_computer: bool = False  # the link's socket shows the peer is on this computer (never a peer-sent claim)
 
 
 def _require_pin(c: OpContext) -> dict[str, str]:
@@ -459,7 +460,7 @@ def switch_ticket(c: OpContext) -> dict[str, Any]:
     user = _owner_user(c)
     try:
         sw.set_origin(c.workspace_id, c.body["origin"])
-        base = sw.hub_origin_for(c.body["origin"])
+        base = sw.hub_origin_for(c.body["origin"], c.same_computer)
         if not base:
             raise Refused("unavailable")
         t = sw.issue_to_hub(user, c.workspace_id, c.body["return_to"], c.body["kind"])
@@ -501,7 +502,7 @@ def rail_get(c: OpContext) -> dict[str, Any]:
     except SwitchError as e:
         raise Refused(e.code) from None
     return {
-        "hub": {"name": sw.hub_name, "origin": sw.hub_origin_for(c.body["origin"])},
+        "hub": {"name": sw.hub_name, "origin": sw.hub_origin_for(c.body["origin"], c.same_computer)},
         "user_id": user,
         "workspaces": sw.rail_rows(c.registry, c.access, user, current=c.workspace_id),
     }

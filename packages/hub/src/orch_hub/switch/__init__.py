@@ -120,13 +120,14 @@ class SwitchService:
         to loopback or all interfaces; None otherwise. Set by `serve` from the real listener, never from a request."""
         self._loopback_origin = fn
 
-    def hub_origin_for(self, browser: str | None) -> str | None:
+    def hub_origin_for(self, browser: str | None, same_computer: bool = False) -> str | None:
         """The hub origin to hand a browser that reached the workspace dashboard on ``browser``. A computer cannot
         always dial its own private address (NetBird), so a browser on loopback gets the hub's loopback origin, but
-        only when THIS hub says it listens there (never a guess from the dashboard side)."""
+        only when THIS hub says it listens there AND the workspace link itself comes from this computer (a remote
+        workspace claiming a loopback browser origin must not get a ticket link to the user's own loopback)."""
         fn = getattr(self, "_loopback_origin", None)
         loop = fn() if fn else None
-        if loop and isinstance(browser, str) and re.match(r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", browser):
+        if loop and same_computer and isinstance(browser, str) and re.match(r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$", browser):
             return loop
         return self._hub_origin()
 

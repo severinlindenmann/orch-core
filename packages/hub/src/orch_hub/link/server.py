@@ -388,7 +388,7 @@ class LinkServer:
                     self._deliveries.on_reply(ws, port.delivery, o)
                 continue
             was_unjoined = self._reg.pin(ws) is None
-            body = self._dispatch(ws, wsk, o, now)
+            body = self._dispatch(ws, wsk, o, now, conn.same_computer())
             port.send_signed(
                 o["op"] if o["op"] in H.LINK_OPS else "error", o["seq"], body
             )  # never sign a peer-chosen string
@@ -414,12 +414,12 @@ class LinkServer:
         if code not in ("bad_signature", "wrong_suite") and type(op) is str and op in H.LINK_OPS:
             self._count(ws, op, False)
 
-    def _dispatch(self, ws: str, wsk: bytes, o: dict[str, Any], now: int) -> dict[str, Any]:
-        body = self._run(ws, wsk, o, now)
+    def _dispatch(self, ws: str, wsk: bytes, o: dict[str, Any], now: int, same: bool = False) -> dict[str, Any]:
+        body = self._run(ws, wsk, o, now, same)
         self._count(ws, o["op"], "error" not in body)
         return body
 
-    def _run(self, ws: str, wsk: bytes, o: dict[str, Any], now: int) -> dict[str, Any]:
+    def _run(self, ws: str, wsk: bytes, o: dict[str, Any], now: int, same: bool = False) -> dict[str, Any]:
         handler = ops.HANDLERS.get(o["op"])
         try:
             if handler is None:
@@ -456,6 +456,7 @@ class LinkServer:
                 views=self._views,
                 shares=self._shares,
                 switch=self._switch,
+                same_computer=same,
             )
             return handler(ctx)
         except Refused as e:

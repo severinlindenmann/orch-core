@@ -69,7 +69,8 @@ class WorkspaceInv:
     files: int = 0
     size: int = 0
     folder_refusal: str = ""  # why the whole folder can never be deleted by prune ("" = it may be asked)
-    hub: bool = False
+    hub: bool = False  # on a hub somewhere else (one that prune does not remove)
+    local_hub: bool = False  # its hub is installed on this computer and goes with this prune
 
 
 @dataclass
@@ -108,6 +109,47 @@ def _leave(root: Path, env: Mapping[str, str]) -> tuple[bool, str]:
     return r.returncode == 0, f"exit {r.returncode}"
 
 
+def _find_key(doc: Any, key: str) -> Any:
+    if isinstance(doc, dict):
+        if key in doc:
+            return doc[key]
+        for v in doc.values():
+            got = _find_key(v, key)
+            if got is not None:
+                return got
+    return None
+
+
+def _hub_joined(root: Path, env: Mapping[str, str]) -> bool | None:
+    """Whether the workspace is joined to a hub RIGHT NOW (``orch hub status --json`` asks the live host, not the
+    leftover files): ``True``/``False``, ``None`` when that could not be read. Same isolation as :func:`_leave`."""
+    import json
+
+    home = env.get("HOME") or env.get("USERPROFILE") or os.path.expanduser("~")
+    child = {k: v for k, v in env.items() if k not in ("PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP")}
+    child["ORCH_WORKSPACE"] = os.fspath(root)
+    try:
+        r = subprocess.run(
+            [sys.executable, "-I", "-m", "orch", "hub", "status", "--json"],
+            cwd=home, env=child, capture_output=True, text=True, timeout=60,
+        )  # fmt: skip
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = r.stdout or ""
+    start = text.find("{")
+    try:
+        doc = json.loads(text[start:]) if start >= 0 else None
+    except ValueError:
+        doc = None
+    if "hub.not_joined" in text or "no hub" in text:
+        return False
+    if doc is None:
+        return None
+    if not _find_key(doc, "hub_id"):
+        return False
+    return bool(_find_key(doc, "joined"))
+
+
 @dataclass
 class Ctx:
     env: Mapping[str, str]
@@ -121,6 +163,8 @@ class Ctx:
     #: folders prune may touch (set by the inventory): no program is ever taken from below them
     deny: list[Path] = field(default_factory=list)
     hub_leave: Callable[[Path, Mapping[str, str]], tuple[bool, str]] = _leave
+    #: ``(workspace root, env) -> joined now? | None (unknown)``
+    hub_status: Callable[[Path, Mapping[str, str]], bool | None] = _hub_joined
     #: install runner (launchd / systemd / pidfile) of the installed parts; ``None``: pick it from the layout
     runner: Any = None
     #: ``[(name, kind)]`` of OS users/groups orch created that exist here (``kind`` user|group); Linux only

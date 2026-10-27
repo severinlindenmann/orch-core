@@ -125,6 +125,15 @@ def _tell_hubs(ctx: Ctx, inv: Inventory, folders: set[Path]) -> None:
     for ws in inv.workspaces:
         if not ws.hub:
             continue
+        joined = ctx.hub_status(ws.root, ctx.env)  # the live state, not the files a hub leaves behind
+        prefix = f"workspace {(ws.wid or '')[:8]} has a hub"
+        if joined is False:
+            ctx.say(f"Workspace {ws.root}: left its hub earlier (nothing to tell it).")
+            inv.remote[:] = [r for r in inv.remote if not r.startswith(prefix)]
+            continue
+        if joined is None:
+            ctx.say(f"Workspace {ws.root}: could not read its hub status; the hub is not told (see the list below).")
+            continue
         if not _confirm(ctx, f"Workspace {ws.root} is on a hub. Tell the hub it leaves now (orch hub leave)? [y/N] "):
             continue
         ok, why = ctx.hub_leave(ws.root, ctx.env)
@@ -142,11 +151,19 @@ def report(ctx: Ctx, inv: Inventory, res: Result) -> int:
             if it.label:
                 say(f"  - {it.label} {it.path}".rstrip())
         say("Fix the problem and run `orch host prune` again; it only removes what is still there.")
+    elif res.skipped:
+        say(f"\nDone: {len(res.done)} steps. {len(res.skipped)} item(s) could not be removed and were skipped.")
     else:
         say(
             f"\nDone: {len(res.done)} steps. orch is off this computer"
             + (" (except the notes below)." if res.admin or inv.remote else ".")
         )
+    if res.skipped:
+        say("\nSkipped (everything else was removed). Do this by hand:")
+        for it, why, fix in res.skipped:
+            say(f"  - {it.label or it.kind} {it.path}".rstrip())
+            say(f"      why: {why[:200]}")
+            say(f"      fix: {fix}")
     for note in res.notes:
         say(f"\nNote: {note}")
     if res.admin:
@@ -158,7 +175,7 @@ def report(ctx: Ctx, inv: Inventory, res: Result) -> int:
         for r in inv.remote:
             say(f"  - {r}")
     say("\nNot removable by prune: browser data, git history in your folders, Claude Code's own records, backups.")
-    return 1 if res.failed is not None else 0
+    return 1 if (res.failed is not None or res.skipped) else 0
 
 
 def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextIO, ctx: Ctx | None = None) -> int:
@@ -206,7 +223,8 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         if not ctx.interactive:
             err.write("orch host prune: needs a terminal to ask; use --yes to run without asking (or --dry-run)\n")
             return 2
-        if not _confirm(ctx, "\nRemove all of this? [y/N] "):
+        question = "\nRemove the orch tool too? [y/N] " if only_tool else "\nRemove all of this? [y/N] "
+        if not _confirm(ctx, question):
             ctx.say("Nothing was removed.")
             return 5
     notes: list[str] = []

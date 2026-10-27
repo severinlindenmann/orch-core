@@ -37,6 +37,7 @@ class Result:
     def __init__(self) -> None:
         self.done: list[Item] = []
         self.failed: Item | None = None
+        self.skipped: list[tuple[Item, str, str]] = []  # (item, why it failed, what to do by hand)
         self.error: str = ""
         self.left: list[Item] = []
         self.admin: list[str] = []  # commands the person must run with administrator rights
@@ -116,22 +117,51 @@ def build_steps(inv: Inventory, delete_folders: set[Path], skip_workspaces: set[
     return steps
 
 
+#: steps whose failure stops the run: everything after them (deleting files a running service holds, deleting state
+#: that a host would write again) depends on them having worked. Every other item is skipped and the run goes on.
+_STOP_ON_FAIL = frozenset({"unit", "part", "launcher", "internal"})
+
+
+def fix_for(step: Item, error: str) -> str:
+    """What the person does by hand for an item that could not be removed, in plain words."""
+    k = step.kind
+    if k == "keychain":
+        acct = step.data.get("account", "")
+        kc = step.path or ""
+        login = kc.endswith("login.keychain-db")
+        cmd = f"security delete-generic-password -s io.orch.device-key -a '{acct}'" + ("" if login else f" '{kc}'")
+        return (
+            "Open Keychain Access, search for 'io.orch.device-key' and delete it, or run in Terminal "
+            f"(macOS may ask you to allow it): {cmd}"
+        )
+    if k == "claude-trust":
+        return "Close Claude Code, then run `orch host prune` again"
+    if k == "plugin":
+        return "Run: " + "; ".join(" ".join(c) for c in step.data.get("cmds", []))
+    if k == "worktree":
+        return f"Run: git -C '{step.data.get('declared', '')}' worktree remove --force '{step.path}'"
+    if k == "edit":
+        return f"Remove orch's lines from {step.path} by hand"
+    if k == "tool":
+        return "Run: uv tool uninstall orch-core"
+    if k == "os-batch":
+        return "Run the administrator commands printed above"
+    return f"Delete {step.path or step.label} by hand ({error[:120]})"
+
+
 def execute(ctx: Ctx, inv: Inventory, steps: list[Item]) -> Result:
     res = Result()
     fence = Fence(inv.roots, inv.home, inv.idents)
     for n, step in enumerate(steps):
         try:
             _do(ctx, inv, fence, step, res)
-        except PruneError as e:
-            res.failed, res.error, res.left = step, str(e), steps[n + 1 :]
-            return res
         except Exception as e:  # noqa: BLE001 - whatever it is, the report of what is done and left must still come
-            res.failed, res.error, res.left = (
-                step,
-                f"{step.label or step.kind}: {type(e).__name__}: {e}",
-                steps[n + 1 :],
-            )
-            return res
+            msg = str(e) if isinstance(e, PruneError) else f"{step.label or step.kind}: {type(e).__name__}: {e}"
+            if step.kind in _STOP_ON_FAIL:
+                res.failed, res.error, res.left = step, msg, steps[n + 1 :]
+                return res
+            res.skipped.append((step, msg, fix_for(step, msg)))
+            continue
         res.done.append(step)
     return res
 

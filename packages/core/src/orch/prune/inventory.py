@@ -562,6 +562,8 @@ def _workspace(ctx: Ctx, inv: Inventory, root: Path, wid: str | None) -> Workspa
         )
     if wid:
         ws.hub = any(os.path.lexists(inv.state / "hosts" / wid / d) for d in ("hub", "membership"))
+        ws.local_hub = ws.hub and _local_hub(inv, wid)
+        ws.hub = ws.hub and not ws.local_hub  # a hub this prune removes cannot be told anything
         for item in _worktrees(inv, wid):
             ws.items.append(item)
     ws.files, ws.size = measure(root)
@@ -602,6 +604,34 @@ def _worktrees(inv: Inventory, wid: str) -> Iterable[Item]:
 # ----------------------------------------------------------------------------------------------- remote, claude, os
 
 
+def _local_hub(inv: Inventory, wid: str) -> bool:
+    """Whether the hub this workspace joined is one installed (and removed) here: the hub address its state records
+    (``addr``, ``HOST:PORT``) has the port of the install record's hub or its link, and a hub part is recorded."""
+    rec = _read_json(inv.state / "install" / "install.json")
+    hub = ((rec.get("parts") or {}) if isinstance(rec, dict) else {}).get("hub")
+    if not isinstance(hub, dict):
+        return False
+    ports = {str(p) for p in (hub.get("port"), hub.get("link_port")) if p}
+    found: list[str] = []
+
+    def walk(doc: Any) -> None:
+        if isinstance(doc, dict):
+            for k, v in doc.items():
+                if k == "addr" and isinstance(v, str):
+                    found.append(v)
+                else:
+                    walk(v)
+        elif isinstance(doc, list):
+            for v in doc:
+                walk(v)
+
+    base = inv.state / "hosts" / wid / "hub"
+    for e in _entries(base):
+        if e.name.endswith(".json") and e.is_file(follow_symlinks=False):
+            walk(_read_json(Path(e.path), 1 << 20))
+    return any(a.rpartition(":")[2] in ports for a in found)
+
+
 def _remote(ctx: Ctx, inv: Inventory, registry: list[dict[str, Any]]) -> None:
     hosts = inv.state / "hosts"
     for e in _entries(hosts):
@@ -609,7 +639,9 @@ def _remote(ctx: Ctx, inv: Inventory, registry: list[dict[str, Any]]) -> None:
             continue
         w8 = e.name[:8]
         names = {x.name for x in _entries(Path(e.path))}
-        if names & {"hub", "membership"}:
+        if names & {"hub", "membership"} and _local_hub(inv, e.name):
+            inv.remote.append(f"workspace {w8}: its hub was on this computer and is removed with it")
+        elif names & {"hub", "membership"}:
             inv.remote.append(
                 f"workspace {w8} has a hub membership: the hub still lists it. Run `orch hub leave` in that workspace "
                 "first, or ask the hub's admin to remove it (the hub console: Admin > Workspaces > Remove)"

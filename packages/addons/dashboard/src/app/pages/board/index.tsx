@@ -445,7 +445,6 @@ export function BoardPage() {
           title={`Move ${handoffMove.key} to ${STATUS_LABEL[handoffMove.to]}`}
           ws={wsId}
           action={{ action: 'move', key: handoffMove.key, to: handoffMove.to }}
-          autoStart
           onSettled={() => {
             void qc.invalidateQueries({ queryKey: ['board'] })
             void qc.invalidateQueries({ queryKey: ['ticket'] })

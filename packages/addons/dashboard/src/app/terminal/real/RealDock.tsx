@@ -1,3 +1,4 @@
+import { takeTrustedPress } from '@/components/sign/trustedPress'
 // The terminal dock on a real host (M7a): the person's own runs from `run.list` + `run.sub`, a New terminal that shows
 // the host's preview before anything starts, Stop, and one RealTerminal for the selected run. Same frame as the
 // mockup's dock (header, tabs, resize edge). Start agent (M7b) opens core's Start agent dialog when the host serves it
@@ -70,35 +71,25 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
   // (switching tabs and back, a remount) starts read-only. RealTerminal reads `initial` only when it mounts.
   useEffect(() => { if (opened && current?.run === opened) setOpened(null) }, [opened, current?.run])
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (autoPreview && ws) void ask(false) }, [autoPreview, ws])
+  useEffect(() => { if (autoPreview && ws && takeTrustedPress()) void ask(false) }, [autoPreview, ws])
 
   const resize = (px: number) => setPrefs((p) => ({ ...p, [side]: Math.round(Math.min(dockMax(side, view, area), Math.max(DOCK_LIMITS[side].min, px))) }))
   const ask = async (inTicket: boolean) => {
-    if (!ws) return
+    if (!ws || busy) return
     const args = inTicket && ticket ? { ticket } : {}
-    setPreview({ args, data: null, error: '', idem: newIdem() })
+    setBusy(true)
+    const idem = newIdem()
     try {
       const data = await runsApi.preview(ws, args)
-      setPreview((p) => (p ? { ...p, data } : p))
-    } catch (e) {
-      setPreview((p) => (p ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p))
-    }
-  }
-  const confirm = async () => {
-    if (!ws || !preview?.data || preview.data.blocked) return
-    setBusy(true)
-    try {
-      const { run } = await runsApi.open(ws, preview.args, preview.data.spec, preview.idem)
+      if (data.blocked) { setPreview({ args, data, error: data.blocked.message ?? 'The host refused.', idem }); return }
+      const { run } = await runsApi.open(ws, args, data.spec, idem)
       setOpened(run.run)
       setSelected(run.run)
       setPreview(null)
       void qc.invalidateQueries({ queryKey: ['runs', ws] })
     } catch (e) {
-      // The same idem is kept: a retry of this confirmation returns the same run, never a second one.
-      setPreview((p) => (p ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p))
-    } finally {
-      setBusy(false)
-    }
+      setPreview({ args, data: null, error: e instanceof ApiError ? e.message : 'The host did not answer.', idem })
+    } finally { setBusy(false) }
   }
   const stop = async (run: Run) => {
     if (!ws) return
@@ -185,7 +176,7 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
           ) : ws ? <RealTerminal key={current.run} ws={ws} run={current} initial={opened === current.run ? 'write' : 'read'} /> : null}
       </div>
       {ws && agents && ticket && <StartAgentDialog key={agent ?? 'none'} ws={ws} ticket={ticket} open={!!agent} choose={agent === 'choose'} onClose={() => setAgent(null)} onStarted={(run) => setSelected(run.run)} />}
-      <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} onConfirm={() => void confirm()} />
+      <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} />
     </section>
   )
 }

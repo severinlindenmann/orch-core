@@ -353,7 +353,7 @@ def test_runner_grant_goes_through_the_terminal_handoff_with_runner_set(worlds, 
 )
 def test_a_prepared_runner_grant_that_differs_from_the_request_is_refused(change):
     """B11-P1: a host-prepared grant.issued with another label, hours, verbs, scope, field or person is never shown."""
-    from orch_dashboard.handoff import RunnerGrant, expected
+    from orch_dashboard.signing import RunnerGrant, expected
 
     good = {
         "type": "grant.issued",
@@ -692,36 +692,6 @@ def test_a_host_that_prepares_another_event_is_refused_before_anything_is_shown(
     assert res.status_code == 500 and res.json()["error"]["code"] == "internal"
 
 
-def test_the_stub_signer_signs_settings_and_member_requests(worlds, team, tmp_path):
-    from conftest import Signing
-
-    env, people, grants = team
-    world = worlds(env.owner.ref)
-    signing = Signing(world.stub, env, tmp_path)  # the signer talks to the same stub as the dashboard server
-    got = handoff(world, {"action": "settings_set", "grant_hours": 12}).json()
-    status, shown = signing.sign(got["code"])
-    assert status == 0, shown
-    env.store.refresh()
-    assert env.store.state.workspace.settings["grant_hours"] == 12
-    assert shown[0][1] == f"DEMO~{world.stub.ws[-8:]}/SETTINGS"  # stream A: <PREFIX>~<WS8>/SETTINGS
-    person, pk, cert = invitee(env)
-    got = handoff(world, {"action": "member_add", "name": "Nia", "role": "viewer", "pk": pk, "cert": cert}, 2).json()
-    status, shown = signing.sign(got["code"], confirm=lambda text, word: word == person.ref)
-    assert status == 0, shown
-    env.store.refresh()
-    assert env.store.state.workspace.members[person.ref].role == "viewer"
-    got = handoff(world, {"action": "grant_revoke", "grant": grants["owner"]}, 3).json()
-    assert signing.sign(got["code"])[0] == 0
-    env.store.refresh()
-    assert env.store.state.workspace.grants[grants["owner"]].revoked
-    after = world.get(f"/api/w/{world.stub.ws}/settings").json()
-    assert after["grant_hours"] == 12 and after["defaults"] == ["claim_ttl_min", "lease_ttl_min"]
-
-
-BIDI = "\u202e"
-
-
-@pytest.mark.parametrize("hidden", ["\u202e", "\u2066", "\u200b", "\u200f", "\ufeff", "\u2028"])
 def test_hidden_characters_from_the_host_are_not_forwarded(hidden):
     page = {
         "settings": {

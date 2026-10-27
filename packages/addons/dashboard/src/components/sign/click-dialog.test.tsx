@@ -121,52 +121,13 @@ describe('the action dialog with click-to-sign', () => {
     expect(bad).toEqual([])
   })
 
-  it('#1161: a sign_methods change goes the click path (core classes it click + word), not the terminal hand-off', async () => {
-    flag(true)
-    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
-    const { SignPopover } = await import('./SignPopover')
-    const { render } = await import('@testing-library/react')
-    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
-    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: false, allowed: ['terminal', 'click', 'phone'] })
-    const ws = (await api.getWorkspaces())[0]!.id
-    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: ['terminal', 'click'] }} autoStart onClose={() => {}} /></QueryClientProvider>)
-    await screen.findByTestId('click-panel', {}, T)
-    expect(c.prepare).toHaveBeenCalledTimes(1)
-    expect(c.prepare.mock.calls[0]?.[1]).toMatchObject({ action: 'settings_set', sign_methods: ['terminal', 'click'] })
-    expect(s.prepare).not.toHaveBeenCalled()
-  })
 
   it('a network failure is a retry, not a crash', () => {
     expect(clickProblem(new Error('boom')).next).toBe('retry')
   })
 })
 
-it('without the signer the terminal request opens and there is no Other ways', async () => {
-  flag('unavailable')
-  s.prepare.mockResolvedValue(fakeRequest())
-  s.get.mockResolvedValue(state(fakeRequest()))
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false })
-  await mount(PLAN)
-  const dialog = await screen.findByRole('dialog')
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  // Nothing usable is left: no click (signer unavailable), no phone (none paired), so no "Other ways" at all.
-  expect(within(dialog).queryByText('Other ways')).toBeNull()
-  expect(within(dialog).queryByRole('button', { name: 'One click' })).toBeNull()
-  expect(within(dialog).queryByRole('button', { name: /Approve on your phone/ })).toBeNull()
-})
 
-it('has no "Other ways": the method follows My settings, with the phone as the only quiet alternative', async () => {
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', allowed: ['terminal', 'click'], is_default: false })
-  s.prepare.mockResolvedValue(fakeRequest())
-  s.get.mockResolvedValue(state(fakeRequest()))
-  const { dialog } = await toPanel()
-  expect(within(dialog).queryByText('Other ways')).toBeNull()
-  expect(within(dialog).queryByRole('button', { name: 'Sign in a terminal' })).toBeNull()
-  expect(within(dialog).queryByRole('button', { name: 'Use my phone instead' })).toBeNull() // no phone paired
-  expect(s.prepare).not.toHaveBeenCalled()
-})
 
 describe('[rev818] adversarial: the switch moving never re-binds or signs an open request', () => {
   it('a stale-method event while the click review is open: the review stays, nothing is signed, cancelled or re-prepared', async () => {

@@ -7,7 +7,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from orch_dashboard.adapters.activity import sentence
 from orch_dashboard.adapters.tickets import _manual_acceptance, event
-from orch_dashboard.handoff import PrepareBody, expected, host_call
+from orch_dashboard.signing import PrepareBody, expected, host_call
 
 
 def parse(action, **fields):
@@ -100,7 +100,7 @@ def prepared_withdraw(reason="changed", ac="AC2"):
 
 
 def test_accept_event_and_statement_must_be_exactly_what_was_asked():
-    from orch_dashboard.handoff import expected_material
+    from orch_dashboard.signing import expected_material
 
     action = parse("accept_criterion", ac="AC2", note="checked")
     event, statement = prepared_accept("checked")
@@ -122,7 +122,7 @@ def test_accept_event_and_statement_must_be_exactly_what_was_asked():
 
 
 def test_withdraw_event_and_statement_must_be_exactly_what_was_asked():
-    from orch_dashboard.handoff import expected_material
+    from orch_dashboard.signing import expected_material
 
     action = parse("withdraw_acceptance", ac="AC2", reason="changed")
     event, statement = prepared_withdraw("changed")

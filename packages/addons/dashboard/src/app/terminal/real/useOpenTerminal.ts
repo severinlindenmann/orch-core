@@ -11,30 +11,22 @@ export function useOpenTerminal(ws: string) {
   const opening = useRef(false)
   const ask = async (args: TermArgs) => {
     if (opening.current) return
-    const idem = newIdem()
-    setPreview({ args, data: null, error: '', idem })
-    try {
-      const data = await runsApi.preview(ws, args)
-      setPreview((p) => p?.idem === idem ? { ...p, data } : p)
-    } catch (e) {
-      setPreview((p) => p?.idem === idem ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p)
-    }
-  }
-  const confirm = async () => {
-    if (!preview?.data || preview.data.blocked || opening.current) return
     opening.current = true
     setBusy(true)
+    const idem = newIdem()
     try {
-      const { run } = await runsApi.open(ws, preview.args, preview.data.spec, preview.idem)
+      const data = await runsApi.preview(ws, args)
+      if (data.blocked) { setPreview({ args, data, error: data.blocked.message ?? 'The host refused.', idem }); return }
+      const { run } = await runsApi.open(ws, args, data.spec, idem)
       setPreview(null)
       void qc.invalidateQueries({ queryKey: ['runs', ws] })
       openDockOn(run.run)
     } catch (e) {
-      setPreview((p) => p ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p)
+      setPreview({ args, data: null, error: e instanceof ApiError ? e.message : 'The host did not answer.', idem })
     } finally {
       opening.current = false
       setBusy(false)
     }
   }
-  return { ask, preview, busy, onConfirm: () => void confirm(), onClose: () => setPreview(null) }
+  return { ask, preview, busy, onClose: () => setPreview(null) }
 }

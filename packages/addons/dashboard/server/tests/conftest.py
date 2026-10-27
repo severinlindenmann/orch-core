@@ -296,20 +296,6 @@ class Signing:
     def connect(self, path, uid, ws):
         return self.link()
 
-    def sign(self, code, confirm=lambda text, word: True, backend=None):
-        from devhost import sign
-
-        shown = []
-        status = sign.run(
-            code,
-            state=self.p1.host_state,
-            run_dir=self.p1.host_state / "run",
-            open_backend=lambda directory: backend or self.backend,
-            confirm=lambda text, word: (shown.append((text, word)), confirm(text, word))[1],
-            out=shown.append,
-            connect=self.connect,
-        )
-        return status, shown
 
 
 @pytest.fixture

@@ -92,8 +92,8 @@ export function SettingsSheet({ workspace, name, onClose }: { workspace: Workspa
     ask({
       title: `Save ${title} settings`,
       action: { action: 'addon_settings', name, value: now },
-      autoStart: true,
-      autoSign: true,
+
+
       confirmLabel: 'Approve and save',
       doneToast: `${title} settings saved`,
       summary: <p className="text-[13px] text-text-muted">Saves the settings of {title} for this workspace.</p>,

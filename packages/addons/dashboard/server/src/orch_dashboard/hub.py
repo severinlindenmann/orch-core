@@ -363,7 +363,7 @@ def register(app: FastAPI, gateway: Gateway):
         for it (R1-6); one opened on this computer does not. The invite goes to the host and nowhere else; nothing
         here logs it."""
         refuse_step_up(app.state.auth, request, "hub/connect", body, ws)
-        from .handoff import _strict_json_object
+        from .signing import _strict_json_object
 
         try:
             card = _strict_json_object(body.hub_card)

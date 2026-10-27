@@ -69,7 +69,7 @@ export function TerminalsPage() {
   const list = useQuery({ ...runQueries.list(ws ?? ''), enabled: served })
   const [error, setError] = useState('')
   const [doubt, setDoubt] = useState<Record<string, boolean>>({})
-  const [preview, setPreview] = useState<{ data: TermPreview | null; error: string; idem: string } | null>(null)
+  const [preview, setPreview] = useState<{ args?: object; data: TermPreview | null; error: string; idem: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [starting, setStarting] = useState(false)
   if (!workspace || !ws) return null
@@ -88,28 +88,20 @@ export function TerminalsPage() {
   const runs = (list.data?.runs ?? []).filter((r) => r.kind === 'shell' || r.kind === 'agent')
   const off = list.data?.runner && (!list.data.runner.enabled || !list.data.runner.terminals)
   const ask = async () => {
-    setPreview({ data: null, error: '', idem: newIdem() })
-    try {
-      const data = await runsApi.preview(ws, {})
-      setPreview((p) => (p ? { ...p, data } : p))
-    } catch (e) {
-      setPreview((p) => (p ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p))
-    }
-  }
-  const confirm = async () => {
-    if (!preview?.data || preview.data.blocked) return
+    if (busy) return
+    const args = {}
     setBusy(true)
+    const idem = newIdem()
     try {
-      const { run } = await runsApi.open(ws, {}, preview.data.spec, preview.idem)
+      const data = await runsApi.preview(ws, args)
+      if (data.blocked) { setPreview({ args, data, error: data.blocked.message ?? 'The host refused.', idem }); return }
+      const { run } = await runsApi.open(ws, args, data.spec, idem)
+      openDockOn(run.run)
       setPreview(null)
       void qc.invalidateQueries({ queryKey: ['runs', ws] })
-      openDockOn(run.run)
     } catch (e) {
-      // The same idem is kept: a retry of this confirmation returns the same run, never a second one.
-      setPreview((p) => (p ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p))
-    } finally {
-      setBusy(false)
-    }
+      setPreview({ args, data: null, error: e instanceof ApiError ? e.message : 'The host did not answer.', idem })
+    } finally { setBusy(false) }
   }
   const stop = async (r: Run) => {
     setError('')
@@ -164,7 +156,7 @@ export function TerminalsPage() {
           ))}
         </ul>
       )}
-      <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} onConfirm={() => void confirm()} />
+      <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} />
       {agents && (
         <StartAgentDialog
           ws={ws}

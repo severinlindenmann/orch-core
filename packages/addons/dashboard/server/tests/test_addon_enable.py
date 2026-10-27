@@ -8,7 +8,7 @@ from orch.host import sequence
 from pydantic import TypeAdapter, ValidationError
 
 from orch_dashboard.errors import HostError
-from orch_dashboard.handoff import PrepareBody, expected, host_call, host_files, plan
+from orch_dashboard.signing import PrepareBody, expected, host_call, host_files, plan
 
 PUBLISH = {"server": "https://files.example.test", "share": "https://links.example.test"}
 

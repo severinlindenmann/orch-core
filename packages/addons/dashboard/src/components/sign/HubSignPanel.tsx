@@ -169,7 +169,7 @@ export function HubAddonPanel({ ws, action, onDone }: { ws: string; action: Extr
   )
 }
 
-const OFF_WORDS: Record<string, string> = { sign_methods: 'the allowed ways to approve', repos: 'the code folders', models: 'the AI models', icon: 'the workspace icon' }
+const OFF_WORDS: Record<string, string> = { repos: 'the code folders', models: 'the AI models', icon: 'the workspace icon' }
 
 function hours(v: number, unit: string): string {
   if (unit === 'hours') return v % 24 === 0 ? `${v / 24} day${v === 24 ? '' : 's'}` : `${v} hours`

@@ -4,7 +4,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from orch_dashboard.adapters.shell import workspace_icon
-from orch_dashboard.handoff import PrepareBody, expected, host_call
+from orch_dashboard.signing import PrepareBody, expected, host_call
 
 PAIR = {"icon": "rocket", "colour": "pink"}
 

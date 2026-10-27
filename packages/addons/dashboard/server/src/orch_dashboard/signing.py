@@ -588,23 +588,14 @@ class SettingsSet(Action):
     claim_ttl_min: Annotated[int, Field(ge=15, le=1440)] | None = None
     lease_ttl_min: Annotated[int, Field(ge=5, le=1440)] | None = None
     #: B6 (owner decision F): the workspace's allowed ways to sign; `terminal` is always present, `touchid` is reserved
-    sign_methods: (
-        Annotated[list[Literal["terminal", "click", "phone", "hub"]], Field(min_length=1, max_length=4)] | None
-    ) = None
-
     @model_validator(mode="after")
     def something(self):
         if (
             self.grant_hours is None
             and self.claim_ttl_min is None
             and self.lease_ttl_min is None
-            and self.sign_methods is None
         ):
             raise ValueError("change at least one setting")
-        if self.sign_methods is not None and (
-            "terminal" not in self.sign_methods or len(set(self.sign_methods)) != len(self.sign_methods)
-        ):
-            raise ValueError("sign_methods always contains terminal, once each")
         return self
 
 
@@ -1199,7 +1190,7 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case WriteSection():
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
-            return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
+            return "settings.set", {"set": action.model_dump(include=set(DURATIONS), exclude_none=True)}
         case IconSet():
             return "settings.set", {"set": {"icon": action.icon.model_dump() if action.icon else None}}
         case AddonEnable():
@@ -1957,7 +1948,7 @@ def register(app: FastAPI, gateway: Gateway):
                 del checks[k]  # tokens with no recent check are dropped: the dict stays small
         # The host decides first (it checks the role, then the folder); the local look is not run before it.
         op, args = host_call(body)
-        human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, dry_run=True)
+        human(ws, "human.prepare", {"op": op, "args": args}, dry_run=True)
         return {"ok": True}
 
     @app.post("/api/w/{ws}/handoff")
@@ -2007,7 +1998,6 @@ def register(app: FastAPI, gateway: Gateway):
                     {
                         "op": op,
                         "args": args,
-                        "handoff": True,
                         **({"sequence": planned.sequence} if planned.sequence else {}),
                     },
                     idem=idem,

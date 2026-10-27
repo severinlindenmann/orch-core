@@ -220,7 +220,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                   title={lastOwner ? 'You cannot demote the last owner. Make someone else an owner first.' : undefined}
                   onChange={(e) => {
                     const next = e.target.value as Role
-                    ask({ title: `Make ${name} ${next === 'owner' ? 'an owner' : `a ${next}`}`, action: { action: 'member_role', person: m.person, role: next }, autoStart: true })
+                    ask({ title: `Make ${name} ${next === 'owner' ? 'an owner' : `a ${next}`}`, action: { action: 'member_role', person: m.person, role: next },  })
                   }}
                   className="h-8 rounded-full border border-border bg-bg px-3 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
                 >
@@ -235,7 +235,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                     aria-label={`Remove ${name}`}
                     disabled={mine || lastOwner}
                     title={mine ? 'You cannot remove yourself.' : lastOwner ? 'The last owner cannot be removed.' : undefined}
-                    onClick={() => ask({ title: `Remove ${name}`, action: { action: 'member_remove', person: m.person }, autoStart: true })}
+                    onClick={() => ask({ title: `Remove ${name}`, action: { action: 'member_remove', person: m.person },  })}
                   >
                     Remove
                   </Button>
@@ -266,7 +266,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
           onClose={() => setAdding(false)}
           onSubmit={(v) => {
             setAdding(false)
-            ask({ title: `Add ${visible(v.name)}`, action: { action: 'member_add', ...v }, autoStart: true })
+            ask({ title: `Add ${visible(v.name)}`, action: { action: 'member_add', ...v },  })
           }}
         />
       )}

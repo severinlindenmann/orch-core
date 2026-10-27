@@ -20,7 +20,7 @@ it('says what an incomplete gate lacks in words and never shows orch describe', 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
-      <SignPopover title="Approve requirements" ws="w_1" action={{ action: 'approve', key: 'DEMO-0044', gate: 'requirements' } as never} autoStart onClose={vi.fn()} />
+      <SignPopover title="Approve requirements" ws="w_1" action={{ action: 'approve', key: 'DEMO-0044', gate: 'requirements' } as never} onClose={vi.fn()} />
     </QueryClientProvider>,
   )
   expect(await screen.findByText('Add Context, Out of scope and one acceptance check first.', {}, { timeout: 5000 })).toBeInTheDocument()

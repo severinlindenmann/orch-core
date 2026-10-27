@@ -494,21 +494,3 @@ it('Gates: a one-person workspace explains that the verify rule does not block i
   await screen.findByRole('heading', { name: 'Who approves what?' }, T)
   expect(await screen.findByTestId('gate-alone', {}, T)).toHaveTextContent('only member')
 })
-
-it('How I approve: the production api asks the server, so the personal controls appear when it answers (B11 10)', async () => {
-  state.host.workspaces[0].settings = settingsOf({ sign_methods: ['terminal', 'click'] })
-  state.host.override = (path) =>
-    path.endsWith('/me/sign_default') ? Response.json({ method: 'terminal', is_default: true, allowed: ['terminal', 'click'] }) : undefined
-  show('/w/DEMO/settings/general')
-  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
-  expect(await screen.findByLabelText('Default', {}, T)).toBeEnabled()
-  expect(state.host.calls.some((c) => c.path.endsWith('/me/sign_default'))).toBe(true)
-})
-
-it('How I approve: an older server without the route hides the personal controls and says so in one line', async () => {
-  state.host.workspaces[0].settings = settingsOf({ sign_methods: ['terminal', 'click'] })
-  show('/w/DEMO/settings/general')
-  await userEvent.setup().click(await screen.findByText('Advanced', {}, T))
-  expect(await screen.findByText(/Your own way of approving is not available on this host yet/, {}, T)).toBeInTheDocument()
-  expect(screen.queryByLabelText('Default')).toBeNull()
-})

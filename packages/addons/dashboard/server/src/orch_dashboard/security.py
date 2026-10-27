@@ -176,6 +176,8 @@ class Security:
                 return await reject("session.required", 401)
             scope.setdefault("state", {})["token"] = token
             refusal = self.switch_refused(token, path, method, scope)
+            if refusal and (path.endswith("/click/prepare") or path.endswith("/market/add")):
+                return await response("session.readonly", 403)(scope, receive, secure_send)
             if refusal:
                 return await step_up_response(policy.name != "loopback")(scope, receive, secure_send)
         if method not in ("GET", "HEAD", "OPTIONS"):

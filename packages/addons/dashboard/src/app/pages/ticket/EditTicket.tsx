@@ -315,7 +315,6 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
             title={`Edit ${ticket.key}`}
             ws={ws.id}
             action={signing}
-            autoStart
             onClose={() => setSigning(null)}
             onSettled={(phase) => {
               if (phase !== 'done') return

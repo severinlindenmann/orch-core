@@ -106,7 +106,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     async (where: string, id: string) => {
       setPhase('viewing')
       const got = await api.viewClick(where, id)
-      if (!mounted.current) return
+      if (!mounted.current || live.current.phase === 'cancelled' || live.current.prepared?.request_id !== id) return
       // Fail closed: the owner-mandated risk line must be exactly what the card says, or nothing is shown.
       if (got.view.risk !== CLICK_RISK) throw new ApiError(409, { code: 'human.click_refused', message: 'The review lacks the risk line.', retryable: false, reason: 'check_failed' })
       setView(got)
@@ -263,6 +263,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const cancel = useCallback(async () => {
     const { prepared: open, ws: where, phase: last } = live.current
     if (!open || !where || last === 'done' || last === 'cancelled' || last === 'idle' || last === 'settling') return // never cancel while a signature may be in flight
+    setPhase('cancelled') // Tombstone immediately, before the cancellation round trip.
     try {
       await api.cancelClick(where, open.request_id)
     } catch {

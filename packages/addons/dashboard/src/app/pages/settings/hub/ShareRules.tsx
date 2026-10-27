@@ -5,7 +5,6 @@ import { hubQueries, type HubRule, type HubPreview, type HubShare } from '@/api/
 import { Raw } from '@/components/sign/visible'
 import { Badge } from '@/components/ui/badge'
 import { Action, Field, Flow, Panel, caveat } from './shared'
-import { TerminalStep } from './TerminalStep'
 import { StopSharing } from './StopSharing'
 
 type Change = { add: HubRule; remove?: never } | { remove: HubRule; add?: never }
@@ -79,12 +78,12 @@ export function ShareRules({ ws, onBack }: { ws: string; onBack: () => void }) {
         <details><summary data-testid="hub-ticket-details">Technical details</summary><div className="space-y-2">{share.data.tickets.map((ticket, i) => <div key={ticket} className="flex flex-wrap items-center gap-2"><Raw>{ticket}</Raw><Action id={'hub-ticket-revoke-' + i} onClick={() => setRevoke(ticket)}>Stop sharing this ticket</Action></div>)}</div></details>
       </Panel>}
     </>}
-    {review && <Flow title="Review sharing change" onClose={() => setReview(undefined)}><TerminalStep ws={ws} request={review.add ? { kind: 'share_add', rule: review.add } : { kind: 'share_remove', rule: review.remove }}>
+    {review && <Flow title="Review sharing change" onClose={() => setReview(undefined)}><div><p>One click is not ready for changing sharing rules.</p>
       <p>{review.add ? 'Add this sharing rule. Matching items, including future matches, become visible to the hub.' : 'Remove this sharing rule. Items covered by other rules remain shared.'}</p>
       <p>Rule: {(review.add ?? review.remove).kind === 'ticket' ? 'single ticket (exact key in Technical details)' : <><Raw>{(review.add ?? review.remove).kind}</Raw> · <Raw>{(review.add ?? review.remove).value ?? ''}</Raw></>}</p>
       {current && <p>{current.count} items after saving · {current.new} now visible · {current.revoked} no longer shared. Preview from the hub, not signed.</p>}
       <p className="text-danger">{caveat}</p>
-    </TerminalStep></Flow>}
+    </div></Flow>}
     {revoke && <StopSharing ws={ws} ticket={revoke} onClose={() => setRevoke(undefined)} />}
   </div>
 }

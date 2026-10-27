@@ -302,9 +302,8 @@ export function ShareFlow({ ws, ticket, resume, onClose }: { ws: string; ticket:
         title={`Share files of ${s.ticket ?? ticket.key}`}
         ws={ws}
         action={{ action: 'publish_share', key: s.ticket ?? ticket.key, staged_id: s.staged_id }}
-        autoStart
         onSettled={(phase, _state, _request) => {
-          if (phase === 'done' || phase === 'already') void send(s)
+          if (phase === 'done') void send(s)
         }}
         onClose={() => {
           discard(s)

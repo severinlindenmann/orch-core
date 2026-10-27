@@ -32,6 +32,9 @@ GET, POST, PUT, DELETE, WEBSOCKET = "GET", "POST", "PUT", "DELETE", "WEBSOCKET"
 
 #: (method, route template) -> rule, with the reason where it is not obvious.
 TABLE: dict[tuple[str, str], tuple[str, str]] = {
+    (POST, W + "/handoff"): (ALLOWED, "prepares a request; it signs nothing"),
+    (GET, W + "/handoff/{request_id}"): (ALLOWED, ""),
+    (DELETE, W + "/handoff/{request_id}"): (ALLOWED, "cancels a request"),
     # --- the app shell and the session
     (GET, "/{path:path}"): (ALLOWED, "the closed SPA surface; which paths answer before login is policy.pre_login"),
     (GET, "/auth/probe"): (REFUSED, "launcher discovery on the local computer"),
@@ -107,9 +110,6 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/model-routing"): (ALLOWED, ""),
     # --- hand-off: prepares the request for the ticket actions (approve, verdict, close, ...); signing is the click
     # routes below or a Terminal, where the passkey/step-up rules apply
-    (POST, W + "/handoff"): (ALLOWED, "prepares a request; it signs nothing"),
-    (GET, W + "/handoff/{request_id}"): (ALLOWED, ""),
-    (DELETE, W + "/handoff/{request_id}"): (ALLOWED, "cancels a request"),
     # --- click-to-sign
     (GET, W + "/click/status"): (ALLOWED, ""),
     (POST, W + "/click/custody/seal"): (
@@ -153,8 +153,6 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, "/api/passkeys/enroll-link"): (STEP_UP, "Add a device"),
     (DELETE, "/api/passkeys/{credential_id}"): (STEP_UP, "remove a passkey"),
     # --- settings and small preferences
-    (GET, W + "/me/sign_default"): (ALLOWED, ""),
-    (PUT, W + "/me/sign_default"): (ALLOWED, ""),
     (GET, W + "/me/risk_notices"): (ALLOWED, ""),
     (POST, W + "/me/risk_notices"): (ALLOWED, ""),
     # --- phone signing

@@ -14,7 +14,7 @@ from pydantic import TypeAdapter
 
 from orch_dashboard import adapters
 from orch_dashboard.errors import HostError
-from orch_dashboard.handoff import PrepareBody, expected, expected_material, host_call
+from orch_dashboard.signing import PrepareBody, expected, expected_material, host_call
 from tests.host import human_helpers
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human

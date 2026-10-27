@@ -1,7 +1,6 @@
 import { versionQueries, vLabel } from '@/api/versions'
 import { RunnerSwitch } from '@/components/RunnerSwitch'
 import { AccessLength } from '../AccessLength'
-import { ApprovalMethods } from './ApprovalMethods'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { DURATIONS, canChangeSettings, inRange, type DurationKey } from '@/api/settings'
@@ -65,7 +64,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
     ask({
       title: 'Change the workspace settings',
       action: { action: 'settings_set', ...set },
-      autoStart: true,
+
     })
   }
 
@@ -78,7 +77,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
             <PopoverTrigger asChild><button type="button" className="rounded px-1 text-[12px] text-text-muted underline-offset-2 hover:text-text hover:underline">Change</button></PopoverTrigger>
             <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)]">
               <WorkspaceIconPicker workspace={workspace} canEdit={canChangeSettings(role) && served}
-                onSave={(choice) => { setIconOpen(false); ask({ title: 'Change the workspace icon', action: { action: 'icon_set', icon: choice }, autoStart: true }) }} />
+                onSave={(choice) => { setIconOpen(false); ask({ title: 'Change the workspace icon', action: { action: 'icon_set', icon: choice },  }) }} />
             </PopoverContent>
           </Popover>}
         </div>
@@ -135,7 +134,6 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           )}
 
           <div><h4 className="mb-2 font-semibold">Signing methods</h4>
-            <ApprovalMethods key={workspace.id} ws={workspace.id} owner={role === 'owner'} />
           </div>
 
           <div><h4 className="mb-2 font-semibold">How long things are held</h4>

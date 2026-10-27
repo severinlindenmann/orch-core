@@ -20,7 +20,7 @@ async function mount(action: HandoffAction) {
   const ws = mockStore.workspaces[0].id
   setFeatures({ features: ['identity', 'today', 'tickets', 'board', 'ticket', 'actions'], workspaces: { [ws]: ['identity', 'today', 'tickets', 'board', 'ticket', 'actions'] } })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  render(<QueryClientProvider client={client}><SignPopover ws={ws} title="Change the workspace settings" action={action} autoStart onClose={() => {}} /></QueryClientProvider>)
+  render(<QueryClientProvider client={client}><SignPopover ws={ws} title="Change the workspace settings" action={action} onClose={() => {}} /></QueryClientProvider>)
 }
 const INFO: HubSignInfo = {
   mode: 'full', kind: 'settings', short_hash: null,
@@ -50,16 +50,6 @@ describe('a settings change in a Full-mode workspace', () => {
     expect(within(dialog).queryByText(/Refused/)).toBeNull()
   })
 
-  it('a setting the hub may not change says so plainly and asks the host for nothing', async () => {
-    const hub = vi.spyOn(api, 'hubSign')
-    full()
-    await mount({ action: 'settings_set', sign_methods: ['click'] })
-    const dialog = await screen.findByRole('dialog', {}, T)
-    const off = await within(dialog).findByTestId('hub-settings-off', {}, T)
-    expect(off).toHaveTextContent('the allowed ways to approve')
-    expect(off).toHaveTextContent('leave the hub')
-    expect(hub).not.toHaveBeenCalled()
-  })
 
   it('a stale workspace card: the host\'s sign.hub_only turns the review into the hub approval', async () => {
     vi.spyOn(api, 'hubSign').mockResolvedValue(INFO)

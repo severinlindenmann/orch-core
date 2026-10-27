@@ -14,17 +14,14 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { seal, SealedError } from '@/api/sealed'
 import type { ClickCard, ClickSwitch } from '@/api/click'
-import { convenienceOffCommand, convenienceOnCommand, custodyPassphraseCommand } from '@/api/pairing'
 import { DEV_HOST_SENTENCE, DEV_REFUSED, devRefusedSentence, signerProblem } from '@/api/refusals'
 import { ApiError, type Workspace } from '@/api/types'
 import { CLICK_RISK } from '@/api/click'
 import { hubOnly } from '@/api/hubsign'
-import { queries } from '@/api/queries'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { CopyButton } from '../../ticket/Header'
 import { Section } from '../../ticket/shared'
 import { SignShell, SignFooter, STICKY_FOOTER } from '@/components/sign/SignShell'
 
@@ -37,7 +34,7 @@ const MIN_NEW_PASSPHRASE = 14
 const MESSAGES: Record<string, string> = {
   'custody.wrong_passphrase': 'That passphrase was refused. Nothing changed.',
   'custody.no_key': 'This computer holds no device key for this workspace.',
-  'custody.unavailable': 'The key store is locked, refused access, or a custody change is unfinished. Check in the terminal: orch keys custody status',
+  'custody.unavailable': 'The key store is locked, refused access, or a custody change is unfinished. Unlock on the host computer.',
   'role.denied': 'Only an owner switches signing in the dashboard.',
   'click.contract': 'Update orch-core: its signing helper cannot switch signing yet.',
   'lock.busy': 'Something else is changing signing right now. Try again in a moment.',
@@ -45,37 +42,19 @@ const MESSAGES: Record<string, string> = {
   'human.click_refused': 'A new passphrase for your key can only be set from a dashboard opened on this computer. Nothing changed.',
 }
 
-/** A command the person copies into a terminal, or, when the workspace prefix can't be put in one safely (it comes
- * from the host), a description without a command (the same `shellWord` gate as pairing). */
-function Command({ command, what }: { command: string | null; what: string }) {
-  if (command === null) return <span data-testid="signing-command-unsafe">run {what} for this workspace (its prefix has characters that can&apos;t be put in a command safely)</span>
-  return (
-    <span className="inline-flex max-w-full items-center gap-1 align-middle">
-      <code className="select-all break-all rounded bg-surface-3 px-1 font-mono text-[12px] text-text">{command}</code>
-      <CopyButton text={command} label="Copy the command" />
-    </span>
-  )
-}
-
 interface Failure {
   text: string
-  command?: { command: string | null; what: string }
 }
 
-function failure(e: unknown, on: boolean, prefix: string): Failure {
+function failure(e: unknown, on: boolean): Failure {
   if (!(e instanceof ApiError)) return { text: 'Could not reach the dashboard server, so the result is unknown. Reloading the card…' }
   if (e.code === 'rate.limited') {
     const s = Math.max(1, Math.ceil((e.retry_after_ms ?? 1000) / 1000))
-    return { text: `Too many wrong passphrases. Try again in ${s >= 120 ? `${Math.ceil(s / 60)} min` : `${s} s`}, or use the terminal.` }
+    return { text: `Too many wrong passphrases. Try again in ${s >= 120 ? `${Math.ceil(s / 60)} min` : `${s} s`}.` }
   }
   // Core D1 (#582): a dev sandbox host never switches signing on from the dashboard.
   if (e.code === DEV_REFUSED) return { text: `${devRefusedSentence(e)} Nothing changed.` }
-  if (e.code === 'custody.terminal_needed') {
-    return {
-      text: `Nothing changed. Switch it ${on ? 'on' : 'off'} in the terminal:`,
-      command: { command: on ? convenienceOnCommand(prefix) : convenienceOffCommand(prefix), what: `orch host convenience ${on ? 'on' : 'off'}` },
-    }
-  }
+  if (e.code === 'custody.terminal_needed') return { text: 'One click needs setup on the host computer.' }
   // Core refused the new passphrase as too weak before anything changed (it names the rule, never the text).
   if (!on && e.code === 'custody.unavailable' && /passphrase/i.test(e.message ?? '') && /(at least|common|predictable)/.test(e.message ?? '')) {
     return { text: `${e.message}. Nothing changed: one-click signing is still on. Enter your new passphrase again.` }
@@ -90,8 +69,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const card: ClickCard | null = status.data ?? workspace.click ?? null
   const on = !!card && card.enabled
   // Full mode (joined to a hub): the host signs nothing locally, so the card says approvals go through the hub, in view.
-  const hostSettings = useQuery(queries.hostSettings(workspace.id))
-  const viaHub = hubOnly(workspace) || (hostSettings.data?.sign_methods as string[] | null | undefined)?.includes('hub') === true
+  const viaHub = hubOnly(workspace)
   const [mode, setMode] = useState<'idle' | 'on' | 'off' | 'resume'>('idle')
   const [pass, setPass] = useState('')
   const [pass2, setPass2] = useState('')
@@ -148,7 +126,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
       void qc.invalidateQueries({ queryKey: ['workspaces'] })
       reset()
     } catch (e) {
-      setError(e instanceof SealedError ? { text: 'Your passphrase could not be locked in this window. Nothing changed. Enter it again.' } : failure(e, body.on, workspace.prefix))
+      setError(e instanceof SealedError ? { text: 'Your passphrase could not be locked in this window. Nothing changed. Enter it again.' } : failure(e, body.on))
       setPass('')
       setPass2('')
       // whatever the answer, the card shows what the signer says now (a stale form after a refusal, orch-9d M2)
@@ -187,8 +165,8 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
             : on && card?.available
             ? 'On: you approve here with one click.'
             : on
-              ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''} Approve in the terminal.`
-              : 'Off: you approve in the terminal with your passphrase.'}
+              ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''}`
+              : 'One click is off.'}
         </p>
         {card?.problem === 'idle' && (
           <p data-testid="signing-idle-off" className="text-text-muted">
@@ -211,13 +189,11 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
           <p className="text-text-muted">Only an owner switches this.</p>
         ) : card && card.switchable === false ? (
           <p data-testid="signing-update" className="text-text-muted">
-            This version of orch cannot switch it here. Update orch, or use the terminal:{' '}
-            <Command command={on ? convenienceOffCommand(workspace.prefix) : convenienceOnCommand(workspace.prefix)} what={`orch host convenience ${on ? 'off' : 'on'}`} />
+            Update orch to turn on One click here.
           </p>
         ) : terminalOn && mode === 'idle' ? (
           <p data-testid="signing-terminal-on" className="text-text-muted">
-            Your key is already saved on this computer, so there is no passphrase to check. Use the switch to turn it on after a short review, or in the terminal:{' '}
-            <Command command={convenienceOnCommand(workspace.prefix)} what="orch host convenience on" />
+            Use the switch to turn on One click.
           </p>
         ) : null}
         {mode !== 'idle' && (
@@ -244,12 +220,6 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
                 {error && (
                   <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
                     {error.text}
-                    {error.command && (
-                      <>
-                        {' '}
-                        <Command {...error.command} />
-                      </>
-                    )}
                   </p>
                 )}
                 <SignFooter><div className={STICKY_FOOTER + " flex justify-end gap-2"}>
@@ -294,12 +264,6 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
                 {error && (
                   <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
                     {error.text}
-                    {error.command && (
-                      <>
-                        {' '}
-                        <Command {...error.command} />
-                      </>
-                    )}
                   </p>
                 )}
                 <SignFooter><div className={STICKY_FOOTER + " flex justify-end gap-2"}>
@@ -364,20 +328,13 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
                   <>
                     <p className="text-text-muted">Your key stays saved on this computer; nothing here can sign while signing is off.</p>
                     <p data-testid="signing-move-back" className="text-text-muted">
-                      To move it back under a passphrase, run in the terminal:{' '}
-                      <Command command={custodyPassphraseCommand(workspace.prefix)} what="orch keys custody passphrase --in-place" />
+                      Manage key custody on the host computer.
                     </p>
                   </>
                 )}
                 {error && (
                   <p role="alert" id={errorId} data-testid="signing-error" className="text-warning">
                     {error.text}
-                    {error.command && (
-                      <>
-                        {' '}
-                        <Command {...error.command} />
-                      </>
-                    )}
                   </p>
                 )}
                 <SignFooter><div className={STICKY_FOOTER + " flex flex-wrap items-center justify-end gap-2"}>

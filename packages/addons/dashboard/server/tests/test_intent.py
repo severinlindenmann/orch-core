@@ -92,7 +92,7 @@ def test_a_moved_base_is_a_new_intent(client, token, stub, script, rich, monkeyp
     from orch_dashboard import intent
 
     real = intent.gate_base
-    monkeypatch.setattr("orch_dashboard.handoff.gate_base", lambda data, gate: {**real(data, gate), "gen": 99})
+    monkeypatch.setattr("orch_dashboard.signing.gate_base", lambda data, gate: {**real(data, gate), "gen": 99})
     second = client.post(url(stub, "prepare"), json=approve, headers=hdr(token)).json()
     assert first["request_id"] != second["request_id"] and script.prepared == 2
 
@@ -157,7 +157,7 @@ def test_logout_and_login_then_retry_never_makes_a_second_request(client, token,
 
 def test_send_prepare_expiry_does_not_renew_a_baseless_intent():
     from orch_dashboard.errors import HostError, fail
-    from orch_dashboard.handoff import Plan, send_prepare
+    from orch_dashboard.signing import Plan, send_prepare
 
     plan = Plan("new", {"title": "A ticket"}, None, None, P)
     calls = []
@@ -264,7 +264,7 @@ def test_new_dashboard_link_keeps_same_host_request_without_auth_session(
 @pytest.mark.parametrize("submitted_at", [None, "2026-10-13T15:20:00Z"])
 @pytest.mark.parametrize("source", ["request", "row"])
 def test_done_time_requires_committed_pending_sequence(submitted_at, source):
-    from orch_dashboard.handoff import done_error
+    from orch_dashboard.signing import done_error
 
     prepared = {"request": {"state": "submitted"}, "op": "log"}
     row = {"state": "submitted", "seq": 7}

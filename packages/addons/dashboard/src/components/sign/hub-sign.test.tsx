@@ -175,7 +175,7 @@ describe('an add-on approval in a full-mode workspace (FB15)', () => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const { render } = await import('@testing-library/react')
     const { SignPopover } = await import('./SignPopover')
-    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={W} title="Turn on wiki" action={{ action: 'addon_grant', name: 'wiki' } as never} autoStart onClose={() => {}} /></QueryClientProvider>)
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={W} title="Turn on wiki" action={{ action: 'addon_grant', name: 'wiki' } as never} onClose={() => {}} /></QueryClientProvider>)
     const dialog = await screen.findByRole('dialog', {}, T)
     const panel = await within(dialog).findByTestId('hub-addon', {}, T)
     expect(prepare).toHaveBeenCalled()

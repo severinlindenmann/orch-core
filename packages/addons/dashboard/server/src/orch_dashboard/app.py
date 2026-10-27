@@ -20,7 +20,6 @@ from . import (
     click,
     focus_routes,
     followups,
-    handoff,
     hub,
     hubapprove,
     market_routes,
@@ -30,7 +29,7 @@ from . import (
     riskack,
     settings,
     shares,
-    signprefs,
+    signing,
     stepup_routes,
     switch,
     terminals,
@@ -297,7 +296,7 @@ def create_app(
 
     register_setup(app, auth, setup_proxy or SetupProxy(state_dir() / "setup" / "setup.sock"), port)
     reads.register(app, gateway)
-    handoff.register(app, gateway)
+    signing.register(app, gateway)
     click.register(app, gateway)
     stepup_routes.register(app, gateway)
     hubapprove.register(app, gateway)
@@ -306,7 +305,6 @@ def create_app(
     trust_routes.register(app, auth)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
-    signprefs.register(app, gateway)
     riskack.register(app, gateway)
     phone.register(app, gateway)
     addon_routes.register(app, gateway)

@@ -194,7 +194,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         points: [
           'Next to the key the view says "key per host" (by design).',
           'The main button is your method ("Sign in Terminal"); "Other ways" lists only ways your workspace allows.',
-          'Terminal: a hand-over code appears; run "orch sign CODE".',
+          'Terminal: a hand-over code appears; run "One click".',
         ],
         see: 'ONE review for everything, plain like a ticket (a headline, the text, the checklist, people by name), with "Technical details" folded away. In the Terminal: a short plain review, a word to type, d = details. After signing the drawer closes and the new ticket opens.',
       },

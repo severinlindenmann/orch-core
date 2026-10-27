@@ -17,7 +17,6 @@ const CLASS_WORD: Record<string, string> = { official: 'Signed by orch', dev: 'D
 export function AddMarketplace({ ws, list, markets, onAdded }: { ws: string; list: MarketList | undefined; markets: Market[]; onAdded: (url: string) => void }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState(false)
-  const [picked, setPicked] = useState<string | null>(null)
   const [address, setAddress] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -26,7 +25,6 @@ export function AddMarketplace({ ws, list, markets, onAdded }: { ws: string; lis
   const allowed = offered.length > 0 || anySource
   const close = () => {
     setOpen(false)
-    setPicked(null)
     setError('')
   }
   const add = async (url: string) => {
@@ -61,26 +59,8 @@ export function AddMarketplace({ ws, list, markets, onAdded }: { ws: string; lis
           <DialogContent data-testid="add-market-sheet" className="max-w-lg border-border bg-surface">
             <DialogHeader>
               <DialogTitle>Add marketplace</DialogTitle>
-              <DialogDescription>Choose a source for add-ons. You will review it before adding.</DialogDescription>
+              <DialogDescription>Choose a source for add-ons. Adding a marketplace installs nothing.</DialogDescription>
             </DialogHeader>
-            {picked ? (
-              <div className="space-y-3 text-[13px]">
-                <p className="font-medium">Approve this change</p>
-                <p>
-                  Marketplace <Inline>{repo(picked)}</Inline>
-                </p>
-                <p className="text-text-muted">Its add-ons will appear in Browse. Nothing is installed or turned on by adding a marketplace.</p>
-                {error && <p role="alert" className="text-warning">{error}</p>}
-                <div className="flex justify-end gap-2">
-                  <Button variant="ghost" disabled={busy} onClick={() => setPicked(null)}>
-                    Cancel
-                  </Button>
-                  <Button disabled={busy} onClick={() => void add(picked)}>
-                    Approve
-                  </Button>
-                </div>
-              </div>
-            ) : (
               <div className="space-y-3">
                 <ul aria-label="Known marketplaces" className="divide-y divide-border text-[13px]">
                   {markets.map((m) => (
@@ -98,7 +78,7 @@ export function AddMarketplace({ ws, list, markets, onAdded }: { ws: string; lis
                         <p className="font-medium">{o.class === 'dev' ? 'Dev test marketplace' : <Inline>{repo(o.url)}</Inline>}</p>
                         <p className="text-text-muted">Repository: <Inline>{repo(o.url)}</Inline>{CLASS_WORD[o.class] ? ` · ${CLASS_WORD[o.class]}` : ''}</p>
                       </div>
-                      <Button size="sm" variant="secondary" onClick={() => setPicked(o.url)}>
+                      <Button size="sm" variant="secondary" disabled={busy} onClick={() => void add(o.url)}>
                         Add
                       </Button>
                     </li>
@@ -109,14 +89,14 @@ export function AddMarketplace({ ws, list, markets, onAdded }: { ws: string; lis
                     <summary className="cursor-pointer text-[13px] text-text-muted">Add by address</summary>
                     <div className="mt-2 flex gap-2">
                       <Input aria-label="Marketplace address" placeholder="https://github.com/owner/repo" value={address} onChange={(e) => setAddress(e.target.value)} />
-                      <Button size="sm" variant="secondary" disabled={!address.trim()} onClick={() => setPicked(address.trim())}>
+                      <Button size="sm" variant="secondary" disabled={busy || !address.trim()} onClick={() => void add(address.trim())}>
                         Add
                       </Button>
                     </div>
                   </details>
                 )}
               </div>
-            )}
+            {error && <p role="alert" className="text-warning">{error}</p>}
           </DialogContent>
         </Dialog>
       )}

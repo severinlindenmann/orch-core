@@ -19,7 +19,6 @@ import { ApiError } from '@/api/types'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { storyOf } from '@/components/sign/story'
 import { SignPopover } from '@/components/sign/SignPopover'
-import { useSignMethods } from '@/components/sign/SignMethods'
 import { useClickSign } from '@/components/sign/useClickSign'
 import { Inline, Prose, Raw } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -303,7 +302,6 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
         ws={ws}
         title="Give agents access"
         action={{ action: 'runner_grant', hours, scope: 'workable' }}
-        autoStart
         startsAgent
         anchor={anchor}
         controls={accessSelect}
@@ -540,9 +538,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   const revoke = useClickSign(ws)
   // One click only where this workspace really uses it AND the person's method is click; otherwise the same terminal
   // hand-off as every other signature. The custody itself is still checked by core.
-  const methods = useSignMethods(ws)
-  const oneClick = clickReady(workspace) && !!methods.allowed?.includes('click')
-    && (methods.preference?.method ? methods.preference.method === 'click' : true)
+  const oneClick = clickReady(workspace)
   const [handoff, setHandoff] = useState(false)
   const changed = useRef(onChanged)
   changed.current = onChanged
@@ -655,7 +651,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
       {extend && !sheet && <p>Agents that are running now stop; new agents use the extended access.</p>}
       {/* M-2: while the terminal is waiting for the person (the signature, then r), the old "issue one" must not shout over it. */}
       {blocked && (handoff || step.kind === 'polling'
-        ? <p className="text-text" data-testid="runner-grant-waiting">Waiting for your terminal: sign there, then press r to hand the access to the agent runner.</p>
+        ? <p className="text-text" data-testid="runner-grant-waiting">Review and sign the agent access.</p>
         : <p className="text-text" data-testid="runner-grant-needed">{blockedText(blocked)}</p>)}
       {(!grant || extend) && !loading && maxKnown && step.kind !== 'confirmed' && (click.phase === 'idle' || click.phase === 'failed' || click.phase === 'cancelled') && (
         lengths.length === 0 ? <p className="text-text-muted" data-testid="runner-grant-longest">Your access already lasts as long as this workspace allows ({hoursText(maxHours)}), so there is nothing to extend. Whoever owns the workspace can allow longer in Settings, General.</p> : sheet ? <div className="min-w-0 space-y-4 py-2 text-[13px] leading-relaxed" data-testid="access-sheet">
@@ -665,7 +661,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
           <p data-testid="access-until" className="break-words text-xs leading-relaxed text-text-muted">Until <time dateTime={new Date(nowMs() + hours * 3_600_000).toISOString()}>{fmtExact(new Date(nowMs() + hours * 3_600_000).toISOString())}</time> (your time), counted from now.{extend && <> Replaces your current access, which ends <time dateTime={extend.until}>{fmtExact(extend.until)}</time>.</>}</p>
           <p data-testid="access-may-do" className="border-t border-border pt-4 text-text-muted"><span className="font-medium text-text">What agents may do. </span>Agents (Claude Code) may read and change files in the project folder and run its commands, on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'}.</p>
           <p className="text-xs text-text-muted">This workspace allows access for up to {hoursText(maxHours)}.{extend ? ' Agents that are running now stop; new agents use the extended access.' : ''}</p>
-          <Button disabled={!enabled || methods.loading} className="min-h-11 w-full" onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Allow agent access'}</Button>
+          <Button disabled={!enabled || false} className="min-h-11 w-full" onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Allow agent access'}</Button>
           {!runner?.enabled && runner && <><span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span><RunnerSwitch ws={ws} on testId="runner-grant-enable" variant="secondary" /></>}
         </div> : <div className="flex flex-wrap items-center gap-2">
           <Label htmlFor="grant-hours" className="text-xs text-text-muted">Length</Label>
@@ -677,14 +673,14 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
             <option value="workable">Tickets you may work on</option>
             <option value="all">All tickets</option>
           </select>
-          <Button size="xs" disabled={!enabled || methods.loading} onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Issue runner grant'}</Button>
+          <Button size="xs" disabled={!enabled || false} onClick={() => void issue()} data-testid="runner-grant-issue">{extend ? 'Extend access' : 'Issue runner grant'}</Button>
           {!runner?.enabled && runner && <><span className="text-text-muted" data-testid="runner-grant-off">{TERMINAL_ONLY}</span><RunnerSwitch ws={ws} on testId="runner-grant-enable" variant="secondary" /></>}
         </div>
       )}
-      {handoff && workspace && action.hours > 0 && <SignPopover ws={ws} title={extend ? 'Extend agent access' : 'Issue runner grant'} action={action} autoStart
+      {handoff && workspace && action.hours > 0 && <SignPopover ws={ws} title={extend ? 'Extend agent access' : 'Issue runner grant'} action={action}
         summary={extend ? <div className="space-y-1" data-testid="extend-summary">
           <p>Your current agent access ends {fmtDateTime(extend.until)} <span className="text-text-muted">(per host, not signed)</span>. The new access lasts {hoursText(hours)} from the moment you sign.</p>
-        </div> : <p>Agents on this machine can act for you on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'} for {hoursText(hours)}. When you sign in the terminal, you type GRANT to continue, then choose to hand the grant to the orch runner.</p>}
+        </div> : <p>Agents on this machine can act for you on {scope === 'all' ? 'all tickets' : 'the tickets you may work on'} for {hoursText(hours)}. One click must be ready before you can allow agents.</p>}
         onSettled={(phase, _state, request) => {
           if (phase !== 'done') return
           setHandoff(false)
@@ -739,7 +735,7 @@ export const depositIdOf = (requestId: string | undefined | null): string | null
   requestId && /^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(requestId) ? requestId.slice(3) : null
 
 /** When the grant's id is not known here (a lost sign answer): where to find it. */
-export const FIND_GRANT = 'Its id did not reach this page: revoke your newest runner grant under Settings → Grants, or run `orch grant --runner` in your terminal for a new one.'
+export const FIND_GRANT = 'Its id did not reach this page: revoke your newest runner grant under Settings → Grants.'
 
 /** The grant's refusals before signing, in the approved words. */
 export function refusalText(e: unknown): string | null {

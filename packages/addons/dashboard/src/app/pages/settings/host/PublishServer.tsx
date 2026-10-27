@@ -160,7 +160,7 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
                 disabled={!ready}
                 onClick={() => {
                   setEditing(false)
-                  ask({ title: 'Choose where shared files go', action: { action: 'publish_setup', server, share }, autoStart: true })
+                  ask({ title: 'Choose where shared files go', action: { action: 'publish_setup', server, share },  })
                 }}
               >
                 Review and sign

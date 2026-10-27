@@ -66,8 +66,6 @@ export function FollowupUndoHost() {
       ws={request.ws}
       title={`Restore the follow-up on ${request.key}`}
       action={{ action: 'followup_undo', key: request.key, id: request.id }}
-      autoStart
-      autoSign
       doneToast="Follow-up restored."
       onSettled={refresh}
       onClose={() => setRequest(null)}
@@ -156,8 +154,6 @@ export function CancelButton({ row, ws, canUndo, size = 'sm' }: { row: FollowupR
           title={`Cancel the follow-up on ${row.ticket}`}
           ws={ws}
           action={{ action: 'followup_cancel', key: row.ticket, id: row.id }}
-          autoStart
-          autoSign
           confirmLabel={label}
           doneToast=""
           onSettled={(phase) => {
@@ -297,8 +293,6 @@ export function RescheduleButton({ row, ws, canMove, size = 'sm' }: { row: Follo
           ws={ws}
           title={`Move the follow-up on ${row.ticket} to ${fmtExact(when)}`}
           action={{ action: 'followup_reschedule', key: row.ticket, id: row.id, when }}
-          autoStart
-          autoSign
           doneToast={`Moved the follow-up on ${row.ticket} to ${fmtExact(when)}.`}
           onSettled={refresh}
           onClose={() => setWhen(null)}

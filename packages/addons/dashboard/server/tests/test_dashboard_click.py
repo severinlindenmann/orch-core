@@ -383,11 +383,11 @@ def test_sign_bodies_are_checked(client, token, stub, script, body):
     assert [c for c in script.clients[0].calls if c[0] == "sign"] == []
 
 
-def test_a_request_belongs_to_the_person_so_any_session_of_theirs_can_use_it(client, token, stub, script, auth):
+def test_a_request_belongs_only_to_the_preparing_session(client, token, stub, script, auth):
     prepare(client, token, stub)
     other = client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(other["token"]))
-    assert res.status_code == 200
+    assert res.status_code == 404
     unknown = "hr_" + "0" * 25 + "2"
     for step, body in (
         ("view", {"request_id": unknown}),
@@ -786,7 +786,7 @@ def test_m2_the_view_is_checked_against_the_hosts_own_record(client, token, stub
     kw = host_check.checks[0]
     assert kw["expect_op"] == "approve" and kw["expect_key"] == "DEMO-0001" and kw["expect_events"] is None
     # A settings change carries the exact event it must prepare.
-    from orch_dashboard.handoff import SettingsSet
+    from orch_dashboard.signing import SettingsSet
 
     body = {"action": "settings_set", "grant_hours": 12}
     assert SettingsSet(**body)
@@ -1287,7 +1287,7 @@ def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client,
 
 
 def test_794_the_walk_is_capped(client, token, stub, script, rich):
-    from orch_dashboard.handoff import NEXT_RETRY_HOPS
+    from orch_dashboard.signing import NEXT_RETRY_HOPS
 
     for r in range(NEXT_RETRY_HOPS + 1):
         got = client.post(url(stub, "prepare"), json={**comment(1), "retry": r}, headers=hdr(token))
@@ -1570,7 +1570,7 @@ def test_concurrent_uncertain_sign_remarks_after_definite_failure(client, token,
     ],
 )
 def test_a_definite_sign_failure_clears_the_mark_only_with_nothing_in_flight_or_unknown(steps, marked):
-    from orch_dashboard.handoff import Handoffs
+    from orch_dashboard.signing import Handoffs
 
     handoffs = Handoffs()
     until = handoffs.clock() + 100
@@ -1583,7 +1583,7 @@ def test_a_definite_sign_failure_clears_the_mark_only_with_nothing_in_flight_or_
 
 
 def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
-    from orch_dashboard.handoff import Handoffs
+    from orch_dashboard.signing import Handoffs
 
     handoffs = Handoffs()
     until = handoffs.clock() + 100
@@ -1767,7 +1767,7 @@ def test_each_deposit_field_is_checked(client, token, stub, deposits, answer, ou
 
 
 def test_expected_admits_only_the_callers_runner_grant():
-    from orch_dashboard.handoff import RunnerGrant, expected
+    from orch_dashboard.signing import RunnerGrant, expected
 
     me = "p_" + "1" * 32
     good = {
@@ -2127,7 +2127,7 @@ MARKET = {"action": "market_grant", "name": "echo", "staged": "st_" + "0" * 32}
 @pytest.fixture
 def host_serves_grant(monkeypatch):
     """The test host's welcome does not list addon.grant (a real one does); the column check is not what is tested."""
-    from orch_dashboard import handoff
+    from orch_dashboard import signing as handoff
 
     monkeypatch.setattr(handoff, "WORKSPACE_OPS", tuple(o for o in handoff.WORKSPACE_OPS if o != "addon.grant"))
 
@@ -2545,7 +2545,7 @@ def test_the_server_logs_never_hold_the_envelope_or_the_secret(client, token, st
 
 
 def test_expected_admits_only_the_callers_agent_access():
-    from orch_dashboard.handoff import AgentAccess, expected
+    from orch_dashboard.signing import AgentAccess, expected
 
     me = "p_" + "1" * 32
     good = {
@@ -2564,12 +2564,12 @@ def test_expected_admits_only_the_callers_agent_access():
 
 
 def test_a_new_page_key_is_a_new_request_and_the_same_key_the_same_one():
-    from orch_dashboard.handoff import AgentAccess
+    from orch_dashboard.signing import AgentAccess
 
     other = "E" + "A" * 86
     a = AgentAccess(action="agent_access", reveal_key=PAGE_KEY)
     b = AgentAccess(action="agent_access", reveal_key=other)
-    from orch_dashboard.handoff import intent_idem
+    from orch_dashboard.signing import intent_idem
 
     def idem(body):
         return intent_idem(
@@ -3244,7 +3244,7 @@ def test_c16_the_contract_refusal_is_in_plain_words(client, token, stub, script,
 
 def test_hub_steps_get_a_fresh_idem_once_the_hub_state_moved(client, token, stub, backup, monkeypatch):
     """B10/B13: leave, join, mode full, leave is a new request each time; a repeat with no change is not."""
-    from orch_dashboard import handoff
+    from orch_dashboard import signing as handoff
 
     state = {"joined": True, "mode": "selective", "binding_seq": 1, "hub_id": HUB_ID, "binding": "bound"}
     monkeypatch.setattr(handoff, "hub_base", lambda link: {"hub": dict(state)})
@@ -3263,7 +3263,7 @@ def test_hub_steps_get_a_fresh_idem_once_the_hub_state_moved(client, token, stub
 def test_hub_base_is_the_log_head_and_the_hub_state():
     from orch.host.journal import CURSOR_PREFIX
 
-    from orch_dashboard.handoff import hub_base
+    from orch_dashboard.signing import hub_base
 
     body = base64.urlsafe_b64encode(json.dumps({"e": "E", "j": 7, "p": "P", "r": "R9", "w": "W"}).encode())
     cursor = CURSOR_PREFIX + body.decode().rstrip("=") + ".mac"
@@ -3276,3 +3276,38 @@ def test_hub_base_is_the_log_head_and_the_hub_state():
 
     want = {"joined": True, "hub_id": "ab", "mode": "full", "binding_seq": 4, "binding": "bound"}
     assert hub_base(L()) == {"head": {"e": "E", "j": 7, "r": "R9"}, "hub": want}
+
+
+def test_c2_switch_cannot_prepare(client, auth, stub, script):
+    from orch_dashboard.policy import LOOPBACK
+
+    switched = auth.open_switch(LOOPBACK, stub.ws)["token"]
+    result = prepare(client, switched, stub)
+    assert result.status_code == 403
+    assert result.json()["error"]["code"] == "session.readonly"
+    assert script.prepared == 0
+
+
+def test_c2_other_session_cannot_sign_or_cancel(client, token, stub, script, auth):
+    from orch_dashboard.policy import LOOPBACK
+
+    request_id = prepare(client, token, stub).json()["request_id"]
+    other = client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()["token"]
+    for step, body in (
+        ("view", {"request_id": request_id}),
+        ("sign", {"request_id": request_id, "view_digest": HASH}),
+        ("cancel", {"request_id": request_id}),
+    ):
+        result = client.post(url(stub, step), json=body, headers=hdr(other))
+        assert result.status_code == 404
+
+
+def test_c2_cancelled_request_is_never_signable(client, token, stub, script):
+    request_id = prepare(client, token, stub).json()["request_id"]
+    cancelled = client.post(url(stub, "cancel"), json={"request_id": request_id}, headers=hdr(token))
+    assert cancelled.status_code == 200
+    late = client.post(url(stub, "sign"), json={"request_id": request_id, "view_digest": HASH}, headers=hdr(token))
+    assert late.status_code == 404
+    fresh = prepare(client, token, stub, {**approve(), "retry": 1})
+    assert fresh.status_code == 200
+    assert fresh.json()["request_id"] != request_id

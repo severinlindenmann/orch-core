@@ -170,8 +170,6 @@ export function createApi(transport: Transport) {
     phoneRequest: (ws: string, body: import('./phone').PhoneRequest & { idem: string }) => call<import('./phone').PhoneHint & { phones: number }>('POST', `/api/w/${ws}/phone/request`, body),
     phoneCancel: (ws: string, id: string) => call<{ id: string; state: import('./phone').PhoneHint['state'] }>('POST', `/api/w/${ws}/phone/cancel`, { id }),
     phoneStatus: (ws: string, id: string) => call<{ hints: import('./phone').PhoneHint[] }>('GET', `/api/w/${ws}/phone/status/${id}`),
-    getSignDefault: (ws: string) => call<import('./signing').SignDefault>('GET', `/api/w/${ws}/me/sign_default`),
-    putSignDefault: (ws: string, body: { method: import('./signing').SignMethod; fallback?: import('./signing').SignMethod }) => call<import('./signing').SignDefault>('PUT', `/api/w/${ws}/me/sign_default`, body),
     getHostSettings: (ws: string) => call<HostSettings>('GET', `/api/w/${ws}/settings`),
     getRoster: (ws: string) => call<RosterMember[]>('GET', `/api/w/${ws}/members`),
     addonSettings: (ws: string, name: string) => call<AddonSettingsData>('GET', `/api/w/${ws}/add-ons/${name}/settings`),

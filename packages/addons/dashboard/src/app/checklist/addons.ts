@@ -193,7 +193,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'L2',
         title: 'Approving things',
         text: 'Click "Approving things".',
-        see: 'It names the Terminal way, "orch sign CODE", and says Phone is coming later.',
+        see: 'It names the Terminal way, "One click", and says Phone is coming later.',
       },
       {
         id: 'L3',
@@ -569,7 +569,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'W6',
         title: 'The verification code',
-        text: 'Start any signature from the dashboard (for example Approve requirements) and run the `orch sign ...` command. Compare the verification code line in the Terminal with the one in the dashboard dialog. Press d in the Terminal.',
+        text: 'Start a signature from the dashboard and review the exact values before signing with One click.',
         see: 'Under the headline a line "Verification code: " with 12 characters, the same 12 in the dashboard (step 3: "Check that the verification code ... matches the one in Terminal, read what Terminal shows (that is what you approve), then type ...") and in the Terminal (the details still show "fingerprint:"). It is clear that the command and the code are two different things.',
       },
       {
@@ -864,7 +864,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'S2',
         title: 'Turn on Publish in one review',
         text: 'On the Add-ons page: switch on "Publish". It first asks for the two addresses (where files are sent, where links open). Press "Turn on".',
-        see: 'The dashboard tells you to sign in the Terminal (`orch sign CODE`); a click is refused. In the Terminal the review shows both addresses and the grant, one word, one passphrase, "signed settings.set (2 signatures)". Publish shows "On". The publish server must know you and the workspace: it needs BOTH `ws allow` and `owners add` (owner id = 32 hex characters without "p_"). The lead does this on the edge host: if sharing is refused later, ask the lead (it is already done by the lead for this run).',
+        see: 'The dashboard tells you to sign in the Terminal (`One click`); a click is refused. In the Terminal the review shows both addresses and the grant, one word, one passphrase, "signed settings.set (2 signatures)". Publish shows "On". The publish server must know you and the workspace: it needs BOTH `ws allow` and `owners add` (owner id = 32 hex characters without "p_"). The lead does this on the edge host: if sharing is refused later, ask the lead (it is already done by the lead for this run).',
       },
       {
         id: 'S3',

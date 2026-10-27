@@ -43,6 +43,22 @@ describe('switching workspace', () => {
     expect(t.cancel).toHaveBeenCalledTimes(1)
   })
 
+  it('C2: cancelling tombstones the request before the answer; another press increments retry', async () => {
+    const t = await setup()
+    const sign = vi.spyOn(api, 'signClick')
+    let finish!: () => void
+    t.cancel.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({ id: REQ, state: 'cancelled' }) }))
+    let cancellation!: Promise<void>
+    act(() => { cancellation = t.run().cancel() })
+    await act(async () => { await t.run().sign() })
+    expect(sign).not.toHaveBeenCalled()
+    expect(t.run().phase).toBe('cancelled')
+    await act(async () => { finish(); await cancellation })
+    await act(async () => { await t.run().again({ action: 'approve', key: 'DEMO-1', gate: 'plan' }) })
+    expect(api.prepareClick).toHaveBeenLastCalledWith('a'.repeat(32), { action: 'approve', key: 'DEMO-1', gate: 'plan' }, 1)
+    expect(sign).not.toHaveBeenCalled()
+  })
+
   it('while the outcome is unknown cancels nothing and claims nothing', async () => {
     const t = await setup()
     vi.spyOn(api, 'signClick').mockRejectedValue(new ApiError(409, { code: 'human.click_refused', message: 'x', retryable: false, reason: 'uncertain' }))

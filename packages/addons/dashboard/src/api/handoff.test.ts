@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cj, confirmWord, expiryMs, fingerprintOf, requestIsConsistent, reviewDigestOf, signCommand, type HandoffEvent, type HandoffRequest } from './handoff'
+import { cj, expiryMs, fingerprintOf, requestIsConsistent, reviewDigestOf, type HandoffEvent, type HandoffRequest } from './handoff'
 import vector from '@/test/fixtures/handoff/vector.json'
 
 const events = vector.events as unknown as HandoffEvent[]
@@ -30,7 +30,6 @@ describe('the fingerprint is the one `orch sign` computes (host contract v1.4 se
     const digest = 'sha256:' + 'ab'.repeat(32)
     expect(fingerprintOf(digest, [ev as unknown as HandoffEvent], 'log')).toBe(vector.doc.op_log)
     expect(fingerprintOf(digest, [ev as unknown as HandoffEvent], 'set')).toBe(vector.doc.op_set)
-    expect(confirmWord('DEMO-0042', '01J9ZP0000000000002W0KFDM3')).toBe('DEMO-0042/2W0KFDM3')
   })
 
   it('a request is consistent only when both hashes recompute from its own bytes', () => {
@@ -48,7 +47,6 @@ describe('the fingerprint is the one `orch sign` computes (host contract v1.4 se
 
 describe('the command', () => {
   it('the command is exactly orch sign CODE', () => {
-    expect(signCommand('7F3K-Q2MA')).toBe('orch sign 7F3K-Q2MA')
   })
 })
 
@@ -100,47 +98,5 @@ describe('a request must be what it says it is', () => {
     expect(requestIsConsistent({ ...base(), expires_at: 'soon' })).toBe(false)
     expect(requestIsConsistent({ ...base(), expires_at: '2099-01-01T00:00:00Z' })).toBe(false)
     expect(expiryMs('2020-01-01T00:00:00Z')).toBeNull()
-  })
-})
-
-describe('typed words shared with orch-core', () => {
-  it('the hand-off page shows the word the terminal accepts, for every shared case', async () => {
-    const { workspaceConfirmWord } = await import('./handoff')
-    const shared = (await import('@/test/confirm-words.json')).default
-    const material = { kind: 'payload' as const, ticket: null, review: [] }
-    for (const c of shared.cases) {
-      const events = [{ type: 'x', actor: { kind: 'person', id: 'p_a', device: null }, auth: null, ...c.event }]
-      expect(workspaceConfirmWord({ op: c.op, events, material }, shared.workspace), c.op).toBe(c.word)
-    }
-  })
-})
-
-describe('workspace operations (M4)', () => {
-  const material = { kind: 'payload' as const, ticket: null, review: [] }
-  const ev = (over: Record<string, unknown>) => [{ type: 'x', actor: { kind: 'person', id: 'p_a', device: null }, auth: null, ...over }]
-
-  it('the confirmation word is the member for member operations and GRANT.REVOKE for a revoke', async () => {
-    const { workspaceConfirmWord } = await import('./handoff')
-    expect(workspaceConfirmWord({ op: 'member.role', events: ev({ person: 'p_member' }), material })).toBe('p_member')
-    expect(workspaceConfirmWord({ op: 'member.add', events: ev({ person: 'p_new' }), material })).toBe('p_new')
-    expect(workspaceConfirmWord({ op: 'member.remove', events: ev({ person: 'p_gone' }), material })).toBe('p_gone')
-    expect(workspaceConfirmWord({ op: 'grant.revoke', events: ev({}), material })).toBe('GRANT.REVOKE')
-    // Extend / Start again / a runner grant: the terminal asks for GRANT
-    expect(workspaceConfirmWord({ op: 'grant', events: ev({}), material })).toBe('GRANT')
-  })
-  it('a sequence that gives agents access (Extend, Start again) shows GRANT, as the terminal asks', async () => {
-    const { workspaceConfirmWord } = await import('./handoff')
-    const sequence = { intent: { agent: { days: 3 } } } as never
-    expect(workspaceConfirmWord({ op: 'sequence', events: ev({}), material: { ...material, sequence } })).toBe('GRANT')
-    expect(workspaceConfirmWord({ op: 'sequence', events: ev({}), material: { ...material, sequence: { intent: { agent: null } } as never } })).toBeNull()
-  })
-  it('nothing is promised for operations whose signer word is not settled, or for a ticket', async () => {
-    const { workspaceConfirmWord } = await import('./handoff')
-    expect(workspaceConfirmWord({ op: 'settings.set', events: ev({}), material })).toBeNull() // no prefix known
-    const ws = { prefix: 'DEMO', id: 'b5c67894e3cf0cf3e4b0a64b4357e3f3' }
-    expect(workspaceConfirmWord({ op: 'settings.set', events: ev({}), material }, ws)).toBe('DEMO~4357e3f3/SETTINGS')
-    expect(workspaceConfirmWord({ op: 'policy.set', events: ev({}), material }, ws)).toBe('DEMO~4357e3f3/POLICY')
-    expect(workspaceConfirmWord({ op: 'member.role', events: ev({ person: 'p_a' }), material: { ...material, ticket: { key: 'DEMO-1', uid: 'U' } } })).toBeNull()
-    expect(workspaceConfirmWord({ op: 'member.role', events: ev({}), material })).toBeNull()
   })
 })

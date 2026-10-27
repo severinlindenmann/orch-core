@@ -195,7 +195,6 @@ export function checkSas(typed: string, sas: string | null | undefined): SasChec
 export const primaryCommand = (offerId: string | null | undefined): string | null =>
   typeof offerId === 'string' && /^[0-9a-f]{32}$/.test(offerId) ? `orch host relay pair --resume --offer ${offerId}` : null
 /** The `device.added` signature: the existing hand-off command; the code comes with the prepared request. */
-export const SIGN_COMMAND = 'orch sign <CODE>'
 /** Typed SAS mismatches allowed per offer (orch-52); the third refuses the offer. */
 export const SAS_ATTEMPTS = 3
 export const convenienceOffCommand = (ws: string): string | null => (shellWord(ws) ? `orch host convenience off --workspace ${ws}` : null)

@@ -57,6 +57,7 @@ def status(code: str) -> int:
         return 400
     if code in {
         "human_only",
+        "session.readonly",
         "role.denied",
         "op.not_allowed",
         "peer.denied",

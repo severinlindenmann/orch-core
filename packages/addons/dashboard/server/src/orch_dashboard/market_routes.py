@@ -28,12 +28,13 @@ from __future__ import annotations
 import secrets
 from typing import Annotated
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from . import reads
+from .errors import fail
 from .gateway import Gateway
-from .handoff import MarketName, StageId
+from .signing import MarketName, StageId
 
 Url = Annotated[str, StringConstraints(pattern=r"^[\x21-\x7e]{1,200}$")]
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -96,7 +97,9 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         return write(ws, "market.uninstall", {"name": body.name})
 
     @app.post("/api/w/{ws}/market/add")
-    def add(body: AddBody, ws: str = Depends(reads.workspace)):
+    def add(body: AddBody, request: Request, ws: str = Depends(reads.workspace)):
+        if app.state.auth.login_kind(request.state.token) == "switch":
+            raise fail("session.readonly", "Open a full session to add a marketplace.", exit=3)
         return write(ws, "market.add", {"url": body.url})
 
     @app.post("/api/w/{ws}/market/refresh")

@@ -10,7 +10,7 @@ import { useHub } from '../hub/shared'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { encode } from 'uqr'
-import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, SIGN_COMMAND, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, PAIR_UNAVAILABLE_CLICK, primaryCommand, type PairBlocked, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
+import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, PAIR_UNAVAILABLE_CLICK, primaryCommand, type PairBlocked, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
 import { ApiError, type Workspace } from '@/api/types'
 import { hasFeature } from '@/api/features'
 import { LoadFailed } from '@/components/LoadFailed'
@@ -537,16 +537,12 @@ function OfferView(p: {
             {status?.cert_ready && <p className="text-success">Done: the primary signed the certificate.</p>}
           </li>
           <li className="space-y-1" data-testid="pair-step-sign">
-            <p>Sign the new device into this workspace. Run, with the code the dashboard gives you:</p>
-            <CopyText label="Command to sign the new device" testId="pair-sign-command">
-              {SIGN_COMMAND}
-            </CopyText>
             {status?.cert_ready ? (
-              <Button size="sm" onClick={() => handoff.ask({ title: 'Add the phone', action: { action: 'pair_device', offer: status.offer_id }, autoStart: true })}>
-                Get the signing code
+              <Button size="sm" onClick={() => handoff.ask({ title: 'Add the phone', action: { action: 'pair_device', offer: status.offer_id },  })}>
+                Add the phone
               </Button>
             ) : (
-              <p className="text-text-muted">The code is ready once the primary has signed (step 1).</p>
+              <p className="text-text-muted">The phone can be added once the primary has signed (step 1).</p>
             )}
           </li>
         </ol>
@@ -644,7 +640,7 @@ function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devi
                           handoff.ask({
                             title: 'Remove this device',
                             action: { action: 'device_remove', device: String(d.id) },
-                            autoStart: true,
+
                             confirmLabel: 'Remove device',
                             summary: (
                               <div data-testid="device-remove-summary" className="space-y-1">

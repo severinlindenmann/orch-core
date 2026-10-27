@@ -4,7 +4,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 from test_shares import AddonLink, Host  # the shared stub host and add-on list link
 
-from orch_dashboard import handoff
+from orch_dashboard import signing as handoff
 from orch_dashboard.addon_switches import busy, needs
 from orch_dashboard.errors import HostError
 

@@ -12,7 +12,7 @@ asked for another way. A `remote` is shown only as a canonical identity without 
 
 import re
 
-from pydantic import BaseModel, Field, model_serializer
+from pydantic import BaseModel
 
 from ..errors import fail
 from ..text import hidden
@@ -76,10 +76,6 @@ class Settings(BaseModel):
     grant_hours: int | None = None
     claim_ttl_min: int | None = None
     lease_ttl_min: int | None = None
-    #: B6: the workspace's allowed ways to sign (`terminal` always). Absent when the host did not say (an older core).
-    sign_methods: list[str] | None = None
-    #: whether the host reported sign_methods at all (an explicit null = not set, every way allowed)
-    sign_methods_known: bool = Field(default=False, exclude=True)
     defaults: list[str] | None = None
     gates: dict[str, dict] | None = None
     repos: list[Repo] | None = None
@@ -87,25 +83,9 @@ class Settings(BaseModel):
     settings_at: Stamp | None = None
     policy_at: Stamp | None = None
 
-    @model_serializer(mode="wrap")
-    def _omit_unknown_sign_methods(self, handler):
-        out = handler(self)
-        if out.get("sign_methods") is None and not self.sign_methods_known:
-            out.pop("sign_methods", None)  # an older core said nothing: absent (the UI shows it read-only)
-        return out
-
 
 def unavailable() -> Settings:
     return Settings(available=False)
-
-
-# The ways to sign the host can hold: core's own list is the one source (a fresh One click setup signs all four, so a
-# narrower list here made every freshly set-up workspace answer 500). `touchid` is reserved by the contract.
-try:
-    from orch.model.workspace import SIGN_METHODS as _CORE_SIGN_METHODS
-except ImportError:  # pragma: no cover - the dashboard always ships with core; this is only a safety net
-    _CORE_SIGN_METHODS = ("terminal", "click", "phone", "hub")
-SIGN_METHODS_KNOWN = frozenset((*_CORE_SIGN_METHODS, "touchid"))
 
 
 def bad():
@@ -216,20 +196,11 @@ def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
         defaults = first["defaults"]
         if not isinstance(defaults, list) or any(d not in DURATIONS for d in defaults):
             raise bad()
-        methods = first.get("sign_methods")
-        if methods is not None and (
-            not isinstance(methods, list)
-            or "terminal" not in methods
-            or any(m not in SIGN_METHODS_KNOWN for m in methods)
-        ):
-            raise bad()
         repos: list[Repo] = []
         for page in [first, *more_pages]:
             repos += [repo(n, e) for n, e in sorted(page["settings"]["repos"].items())]
         return Settings(
             **out,
-            sign_methods=methods,
-            sign_methods_known="sign_methods" in first,
             defaults=sorted(set(defaults)),
             gates={g: policy(p) for g, p in gates.items()},
             repos=repos,

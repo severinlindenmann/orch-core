@@ -679,7 +679,6 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             const again = handoffNewTicket(handoffNew.draft, me.person, plan.hours)
             return 'problem' in again ? handoffNew.action : again.action
           })()}
-          autoStart
           startsAgent={!!handoffNew.start}
           summary={<div className="space-y-1 text-[13px]" data-testid="nt-summary"><p><span className="text-text-muted">Title </span><Inline>{handoffNew.draft.title.trim()}</Inline></p>{handoffNew.draft.sections.requirements?.trim() && <p className="line-clamp-3 whitespace-pre-line"><span className="text-text-muted">Should be true </span><Inline>{handoffNew.draft.sections.requirements.trim()}</Inline></p>}</div>}
           anchor={handoffNew.anchor}

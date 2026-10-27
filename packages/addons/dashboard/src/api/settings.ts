@@ -90,7 +90,6 @@ export function repoCheckWords(c: HostRepoCheck): string {
 
 /** `available: false` is a host without `settings/1`: everything else is then unknown. */
 export interface HostSettings {
-  sign_methods?: import('./signing').SignMethod[] | null
   available: boolean
   grant_hours: number | null
   claim_ttl_min: number | null

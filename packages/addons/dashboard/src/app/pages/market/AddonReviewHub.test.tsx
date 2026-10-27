@@ -10,7 +10,6 @@ import { BuiltInAddOns } from '../settings/host/AddOns'
 // FB15 / run 12a: the Add-ons switch in a Full-mode workspace ends in the hub approval, not in a refusal.
 configure({ asyncUtilTimeout: 15000 })
 vi.mock('../settings/host/useViewerRole', () => ({ useViewerRole: () => 'owner' }))
-vi.mock('@/components/sign/SignMethods', () => ({ useSignMethods: () => ({ allowed: ['click'], loading: false }) }))
 vi.mock('@/api/click', async importOriginal => ({ ...await importOriginal<object>(), clickReady: () => true }))
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 

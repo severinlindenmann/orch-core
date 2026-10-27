@@ -9,6 +9,7 @@ let base = ''
 
 test.beforeAll(async () => {
   fake = new FakeServer(path.resolve(import.meta.dirname, '../dist'))
+  fake.clickOn = true
   base = await fake.start()
 })
 test.afterAll(() => fake.stop())
@@ -33,10 +34,9 @@ test('browse -> review -> Review installation -> installed', async ({ page }) =>
   await page.screenshot({ path: path.join(SHOTS, 'a10-review.png') })
   expect(fake.posts('/market/stage')[0].body).toMatchObject({ id: 'jira' })
   await dialog.getByRole('button', { name: 'Review installation' }).click()
-  await expect(page.getByText('7F3K-Q2MA')).toBeVisible()
-  expect(fake.posts('/handoff')[0].body).toMatchObject({ action: 'market_grant', name: 'jira', staged: STAGE })
-  await page.screenshot({ path: path.join(SHOTS, 'a10-terminal.png') })
-  fake.signLast() // the mocked human.submit: the person approved in the terminal
+  await expect(page.getByTestId('click-panel')).toBeVisible()
+  expect(fake.posts('/click/prepare')[0].body).toMatchObject({ action: 'market_grant', name: 'jira', staged: STAGE })
+  await page.getByRole('button', { name: 'Sign', exact: true }).click()
   await expect(jira).toContainText('Off', { timeout: 20_000 })
   await expect(page.getByText('Waiting for your signature')).toHaveCount(0)
   await page.screenshot({ path: path.join(SHOTS, 'a10-installed.png') })
@@ -53,7 +53,7 @@ test('update with a diff', async ({ page }) => {
   expect(fake.posts('/market/stage').pop()!.body).toMatchObject({ id: 'github', update: true })
   await page.screenshot({ path: path.join(SHOTS, 'a10-update-diff.png') })
   await dialog.getByRole('button', { name: 'Review installation' }).click()
-  await expect.poll(() => fake.posts('/handoff').pop()?.body).toMatchObject({ action: 'market_grant', name: 'github', staged: STAGE_UPDATE })
+  await expect.poll(() => fake.posts('/click/prepare').pop()?.body).toMatchObject({ action: 'market_grant', name: 'github', staged: STAGE_UPDATE })
 })
 
 test('widened update shows the full review', async ({ page }) => {
@@ -65,7 +65,7 @@ test('widened update shows the full review', async ({ page }) => {
   await expect(dialog).toContainText('Starts agents on a timetable')
   await page.screenshot({ path: path.join(SHOTS, 'a10-update-widened.png') })
   await dialog.getByRole('button', { name: 'Review installation' }).click()
-  await expect.poll(() => fake.posts('/handoff').pop()?.body).toMatchObject({ staged: STAGE_WIDE })
+  await expect.poll(() => fake.posts('/click/prepare').pop()?.body).toMatchObject({ staged: STAGE_WIDE })
 })
 
 test('marketplaces table', async ({ page }) => {

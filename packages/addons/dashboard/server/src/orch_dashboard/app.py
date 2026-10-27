@@ -33,6 +33,7 @@ from . import (
     signprefs,
     stepup_routes,
     switch,
+    trust_routes,
     terminals,
     testrun,
     usage,
@@ -293,6 +294,7 @@ def create_app(
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
     switch.register(app, gateway, auth)
+    trust_routes.register(app, auth)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
     signprefs.register(app, gateway)

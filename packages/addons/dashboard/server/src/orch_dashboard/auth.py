@@ -8,6 +8,7 @@ from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 
+from . import trusted as trust
 from .policy import LOOPBACK, REMOTE
 
 # A launch code lives 30 s; its redirect file lives exactly as long (#542 item 3). Redemption and the expiry timer
@@ -35,6 +36,8 @@ LAUNCH_KINDS = frozenset({"local"})
 #: decision of 24 Oct 2026: a fresh touch at most every 10 minutes). At most this many wait per session.
 STEPUP_FRESH = 600
 STEPUPS_PER_SESSION = 8
+CHALLENGE_TTL = 60
+CHALLENGES_PER_SESSION = 10
 
 #: Passkey-login buckets, separate from the launch limiter so internet traffic cannot lock out the local owner (host
 #: spec 0.8.6 10.3): 20 per minute per source, 600 per minute overall (a CPU guard only).
@@ -76,9 +79,16 @@ def source_key(address) -> str | None:
 
 
 class Auth:
-    def __init__(self, clock=time.time, directory=None):
+    def __init__(self, clock=time.time, directory=None, trust_file=None):
         self.directory = directory
         self.clock = clock
+        #: browser keys enrolled by a real local sign-in (trusted.py): what upgrades a switch session
+        self.trusted = trust.TrustedKeys(trust_file, clock)
+        #: switch session -> (nonce, expires): the one challenge a browser key must sign (single use)
+        self.challenges: dict[str, tuple[str, float]] = {}
+        self.challenge_count: dict[str, int] = {}
+        #: session upgraded by a browser key -> (key id, the workspace its switch was for); revoking the key puts it back
+        self.upgraded: dict[str, tuple[str, str]] = {}
         self.instance = secrets.token_hex(16)
         self.probe_key = secrets.token_hex(32)
         self.codes: dict[str, float] = {}
@@ -237,6 +247,90 @@ class Auth:
         with self.lock:
             return self.switch_ws.get(token) if token in self.sessions else None
 
+    # --- trusted browsers (run 12) -------------------------------------------------------------------------------------
+
+    def enrol_key(self, token, jwk, origin):
+        """Enrol a browser key. ONLY a session opened by a real local sign-in may: not a switch session, not a remote
+        one, not one a key upgraded. Returns the key id, or None."""
+        clean = trust.clean_jwk(jwk)
+        with self.lock:
+            if (
+                clean is None
+                or token not in self.sessions
+                or self.kinds.get(token) != "local"
+                or token in self.upgraded
+                or self.listeners.get(token) != LOOPBACK
+            ):
+                return None
+            return self.trusted.enrol(clean, origin)
+
+    def trusted_list(self):
+        with self.lock:
+            return self.trusted.listing()
+
+    def revoke_key(self, kid):
+        """Forget a browser key; every session it upgraded goes back to read-mostly (a switch session)."""
+        with self.lock:
+            found = self.trusted.remove(kid)
+            self._downgrade_unknown_keys()
+            return found
+
+    def _downgrade_unknown_keys(self):
+        """Hold ``self.lock``. A session upgraded by a key that is revoked or idle-expired is a switch session again."""
+        self.trusted.sweep()
+        for token, (kid, ws) in list(self.upgraded.items()):
+            if kid in self.trusted.keys:
+                continue
+            del self.upgraded[token]
+            if token in self.sessions:
+                self.kinds[token] = "switch"
+                self.switch_ws[token] = ws
+                self.stepups.pop(token, None)
+
+    def challenge(self, token):
+        """A nonce for a switch session (loopback only, where keys are enrolled) to sign with its browser key; at most
+        ``CHALLENGES_PER_SESSION`` per session. None when the session cannot upgrade."""
+        with self.lock:
+            now = self.clock()
+            if (
+                token not in self.sessions
+                or self.kinds.get(token) != "switch"
+                or self.listeners.get(token) != LOOPBACK
+                or self.challenge_count.get(token, 0) >= CHALLENGES_PER_SESSION
+            ):
+                return None
+            self.challenge_count[token] = self.challenge_count.get(token, 0) + 1
+            nonce = secrets.token_urlsafe(32)
+            self.challenges[token] = (nonce, now + CHALLENGE_TTL)
+            return nonce
+
+    def upgrade(self, token, kid, signature, origin):
+        """The switch session proves it holds an enrolled browser key by signing its challenge (single use, whatever
+        the outcome). Success: a NEW ``local`` session (the switch one ends), exactly what a launch link gives, and
+        the key is remembered as its upgrader. None for anything else."""
+        with self.lock:
+            now = self.clock()
+            held = self.challenges.pop(token, None)
+            if (
+                held is None
+                or held[1] < now
+                or token not in self.sessions
+                or self.kinds.get(token) != "switch"
+                or self.listeners.get(token) != LOOPBACK
+                or not isinstance(kid, str)
+                or not isinstance(signature, str)
+            ):
+                return None
+            ws = self.switch_ws.get(token)
+            row = self.trusted.get(kid)
+            if ws is None or row is None or row["origin"] != origin or not trust.verify(row["jwk"], held[0], origin, signature):
+                return None
+            self.trusted.touch(kid)
+            self._drop(token)
+            minted = self._mint(now, "local")
+            self.upgraded[minted["token"]] = (kid, ws)
+            return minted
+
     def switch_attempt(self, address):
         """One switch-ticket try: a remote source has its own bucket (like a passkey login); on loopback there is no
         client address, so the launch limiter (10 a minute) applies. False when the bucket is full."""
@@ -266,6 +360,9 @@ class Auth:
             self.stepups,
             self.credentials,
             self.switch_ws,
+            self.challenges,
+            self.challenge_count,
+            self.upgraded,
         ):
             table.pop(token, None)
 
@@ -276,7 +373,17 @@ class Auth:
             for t, (born, last) in self.sessions.items()
             if self._alive(self.kinds.get(t), born, last, now)
         }
-        for table in (self.kinds, self.listeners, self.session_sources, self.stepups, self.credentials, self.switch_ws):
+        for table in (
+            self.kinds,
+            self.listeners,
+            self.session_sources,
+            self.stepups,
+            self.credentials,
+            self.switch_ws,
+            self.challenges,
+            self.challenge_count,
+            self.upgraded,
+        ):
             for token in [t for t in table if t not in self.sessions]:
                 del table[token]
 
@@ -332,6 +439,7 @@ class Auth:
             now = self.clock()
             # Bound retained state even if expired tabs never return.
             self._drop_dead(now)
+            self._downgrade_unknown_keys()
             if token not in self.sessions:
                 return False
             born, _ = self.sessions[token]

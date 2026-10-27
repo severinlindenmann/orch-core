@@ -447,7 +447,7 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
     sweep_redirects(directory)
     if redirects != directory:
         sweep_redirects(redirects)
-    auth = Auth(directory=redirects)
+    auth = Auth(directory=redirects, trust_file=state_dir() / "dashboard-trusted-browsers.json")
     # A wrong remote.json (or a front socket that cannot be opened) switches remote access off and says why
     # (`remote.not_configured` in /api/session); the loopback dashboard keeps serving: the person at the machine must
     # be able to see and fix it.

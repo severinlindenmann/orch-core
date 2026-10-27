@@ -107,6 +107,23 @@ def response(code: str, http: int):
     return JSONResponse({"ok": False, "error": {"code": code, "message": code, "retryable": False}}, status_code=http)
 
 
+def step_up_response(remote: bool):
+    """A hub-made (switch) session asked for more than reading. Structured, never a raw `remote.refused`: the page
+    shows a "Confirm it's you on this computer" step (or, for a session that came in from another computer, where the
+    change can be made) and then repeats the action."""
+    body = {
+        "code": "step_up_required",
+        "message": (
+            "Changes can be made on the computer this workspace runs on."
+            if remote
+            else "Confirm it's you on this computer to make this change."
+        ),
+        "retryable": False,
+        "step_up": {"where": "host" if remote else "this_computer"},
+    }
+    return JSONResponse({"ok": False, "error": body}, status_code=403)
+
+
 FIX_COMMAND_CODES = ("sign.convenience_readers",)
 
 

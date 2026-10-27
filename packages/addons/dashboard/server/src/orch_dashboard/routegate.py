@@ -47,6 +47,11 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/hub/rail"): (ALLOWED, "H1: the company rail (names and counts the hub gives this workspace's owner)"),
     (POST, W + "/hub/switch"): (ALLOWED, "H1: a one-use ticket to open the hub console, or to sign out of it"),
     # --- passkey login and enrollment (the only pre-login routes besides the shell)
+    (POST, "/api/trusted/enrol"): (REFUSED, "browser keys are enrolled on this computer by a real local sign-in"),
+    (GET, "/api/trusted"): (REFUSED, "trusted browsers are managed on this computer"),
+    (DELETE, "/api/trusted/{kid}"): (REFUSED, "trusted browsers are managed on this computer"),
+    (POST, "/api/auth/challenge"): (REFUSED, "a browser key lives on the loopback origin of this computer"),
+    (POST, "/api/auth/upgrade"): (REFUSED, "a browser key lives on the loopback origin of this computer"),
     (POST, "/auth/switch"): (PRE_LOGIN, "H1: a one-use hub switch ticket (the host asks the hub over its link)"),
     (POST, "/auth/passkey/options"): (PRE_LOGIN, "login challenge"),
     (POST, "/auth/passkey/login"): (PRE_LOGIN, "login assertion"),

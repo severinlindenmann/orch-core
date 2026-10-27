@@ -16,6 +16,7 @@ import { fmtDateTime } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { PreviewDialog } from '@/app/terminal/real/PreviewDialog'
+import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
 import { runName } from '@/app/terminal/real/runName'
 import { openDockOn } from '@/app/terminal/dock/request'
 import { useWorkspace } from '@/app/workspace'
@@ -70,7 +71,9 @@ export function TerminalsPage() {
   const [doubt, setDoubt] = useState<Record<string, boolean>>({})
   const [preview, setPreview] = useState<{ data: TermPreview | null; error: string; idem: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [starting, setStarting] = useState(false)
   if (!workspace || !ws) return null
+  const agents = hasFeature('agent_start', ws)
   if (!served) {
     return (
       <div className="max-w-2xl space-y-2">
@@ -122,7 +125,13 @@ export function TerminalsPage() {
     <div className="w-full max-w-4xl space-y-4" data-terminals-page>
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold tracking-tight">Terminals</h1>
-        <Button size="sm" className="ml-auto" onClick={() => void ask()}>
+        {/* Run 12a owner feedback: starting an agent is the main thing people come here for; a plain terminal is second. */}
+        {agents && (
+          <Button size="sm" className="ml-auto" data-testid="terminals-start-agent" onClick={() => setStarting(true)}>
+            <Plus /> Start agent
+          </Button>
+        )}
+        <Button size="sm" variant={agents ? 'outline' : 'default'} className={agents ? '' : 'ml-auto'} onClick={() => void ask()}>
           <Plus /> New terminal
         </Button>
       </div>
@@ -146,7 +155,7 @@ export function TerminalsPage() {
         </p>
       ) : runs.length === 0 ? (
         <p data-testid="terminals-empty" className="text-[13px] text-text-muted">
-          No terminal is open. Start one with New terminal.
+          {agents ? 'Nothing is running. Start an agent, or open a terminal with New terminal.' : 'No terminal is open. Start one with New terminal.'}
         </p>
       ) : (
         <ul aria-label="Terminals" className="divide-y divide-border rounded-lg border border-border bg-surface px-3">
@@ -156,6 +165,19 @@ export function TerminalsPage() {
         </ul>
       )}
       <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} onConfirm={() => void confirm()} />
+      {agents && (
+        <StartAgentDialog
+          ws={ws}
+          open={starting}
+          choose
+          onClose={() => setStarting(false)}
+          onStarted={(run) => {
+            setStarting(false)
+            void qc.invalidateQueries({ queryKey: ['runs', ws] })
+            openDockOn(run.run)
+          }}
+        />
+      )}
     </div>
   )
 }

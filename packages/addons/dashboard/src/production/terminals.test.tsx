@@ -71,6 +71,8 @@ it('Stop uses the dock\'s stop route; New terminal shows the host\'s preview fir
   }
   await user.click(screen.getByRole('button', { name: /New terminal/ }))
   const dialog = await screen.findByRole('dialog', {}, T)
-  expect(dialog).toHaveTextContent('Open a terminal')
+  expect(dialog).toHaveTextContent('Open a terminal in code?')
+  expect(dialog).toHaveTextContent('It runs on this computer as you, so it can read and change your files and keys.')
+  expect(screen.queryByTestId('terminals-start-agent')).toBeNull() // the host does not serve agent_start here
   expect(calls('/terminals/open')).toHaveLength(0) // nothing starts before the confirmation
 })

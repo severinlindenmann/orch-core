@@ -239,7 +239,6 @@ export function TicketsTable({
 
   return (
     <div ref={frame} className="min-h-0 flex-1 overflow-auto rounded-lg border border-border bg-surface">
-      {hub.data?.mode === 'full' && <p data-testid="hub-all-tickets" className="border-b border-chart-4/40 bg-chart-4/10 p-3 text-sm text-chart-4">The hub can read every ticket here</p>}
       <Table aria-label="Tickets" className={cn('table-fixed', folded.size === 0 && 'min-w-[800px]')}>
         <TableHeader className="sticky top-0 z-10 bg-surface-2">
           <TableRow>

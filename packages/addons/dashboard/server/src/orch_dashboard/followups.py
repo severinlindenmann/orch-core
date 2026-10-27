@@ -83,7 +83,7 @@ def register(app: FastAPI, gateway: Gateway) -> None:
     @app.get("/api/w/{ws}/followups")
     def followups(ws: str = Depends(reads.workspace)):
         link = gateway.enabled(ws)
-        if not link.supports("follow_up.list"):
+        if not link.supports("follow_up.list", "ops/1"):
             return {"available": False}
         if not gateway.addon_on(link, ADDON):
             raise fail("addon.disabled", exit=3)  # Schedules is off: nothing about follow-ups, whatever the page asks

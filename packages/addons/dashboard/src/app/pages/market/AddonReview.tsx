@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { AddOnRow } from '@/api/addOnSwitches'
 import type { SignContent } from '@/api/signing'
 import type { Workspace } from '@/api/types'
@@ -34,7 +35,13 @@ export function AddonReview({ workspace, row, marketplace, onBusy, onDone, onClo
   const click = useClickSign(workspace.id, () => onDone())
   const terminal = useHandoff(workspace.id, phase => { if (phase === 'done') onDone() })
   const viaClick = clickReady(workspace) && (!methods.allowed || methods.allowed.includes('click'))
-  const viaHub = hubOnly(workspace)
+  // The workspace card can be older than the host's mode (the hub was switched to Full after this page loaded): the host's
+  // `sign.hub_only` is the truth, and the review then becomes the hub approval (FB15 / run 12a).
+  const qc = useQueryClient()
+  const [forcedHub, setForcedHub] = useState(false)
+  const viaHub = hubOnly(workspace) || forcedHub
+  const refused = [click.error, terminal.error].some(e => (e as { code?: string } | null)?.code === 'sign.hub_only')
+  useEffect(() => { if (refused) { setForcedHub(true); void qc.invalidateQueries({ queryKey: ['workspaces'] }) } }, [refused, qc])
   const started = useRef(false)
   useEffect(() => {
     if (methods.loading || viaHub || started.current) return
@@ -55,7 +62,7 @@ export function AddonReview({ workspace, row, marketplace, onBusy, onDone, onClo
   useEffect(() => { if (click.problem?.waitMs) setWaitUntil(Date.now() + click.problem.waitMs) }, [click.problem])
   const panel = useRef<HTMLDivElement>(null)
   useEffect(() => { if (click.view || terminal.request) panel.current?.scrollIntoView?.({ block: 'nearest' }) }, [click.view, terminal.request])
-  if (viaHub) return <SignPopover ws={workspace.id} title={`${label} ${row.title}`} action={action} inline autoStart onClose={onClose} onSettled={phase => { if (phase === 'done') onDone() }} />
+  if (viaHub) return <SignPopover ws={workspace.id} title={`${label} ${row.title}`} action={action} inline autoStart forceHub onClose={onClose} onSettled={phase => { if (phase === 'done') onDone() }} />
   const close = async () => { if (viaClick) { if (click.problem?.next !== 'check') await click.cancel() } else await terminal.cancel(); onClose() }
   return <div ref={panel} className="mt-2 space-y-2 rounded-lg border border-border bg-surface p-3 [&_[data-testid=sign-exact]]:max-h-[30vh] [&_[data-testid=sign-exact]]:overflow-auto" aria-label={`${label} ${row.title}`}>
     <p className="font-medium">{label} <Inline>{row.title}</Inline></p>

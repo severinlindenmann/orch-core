@@ -150,7 +150,7 @@ describe('an add-on approval in a full-mode workspace (FB15)', () => {
     vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
     const click = vi.spyOn(api, 'prepareClick')
     const hub = vi.spyOn(api, 'hubSign').mockResolvedValue({
-      mode: 'full', kind: 'addon', short_hash: 'aaaa aaaa aaaa', url: `https://hub.example.test:4443/#/w/${W}/addon/eyJhIjoxfQ`,
+      mode: 'full', kind: 'addon', short_hash: 'aaaa aaaa aaaa', url: `https://hub.example.test:4443/#/w/${W}/addon/eyJhIjoxfQ`, other_url: `http://100.64.0.9:8100/#/w/${W}/addon/eyJhIjoxfQ`,
       summary: { kind: 'addon', ticket: '', gate: null, gate_gen: null, question: null, status: '', title: '', name: 'wiki', version: '1.2.0', capabilities: ['network'] },
     } as HubSignInfo)
     vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: W, signing: 'full' }] as unknown as Awaited<ReturnType<typeof api.getWorkspaces>>)
@@ -163,6 +163,7 @@ describe('an add-on approval in a full-mode workspace (FB15)', () => {
     expect(prepare).toHaveBeenCalled()
     expect(hub).toHaveBeenCalledWith(expect.any(String), { kind: 'addon', request: 'hr_01J9ZP0000000000000000HND1' })
     expect(within(panel).getByTestId('hub-link')).toHaveAttribute('href', `https://hub.example.test:4443/#/w/${W}/addon/eyJhIjoxfQ`)
+    expect(within(panel).getByTestId('hub-link-other')).toHaveTextContent(`http://100.64.0.9:8100/#/w/${W}/addon/eyJhIjoxfQ`)
     expect(within(panel).getByText(/use the network/)).toBeVisible()
     expect(within(dialog).queryByRole('button', { name: /^Sign/ })).toBeNull()
     expect(click).not.toHaveBeenCalled()

@@ -172,3 +172,55 @@ def test_webhook_new_and_bind(ws, cli, schedules):
     assert rec["hook_prefix"] == fe.hook_hash(hid, ws.store.workspace_id)[:8]
     assert "hook" not in rec["on"] and "hook" not in rec  # the hash is not shown to readers
     assert hid not in str(ws.events("1")[-1])  # only the hash is in the ledger
+
+
+@pytest.mark.parametrize("event_trigger", [False, True])
+def test_human_reschedule_and_undo(hws, agent, me, event_trigger):
+    from datetime import UTC
+
+    hws.store.append(
+        hws.person_event(
+            hws.owner,
+            "workspace",
+            "addon.granted",
+            name="schedules",
+            version="0.1.0",
+            package_sha256="sha256:" + "0" * 64,
+            capabilities=[],
+            fields={},
+            sections=[],
+            artifact_kinds=[],
+        ),
+        log="workspace",
+    )
+    claimed(agent)
+    extra = ("--on", "question.answered:q1") if event_trigger else ()
+    result = agent.j("follow-up", "--in", "2d", "--brief", "later", *extra)
+    assert result.code == 0, result.out
+    fid = result.data["id"]
+    when = datetime.fromtimestamp(hws.clock[0] + 3 * 86400, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert agent.j("follow-up", "reschedule", fid, "--when", when).err_code == "human_only"
+    result = me.j("follow-up", "reschedule", fid, "--when", when)
+    assert result.code == 0, result.out
+    field = "deadline" if event_trigger else "due"
+    assert hws.events("1")[-1][field] == when
+    assert field in hws.reviews[-1]
+    assert me.j("follow-up", "reschedule", fid, "--when", "tomorrow").err_code == "followup.denied"
+    from orch import canon
+
+    hws.store.append(
+        hws.person_event(
+            hws.owner,
+            hws.view("1").uid,
+            "followup.cancelled",
+            followup=fid,
+            reason="person",
+            based_on=canon.event_head(hws.events("1")[-1]),
+        ),
+        log=hws.view("1").uid,
+    )
+    assert agent.j("follow-up", "undo", fid).err_code == "human_only"
+    result = me.j("follow-up", "undo", fid)
+    assert result.code == 0, result.out
+    assert hws.view("1").followups[0]["state"] == "pending"
+    assert hws.events("1")[-1]["type"] == "followup.restored"

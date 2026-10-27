@@ -2,8 +2,8 @@
 
 Read only. The hub cannot start or stop other services (relay and publish are separate processes, maybe on other
 machines), so this offers a re-probe and says so; the console shows the commands to run. A probe is one short HTTP GET:
-the relay answers ``/healthz`` with its version; publish has no health route, so any HTTP answer means it is up and no
-version is reported. Probes run in parallel, are bounded by ``timeout_s`` and never raise.
+relay and publish answer ``/healthz`` with their version; an older publish without that route still counts as up on
+any HTTP answer, with no version. Probes run in parallel, are bounded by ``timeout_s`` and never raise.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ class Services:
 
         ts = [
             threading.Thread(target=run, args=("relay", "/healthz")),
-            threading.Thread(target=run, args=("publish", "/")),
+            threading.Thread(target=run, args=("publish", "/healthz")),
         ]
         for t in ts:
             t.start()

@@ -41,6 +41,8 @@ export interface FollowupRow {
   label?: string | null
   /** "2 of 5": the place in the chain of follow-ups with no task done; only when the host says. */
   chain?: { n: number; max: number } | null
+  /** Present on real hosts; omitted by older mock fixtures. */
+  can_reschedule?: boolean
   /** Who may cancel it (its person or a manager): the host decides, a button the host would refuse is not drawn. */
   can_cancel: boolean
 }

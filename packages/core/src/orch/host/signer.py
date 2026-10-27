@@ -780,6 +780,8 @@ _PLAIN = {
     "request_changes": "request changes on the {gate} gate of {ticket}",
     "verdict": "give the verdict {outcome} on {ticket}",
     "answer": "answer {question} on {ticket} with option {option}",
+    "follow_up.reschedule": "move the follow-up {field} of {ticket} to {when}",
+    "follow_up.undo": "restore the cancelled follow-up of {ticket}",
     "close": "close {ticket} as {resolution}",
     "reopen": "reopen {ticket}",
     "grant": "issue a grant {grant}: scope {scope}, verbs {verbs}, {hours} h",
@@ -864,6 +866,9 @@ def header(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, st
     name, prefix = known  # type: ignore[misc]
     ev, ticket = prepared["events"][0], prepared["material"].get("ticket")
     fields = {k: _clean(v) for k, v in review.payload(ev).items()}
+    if prepared["op"] == "follow_up.reschedule":
+        fields["field"] = "due" if "due" in ev else "deadline"
+        fields["when"] = fields.get(fields["field"], "")
     fields.setdefault("gate", "verify")
     fields.setdefault("option", "none (text only)")
     fields["ticket"] = ticket_word(prepared) if ticket else "the workspace"

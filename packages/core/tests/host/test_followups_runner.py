@@ -258,6 +258,29 @@ def test_cancelled_and_needs_person(env):
     assert not env.hub.commands
 
 
+def test_reschedule_moves_the_fire_time_through_the_live_host(env):
+    uid, fid, due = env.schedule()
+    later = due + 5 * 3600
+    env.w.person_event("followup.rescheduled", uid, followup=fid, due=ts(later))
+    env.w.lab.ws.clock[0] = due
+    env.tick()
+    assert env.view(uid)["state"] == "pending" and not env.hub.commands  # the old time passes: nothing fires
+    env.w.lab.ws.clock[0] = later
+    env.tick()
+    assert env.view(uid)["state"] == "fired" and env.hub.commands[-1][0] == "spawn"
+
+
+def test_cancel_then_undo_is_pending_again_and_fires(env):
+    uid, fid, due = env.schedule()
+    env.w.person_event("followup.cancelled", uid, followup=fid, reason="person")
+    assert env.view(uid)["state"] == "cancelled"
+    env.w.person_event("followup.restored", uid, followup=fid)
+    assert env.view(uid)["state"] == "pending"
+    env.w.lab.ws.clock[0] = due
+    env.tick()
+    assert env.view(uid)["state"] == "fired"
+
+
 def test_start_limits_apply_to_a_follow_up(env):
     uid, _, due = env.schedule()
     env.hub.take_start = lambda person: False

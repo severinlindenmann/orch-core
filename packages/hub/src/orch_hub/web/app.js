@@ -8,7 +8,7 @@ import { adminView } from "./admin.js";
 import { servicesView } from "./services.js";
 import { workspacesView } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl, ticketFromHash } from "./switch.js";
-import { Refusal, addonFacts, addonTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
+import { Refusal, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
 const state = { user: null, me: null, channels: [], notice: null, rail: { hubName: "Hub", rows: [] }, menu: false };
@@ -388,7 +388,9 @@ function reviewDecision(it, c) {
 // After a sign-in: an add-on approval link keeps its fragment, everything else goes Home.
 async function afterLogin() {
   const a = /^#\/w\/([0-9a-f]{32})\/addon\/([\w-]+)$/.exec(location.hash);
-  return a ? addonView(a[1], a[2]) : home();
+  if (a) return addonView(a[1], a[2]);
+  const st = /^#\/w\/([0-9a-f]{32})\/settings\/([\w-]+)$/.exec(location.hash);
+  return st ? settingsView(st[1], st[2]) : home();
 }
 
 // FB15 (protocol 8.8b): the link a workspace's Mission Control builds, #/w/<workspace>/addon/<b64u(JSON terms)>. The terms
@@ -411,6 +413,32 @@ async function addonView(wsId, raw) {
     h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? wsId.slice(0, 8)) + " asks to install and turn on " + renderText(terms.name) + "." }),
     h("dl", { class: "facts" }, addonFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("p", { class: "small muted", text: "Approving here lets the workspace's computer install exactly this package. You can check the fingerprint against the one shown in the workspace." }),
+    h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
+}
+
+// A settings change (protocol 8.8): the link a workspace's Mission Control builds, #/w/<workspace>/settings/<b64u(JSON set)>.
+// Parsed strictly, shown in this page's words, signed only after the click and the normal review.
+const isObjTerms = (t) => t !== null && typeof t === "object" && !Array.isArray(t) && Object.keys(t).sort().join() === "exp,set";
+async function settingsView(wsId, raw) {
+  let terms = null;
+  try {
+    const b = atob(raw.replaceAll("-", "+").replaceAll("_", "/"));
+    terms = parseStrict(new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(b, (c) => c.charCodeAt(0))));
+  } catch { terms = null; }
+  const back = h("p", { class: "small" }, h("a", { href: "#", text: "\u2190 Back to your list", onclick: (e) => { e.preventDefault(); location.hash = ""; home(); } }));
+  if (!(await refresh())) return loginView();
+  const ws = await api("GET", "/me/workspaces");
+  const mine = ws.status === 200 ? ws.body.workspaces.find((w) => w.workspace_id === wsId) : null;
+  const exp = terms?.exp;
+  const fresh = Number.isInteger(exp) && exp * 1000 > Date.now();
+  if (isObjTerms(terms) && !fresh) return shell("home", h("div", {}, back, banner("bad", "This link has expired", "Go back to the workspace and press Save again.")));
+  terms = isObjTerms(terms) ? terms.set : null;
+  if (!settingsTermsOk(terms) || !mine) return shell("home", h("div", {}, back, banner("bad", "This link cannot be used", "It does not describe a settings change this page can show safely.")));
+  const action = { type: "settings.changed", log: "workspace", set: terms };
+  shell("home", h("div", {}, back,
+    h("h1", { text: "Change workspace settings" }),
+    h("p", { class: "sentence", text: "This link asks to change how long things are held in " + renderText(mine.name ?? wsId.slice(0, 8)) + ". Check the change below; nothing happens until you approve." }),
+    h("dl", { class: "facts" }, settingsFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
 
@@ -445,6 +473,8 @@ async function startSign(workspaceId, action, qv = null) {
   const sent = { workspaceId, action };
   const r = await api("POST", "/sign/prepare", { workspace_id: workspaceId, channel_id: me.channelId, action });
   if (r.status === 401) return loginView(say("no_session"));
+  // arrived by the rail switch: that session may read but not sign. Ask for password + code here, then carry on.
+  if (r.status === 403 && r.body.error === "reauth_required") return signInToSign(action, () => startSign(workspaceId, action, qv));
   if (r.status !== 200) return nothingSigned(r.body.error);
   const p = r.body;
   let digest, d;
@@ -457,6 +487,28 @@ async function startSign(workspaceId, action, qv = null) {
   }
   if (!d.signable) return nothingSigned("event_changed", h("details", { open: true }, h("summary", { text: "What the hub built" }), factsList(d.fields)));
   promptView(me, p, digest, d);
+}
+
+// A session that came from a workspace (rail switch) cannot sign until the person proves it is them. One plain step in the
+// prompt, no raw codes: password and the 6-digit code, then the same review opens. Nothing is signed here.
+function signInToSign(action, again, err) {
+  const verb = action?.type === "question.answered" ? "answer" : "approve";
+  const pw = h("input", { id: "re-pw", type: "password", autocomplete: "current-password", required: true });
+  const code = h("input", { id: "re-code", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 6, required: true });
+  const form = h("form", {
+    onsubmit: async (ev) => {
+      ev.preventDefault();
+      const r = await api("POST", "/session", { user_id: state.user.user_id, password: pw.value, totp: code.value.trim(), client: "browser" });
+      pw.value = code.value = "";
+      if (r.status !== 200) return signInToSign(action, again, say(r.body.error === "malformed" ? "bad_credentials" : r.body.error));
+      closeDialog();
+      if (!(await refresh())) return loginView();
+      await again();
+    },
+  }, h("p", { class: "muted small", text: "You came here from your workspace. To " + verb + ", confirm it is you with your password and a 6-digit code. Each code works only once." }), field("Password", pw), field("6-digit code", code),
+    h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: () => closeDialog() }), h("button", { class: "pri", type: "submit", text: "Sign in to " + verb })));
+  dialog(h("h1", { text: "Sign in to " + verb }), err ? banner("bad", "Not signed in", err) : null, form);
+  pw.focus();
 }
 
 function factsList(rows) {
@@ -487,7 +539,7 @@ function promptView(me, p, digest, d) {
     }
   });
   dialog(
-    h("h1", { text: d.type === "addon.requested" ? "Approve an add-on" : "Review your answer" }),
+    h("h1", { text: d.type === "addon.requested" ? "Approve an add-on" : d.type === "settings.changed" ? "Approve a settings change" : "Review your answer" }),
     h("p", { class: "sentence", text: d.sentence }),
     h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.facts.length ? d.facts.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: k === "Content reference" ? "fp" : "", text: v })]) : d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
     h("details", {}, h("summary", { text: "Signed details" }), factsList(d.fields)),
@@ -505,5 +557,7 @@ function promptView(me, p, digest, d) {
   if (m) return setupView(m[1]);
   const a = /^#\/w\/([0-9a-f]{32})\/addon\/([\w-]+)$/.exec(location.hash);
   if (a) return addonView(a[1], a[2]);
+  const st = /^#\/w\/([0-9a-f]{32})\/settings\/([\w-]+)$/.exec(location.hash);
+  if (st) return settingsView(st[1], st[2]);
   try { if (!(await refresh())) return loginView(); await home(); } catch { loginView("Something went wrong."); }
 })();

@@ -903,6 +903,7 @@ an agent grant, exclude a lost device or change policy; agents would stop within
   **A channel never changes a factor floor:** the host applies each named gate as the five keys above and keeps the
   gate's effective `factor` (the stored one, else the inherited workspace floor; a ticket override inherits the
   workspace floor and can never lower it). Core vector `policy_changed_channel_keeps_factor`.
+- **Settings link (27 Oct).** Mission Control's Save of one of the three keys is a host read `hub.handoff {kind: settings, set}` (nothing prepared or logged); it returns ONE link `https://<hub>/#/w/<workspace_id>/settings/<b64u(JSON {set, exp})>` (`exp`: epoch seconds, 10 minutes; the page refuses an expired link so an old link cannot roll back a later change). Who may sign is not the link's business: the hub signs only for its role `admin` on the workspace log, and the host's model applies `settings.changed` only for an owner and only the three keys, at append and on replay (core `test_h5_custodial`). The hub web parses the set strictly (the three keys, in range), shows it in its own words and signs `settings.changed` after a click; Mission Control follows the host's settings until they read as asked. Any other key (`sign_methods`, `repos`, `models`, icon) is said plainly as not changeable from the hub.
 - **Off the channel in V3 (V3-D29)** (`malformed` inside `set` or a gate, `not_custodial` as types): `sign_methods`
   (how signatures are made), `repos` (host file system paths), `models`, the D66 `factor` key; `grant.issued` itself,
   including a terminal-printed grant for a hand-started agent (the owner's local act, standalone or after a leave);
@@ -1284,7 +1285,7 @@ unknown `op` is `unknown_op`.
 | `space_proposals` | w2h | both | `{}` | `{"proposals": [<hub.space_proposal>]}` (p4, §10.4) |
 | `switch_ticket` | w2h | both | `{"origin", "return_to", "kind": "open"\|"signout"}` | `{"ticket", "url"}` (hub one-app, below) |
 | `switch_redeem` | w2h | both | `{"ticket"}` | `{"user_id", "name", "return_to", "kind"}` (hub one-app) |
-| `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
+| `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
 

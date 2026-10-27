@@ -495,6 +495,8 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `followup.fired` | H | `followup`: fu_ ULID; `grant`: grant id; `trigger`: time, orch, addon, webhook or deadline; `fallback?`: no_event, no_ring or addon_silent; `event?`: the waking event `{source, kind, ref, status, at}`; `secret_hash`: hash; `run`: r_ ULID | Derives a one-run grant scoped to this ticket. |
 | `followup.outcome` | H | `followup`: fu_ ULID; `outcome`: ran, failed or did_not_run; `reason?`: follow-up outcome reason; `run?`: r_ ULID | Ends the run grant. |
 | `followup.cancelled` | A | `followup`: fu_ ULID; `reason`: person, agent, run_now or dismissed | Cancels a pending or needs_person follow-up. |
+| `followup.rescheduled` | P | `followup`: fu_ ULID; `due?`: UTC instant; `deadline?`: UTC instant | Moves pending times; only its own person may resume needs_person. |
+| `followup.restored` | P | `followup`: fu_ ULID | The cancelling person undoes a person cancellation within 120 seconds, before its deadline, with no live or newer follow-up. |
 | `claim.released` | A, H | `session`: session id; `reason`: claim release reason (§11.4) | An agent releases only its own claim; a person (§5.2) only a live claim, named by its `session`. |
 | `task.started` | A | `task`: task id | The lease (A4). Agents only. |
 | `task.done` | A | `task`; `receipt?`: {`cmd`: str, `exit`: int, `ms`: int, `repo`: repo name or null, `commit`: git commit id or null}; `log?`: artifact name; `text?`: str | With `--run`, `exit` must be 0, otherwise nothing is appended. `receipt.cmd` must equal the task's `verify.cmd` at append. `commit` is the head of `repo`, read by the CLI from git. |

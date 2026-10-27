@@ -222,6 +222,27 @@ KEY_FIELDS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("human.submit", (_EV, "*", "device_cert", "o", "dk_sig_pub"), "pub"),
     ("human.submit", (_EV, "*", "device_cert", "o", "dk_kx_pub"), "pub"),
     ("human.submit", (_EV, "*", "device_cert", "o", "label_sealed"), "sealed"),
+    # the signed hub card a connect carries, and the hub-owner proof of a hub.joined event: random keys, hashes and
+    # signatures, ~1 in 1,000 of such a request held a token-shaped run (#1475)
+    *(
+        (op, (*pre, *path), kind)
+        for op, pre in (("hub.connect", ()), ("human.prepare", ("args",)))
+        for path, kind in (
+            (("hub_card", "o", "hk_root_pub"), "pub"),
+            (("hub_card", "o", "hxk_pub"), "pub"),
+            (("hub_card", "o", "tls_spki_sha256"), "hash"),
+            (("hub_card", "op_cert", "o", "hk_op_pub"), "pub"),
+            (("hub_card", "op_cert", "sig"), "sig"),
+            (("hub_card", "sig"), "sig"),
+        )
+    ),
+    ("human.submit", (_EV, "*", "hk_root_pub"), "pub"),
+    ("human.submit", (_EV, "*", "owner_proof", "o", "payload", "hk_root_pub"), "pub"),
+    ("human.submit", (_EV, "*", "owner_proof", "sig"), "sig"),
+    # the sha-256 digest of the plan the owner was shown, echoed back by the share confirm ops
+    ("share.rule_add", ("expect",), "hash"),
+    ("share.rule_remove", ("expect",), "hash"),
+    ("share.sync", ("expect",), "hash"),
 )
 #: ``member.add`` args that name an inline file, and the kind of key file each is (#1044, #832)
 KEY_FILE_ARGS: dict[str, dict[str, str]] = {"member.add": {"reader_decl": "reader_decl", "cert": "device_cert"}}

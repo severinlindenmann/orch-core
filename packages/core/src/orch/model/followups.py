@@ -12,6 +12,7 @@ from typing import Literal
 
 from orch.canon.text import is_clean_text
 
+FU_UNDO_S = 120  # Person cancellation undo window.
 FU_MAX_DAYS = 14  # FU5 scheduling horizon.
 FU_CHAIN_MAX = 5  # FU7 follow-ups without progress.
 FU_CHAIN_CEILING_DAYS = 30  # owner decision 2026-10-21 (Q1/Q5)
@@ -312,6 +313,39 @@ def check_set(ctx: SetContext, req: SetRequest, caps: Caps) -> Denial | None:
         or ctx.pending_in_workspace - (1 if ctx.replaces_pending is True else 0) >= caps.pending_max
     ):
         return Denial("pending_cap", "workspace pending capacity is unavailable")
+    return None
+
+
+def check_reschedule(state: str, req: SetRequest, caps: Caps, *, old_deadline: int | None = None) -> Denial | None:
+    """Check a person scheduling change, including an implicitly retained deadline."""
+    if state not in ("pending", "needs_person"):
+        return Denial("bad_state", "only pending or needs_person follow-ups can be rescheduled")
+    if req.trigger not in SET_TRIGGERS:
+        return Denial("bad_trigger", "unknown set trigger")
+    if req.trigger == "time" and req.due is None:
+        return Denial("missing_due", "time triggers need a due time")
+    if req.trigger != "time":
+        if req.due is not None:
+            return Denial("bad_time", "event triggers cannot have a due time")
+        if req.deadline is None:
+            return Denial("missing_deadline", "event triggers need a deadline")
+    if type(req.at) is not int or any(
+        value is not None and type(value) is not int for value in (req.due, req.deadline, old_deadline)
+    ):
+        return Denial("bad_time", "times must be integer epoch seconds")
+    deadline = req.deadline
+    if req.trigger == "time" and deadline is None:
+        deadline = max(old_deadline, req.due) if old_deadline is not None else req.due
+    if req.due is not None and req.due < req.at + caps.min_lead_s:
+        return Denial("too_soon", "due is before the minimum scheduling lead")
+    if req.due is not None and deadline < req.due:
+        return Denial("deadline_before_due", "deadline must be at or after due")
+    if req.trigger != "time" and deadline < req.at + caps.min_lead_s:
+        return Denial("too_soon", "deadline is before the minimum scheduling lead")
+    if deadline > req.at + caps.max_days * 86400:
+        return Denial("too_far", "deadline exceeds the scheduling horizon")
+    if deadline <= req.at:
+        return Denial("deadline_past", "deadline must be in the future")
     return None
 
 

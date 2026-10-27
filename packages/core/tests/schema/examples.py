@@ -306,6 +306,8 @@ _SPEC = {
     ),
     "followup.outcome": (HOST, {"followup": "fu_" + EID, "outcome": "ran"}, 5),
     "followup.cancelled": (PERSON, {"followup": "fu_" + EID, "reason": "person"}, 5),
+    "followup.rescheduled": (PERSON, {"followup": "fu_" + EID, "due": "2026-10-10T09:00:00Z"}, 5),
+    "followup.restored": (PERSON, {"followup": "fu_" + EID}, 5),
     "claim.taken": (AGENT, {"takeover": {"from_session": "s_" + EID, "reason": "stuck"}}, 5),
     "claim.released": (AGENT, {"session": AGENT["session"], "reason": "handoff"}, 5),
     "task.started": (AGENT, {"task": "T3"}, 5),

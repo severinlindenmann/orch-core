@@ -107,6 +107,20 @@ export function addonFacts(t) {
   rows.push(["Package fingerprint", renderText(t.package_sha256)]);
   return rows;
 }
+// Protocol 8.8 `settings.changed`: the three timings the hub's channel may set, with the same ranges as the hub's contract.
+export const SETTING_RANGES = { grant_hours: [1, 168], claim_ttl_min: [15, 1440], lease_ttl_min: [5, 1440] };
+const SETTING_LABELS = { grant_hours: "Longest agent access", claim_ttl_min: "Ticket reserved for", lease_ttl_min: "Single task held for" };
+/** True only for 1-3 of the three keys, each a whole number in range. */
+export function settingsTermsOk(t) {
+  if (!isObj(t)) return false;
+  const keys = Object.keys(t);
+  return keys.length >= 1 && keys.every((k) => Object.hasOwn(SETTING_RANGES, k) && Number.isInteger(t[k]) && t[k] >= SETTING_RANGES[k][0] && t[k] <= SETTING_RANGES[k][1]);
+}
+const settingWords = (k, v) => k === "grant_hours" ? (v % 24 === 0 ? v / 24 + (v === 24 ? " day" : " days") : v + " hours") : v + " minutes";
+/** The rows a person reads before signing a settings change, in this page's own words. */
+export function settingsFacts(t) {
+  return Object.keys(SETTING_RANGES).filter((k) => k in t).map((k) => [SETTING_LABELS[k], settingWords(k, t[k])]);
+}
 // D15b: the two status moves a prompt may offer; `from` is the host's own value, copied by the hub from P.
 export const MOVES = {
   "status.changed": ["to", "from", "reason"],
@@ -246,6 +260,8 @@ export function facts(type, ev, qv = null) {
     }
   } else if (type === "addon.requested") {
     out.push(...addonFacts(ev));
+  } else if (type === "settings.changed") {
+    out.push(...settingsFacts(ev.set));
   } else if (type in MOVES) {
     out.push(["Status", r(ev.from) + " \u2192 " + r(ev.to)]);
   }
@@ -257,6 +273,8 @@ const SENTENCE_STRINGS = ["from", "to", "reason", "gate", "outcome", "text", "op
 function sentence(type, log, ev, qv = null) {
   const on = "ticket " + renderText(log);
   switch (type) {
+    case "settings.changed":
+      return "I change the workspace settings: " + settingsFacts(ev.set).map(([k, v]) => k + " " + v).join(", ") + ".";
     case "addon.requested":
       return "I allow the add-on " + q(ev.name + " " + ev.version) + " to be installed and turned on in this workspace.";
     case "gate.approved":
@@ -281,7 +299,8 @@ export function describe(ctx, digest, sent = null, qv = null) {
   const ev = ctx.event;
   const type = typeof ev.type === "string" ? ev.type : "";
   const isAddon = type === "addon.requested";
-  const known = isAddon ? ADDON_REQUEST : Object.hasOwn(DECISIONS, type) ? DECISIONS[type] : Object.hasOwn(MOVES, type) ? MOVES[type] : undefined;
+  const isSettings = type === "settings.changed";
+  const known = isAddon ? ADDON_REQUEST : isSettings ? ["set"] : Object.hasOwn(DECISIONS, type) ? DECISIONS[type] : Object.hasOwn(MOVES, type) ? MOVES[type] : undefined;
   const fields = Object.keys(ev)
     .filter((k) => k !== "channel_cert" && k !== "uk_cert")
     .sort()
@@ -295,7 +314,8 @@ export function describe(ctx, digest, sent = null, qv = null) {
   // an answer that picks an option is signable only against the verified question that lists it: never a blind label
   const answerOk = type !== "question.answered" || answerFits(ev, qv);
   const addonOk = !isAddon || (ctx.log === "workspace" && addonTermsOk(Object.fromEntries(ADDON_REQUEST.filter((k) => k in ev).map((k) => [k, ev[k]]))));
-  const signable = Boolean(known) && answerOk && addonOk && extra.length === 0 && stringsOk && moveOk && typeof ctx.log === "string" && (isAddon ? ctx.log === "workspace" : ctx.log !== "workspace");
+  const settingsOk = !isSettings || settingsTermsOk(ev.set);
+  const signable = Boolean(known) && answerOk && addonOk && settingsOk && extra.length === 0 && stringsOk && moveOk && typeof ctx.log === "string" && (isAddon || isSettings ? ctx.log === "workspace" : ctx.log !== "workspace");
   return {
     type: renderText(type),
     signable,
@@ -325,6 +345,7 @@ export function checkBindings(ctx, me, sent) {
       if (k in sent.action && ev[k] !== sent.action[k]) bad();
     }
     if (ev.type === "addon.requested") for (const k of ["capabilities", "runtime"]) if ((k in ev) !== (k in sent.action) || (k in ev && cj(ev[k]) !== cj(sent.action[k]))) bad();
+    if (ev.type === "settings.changed" && cj(ev.set) !== cj(sent.action.set)) bad();
     // an answer carries exactly the option/text keys that were sent, never one more (an added note or option)
     if (ev.type === "question.answered") for (const k of ["option", "text"]) if ((k in ev) !== (k in sent.action)) bad();
   }

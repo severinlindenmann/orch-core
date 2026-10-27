@@ -275,6 +275,9 @@ class FollowupRec:
     outcome: str | None = None
     reason: str | None = None
     fallback: str | None = None
+    cancelled_at: str | None = None
+    cancelled_by: str | None = None
+    cancel_prev_state: str | None = None
     cancel_reason: str | None = None
     label: str | None = None
     on: dict[str, Any] | None = None  # the event match of an orch/webhook follow-up

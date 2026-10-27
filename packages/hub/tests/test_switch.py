@@ -76,7 +76,7 @@ def test_link_ops_to_hub_and_rail(w):
     assert r["url"] == f"{ORIGIN}/#t={r['ticket']}"
     assert w.sw.origin_of(WS) == DASH
     rail = ops.rail_get(ctx(w, WS, "rail_get", {"origin": DASH}))
-    assert rail["hub"] == {"name": "Acme", "origin": ORIGIN}
+    assert rail["hub"] == {"name": "Acme", "origin": ORIGIN, "network_origin": None}
     cur = [x for x in rail["workspaces"] if x["current"]]
     assert [x["workspace_id"] for x in cur] == [WS] and cur[0]["origin"] == DASH
     with pytest.raises(Refused):
@@ -363,6 +363,8 @@ def test_a_loopback_browser_gets_the_loopback_origin_only_when_the_hub_says_it_l
     same_rail = ctx(w, WS, "rail_get", {"origin": DASH})
     same_rail.same_computer = True
     assert ops.rail_get(same_rail)["hub"]["origin"] == "http://127.0.0.1:9001"
+    assert ops.rail_get(same_rail)["hub"]["network_origin"] == ORIGIN  # the address for other devices, named beside it
+    assert ops.rail_get(ctx(w, WS, "rail_get", {"origin": DASH}))["hub"]["network_origin"] is None
 
 
 def test_same_computer_comes_from_the_socket_not_the_peer():
@@ -386,3 +388,15 @@ def test_same_computer_comes_from_the_socket_not_the_peer():
     assert same("::ffff:100.64.0.7", "100.64.0.7")
     assert same("100.64.0.7", "100.64.0.7")  # this computer dialling its own private address
     assert not same("100.64.0.9", "100.64.0.7")  # another computer
+
+
+def test_signing_in_after_a_switch_gives_a_normal_session(w):
+    """Opus review of #1481: the "Sign in to answer" step is a plain password sign-in; its session is not a switch session."""
+    _, _, h = w.call("POST", "/switch/redeem", {"t": w.sw.issue_to_hub(w.admin, WS, "/")})
+    sw_tok = _tok(h)
+    w.browser_tokens.add(sw_tok)
+    assert w.api.d.channels.session_info(sw_tok)["via"] == "switch"
+    real = w.login(w.admin)
+    assert w.api.d.channels.session_info(real)["via"] is None
+    s, me, _ = w.call("GET", "/session", token=real)
+    assert s == 200 and me["needs_sign_in"] is False

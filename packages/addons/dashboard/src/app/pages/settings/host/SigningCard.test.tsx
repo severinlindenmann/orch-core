@@ -462,3 +462,20 @@ it.each(['on', 'off', 'resume'] as const)('shows the pending target while turnin
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   expect(screen.queryByText(`Turning ${action}...`)).toBeNull()
 })
+
+
+describe('SigningCard in a Full-mode workspace (run 12 rerun 2, 4.4)', () => {
+  afterEach(() => { cleanup(); vi.restoreAllMocks() })
+  it('says in view that approvals go through the hub, and does not promise one click here', async () => {
+    mount(ON, true, { ...workspace, signing: 'full' } as Workspace)
+    expect(await screen.findByTestId('hub-approvals')).toHaveTextContent('Approving through your hub is on.')
+    expect(screen.getByTestId('signing-state')).toHaveTextContent(/go through your hub/)
+    expect(screen.getByTestId('signing-state')).not.toHaveClass('sr-only')
+  })
+  it('a standalone workspace shows no hub note and keeps the one-click line', async () => {
+    mount(ON, true, { ...workspace, signing: 'standalone' } as Workspace)
+    await openSwitch()
+    expect(screen.queryByTestId('hub-approvals')).toBeNull()
+    expect(screen.getByTestId('signing-state')).toHaveTextContent('On: you approve here with one click.')
+  })
+})

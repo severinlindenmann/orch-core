@@ -967,3 +967,22 @@ it('a terminal-only action with One click on shows the terminal hand-off: why li
   expect(screen.getByText('Waiting for approval in a terminal…')).toBeVisible()
   expect(document.body).not.toHaveTextContent(/convenience off|turn One click off/i)
 })
+
+it.each([
+  { action: { action: 'followup_reschedule' as const, key: 'DEMO-0001', id: 'fu_' + '0'.repeat(26), when: '2026-10-28T09:00:00.123Z' }, op: 'follow_up.reschedule', event: 'followup.rescheduled' },
+  { action: { action: 'followup_undo' as const, key: 'DEMO-0001', id: 'fu_' + '0'.repeat(26) }, op: 'follow_up.undo', event: 'followup.restored' },
+])('follow-up signing surface: $op preserves the exact action', async ({ action, op, event }) => {
+  const { workspaceRequest } = await import('./hostHarness')
+  const { state } = await import('./handoffHarness')
+  const ws = 'a'.repeat(32)
+  const request = workspaceRequest(op, { type: event, followup: action.id, ...('when' in action ? { due: action.when } : {}) })
+  vi.spyOn(api, 'getWorkspaces').mockResolvedValue([])
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
+  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'terminal', is_default: true, allowed: ['terminal'] })
+  const prepare = vi.spyOn(api, 'prepareHandoff').mockResolvedValue(request)
+  vi.spyOn(api, 'getHandoff').mockResolvedValue(state(request))
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Change follow-up" action={action} autoStart autoSign onClose={() => {}} /></QueryClientProvider>)
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
+  expect(await screen.findByText(action.id, { exact: false })).toBeVisible()
+  if ('when' in action) expect(screen.getByText(action.when!, { exact: false })).toBeVisible()
+})

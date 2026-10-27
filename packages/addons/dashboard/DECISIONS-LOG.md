@@ -3,6 +3,12 @@
 Non-trivial product and engineering decisions made during the autonomous run, for the owner's review.
 Format: date, decision, why, how to revert.
 
+## 2026-10-27 — Follow-up Reschedule and Undo on real hosts
+
+- **Decision:** Use person-signed handoffs for Reschedule and Undo, gated by host support. Keep Undo signing in the shell and offer it for 15 seconds after a successful Cancel.
+- **Why:** The cancelled card can unmount before Undo is clicked; the host enforces the 120-second window and canceller identity. Prepared reschedules must name the same follow-up and exactly one matching due/deadline instant to the second.
+- **Revert:** Remove the two handoff actions, capability flags and shell Undo host; retain mock actions.
+
 ## 2026-10-26 — Focus merge into run9fb
 
 - **Decision:** Focus uses the existing Built in list, switch and inline signing accordion; preserve Quick tasks, marketplace actions and per-add-on settings. Keep the extensible handoff name types.

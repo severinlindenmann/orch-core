@@ -9,7 +9,7 @@ import time
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
-from . import auth, db, hub_admin, hub_path, registry, shares
+from . import __version__, auth, db, hub_admin, hub_path, registry, shares
 from . import relay_proto as proto
 from .auth import Refusal
 
@@ -101,6 +101,11 @@ class SignedRequestMiddleware:
             if scope["type"] == "lifespan":
                 return await self.app(scope, receive, send)
             return  # websockets etc.: not served
+        if scope.get("path") == "/healthz" and scope.get("method") == "GET":
+            # The one unsigned answer: "up" and the version, nothing else (the hub's Services page reads it).
+            status, headers, raw = _json(200, {"ok": True, "version": __version__})
+            await send({"type": "http.response.start", "status": status, "headers": headers})
+            return await send({"type": "http.response.body", "body": raw})
         if hub_admin.is_admin_path(
             scope.get("path")
         ):  # self-authenticating hub objects, no request signature

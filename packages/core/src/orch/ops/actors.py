@@ -24,6 +24,8 @@ EVENT_ACTORS: dict[str, frozenset[str]] = {
         "policy.changed": "P",
         "followup.set": "A",
         "followup.cancelled": "A",
+        "followup.rescheduled": "P",
+        "followup.restored": "P",
         "followup.fired": "H",
         "followup.outcome": "H",
         "claim.taken": "A",

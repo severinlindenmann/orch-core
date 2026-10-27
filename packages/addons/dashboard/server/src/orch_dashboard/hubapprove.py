@@ -12,7 +12,7 @@ import re
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from .errors import fail
 from .gateway import Gateway
@@ -31,6 +31,12 @@ URL = re.compile(
 ADDON_URL = re.compile(
     r"^https://(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])(?::[0-9]{1,5})?/#/w/[0-9a-f]{32}/addon/[A-Za-z0-9_-]{1,8192}$"
 )
+#: the settings-change link, ``/#/w/<workspace>/settings/<b64u set>`` (the host's `build_settings_url`)
+SETTINGS_URL = re.compile(
+    r"^https://(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])(?::[0-9]{1,5})?/#/w/[0-9a-f]{32}/settings/[A-Za-z0-9_-]{1,512}$"
+)
+#: the only settings the hub's channel may set (hub protocol 8.8), with their ranges
+SETTINGS_KEYS = {"grant_hours": (1, 168), "claim_ttl_min": (15, 1440), "lease_ttl_min": (5, 1440)}
 #: the same link on the hub's web console (the origin the person signs in to), set by `with_console_origin`
 CONSOLE_ORIGIN = re.compile(r"^https?://(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])(?::[0-9]{1,5})?$")
 RequestId = Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
@@ -39,11 +45,12 @@ Qid = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.-]{1,64}$")]
 
 class HubSign(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    kind: Literal["gate", "verdict", "question", "status", "addon"]
+    kind: Literal["gate", "verdict", "question", "status", "addon", "settings"]
     ticket: Key | None = None
     request: RequestId | None = None  # kind addon: the prepared hand-off request the link is for
     gate: Literal["requirements", "plan", "code", "verify"] | None = None
     question: Qid | None = None
+    set: dict[str, Annotated[int, Field(strict=True)]] | None = None  # kind settings: the change the link is for
 
 
 def mode_of_link(link) -> str | None:
@@ -99,6 +106,30 @@ def addon_panel(got: dict) -> dict:
     }
 
 
+def settings_panel(got: dict) -> dict:
+    """The host's settings-change answer: the closed summary (only the three channel keys, in range) and the link."""
+    s, url = got.get("summary"), got.get("url")
+    change = s.get("set") if isinstance(s, dict) else None
+    if (
+        got.get("mode") not in HUB_ONLY
+        or not isinstance(change, dict)
+        or not change
+        or not all(
+            k in SETTINGS_KEYS and type(v) is int and SETTINGS_KEYS[k][0] <= v <= SETTINGS_KEYS[k][1]
+            for k, v in change.items()
+        )
+        or not (isinstance(url, str) and SETTINGS_URL.fullmatch(url))
+    ):
+        raise fail("internal", exit=1)
+    return {
+        "mode": got["mode"],
+        "kind": "settings",
+        "summary": {"kind": "settings", "set": dict(change)},
+        "short_hash": None,
+        "url": url,
+    }
+
+
 def with_console_origin(info: dict, link, request) -> dict:
     """FB15 round 3: the host builds the add-on link from its hub LINK address (the host-to-hub port), which a browser
     cannot open. The page the person signs in to is the hub's web console: its origin is what the hub's `rail` answer
@@ -108,19 +139,26 @@ def with_console_origin(info: dict, link, request) -> dict:
 
     try:
         raw = link.call("hub.switch", {"kind": "rail", "origin": browser_origin(request)})
-        origin = rail_view(raw)["hub"]["origin"]
+        hub = rail_view(raw)["hub"]
+        origin = hub["origin"]
+        other = raw["hub"].get("network_origin") if isinstance(raw.get("hub"), dict) else None
     except Exception:  # noqa: BLE001 - advisory: the host's own link still stands
         return info
     if not isinstance(origin, str) or not CONSOLE_ORIGIN.fullmatch(origin):
         return info
     rest = info["url"].split("/#/", 1)[1]
-    return {**info, "url": f"{origin}/#/{rest}"}
+    out = {**info, "url": f"{origin}/#/{rest}"}
+    if isinstance(other, str) and other != origin and CONSOLE_ORIGIN.fullmatch(other):
+        out["other_url"] = f"{other}/#/{rest}"  # the same page for another device
+    return out
 
 
 def panel(got: dict) -> dict:
     """Of the host's answer only the closed fields, each checked; anything off is the dashboard's own `internal`."""
     if got.get("kind") == "addon":
         return addon_panel(got)
+    if got.get("kind") == "settings":
+        return settings_panel(got)
     s = got.get("summary")
     short, url = got.get("short_hash"), got.get("url")
     if (
@@ -147,7 +185,14 @@ def register(app: FastAPI, gateway: Gateway):
         link = gateway.enabled(ws)
         if not link.supports("hub.handoff", "hub/1"):
             raise fail("click.contract", "Update orch-core: it cannot hand an approval to the hub yet.", exit=9)
-        if (body.kind == "addon") != (body.request is not None) or (body.kind == "addon") == (body.ticket is not None):
+        if body.kind == "settings":
+            if body.set is None or body.request is not None or body.ticket is not None:
+                raise fail("invalid.input", "A settings change names the settings, nothing else.", exit=5)
+        elif (
+            body.set is not None
+            or (body.kind == "addon") != (body.request is not None)
+            or (body.kind == "addon") == (body.ticket is not None)
+        ):
             raise fail("invalid.input", "An add-on names its request; a ticket approval names its ticket.", exit=5)
         shown = panel(link.call("hub.handoff", body.model_dump(exclude_none=True)))
-        return with_console_origin(shown, link, request) if shown.get("kind") == "addon" else shown
+        return with_console_origin(shown, link, request) if shown.get("kind") in ("addon", "settings") else shown

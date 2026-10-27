@@ -26,7 +26,11 @@ def build(c: Call, p: Projection, args: dict[str, Any]) -> plans.Out:
     gate = views.open_gate(p.view)
     if gate is not None and views.fill_hint(p.view, gate) is not None:
         lacks = ", ".join(m for m in p.view.gates[gate].missing if not m.startswith("artifact:"))
-        lines.append(f"warning: the {gate} gate is not ready for approval, it still lacks: {lacks}. The person cannot approve it yet; add it first ({views.fill_hint(p.view, gate)}).")
+        fix = views.fill_hint(p.view, gate)
+        lines.append(
+            f"warning: the {gate} gate is not ready for approval, it still lacks: {lacks}. "
+            f"The person cannot approve it yet; add it first ({fix})."
+        )
     return plans.Out({"bytes": len(text.encode("utf-8"))}, [views.claim_hint(c)], lines)
 
 

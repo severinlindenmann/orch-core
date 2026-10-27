@@ -200,7 +200,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false
 }
 
 /** The header's one primary button: what the viewer should do next (a quiet status when an agent works and nothing waits). */
-function PrimaryButton({ ticket, viewer, sign, jump, start, signing }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; signing: boolean }) {
+function PrimaryButton({ ticket, viewer, jump, start, signing }: { ticket: TicketDocument; viewer: Viewer; jump: (j: Jump) => void; start: StartAgent; signing: boolean }) {
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
@@ -314,7 +314,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
-          <PrimaryButton ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} />
+          <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} />
           <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} />
           {start.node}
         </div>

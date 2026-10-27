@@ -182,9 +182,10 @@ describe('the Tickets Hub column (A5.6)', () => {
     expect((await screen.findByTestId('ticket-hub-DEMO-0043', {}, T)).textContent).toBe('Shared')
     expect(screen.getByTestId('ticket-hub-DEMO-0042').textContent).toBe('Only here')
   })
-  it('full mode: one banner and no marks', async () => {
+  it('full mode: no banner (run 12a owner: the person chose Everything) and no marks', async () => {
     hubPage('full', '/w/DEMO/tickets')
-    expect(await screen.findByTestId('hub-all-tickets', {}, T)).toBeTruthy()
+    await screen.findByRole('table', { name: 'Tickets' }, T)
+    expect(screen.queryByTestId('hub-all-tickets')).toBeNull()
     expect(screen.queryByTestId('ticket-hub-DEMO-0043')).toBeNull()
   })
   it('standalone: nothing', async () => {

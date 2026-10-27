@@ -7,15 +7,20 @@ import { Skeleton } from '@/components/ui/skeleton'
 import type { TermPreview } from '@/api/runs'
 import { EXECUTION_LINE } from './executionLine'
 
+/** Run 12a owner feedback: the terminal dialog says the one thing that matters in plain words; the core execution line
+ * (D-P2-31) stays in full under Details. */
+export const TERMINAL_LINE = 'It runs on this computer as you, so it can read and change your files and keys.'
+
 /** The host's preview, shown before anything starts: what runs, where, as whom. Every value is untrusted text. */
 export function PreviewDialog({ preview, busy, onClose, onConfirm }: { preview: { data: TermPreview | null; error: string } | null; busy: boolean; onClose: () => void; onConfirm: () => void }) {
   const data = preview?.data
+  const folder = data?.cwd_path ? data.cwd_path.split('/').filter(Boolean).pop() : null
   return (
     <Dialog open={!!preview} onOpenChange={(open) => { if (!open) onClose() }}>
       <DialogContent className="max-w-lg gap-3 border-border bg-surface" data-term-preview>
         <DialogHeader>
-          <DialogTitle>Open a terminal</DialogTitle>
-          <DialogDescription>{EXECUTION_LINE}</DialogDescription>
+          <DialogTitle>{folder ? <>Open a terminal in <Raw>{folder}</Raw>?</> : 'Open a terminal?'}</DialogTitle>
+          <DialogDescription>{TERMINAL_LINE}</DialogDescription>
         </DialogHeader>
         {!data && !preview?.error && <Skeleton className="h-20" />}
         {data && (
@@ -28,6 +33,7 @@ export function PreviewDialog({ preview, busy, onClose, onConfirm }: { preview: 
             </dl>
             <details data-testid="term-details">
               <summary className="cursor-pointer text-text-muted">Details</summary>
+              <p className="mt-2 text-text-muted" data-testid="term-execution-line">{EXECUTION_LINE}</p>
               <dl className="mt-2 grid grid-cols-[110px_minmax(0,1fr)] gap-x-3 gap-y-1.5">
                 <dt className="text-text-muted">Runs</dt>
                 <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>

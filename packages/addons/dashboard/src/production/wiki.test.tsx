@@ -23,14 +23,14 @@ const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'action
 const route = () => {
   folder = true
   state.host.override = (path, method) => {
-    if (path === '/api/addons') return Response.json([PACKAGE])
+    if (path.endsWith('/addons')) return Response.json([PACKAGE])
     if (path.endsWith('/view/wiki.tree'))
       return Response.json(folder ? { state: 'ok', message: null, nodes: [entry('runbook', 'On-call runbook'), entry('glossary', 'Glossary')], total: 2, cut: false } : { state: 'no_folder', message: 'No wiki folder in this project yet.', nodes: [], total: 0, cut: false, offer: { label: 'Create the wiki folder', action: 'create' } })
     if (path.endsWith('/view/wiki.page')) {
       const id = new URLSearchParams(state.host.calls.at(-1)?.path.split('?')[1]).get('id')
       return Response.json({ id, title: id === 'runbook' ? 'On-call runbook' : 'Glossary', markdown: `# ${id}\n\nText of ${id}.`, updated: null, by: null })
     }
-    if (path.endsWith('/view/wiki.search')) return Response.json({ results: [{ id: 'glossary', label: 'Glossary', snippet: 'a needle' }], total: 1, cut: false })
+    if (path.endsWith('/view/wiki.search')) return Response.json({ results: [{ id: 'glossary', label: 'Glossary', snippet: 'a needle' }], cut: false })
     if (path.endsWith('/wiki/create') && method === 'POST') {
       folder = true
       return Response.json({ created: true, path: 'wiki/readme.md' })
@@ -85,4 +85,10 @@ it('with the add-on off Wiki is not listed and nothing is read', async () => {
   await screen.findByRole('heading', { level: 1 }, T)
   expect(screen.queryByRole('link', { name: /^Wiki/ })).toBeNull()
   expect(state.host.calls.some((c) => c.path.includes('/view/'))).toBe(false)
+})
+
+it('the old /wiki address redirects to the add-on page', async () => {
+  route()
+  show('/w/DEMO/wiki')
+  expect(await screen.findByRole('tree', { name: 'Wiki pages' }, T)).toBeInTheDocument()
 })

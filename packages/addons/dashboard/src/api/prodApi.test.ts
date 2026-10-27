@@ -152,9 +152,10 @@ it('sends a sealed hub backup key with the sign call, and nothing sealed otherwi
 })
 
 it('reads the add-on packages the server serves, and refuses add-on actions it does not serve', async () => {
-  vi.stubGlobal('fetch', vi.fn(async () => Response.json([{ name: 'wiki' }])))
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => (url === '/api/workspaces' ? Response.json([{ id: 'a'.repeat(32), host_state: 'ok', features: ['addons'] }, { id: 'b'.repeat(32), host_state: 'ok', features: [] }]) : Response.json([{ name: 'wiki' }]))))
   expect(await api.getAddons()).toEqual([{ name: 'wiki' }])
-  expect(fetch).toHaveBeenCalledWith('/api/addons', expect.anything())
+  expect(fetch).toHaveBeenCalledWith(`/api/w/${'a'.repeat(32)}/addons`, expect.anything())
+  expect(fetch).not.toHaveBeenCalledWith(`/api/w/${'b'.repeat(32)}/addons`, expect.anything())
   expect(await api.getAddonState(ws, 'wiki')).toEqual({})
   vi.stubGlobal('fetch', vi.fn())
   await expect(api.runAddonAction(ws, 'wiki', 'delete')).rejects.toMatchObject({ code: 'op.unsupported' })

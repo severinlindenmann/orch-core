@@ -255,6 +255,14 @@ const schedulesRoute = createRoute({
   loader: pageLoader(() => [], [SchedulesPage.preload]),
   component: SchedulesPage,
 })
+/** The old address of the Wiki: kept as a plain redirect to the add-on's page. */
+const wikiRedirectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: 'wiki',
+  beforeLoad: () => {
+    throw redirect({ to: '/addon/$name/$page', params: { name: 'wiki', page: 'wiki' } })
+  },
+})
 const focusRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'focus',
@@ -360,7 +368,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, schedulesRoute, focusRoute, focusTicketRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, schedulesRoute, wikiRedirectRoute, focusRoute, focusTicketRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

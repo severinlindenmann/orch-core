@@ -28,7 +28,6 @@ export type TreeResult = z.output<typeof treeResult>
 
 export const searchResult = z.object({
   results: z.array(z.object({ id: nodeId, label: line, snippet: line.nullish() })).max(100),
-  total: z.number().int().min(0).max(1_000_000),
   cut: z.boolean(),
 })
 export type SearchResult = z.output<typeof searchResult>

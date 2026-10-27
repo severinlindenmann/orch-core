@@ -1,7 +1,7 @@
 """Named reads for declarative add-on views (design D7, ``addon.view``).
 
 A declarative node (``tree``, ``search``) never carries a URL. It names a read, ``<addon>.<name>``, and core answers it
-from this registry. Each read is an explicit contract: a name, a closed args model, the limits it enforces and a result
+from this registry. Each read is an explicit contract: a name, a closed args model, the add-on that owns it and a result
 shape the dashboard's zod schema checks again. Reads are GET-only and answer from the workspace's committed files
 (HEAD of the wiki folder) with the same path-safety helpers as the rest of the wiki; they run no add-on code and need
 no capability. The add-on being ON, the person being a member and the repository being confirmed are checked on every
@@ -13,7 +13,7 @@ Result shapes (what the dashboard validates):
           ``children``: true when a further read with ``parent=<id>`` lists them (lazy). ``offer``: one plain action
           the viewer may take when there is nothing to show (``{label, action}``).
 * page    ``{id, title, markdown|null, updated|null, by|null}``; ``markdown`` null means too large to show.
-* search  ``{results:[{id, label, snippet}], total, cut}``
+* search  ``{results:[{id, label, snippet}], cut}``
 """
 
 import hashlib
@@ -28,7 +28,7 @@ from fastapi import Depends, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import reads
-from .errors import fail
+from .errors import HostError, fail
 from .wiki import index, limits, reader, scope, search
 
 NAME = re.compile(r"[a-z][a-z0-9_]{0,31}\.[a-z][a-z0-9_]{0,31}")
@@ -57,11 +57,11 @@ class SearchArgs(BaseModel):
 
 @dataclass(frozen=True)
 class Read:
-    """One named read: who owns it, what it takes, what it never exceeds, and how it answers."""
+    """One named read: its name, the add-on that owns it, what it takes and how it answers (limits: wiki/limits.py)."""
 
     name: str
+    addon: str
     args: type[BaseModel]
-    limits: dict[str, int]
     run: Callable
 
 
@@ -82,14 +82,14 @@ def wiki_tree(gateway, ws: str, args: TreeArgs) -> dict:
         if sc.repo is not None
         else {"state": "no_repo", "pages": [], "total": 0, "cut": False}
     )
-    pages = raw["pages"]
+    pages = raw["pages"][: limits.LIST_MAX]
     if pages:
-        _links(sc, ws, pages)
+        _links(sc, ws, pages)  # only for the rows that are returned
     offer = None
     if raw["state"] == "no_folder" and sc.role in ("owner", "maintainer"):
         offer = {"label": "Create the wiki folder", "action": "create"}
     nodes = []
-    for row in pages[: limits.LIST_MAX]:
+    for row in pages:
         node = {"id": row["slug"], "label": row["title"], "hint": row["slug"]}
         if row["links"]:
             node["badge"] = f"{row['links']} linked {'ticket' if row['links'] == 1 else 'tickets'}"
@@ -117,15 +117,15 @@ def wiki_search(gateway, ws: str, args: SearchArgs) -> dict:
     sc = scope.open_wiki(gateway, ws)
     found = search.search(sc, args.q)
     results = [{"id": r["slug"], "label": r["title"], "snippet": r["snippet"]} for r in found["pages"]]
-    return {"results": results[: limits.SEARCH_HITS], "total": len(results), "cut": found["cut"]}
+    return {"results": results[: limits.SEARCH_HITS], "cut": found["cut"]}
 
 
 READS: dict[str, Read] = {
     r.name: r
     for r in (
-        Read("wiki.tree", TreeArgs, {"nodes": limits.LIST_MAX}, wiki_tree),
-        Read("wiki.page", PageArgs, {"bytes": limits.PAGE_MAX_BYTES}, wiki_page),
-        Read("wiki.search", SearchArgs, {"results": limits.SEARCH_HITS, "query": limits.MAX_QUERY}, wiki_search),
+        Read("wiki.tree", "wiki", TreeArgs, wiki_tree),
+        Read("wiki.page", "wiki", PageArgs, wiki_page),
+        Read("wiki.search", "wiki", SearchArgs, wiki_search),
     )
 }
 
@@ -156,17 +156,32 @@ def packages() -> list[dict]:
 
 
 def register(app, gateway):
-    @app.get("/api/addons")
-    def addon_packages():
-        return packages()
+    @app.get("/api/w/{ws}/addons")
+    def addon_packages(ws: str = Depends(reads.workspace)):
+        """The packages with declarative views that are ON in this workspace (and only for a member)."""
+        out = []
+        for pkg in packages():
+            try:
+                scope.authorize(gateway, ws, pkg["name"])
+            except HostError:
+                continue
+            out.append(pkg)
+        return out
 
     @app.get("/api/w/{ws}/view/{name}")
     def view(name: str, request: Request, ws: str = Depends(reads.workspace)):
         read = READS.get(name) if NAME.fullmatch(name) else None
         if read is None:
             raise fail("not_found", "That read does not exist.", exit=2)
+        scope.authorize(gateway, ws, read.addon)  # one central gate, before anything of the caller's is parsed
         try:
             args = read.args.model_validate(dict(request.query_params))
         except ValidationError:
             raise fail("invalid.input", "Those arguments are not valid for this read.", exit=5) from None
-        return read.run(gateway, ws, args)
+        try:
+            return read.run(gateway, ws, args)
+        except HostError:
+            raise
+        except Exception:
+            # Nothing of git's stderr, a path or a traceback reaches the answer.
+            raise fail("internal", "This could not be read right now.", exit=1) from None

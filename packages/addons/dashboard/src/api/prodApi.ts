@@ -197,8 +197,12 @@ export const session = async (cancel?: AbortSignal) => {
 }
 
 const reads = {
-  /** The add-on packages whose screens are declarative views served by the dashboard server (the Wiki). */
-  getAddons: () => call<AddonPackage[]>('/api/addons'),
+  /** The add-on packages with declarative views that are ON in a running workspace (asked per workspace; the Wiki). */
+  getAddons: async (): Promise<AddonPackage[]> => {
+    const rows = await call<ServerWorkspace[]>('/api/workspaces')
+    const lists = await Promise.all(rows.filter((r) => r.host_state === 'ok' && r.features.includes('addons')).map((r) => call<AddonPackage[]>(`${w(r.id)}/addons`)))
+    return [...new Map(lists.flat().map((p) => [p.name, p])).values()]
+  },
   /**
    * The one add-on action a served view can run: the Wiki's "Create the wiki folder" (its plain-click admin route). The
    * server decides who may; an add-on action the server does not serve is refused plainly.

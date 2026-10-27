@@ -72,7 +72,7 @@ export function SearchNode({ node, addon, ws }: { node: NodeOf<'search'>; addon:
           ) : res.data ? (
             <>
               <p className="px-2 pb-1 pt-0.5 text-[12px] text-text-muted">
-                {res.data.results.length === 1 ? '1 result' : `${res.data.results.length}${res.data.cut || res.data.total > res.data.results.length ? '+' : ''} results`}
+                {res.data.results.length === 1 ? '1 result' : `${res.data.results.length}${res.data.cut ? '+' : ''} results`}
               </p>
               <ul aria-label="Search results" className="divide-y divide-border border-t border-border">
                 {res.data.results.slice(0, node.limit).map((r) => (

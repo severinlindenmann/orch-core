@@ -83,6 +83,7 @@ SPA_ROUTES = (
     "worktrees",
     "terminals",
     "explorer",
+    "wiki",  # redirects to the Wiki add-on page
     "addons",
     "shares",
     "activity",

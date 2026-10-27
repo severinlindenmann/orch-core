@@ -284,7 +284,7 @@ describe('search', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: false }))
     handler = (name, q) => {
       if (name === 'wiki.tree') return tree([entry('a'), entry('b')])
-      if (name === 'wiki.search') return { results: [{ id: 'b', label: 'Page b', snippet: 'a needle in b' }], total: 1, cut: false }
+      if (name === 'wiki.search') return { results: [{ id: 'b', label: 'Page b', snippet: 'a needle in b' }], cut: false }
       return page(q.get('id') as string)
     }
     show(stack(SEARCH, TREE))
@@ -302,7 +302,7 @@ describe('search', () => {
 
   it('gives the phone the hits instead of a second list while a query is open', async () => {
     vi.stubGlobal('matchMedia', () => ({ matches: false }))
-    handler = (name) => (name === 'wiki.tree' ? tree([entry('a')]) : { results: [{ id: 'a', label: 'Page a' }], total: 1, cut: false })
+    handler = (name) => (name === 'wiki.tree' ? tree([entry('a')]) : { results: [{ id: 'a', label: 'Page a' }], cut: false })
     show(stack(SEARCH, TREE))
     const tree1 = await screen.findByRole('tree')
     expect(tree1.parentElement).not.toHaveClass('max-md:hidden')
@@ -317,7 +317,7 @@ describe('search', () => {
     let mode: 'none' | 'fail' = 'none'
     handler = () => {
       if (mode === 'fail') throw new ApiError(500, { code: 'host.unavailable', message: 'x', retryable: true })
-      return { results: [], total: 0, cut: false }
+      return { results: [], cut: false }
     }
     show(SEARCH)
     const user = userEvent.setup()
@@ -331,7 +331,7 @@ describe('search', () => {
   })
 
   it('draws at most `limit` hits and says how many more', async () => {
-    handler = () => ({ results: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }, { id: 'd', label: 'D' }], total: 4, cut: true })
+    handler = () => ({ results: [{ id: 'a', label: 'A' }, { id: 'b', label: 'B' }, { id: 'c', label: 'C' }, { id: 'd', label: 'D' }], cut: true })
     show(SEARCH)
     await userEvent.setup().type(screen.getByRole('searchbox'), 'x')
     expect(await screen.findAllByRole('listitem')).toHaveLength(2)
@@ -339,7 +339,7 @@ describe('search', () => {
   })
 
   it('clears with Escape and sends nothing for blank text', async () => {
-    handler = () => ({ results: [{ id: 'a', label: 'A' }], total: 1, cut: false })
+    handler = () => ({ results: [{ id: 'a', label: 'A' }], cut: false })
     show(SEARCH)
     const user = userEvent.setup()
     const box = screen.getByRole('searchbox')

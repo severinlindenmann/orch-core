@@ -130,8 +130,10 @@ def member_role(ws: WsCore, person: str) -> str | None:
     """The effective role of the workspace member ``person`` (``p_...``) for what its AGENTS may do (#1133).
 
     Standalone, hub left, or selective mode: the member's role. Full mode: the **lower** of the member's role and the
-    hub role of the user aliased to ``person`` in the joined hub's book, ``None`` when no user is aliased to it or the
-    hub gave that user no role (removed from the group). The one place agent authority reads the hub projection."""
+    hub role of the user aliased to ``person`` in the joined hub's book, ``None`` when the hub gave that user no role
+    (removed from the group). A member no hub user is aliased to keeps its own role: the hub is an extra (a
+    console-link join aliases nobody, and the workspace owner's agents must keep working).
+    The one place agent authority reads the hub projection."""
     m = ws.members.get(person)
     if m is None:
         return None
@@ -141,7 +143,9 @@ def member_role(ws: WsCore, person: str) -> str | None:
     if _snapshot(ws) is None:  # no snapshot pinned yet: the hub has taken nothing away, the member's role stands
         return m.role
     uid = (h.get("alias_book", {}).get(h.get("hub_id"), {}) or {}).get(person[2:])
-    hub_role = _snapshot_role(ws, uid) if type(uid) is str else None
+    if type(uid) is not str:  # never aliased (a console-link join): the hub has no user for it and takes nothing away
+        return m.role
+    hub_role = _snapshot_role(ws, uid)
     return None if hub_role is None else _lower(m.role, hub_role)
 
 

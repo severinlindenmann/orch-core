@@ -316,3 +316,51 @@ def test_web_server_accept_queue_holds_a_burst():
     from orch_hub.webapi.server import _BoundedServer
 
     assert _BoundedServer.request_queue_size >= 128  # the Admin page opens 7 connections at once
+
+
+def test_sign_in_by_name_or_id_and_wrong_names_are_generic(w):
+    """Run-11 #10/#11: the setup name signs in too; unknown ids and names are bad_credentials, never malformed."""
+    s, o, _ = w.call(
+        "POST", "/session", {**sign_in_body(w, w.ann), "user_id": "Ann"}
+    )  # the name chosen at setup, any case
+    assert s == 200 and o["user_id"] == w.ann
+    for who in ("nobody", "zz" * 16, "abc"):
+        s, o, _ = w.call(
+            "POST", "/session", {"user_id": who, "password": "x" * 12, "totp": "000000", "client": "app"}, origin=None
+        )
+        assert (s, o) == (401, {"error": "bad_credentials"}), who
+
+
+def test_shared_name_signs_in_the_matching_user_and_reveals_nothing(w):
+    other = w.env.user("ann")
+    assert other != w.ann
+    bad = {"user_id": "ann", "password": "x" * 12, "totp": "000000", "client": "app"}
+    s, o, _ = w.call("POST", "/session", bad, origin=None)
+    assert (s, o) == (401, {"error": "bad_credentials"})  # same answer as an unknown name
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann, client="app") | {"user_id": "ann"}, origin=None)
+    assert s == 200 and o["user_id"] == w.ann
+
+
+def test_unknown_name_is_charged_to_the_limiter(w):
+    codes = []
+    for i in range(25):
+        s, _o, _ = w.call(
+            "POST",
+            "/session",
+            {"user_id": f"ghost{i}", "password": "x" * 12, "totp": "000000", "client": "app"},
+            origin=None,
+        )
+        codes.append(s)
+    assert 429 in codes  # guessing names cannot bypass the per-source cap
+
+
+def test_unknown_and_shared_names_count_against_the_network_limit(w):
+    """Run-11: 0 or 2+ candidates never get the known-source exemption; many sources in one /24 hit the aggregate."""
+
+    def spray(name, net, n=230):
+        bad = {"user_id": name, "password": "x" * 12, "totp": "000000", "client": "app"}
+        return [w.call("POST", "/session", bad, origin=None, peer=f"10.{net}.1.{i % 250 + 1}")[0] for i in range(n)]
+
+    assert 429 in spray("ghost", 1)  # zero candidates: counted
+    w.env.user("ann")  # now "ann" names two users
+    assert 429 in spray("ann", 2)

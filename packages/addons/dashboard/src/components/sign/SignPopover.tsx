@@ -14,7 +14,7 @@ import { lastTrigger, SignShell } from './SignShell'
 import { Inline } from './visible'
 import { ClickSignPanel } from './ClickSignPanel'
 import { ClickProblemBox } from './RefusalDevices'
-import { useClickSign, type ClickPhase } from './useClickSign'
+import { settledAs, useClickSign, type ClickPhase } from './useClickSign'
 import { storyOf } from './story'
 import { takeTrustedPress, trustedPress } from './trustedPress'
 
@@ -98,7 +98,9 @@ export function SignPopover(p: SignPopoverProps) {
     reported.current = prepared.request_id
     void api.stateClick(p.ws, prepared.request_id).then(got => {
       if (!got.key || !got.progress) return
-      p.onSettled?.('failed', { id: prepared.request_id, state: 'submitted', op: prepared.op, key: got.key, expires_at: prepared.expires_at, event_ids: [], seq: null, progress: got.progress }, null)
+      // The request this dialog prepared goes along, as for a signed one: callers take the key only from their own request.
+      const { request } = settledAs(prepared, { state: 'submitted', duplicate: false, key: got.key })
+      p.onSettled?.('failed', { id: prepared.request_id, state: 'submitted', op: prepared.op, key: got.key, expires_at: prepared.expires_at, event_ids: [], seq: null, progress: got.progress }, request)
     }, () => {})
   }, [click.phase, click.problem, click.prepared, p.ws, p.onSettled])
   const [waitUntil, setWaitUntil] = useState(0)
@@ -107,17 +109,22 @@ export function SignPopover(p: SignPopoverProps) {
     if (click.prepared && click.problem?.next !== 'check') await click.cancel()
     p.onClose()
   }
+  const dismiss = (label: 'Cancel' | 'Close') => <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>{label}</Button>
   return <SignShell inline={p.inline} anchor={anchor} open={!(p.onSigning && click.phase === 'signing')} onDismiss={() => void close()} title={<Inline>{click.view?.view.content?.title ?? click.view?.view.headline ?? p.title}</Inline>} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
     {p.controls}{p.lead}{!click.view && p.summary}
     {/* The switch is read before the press; a request already open keeps its review (the signer refuses it if the switch moved). */}
-    {!canClick && click.phase === 'idle' ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}</> : <>
-      {click.phase === 'idle' && <>{p.children}{p.hint && <p>{p.hint}</p>}<Button disabled={!p.action || !!p.hint} onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.start(p.action) }}>{p.confirmLabel ?? story?.signLabel ?? p.title}</Button></>}
+    {!canClick && click.phase === 'idle' ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}<div className="flex justify-end">{dismiss('Close')}</div></> : <>
+      {click.phase === 'idle' && <>{p.children}{p.hint && <p>{p.hint}</p>}<div className="flex flex-wrap justify-end gap-2">{dismiss('Cancel')}<Button disabled={!p.action || !!p.hint} onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.start(p.action) }}>{p.confirmLabel ?? story?.signLabel ?? p.title}</Button></div></>}
       {['preparing', 'viewing'].includes(click.phase) && <p role="status">Reading the review…</p>}
       {(click.phase === 'ready' || click.phase === 'signing') && click.view && <ClickSignPanel ws={p.ws} answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={() => void close()} waitUntil={waitUntil} story={story} label={p.confirmLabel} />}
       {click.phase === 'settling' && <p role="status">The outcome is not certain yet. Do not sign again. {click.settleNote}</p>}
       {click.phase === 'failed' && click.problem && (click.problem.next === 'unavailable' ? <p>{click.problem.body}</p> : <ClickProblemBox problem={click.problem} ws={p.ws} />)}
       {click.phase === 'cancelled' && <p role="status">Nothing was signed.</p>}
-      {(click.phase === 'cancelled' || (click.phase === 'failed' && ['prepare', 'retry', 'again', 'review'].includes(click.problem?.next ?? ''))) && <Button onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.again(p.action) }}>Try again</Button>}
+      {['cancelled', 'failed', 'settling'].includes(click.phase) && <div className="flex flex-wrap justify-end gap-2">
+        {/* An ended or unsettled attempt can always be left: Cancel withdraws a request still open, Close just closes. */}
+        {dismiss(click.phase === 'failed' && click.prepared && click.problem?.next !== 'check' ? 'Cancel' : 'Close')}
+        {(click.phase === 'cancelled' || (click.phase === 'failed' && ['prepare', 'retry', 'again', 'review'].includes(click.problem?.next ?? ''))) && <Button onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.again(p.action) }}>Try again</Button>}
+      </div>}
       {p.unsigned}
     </>}
   </SignShell>

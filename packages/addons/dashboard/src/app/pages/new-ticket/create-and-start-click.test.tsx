@@ -9,6 +9,7 @@ import { ARM_MS, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { routingApi } from '@/api/modelRouting'
 import { ApiError } from '@/api/types'
 import { markOf } from '@/app/pages/ticket/progress'
+import * as gesture from '@/components/sign/trustedPress'
 import { renderApp } from '@/test/renderApp'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
@@ -32,6 +33,7 @@ const view = (): ClickViewAnswer => ({
 let s: { preview: ReturnType<typeof vi.spyOn>; start: ReturnType<typeof vi.spyOn>; sign: ReturnType<typeof vi.spyOn>; state: ReturnType<typeof vi.spyOn> }
 
 beforeEach(() => {
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true) // fireEvent is untrusted: stand in for a real press of the outcome button
   const real = api.getWorkspaces.bind(api)
   vi.spyOn(api, 'getWorkspaces').mockImplementation(async () => (await real()).map((w) => ({ ...w, click: { custody: 'convenience' as const, enabled: true, available: true } })))
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168 } as Awaited<ReturnType<typeof api.getHostSettings>>)
@@ -64,7 +66,11 @@ async function signed() {
   await r.user.click(await within(sheet).findByRole('button', { name: 'Review and start agent' }, T))
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
+  expect(api.prepareClick).not.toHaveBeenCalled() // opening the dialog prepares nothing
+  // the trusted press of the outcome button prepares; the review then shows and its armed Sign signs
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'Sign and start agent' }, T))
   await within(dialog).findByTestId('click-panel', {}, T)
+  expect(s.sign).not.toHaveBeenCalled()
   const go = within(dialog).getByRole('button', { name: 'Sign and start agent' })
   await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })
   fireEvent.pointerDown(go)

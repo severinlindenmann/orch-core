@@ -51,6 +51,8 @@ MODULES = (
     "verdict",
     "answer",
     "close",
+    "follow_up_reschedule",
+    "follow_up_undo",
     "reopen",
     "grant",
     "grant_revoke",

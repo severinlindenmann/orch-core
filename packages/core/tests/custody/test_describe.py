@@ -164,6 +164,15 @@ CASES: dict[str, tuple[str, dict]] = {
     # A types a person signs through human.prepare (H5a: person versions of agent ops, and move)
     "ticket.moved": (TICKET, {"from": "in_progress", "to": "backlog", "reason": "parked"}),
     "followup.cancelled": (TICKET, {"followup": "fu_01J9ZK4Q7M3R8T2V6X0B5N1C9D", "reason": "person"}),
+    "followup.rescheduled": (
+        TICKET,
+        {
+            "followup": "fu_01J9ZK4Q7M3R8T2V6X0B5N1C9D",
+            "due": "2026-10-28T12:00:00Z",
+            "deadline": "2026-10-29T12:00:00Z",
+        },
+    ),
+    "followup.restored": (TICKET, {"followup": "fu_01J9ZK4Q7M3R8T2V6X0B5N1C9D"}),
     "ticket.created": (TICKET, {"key": "DEMO-0042", "ticket_type": "feature", "title": "Login", "owner": PERSON}),
     "ticket.updated": (
         TICKET,

@@ -217,7 +217,68 @@ def cancelled_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.FOLLOWUP_DENIED, "only the follow-up's person or a manager may cancel it")
     if e["reason"] == "run_now" and view_state(core, t, rec, ts(e["at"]))[0] != "needs_person":
         return Refusal(Code.FOLLOWUP_DENIED, "run_now applies to a follow-up that needs a person")
+    rec.cancelled_at = e["at"]
+    rec.cancelled_by = a["id"] if a["kind"] == "person" else None
+    rec.cancel_prev_state = rec.state
     rec.state, rec.cancel_reason = "cancelled", e["reason"]
+    return None
+
+
+def rescheduled_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
+    rec = t.followups.get(e["followup"])
+    a, now = e["actor"], ts(e["at"])
+    if rec is None or a["kind"] != "person":
+        return Refusal(Code.FOLLOWUP_DENIED, "a person and a known follow-up are required")
+    state = view_state(core, t, rec, now)[0]
+    if a["id"] != rec.person and (state == "needs_person" or not claims.signer_manages(core.ws, t, e)):
+        return Refusal(
+            Code.FOLLOWUP_DENIED, "only its own person may resume needs_person; otherwise a manager may reschedule"
+        )
+    req = fu.SetRequest(
+        now,
+        rec.trigger,
+        ts(e["due"]) if "due" in e else None,
+        ts(e["deadline"]) if "deadline" in e else None,
+        rec.brief,
+    )
+    if (
+        r := denied(
+            fu.check_reschedule(state, req, caps_of(core.ws), old_deadline=ts(rec.deadline) if rec.deadline else None)
+        )
+    ) is not None:
+        return r
+    deadline = e.get("deadline")
+    if rec.trigger == "time" and deadline is None and rec.deadline is not None:
+        deadline = max(rec.deadline, e["due"])
+    rec.due, rec.deadline = e.get("due"), deadline
+    rec.state = "pending"
+    return None
+
+
+def restored_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
+    rec = t.followups.get(e["followup"])
+    a, now = e["actor"], ts(e["at"])
+    if (
+        rec is None
+        or a["kind"] != "person"
+        or a["id"] != rec.cancelled_by
+        or rec.state != "cancelled"
+        or rec.cancel_reason != "person"
+        or rec.cancelled_at is None
+        or now - ts(rec.cancelled_at) > fu.FU_UNDO_S
+        or rec.cancel_prev_state not in ("pending", "needs_person")
+    ):
+        return Refusal(Code.FOLLOWUP_DENIED, "only the canceller may undo a person cancellation within 120 seconds")
+    records = list(t.followups.values())
+    if records.index(rec) != len(records) - 1 or any(
+        other.id != rec.id and view_state(core, t, other, now)[0] in ("pending", "needs_person", "fired")
+        for other in records
+    ):
+        return Refusal(Code.FOLLOWUP_DENIED, "a live or newer follow-up prevents undo")
+    deadline = rec.due if rec.trigger == "time" and rec.deadline is None else rec.deadline
+    if deadline is None or now > ts(deadline):
+        return Refusal(Code.FOLLOWUP_DENIED, "the follow-up deadline has passed")
+    rec.state, rec.cancel_reason = rec.cancel_prev_state, None
     return None
 
 

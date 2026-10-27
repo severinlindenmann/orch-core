@@ -35,6 +35,8 @@ ACTOR_RULES: dict[str, str] = {
     "followup.fired": "H",
     "followup.outcome": "H",
     "followup.cancelled": "PA",
+    "followup.rescheduled": "P",
+    "followup.restored": "P",
     "claim.taken": "G",
     "claim.released": "PAH",
     "task.started": "G",

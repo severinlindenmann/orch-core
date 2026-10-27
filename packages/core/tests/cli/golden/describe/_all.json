@@ -313,6 +313,20 @@
         "summary": "Close a ticket without finishing it."
       },
       {
+        "name": "follow_up.reschedule",
+        "cli": "follow-up reschedule",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Move a follow-up's due time or event deadline."
+      },
+      {
+        "name": "follow_up.undo",
+        "cli": "follow-up undo",
+        "group": "Human only",
+        "who": "human",
+        "summary": "Undo your follow-up cancellation within 120 seconds."
+      },
+      {
         "name": "reopen",
         "cli": "reopen",
         "group": "Human only",

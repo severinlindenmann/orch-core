@@ -86,6 +86,8 @@ HUMAN_ONLY: frozenset[str] = frozenset(
         "addon.purge",
         "answer",
         "approve",
+        "follow_up.reschedule",
+        "follow_up.undo",
         "close",
         "grant",
         "grant.revoke",
@@ -116,6 +118,8 @@ EMITS_V3: dict[str, frozenset[str]] = {**EMITS_V2, "task.edit": frozenset({"tick
 EMITS_V4: dict[str, frozenset[str]] = {
     **EMITS_V3,
     "follow_up": frozenset({"followup.set"}),
+    "follow_up.reschedule": frozenset({"followup.rescheduled"}),
+    "follow_up.undo": frozenset({"followup.restored"}),
     "follow_up.cancel": frozenset({"followup.cancelled"}),
 }
 

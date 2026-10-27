@@ -12,7 +12,7 @@ DIGEST_V1 = "deb64fba742883b0daef32a9e9170991353f139eefad78c4db14089a51970d87"
 DIGEST_V2 = "66a7375e81ae5d462aa4246333c0a31fcfedfbbb142fd2fb592cf5029de357f2"
 DIGEST_V3 = "da2b8b56cd3cc9fae37737c80c4d23665b0dafb10e90b0fb1acb40610efc950e"
 # V3-D38 dropped `init` from all three tables and from HUMAN_ONLY (nothing is in production: no new version)
-HUMAN_ONLY_V1 = "8a61d1edd61d03376e26cde56bdd89ceab1bfc9f74a361c11b127163dec888a7"
+HUMAN_ONLY_V1 = "19ba36a3eec5aef666b8e2627c345edf20a36453e665f18471c01fc3db5f3504"
 
 
 def digest(table):
@@ -45,10 +45,12 @@ def test_v3_adds_only_task_edit_and_the_model_still_reads_v1():
 
 def test_v4_adds_followups():
     assert emits.CURRENT is emits.EMITS_V4
-    assert digest(emits.EMITS_V4) == "57b5516751706c5ff48da8eefef8ed2de1c5ecb4fdbc2f5e05141422bf9da39d"
+    assert digest(emits.EMITS_V4) == "78fa644b591f7f15b8b4a9eda6106fc080d3e193f667127ae97f9a9b50d7a7e8"
     assert {k for k in emits.EMITS_V4 if emits.EMITS_V4[k] != emits.EMITS_V3.get(k)} == {
         "follow_up",
         "follow_up.cancel",
+        "follow_up.reschedule",
+        "follow_up.undo",
     }
 
 

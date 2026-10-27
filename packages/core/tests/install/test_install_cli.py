@@ -276,3 +276,19 @@ def test_phone_refuses_loopback_none_installed_and_many_admins(home):
     ctx3, out3, err3, _ = _phone_ctx(home / "two", users=two)
     assert cli.main(["phone"], env=ctx3.env, out=out3, err=err3, ctx=ctx3) == 1
     assert "--user" in err3.getvalue()
+
+
+def test_status_shows_version_and_commit_of_the_workspace_dashboard(home, monkeypatch):
+    # run-11 owner item 9: the workspace row said "-" for version and commit
+    ctx, out, err, _ = make(home)
+    monkeypatch.setattr(cli, "installed_version", lambda ctx, dist: ("1.2.3", "c" * 40))
+    cli.full_server(ctx, ["hub"], address="127.0.0.1")
+    cli.add_workspace(ctx, "/w/one")
+    out.truncate(0), out.seek(0)
+    cli.main(["status", "--json"], env=ctx.env, out=out, err=err, ctx=ctx)
+    ws = [r for r in json.loads(out.getvalue())["parts"] if r["part"] == "workspace"][0]
+    assert (ws["version"], ws["ref"]) == ("1.2.3", "c" * 40)
+    out.truncate(0), out.seek(0)
+    cli.main(["status"], env=ctx.env, out=out, err=err, ctx=ctx)
+    line = next(ln for ln in out.getvalue().splitlines() if ln.startswith("workspace"))
+    assert "1.2.3" in line and "c" * 12 in line

@@ -390,10 +390,13 @@ def status(ctx: Ctx, as_json: bool) -> int:
             }
         )
     dash = st.get("dashboard")
+    dver, dref = installed_version(ctx, "orch-dashboard") if dash else (None, None)
     for w in st["workspaces"]:
         rows.append(
             {
                 "part": "workspace",
+                "version": (dash or {}).get("version") or dver,
+                "ref": (dash or {}).get("ref") or dref,
                 "state": ("running" if ctx.runner.info("dashboard")["running"] else "stopped")
                 if dash
                 else "registered",
@@ -413,6 +416,25 @@ def status(ctx: Ctx, as_json: bool) -> int:
     if dash:
         ctx.say(f"workspace dashboard login link (single use, 5 min):  {dashboard_login_hint(dash)}")
     return 0
+
+
+def installed_version(ctx: Ctx, dist: str) -> tuple[str | None, str | None]:
+    """(version, git commit) of an installed Python distribution, read from its metadata (the dashboard runs from the
+    same tool environment as ``orch``; its commit is in ``direct_url.json`` when it was installed from git)."""
+    from importlib import metadata
+
+    for name in (dist, "orch-core"):
+        try:
+            d = metadata.distribution(name)
+        except metadata.PackageNotFoundError:
+            continue
+        commit = None
+        try:
+            commit = (json.loads(d.read_text("direct_url.json") or "{}").get("vcs_info") or {}).get("commit_id")
+        except (ValueError, OSError):
+            pass
+        return d.version, commit
+    return None, None
 
 
 def _short(ref: Any) -> str:

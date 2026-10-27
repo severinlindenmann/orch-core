@@ -1313,7 +1313,11 @@ class WebApi:
         base = self.d.api_origin or c.origin
         if base is None:
             raise ApiError("unavailable")
-        code, expires = self.d.invites.mint(self.d.now_ms())
+        # the workspace's owner on the hub: the admin who mints the link, or the user they pick (V3-D19)
+        owner = b.get("owner_user", c.user_id)
+        if type(owner) is not str or not any(u["user_id"] == owner for u in self.d.access.users()):
+            raise ApiError("malformed")
+        code, expires = self.d.invites.mint(self.d.now_ms(), owner_user=owner)
         try:
             link = build_link(base, self.d.keys.hub_id, code, endpoint)
         except LinkError:
@@ -1323,6 +1327,7 @@ class WebApi:
             "code": code,
             "hub_id": self.d.keys.hub_id,
             "endpoint": endpoint,
+            "owner_user": owner,
             "expires_ms": expires,
         }
 

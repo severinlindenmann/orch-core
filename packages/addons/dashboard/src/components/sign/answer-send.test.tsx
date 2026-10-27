@@ -123,6 +123,15 @@ describe('Send answer in the card, one-click custody', () => {
     expect(sign.mock.calls[0][2]).toBe(digestOf('1')) // bound to this request's digest
   })
 
+  it('the strip names the workspace by prefix and id tail, never by its unsigned name alone (D6)', async () => {
+    flag(true)
+    expect(mockStore.workspaces.length).toBeGreaterThan(1) // the workspace line is shown with more than one
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    const line = await screen.findByTestId('strip-workspace', {}, T)
+    expect(line).toHaveTextContent(/DEMO · xxxxxxxx · billing/)
+  })
+
   it('the arming timer restarts when the option changes, and the earlier request is cancelled', async () => {
     flag(true)
     await mountHost()

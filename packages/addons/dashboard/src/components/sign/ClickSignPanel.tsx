@@ -137,6 +137,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   // A compact review (a summary, or a quick task shown folded) says what happens in its own lines: no step list under it.
   const lean = !!view.content?.summary || (!!story?.quick && !!view.content && alsoSigned(view.content, story.quick) !== null)
   const label = story?.signLabel ?? given ?? 'Sign'
+  const danger = !!story?.danger
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
       {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
@@ -150,7 +151,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
       {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
       {problem && <ClickProblemBox problem={{ ...problem, body: problem.body.replace('Press the button again', `Press ${label} again`), next: undefined, signedAt: undefined }} ws={ws} />}
       {extra}
-      <SignFooter><div className={STICKY_FOOTER} data-testid="sign-footer">
+      <SignFooter><div className={danger ? 'shrink-0 border-t border-border pt-3' : STICKY_FOOTER} data-testid="sign-footer">
         <div className="flex flex-wrap items-center justify-end gap-2">
           {!armed && !signing && (
             <span data-testid="sign-arming" role="status" className="mr-auto text-[12px] text-text-muted">
@@ -162,6 +163,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
           </Button>
           <Button
             type="button"
+            variant={danger ? 'destructive' : 'default'}
             disabled={!can}
             aria-busy={signing}
             onPointerDown={activation.begin}

@@ -1,5 +1,6 @@
 import { ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { runnerQuery } from '@/api/agents'
 import { accessReminder } from '@/api/grants'
@@ -98,12 +99,12 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
     </div>}
     {extend && <Dialog open onOpenChange={open => { if (!open) setExtend(false) }}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{live ? 'Extend agent access' : 'Allow agent access'}</DialogTitle><DialogDescription>{live ? 'Choose how long agents may keep working for you. The time is counted from now and replaces your current access.' : 'Choose how long agents may work for you, counted from now.'}</DialogDescription></DialogHeader>
       <RunnerGrantCard sheet ws={ws} runner={runner.data?.runner ?? null} loading={runner.isPending} blocked={null} extend={live ?? undefined} onChanged={refresh} onOutcome={outcome} onConfirmed={() => setExtend(false)} />
-      {live && <details className="text-xs text-text-muted"><summary className="cursor-pointer">Technical details</summary><p>Access id: {live.id}</p></details>}
+      {live && <InfoDrawer><p>Access id: {live.id}</p></InfoDrawer>}
     </DialogContent></Dialog>}
     {askStop && <Dialog open onOpenChange={open => { if (!open) setAskStop(false) }}><DialogContent><DialogHeader><DialogTitle>Stop agents working for you?</DialogTitle><DialogDescription>This ends your runner access and all your other listed active agent access. Review and sign each stop separately. An agent that is already running can no longer save changes, but it keeps running until you press Stop on it in the agents dock.</DialogDescription></DialogHeader>
       {error && <p role="alert">{error}</p>}<Button variant="ghost" onClick={() => setAskStop(false)}>Cancel</Button><Button disabled={grants.isFetching} onClick={() => void stop()}>Stop agent access</Button>
     </DialogContent></Dialog>}
-    {queue[done] && <SignPopover key={queue[done].id} ws={ws} title="Stop agent access" action={{ action: 'grant_revoke', grant: queue[done].id }} autoStart summary={<><p role="status">Stopping access {done + 1} of {queue.length}. {done} stopped.</p><p>This ends the agent access for {me.data?.name ?? 'you'}{queue[done].until ? <>, which runs until <time dateTime={queue[done].until}>{fmtSlot(queue[done].until!)}</time></> : ''}.</p><details className="text-text-muted"><summary className="cursor-pointer">Technical details</summary><p>Access id: {queue[done].id}</p></details></>} onSettled={phase => {
+    {queue[done] && <SignPopover key={queue[done].id} ws={ws} title="Stop agent access" action={{ action: 'grant_revoke', grant: queue[done].id }} autoStart summary={<><p role="status">Stopping access {done + 1} of {queue.length}. {done} stopped.</p><p>This ends the agent access for {me.data?.name ?? 'you'}{queue[done].until ? <>, which runs until <time dateTime={queue[done].until}>{fmtSlot(queue[done].until!)}</time></> : ''}.</p><InfoDrawer><p>Access id: {queue[done].id}</p></InfoDrawer></>} onSettled={phase => {
       if (phase !== 'done') {
         if (phase !== 'unknown' && phase !== 'attempt_open') interrupted()
         return

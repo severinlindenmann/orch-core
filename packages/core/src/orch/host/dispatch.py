@@ -92,6 +92,7 @@ from .blobs import INLINE_MAX, decoded_len
 from .blobs import VALIDATORS as BLOB_VALIDATORS
 from .bus import Subscription
 from .columns import OpKind
+from .cosmeticops import COSMETIC_OPS
 from .errors import HostError
 from .hubops import HUB_OPS
 from .hubops import NETWORK_OPS as HUB_NETWORK_OPS
@@ -242,6 +243,7 @@ def served_ops() -> dict[str, int]:
     out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
     out.update(SPACE_OPS)  # V3 C13: space.* (shared spaces through the hub)
     out.update(MARKET_OPS)  # V3 G2: market.* (the add-on marketplace)
+    out.update(COSMETIC_OPS)  # run 13 D6: workspace.cosmetic.set (name and icon, unsigned)
     out.update(SHARE_OPS)  # V3 C6: share.* (selective-mode share rules)
     out.update(GRANT_OPS)  # H11c: grant.deposit, grant.deposit_status, grant.forget (cap run/1)
     out.update(AGENT_OPS)  # H11c: agent.preview, agent.start (cap run/1)
@@ -305,6 +307,8 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_read", "read") if name in reads else ("person_write", "write")
     if name in PEER_OPS:  # V3 C12: reads for P and G (an agent reads its inbox); writes P only, owner role
         return ("pg_read", "read") if name in PEER_READS else ("person_write", "write")
+    if name in COSMETIC_OPS:  # D6: column P only (the op checks the owner role)
+        return ("person_write", "write")
     if name in SHARE_OPS:  # V3 C6: column P only (the op checks the owner role)
         return ("person_read", "read") if name in SHARE_READS else ("person_write", "write")
     if name in SPACE_OPS:  # V3 C13: list and get for P and G (untrusted data), the rest P only (owner role)
@@ -723,6 +727,10 @@ class RegistryBackend:
                 from . import hubops
 
                 result = hubops.serve(call)
+            elif op in COSMETIC_OPS:
+                from . import cosmeticops
+
+                result = cosmeticops.serve(call)
             elif op in SHARE_OPS:
                 from . import shareops
 

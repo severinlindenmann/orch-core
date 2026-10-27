@@ -21,13 +21,22 @@ from orch_dashboard.gateway import Gateway
 
 port, bridge, ws, state = int(sys.argv[1]), sys.argv[2], sys.argv[3], Path(sys.argv[4])
 static = Path(sys.argv[5]) if len(sys.argv) > 5 else state
+PERSON = "p_owner1"  # this computer's user in the workspace: its owner (the hub's owner alias is the ticket's user)
 
 
 class Link:
+    welcome = {"peer": {"person": PERSON}}  # noqa: RUF012
+
     def supports(self, op, cap="ops/1"):
         return op == "hub.switch"
 
     def call(self, op, args=None, **kw):
+        if op == "member.list":
+            return {"members": [{"person": PERSON, "name": "Ann", "role": "owner", "devices": []}]}
+        if op == "workspace.show":
+            return {"name": "Product", "prefix": "PRD"}
+        if op != "hub.switch":
+            raise fail("not_found")
         req = urllib.request.Request(
             bridge, data=json.dumps(args).encode(), headers={"content-type": "application/json"}
         )
@@ -40,6 +49,9 @@ class Link:
 
 
 class Gw(Gateway):
+    def people(self):
+        return {ws: PERSON}
+
     def enabled(self, w):
         if w != ws:
             raise fail("not_found")

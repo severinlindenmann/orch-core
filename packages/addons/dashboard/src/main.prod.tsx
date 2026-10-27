@@ -1,6 +1,6 @@
 import './lib/zodJitless'
 import { bootstrapSetup, isSetupPage } from './api/setup'
-import { bootstrap, getPendingSwitch } from './api/bootstrap'
+import { bootstrap, getPendingSwitch, landSwitch } from './api/bootstrap'
 import { showBootFailure } from './api/bootFailure'
 import './lib/cssom'
 import './styles/tokens.css'
@@ -12,9 +12,15 @@ if (setup) {
   void session.catch(() => {})
   void import('./setup/Setup').then(({mount}) => mount(session)).catch(() => showBootFailure())
 } else void bootstrap().catch(() => null).then(async () => {
-  if (getPendingSwitch()) { // a hub link: ask before anybody is signed in
-    const { showSwitchConfirm } = await import('./api/switchConfirm')
-    return showSwitchConfirm()
+  if (getPendingSwitch()) { // a hub link: this browser's key proves itself before the ticket is used, or we ask once
+    const landing = await landSwitch()
+    if (landing.kind === 'landed') {
+      if (landing.to === null) return location.replace('/') // a sign-out ticket: this tab's session ended
+      history.replaceState(null, '', landing.to)
+    } else {
+      const { showSwitchConfirm, showSwitchFailed } = await import('./api/switchConfirm')
+      return landing.kind === 'confirm' ? showSwitchConfirm(landing.name) : showSwitchFailed()
+    }
   }
   const { mount } = await import('./production/Shell')
   mount()

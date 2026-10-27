@@ -80,7 +80,7 @@ describe('workspace icon in the app', () => {
     await waitFor(() => expect(trigger.querySelector('[data-ws-icon]')).not.toBeNull())
     expect(trigger.textContent).toMatch(/DEMO/)
   })
-  it('the owner changes it in Settings (signed) and the menu follows; reset goes back to the automatic one', async () => {
+  it('the owner changes it in Settings (one click, unsigned) and the menu follows; reset goes back to the automatic one', async () => {
     const { user } = renderApp('/settings/general')
     const trigger = await screen.findByRole('button', { name: 'Switch workspace' })
     const def = defaultWorkspaceIcon(mockStore.workspaces[0].id)
@@ -93,13 +93,11 @@ describe('workspace icon in the app', () => {
     expect(trigger.querySelector(sel)).toBeNull() // a draft until it is signed
     const section = screen.getByRole('group', { name: 'Symbol' }).closest('section') ?? document.body
     await user.click(within(section).getByRole('button', { name: 'Save' }))
-    await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     await waitFor(() => expect(trigger.querySelector(sel)).not.toBeNull())
     expect(mockStore.workspaces[0].icon).toEqual({ icon: icon.toLowerCase(), colour: colour.toLowerCase() })
     await user.click(screen.getByRole('button', { name: 'Use the automatic icon' }))
     expect(trigger.querySelector(sel)).not.toBeNull() // reset is a draft too, until it is signed
     await user.click(within(section).getByRole('button', { name: 'Save' }))
-    await user.click(await screen.findByRole('button', { name: 'Sign and save' }))
     await waitFor(() => expect(trigger.querySelector(sel)).toBeNull())
   })
   it('a member cannot save it', async () => {

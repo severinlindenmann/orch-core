@@ -61,7 +61,6 @@ def status(code: str) -> int:
         "op.not_allowed",
         "peer.denied",
         "host.required",
-        "sign.hub_only",
         "market.actor_refused",
         "passkey.stepup_required",
         "passkey.invalid",
@@ -162,7 +161,6 @@ DETAIL_KEYS: dict[str, dict[str, tuple[str, ...] | str]] = {
         ),
         "devices": DEVICES,
     },
-    "sign.hub_only": {"reason": ("hub",)},  # V3 C11: full hub mode takes no local key
     # V3 G4: why a dependency environment was refused or no longer verifies (fixed words, as core's table)
     "market.env_failed": {
         "reason": (

@@ -385,23 +385,8 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
             ws.settings[ADDONS_KEY] = dict(sorted(held.items()))
         else:
             ws.settings.pop(ADDONS_KEY, None)
-    if (
-        "icon" in s
-    ):  # the workspace icon: a pair of ids of the closed lists; null clears it (the default comes from the id)
-        choice = s["icon"]
-        if choice is None:
-            ws.settings.pop("icon", None)
-        else:
-            from orch.wsicons import COLOUR_LABELS, ICON_LABELS
-
-            if (
-                not isinstance(choice, dict)
-                or set(choice) != {"icon", "colour"}
-                or choice["icon"] not in ICON_LABELS
-                or choice["colour"] not in COLOUR_LABELS
-            ):
-                return Refusal(Code.SETTINGS_INVALID, "icon: an icon and a colour that orch offers")
-            ws.settings["icon"] = {"colour": choice["colour"], "icon": choice["icon"]}
+    # `set.icon` (before D6 the icon was signed): the schema still accepts it so older logs replay; it is ignored here
+    # (no state, nothing rendered), the icon is the unsigned `workspace.icon` of config.json now
     return None
 
 

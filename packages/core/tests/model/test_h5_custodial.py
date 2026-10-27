@@ -293,7 +293,6 @@ def test_replay_is_the_same_as_the_admission(w):
         ("repos", {"x": {"path": "../x"}}),
         ("addons", {"wiki": None}),
         ("publish", None),
-        ("icon", None),
     ],
 )
 def test_a_hub_settings_changed_refuses_every_off_channel_key_at_append_and_on_replay(w, key, value):

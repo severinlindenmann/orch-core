@@ -296,3 +296,10 @@ def test_a_crashed_handoff_is_completed_by_the_retry(ws, cli, monkeypatch):
     assert cli("handoff", "-m", "where it stands").code == 0
     assert [e["type"] for e in ws.events("1")][-2:] == ["handoff.written", "claim.released"]
     assert [e["type"] for e in ws.events("1")].count("handoff.written") == 1
+
+
+def test_handoff_warns_when_the_open_gate_cannot_be_approved_yet(ws, cli):
+    claimed(cli)
+    r = cli("handoff", "-m", "waiting on the gates")
+    assert r.code == 0
+    assert "warning: the requirements gate is not ready for approval" in r.out

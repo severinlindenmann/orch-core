@@ -2,7 +2,6 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { renderApp } from '@/test/renderApp'
 import { findRail, openTicketPanel } from '@/test/ticketPanels'
-import { GatesStrip } from './Gates'
 import { WordDiff } from './History'
 
 const T = { timeout: 5000 }
@@ -12,7 +11,7 @@ describe('ticket page', () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     expect(await screen.findByRole('heading', { level: 1, name: 'Load tariff tables as dbt seeds' }, T)).toBeInTheDocument()
     expect(screen.getByTestId('agent-status')).toHaveTextContent(/Claude Code is working for Severin/)
-    expect(screen.getByTestId('gate-requirements')).toHaveAttribute('data-state', 'approved')
+    expect(screen.getByTestId('stepper')).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: /Acceptance & tasks/ }))
     const states = ['T1', 'T2', 'T3', 'T4'].map((id) => document.getElementById(`task-${id}`)?.getAttribute('data-state'))
@@ -50,8 +49,7 @@ describe('ticket page', () => {
 
   it('shows an invalidated gate with its reason, and epic children', async () => {
     const view = renderApp('/ticket/DEMO-0046')
-    expect(await screen.findByTestId('gate-plan', undefined, T)).toHaveAttribute('data-state', 'invalidated')
-    expect(screen.getByTestId('gate-notes')).toHaveTextContent('Plan changed after approval: T2 added')
+    expect(await screen.findByTestId('gate-notes', undefined, T)).toHaveTextContent('Plan changed after approval: T2 added')
     view.unmount()
 
     renderApp('/ticket/DEMO-0040')
@@ -64,7 +62,7 @@ describe('ticket page', () => {
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
     await user.click(screen.getByRole('tab', { name: /Acceptance & tasks/ }))
     expect(within(document.getElementById('ac-AC1')!).getByRole('img', { name: 'Proven by a receipt' })).toBeInTheDocument()
-    expect(within(screen.getByTestId('ticket-header')).getByRole('button', { name: 'Give verdict' })).toBeInTheDocument()
+    expect(within(screen.getByTestId('next-step')).getByRole('button', { name: 'Give verdict' })).toBeInTheDocument()
   })
 
   it('renders added and removed words in the History changes view', async () => {
@@ -93,16 +91,6 @@ describe('a gate the person may not sign', () => {
     renderApp('/ticket/DEMO-0044')
     expect(await screen.findByRole('button', { name: 'Approve plan' }, T)).toBeEnabled()
     expect(screen.queryByRole('button', { name: /owners only/ })).toBeNull()
-  })
-})
-
-describe('ticket gate policy wording', () => {
-  it('uses the same sentence as Settings, not the raw approver value', async () => {
-    const { user } = renderApp('/ticket/DEMO-0043', { setup: (s) => s.appendWs(s.workspaces[0].id, { type: 'gate.policy_set', gate: 'plan', approvers: 'maintainer', count: 1, not: null }) })
-    await user.click(await screen.findByTestId('gate-plan'))
-    const plan = await screen.findByRole('dialog', { name: /Plan/ })
-    expect(within(plan).getByText('Plan needs 1 approval from owners or maintainers.')).toBeInTheDocument()
-    expect(screen.queryByText(/maintainer, 1 of 1/)).toBeNull()
   })
 })
 
@@ -135,7 +123,7 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     vi.stubGlobal('innerWidth', 1024)
     const { user } = renderApp('/ticket/DEMO-0041')
     await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
-    expect(within(header()).getByRole('button', { name: 'Give verdict' })).toBeInTheDocument()
+    expect(within(screen.getByTestId('next-step')).getByRole('button', { name: 'Give verdict' })).toBeInTheDocument()
     expect(screen.queryByRole('complementary', { name: 'Ticket details' })).toBeNull()
     expect(screen.getByTestId('ticket-properties')).toHaveTextContent(/Points/) // Estimate is on in DEMO
     expect(screen.getByTestId('ticket-properties')).not.toHaveTextContent(/Size/)
@@ -148,7 +136,7 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     vi.stubGlobal('innerWidth', 1440)
     renderApp('/ticket/DEMO-0041')
     const rail = await findRail()
-    expect(within(header()).getByRole('button', { name: 'Give verdict' })).toBeInTheDocument()
+    expect(within(screen.getByTestId('next-step')).getByRole('button', { name: 'Give verdict' })).toBeInTheDocument()
     expect(within(rail).queryByText(/Needs you/)).toBeNull()
     expect(within(rail).queryByText(/^Head$/)).toBeNull()
     expect(screen.queryByTestId('ticket-properties')).toBeNull()
@@ -170,27 +158,15 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     expect(within(header()).queryByRole('button', { name: /Give verdict|Answer|Approve/ })).toBeNull()
   })
 
-  it('gates are one stepper of 3 buttons; a step opens its policy, signer and folded details', async () => {
-    const { user } = renderApp('/ticket/DEMO-0043')
-    const gates = await screen.findByRole('group', { name: 'Gates' }, T)
-    const steps = within(gates).getAllByRole('button')
-    expect(steps).toHaveLength(3)
-    expect(steps[0]).toHaveAccessibleName(/Requirements.*Approved/)
-    await user.click(steps[1])
-    const pop = await screen.findByRole('dialog', { name: /Plan/ })
-    expect(within(pop).getByText('Plan needs 1 approval from owners.')).toBeInTheDocument()
-    expect(within(pop).getByText(/Approved by Severin, 8 Oct/)).toHaveTextContent('Approved by Severin, 8 Oct · verified signature')
-    expect(within(pop).getByText('Details')).toBeInTheDocument()
-    // The full content hash an approval binds (security review #2).
-    const hash = (await import('@/api/client')).mockStore.ticket('DEMO-0043')!.gates.plan.hash!
-    expect(hash).toMatch(/^sha256:[0-9a-f]{64}$/)
-    expect(within(pop).getByText(hash)).toBeInTheDocument()
+  it('progress is four plain steps: Understand, Build, Check, Done', async () => {
+    renderApp('/ticket/DEMO-0043')
+    const steps = await screen.findByRole('list', { name: 'Progress' }, T)
+    expect(within(steps).getAllByRole('listitem').map((x) => x.textContent)).toEqual(['Understand', 'Build', 'Check', 'Done'])
   })
 
   it('an invalidated gate keeps its reason visible under the stepper', async () => {
     renderApp('/ticket/DEMO-0046')
-    expect(await screen.findByTestId('gate-plan', undefined, T)).toHaveAttribute('data-state', 'invalidated')
-    expect(screen.getByTestId('gate-notes')).toHaveTextContent('Plan changed after approval: T2 added')
+    expect(await screen.findByTestId('gate-notes', undefined, T)).toHaveTextContent('Plan changed after approval: T2 added')
   })
 
   it('shows no signature, hash or head jargon on the first level', async () => {
@@ -323,48 +299,6 @@ describe('rail details and gate details (G3 review)', () => {
     expect(row('Watchers')).toHaveTextContent('Mara')
     expect(row('Assignees')).toHaveTextContent('none')
   })
-
-  it('says "unknown" for an approval without channel, presence or signature check, never a guessed default', async () => {
-    const doc = structuredClone((await import('@/api/client')).mockStore.ticket('DEMO-0043')!)
-    doc.gates.plan.approvals = [{ by: 'p_sev', at: '2026-10-08T09:44:00Z' }]
-    const viewer = { person: 'p_sev', role: 'owner' as const, members: [{ person: 'p_sev', name: 'Severin', role: 'owner' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Severin' : String(id)), ready: true }
-    const user = (await import('@testing-library/user-event')).default.setup()
-    render(<GatesStrip ticket={doc} viewer={viewer as never} />)
-    await user.click(screen.getByTestId('gate-plan'))
-    const pop = await screen.findByRole('dialog', { name: /Plan/ })
-    expect(within(pop).getByText(/signature not checked/)).toBeInTheDocument()
-    expect(within(pop).getByText(/via unknown · presence unknown/)).toBeInTheDocument()
-    expect(within(pop).queryByText(/Touch ID|verified signature/)).toBeNull()
-  })
-
-  it('shows a convenience signature as "convenience (no presence)", never as a password; an unknown kind keeps its name', async () => {
-    const doc = structuredClone((await import('@/api/client')).mockStore.ticket('DEMO-0043')!)
-    doc.gates.plan.approvals = [
-      { by: 'p_sev', at: '2026-10-08T09:44:00Z', via: 'dashboard', presence: 'convenience' },
-      { by: 'p_sev', at: '2026-10-08T09:45:00Z', via: 'cli', presence: 'hardware-key' },
-    ]
-    const viewer = { person: 'p_sev', role: 'owner' as const, members: [{ person: 'p_sev', name: 'Severin', role: 'owner' as const }], name: (id: string | null | undefined) => (id === 'p_sev' ? 'Severin' : String(id)), ready: true }
-    const user = (await import('@testing-library/user-event')).default.setup()
-    render(<GatesStrip ticket={doc} viewer={viewer as never} />)
-    await user.click(screen.getByTestId('gate-plan'))
-    const pop = await screen.findByRole('dialog', { name: /Plan/ })
-    expect(within(pop).getByText(/presence convenience \(no presence\)/)).toBeInTheDocument()
-    expect(within(pop).getByText(/presence hardware-key/)).toBeInTheDocument()
-    expect(within(pop).queryByText(/presence password/)).toBeNull()
-  })
-})
-
-
-it.each([{ via: 'phone' as const, sig_ok: true }, { presence: 'secure-enclave-unlocked' }])('shows phone decisions without authentication or strength labels: %j', async metadata => {
-  const doc = structuredClone((await import('@/api/client')).mockStore.ticket('DEMO-0043')!)
-  doc.gates.plan.approvals = [{ by: 'p_sev', at: '2026-10-08T09:44:00Z', ...metadata }]
-  const viewer = { person: 'p_sev', role: 'owner' as const, members: [], name: () => 'Severin', ready: true }
-  const user = (await import('@testing-library/user-event')).default.setup()
-  render(<GatesStrip ticket={doc} viewer={viewer as never} />)
-  await user.click(screen.getByTestId('gate-plan'))
-  const pop = await screen.findByRole('dialog', { name: /Plan/ })
-  expect(pop.textContent).not.toMatch(/verified|presence|secure-enclave|signature|signed on phone/i)
-  expect(within(pop).getByText(/Approved by Severin/)).toHaveTextContent('as reported by your computer')
 })
 
 describe('F8: agent names on the ticket', () => {

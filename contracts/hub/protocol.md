@@ -884,8 +884,8 @@ reply decides it. The host's reply is a signed w2h reply; its body decides (refe
 settings" of §16: exactly the five hub-signed custodial types below, no fourth break-glass power. Design:
 `~/orch-dev/state/design-c10.md` (M1, M6), `design-c8.md` (M2.2).
 
-Why: in full mode no local human signature exists (D78, D81; core C11), so without these nobody could issue or revoke
-an agent grant, exclude a lost device or change policy; agents would stop within 168 h.
+Why: these are the acts a person may do remotely (phone, hub web) as an additional path. Local signing stays valid in every
+mode (D83); the hub path exists so a person who is away can still issue or revoke a grant, exclude a lost device or change policy.
 
 | Type | Log | Lowest role | Action fields (exact) | Derived by the hub |
 |---|---|---|---|---|
@@ -971,7 +971,7 @@ C8/C10 merge: `host_grant_issued_{needs_request,request_reused,other_terms,late}
 
 ### 8.8b Turning an add-on on through a channel: `addon.requested` (FB15, 27 Oct)
 
-Why: in full mode no local human signature exists, and `addon.granted` carries declarations (`fields`, `sections`,
+Why: a person away from the workspace may turn an add-on on from the hub (local signing stays valid, D83), and `addon.granted` carries declarations (`fields`, `sections`,
 `artifact_kinds`, `runtime`) that only the host can derive from the package, so the hub cannot build it. Same pattern as
 `grant.requested` (§8.8): the channel signs flat terms, the host answers with its own event.
 
@@ -1302,7 +1302,8 @@ otherwise), so the host can never ask for another person. `origin` is the dashbo
 128-bit id the hub stores in memory only: single use, 30 s, bound to a user and a direction. `switch_ticket` returns a
 hub-console ticket (`url` = `<console origin>/#t=<ticket>`, fragment only); `switch_redeem` spends a ticket the hub made for
 THIS link's workspace (`<workspace_id>.<hex>`) and answers `bad_ticket` for anything else (unknown, used, expired, other
-workspace, user no longer the owner alias). `return_to` is a relative path (`/`, no `//`, `\\`, `..`), else `/`. `kind`
+workspace, user no longer the owner alias). A ticket for this workspace whose user is not the owner alias is refused
+WITHOUT being used; one presented at another workspace's link is spent. `return_to` is a relative path (`/`, no `//`, `\\`, `..`), else `/`. `kind`
 `signout` ends the browser's session at the target instead of opening one. These ops sign nothing.
 
 **Verification by the receiver** (hub for w2h with the binding's `WSK`, host for h2w with the held card's `HK_op`):

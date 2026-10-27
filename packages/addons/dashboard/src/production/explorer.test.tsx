@@ -117,7 +117,7 @@ it('History lists the changes with ticket chips, shows one change and compares t
   await user.click(within(second).getByRole('button', { name: 'Second change' }))
   const diff = await screen.findByLabelText('Change in this commit', {}, T)
   expect(diff.querySelector('[data-line="add"]')).toHaveTextContent('+two')
-  expect(second).toHaveTextContent('Technical details')
+  expect(within(second).getByRole('button', { name: 'More information' })).toBeTruthy()
   await user.click(within(second).getByLabelText('Compare: Second change'))
   await user.click(within(first).getByLabelText('Compare: First version'))
   const compare = await screen.findByLabelText('Difference between the two versions', {}, T)

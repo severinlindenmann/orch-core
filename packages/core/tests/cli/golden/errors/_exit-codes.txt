@@ -28,7 +28,6 @@ custody.no_key 3 retry:false
 custody.wrong_passphrase 3 retry:false
 sign.convenience_readers 3 retry:false
 sign.convenience_unavailable 3 retry:false
-sign.hub_only 3 retry:false
 sign.key_exposed 3 retry:false
 relay.pair_open 3 retry:false
 relay.no_primary 3 retry:false
@@ -119,6 +118,7 @@ market.actor_refused 3 retry:false
 market.state_invalid 5 retry:false
 market.refresh_running 9 retry:true
 market.already_added 3 retry:false
+cosmetic.conflict 3 retry:false
 market.not_installed 3 retry:false
 market.ambiguous_addon 3 retry:false
 market.still_enabled 3 retry:false

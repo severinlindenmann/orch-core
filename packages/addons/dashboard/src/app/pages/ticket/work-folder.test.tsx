@@ -61,7 +61,7 @@ describe('the work folder line on the ticket page', () => {
     const user = userEvent.setup()
     show()
     expect(await screen.findByText(/Work folder: 14 files, 2.1 MB, not artifacts/)).toBeTruthy()
-    expect(screen.getByText('Technical details')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'More information' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Delete work folder' }))
     expect(remove).not.toHaveBeenCalled() // the question comes first
     expect(await screen.findByText(/cannot be undone/)).toBeTruthy()

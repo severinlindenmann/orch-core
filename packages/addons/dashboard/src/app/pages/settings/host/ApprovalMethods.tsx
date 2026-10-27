@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { pairServed } from '@/api/pairing'
 import { queries } from '@/api/queries'
-import { hubOnly } from '@/api/hubsign'
 import { methodLabel, type SignMethod } from '@/api/signing'
 import { useSignMethods } from '@/components/sign/SignMethods'
 import { Button } from '@/components/ui/button'
@@ -23,7 +22,7 @@ export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
   // Approving through the hub is switched on by One click setup has no box here: saving this list keeps it.
   const hostSettings = useQuery(queries.hostSettings(ws))
   const hubOn = (hostSettings.data?.sign_methods as string[] | null | undefined)?.includes('hub') === true
-  const hubNote = hubOn || hubOnly(workspaces.data?.find(w => w.id === ws))
+  const hubNote = hubOn
   const [draft, setDraft] = useState<SignMethod[] | null>(null)
   const [method, setMethod] = useState<SignMethod | null>(null)
   const [fallback, setFallback] = useState<SignMethod | '' | null>(null)

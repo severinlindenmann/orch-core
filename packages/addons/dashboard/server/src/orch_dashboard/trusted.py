@@ -2,14 +2,16 @@
 
 A normal sign-in on this computer (a launch link, kind ``local``) enrols the browser: the page makes an ECDSA P-256 key
 pair with WebCrypto, keeps the private half non-extractable in IndexedDB (origin-scoped: another port is another
-origin, which a cookie would not give), and sends the public half here. A hub switch later proves possession of that
-key to turn its read-only session into a full one (`Auth.upgrade`); without the key it stays read-mostly.
+origin, which a cookie would not give), and sends the public half here, with the person this computer's user is in each
+workspace at that moment. A hub switch link later opens a full session with no question only when the browser proves
+possession of that key BEFORE the ticket is used (E4, `Auth.switch_proof`); without the key the ticket stays unused
+and the page asks "Open <name>?" (a read-mostly session).
 
 **Invariants**
-* Only a session opened by a real local sign-in enrols a key (`Auth.enrol`): a switch session, a remote one or a
-  session an earlier key upgraded never does, so a hub-made session cannot mint its own way up.
-* A key signs a one-use nonce of the session that asks, bound to the origin the key was enrolled for.
-* A key unused for `IDLE` seconds, or revoked, upgrades nothing.
+* Only a session opened by a real local sign-in enrols a key (`Auth.enrol_key`): a switch session, a remote one or a
+  session a key opened never does, so a hub-made session cannot mint its own way up.
+* A key signs a one-use nonce bound to one ticket hash and the origin the key was enrolled for (`message`).
+* A key unused for `IDLE` seconds, or revoked, opens nothing. Using it for a redeem renews it.
 * The store holds public keys only.
 """
 
@@ -39,7 +41,9 @@ log = logging.getLogger(__name__)
 IDLE = 30 * 86400  # a trusted browser idle this long is forgotten
 MAX_KEYS = 20
 _B64 = re.compile(r"^[A-Za-z0-9_-]{43}$")
-DOMAIN = b"orch-switch-upgrade-v1\0"
+DOMAIN = b"orch-switch-redeem-v1\0"
+_PERSON = re.compile(r"^p_[A-Za-z0-9]{1,64}$")
+_WS = re.compile(r"^[0-9a-f]{32}$")
 
 
 def _lock(fd: int) -> None:
@@ -77,11 +81,28 @@ def key_id(jwk: dict) -> str:
     return hashlib.sha256(canon.encode()).hexdigest()[:32]
 
 
-def message(nonce: str, origin: str) -> bytes:
-    return DOMAIN + nonce.encode() + b"\0" + origin.encode()
+def ticket_hash(ticket: str) -> str:
+    """sha256 of the switch ticket, hex: what a challenge is bound to (the ticket itself is never stored here)."""
+    return hashlib.sha256(ticket.encode()).hexdigest()
 
 
-def verify(jwk: dict, nonce: str, origin: str, signature: str) -> bool:
+def message(nonce: str, origin: str, ws: str, t_hash: str, kid: str) -> bytes:
+    """`orch-switch-redeem-v1\\0nonce\\0origin\\0ws_id\\0sha256(t)\\0key_id`: the one switch proof (E4)."""
+    return DOMAIN + b"\0".join(x.encode() for x in (nonce, origin, ws, t_hash, kid))
+
+
+def clean_people(people) -> dict[str, str]:
+    """``{workspace id: person}`` in its closed shape (anything else is dropped)."""
+    if not isinstance(people, dict):
+        return {}
+    return {
+        w: p
+        for w, p in list(people.items())[:200]
+        if isinstance(w, str) and _WS.fullmatch(w) and isinstance(p, str) and _PERSON.fullmatch(p)
+    }
+
+
+def verify(jwk: dict, signed: bytes, signature: str) -> bool:
     """``signature`` is WebCrypto's ECDSA output: r || s, 64 bytes, base64url."""
     try:
         raw = _unb64(signature)
@@ -91,7 +112,7 @@ def verify(jwk: dict, nonce: str, origin: str, signature: str) -> bool:
             int.from_bytes(_unb64(jwk["x"]), "big"), int.from_bytes(_unb64(jwk["y"]), "big"), ec.SECP256R1()
         ).public_key()
         der = utils.encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big"))
-        pub.verify(der, message(nonce, origin), ec.ECDSA(hashes.SHA256()))
+        pub.verify(der, signed, ec.ECDSA(hashes.SHA256()))
         return True
     except (InvalidSignature, ValueError, TypeError, KeyError):
         return False
@@ -135,6 +156,7 @@ class TrustedKeys:
                         "origin": str(row.get("origin", ""))[:200],
                         "created": float(row.get("created", 0)),
                         "last_used": float(row.get("last_used", 0)),
+                        "people": clean_people(row.get("people")),
                     }
         self.keys = keys
 
@@ -184,7 +206,9 @@ class TrustedKeys:
             for k in [k for k, r in self.keys.items() if now - r["last_used"] >= IDLE]:
                 del self.keys[k]
 
-    def enrol(self, jwk: dict, origin: str) -> str | None:
+    def enrol(self, jwk: dict, origin: str, people: dict[str, str] | None = None) -> str | None:
+        """``people``: the person this computer's user is in each workspace, as the sign-in saw it (the key's enrolled
+        person, checked again before every redeem)."""
         self.sweep()
         kid = key_id(jwk)
         with self._change():
@@ -193,7 +217,13 @@ class TrustedKeys:
                 oldest = min(self.keys, key=lambda k: self.keys[k]["last_used"])
                 del self.keys[oldest]
             row = self.keys.get(kid)
-            self.keys[kid] = {"jwk": jwk, "origin": origin, "created": row["created"] if row else now, "last_used": now}
+            self.keys[kid] = {
+                "jwk": jwk,
+                "origin": origin,
+                "created": row["created"] if row else now,
+                "last_used": now,
+                "people": clean_people(people),
+            }
         return kid
 
     def get(self, kid: str) -> dict | None:

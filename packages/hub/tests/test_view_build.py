@@ -294,7 +294,9 @@ def test_settings_changed_is_built_and_signed_by_the_real_engine(env):
     a = {"type": "settings.changed", "log": "workspace", "set": {"grant_hours": 24, "claim_ttl_min": 60}}
     p, ev = sign(env, a)
     e = p.ctx["event"]
-    assert p.ctx["log"] == "workspace" and e["set"] == a["set"] and e["based_on"] == env.vs.service.head(WS, "workspace")
+    assert (
+        p.ctx["log"] == "workspace" and e["set"] == a["set"] and e["based_on"] == env.vs.service.head(WS, "workspace")
+    )
     assert env.delivered[-1][1] == "workspace" and ev["sig"]
     assert code(env.prepare, {**a, "set": {"sign_methods": ["click"]}}) == "malformed"
     assert code(env.prepare, {**a, "set": {"grant_hours": 999}}) == "malformed"

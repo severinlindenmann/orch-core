@@ -81,11 +81,40 @@ def env(w, monkeypatch, tmp_path):  # noqa: F811 - imported fixture
         )
         return uid, fid, due
 
+    def schedule_on(on, trigger, hook=None, hours=3):
+        uid, key = w.ticket("Follow-up " + new_ulid())
+        ok(w.conn().call("claim", {"ref": key}, grant=w.grant, session=SESSION, idem=True))
+        deadline = w.lab.ws.clock[0] + hours * 3600
+        fid = "fu_" + new_ulid()
+        w.host_append(
+            lambda ws: (
+                {
+                    "type": "followup.set",
+                    "actor": {**ws.agent, "session": SESSION},
+                    "followup": fid,
+                    "trigger": trigger,
+                    "deadline": ts(deadline),
+                    "on": on,
+                    **({"hook": hook} if hook else {}),
+                    "brief": "Check again",
+                },
+                uid,
+            )
+        )
+        return uid, key, fid, deadline
+
     def view(uid):
         return w.h.run(w.service.call(lambda: w.service.store.ticket(uid))).followups[-1]
 
     return NS(
-        w=w, hub=hub, runner=runner, mono=mono, schedule=schedule, view=view, tick=lambda: w.h.run(runner.tick_once())
+        w=w,
+        hub=hub,
+        runner=runner,
+        mono=mono,
+        schedule=schedule,
+        schedule_on=schedule_on,
+        view=view,
+        tick=lambda: w.h.run(runner.tick_once()),
     )
 
 
@@ -314,3 +343,82 @@ def test_no_runner_for_a_service_closed_while_the_check_waited(env, monkeypatch)
     env.w.h.host.services.pop(env.w.service.workspace_id, None)  # closed meanwhile
     env.w.h.run(start(env.w.h.host, env.w.service))
     assert not made and env.w.service.followups is None
+
+
+from orch.canon import question_hash, question_id  # noqa: E402
+
+
+def test_orch_event_fires_and_only_its_shape_is_recorded(env):
+    from orch.model import followup_events as fe
+
+    e = env
+    uid, key, fid, deadline = e.schedule_on(fe.parse_on("question.asked"), "orch")
+    e.tick()
+    assert e.view(uid)["state"] == "pending" and not e.hub.commands
+    # a question is asked on the ticket after the set (host-appended; the text must never reach the follow-up)
+    q = {
+        "id": "Q1",
+        "to": "ticket_owner",
+        "text": "which database?",
+        "kind": "text",
+        "why": "needed to choose",
+        "blocking": False,
+    }
+    qid = question_id(e.w.wid, uid, "Q1")
+    e.w.host_append(
+        lambda ws: (
+            {
+                "type": "question.asked",
+                "actor": {**ws.agent, "session": SESSION},
+                "question": q,
+                "qid": qid,
+                "hash": question_hash(qid, uid, q),
+            },
+            uid,
+        )
+    )
+    e.tick()
+    rec = e.view(uid)
+    assert rec["state"] == "fired", rec["reason"]
+    assert rec["trigger"] == "orch" and not rec.get("fallback")
+    assert set(rec["event"]) == {"source", "kind", "ref", "status", "at"} and rec["event"]["kind"] == "question"
+    assert "which database" not in str(rec) + json.dumps(e.hub.commands)
+    assert e.hub.commands[0][0] == "grant.put_run"
+
+
+def test_deadline_fallback_for_event_and_webhook(env):
+    from orch.model import followup_events as fe
+
+    e = env
+    uid, _, _, deadline = e.schedule_on(fe.parse_on("gate.approved:plan"), "orch")
+    hid = fe.new_hook_id()
+    on = fe.parse_on("webhook:" + hid)
+    uid2, _, _, deadline2 = e.schedule_on(on, "webhook", hook=on["hook"])
+    e.w.lab.ws.clock[0] = min(deadline, deadline2) - 60
+    e.tick()
+    assert e.view(uid)["state"] == "pending" and e.view(uid2)["state"] == "pending"
+    e.w.lab.ws.clock[0] = max(deadline, deadline2)
+    e.tick()
+    a, b = e.view(uid), e.view(uid2)
+    assert (a["state"], a["fallback"], a["trigger"]) == ("fired", "no_event", "orch")
+    assert (b["state"], b["fallback"]) == ("fired", "no_ring")
+    assert not a.get("event") and not b.get("event")
+
+
+def test_webhook_ring_fires_once_and_later_rings_are_ignored(env):
+    from orch.model import followup_events as fe
+
+    e = env
+    hid = fe.new_hook_id()
+    on = fe.parse_on("webhook:" + hid)
+    uid, _, fid, _ = e.schedule_on(on, "webhook", hook=on["hook"])
+    assert e.w.h.run(e.runner.ring(fe.hook_hash(fe.new_hook_id()))) is False  # unknown hook
+    assert e.w.h.run(e.runner.ring(on["hook"])) is True
+    e.tick()
+    rec = e.view(uid)
+    assert rec["state"] == "fired" and rec["trigger"] == "webhook" and rec["event"]["status"] == "rang"
+    assert rec["event"]["ref"] == on["hook"] and not rec.get("fallback")
+    assert e.w.h.run(e.runner.ring(on["hook"])) is False  # no longer pending: ignored
+    e.tick()
+    assert len([c for c in e.hub.commands if c[0] == "spawn"]) == 1
+    assert hid not in json.dumps(e.hub.commands) + e.runner.path.read_text()

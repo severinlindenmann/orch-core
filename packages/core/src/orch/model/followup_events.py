@@ -120,7 +120,10 @@ def from_ledger(event: Mapping[str, Any]) -> dict[str, str] | None:
     if row is None:
         return None
     kind, status, key = row
-    return {"source": "orch", "kind": kind, "ref": _clean_ref(event.get(key)), "status": status, "at": event["at"]}
+    ref = event.get(key)
+    if isinstance(ref, Mapping):  # question.asked carries the whole question; only its id is the ref
+        ref = ref.get("id")
+    return {"source": "orch", "kind": kind, "ref": _clean_ref(ref), "status": status, "at": event["at"]}
 
 
 def webhook_event(hash_: str, at: str) -> dict[str, str]:

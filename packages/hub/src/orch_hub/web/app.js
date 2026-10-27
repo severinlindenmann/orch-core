@@ -5,10 +5,11 @@ import { CanonError, parseStrict } from "./cj.js";
 import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, signProof, signRegistration } from "./channel.js";
 import { homeView } from "./home.js";
 import { adminView } from "./admin.js";
+import { OPEN_FIRST, colour, initials, landing, railRows, safeUrl, ticketFromHash } from "./switch.js";
 import { Refusal, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
-const state = { user: null, me: null, channels: [], notice: null };
+const state = { user: null, me: null, channels: [], notice: null, rail: { hubName: "Hub", rows: [] }, menu: false };
 
 // --- DOM helpers (no HTML strings anywhere) ----------------------------------------------------------------------------
 function h(tag, props = {}, ...kids) {
@@ -23,7 +24,7 @@ function h(tag, props = {}, ...kids) {
   for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c)));
   return e;
 }
-const show = (...nodes) => root.replaceChildren(...nodes.flat().filter(Boolean));
+const show = (...nodes) => { root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
 const field = (label, input) => h("div", {}, h("label", { text: label }), input);
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
@@ -58,6 +59,8 @@ const WORDS = {
   bad_channel_proof: "The signature was not accepted.",
   malformed: "The answer could not be read safely.",
   unavailable: "The hub cannot be reached.",
+  bad_ticket: "This link expired. Go back and click again.",
+  no_origin: "Open that workspace's dashboard once first, then try again.",
 };
 const say = (code) => WORDS[code] ?? "Refused (" + renderText(code) + ").";
 
@@ -110,17 +113,79 @@ async function refresh() {
 }
 
 function shell(active, ...nodes) {
-  const tab = (id, label, go) => h("a", { href: "#", class: "nav" + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); go(); } });
-  show(
-    h("header", { class: "topbar" }, h("b", { class: "brand", text: "orch hub" }),
-      h("nav", { class: "navtabs", "aria-label": "Sections" }, tab("home", "Home", home), state.user?.is_admin ? tab("admin", "Admin", admin) : null),
-      h("span", { class: "grow" }), h("span", { class: "small muted", text: renderText(state.user?.name ?? "") }), h("button", { text: "Sign out", onclick: signOut })),
-    nodes.flat(2),
-  );
+  const tab = (id, label, go, cls) => h("a", { href: "#", class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); go(); } });
+  const name = renderText(state.user?.name ?? "");
+  const hubName = renderText(state.rail.hubName);
+  const side = h("aside", { class: "side", "aria-label": "Hub" },
+    h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
+    h("div", { class: "hubbox" }, h("span", { text: hubName })),
+    tab("home", "Home", home, "nv"), state.user?.is_admin ? tab("admin", "Admin", admin, "nv") : null,
+    h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
+  const top = h("header", { class: "topbar" }, h("span", { class: "t", text: hubName }),
+    h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", home, "nav"), state.user?.is_admin ? tab("admin", "Admin", admin, "nav") : null),
+    h("span", { class: "grow" }), h("span", { class: "small muted", text: name }), signOutMenu());
+  show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content" }, nodes.flat(2)))));
+  root.classList.add("shelled");
+}
+
+// --- the company rail: this hub, then every workspace of mine (GET /rail); one click switches, no second sign-in ----------
+function railView() {
+  const hub = h("button", { class: "ra hub on", title: renderText(state.rail.hubName), "aria-label": "Hub " + renderText(state.rail.hubName), "aria-current": "page", text: initials(state.rail.hubName), onclick: home });
+  const items = state.rail.rows.map((w) => {
+    const b = h("button", { class: "ra " + colour(w.id), "aria-label": "Open " + renderText(w.name) + (w.online ? "" : " (offline)"), disabled: !w.canOpen,
+      title: w.canOpen ? renderText(w.name) : renderText(w.name) + ": " + OPEN_FIRST, onclick: () => openWorkspace(w) },
+      initials(w.name, w.id), w.badge ? h("span", { class: "bd", text: String(w.badge) }) : null, h("span", { class: "dot" + (w.online ? " up" : "") }));
+    return b;
+  });
+  return h("nav", { class: "rail", "aria-label": "Hub and workspaces" }, hub, items.length ? h("div", { class: "rsep" }) : null, items);
+}
+
+async function loadRail() {
+  let r = await api("GET", "/rail");
+  if (r.status !== 200) r = await api("GET", "/me/workspaces"); // older hub without the rail: the plain list, nothing openable
+  state.rail.rows = r.status === 200 ? railRows(r.body) : [];
+  const n = r.status === 200 ? r.body.hub?.name : null;
+  state.rail.hubName = typeof n === "string" && n ? n : "Hub";
+}
+
+async function openWorkspace(w) {
+  const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: "/", kind: "open" });
+  const url = r.status === 200 ? safeUrl(r.body.url) : null;
+  if (!url) { state.notice = banner("bad", "Cannot open " + renderText(w.name), say(r.status === 200 ? "malformed" : r.body.error)); return home(); }
+  location.assign(url);
+}
+
+// Sign-out: two named plain clicks, no question. "Sign out of <workspace> too" signs this hub out and lets that dashboard end its own session.
+function signOutMenu() {
+  const entries = [h("button", { text: "Sign out of " + renderText(state.rail.hubName), onclick: signOut })];
+  for (const w of state.rail.rows.filter((x) => x.canOpen)) entries.push(h("button", { text: "Sign out of " + renderText(w.name) + " too", onclick: () => signOutAlso(w) }));
+  const menu = h("div", { class: "menu", role: "menu", hidden: !state.menu }, entries.length > 1 ? h("div", { class: "hd", text: "SIGN OUT" }) : null, entries);
+  return h("div", { class: "signout" }, h("button", { text: "Sign out", "aria-haspopup": "true", "aria-expanded": String(state.menu),
+    onclick: () => { if (entries.length === 1) return signOut(); state.menu = !state.menu; menu.hidden = !state.menu; } }), menu);
+}
+
+async function signOutAlso(w) {
+  const r = await api("POST", "/switch/ticket", { workspace_id: w.id, return_to: "/", kind: "signout" });
+  const url = r.status === 200 ? safeUrl(r.body.url) : null;
+  await signOut();
+  if (url) location.assign(url);
+}
+
+// A ticket in the address (#t=...): strip it at once, exchange it once, then land on the page it names.
+async function landFromTicket(t) {
+  history.replaceState(null, "", location.pathname);
+  const r = await api("POST", "/switch/redeem", { t });
+  const l = landing(r.status, r.body);
+  if (l.kind === "signout") { state.user = null; return show(h("div", { class: "plain" }, h("h1", { text: "You are signed out" }), h("p", { class: "muted", text: "Your hub session ended." }), h("button", { class: "pri", text: "Sign in again", onclick: () => loginView() }))); }
+  if (l.kind === "expired") return show(h("div", { class: "plain" }, h("h1", { text: "This link expired" }), h("p", { class: "muted", text: "This link expired. Go back and click again." }), h("button", { text: "Sign in with your password", onclick: () => loginView() })));
+  if (l.kind === "path") return location.replace(l.path);
+  await home();
 }
 
 async function admin() {
   if (!(await refresh())) return loginView();
+  state.menu = false;
+  await loadRail();
   if (!state.user.is_admin) return home();
   const notice = state.notice;
   state.notice = null;
@@ -129,6 +194,8 @@ async function admin() {
 
 async function home() {
   if (!(await refresh())) return loginView();
+  state.menu = false;
+  await loadRail();
   const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
   const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
   const workspaces = ws.status === 200 ? ws.body.workspaces : [];
@@ -165,6 +232,7 @@ async function removeChannel(id) {
 async function signOut() {
   await api("DELETE", "/session");
   state.user = null;
+  state.menu = false;
   loginView();
 }
 
@@ -346,6 +414,8 @@ function promptView(me, p, digest, d) {
 
 // --- start -------------------------------------------------------------------------------------------------------------
 (async () => {
+  const t = ticketFromHash(location.hash);
+  if (t) return landFromTicket(t);
   const m = /^#setup=([\w-]+)$/.exec(location.hash);
   if (m) return setupView(m[1]);
   try { if (!(await refresh())) return loginView(); await home(); } catch { loginView("Something went wrong."); }

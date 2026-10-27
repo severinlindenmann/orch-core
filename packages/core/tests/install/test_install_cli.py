@@ -158,7 +158,11 @@ def test_detected_addresses_offer_the_netbird_ip():
         "en0: flags=8863\n\tinet 192.168.1.10 netmask 0xffffff00\n"
     )
     got = detect_addresses(lambda argv: ifc if argv == ["ifconfig"] else "")
-    assert ("100.64.9.9", "private network") in got and ("192.168.1.10", "local network") in got and got[0][0] == "127.0.0.1"
+    assert (
+        ("100.64.9.9", "private network") in got
+        and ("192.168.1.10", "local network") in got
+        and got[0][0] == "127.0.0.1"
+    )
 
 
 def test_an_agent_is_refused(home):

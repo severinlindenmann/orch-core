@@ -27,6 +27,8 @@ import {
   type TicketDocument,
   type TicketSummary,
   type TodayDocument,
+  type AddonActionResult,
+  type AddonPackage,
   type Workspace,
   type WorkspaceIdentity,
   type OrchEvent,
@@ -136,6 +138,16 @@ async function listTickets(ws: string, p: ListTicketsParams = {}, route = 'ticke
   return narrow(rows, p)
 }
 
+/**
+ * Add-ons whose screens are declarative views the server serves (today the Wiki): on for the workspace while the server
+ * lists their feature. The package (`/api/addons`) carries the view; the grant is the server's own check, not a signed one.
+ */
+function viewAddons(features: string[]): Workspace['addons'] {
+  return features.includes('wiki')
+    ? { wiki: { enabled: true, status: 'active', installed: true, granted: null, version: '0.1.0', package_sha256: '', capabilities: [] } }
+    : {}
+}
+
 /** Workspaces in the UI's shape. What the shell never fills for a read-only host (gates, addons, counts) stays empty. */
 function workspace(s: ServerWorkspace): Workspace {
   return {
@@ -144,7 +156,7 @@ function workspace(s: ServerWorkspace): Workspace {
     name: s.name,
     members: s.members,
     gates: {} as Workspace['gates'],
-    addons: {},
+    addons: viewAddons(s.features),
     counts: {},
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),
@@ -185,6 +197,21 @@ export const session = async (cancel?: AbortSignal) => {
 }
 
 const reads = {
+  /** The add-on packages with declarative views that are ON in a running workspace (asked per workspace; the Wiki). */
+  getAddons: async (): Promise<AddonPackage[]> => {
+    const rows = await call<ServerWorkspace[]>('/api/workspaces')
+    const lists = await Promise.all(rows.filter((r) => r.host_state === 'ok' && r.features.includes('addons')).map((r) => call<AddonPackage[]>(`${w(r.id)}/addons`)))
+    return [...new Map(lists.flat().map((p) => [p.name, p])).values()]
+  },
+  /**
+   * The one add-on action a served view can run: the Wiki's "Create the wiki folder" (its plain-click admin route). The
+   * server decides who may; an add-on action the server does not serve is refused plainly.
+   */
+  runAddonAction: async (ws: string, addon: string, action: string): Promise<AddonActionResult> => {
+    if (addon !== 'wiki' || action !== 'create') return unsupported('runAddonAction')
+    await call(`${w(ws)}/wiki/create`, 'POST', {})
+    return { ok: true, message: 'The wiki folder is ready.', changed: true }
+  },
   /** One person has a different id in each workspace: with `ws` this is that workspace's own entry (person, name, role). */
   getMe: async (ws?: string): Promise<Me> => {
     const all = await call<ServerMe[]>('/api/me')
@@ -255,7 +282,7 @@ const records = {
 
 /** Reads a page needs an answer to even when the host has nothing to say yet: an empty list, never a made-up one. */
 const empty = {
-  getAddons: async () => [],
+  getAddonState: async () => ({}),
   getWorkspaceAddons: async () => [],
   getAddonCatalog: async () => [],
   getAddonDecisions: async () => [],

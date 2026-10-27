@@ -114,7 +114,9 @@ def test_launch_and_session(world, token):
 def test_shell_reads(world, api, token):
     h = {"Authorization": f"Bearer {token}"}
     spaces = world.client.get("/api/workspaces", headers=h).json()
-    assert [(w["prefix"], w["host_state"], w["name"]) for w in spaces] == [("DEMO", "ok", "Demo Owner")]  # setup names the workspace after its owner
+    assert [(w["prefix"], w["host_state"], w["name"]) for w in spaces] == [
+        ("DEMO", "ok", "Demo Owner")
+    ]  # setup names the workspace after its owner
     assert spaces[0]["members"][0]["role"] == "owner" and spaces[0]["needs_you"] == 5
     # RH-6: the number is what Today counts (questions and approvals/verdicts; never a no_eligible or acknowledge
     # notice). B5b (fc7c940d): the one member of a solo workspace may decide every gate, so both testing tickets wait

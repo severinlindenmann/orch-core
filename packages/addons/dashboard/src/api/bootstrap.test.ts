@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { bootstrap, clearSession, getToken, safeDestination } from './bootstrap'
+import { bootstrap, clearSession, confirmSwitch, declineSwitch, getPendingSwitch, getToken, safeDestination } from './bootstrap'
 
 beforeEach(() => {
   sessionStorage.clear()
@@ -8,6 +8,54 @@ beforeEach(() => {
   clearSession(false)
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
+
+const TICKET = 'a'.repeat(32) + '.' + 'b'.repeat(32)
+
+describe('hub switch link (H1)', () => {
+  it('strips the ticket at once and signs nobody in until the person confirms', async () => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    const fetcher = vi.fn()
+    expect(await bootstrap(fetcher)).toBeNull()
+    expect(location.hash).toBe('')
+    expect(getPendingSwitch()).toBe(TICKET)
+    expect(fetcher).not.toHaveBeenCalled()
+    declineSwitch()
+    expect(getPendingSwitch()).toBeNull()
+    expect(await confirmSwitch(fetcher)).toBeUndefined() // nothing to use after Cancel
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+  it('a ticket that is not the expected shape is never pending', async () => {
+    history.replaceState(null, '', '/#t=../../etc')
+    await bootstrap(vi.fn())
+    expect(getPendingSwitch()).toBeNull()
+  })
+  it('Continue uses the ticket once and lands on a path of this site', async () => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    const fetcher = vi.fn(async (_u, init) => {
+      expect(init?.body).toBe(JSON.stringify({ t: TICKET }))
+      return Response.json({ token: 'demo-not-a-real-token', expires_at: 'x', return_to: '//evil.test', workspace_id: 'w' })
+    }) as unknown as typeof fetch
+    expect(await confirmSwitch(fetcher)).toBe('/')
+    expect(sessionStorage.getItem('orch-session')).toBe('demo-not-a-real-token')
+    expect(await confirmSwitch(fetcher)).toBeUndefined()
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+  it('a refused ticket signs nobody in; a sign-out ticket ends this tab\'s session', async () => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    expect(await confirmSwitch(vi.fn(async () => new Response('', { status: 401 })) as unknown as typeof fetch)).toBeUndefined()
+    expect(getToken()).toBeNull()
+    sessionStorage.setItem('orch-session', 'demo-not-a-real-token')
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    const calls: string[] = []
+    const fetcher = vi.fn(async (u) => { calls.push(String(u)); return Response.json({ signed_out: true }) }) as unknown as typeof fetch
+    expect(await confirmSwitch(fetcher)).toBeNull()
+    expect(calls).toEqual(['/auth/switch', '/auth/logout'])
+    expect(sessionStorage.getItem('orch-session')).toBeNull()
+  })
+})
 
 describe('production bootstrap', () => {
   it('scrubs the fragment before any request, exchanges once and stores in this tab', async () => {

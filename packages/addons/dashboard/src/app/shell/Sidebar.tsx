@@ -26,7 +26,6 @@ import {
   PackageOpen,
   FolderGit2,
   FolderTree,
-  BookText,
   Gauge,
   Puzzle,
   Share2,
@@ -39,6 +38,7 @@ import { activeGrantOf } from '@/api/grants'
 import { roleOf } from '@/api/permissions'
 import { useAttention } from '../attention'
 import { useRole } from '../useRole'
+import { HubLogout } from './CompanyRail'
 import { AddonBadge } from '@/addon-ui/AddonBadge'
 import { PreviewChip } from '@/addon-ui/PreviewChip'
 import { useAddons, useSlot } from '@/addon-ui/slots'
@@ -411,6 +411,7 @@ export function Sidebar() {
                   Log out
                 </button>
               )}
+              {showsLogout() && <HubLogout ws={workspace?.id} collapsed={collapsed} onDone={() => qc.clear()} />}
             </div>
           ) : (
           <DropdownMenu>
@@ -471,7 +472,7 @@ const CORE_NAV = [
   /** Drop (proposed `drop/1`): listed where the host serves it; the page itself says when it is not available. */
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
   /** Worktrees (H11d): one folder per ticket; the mock has it as an addon page. */
-  { to: '/worktrees', label: 'Ticket copies', icon: FolderGit2, feature: 'worktrees', real: true },
+  { to: '/worktrees', label: 'Worktrees', icon: FolderGit2, feature: 'worktrees', real: true },
   /** Terminals (add-on): every terminal and agent session; listed only while the add-on is ON (the server adds `terminals_page` then). */
   { to: '/terminals', label: 'Terminals', icon: SquareTerminal, feature: 'terminals_page', real: true },
   /** Files (File Explorer add-on): owners only, listed only while the add-on is ON (the server adds `explorer` then). */
@@ -484,8 +485,6 @@ const CORE_NAV = [
   { to: '/usage', label: 'Usage', icon: Gauge, feature: 'usage', real: true },
   /** Schedules (add-on): the follow-ups agents set; listed only while the add-on is ON (the server adds `schedules` then). */
   { to: '/schedules', label: 'Schedules', icon: CalendarClock, feature: 'schedules', real: true },
-  /** Wiki (add-on): pages of the project's wiki folder; listed only while the add-on is ON (the server adds `wiki` then). */
-  { to: '/wiki', label: 'Wiki', icon: BookText, feature: 'wiki', real: true },
   /** Activity (#595): who did what; listed where the host serves `activity/1`. */
   { to: '/activity', label: 'Activity', icon: History, feature: 'activity', real: true },
   /** The guide of a real host: fixed pages in the bundle, so any host serves it. */

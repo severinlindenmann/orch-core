@@ -1348,6 +1348,18 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "space_get": ("w2h", None, {"space_id": _hex16, "since": _int_min(0)}),
     # p4 (§10.4, #1020): the pending hub.space_proposal objects that name the link's workspace
     "space_proposals": ("w2h", None, {}),
+    # hub one-app (TECH.md 27 Oct): the browser switch between a workspace dashboard and the hub console
+    "switch_ticket": (
+        "w2h",
+        None,
+        {
+            "origin": lambda x: type(x) is str,
+            "return_to": lambda x: type(x) is str,
+            "kind": lambda x: x in ("open", "signout"),
+        },
+    ),
+    "switch_redeem": ("w2h", None, {"ticket": lambda x: type(x) is str}),
+    "rail_get": ("w2h", None, {"origin": lambda x: type(x) is str}),
     # p4 (§10.7): the hub's WK_e-sealed view of one workspace log; full mode only (selective: the hub holds no WK_e)
     "log_sync": (
         "w2h",

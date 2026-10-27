@@ -57,6 +57,10 @@ class ChannelsDB:
                 ("scope", "TEXT NOT NULL DEFAULT 'full'"),  # full (browser) | pairing | channel (H1, protocol §6.4)
                 ("channel_id", "TEXT"),
                 ("login_ms", "INTEGER"),  # the password sign-in a channel session's 12 h run from
+                (
+                    "via",
+                    "TEXT",
+                ),  # NULL: a sign-in; 'switch': born from a workspace's switch ticket (api.SWITCH_HANDLERS)
             ):
                 if name not in cols:
                     self.db.execute(f"ALTER TABLE sessions ADD COLUMN {name} {decl}")

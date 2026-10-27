@@ -270,6 +270,56 @@ export const popoverNode = z
   })
   .strict()
 
+/** `<addon>.<name>`: a named read of the add-on's own namespace. Never a URL. */
+export const READ_NAME = /^[a-z][a-z0-9_]{0,31}\.[a-z][a-z0-9_]{0,31}$/
+const readName = z.string().regex(READ_NAME)
+/** An id that names a node on its page (a `tree`): `search.target` points at one. */
+const viewId = z.string().regex(/^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,63}$/)
+/** A field name of a read's result. */
+const fieldKey = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,31}$/)
+
+/**
+ * A tree of items listed by a named read (`read`, e.g. "wiki.tree"; the add-on's own namespace, never a URL). Children
+ * load lazily when an item with `children` opens. Selecting an item shows it in a pane beside the tree (below it on a
+ * phone) when `detail` is set: a second named read gets `id=<item>` and the result's text field is drawn as markdown.
+ */
+export const treeNode = z
+  .object({
+    type: z.literal('tree'),
+    id: viewId,
+    /** The accessible name of the tree. */
+    label: z.string().min(1).max(80),
+    read: readName,
+    /** Shown when the read lists nothing and has no message of its own. */
+    empty: text.optional(),
+    detail: z
+      .object({
+        read: readName,
+        /** The result fields that hold the item's title and its markdown text. */
+        title: fieldKey,
+        text: fieldKey,
+        /** Shown when the text field is null (a page too large to show). */
+        empty: text.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+
+/** A search box: the typed text goes to a named read as `q`; the hits are listed, and a hit opens in the tree `target`. */
+export const searchNode = z
+  .object({
+    type: z.literal('search'),
+    id: viewId,
+    label: z.string().min(1).max(80),
+    placeholder: z.string().max(80).optional(),
+    read: readName,
+    target: viewId.optional(),
+    /** Hits shown before "n more": the read caps its own answer too. */
+    limit: z.number().int().min(1).max(50).default(20),
+  })
+  .strict()
+
 export const nodeSchema = z.discriminatedUnion('type', [
   stackNode,
   statNode,
@@ -293,6 +343,8 @@ export const nodeSchema = z.discriminatedUnion('type', [
   tabsNode,
   foldNode,
   popoverNode,
+  treeNode,
+  searchNode,
 ])
 
 export type AddonNodeData = z.output<typeof nodeSchema>

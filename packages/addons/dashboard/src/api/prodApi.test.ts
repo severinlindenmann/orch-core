@@ -63,7 +63,6 @@ it('keeps the host\'s error code, status and hint', async () => {
 
 it('answers neutrally where a page needs an answer and refuses every action', async () => {
   vi.stubGlobal('fetch', vi.fn())
-  expect(await api.getAddons()).toEqual([])
   expect(await api.getAgents(ws)).toEqual([])
   expect(await api.getAddonDecisions(ws)).toEqual([])
   expect(await api.listGrants(ws)).toEqual([])
@@ -150,4 +149,15 @@ it('sends a sealed hub backup key with the sign call, and nothing sealed otherwi
   await api.signClick(ws, 'hr_1', d)
   const bodies = (answers.mock.calls as unknown as [string, RequestInit][]).map((c) => JSON.parse(String(c[1].body)))
   expect(bodies).toEqual([{ request_id: 'hr_1', view_digest: d, sealed: { 'hub.backup_key': env } }, { request_id: 'hr_1', view_digest: d }])
+})
+
+it('reads the add-on packages the server serves, and refuses add-on actions it does not serve', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => (url === '/api/workspaces' ? Response.json([{ id: 'a'.repeat(32), host_state: 'ok', features: ['addons'] }, { id: 'b'.repeat(32), host_state: 'ok', features: [] }]) : Response.json([{ name: 'wiki' }]))))
+  expect(await api.getAddons()).toEqual([{ name: 'wiki' }])
+  expect(fetch).toHaveBeenCalledWith(`/api/w/${'a'.repeat(32)}/addons`, expect.anything())
+  expect(fetch).not.toHaveBeenCalledWith(`/api/w/${'b'.repeat(32)}/addons`, expect.anything())
+  expect(await api.getAddonState(ws, 'wiki')).toEqual({})
+  vi.stubGlobal('fetch', vi.fn())
+  await expect(api.runAddonAction(ws, 'wiki', 'delete')).rejects.toMatchObject({ code: 'op.unsupported' })
+  expect(fetch).not.toHaveBeenCalled()
 })

@@ -115,6 +115,11 @@ def _grant(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
     )
 
 
+def prepared_event(record: dict[str, Any]) -> dict[str, Any]:
+    """The one unsigned event of a prepared add-on grant request."""
+    return record["prepared"]["events"][0]
+
+
 def build_addon_url(addr: str, workspace_id: str, terms: dict[str, Any]) -> str:
     """The one link of an add-on approval (FB15): ``https://<hub>/#/w/<workspace_id>/addon/<b64u(JSON terms)>``. The
     terms are what the person is asked to approve (:data:`ADDON_TERMS`); the page parses them strictly, shows them and
@@ -150,7 +155,7 @@ def _addon(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
         or record.get("workspace_id") != service.workspace_id
     ):
         raise HostError("not_found", "no such add-on request waiting for the hub")
-    ev = record["prepared"]["events"][0]
+    ev = prepared_event(record)
     terms = {
         "name": ev["name"],
         "version": ev["version"],

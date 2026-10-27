@@ -197,7 +197,7 @@ class StoreLanding:
         from orch.identity import new_ulid
         from orch.model import Code, Refusal
 
-        from . import marketinstall
+        from . import hubhandoff, marketinstall
 
         ws = state._core.ws  # noqa: SLF001 - the model's own state, read under the lock
         req = ws.addon_requests.get(event["id"])
@@ -222,7 +222,7 @@ class StoreLanding:
             or requests.lapsed(record)
         ):
             return None  # no live local hand-off for these terms: the request is inert
-        ev = record["prepared"]["events"][0]
+        ev = hubhandoff.prepared_event(record)
         keys = ("name", "version", "package_sha256", "capabilities", "fields", "sections", "artifact_kinds", "runtime")
         body = {k: ev[k] for k in keys if k in ev}
         terms = ("name", "version", "package_sha256", "capabilities", "runtime")

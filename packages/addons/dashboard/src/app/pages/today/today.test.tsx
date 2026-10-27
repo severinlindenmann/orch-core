@@ -11,6 +11,7 @@ import { ApiError } from '@/api/types'
 import { api, mockStore } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
 import { reloginItems } from '@/api/attention'
+import { needsLine } from './index'
 
 const T = { timeout: 6000 }
 const busy = { setup: (s: typeof mockStore) => s.reset('busy', true) }
@@ -20,6 +21,14 @@ describe('Today: a calm, grouped queue', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     sessionStorage.clear()
+  })
+
+  it('counts follow-ups once: never "to look at" twice, "Nothing needs you" only when both are 0', () => {
+    expect(needsLine(0, 2)).toBe('2 follow-ups to look at')
+    expect(needsLine(0, 1)).toBe('1 follow-up to look at')
+    expect(needsLine(3, 2)).toBe('3 need you · 2 follow-ups to look at')
+    expect(needsLine(3, 0)).toBe('3 need you')
+    expect(needsLine(0, 0)).toBe('Nothing needs you')
   })
 
   it('says in one line what needs you and how many agents work, from the shared attention numbers', async () => {

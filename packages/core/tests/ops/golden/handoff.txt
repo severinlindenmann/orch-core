@@ -1,5 +1,6 @@
 exit 0
 --- stdout
 ok DEMO-0001 handoff.written 60 seq=17
+warning: the requirements gate is not ready for approval, it still lacks: context, requirements, out_of_scope. The person cannot approve it yet; add it first (orch section set context -m TEXT).
 next: orch claim --next
 --- stderr

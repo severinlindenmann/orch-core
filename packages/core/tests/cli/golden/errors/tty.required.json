@@ -1,0 +1,9 @@
+{
+  "ok": false,
+  "error": {
+    "code": "tty.required",
+    "message": "signing requires a controlling terminal",
+    "hint": "run the command in your terminal",
+    "retryable": false
+  }
+}

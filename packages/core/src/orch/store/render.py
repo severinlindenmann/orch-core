@@ -139,7 +139,6 @@ def render_config(view: Any, *, host_id: str, wsk_pub: str, name: str, run_for: 
             "grant_hours": view.settings["grant_hours"],
             "claim_ttl_min": view.settings["claim_ttl_min"],
             "lease_ttl_min": view.settings["lease_ttl_min"],
-            **({"sign_methods": list(view.settings["sign_methods"])} if "sign_methods" in view.settings else {}),
             **({"publish": dict(view.settings["publish"])} if "publish" in view.settings else {}),
             **({"icon": thaw(view.settings["icon"])} if "icon" in view.settings else {}),
             **({ADDONS_KEY: thaw(view.settings[ADDONS_KEY])} if ADDONS_KEY in view.settings else {}),

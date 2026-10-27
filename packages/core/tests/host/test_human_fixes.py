@@ -98,30 +98,7 @@ def test_escape_characters_in_payload_values_are_shown_as_visible_markers(human,
         assert "before" in text and "after" in text
 
 
-def test_member_and_addon_names_are_checked_before_they_become_the_typed_word():
-    ev = {"person": "p_" + "1" * 31 + "\x1b"}
-    prepared = {"op": "member.remove", "events": [ev], "material": {"ticket": None}, "log": "workspace"}
-    word = signer.confirm_word(prepared)
-    assert "\x1b" not in word  # cleaned; check() refuses it before this is ever reached (format test above)
-
-
 # --- 2. the ticket key is a host attestation; the uid fragment is signed ----------------------------------------------
-
-
-def test_the_relabel_probe_shows_the_real_tickets_uid_fragment(human, served):
-    uid_a, key_a = human.ticket("A real")
-    uid_b, key_b = human.ticket("B decoy")
-    ready(human, key_a)
-    p = human.prepare("approve", {"ref": key_a, "gate": "requirements"})
-    bad = reseal(copy.deepcopy(p))
-    bad["material"]["ticket"]["key"] = key_b  # a host that relabels the ticket
-    reseal(bad)
-    human.check(bad)  # the key is not provable in H5a...
-    word = signer.confirm_word(bad)
-    text = signer.render(bad, REG)
-    assert word == f"{key_b}/{uid_a[-8:]}"  # ...but the typed word carries the signed log's uid
-    assert uid_a in text and "ticket key per host" in text and uid_b not in text
-    assert uid_a[-8:] != uid_b[-8:]
 
 
 # --- 3. half-applied submits ------------------------------------------------------------------------------------------
@@ -347,7 +324,7 @@ def test_the_composite_checks_artifacts_against_the_bytes_it_uploaded(human, ser
             person=human.person.ref,
             device=human.person.device,
             workspace=REG,
-            confirm=lambda text, word: True,
+            confirm=lambda text: True,
             show_secret=lambda t: None,
             idem=new_idem(),
             files=files,
@@ -528,15 +505,6 @@ def test_the_fingerprint_test_vector_of_the_doc():
     assert review.fingerprint(digest, [ev], "set") == "37cf21ef169c"
 
 
-def test_the_uid_fragment_is_the_last_eight_characters_of_the_signed_log(human, served):
-    uid, key = human.ticket()
-    p = human.prepare("log", {"ref": key, "text": "x"})
-    assert signer.confirm_word(p) == f"{key}/{uid[-8:]}"
-    assert signer.header(p, REG)[2] == (
-        f"ticket: {key} (ticket key per host, not proven) uid {uid} (signed; you type its last eight: {uid[-8:]})"
-    )
-
-
 def test_a_refused_submit_leaves_the_request_bound_and_pending_shows_the_code_only(human, served, lab):
     _, key = human.ticket()
     p = human.prepare("log", {"ref": key, "text": "x"})
@@ -546,15 +514,14 @@ def test_a_refused_submit_leaves_the_request_bound_and_pending_shows_the_code_on
     assert record(served, rid)["state"] == "bound"  # not terminal: it expires after 10 minutes
     (item,) = ok(human.c.req("human.pending", {"request_id": rid}))["data"]["requests"]
     assert item["state"] == "bound" and item["error"] == {"code": "members.stale"} and item["seq"] is None
-    assert item["key"] == key and item["event_ids"] == [p["events"][0]["id"]] and item["code"] is None
+    assert item["key"] == key and item["event_ids"] == [p["events"][0]["id"]] and "code" not in item
     assert set(item["error"]) == {"code"}
     done = human.prepare("log", {"ref": key, "text": "y"})
     res = ok(human.submit_res(done["request"]["id"], human.sign(done).events))
     listed = {r["id"]: r for r in ok(human.c.req("human.pending", {}))["data"]["requests"]}
     assert listed[done["request"]["id"]]["seq"] == res["seq"] and "error" not in listed[done["request"]["id"]]
-    assert ok(human.c.req("human.pending", {"code": "ABCD-EFGH"}))["data"] == {"requests": []}
     assert ok(human.c.req("human.pending", {"request_id": "hr_" + "0" * 26}))["data"] == {"requests": []}
-    assert err(human.c.req("human.pending", {"code": "ABCD-EFGH", "request_id": rid})) == "invalid.input"
+    assert err(human.c.req("human.pending", {"code": "ABCD-EFGH"})) == "invalid.input"
 
 
 def test_a_material_key_outside_the_schema_is_refused(human, served):

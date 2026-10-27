@@ -66,7 +66,7 @@ def test_terminal_default_has_no_settings_item_and_no_word(flow):
 def test_r2_long_agent_hours_and_a_runner_grant_need_no_typed_word(flow):
     out = to_review(flow, {**PROFILE, "agent_hours": 24})
     assert "typed_word" not in out
-    assert [i["id"] for i in out["items"]][:1] == ["settings"]
+    assert "settings" not in [i["id"] for i in out["items"]]
     row = out["items"][0]
     assert any("grant_hours" in line and "24" in line for line in row["lines"])
     f2 = rev_flow(flow)
@@ -125,16 +125,6 @@ def test_digest_includes_the_manifest_hashes(tmp):
     doc = json.loads(builtin.manifest_bytes("terminals"))
     other = json.dumps({**doc, "version": "9.9.9"}).encode()
     assert digest(builtin.manifest_bytes("terminals")) != digest(other)
-
-
-def test_click_path_review_has_settings_and_the_risk(tmp):
-    f = SetupFlow(make_env(tmp))
-    f.launch(str(tmp.work))
-    out = to_review(f, {**PROFILE, "method": "click"})
-    assert out["risk"]["once"] is True and "Convenience signing" in out["risk"]["text"]
-    settings = out["items"][0]
-    assert settings["id"] == "settings" and any("sign_methods" in line for line in settings["lines"])
-    assert {"id": "custody", "text": "Approvals on this machine need one click, with no passphrase."} in out["flags"]
 
 
 def test_a_new_review_has_a_new_id_and_a_profile_post_voids_it(flow):

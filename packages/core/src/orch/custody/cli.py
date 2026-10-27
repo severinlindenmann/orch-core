@@ -66,7 +66,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _entries(state: Path, pick: str | None) -> list[dict[str, Any]]:
-    from orch.host.handoff import _own_workspaces
+    from orch.host.signer_registry import _own_workspaces
 
     return _own_workspaces(state, os.getuid(), pick)
 

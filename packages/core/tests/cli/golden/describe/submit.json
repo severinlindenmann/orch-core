@@ -91,6 +91,13 @@
         ]
       },
       {
+        "code": "sign.cancelled",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run the command again to review",
+        "fix": []
+      },
+      {
         "code": "transition.refused",
         "exit": 3,
         "retryable": false,
@@ -99,6 +106,13 @@
           "orch",
           "show"
         ]
+      },
+      {
+        "code": "tty.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run the command in your terminal",
+        "fix": []
       },
       {
         "code": "claim.required",

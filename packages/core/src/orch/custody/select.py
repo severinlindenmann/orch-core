@@ -6,7 +6,7 @@ The selection is ``<person state>/person/<ws>/custody.json`` (0600 in 0700 direc
      "transition": null | {"to": "convenience" | "passphrase", "step": "written"}}
 
 No file means the P1 default: the passphrase key at ``<state>/hosts/<ws>/person/dk.key.json`` (H5b's location, kept so
-existing keys and ``orch sign`` keep working). :func:`device_backend` is the one resolver ``orch sign``, the click
+existing keys and the CLI signer keep working). :func:`device_backend` is the one resolver the CLI signer, the click
 signer and ``orch keys`` use. ``gen`` grows at every transition; a click signer compares it before every ``sign``.
 
 Transitions are recoverable: the destination is written durably, read back, its public key and a test signature are

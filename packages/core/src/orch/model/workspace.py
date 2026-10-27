@@ -321,10 +321,6 @@ def policy_changed(core: Core, e: dict[str, Any]) -> Refusal | None:
     return None
 
 
-#: the ways to sign, in the canonical order a stored ``sign_methods`` has (B6); ``touchid`` is reserved
-SIGN_METHODS = ("terminal", "click", "phone", "hub")
-
-
 #: the only settings a hub-signed ``settings.changed`` may set (hub protocol 8.8)
 CHANNEL_SETTINGS = frozenset({"grant_hours", "claim_ttl_min", "lease_ttl_min"})
 
@@ -334,7 +330,6 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return r
     s = e["set"]
     if "via" in e["actor"] and (bad := sorted(set(s) - CHANNEL_SETTINGS)):
-        # hub protocol 8.8 (V3-D29): sign_methods, repos, publish, icon ... stay off the channel, whatever the
         # hub signed; one place for append and replay
         return Refusal(Code.SETTINGS_INVALID, f"a hub may not set {', '.join(bad)}")
     if ADDONS_KEY in s and len(s) != 1:  # G6: one add-on per event, nothing else beside it (one review, one word)
@@ -359,11 +354,6 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     for k in ("grant_hours", "claim_ttl_min", "lease_ttl_min"):
         if k in s:
             ws.settings[k] = s[k]
-    if "sign_methods" in s:  # B6: terminal always; touchid is reserved (the schema refuses it); canonical order
-        methods = set(s["sign_methods"])
-        if "terminal" not in methods:
-            return Refusal(Code.SETTINGS_INVALID, "sign_methods always contains terminal")
-        ws.settings["sign_methods"] = [m for m in SIGN_METHODS if m in methods]
     if "publish" in s:  # the Publish add-on's server: one signed place for shared files to go; null removes it
         server = s["publish"]
         if server is None:

@@ -1,0 +1,9 @@
+{
+  "ok": false,
+  "error": {
+    "code": "sign.cancelled",
+    "message": "nothing was signed",
+    "hint": "run the command again to review",
+    "retryable": false
+  }
+}

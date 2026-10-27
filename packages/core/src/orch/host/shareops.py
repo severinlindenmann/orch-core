@@ -348,7 +348,7 @@ def _sync_locked(service: WorkspaceService, st: Any, wanted: list[Any]) -> dict[
         closer.close()
 
 
-def _confirm(st: Any, selection: list[Any], expect: str) -> None:
+def _approve(st: Any, selection: list[Any], expect: str) -> None:
     """The one place a selection is confirmed: against the plan the owner was shown (C6fud-1)."""
     from orch.hubclient.errors import HubRefused
 
@@ -377,7 +377,7 @@ def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str |
             wanted = st.auto_wanted(S.select(st.rules, facts))
         else:
             wanted = _after(st, facts)[2]
-            _confirm(st, wanted, expect)
+            _approve(st, wanted, expect)
         return _sync_locked(service, st, wanted)
 
 
@@ -474,7 +474,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             if op == "share.revoke":
                 selected = st.auto_wanted(selected)
             else:
-                _confirm(st, [i for i in selected if i.logical not in st.withdrawn], args["expect"])
+                _approve(st, [i for i in selected if i.logical not in st.withdrawn], args["expect"])
             got = _sync_locked(service, st, selected)
         hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item")  # noqa: SLF001
         return ok_result({"note": note} | got)

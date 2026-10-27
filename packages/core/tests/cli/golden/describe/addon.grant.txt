@@ -25,6 +25,8 @@ errors:
   market.staged_changed (exit 3): start again | fix: orch market list
   market.version_reused (exit 3): raise the version | fix: orch market list
   role.denied (exit 3): ask an owner or maintainer | fix: orch status
+  sign.cancelled (exit 3): run the command again to review | fix: 
+  tty.required (exit 3): run the command in your terminal | fix: 
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   market.env_failed (exit 5): see the add-on's lockfile | fix: orch market list
   market.lock_invalid (exit 5): fix the package | fix: orch market list

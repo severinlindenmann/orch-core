@@ -155,7 +155,7 @@ class SetupFlow:
             ("GET", "state"): self._state,
             ("POST", "profile"): self._post_profile,
             ("POST", "secrets/reveal"): self._reveal,
-            ("POST", "secrets/confirm"): self._confirm,
+            ("POST", "secrets/confirm"): self._approve,
             ("POST", "review"): self._post_review,
             ("POST", "create"): self._create,
             ("GET", "progress"): self._progress,
@@ -439,7 +439,7 @@ class SetupFlow:
             self.secrets = Secrets(show_passphrase=self.profile["method"] == "terminal")
         return self.secrets.reveal()
 
-    def _confirm(self, body: Any) -> dict[str, Any]:
+    def _approve(self, body: Any) -> dict[str, Any]:
         if self.secrets is None:
             raise SetupError("secrets.not_shown", "show the secrets first", 409)
         if not isinstance(body, dict):
@@ -482,7 +482,7 @@ def default_env(environ: Mapping[str, str]) -> Env:
     uid = os.getuid()
 
     def entries() -> list[dict[str, Any]]:
-        from orch.host.handoff import _own_workspaces
+        from orch.host.signer_registry import _own_workspaces
 
         try:
             return _own_workspaces(state, uid, None)

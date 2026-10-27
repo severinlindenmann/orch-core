@@ -284,7 +284,7 @@ def test_an_edit_is_signed_through_the_terminal_path_with_a_batch_unlock(human, 
     """The terminal path renders the intent too (the unlock prompt names it): an edit has no title, only its ticket."""
     import contextlib
 
-    from tests.host.test_handoff import Shown
+    from tests.host.terminal_helpers import Shown
     from tests.host.test_sequence import handoff_first, terminal
 
     quinn = lab.add_member()
@@ -313,7 +313,7 @@ def test_an_edit_is_signed_through_the_terminal_path_with_a_batch_unlock(human, 
             return cm()
 
     shown = Shown()
-    result = terminal(rig, served=human.served, shown=shown, code=p["request"]["code"], backend=OpenOnce())
+    result = terminal(rig, served=human.served, shown=shown, code=p["request"]["id"], backend=OpenOnce())
     assert result["steps"] == 3 and result["key"] == key
     assert ("ticket title", f"edit {key}") in unlocks[0][1]
     assert "AC1: First check -> First, reworded" in shown.plain[0]
@@ -324,7 +324,7 @@ def test_an_edit_is_signed_through_the_terminal_path_with_a_batch_unlock(human, 
     intent2 = edit_intent(human, key2, sections={"summary": {"was": canon.section_hash("One line."), "text": "Again."}})
     rig2 = Rig(human, tmp_path / "edit2", intent2)
     p2 = handoff_first(rig2)
-    assert terminal(rig2, human.served, Shown(), p2["request"]["code"])["key"] == key2
+    assert terminal(rig2, human.served, Shown(), p2["request"]["id"])["key"] == key2
 
 
 # --- F6: link repositories to a ticket (one review with the rest of the edit) ----------------------------------------

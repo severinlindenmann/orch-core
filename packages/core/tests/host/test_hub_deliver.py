@@ -392,16 +392,3 @@ def test_an_unaliased_hub_editor_is_not_the_ticket_owner_and_cannot_answer_its_q
     assert env.deliver(env.event("question.answered", question="Q1", hash=h, text="yes")) == "forbidden_role"
     env.state.snapshot = hub_snapshot(env.wid, 3, {ALICE: "admin"})
     assert env.deliver(env.event("question.answered", question="Q1", hash=h, text="yes")) is None
-
-
-def test_a_one_click_setup_workspace_still_takes_a_hub_answer(served, human, stub):  # noqa: F811
-    """Run 12a: setup (One click) wrote sign_methods without `hub`; every hub-signed answer was refused (sign.method,
-    replied forbidden_role) and the hub dropped it. The setup list is what the review sets; it must keep `hub`."""
-    from orch.setup.review import ONE_CLICK_SIGN_METHODS
-
-    human.run("settings.set", {"set": {"sign_methods": list(ONE_CLICK_SIGN_METHODS)}})
-    env = Env(served, human, alias=False, role="admin")
-    ask = {"ref": env.key, "text": "which one?"}
-    ok(served.client().req("ask", ask, grant=served.grant, session=SESSION, idem=True))
-    h = next(e["hash"] for e in env.lines(env.uid) if e["type"] == "question.asked")
-    assert env.deliver(env.event("question.answered", question="Q1", hash=h, text="yes")) is None

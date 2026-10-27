@@ -91,14 +91,6 @@ _SET = {
         "grant_hours": {"type": "integer", "minimum": 1, "maximum": GRANT_MAX_HOURS},
         "claim_ttl_min": {"type": "integer", "minimum": 15, "maximum": 1440},
         "lease_ttl_min": {"type": "integer", "minimum": 5, "maximum": 1440},
-        "sign_methods": {  # B6: terminal always; touchid is reserved
-            "type": "array",
-            "items": {"enum": ["terminal", "click", "phone", "hub"]},
-            "uniqueItems": True,
-            "minItems": 1,
-            "maxItems": 4,
-            "contains": {"const": "terminal"},
-        },
         "publish": {  # the Publish add-on's server: an address pair, or null to remove it
             "oneOf": [
                 {

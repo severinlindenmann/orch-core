@@ -47,7 +47,6 @@ __all__ = [
     "keys_dir",
     "open_backend",
     "review_prompt",
-    "secret_destination",
     "show_secret",
     "source_sha",
 ]
@@ -139,90 +138,64 @@ class _AcceptAll:
         return None  # #1198 C9: the owner proof is made after the review; the submit and the append check it for real
 
 
-def review_prompt(text: str, expect: str) -> bool:
-    """Show ``text`` on the person's own terminal and go on only if the person types ``expect`` (the ticket key) and
-    Enter after reading it. ``/dev/tty`` only (like the passphrase), so an agent holding stdin and stdout sees none of
-    it and cannot answer; no terminal is :class:`NoPrompt`. Anything else (another word, end of input, a line cut off
-    by end of input, Ctrl-C) is ``False``: nothing is signed. No flag or variable skips it. Tests replace this."""
-    if os.name == "nt":  # pragma: no cover
-        raise NoPrompt("no terminal to show the review on")
+def review_prompt(text: str) -> bool:
+    """Review on the controlling terminal; only a fresh Enter authorizes signing.
+
+    Input during the first second is discarded. A burst continuing across the
+    deadline cancels rather than treating a held Enter as consent.
+    """
+    if os.name == "nt":  # no POSIX controlling terminal
+        raise OrchError("tty.required", "signing requires a controlling terminal")
+    import select
+    import termios
+    import time
+    import tty
+
     try:
         fd = open_tty(os.O_RDWR)
     except OSError:
-        raise NoPrompt("no controlling terminal to show the review on") from None
+        raise OrchError("tty.required", "signing requires a controlling terminal") from None
+    saved = None
     try:
         if not os.isatty(fd):
-            raise NoPrompt("/dev/tty is not a terminal")
-        details = getattr(text, "details", "") or ""  # B6: a plain view with the full review behind `d`
-        if not details:
-            prompt = f"Type {expect} and Enter to continue; anything else stops: "
-        else:
-            prompt = f"Type {expect} to continue (d = details): "
-        shown = text
-        if details and getattr(text, "details_first", False):  # --details: the full review first, no `d` needed
-            shown, details = details, ""
-        os.write(fd, ("\n=== orch: read before you sign ===\n" + shown + prompt).encode())
-        b6_view = bool(details)  # only a B6 review (plain view, full one behind d)
-        seen_details = bool(getattr(text, "details", "")) and not details  # --details: the full review came first
-        import termios
-
-        while True:
-            termios.tcflush(fd, termios.TCIFLUSH)  # whatever was typed before the content appeared confirms nothing
-            line = bytearray()
-            try:
-                while True:
-                    c = os.read(fd, 1)
-                    if not c:
-                        return False  # end of input: no newline came
-                    if c == b"\n":
-                        break
-                    line += c
-            except (KeyboardInterrupt, OSError):
+            raise OrchError("tty.required", "signing requires a controlling terminal")
+        saved = termios.tcgetattr(fd)
+        tty.setraw(fd)
+        shown = getattr(text, "details", "") if getattr(text, "details_first", False) else str(text)
+        output = (
+            "\r\n=== orch: read before you sign ===\r\n"
+            + shown.replace("\n", "\r\n")
+            + "\r\nPress Enter to sign, any other key cancels.\r\n"
+        ).encode()
+        while output:
+            written = os.write(fd, output)
+            if written <= 0:
                 return False
-            answer = bytes(line).strip().decode("utf-8", "replace")
-            if details and answer == "d":  # the full review, then the same question
-                os.write(fd, ("\n=== details ===\n" + details + prompt).encode())
-                details = ""  # shown once; a second `d` is an answer that stops
-                seen_details = True
-                continue
-            if answer == expect and b6_view:
-                from orch.custody.passphrase import note_plain_review
-
-                note_plain_review(
-                    hint=not seen_details
-                )  # one-shot: the next passphrase prompt only, and only after a confirmed review
-            return answer == expect
-    finally:
-        os.close(fd)
-
-
-def secret_destination(prompt: str) -> str:
-    """``orch sign`` of a runner grant (H11c): ``r`` hands the secret to the orch runner, ``s`` shows it here. Asked on
-    the person's own terminal only (``/dev/tty``); anything but ``r`` is ``s``. Tests replace this."""
-    if os.name == "nt":  # pragma: no cover
-        raise NoPrompt("no terminal to ask on")
-    try:
-        fd = open_tty(os.O_RDWR)
-    except OSError:
-        raise NoPrompt("no controlling terminal to ask on") from None
-    try:
-        if not os.isatty(fd):
-            raise NoPrompt("/dev/tty is not a terminal")
-        os.write(fd, prompt.encode())
-        import termios
-
+            output = output[written:]
+        termios.tcdrain(fd)
         termios.tcflush(fd, termios.TCIFLUSH)
-        line = bytearray()
-        while True:
-            c = os.read(fd, 1)
-            if not c or c == b"\n":
-                break
-            line += c
-        return "r" if bytes(line).strip().lower() == b"r" else "s"
-    except (KeyboardInterrupt, OSError):
-        return "s"
+        deadline = time.monotonic() + 1.0
+        last_input = None
+        while (left := deadline - time.monotonic()) > 0:
+            if select.select([fd], [], [], left)[0]:
+                if not os.read(fd, 4096):
+                    return False
+                last_input = time.monotonic()
+        termios.tcflush(fd, termios.TCIFLUSH)
+        # Terminals report bytes, not key-up events. Refuse a repeat stream at
+        # the boundary; the person can start a fresh review after releasing it.
+        if last_input is not None and deadline - last_input < 0.15:
+            return False
+        return os.read(fd, 1) in (b"\r", b"\n")
+    except (KeyboardInterrupt, OSError, termios.error):
+        return False
     finally:
-        os.close(fd)
+        try:
+            if saved is not None:
+                termios.tcsetattr(fd, termios.TCSANOW, saved)
+        finally:
+            os.close(fd)
+
 
 
 def source_sha(view: Any) -> list[dict[str, str]]:
@@ -740,8 +713,7 @@ class Human:
         artifacts: dict[str, bytes] | None = None,
     ) -> Any:
         """``precheck``, then (unless ``--dry-run``) show ``review`` on the terminal and ask the person to confirm, sign
-        and append; ``None`` for a dry run. The word the person types comes from what is signed: the verified key of
-        the ticket log, or the ``name`` of a workspace event (``addon.granted``); no such word is a refusal."""
+        and append; ``None`` for a dry run. Every direct signature requires a fresh Enter on the controlling tty."""
         capture = self.ctx.prepare
         grant_probe = capture is not None and event.get("type") == "grant.issued" and event.get("secret_hash") is None
         # a prepared grant has no secret_hash (the signer draws the secret, F1): the model judges it with a placeholder
@@ -753,15 +725,9 @@ class Human:
 
             capture.add(Captured(log, dict(event), artifacts=artifacts))  # submit re-reads git itself (D58)
             return None
-        if review is not None:
-            if log == "workspace":  # no ticket key: the name the event itself carries, never a word the caller picks
-                name = event.get("name")
-                word = name if isinstance(name, str) and name else None
-            else:
-                view = self.store.ticket(log)  # the key the person types is the verified key of the log being signed
-                word = view.key if view is not None else None
-            if word is None or not review_prompt("\n".join(review), word):
-                raise OrchError("invalid.input", "not confirmed: nothing was signed")
+        text = "\n".join(review) if review else canon.clean(action) + "\n" + canon.dumps(event).decode("utf-8")
+        if not review_prompt(text):
+            raise OrchError("sign.cancelled", "nothing was signed")
         return self._sign_and_append(event, log, action, precommit, artifacts)
 
     def recheck_source(self, view: Any, signed: list[dict[str, str]]) -> Callable[[], None]:

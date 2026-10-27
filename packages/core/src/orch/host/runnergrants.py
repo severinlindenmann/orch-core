@@ -5,7 +5,7 @@ whose UID maps to a valid member (evaluated as P) **and** a verified ``auth.gran
 whose ``grant.issued`` carries ``label:"runner"``, ``verbs:"agent"``, at most the workspace grant_hours (168) and
 at least 15 minutes left.
 It is sent by the process that drew the secret (the click signer in deposit-only grant mode, ``orch grant --runner``,
-``orch sign`` "hand to the runner"). The host forwards the secret **once** to the runner (``grant.put``), keeps no copy
+the CLI signer "hand to the runner"). The host forwards the secret **once** to the runner (``grant.put``), keeps no copy
 (the request's :class:`~orch.host.auth.Redactor` removes it from every answer), and records only the outcome per
 ``deposit_id``: ``confirmed`` (the runner holds it), ``rejected`` (the runner refused it) or ``unknown`` (no answer:
 ``grant.deposit_status`` reports it, and the next ``runner.hello`` settles it). A forgotten or replaced runner grant id
@@ -233,7 +233,7 @@ class RunnerGrants:
                         outcome="rejected", reason="grant.forgotten")  # fmt: skip
             await self._drop(gid)
             return {**base, "deposit": "rejected", "reason": "grant.forgotten"}
-        self._confirm(table, person, gid, plan["until"], plan["scope"], did)
+        self._approve(table, person, gid, plan["until"], plan["scope"], did)
         return {**base, "deposit": "confirmed"}
 
     def _forget_current(self, table: GrantTable, person: str, reason: str) -> str | None:
@@ -246,7 +246,7 @@ class RunnerGrants:
         self.hub.publish_grant(table.workspace_id, person)
         return str(cur["grant"])
 
-    def _confirm(self, table: GrantTable, person: str, gid: str, until: str, scope: str, did: str) -> None:
+    def _approve(self, table: GrantTable, person: str, gid: str, until: str, scope: str, did: str) -> None:
         old = table.current.get(person)
         if old is not None and old.get("grant") != gid:
             table.forgotten[old["grant"]] = str(old.get("until") or until)
@@ -313,7 +313,7 @@ class RunnerGrants:
                 if rep is not None and rep["grant"] == dep.get("grant") and rep["grant"] not in drops:
                     cur = table.current.get(dep["person"])
                     if cur is None or cur.get("grant") != rep["grant"]:
-                        self._confirm(table, dep["person"], rep["grant"], rep["until"], self._scope(wid, rep["grant"]),
+                        self._approve(table, dep["person"], rep["grant"], rep["until"], self._scope(wid, rep["grant"]),
                                       did)  # fmt: skip
                     else:  # already current (a repeated deposit of it): this deposit settles too (Codex P2 #3)
                         dep.update(outcome="confirmed", reason=None)

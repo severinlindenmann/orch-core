@@ -277,34 +277,35 @@ def test_the_host_refuses_a_later_step_on_a_foreign_head(human, tmp_path):
 
 def handoff_first(rig):
     op, args = sequence.step_args(rig.intent, 0, None)
-    res = rig.h.c.req("human.prepare", {"op": op, "args": args, "handoff": True, "sequence": rig.meta0()})
+    res = rig.h.c.req("human.prepare", {"op": op, "args": args, "signer": rig.h.signer, "sequence": rig.meta0()})
     return ok(res)["data"]
 
 
 def terminal(rig, served, shown, code, *, backend=None, sessions=None):
-    from orch.host import handoff
     from orch.host.control_client import new_idem
-    from tests.host.test_handoff import connect
+    from orch.host.sequence_terminal import sign_sequence
+    from tests.host.terminal_helpers import connect
 
     with connect(served) as conn:
-        return handoff.sign_code(
+        prepared = conn.call("human.get", {"request_id": code, "signer": rig.h.signer})["data"]
+        return sign_sequence(
             conn.call,
+            prepared,
             code,
             backend=backend or rig.h.backend,
             key_id="dk",
             workspace_id=served.wid,
             person=rig.person,
             device=rig.h.person.device,
-            workspace=lambda w: ("Acme", "DEMO") if w == served.wid else None,
+            workspace=lambda w: ("Acme", "DEMO"),
             confirm=shown.confirm,
-            show_secret=shown.secret,
-            idem=new_idem(),
             sessions=sessions or rig.sessions,
+            new_idem=new_idem,
         )
 
 
 def test_terminal_one_review_one_word_and_one_unlock_sign_every_step(human, served, tmp_path):
-    from tests.host.test_handoff import Shown
+    from tests.host.terminal_helpers import Shown
 
     rig = Rig(human, tmp_path)
     p = handoff_first(rig)
@@ -325,79 +326,23 @@ def test_terminal_one_review_one_word_and_one_unlock_sign_every_step(human, serv
             return cm()
 
     shown = Shown()
-    result = terminal(rig, served, shown, p["request"]["code"], backend=OpenOnce())
+    result = terminal(rig, served, shown, p["request"]["id"], backend=OpenOnce())
     assert result["steps"] == 4 and result["key"]
-    assert len(shown.words) == 1 and len(unlocks) == 1  # one confirmation, one unlock
+    assert len(shown.plain) == 1 and len(unlocks) == 1  # one confirmation, one unlock
     assert "Line two" in shown.plain[0] and "Add a sequence" in shown.plain[0]  # the text is IN the one review
     assert doc(human, result["key"])["doc"]["priority"] == "high"
     assert unlocks[0][2][0] == ("signatures", "4")
 
 
 def test_terminal_not_confirmed_signs_nothing(human, served, tmp_path):
-    from tests.host.test_handoff import Shown
+    from tests.host.terminal_helpers import Shown
 
     rig = Rig(human, tmp_path)
     p = handoff_first(rig)
     shown = Shown(answer=False)
-    with pytest.raises(signer.SignerRefused, match="not confirmed"):
-        terminal(rig, served, shown, p["request"]["code"])
+    with pytest.raises(__import__("orch.ops.errors", fromlist=["OrchError"]).OrchError, match="nothing was signed"):
+        terminal(rig, served, shown, p["request"]["id"])
     assert human.backend.payloads == []
-
-
-def test_terminal_a_host_that_shows_another_intent_than_it_prepared_is_refused(human, served, tmp_path):
-    from orch.host import handoff
-    from orch.host.control_client import new_idem
-    from tests.host.test_handoff import Shown
-
-    rig = Rig(human, tmp_path)
-    p = handoff_first(rig)
-
-    def call(op, args, idem=None, files=None):
-        res = ok(human.c.req(op, args, idem=idem, files=files))
-        if op == "human.get":  # the review digest covers the intent, so changing it needs the digest changed too
-            res["data"]["material"]["sequence"]["intent"]["sections"]["summary"] = "something else"
-        return res
-
-    shown = Shown()
-    with pytest.raises(signer.SignerRefused):
-        handoff.sign_code(
-            call,
-            p["request"]["code"],
-            backend=human.backend,
-            key_id="dk",
-            workspace_id=served.wid,
-            person=rig.person,
-            device=human.person.device,
-            workspace=lambda w: ("Acme", "DEMO"),
-            confirm=shown.confirm,
-            show_secret=shown.secret,
-            idem=new_idem(),
-            sessions=rig.sessions,
-        )
-    assert shown.plain == [] and human.backend.payloads == []
-
-
-def test_terminal_a_client_without_sessions_refuses(human, served, tmp_path):
-    from orch.host import handoff
-    from orch.host.control_client import new_idem
-    from tests.host.test_handoff import Shown, connect
-
-    rig = Rig(human, tmp_path)
-    p = handoff_first(rig)
-    with connect(served) as conn, pytest.raises(signer.SignerRefused, match="cannot sign sequences"):
-        handoff.sign_code(
-            conn.call,
-            p["request"]["code"],
-            backend=human.backend,
-            key_id="dk",
-            workspace_id=served.wid,
-            person=rig.person,
-            device=human.person.device,
-            workspace=lambda w: ("Acme", "DEMO"),
-            confirm=Shown().confirm,
-            show_secret=lambda t: None,
-            idem=new_idem(),
-        )
 
 
 # --- the invariants, one by one --------------------------------------------------------------------------------------
@@ -475,14 +420,14 @@ def test_the_intent_is_refused_unless_every_line_is_clean(change):
 
 
 def test_the_terminal_review_shows_a_newline_in_a_text_only_as_marked_lines(human, served, tmp_path):
-    from tests.host.test_handoff import Shown
+    from tests.host.terminal_helpers import Shown
 
     intent = intent_of(title="A title", sections={"summary": "line one\nline two\n\nline four"})
     rig = Rig(human, tmp_path, intent)
     p = handoff_first(rig)
     shown = Shown(answer=False)
     with pytest.raises(signer.SignerRefused):
-        terminal(rig, served, shown, p["request"]["code"])
+        terminal(rig, served, shown, p["request"]["id"])
     plain = shown.plain[0]
     assert "  | line one" in plain and "  | line two" in plain and "  | line four" in plain
     assert "\x1b" not in plain and "\r" not in plain
@@ -550,7 +495,7 @@ def test_ctrl_c_at_the_batch_passphrase_cancels_the_request_before_anything_is_s
     cancel the request and surface as Cancelled ("nothing was signed")."""
     import contextlib
 
-    from tests.host.test_handoff import Shown, by_id
+    from tests.host.terminal_helpers import Shown, by_id
 
     class CtrlC:
         name, person_capable, auth = "test", True, "passphrase"
@@ -566,5 +511,5 @@ def test_ctrl_c_at_the_batch_passphrase_cancels_the_request_before_anything_is_s
     rig = Rig(human, tmp_path)
     p = handoff_first(rig)
     with pytest.raises(signer.Cancelled):
-        terminal(rig, served, Shown(), p["request"]["code"], backend=CtrlC())
+        terminal(rig, served, Shown(), p["request"]["id"], backend=CtrlC())
     assert by_id(human.c, p["request"]["id"])["state"] == "cancelled"

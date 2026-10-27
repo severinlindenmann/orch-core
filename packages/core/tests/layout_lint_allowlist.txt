@@ -17,7 +17,6 @@ host/control.py 14
 host/custody.py 3
 host/devmode.py 1
 host/dispatch.py 2
-host/handoff.py 2
 host/hubhandoff.py 1
 host/human.py 19
 host/journal.py 6

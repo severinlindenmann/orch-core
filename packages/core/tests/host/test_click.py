@@ -239,11 +239,19 @@ def test_member_add_works_after_switching_off_when_there_are_no_convenience_even
 # --- the click signer -------------------------------------------------------------------------------------------------
 
 
-def test_a_click_is_signed_end_to_end_with_auth_convenience(click, served, human):
+def test_a_click_is_signed_end_to_end_with_auth_convenience(click, served, human, monkeypatch):
+    from orch.custody import passphrase
+    from orch.ops import human as terminal
+
+    def no_prompt(*a, **kw):
+        raise AssertionError("click signing must never prompt on the terminal")
+
+    monkeypatch.setattr(passphrase, "tty_passphrase_provider", no_prompt)
+    monkeypatch.setattr(terminal, "review_prompt", no_prompt)
     _, key = human.ticket()
     p = click.prepare("log", {"ref": key, "text": "via a click"})
     assert p["confirm"] == "click"
-    assert pending(served, p["request_id"])["code"] is None  # bound at prepare: no hand-off code
+    assert "code" not in pending(served, p["request_id"])  # bound at prepare: no hand-off code
     v = click.view(p["request_id"])
     view = v["view"]
     assert view["risk"] == RISK

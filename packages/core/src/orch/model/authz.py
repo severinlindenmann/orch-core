@@ -159,23 +159,6 @@ def device_valid(dev: Device | None, cert: dict[str, Any], at: int, operate: boo
     return None
 
 
-#: B6: the ``auth`` labels the workspace setting ``sign_methods`` governs, and the method each one is: a convenience
-#: signature is "one click on this computer", the iPhone app's Secure Enclave signature is "the phone". The other labels
-#: (passphrase is the terminal, always allowed; the Mac and cross-platform ones are reserved) are not judged here.
-AUTH_METHOD = {"convenience": "click", "secure-enclave-unlocked": "phone", "hub": "hub"}
-
-
-def method_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
-    """A person event made another way than the workspace's signed ``sign_methods`` allows. Judged by the workspace
-    state at this event's own position (append and replay alike): an event from before the setting, or from before a
-    change of it, stays valid. No setting: every way is allowed, as before."""
-    methods = ws.settings.get("sign_methods")
-    need = AUTH_METHOD.get(str(e.get("auth")))
-    if methods is None or need is None or need in methods:
-        return None
-    return Refusal(Code.SIGN_METHOD, f"auth {e['auth']} ({need}) is not an allowed way to sign in this workspace")
-
-
 def person_has_valid_device(ws: WsCore, person: str, at: int) -> bool:
     return any(d.person == person and device_valid(d, d.cert, at, False) is None for d in ws.devices.values())
 
@@ -194,8 +177,6 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier, *, hu
     else:
         cert = dev.cert
     if (r := device_valid(dev, cert, at, typ in OPERATE)) is not None:
-        return r
-    if (r := method_refusal(ws, e)) is not None:
         return r
     if (
         hub_only and (r := breakglass.local_refusal(ws, e)) is not None
@@ -287,8 +268,6 @@ def authorize_hub(core: Core, log: str, e: dict[str, Any], v: Verifier, *, dev: 
     sg = identity.signer(ws, e)
     if isinstance(sg, Refusal):
         return sg
-    if (r := method_refusal(ws, e)) is not None:  # C3b-6: sign_methods without `hub` refuses every hub event
-        return r
     if sg.role is None:  # aliased to a person who is no member now, or no role in the snapshot
         return Refusal(Code.HUB_DENIED, "forbidden_role")
     if sg.role == "viewer" and typ not in VIEWER_MAY:

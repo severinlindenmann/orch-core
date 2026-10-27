@@ -8,7 +8,7 @@ entries only). Not installed: a clear
 error that names how to install it.
 
 Under an agent's environment (``ORCH_GRANT`` or ``ORCH_SESSION`` set and non-empty) it refuses with ``human_only``
-(exit 3), the shape of ``orch sign``'s refusal, before anything is looked up or started: a dashboard session acts as the
+(exit 3), the CLI signer's refusal shape, before anything is looked up or started: a dashboard session acts as the
 person (#542). Only ``stop`` passes (it mints nothing and only ends the person's server). The addon refuses again in its
 own entry point, so going around ``orch dashboard`` does not help. A speed bump in tier A, not a boundary: same UID.
 """

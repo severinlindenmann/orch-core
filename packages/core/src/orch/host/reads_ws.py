@@ -439,14 +439,6 @@ def _repo_entry(raw: dict[str, Any], manager: bool) -> dict[str, Any]:
     return entry
 
 
-def sign_methods(service: Any, ws: Any) -> list[str] | None:
-    """B6: the workspace's signed ``settings.sign_methods``, or ``None`` when no ``settings.changed`` ever set it.
-    ``None`` means "not set": the model then judges no way, so every way is allowed; a reader must not invent a
-    narrower default."""
-    methods = ws.settings.get("sign_methods")
-    return None if methods is None else list(methods)
-
-
 def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
     from orch.store.render import thaw
 
@@ -457,7 +449,6 @@ def _snapshot(ctx: ReadCtx, limit: int) -> dict[str, Any]:
         "settings": {k: int(ws.settings[k]) for k in SETTINGS},
         "gates": {g: canonical_policy(thaw(ws.policies[g])) for g in GATES},
         "defaults": [k for k in SETTINGS if k not in named],
-        "sign_methods": sign_methods(ctx.service, ws),
         "icon": thaw(ws.settings["icon"]) if "icon" in ws.settings else None,
         "publish": thaw(ws.settings["publish"]) if "publish" in ws.settings else None,
         ADDONS_KEY: thaw(ws.settings[ADDONS_KEY]) if ADDONS_KEY in ws.settings else {},
@@ -515,7 +506,6 @@ def workspace_settings(ctx: ReadCtx) -> dict[str, Any]:
         "next_page": ctx.pages.token(snap, nxt, ctx.args) if nxt is not None else None,
         "gates": data["gates"],
         "defaults": data["defaults"],
-        "sign_methods": data["sign_methods"],
         "icon": data["icon"],  # always present (null: none signed): the key means "this host knows the icon setting"
         "sub_cursor": data["sub_cursor"],
     }

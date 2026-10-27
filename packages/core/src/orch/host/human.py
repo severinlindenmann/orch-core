@@ -21,13 +21,7 @@ The host never prompts and holds no device key (D-P2-15). A person op is prepare
 * **pending** lists the caller's requests (or the one named by ``request_id``), each with ``error: {code}`` after a
   refused submit (the catalog code only).
 
-Hand-off (H5b, F5): a request prepared with ``handoff:true`` gets a code, ``XXXX-XXXX`` in Crockford base32 (40 bits
-from a CSPRNG, unique among this workspace's stored requests). The code **names** the request and authorises nothing:
-``human.pending {code}`` finds it only for the same principal and person, in this workspace, while it is pending
-(``prepared`` or ``bound``); a terminal request's code no longer resolves and is never issued again while the request is
-kept. Failed code lookups are limited to 5 per minute **per connection** (``rate.limited``), so one connection's
-failures never lock out another. ``human.get`` with ``signer`` binds the request to one device, once
-(:mod:`orch.host.handoff` is ``orch sign CODE``).
+Unbound requests are reserved for hub-mediated operations; no terminal code is issued.
 """
 
 from __future__ import annotations
@@ -36,10 +30,7 @@ import base64
 import copy
 import logging
 import os
-import secrets
 import time
-import weakref
-from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -83,7 +74,6 @@ PHASES = {
     "human.cancel": "read",
     "human.pending": "read",
 }
-_CODE = {"type": "string", "pattern": r"^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$"}
 
 _DEVICE = {"type": "string", "pattern": r"^d_[0-9a-f]{32}$"}
 _SIGNER = {
@@ -129,7 +119,7 @@ _SCHEMAS = {
     },
     "human.pending": {
         "type": "object",
-        "properties": {"code": _CODE, "request_id": _REQ},
+        "properties": {"request_id": _REQ},
         "maxProperties": 1,
         "additionalProperties": False,
     },
@@ -137,17 +127,6 @@ _SCHEMAS = {
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
 _GATE_TYPES = {"gate.approved", "gate.changes_requested", "verdict.given"}
 _HASH = r"sha256:[0-9a-f]{64}"
-#: Crockford base32 (no I, L, O, U): 8 characters are 40 bits
-CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-#: failed ``human.pending {code}`` lookups allowed per connection per window (F5)
-LOOKUP_FAILURES = 5
-LOOKUP_WINDOW = 60.0
-
-
-def new_code() -> str:
-    """A hand-off code: 8 Crockford base32 characters from a CSPRNG (40 bits), shown as ``XXXX-XXXX``."""
-    s = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
-    return f"{s[:4]}-{s[4:]}"
 
 
 def _iso(epoch: float) -> str:
@@ -277,9 +256,6 @@ class HumanOps:
 
     def __init__(self, backend: Any) -> None:
         self.backend = backend  # the RegistryBackend: its context, file and state helpers
-        #: per connection (the transport's Session): the times of its failed code lookups in the last window (F5).
-        #: Only the workspace worker thread touches it; a closed connection's entry goes with its session.
-        self._lookups: weakref.WeakKeyDictionary[Any, deque[float]] = weakref.WeakKeyDictionary()
 
     def serve(self, call: Call, redactor: Redactor) -> dict[str, Any]:
         op = call.frame["op"]
@@ -490,7 +466,6 @@ class HumanOps:
         # H12d-2 (§0.8.6 item 9.4): the new reader's declaration against required_reader, early, with a good message
         built = prepared["events"]
         convenience.refuse_reader_op(service, name, events=built, readers=capture.readers)
-        convenience.refuse_click_removal(service, name, built)  # B6: never lock the honest signer out
         # FB15: in full hub mode an add-on grant may be PREPARED as a hand-off (signer None): nothing is signed here and
         # no local signature will ever land (submit and append_signed refuse it). The hub's channel signs an
         # ``addon.requested`` that names this request, and the host answers it (hubdeliver).
@@ -526,7 +501,6 @@ class HumanOps:
             "principal": call.principal,
             "person": person,
             "op": name,
-            "code": self._new_code(requests) if handoff else None,
             "state": "bound" if signer is not None else "prepared",
             "signer": signer,
             "created": now,
@@ -678,23 +652,6 @@ class HumanOps:
         ``opts.idem`` that has a record, since the prepare consumed the blob) a ``{digest}``, which only binds."""
         return self.backend._file_specs(operation, frame, inner)
 
-    @staticmethod
-    def _new_code(requests: RequestStore) -> str:
-        """A code no request stored in this workspace carries (terminal ones included, for the 24 h they are kept), so a
-        code names one request only and is never issued twice while that request can be looked up."""
-        taken = set()
-        for rid in requests.ids():
-            try:
-                rec = requests.read(rid)
-            except HostError:
-                continue
-            if rec is not None and rec.get("code"):
-                taken.add(rec["code"])
-        while True:
-            code = new_code()
-            if code not in taken:
-                return code
-
     def _build(
         self, call: Call, name: str, log: str, capture: Any, store: Any, now: float
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -817,7 +774,7 @@ class HumanOps:
                         held = current.settings.get(ADDONS_KEY) or {}
                         now = {name: thaw(held.get(name)) for name in value}
                     else:
-                        now = thaw(current.settings.get(key))  # a tuple (sign_methods) is a list on the wire
+                        now = thaw(current.settings.get(key))
                     before.setdefault(key, now)
         if before:
             material["before"] = before
@@ -846,7 +803,6 @@ class HumanOps:
         return {
             "request": {
                 "id": record["id"],
-                "code": record.get("code"),
                 "expires_at": _iso(record["expires"]),
                 "state": record["state"],
                 "submitted_at": _submitted_at(record),
@@ -924,11 +880,7 @@ class HumanOps:
         return self._view(record)
 
     def pending(self, call: Call, requests: RequestStore, args: dict[str, Any]) -> dict[str, Any]:
-        """``human.pending`` (R6): this principal's requests, the one named by ``request_id``, or the pending one named
-        by a hand-off ``code`` (F5). A failed submit carries ``error: {code}``, the catalog code only, never the
-        message."""
-        if "code" in args:
-            return {"requests": [self._summary(r) for r in self._by_code(call, requests, args["code"])]}
+        """This principal's requests, optionally selected by id; submit errors carry catalog codes only."""
         if "request_id" in args:
             try:
                 records = [requests.load(args["request_id"], call.principal)]
@@ -947,40 +899,6 @@ class HumanOps:
                     records.append(requests.expire(rec))
         return {"requests": [self._summary(r) for r in records]}
 
-    def _by_code(self, call: Call, requests: RequestStore, code: str) -> list[dict[str, Any]]:
-        """The pending request of this principal and person that ``code`` names, in this workspace. After
-        ``LOOKUP_FAILURES`` failed lookups in ``LOOKUP_WINDOW`` seconds on **this connection**, every code lookup on it
-        answers ``rate.limited`` until the oldest failure leaves the window; other connections are not affected (F5)."""
-        now = call.service.clock()
-        failures = self._lookups.setdefault(call.session, deque())
-        while failures and now - failures[0] >= LOOKUP_WINDOW:
-            failures.popleft()
-        if len(failures) >= LOOKUP_FAILURES:
-            wait = max(1, int((failures[0] + LOOKUP_WINDOW - now) * 1000))
-            raise HostError(
-                "rate.limited",
-                f"too many failed code lookups on this connection: at most {LOOKUP_FAILURES} per minute",
-                retry_after_ms=wait,
-            )
-        found = []
-        for rid in requests.ids():
-            try:
-                rec = requests.read(rid)
-            except HostError:
-                continue
-            if (
-                rec is not None
-                and rec.get("code") == code
-                and rec.get("principal") == call.principal
-                and rec.get("person") == call.viewer
-            ):
-                rec = requests.expire(rec)
-                if rec["state"] in PENDING:
-                    found.append(rec)
-        if not found:
-            failures.append(now)
-        return found
-
     @staticmethod
     def _summary(record: dict[str, Any]) -> dict[str, Any]:
         prepared = record["prepared"]
@@ -988,7 +906,6 @@ class HumanOps:
         outcome = record.get("outcome") or {}
         out: dict[str, Any] = {
             "id": record["id"],
-            "code": record.get("code"),
             "op": record["op"],
             "key": ticket["key"] if ticket else None,
             "created_at": _iso(record["created"]),
@@ -1579,10 +1496,6 @@ def append_signed(
             if error is None:  # V3 C11 (D78/D81): full hub mode takes no local signature, whoever the signer is
                 error = hubsign.refusal(service, [e for e in events if store.logged_event(log, e.get("id")) is None],
                                         signed_by)  # fmt: skip
-            if (
-                error is None and signed_by is None
-            ):  # B6: by custody, not by the label; under the lock, on the re-read state
-                error = convenience.refuse_excluded_click_custody(service)
             if error is None:
                 error = _readers_refusal(service, log, events, readers or [])  # H12d-2: invariant I, before anything
             if error is None and any(e.get("auth") == "convenience" for e in events):
@@ -1685,9 +1598,9 @@ def roll_forward(service: WorkspaceService, requests: RequestStore, record: dict
 
 
 def first_view(record: dict[str, Any]) -> dict[str, Any]:
-    """The answer ``human.prepare`` gave for ``record``: a hand-off request (it has a code) is ``prepared``, any other
+    """The answer ``human.prepare`` gave for ``record``: an unbound request is ``prepared``, any other
     one was bound to its signer at prepare."""
-    return HumanOps._view({**record, "state": "prepared" if record.get("code") else "bound"})
+    return HumanOps._view({**record, "state": "bound" if record.get("signer") else "prepared"})
 
 
 def outcome_prepared(service: WorkspaceService, record: dict[str, Any]) -> dict[str, Any] | str:

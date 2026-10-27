@@ -1,0 +1,1 @@
+err tty.required signing requires a controlling terminal · retry:false · next: run the command in your terminal

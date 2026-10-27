@@ -204,7 +204,9 @@ class Machine:
         ctx = self.ctx(**kw)
         env = {**ctx.env, **(env_extra or {})}
         ctx.env = env
-        return main(list(args), env=env, out=self.out, err=self.err, ctx=ctx)
+        from unittest.mock import patch
+        with patch("orch.ops.human.review_prompt", side_effect=lambda text: self.ask(text) in ("y", "yes")):
+            return main(list(args), env=env, out=self.out, err=self.err, ctx=ctx)
 
     def go(self, *args: str, answers: list[str] | None = None, **kw) -> int:
         """A person at a terminal who confirms ("y"), then answers ``answers`` (the per-workspace questions)."""
@@ -360,7 +362,7 @@ def test_interactive_confirm_and_per_workspace_question(m):
     assert m.prune(interactive=True) == 0, m.err.getvalue()
     assert any("Remove all of this?" in a for a in m.asked)
     assert any(
-        f"Also delete the folder {m.ws} including its git history (" in a and a.endswith("[y/N] ") for a in m.asked
+        f"Also delete the folder {m.ws} including its git history (" in a for a in m.asked
     )
     assert m.ws.exists() and not (m.ws / ".orch").exists()
 

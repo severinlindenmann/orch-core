@@ -25,7 +25,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-from orch.cli.publish import PubError, _call, _confirm
+from orch.cli.publish import PubError, _call
+from orch.ops.human import review_prompt
 
 __all__ = ["main"]
 
@@ -155,10 +156,9 @@ def main(
                 raise PubError(
                     "invalid.input", "those are not the members the hub lists now; look again: orch space list", 5
                 )
-            if not _confirm(
+            if not review_prompt(
                 f"Share files into space {a.rest[0]} (epoch {row['epoch']}) with exactly these workspaces:\n"
-                + "".join(f"  {m}\n" for m in members) + "Type 'share' to approve: ",
-                "share",
+                + "".join(f"  {m}\n" for m in members) ,
             ):  # fmt: skip
                 raise PubError("invalid.input", "not approved; nothing changed", 5)
             got = _call(target, "space.share", {"space_id": a.rest[0], "members": members}, env)
@@ -178,9 +178,8 @@ def main(
                 + "Compare the epoch and hashes with what the hub admin showed you: a workspace that is not a member\n"
                 "cannot see the space, so these come from the admin, not from the hub's signed record.\n"
                 "Everyone in the space can read what this workspace puts there, and the hub holds the key.\n"
-                "Type 'accept' to agree: "
             )
-            if not _confirm(prompt, "accept"):
+            if not review_prompt(prompt):
                 raise PubError("invalid.input", "not accepted; nothing was sent", 5)
             got = _call(
                 target, "space.accept",

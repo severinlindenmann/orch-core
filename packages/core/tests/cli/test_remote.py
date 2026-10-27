@@ -49,7 +49,7 @@ class Rig:
         monkeypatch.setattr(remote, "_is_local", lambda a: a in self.local)
         monkeypatch.setattr(remote, "_port_busy", lambda p: p in self.busy)
         monkeypatch.setattr(remote, "_run", self._run)
-        monkeypatch.setattr(remote, "TERMINAL", self)
+        monkeypatch.setattr("orch.ops.human.review_prompt", lambda text: self.ask(text) in ("y", "yes"))
         monkeypatch.setattr(remote, "_no_answer", lambda p: True)
         monkeypatch.setattr("orch.cli.dashboard.find_entry_point", lambda env, err=None: ["/opt/orch-dashboard"])
         monkeypatch.setattr(remote, "_front_installed", lambda: False)
@@ -215,9 +215,12 @@ def test_no_terminal_means_no_change(rig, monkeypatch):
         def ask(self, prompt):
             raise OSError("no controlling terminal")
 
-    monkeypatch.setattr(remote, "TERMINAL", NoTty())
+    from orch.ops.errors import OrchError
+    def missing(text):
+        raise OrchError("tty.required", "no controlling terminal")
+    monkeypatch.setattr("orch.ops.human.review_prompt", missing)
     code, _, err = rig.go("enable", "--name", NAME)
-    assert code == 3 and "human_only" in err and rig.calls == []
+    assert code == 3 and "tty.required" in err and rig.calls == []
 
 
 # --- enable ----------------------------------------------------------------------------------------------------------

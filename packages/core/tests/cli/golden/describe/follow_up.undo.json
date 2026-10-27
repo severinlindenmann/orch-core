@@ -118,6 +118,20 @@
         ]
       },
       {
+        "code": "sign.cancelled",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run the command again to review",
+        "fix": []
+      },
+      {
+        "code": "tty.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run the command in your terminal",
+        "fix": []
+      },
+      {
         "code": "lock.busy",
         "exit": 4,
         "retryable": true,

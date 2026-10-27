@@ -115,7 +115,7 @@ def handshake_pinned(pin: Pin, hello: dict[str, Any], *, timeout: float = 2) -> 
 class Connection:
     """A blocking client of one workspace socket: the pinned handshake, then one request at a time.
 
-    ``orch sign`` (H5b) and the thin CLI (H4b, :mod:`orch.hostclient`) share it. ``call`` sends one ``req`` and returns
+    the CLI signer (H5b) and the thin CLI (H4b, :mod:`orch.hostclient`) share it. ``call`` sends one ``req`` and returns
     its ``result``, raising the host's error as :class:`~orch.host.errors.HostError`. ``auth`` carries the grant and the
     session (never in ``args``), ``dry_run`` goes in ``opts``, and ``timeout`` is the seconds this one
     call waits for its answer on the socket (a ``wait`` outlasts the default). Frames that are not the answer

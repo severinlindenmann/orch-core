@@ -26,7 +26,7 @@ _INTERNAL = (
 ).split()
 _REFUSED = (  # an event the model refused: the request is what is wrong
     "sig.invalid freeze.active member.unknown member.exists members.last_owner device.unknown device.exists "
-    "device.invalid device.scope sign.method device.cert grant.terms grant.exists grant.unknown unattended.denied "
+    "device.invalid device.scope device.cert grant.terms grant.exists grant.unknown unattended.denied "
     "settings.invalid hub.invalid hub.cert_invalid hub.unknown_snapshot hub.foreign_user hub.denied "
     "addon.unknown addon.field_unknown addon.value_invalid "
     "ticket.exists ticket.bad_reference submit.incomplete people.invalid "

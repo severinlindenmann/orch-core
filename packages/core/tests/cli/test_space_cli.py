@@ -29,12 +29,12 @@ def host(monkeypatch):
         log.called.append((op, args))
         return log.reply.get(op, {})
 
-    def confirm(prompt, word):
-        log.asked.append((prompt, word))
+    def confirm(prompt):
+        log.asked.append(prompt)
         return log.yes
 
     monkeypatch.setattr(space, "_call", call)
-    monkeypatch.setattr(space, "_confirm", confirm)
+    monkeypatch.setattr(space, "review_prompt", confirm)
     return log
 
 
@@ -81,8 +81,8 @@ def test_share_shows_the_members_and_sends_exactly_that_list(host):
     host.reply["space.list"] = {"spaces": [{"space_id": SID, "epoch": 3, "members": [WS1, WS2]}]}
     host.reply["space.share"] = {"space_id": SID, "members": [WS1, WS2]}
     assert run(["share", SID])[0] == 0
-    prompt, word = host.asked[-1]
-    assert word == "share" and WS1 in prompt and WS2 in prompt and "epoch 3" in prompt
+    prompt = host.asked[-1]
+    assert WS1 in prompt and WS2 in prompt and "epoch 3" in prompt
     assert host.called[-1] == ("space.share", {"space_id": SID, "members": [WS1, WS2]})
     host.yes = False
     n = len(host.called)
@@ -93,8 +93,8 @@ def test_accept_always_asks_and_shows_the_transition(host):
     argv = ["accept", SID, "--epoch", "2", "--prev-members", WS1, "--members", f"{WS1},{WS2}"]
     host.yes = False
     assert run(argv)[0] == 5 and host.called == []
-    prompt, word = host.asked[-1]
-    assert word == "accept" and SID in prompt and "epoch 2" in prompt and WS1 in prompt and WS2 in prompt
+    prompt = host.asked[-1]
+    assert SID in prompt and "epoch 2" in prompt and WS1 in prompt and WS2 in prompt
     host.yes = True
     assert run(argv)[0] == 0
     assert host.called[-1] == (
@@ -116,7 +116,7 @@ def test_share_with_members_still_asks_and_the_list_must_be_the_hubs_current_one
     host.reply["space.list"] = {"spaces": [{"space_id": SID, "epoch": 3, "members": [WS1, WS2]}]}
     host.reply["space.share"] = {"space_id": SID, "members": [WS1, WS2]}
     assert run(["share", SID, "--members", f"{WS1},{WS2}"])[0] == 0
-    assert host.asked and host.asked[-1][1] == "share" and WS1 in host.asked[-1][0]  # asked even with --members
+    assert host.asked and WS1 in host.asked[-1]  # asked even with --members
     n, asked = len(host.called), len(host.asked)
     code, out = run(["share", SID, "--members", WS1])  # not what the hub lists now: refused before any prompt
     assert code == 5 and len(host.asked) == asked and [c[0] for c in host.called[n:]] == ["space.list"]

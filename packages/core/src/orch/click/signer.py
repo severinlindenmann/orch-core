@@ -243,13 +243,13 @@ class ClickSigner:
 
     # -- seams ---------------------------------------------------------------------------------------------------------
     def _default_workspaces(self) -> list[dict[str, Any]]:
-        from orch.host.handoff import _own_workspaces
+        from orch.host.signer_registry import _own_workspaces
 
         return _own_workspaces(self.state, self.uid, None)
 
     def _default_connect(self, entry: dict[str, Any]) -> Any:
         from orch.host.client import Connection, Pin
-        from orch.host.handoff import _socket
+        from orch.host.signer_registry import _socket
 
         wid = entry["workspace_id"]
         path = _socket(None, self.state, int(entry["host_uid"]), wid)
@@ -442,7 +442,7 @@ class ClickSigner:
             raise ClickError("invalid.input", "request_id is a request id")
         approval = self.approvals.get((entry["workspace_id"], rid))
         if approval is None:
-            raise refused("not_prepared_here", "this signer did not prepare that request; use orch sign CODE")
+            raise refused("not_prepared_here", "this signer did not prepare that request; prepare this action again")
         return entry, approval
 
     def _expired(self, approval: Approval) -> bool:
@@ -520,7 +520,7 @@ class ClickSigner:
             if seq is not None or files or deposit:
                 raise ClickError("invalid.input", "a hub step takes no sequence, files or deposit")
         elif op_class(op, args=inner) == "terminal":
-            raise refused("terminal_only", f"{op} is signed in the terminal (orch sign CODE)")
+            raise refused("terminal_only", f"{op} is signed in the terminal")
         if len(self.approvals) >= MAX_APPROVALS:
             self._sweep()
             if len(self.approvals) >= MAX_APPROVALS:
@@ -713,7 +713,7 @@ class ClickSigner:
         from orch.host import sequence
 
         if sequence.confirm_kind(intent) == "terminal":
-            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal")
         if sequence.has_grant(intent) and not self._execution(entry):
             raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
         return "click"
@@ -964,7 +964,7 @@ class ClickSigner:
         )
         kind = self._sequence_kind(entry, intent)  # re-asserted here: what is signed is what this click may sign
         if approval.kind != kind:  # the approval recorded at prepare must be the class the host-side intent has now
-            raise refused("terminal_only", "this sequence needs more than a click; use the terminal (orch sign CODE)")
+            raise refused("terminal_only", "this sequence needs more than a click; use the terminal")
         driver = sequence.Driver(
             port,
             self.sessions,
@@ -984,12 +984,12 @@ class ClickSigner:
                 raise refused(
                     "resumable",
                     "Turning this add-on on was started from this review and is not finished. Finish it in your "
-                    "terminal (orch sign); nothing is signed here.",
+                    "terminal; nothing is signed here.",
                 )
             key = live["ticket"]["key"] if live.get("ticket") else "the ticket"
             raise refused(
                 "resumable",
-                f"{key} was started from this review and is not finished. Finish it in your terminal (orch sign) "
+                f"{key} was started from this review and is not finished. Finish it in your terminal "
                 "or on the ticket page; nothing is signed here.",
             )
         try:
@@ -1018,7 +1018,7 @@ class ClickSigner:
                 raise refused(
                     "resumable",
                     f"The host did not confirm the last signature.{unfinished} "
-                    f"Finish it in your terminal (orch sign){page}; nothing more is signed here.",
+                    f"Finish it in your terminal{page}; nothing more is signed here.",
                 ) from None
             raise refused("stopped", f"{exc.reason}.{where}") from None
         except sequence.SessionError as exc:
@@ -1865,7 +1865,7 @@ class ClickSigner:
                     {},
                     say=lambda _t: None,
                     pk_factory=lambda **kw: TypedCodeSource(code, **kw),
-                    confirm=lambda _text, _word: True,  # the click on the review above
+                    confirm=lambda _text: True,  # the click on the review above
                     now_ms=lambda: int(self.wall() * 1000),
                     call=lambda op, a, **kw: self._call(entry, op, a, **kw),
                     fresh=fresh,

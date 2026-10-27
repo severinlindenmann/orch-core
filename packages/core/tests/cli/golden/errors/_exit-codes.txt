@@ -9,6 +9,8 @@
 8 base_rev conflict
 9 retryable
 
+tty.required 3 retry:false
+sign.cancelled 3 retry:false
 followup.too_soon 3 retry:false
 followup.too_far 3 retry:false
 followup.bad_brief 3 retry:false

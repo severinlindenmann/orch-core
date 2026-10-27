@@ -42,7 +42,7 @@ describe('ticket: the changes the verdict signs', () => {
     expect(await screen.findByTestId('gate-notes', {}, T)).toHaveTextContent('Verdict: via the factory charter — no person reviewed this (charter signed by Severin, commit')
   })
 
-  it('with the code review on, the gates strip shows it after the verdict and the header offers it', async () => {
+  it('with the code review on, the next-step card offers it after the verdict', async () => {
     renderApp('/ticket/DEMO-0041', {
       setup: (s) => {
         s.appendWs(wsOf(s), { type: 'gate.policy_set', gate: 'code', approvers: 'maintainer', count: 1, not: 'assignees', applies: 'all' })
@@ -51,14 +51,13 @@ describe('ticket: the changes the verdict signs', () => {
         s.append('DEMO-0041', { type: 'gate.approved', actor: 'p_mara', gate: 'verify', source_sha: head })
       },
     })
-    expect(await screen.findByTestId('gate-code', {}, T)).toHaveAccessibleName('Code review: Waiting for your review')
-    expect(within(screen.getByTestId('ticket-header')).getByRole('button', { name: 'Approve code review' })).toBeInTheDocument()
+    expect(await within(await screen.findByTestId('next-step', {}, T)).findByRole('button', { name: 'Approve code review' })).toBeInTheDocument()
   })
 
   it('the verdict dialog signs the head it opened with: a push while it is open is refused as stale', async () => {
     const { user } = renderApp('/ticket/DEMO-0041')
-    const header = await screen.findByTestId('ticket-header', {}, T)
-    await user.click(within(header).getByRole('button', { name: 'Give verdict' }))
+    const card = await screen.findByTestId('next-step', {}, T)
+    await user.click(within(card).getByRole('button', { name: 'Give verdict' }))
     const dialog = await screen.findByRole('dialog', {}, T)
     await user.click(within(dialog).getByRole('radio', { name: /^Pass on c90e7a1/ }))
     mockStore.pushCommit('DEMO-0041')

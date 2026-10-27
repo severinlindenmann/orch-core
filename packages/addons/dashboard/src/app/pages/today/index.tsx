@@ -290,6 +290,8 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
   // A host that does not serve agent sessions says nothing about them: no count, no panel.
   const agentsKnown = hasFeature('agents', ws)
   const n = attention.needsYou.total
+  // Any card on screen (a follow-up too) means something is there to look at.
+  const count = n + followups.cards.length
   const counts = attention.agents
   const waiting = attention.waitingOnOthers
   const whoWaits = waiting.who.map((p) => displayName(dir, p)).join(', ')
@@ -303,7 +305,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
         <span>
           {readOnly
             ? `${dateLine(now)} · Nothing needs you · ${waiting.count} open in the workspace`
-            : `${dateLine(now)} · ${n === 0 ? 'Nothing needs you' : `${n} need you`}${followups.cards.length ? ` · ${plural(followups.cards.length, 'follow-up', 'follow-ups')} to look at` : ''}${agentsKnown ? ` · ${plural(counts.working, 'agent', 'agents')} working` : ''}`}
+            : `${dateLine(now)} · ${n === 0 ? (count > 0 ? `${count} to look at` : 'Nothing needs you') : `${n} need you`}${followups.cards.length ? ` · ${plural(followups.cards.length, 'follow-up', 'follow-ups')} to look at` : ''}${agentsKnown ? ` · ${plural(counts.working, 'agent', 'agents')} working` : ''}`}
         </span>
         {readOnly && (
           <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-muted">

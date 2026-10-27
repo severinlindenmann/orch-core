@@ -19,7 +19,8 @@ import { Artifacts } from './Artifacts'
 import { Changes, HAS_CHANGES } from './Changes'
 import { hasFeature, isRealHost } from '@/api/features'
 import { diffstat } from '@/api/gates'
-import { GatesStrip } from './Gates'
+import { GateNotes } from './Gates'
+import { TicketProgress } from './NextStep'
 import { TicketHeader } from './Header'
 import { FollowupBanner, FollowupLine } from '../schedules/FollowupStrip'
 import { History } from './History'
@@ -203,7 +204,8 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
       <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
       <FollowupBanner ticket={ticket} />
       {!wide && <FollowupLine ticket={ticket} />}
-      <GatesStrip ticket={ticket} viewer={viewer} />
+      <TicketProgress ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} />
+      <GateNotes ticket={ticket} viewer={viewer} />
       {!wide && <PropertiesStrip ticket={ticket} viewer={viewer} />}
 
       {/* From 1280 px the rail is a 320 px column; below, it is the Panels sheet (it never drops under the content). */}

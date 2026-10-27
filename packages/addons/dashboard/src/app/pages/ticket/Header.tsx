@@ -226,6 +226,8 @@ function PrimaryButton({ ticket, viewer, sign, jump, start, signing }: { ticket:
         </span>
       </span>
     )
+  // The next-step card under the header owns Approve and Give verdict (B6): one place for the one next thing.
+  if (p && (p.kind === 'approve' || p.kind === 'verdict')) return null
   if (!p) return agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
   const run = () => {
     if (p.kind === 'verdict') sign({ kind: 'verdict' })

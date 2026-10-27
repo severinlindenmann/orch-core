@@ -149,3 +149,33 @@ def test_one_click_on_makes_click_the_effective_default_until_a_choice_is_stored
 
     os.remove(signprefs._path())
     assert world.get(url).json() == {"method": "terminal", "is_default": True, "allowed": ["terminal"]}
+
+
+def test_a_fresh_one_click_setup_does_not_break_the_settings_read(worlds, owner):
+    """Run-12 blocker (owner FB11): One click setup signs sign_methods = terminal, click, phone, hub; the settings
+    read answered 500 "The host's settings do not match its contract" because the adapter knew only three ways."""
+    from orch.setup.review import ONE_CLICK_SIGN_METHODS
+
+    world = worlds(owner.owner.ref)
+    owner.tick()
+    owner.store.append(
+        owner.person_event(
+            owner.owner, "workspace", "settings.changed", set={"sign_methods": list(ONE_CLICK_SIGN_METHODS)}
+        ),
+        log="workspace",
+    )
+    res = world.get(f"/api/w/{world.stub.ws}/settings")
+    assert res.status_code == 200, res.text
+    assert res.json()["sign_methods"] == ["terminal", "click", "phone", "hub"]
+    # the person's own default keeps offering only what a person picks (hub is not a personal default)
+    got = world.get(f"/api/w/{world.stub.ws}/me/sign_default").json()
+    assert got["allowed"] == ["terminal", "click", "phone"]
+
+
+def test_the_adapter_accepts_every_way_the_host_can_hold():
+    """One source of truth: the adapter's list is core's SIGN_METHODS (plus the reserved touchid)."""
+    from orch.model.workspace import SIGN_METHODS
+
+    from orch_dashboard.adapters.settings import SIGN_METHODS_KNOWN
+
+    assert set(SIGN_METHODS) <= SIGN_METHODS_KNOWN

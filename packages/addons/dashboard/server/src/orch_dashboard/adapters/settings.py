@@ -97,6 +97,15 @@ def unavailable() -> Settings:
     return Settings(available=False)
 
 
+# The ways to sign the host can hold: core's own list is the one source (a fresh One click setup signs all four, so a
+# narrower list here made every freshly set-up workspace answer 500). `touchid` is reserved by the contract.
+try:
+    from orch.model.workspace import SIGN_METHODS as _CORE_SIGN_METHODS
+except ImportError:  # pragma: no cover - the dashboard always ships with core; this is only a safety net
+    _CORE_SIGN_METHODS = ("terminal", "click", "phone", "hub")
+SIGN_METHODS_KNOWN = frozenset((*_CORE_SIGN_METHODS, "touchid"))
+
+
 def bad():
     return fail("internal", "The host's settings do not match its contract.", exit=1)
 
@@ -209,7 +218,7 @@ def settings(first: dict, more_pages: list[dict], more: bool) -> Settings:
         if methods is not None and (
             not isinstance(methods, list)
             or "terminal" not in methods
-            or any(m not in ("terminal", "click", "phone", "touchid") for m in methods)
+            or any(m not in SIGN_METHODS_KNOWN for m in methods)
         ):
             raise bad()
         repos: list[Repo] = []

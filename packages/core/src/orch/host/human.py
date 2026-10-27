@@ -539,6 +539,7 @@ class HumanOps:
             "extras": extras,
             # H12d-2: the readers the request admits, with their verified declarations (not signed, not material)
             "readers": capture.readers,
+            "hub_handoff": capture.hub_handoff,  # FB15: prepared to be answered by the hub's addon.requested
             "staged": capture.staged,  # V3 G3: the stage an addon.grant installs from (None: plain grant)
             "sequence": meta,
             "result": template,

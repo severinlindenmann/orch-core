@@ -75,7 +75,7 @@ function loginView(err) {
       const r = await api("POST", "/session", { user_id: id.value.trim(), password: pw.value, totp: code.value.trim(), client: "browser" });
       pw.value = code.value = "";
       if (r.status !== 200) return loginView(say(r.body.error));
-      await home();
+      await afterLogin();
     },
   }, field("User id", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
   show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, form);
@@ -357,6 +357,12 @@ function reviewDecision(it, c) {
       ? h("div", { class: "row" }, h("button", { class: "pri", text: "Pass", onclick: () => act({ type: "verdict.given", outcome: "pass" }) }), h("button", { text: "Fail", onclick: () => withText({ type: "verdict.given", outcome: "fail" }) }))
       : h("div", { class: "row" }, h("button", { class: "pri", text: "Approve", onclick: () => act({ type: "gate.approved", gate: c.gate }) }), h("button", { text: "Ask for changes", onclick: () => withText({ type: "gate.changes_requested", gate: c.gate }) })),
   );
+}
+
+// After a sign-in: an add-on approval link keeps its fragment, everything else goes Home.
+async function afterLogin() {
+  const a = /^#\/w\/([0-9a-f]{32})\/addon\/([\w-]+)$/.exec(location.hash);
+  return a ? addonView(a[1], a[2]) : home();
 }
 
 // FB15 (protocol 8.8b): the link a workspace's Mission Control builds, #/w/<workspace>/addon/<b64u(JSON terms)>. The terms

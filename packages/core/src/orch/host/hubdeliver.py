@@ -216,6 +216,7 @@ class StoreLanding:
             record is None
             or record.get("op") != "addon.grant"
             or record.get("state") != "prepared"
+            or record.get("hub_handoff") is not True
             or record.get("submit")
             or record.get("workspace_id") != self.service.workspace_id
             or record.get("person") != req["person"]

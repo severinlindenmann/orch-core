@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, Loader2, Smartphone } from 'lucide-react'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { groupHash, safeHubUrl, type HubSignInfo, type HubSignRequest } from '@/api/hubsign'
 import type { HandoffAction } from '@/api/handoff'
 import { useHandoff } from './useHandoff'
@@ -112,7 +112,8 @@ const CAPS: Record<string, string> = { serve_http: 'run a small web page', spawn
 export function HubAddonPanel({ ws, action, onDone }: { ws: string; action: Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' }>; onDone: () => void }) {
   const run = useHandoff(ws, (phase) => { if (phase === 'done') onDone() })
   const { prepare } = run
-  useEffect(() => { void prepare(action) }, [prepare, action])
+  const started = useRef(false) // prepare once: a StrictMode re-run or a new `action` identity must not make a second request
+  useEffect(() => { if (started.current) return; started.current = true; void prepare(action) }, [prepare, action])
   const rid = run.request?.id
   const q = useQuery({ queryKey: ['hub-addon', ws, rid], enabled: !!rid && run.phase === 'waiting', queryFn: () => api.hubSign(ws, { kind: 'addon', request: rid! }), retry: false })
   if (run.phase === 'done') return <p role="status" className="text-[13px] text-text">Approved in the hub. The add-on is set up.</p>

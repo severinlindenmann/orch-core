@@ -155,7 +155,11 @@ def _addon(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
         or record.get("workspace_id") != service.workspace_id
     ):
         raise HostError("not_found", "no such add-on request waiting for the hub")
+    if record.get("hub_handoff") is not True or record.get("submit") or service.requests.lapsed(record):
+        raise HostError("not_found", "no such add-on request waiting for the hub")
     ev = prepared_event(record)
+    if ev.get("type") != "addon.granted":
+        raise HostError("not_found", "no such add-on request waiting for the hub")
     terms = {
         "name": ev["name"],
         "version": ev["version"],

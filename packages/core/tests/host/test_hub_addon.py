@@ -152,3 +152,49 @@ def test_the_same_hand_off_answered_by_two_requests_gives_one_grant(env):
     assert env.deliver(request(env, t), "workspace") is None
     assert env.deliver(request(env, t), "workspace") is None  # a second, different request event, same hand-off
     assert len(granted(env)) == 1
+
+
+def test_a_bundled_add_on_with_nothing_staged_is_turned_on_through_the_hub(env):
+    """B3: no stage file at all (a shipped or already installed add-on): the grant is judged on its own digest."""
+    res = env.human.prepare_res("addon.grant", {"name": "wiki"}, handoff=True)
+    prepared = ok(res)["data"]
+    ev = prepared["events"][0]
+    assert ev["type"] == "addon.granted"
+    got = ok(env.served.client().req("hub.handoff", {"kind": "addon", "request": prepared["request"]["id"]}))["data"]
+    assert got["summary"]["name"] == "wiki"
+    assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is None
+    grant = granted(env)[-1]
+    assert grant["name"] == "wiki" and grant["actor"] == {"kind": "host"}
+    store = env.store()
+    try:
+        assert "wiki" in store.state.workspace.addons
+    finally:
+        store.close()
+
+
+def test_a_market_install_prepares_the_same_op_and_is_a_hub_hand_off(env):
+    """B2: `market_grant` is `addon.grant {name, staged}` (dashboard host_call); the record is marked for the hub."""
+    prepared, _ = prepare_handoff(env)
+    rec = env.service.submit(lambda: env.service.requests.read(prepared["request"]["id"])).result()
+    assert rec["op"] == "addon.grant" and rec["staged"] and rec["hub_handoff"] is True
+
+
+def test_an_unmarked_lapsed_or_foreign_record_gets_no_link_and_no_answer(env):
+    prepared, ev = prepare_handoff(env)
+    rid = prepared["request"]["id"]
+    env.served.lab.ws.clock[0] += 3600  # lapsed
+    assert err(env.served.client().req("hub.handoff", {"kind": "addon", "request": rid})) == "not_found"
+
+
+def test_a_phone_style_hand_off_record_is_not_answered_by_the_hub(env):
+    """Defer: only a record prepared for the hub (hub_handoff) is answered; strip the mark and the request is inert."""
+    prepared, ev = prepare_handoff(env)
+    rid = prepared["request"]["id"]
+
+    def unmark():
+        rec = env.service.requests.read(rid)
+        env.service.requests.write({**rec, "hub_handoff": False})
+
+    env.service.submit(unmark).result()
+    assert env.deliver(request(env, terms_of(ev, rid)), "workspace") is None
+    assert granted(env) == []

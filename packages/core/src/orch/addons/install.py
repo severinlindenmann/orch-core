@@ -78,7 +78,7 @@ def grant_event(manifest: Manifest, package: Package) -> dict[str, Any]:
         "name": manifest.name,
         "version": manifest.version,
         "package_sha256": package.digest,
-        "capabilities": manifest.capabilities,
+        "capabilities": sorted(set(manifest.capabilities)),  # one canonical order: the hub terms are sorted and unique
         **declarations(manifest),
     }
     rt = manifest.runtime

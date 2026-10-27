@@ -113,6 +113,10 @@ export class FakeServer {
   /** One click switched on for the workspace (V3-D38): the page signs through /click/* instead of the terminal hand-off. */
   clickOn = false
   clickSigned = new Set<string>()
+  /** Settings switches (run 13 UE): Claude Code folder trust and the records timer. */
+  trustOn = false
+  historyOn = false
+  trustParent = ''
   clickRequests = new Map<string, { name: string; staged: string }>()
   constructor(private dist: string) {
     this.server = http.createServer((req, res) => void this.handle(req, res))
@@ -194,6 +198,11 @@ export class FakeServer {
     if (rest === 'me/sign_default') return json(this.clickOn ? { method: 'click', is_default: true, allowed: ['terminal', 'click'] } : { method: 'terminal', is_default: true, allowed: ['terminal'] })
     if (rest === 'identity') return json({ uuid: WS, prefix: 'DEMO', genesis: 'sha256:' + 'f'.repeat(64), epoch: 3, key_fingerprint: 'AB12 CD34', created_at: null, tier: 'A', me: { person: OWNER, name: 'Sev', role: 'owner', tier: 'A', workspace: WS } })
     if (rest === 'settings') return json({ gates: {}, sign_methods: this.clickOn ? ['terminal', 'click'] : ['terminal'], grant_hours: 8, claim_ttl_min: 60, lease_ttl_min: 60 })
+    if (rest === 'claude-trust' && method === 'GET') return json({ available: true, on: this.trustOn, offered: !this.trustParent, why_not: this.trustParent ? 'A folder above this one has its own Claude Code settings.' : '', parent_config: this.trustParent })
+    if (rest === 'claude-trust' && method === 'POST') { this.trustOn = true; return json({ on: true }) }
+    if (rest === 'records' && method === 'GET') return json({ available: true, configured: true, repo: { state: 'ok', problem: null, problem_hidden: false }, pending: null, last: null, last_noted: null, auto: this.historyOn ? { on: true, every_min: 15, push: false } : null, remote: null })
+    if (rest === 'records/auto-on' && method === 'POST') { this.historyOn = true; return json({ ok: true }) }
+    if (rest === 'records/auto-off' && method === 'POST') { this.historyOn = false; return json({ ok: true }) }
     if (rest === 'members') return json([{ person: OWNER, name: 'Sev', role: 'owner', devices: [] }])
     if (rest === 'today') return json(fixture('today.json'))
     if (rest === 'board' || rest === 'tickets') return json({ ...fixture('board-page.json'), next_page: null })

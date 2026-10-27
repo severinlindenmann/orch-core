@@ -1,11 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import type { AddOnRow } from '@/api/addOnSwitches'
 import type { SignContent } from '@/api/signing'
 import type { Workspace } from '@/api/types'
 import { clickReady } from '@/api/click'
-import { hubOnly } from '@/api/hubsign'
 import { useClickSign } from '@/components/sign/useClickSign'
 import { useHandoff } from '@/components/sign/useHandoff'
 import { useSignMethods } from '@/components/sign/SignMethods'
@@ -36,13 +34,8 @@ export function AddonReview({ workspace, row, marketplace, onBusy, onDone, onClo
   const click = useClickSign(workspace.id, () => onDone())
   const terminal = useHandoff(workspace.id, phase => { if (phase === 'done') onDone() })
   const viaClick = clickReady(workspace) && (!methods.allowed || methods.allowed.includes('click'))
-  // The workspace card can be older than the host's mode (the hub was switched to Full after this page loaded): the host's
-  // `sign.hub_only` is the truth, and the review then becomes the hub approval (FB15 / run 12a).
-  const qc = useQueryClient()
-  const [forcedHub, setForcedHub] = useState(false)
-  const viaHub = hubOnly(workspace) || forcedHub
-  const refused = [click.error, terminal.error].some(e => (e as { code?: string } | null)?.code === 'sign.hub_only')
-  useEffect(() => { if (refused) { setForcedHub(true); void qc.invalidateQueries({ queryKey: ['workspaces'] }) } }, [refused, qc])
+  // Local signing is the default in every hub mode; the hub approval (FB15) is an optional extra the person asks for.
+  const [viaHub, setViaHub] = useState(false)
   const started = useRef(false)
   useEffect(() => {
     if (methods.loading || viaHub || started.current) return
@@ -71,6 +64,7 @@ export function AddonReview({ workspace, row, marketplace, onBusy, onDone, onClo
     {viaClick && click.view ? <ClickSignPanel answer={{ ...click.view, view: { ...click.view.view, content: click.view.view.content && addonContent(click.view.view.content, marketplace) } }} ws={workspace.id} problem={click.problem} signing={signing} ready={click.phase === 'ready'} waitUntil={waitUntil} extra={click.phase === 'failed' && click.problem?.next !== 'check' ? <Button onClick={() => void (click.problem?.next === 'review' ? click.review() : click.again(action))}>Review again</Button> : undefined} label={`Approve and ${label.toLowerCase()}`} onSign={() => void click.sign()} onCancel={() => void close()} /> : terminal.request && terminal.phase === 'waiting' ? <>
       <HandoffPanel request={{ ...terminal.request, content: terminal.request.content && addonContent(terminal.request.content, marketplace) }} />
       <Button variant="ghost" onClick={() => void close()}>Cancel</Button>
+      {workspace.signing === 'full' && <Button variant="ghost" onClick={() => void (viaClick ? click.cancel() : terminal.cancel()).finally(() => setViaHub(true))}>Approve in the hub instead</Button>}
     </> : <>
       <p className="text-text-muted">{click.problem?.body ?? terminal.error?.message ?? 'Reading what this add-on can access…'}</p>
       <Button variant="ghost" onClick={() => void close()}>Cancel</Button>

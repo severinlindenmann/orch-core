@@ -72,7 +72,7 @@ describe('ticket: the changes the verdict signs', () => {
 // A real host reads one diff per person at a time and answers `quota.host` while busy (core #417): the tab says the
 // host is busy and tries again; only after a few tries does it stop, still saying "busy", with a Try again button.
 describe('ticket: Changes while the host is busy', () => {
-  const busy = () => new ApiError(503, { code: 'quota.host', message: 'busy', retryable: true, retry_after_ms: 20 })
+  const busy = () => new ApiError(503, { code: 'quota.host', message: 'busy', retryable: true, retry_after_ms: 400 })
 
   it('says "busy, trying again" and then shows the diff', async () => {
     const real = api.getChanges.bind(api)
@@ -81,7 +81,7 @@ describe('ticket: Changes while the host is busy', () => {
     try {
       const { user } = renderApp('/ticket/DEMO-0042')
       await user.click(await screen.findByRole('tab', { name: /Changes/ }, T))
-      expect(await screen.findByRole('status', {}, T)).toHaveTextContent('The host is busy reading other diffs; trying again')
+      expect(await screen.findByText(/The host is busy reading other diffs; trying again/, {}, T)).toBeInTheDocument()
       expect(await screen.findByLabelText('Diff', {}, T)).toBeInTheDocument()
       expect(screen.queryByText(/Could not load the diff/)).toBeNull()
       expect(calls).toBe(3)

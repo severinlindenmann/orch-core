@@ -7,12 +7,10 @@ from __future__ import annotations
 import pytest
 
 from orch import devsandbox
-from orch.host import convenience, hubops, hubsign
-from orch.host.errors import HostError
+from orch.host import hubops, hubsign
 from orch.hubclient import wire
-from orch.model import breakglass, engine
+from orch.model import engine
 from tests.host import human_helpers
-from tests.host.lifecycle_helpers import UID
 from tests.hub.vec import V
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
@@ -53,28 +51,17 @@ def entry(served):
     return {"workspace_id": served.wid, "root": served.lab.root}
 
 
-def refusals_hold(served):
-    for fn in (
-        lambda: convenience.refuse_full_mode_entry(served.lab.state, entry(served), UID),
-        lambda: convenience.refuse_turn_on(served.lab.state, entry(served), UID, person=served.lab.owner),
-    ):
-        with pytest.raises(HostError) as e:
-            fn()
-        assert e.value.code == "sign.hub_only"
-
-
 def test_the_dev_prefix_is_the_sandbox_prefix():
     assert engine.DEV_PREFIX == devsandbox.RESERVED_PREFIX
 
 
-def test_a_real_workspace_joined_in_full_mode_refuses_one_click_and_convenience_custody(served):
+def test_a_real_workspace_joined_in_full_mode_reads_as_joined(served):
     full_join(served, dev=False)  # a real proof on a real workspace: valid
     hub = hub_of(served)
     assert hub["status"] == "joined" and not hub.get("invalid")
-    refusals_hold(served)
 
 
-def test_a_dev_proof_on_a_real_workspace_is_refused_by_the_model_and_the_refusals_still_hold(served, monkeypatch):
+def test_a_dev_proof_on_a_real_workspace_is_refused_by_the_model(served, monkeypatch):
     """The mismatch. The append refuses it; the log of an attacker or a bug can still hold such a line, so it is
     written without the admission check: the replay must read the workspace as unknown (full), never standalone."""
     from orch.store import StoreError
@@ -93,12 +80,11 @@ def test_a_dev_proof_on_a_real_workspace_is_refused_by_the_model_and_the_refusal
     hub = hub_of(served)
     assert hub.get("invalid") is True and hub.get("status") != "joined"
     signing = served.service.submit(hubops.signing_mode, served.service).result()
-    assert signing == "unknown" and "unknown" in hubsign.HUB_ONLY
+    assert signing == "unknown" and "unknown" in hubsign.SEALS_TO_HUB
     assert real_admit is not None
-    refusals_hold(served)
 
 
-def test_unknown_counts_as_full_for_every_model_and_host_reader():
+def test_a_refused_owner_hub_event_reads_as_invalid_never_standalone():
     from tests.model.world import World
 
     w = World().bootstrap({})
@@ -110,7 +96,6 @@ def test_unknown_counts_as_full_for_every_model_and_host_reader():
     w.ws.append({**ev, "host_sig": "x" * 86})
     ws = w.state()._core.ws
     assert ws.hub.get("invalid") is True and not ws.hub.get("status")
-    assert breakglass.hub_only_position(ws) and hubsign.log_hub_only(ws)
 
 
 def test_a_refused_event_of_a_non_owner_changes_nothing():

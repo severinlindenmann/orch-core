@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { InfoDrawer } from '@/components/InfoDrawer'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { api } from '@/api/client'
 import { canAct, hasFeature } from '@/api/features'
@@ -20,6 +19,7 @@ import { AddonFrame } from '@/addon-ui/AddonFrame'
 import { Inline, Raw, visible } from '@/components/sign/visible'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { LoadFailed } from '@/components/LoadFailed'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
@@ -33,23 +33,6 @@ import { AddMarketplace } from './AddMarketplace'
 import { SettingsSheet } from './SettingsSheet'
 
 const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
-const cell = 'p-2 align-top break-words @max-[800px]:block @max-[800px]:before:block @max-[800px]:before:text-text-faint @max-[800px]:before:content-[attr(data-label)]'
-function Table({ columns, children }: { columns: string[]; children: ReactNode }) {
-  return (
-    <table className="w-full table-fixed text-left text-sm @max-[800px]:block">
-      <thead className="text-xs text-text-muted @max-[800px]:sr-only">
-        <tr>
-          {columns.map((c) => (
-            <th className="p-2" key={c}>
-              {c}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-border @max-[800px]:block">{children}</tbody>
-    </table>
-  )
-}
 function Review({
   stage: s,
   busy,
@@ -275,7 +258,7 @@ function MarketWorkspace() {
   return (
     <div className="@container min-w-0 w-full max-w-5xl space-y-4 break-words">
       <h1 className="text-xl font-semibold">Add-ons</h1>
-      <nav aria-label="Add-on tabs" className="flex gap-1 border-b border-border pb-2 @max-[520px]:gap-0">
+      <nav aria-label="Add-on tabs" className="flex gap-2 border-b border-border pb-2">
         {(market ? (['browse', 'installed', 'marketplaces'] as const) : (['installed'] as const)).map((t) => (
           <Button key={t} size="sm" variant={tab === t ? 'secondary' : 'ghost'} onClick={() => void navigate({ to: '/addons', search: { tab: t } })}>
             {t === 'browse' ? 'Browse' : t === 'installed' ? 'Installed' : 'Marketplaces'}
@@ -394,68 +377,72 @@ function MarketWorkspace() {
               {!markets.length ? (
                 <p>No marketplaces added yet</p>
               ) : (
-                <Table columns={['Marketplace', 'Repo', 'Allowed by', 'Added by', 'Publisher signature', 'Add-ons', 'Last refreshed', 'Actions']}>
-                  {markets.map((m) => (
-                    <tr key={m.url} className="@max-[800px]:block @max-[800px]:py-3">
-                      <td className={cell} data-label="Marketplace">
-                        <AddonFrame addon="marketplace" title="From the marketplace" compact>
-                          <Inline>{m.from_marketplace.title || m.from_marketplace.name}</Inline>
-                        </AddonFrame>
-                        {m.class === 'official' && (
-                          <a
-                            href={m.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title="Open on GitHub"
-                            className="ml-2 inline-flex items-center gap-1 text-xs text-text-muted hover:text-text"
-                          >
-                            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-                              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
-                            </svg>
-                            GitHub
-                          </a>
-                        )}
-                        {m.cache === 'invalid' ? <p>Needs refresh</p> : m.cache === 'not_fetched' ? <p>Not read yet</p> : m.stale && <p>Out of date - refresh</p>}
-                      </td>
-                      <td className={`${cell} font-mono text-xs`} data-label="Repo">
-                        <Inline>{m.url.replace(/^https:\/\/github\.com\//, '')}</Inline>
-                      </td>
-                      <td className={cell} data-label="Allowed by">
-                        <Inline>{m.allowed_by ?? 'Not reported'}</Inline>
-                      </td>
-                      <td className={cell} data-label="Added by">
-                        <Inline>{m.added_by ?? 'Not reported'}</Inline>
-                      </td>
-                      <td className={cell} data-label="Publisher signature">
-                        {m.publisher_key ? publisherWording(m.publisher_key) : m.class === 'official' && m.verified ? 'Signed by orch' : 'Unsigned'}
-                      </td>
-                      <td className={cell} data-label="Add-ons">
-                        {m.entries}
-                      </td>
-                      <td className={cell} data-label="Last refreshed">
-                        <Inline>{m.last_fetch ? new Date(m.last_fetch * 1000).toLocaleString() : 'Never'}</Inline>
-                      </td>
-                      <td className={cell} data-label="Actions">
-                        {mayWrite && (
-                          <Button
-                            disabled={busy}
-                            variant="ghost"
-                            onClick={() =>
-                              void write(async () => {
-                                await api.marketRefresh(ws, { url: m.url })
-                                await refresh()
-                              })
-                            }
-                          >
-                            Refresh
-                          </Button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
+                <ul aria-label="Marketplaces" className="space-y-2">
+                  {markets.map((m) => {
+                    const name = m.from_marketplace.title || m.from_marketplace.name
+                    const repo = m.url.replace(/^https:\/\/github\.com\//, '')
+                    return (
+                      <li key={m.url} className="rounded-lg border border-border bg-surface p-4">
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                          <div className="min-w-0 flex-1 basis-64">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <span className="min-w-0 max-w-full font-medium" title={visible(name)}>
+                                <AddonFrame addon="marketplace" title="From the marketplace" compact>
+                                  <Inline>{name}</Inline>
+                                </AddonFrame>
+                              </span>
+                              {m.cache === 'invalid' ? <span className="shrink-0 text-xs text-warning">Needs refresh</span> : m.cache === 'not_fetched' ? <span className="shrink-0 text-xs text-text-muted">Not read yet</span> : m.stale && <span className="shrink-0 text-xs text-warning">Out of date - refresh</span>}
+                              {m.class === 'official' && (
+                                <a
+                                  href={m.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="Open on GitHub"
+                                  className="inline-flex shrink-0 items-center gap-1 text-xs text-text-muted hover:text-text"
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                                    <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+                                  </svg>
+                                  GitHub
+                                </a>
+                              )}
+                            </div>
+                            <div className="flex min-w-0 flex-wrap items-center gap-x-3 text-xs text-text-muted">
+                              <span className="min-w-0 max-w-full truncate font-mono" title={visible(repo)}>
+                                <Inline>{repo}</Inline>
+                              </span>
+                              <span>{m.entries} {m.entries === 1 ? 'add-on' : 'add-ons'}</span>
+                              <span>{m.publisher_key ? publisherWording(m.publisher_key) : m.class === 'official' && m.verified ? 'Signed by orch' : 'Unsigned'}</span>
+                              <span>{m.last_fetch ? `Refreshed ${new Date(m.last_fetch * 1000).toLocaleString()}` : 'Never refreshed'}</span>
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {mayWrite && (
+                              <Button
+                                disabled={busy}
+                                variant="ghost"
+                                onClick={() =>
+                                  void write(async () => {
+                                    await api.marketRefresh(ws, { url: m.url })
+                                    await refresh()
+                                  })
+                                }
+                              >
+                                Refresh
+                              </Button>
+                            )}
+                            <InfoDrawer label="About this marketplace">
+                              <p>Allowed by: <Inline>{m.allowed_by ?? 'Not reported'}</Inline></p>
+                              <p>Added by: <Inline>{m.added_by ?? 'Not reported'}</Inline></p>
+                              <p className="text-text-muted">Shown by this computer, not covered by your approval.</p>
+                            </InfoDrawer>
+                          </div>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
               )}
-              <p className="text-xs text-text-muted">Allowed by, added by and publisher signature: shown by this computer, not covered by your approval.</p>
               {mayWrite && <AddMarketplace ws={ws} list={list.data} markets={markets} onAdded={() => setMessage('Marketplace added. Its add-ons are in Browse.')} />}
             </>
           )}

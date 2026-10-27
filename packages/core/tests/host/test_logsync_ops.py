@@ -439,7 +439,6 @@ def test_d15b_a_changed_projection_with_no_new_line_is_sent_once_for_a_burst(mon
     uid, _key = human.ticket("one")
     assert until(lambda: uid in loghub.view.proj and loghub.logs() == local_summary(served))
     # members are added by local signing below; C8 makes full mode sign through the hub, so lift that rule here
-    monkeypatch.setattr("orch.model.breakglass.local_refusal", lambda ws, e: None)
     before = len(loghub.pages)
     roster = loghub.view.proj[uid]["roster_v"]
     seq = loghub.view.proj[uid]["seq"]

@@ -774,3 +774,30 @@ def test_connect_host_honours_the_run_directory_of_the_environment(tmp_path, mon
         state / "run" / "control" / "host.sock",
         run / "control" / "host.sock",
     ]
+
+
+def test_a_rerun_after_a_failed_genesis_reuses_the_half_made_workspace(
+    lab, tmp_path, monkeypatch, term, passphrases, recording
+):
+    # run-11 item 6: every `orch setup` rerun after a failure drew a new workspace id
+    from orch.custody.base import CustodyError
+    from orch.ops import workspace_init as wi
+
+    root = fresh_root(tmp_path, "work")
+    monkeypatch.chdir(root)
+    real = wi._signed_genesis
+    calls = []
+
+    def flaky(*a, **kw):
+        calls.append(a[2])
+        if len(calls) == 1:
+            raise CustodyError("person is writable by others")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(wi, "_signed_genesis", flaky)
+    with lab.host():
+        with pytest.raises(Exception):
+            create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "name": "Severin", "host": True})
+        res = create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "name": "Severin", "host": True})
+        assert calls[0] == calls[1] == res.data["workspace_id"]
+        assert [f["op"] for f in recording.sent].count("host.wsk_create") == 1

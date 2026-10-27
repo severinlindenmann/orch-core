@@ -48,6 +48,26 @@ def test_hub_removal_or_demotion_stops_the_agent_and_lapses_the_claim(roles):
     assert claims.lapse_reason(ws, claim_ticket(ws), authz.ts(AT)) == "member_removed"
 
 
+def test_console_link_owner_alias_keeps_the_owners_agents_working():
+    """Run-12 6.2: the join records the link's hub user as the owner's alias, so the hub admin role carries over."""
+    ws = ws_with("full", ALIAS, {P: "owner"}, {U1: "admin"})
+    ws.settings = {"claim_ttl_min": 60}
+    assert authz.authorize_agent(Core(ws=ws), None, agent_event(ws)) is None
+    assert claims.lapse_reason(ws, claim_ticket(ws), authz.ts(AT)) is None
+
+
+def test_unaliased_members_stay_refused_in_full_mode():
+    ws = ws_with("full", {}, {P: "owner"}, {U1: "admin"})
+    r = authz.authorize_agent(Core(ws=ws), None, agent_event(ws))
+    assert r is not None and r.code == Code.GRANT_INVALID
+
+
+def test_hub_removed_owner_is_refused():
+    ws = ws_with("full", ALIAS, {P: "owner"}, {})
+    r = authz.authorize_agent(Core(ws=ws), None, agent_event(ws))
+    assert r is not None and r.code == Code.GRANT_INVALID
+
+
 def test_live_claim_with_a_hub_role():
     ws = full({U1: "edit"})
     agent_event(ws)

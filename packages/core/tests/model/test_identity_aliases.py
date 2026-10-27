@@ -137,3 +137,53 @@ def test_repointed_alias_is_refused_and_a_repeat_is_fine(w):
     assert r2.code == Code.HUB_INVALID and "re-pointed" in r2.detail
     _, r3 = join(w, [alias(w, "mara", U_MARA), alias(w, "tom", U_TOM)], seq=2)
     assert not hasattr(r3, "code")
+
+
+def _direct():
+    """A WsCore with one owner, driven through the workspace rules (the snapshot is hub state, not a log line)."""
+    from orch.model import workspace
+    from orch.model.types import Member, WsCore
+
+    me = "4" * 32
+    ws = WsCore(created=True)
+    ws.members = {"p_" + me: Member("p_" + me, "mara", "owner", "k")}
+    actor = {"kind": "person", "id": "p_" + me, "device": "d_x"}
+
+    def joined(seq, aliases, mode="full"):
+        e = {"type": "hub.joined", "actor": actor, "hub_id": HUB, "hk_root_pub": ROOT, "mode": mode,
+             "binding_seq": seq, "aliases": aliases, "at": "2026-10-09T09:10:11Z"}  # fmt: skip
+        return workspace.hub_joined(ws, e)
+
+    def left(seq):
+        return workspace.hub_left(ws, {"type": "hub.left", "actor": actor, "hub_id": HUB, "binding_seq": seq})
+
+    return ws, me, joined, left
+
+
+def test_leave_and_a_fresh_join_never_carry_a_pinned_snapshot():
+    """Run 12 delta: the hub's role projection belongs to one membership."""
+    ws, me, joined, left = _direct()
+    assert joined(1, [{"person_id": me, "user_id": U_MARA}]) is None
+    ws.hub["ledger"][HUB]["snapshot"] = {"o": {"roles": {U_MARA: "admin"}}}
+    assert left(1) is None
+    assert ws.hub["ledger"][HUB]["snapshot"] is None  # leave clears it
+    ws.hub["ledger"][HUB]["snapshot"] = {"o": {"roles": {U_MARA: "admin"}}}  # a stale one that somehow survived
+    assert joined(2, []) is None
+    assert ws.hub["ledger"][HUB]["snapshot"] is None  # a fresh join does not inherit it
+
+
+def test_forged_alias_then_leave_then_correct_rejoin_is_refused_and_inert():
+    """Run 12 delta: a refused (forged) join leaves a wrong alias. Aliases are never re-pointed (hub contract 9.1,
+    wire ``alias_repointed``), so the correct rejoin is refused (a lockout of that hub, recoverable on a new hub), and
+    the wrong alias gives the owner at most the LOWER of its role and the forged user's: no snapshot carries over."""
+    ws, me, joined, left = _direct()
+    victim = "7" * 32
+    assert joined(1, [{"person_id": me, "user_id": victim}]) is None
+    assert left(1) is None
+    assert joined(2, [{"person_id": me, "user_id": U_MARA}]).code == Code.HUB_INVALID  # never re-pointed
+    assert joined(2, [{"person_id": me, "user_id": victim}]) is None  # the unchanged alias replays fine
+    assert ws.hub["aliases"] == {me: victim}  # one alias, no stacking
+    assert ws.hub["ledger"][HUB]["snapshot"] is None
+    assert identity.member_role(ws, "p_" + me) == "owner"  # no snapshot yet: the local role stands
+    ws.hub["ledger"][HUB]["snapshot"] = {"o": {"roles": {U_MARA: "admin"}}}  # the real user has a role, the victim none
+    assert identity.member_role(ws, "p_" + me) is None  # fail closed, never more than the local role

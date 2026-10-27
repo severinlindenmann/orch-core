@@ -64,6 +64,13 @@ def test_the_link_format_vector():
     )  # fmt: skip
     assert link.card_url == "https://hub.example.test:8443/api/v1/hub/card"
     assert connectlink.parse_link("http://h/c#h1." + "a" * 32 + ".abc").endpoint is None
+    own = "b" * 32
+    for tail, endpoint in (("", None), (".10.0.0.5:8105", "10.0.0.5:8105"), (".local", "local")):
+        got = connectlink.parse_link(f"http://h/c#h1.{'a' * 32}.abc{tail}~{own}")
+        assert (got.owner_user, got.endpoint, got.code) == (own, endpoint, "abc")
+    assert connectlink.parse_link("http://h/c#h1." + "a" * 32 + ".abc").owner_user is None
+    with pytest.raises(HubRefused):
+        connectlink.parse_link("http://h/c#h1." + "a" * 32 + ".abc~zz")
 
 
 @pytest.mark.parametrize(

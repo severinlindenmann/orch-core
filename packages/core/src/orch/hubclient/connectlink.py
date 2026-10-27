@@ -24,7 +24,7 @@ from .tlsadapter import parse_addr
 
 __all__ = ["Link", "parse_link", "resolve"]
 
-_FRAG = re.compile(r"h1\.([0-9a-f]{32})\.([A-Za-z0-9_-]{1,64})(?:\.(.{1,300}))?")
+_FRAG = re.compile(r"h1\.([0-9a-f]{32})\.([A-Za-z0-9_-]{1,64})(?:\.([^~]{1,300}))?(?:~([0-9a-f]{32}))?")
 MAX_CARD = 64 * 1024
 TIMEOUT = 8.0
 
@@ -35,6 +35,7 @@ class Link:
     hub_id: str
     code: str
     endpoint: str | None
+    owner_user: str | None = None  # the hub user the minting admin named as this workspace's owner (`~<hex32>`)
 
     @property
     def card_url(self) -> str:
@@ -58,13 +59,13 @@ def parse_link(text: Any) -> Link:
     m = _FRAG.fullmatch(u.fragment)
     if m is None:
         raise HubRefused("malformed")
-    hub_id, code, endpoint = m.groups()
+    hub_id, code, endpoint, owner_user = m.groups()
     if endpoint is not None and endpoint != "local":
         try:
             parse_addr(endpoint)
         except HubRefused:
             raise HubRefused("malformed") from None
-    return Link(f"{u.scheme}://{u.netloc}", hub_id, code, endpoint)
+    return Link(f"{u.scheme}://{u.netloc}", hub_id, code, endpoint, owner_user)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -110,6 +111,7 @@ def resolve(text: Any, *, now_ms: int, dev_mode: bool) -> dict[str, Any]:
         "code": link.code,
         "endpoint": None if link.endpoint in (None, "local") else link.endpoint,
         "local": link.endpoint == "local",
+        "owner_user": link.owner_user,
         "name": link.name,
         "dev": bool(verified["card"].get("dev")),
     }

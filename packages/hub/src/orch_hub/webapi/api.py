@@ -1346,7 +1346,7 @@ class WebApi:
             raise ApiError("malformed")
         code, expires = self.d.invites.mint(self.d.now_ms(), owner_user=owner)
         try:
-            link = build_link(base, self.d.keys.hub_id, code, endpoint)
+            link = build_link(base, self.d.keys.hub_id, code, endpoint, owner)
         except LinkError:
             raise ApiError("malformed") from None
         return 200, {

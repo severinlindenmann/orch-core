@@ -206,6 +206,15 @@ def test_only_the_owner_may_be_aliased(human):
     assert signed.events[0]["aliases"] == [me]
 
 
+def test_a_connect_link_owner_becomes_the_owners_alias(human):
+    """Run-12 6.2: the console link names the owner's hub user; the signed join records it, so the hub role counts."""
+    user = V["ids"]["user_alice"]
+    me = {"person_id": human.person.ref.removeprefix("p_"), "user_id": user}
+    assert err(human.prepare_res("hub.join", join_args(owner_user_id=user, aliases=[me]))) == "hub.refused"
+    _, _, signed = human.run("hub.join", join_args(owner_user_id=user))
+    assert signed.events[0]["aliases"] == [me]
+
+
 def test_agents_are_refused(human, served):
     c = served.client()
     mode_args = {"hub_card": copy.deepcopy(CARD), "mode": "full"}
@@ -337,7 +346,7 @@ def test_join_then_connect_sends_the_selective_binding_and_never_a_key(human, se
     assert got["status"] == "bound" and got["binding_seq"] == 1 and got["hub_id"] == HUB_ID
     assert stub.ops() == ["join"]
     body = stub.sent[0]["o"]["body"]
-    assert set(body) == {"invite", "card", "pk_pub", "binding", "owner_proof"}
+    assert set(body) == {"invite", "card", "pk_pub", "binding", "owner_proof", "alias_users"}
     assert body["owner_proof"]["o"]["op"] == "hub.join"  # #1198 C9: the proof the signed log holds goes to the hub
     b = body["binding"]["o"]
     assert (b["mode"], b["binding_seq"], b["dev"], b["hub_id"]) == ("selective", 1, True, HUB_ID)

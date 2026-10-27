@@ -792,6 +792,7 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "pk_pub": _pub,
             "binding": lambda x: type(x) is dict,
             "owner_proof": lambda x: x is None or type(x) is dict,  # #1198 C9
+            "alias_users": lambda x: type(x) is list and all(type(u) is str for u in x),  # optional (run 12)
         },
     ),
     "card_put": ("w2h", None, {"card": lambda x: type(x) is dict, "pk_pub": _pub}),
@@ -849,7 +850,11 @@ def verify_link(
         raise Refused("other_workspace")
     if abs(now_ms - o["ts_ms"]) > LINK_WINDOW_MS:
         raise Refused("stale_timestamp")
-    if is_request and (set(o["body"]) != set(body) or not all(ok(o["body"][k]) for k, ok in body.items())):
+    optional = {"join": {"alias_users"}}.get(o["op"], set())
+    if is_request and (
+        not set(body) - optional <= set(o["body"]) <= set(body)
+        or not all(ok(o["body"][k]) for k, ok in body.items() if k in o["body"])
+    ):
         raise Refused("malformed")
     return o
 

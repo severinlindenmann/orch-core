@@ -360,6 +360,10 @@ def handle_hub_join(ctx: Context, args: dict[str, Any]) -> Result:
             raise HubRefused("other_hub")
         me = h.person.removeprefix("p_")  # the owner is the only person a join may alias (spec 8a)
         aliases = list(args.get("aliases") or [])
+        if args.get("owner_user_id"):  # a console link names the hub user of the owner: the owner's alias (run 12)
+            if aliases:
+                raise HubRefused("malformed")
+            aliases = [{"person_id": me, "user_id": args["owner_user_id"]}]
         if any(a["person_id"] != me for a in aliases) or len(aliases) > 1:
             raise HubRefused("malformed")
         payload = wire.joined_payload(
@@ -562,6 +566,11 @@ HUB_JOIN = operation(
             "description": "the hub id from the invite (<hub_id>:<code>); the card must name this hub (D12c)",
         },
         "mode": E("the join mode", "selective", "full"),
+        "owner_user_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "description": "the hub user the connect link names as this workspace's owner: the owner's alias",
+        },
         "aliases": {
             "type": "array",
             "maxItems": 1,

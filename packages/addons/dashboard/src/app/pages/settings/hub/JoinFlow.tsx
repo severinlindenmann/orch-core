@@ -12,7 +12,7 @@ import { HubStep } from '../host/HubStep'
 import { Action, Flow, NoOneClick, caveat, useHubRefresh, useOneClick } from './shared'
 import { ModeChoice } from './ModeChoice'
 
-const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.\S+)?$/
+const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.[^\s~]+)?(~[0-9a-f]{32})?$/
 
 export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
   const oneClick = useOneClick(ws)
@@ -59,10 +59,11 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
       <details><summary>Technical details</summary><p>Hub id: <Raw>{info.hub_id}</Raw></p></details>
       {!signed && <ModeChoice mode={mode} onChange={setMode} />}
       <p>{mode === 'full' ? 'The hub will read everything.' : 'You choose what to share.'}</p>
+      {mode === 'full' && !info.owner_user && <p role="alert" data-testid="hub-link-old" className="text-warning">This link does not name you on the hub, so your agents could not work in this mode. Make a new connect link in the hub and paste that one.</p>}
       <p className="text-warning">{caveat}</p></>}
       {oneClick !== 'on'
         ? <NoOneClick state={oneClick} what="Connecting" />
-        : <HubStep key={link + mode} ws={ws} action={{ action: 'hub_join', hub_card: info.hub_card, hub_id: info.hub_id, mode }} onClose={onClose} onFailedChange={setFailed} onChanged={() => { refresh(); setSigned(true) }} />}
+        : <HubStep key={link + mode} ws={ws} action={{ action: 'hub_join', hub_card: info.hub_card, hub_id: info.hub_id, mode, ...(info.owner_user ? { owner_user: info.owner_user } : {}) }} onClose={onClose} onFailedChange={setFailed} onChanged={() => { refresh(); setSigned(true) }} />}
     </>}
     {(!info || oneClick !== 'on') && <div className="flex justify-end"><Action id="hub-join-cancel" onClick={onClose}>Cancel</Action></div>}
   </Flow>

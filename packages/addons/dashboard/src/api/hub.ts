@@ -75,7 +75,7 @@ export type HubCommandRequest =
 export interface HubConnectRequest { idem: string; invite?: string; hub_card: string; addr?: string }
 /** `POST /hub/link` (run-9 feedback 6): the host read the connect link (fetched the hub card, checked it against the
  * link's hub id). `hub_card` is the card as text, to hand back to the join; nothing is signed or kept by this read. */
-export interface HubLinkInfo { hub_id: string; name: string; code: string; endpoint: string | null; dev: boolean; hub_card: string }
+export interface HubLinkInfo { hub_id: string; name: string; code: string; endpoint: string | null; owner_user?: string | null; dev: boolean; hub_card: string }
 export interface HubConnected { connected: true; mode: HubMode | null }
 
 export interface HubCommand {

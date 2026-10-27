@@ -983,6 +983,7 @@ class HubJoin(Action):
     hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_HUB_CARD_BYTES)]
     hub_id: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{8,64}$")]
     mode: Literal["selective", "full"] = "selective"
+    owner_user: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")] | None = None  # from the connect link
 
     @model_validator(mode="after")
     def check_card(self):
@@ -1247,7 +1248,7 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
                 "hub_card": _strict_json_object(action.hub_card),
                 "hub_id": action.hub_id,
                 "mode": action.mode,
-            }
+            } | ({"owner_user_id": action.owner_user} if action.owner_user else {})
         case HubModeFull():
             return "hub.mode", {"hub_card": _strict_json_object(action.hub_card), "mode": "full"}
         case HubLeave():

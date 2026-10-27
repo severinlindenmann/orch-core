@@ -1,6 +1,7 @@
 ok help all
 work: pick up a ticket, do its tasks, prove the acceptance criteria, hand over
 ask: ask a person instead of guessing, then wait for the answer
+wait: wait more than an hour: set a follow-up (a fresh session later), then end this one
 refine: turn a rough ticket into requirements, acceptance criteria, a plan and tasks
 parallel: work as a subagent: one lease on one task of the manager's claim
 commands: orch describe

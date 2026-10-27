@@ -117,10 +117,10 @@ def serve(call: Call) -> dict[str, Any]:
 
     args = _check(call)
     service = call.service
-    _rate(service)
     store = service.store
     want = {k: args[k] for k in ("name", "icon") if k in args}
-    old, new = store.set_cosmetic(want, args["if_current"])
+    # the rate check runs under the store lock, with the compare-and-set: two racing calls count one after the other
+    old, new = store.set_cosmetic(want, args["if_current"], before=lambda: _rate(service))
     if old is None:
         raise HostError("cosmetic.conflict", "the name or icon changed meanwhile: look again", detail={"current": new})
     securitylog.record(

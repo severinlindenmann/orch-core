@@ -196,6 +196,54 @@
           ],
           "additionalProperties": false
         },
+        "icon": {
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "Legacy (before D6): optional and ignored, never written again. The icon is workspace.icon (unsigned).",
+              "properties": {
+                "icon": {
+                  "enum": [
+                    "folder",
+                    "rocket",
+                    "briefcase",
+                    "building",
+                    "code",
+                    "cloud",
+                    "compass",
+                    "globe",
+                    "leaf",
+                    "flame",
+                    "zap",
+                    "anchor",
+                    "heart",
+                    "star"
+                  ]
+                },
+                "colour": {
+                  "enum": [
+                    "orange",
+                    "blue",
+                    "green",
+                    "purple",
+                    "pink",
+                    "teal",
+                    "amber",
+                    "slate"
+                  ]
+                }
+              },
+              "required": [
+                "icon",
+                "colour"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "addons": {
           "type": "object",
           "description": "G6: the signed settings of installed add-ons, by add-on name.",

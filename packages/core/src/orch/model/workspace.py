@@ -385,6 +385,8 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
             ws.settings[ADDONS_KEY] = dict(sorted(held.items()))
         else:
             ws.settings.pop(ADDONS_KEY, None)
+    # `set.icon` (before D6 the icon was signed): the schema still accepts it so older logs replay; it is ignored here
+    # (no state, nothing rendered), the icon is the unsigned `workspace.icon` of config.json now
     return None
 
 

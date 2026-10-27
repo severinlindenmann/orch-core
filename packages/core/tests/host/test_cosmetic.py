@@ -30,8 +30,13 @@ def set_(served, args):
 
 
 def test_no_signed_shape_carries_an_icon():
-    assert "icon" not in load("event.settings.changed")["properties"]["set"]["properties"]
-    assert "icon" not in load("workspace")["properties"]["settings"]["properties"]
+    # the legacy `set.icon` / `settings.icon` (signed before D6) stay accepted so older logs and files validate, but
+    # nothing can sign a new one (the op's input schema) and the model ignores it (tests/store/test_config_fail_closed)
+    for legacy in (
+        load("event.settings.changed")["properties"]["set"]["properties"]["icon"],
+        load("workspace")["properties"]["settings"]["properties"]["icon"],
+    ):
+        assert legacy["oneOf"][0]["description"].startswith("Legacy (before D6)")
     assert "icon" not in SET_SCHEMA["properties"]
     assert "icon" in load("workspace")["properties"]["workspace"]["properties"]
 

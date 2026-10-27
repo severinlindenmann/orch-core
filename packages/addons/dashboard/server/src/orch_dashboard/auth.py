@@ -460,6 +460,16 @@ class Auth:
         with self.lock:
             return self.kinds.get(token) if token in self.sessions else None
 
+    def passkey_session(self, token):
+        """Is this a remote session that a passkey login opened (the passkey it used is known)? False for any other."""
+        with self.lock:
+            return (
+                token in self.sessions
+                and self.kinds.get(token) == "remote"
+                and self.switch_ws.get(token) is None
+                and self.credentials.get(token) is not None
+            )
+
     def stepup_grant(self, token, action, digest, proof, credential_id=None):
         """A verified passkey step-up for ``action`` with ``digest``, kept for this session only (never for another
         token). A newer one for the same pair replaces the older; the oldest goes beyond ``STEPUPS_PER_SESSION``.

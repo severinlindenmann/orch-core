@@ -84,6 +84,9 @@ describe('follow-ups on the mock', () => {
     await user.click(await screen.findByRole('tab', { name: /^Follow-ups\s*\d+/ }, T))
     await screen.findByTestId('followups-needs', {}, T)
     expect(screen.queryByTestId('followup-buttons')).not.toBeInTheDocument()
+    const off = screen.getAllByTestId('followup-buttons-off')
+    expect(off.length).toBeGreaterThan(0)
+    for (const b of within(off[0]).getAllByRole('button')) expect(b).toBeDisabled()
   })
   it('the ticket page: a quiet card while waiting, a banner when it needs a person', async () => {
     renderApp('/ticket/DEMO-0037', { viewer: 'p_sev', setup: on })

@@ -378,7 +378,7 @@ registerAddon({
     fu_cancel(ctx) {
       const f = followupsOf(ctx.state).find((x) => x.id === ctx.body.id)
       if (!f) return fail(404, 'not_found', 'No such follow-up.')
-      if (f.state !== 'pending' && f.state !== 'needs_person') return fail(409, 'followup.not_pending', 'That follow-up is no longer waiting.')
+      if (f.state !== 'pending' && f.state !== 'needs_person') return fail(409, 'followup.not_pending', 'It started a moment ago (or was already handled), so it cannot be changed any more.')
       if (!mayAct(ctx, f)) return fail(403, 'role.denied', 'Only the follow-up\'s person or a maintainer can cancel it.')
       f.undo = { state: f.state, reason: f.reason }
       f.state = 'cancelled'
@@ -399,7 +399,7 @@ registerAddon({
     fu_reschedule(ctx) {
       const f = followupsOf(ctx.state).find((x) => x.id === ctx.body.id)
       if (!f) return fail(404, 'not_found', 'No such follow-up.')
-      if (f.state !== 'pending' && f.state !== 'needs_person' && f.state !== 'failed' && f.state !== 'did_not_run') return fail(409, 'followup.not_pending', 'That follow-up cannot be moved.')
+      if (f.state !== 'pending' && f.state !== 'needs_person' && f.state !== 'failed' && f.state !== 'did_not_run') return fail(409, 'followup.not_pending', 'It started a moment ago (or was already handled), so it cannot be moved any more.')
       if (!mayAct(ctx, f)) return fail(403, 'role.denied', 'Only the follow-up\'s person or a maintainer can move it.')
       const at = typeof ctx.body.at === 'string' ? Date.parse(ctx.body.at) : NaN
       if (Number.isNaN(at) || at < Date.parse(ctx.store.now()) + 3_600_000) return fail(400, 'followup.too_soon', 'Pick a time at least an hour from now.')

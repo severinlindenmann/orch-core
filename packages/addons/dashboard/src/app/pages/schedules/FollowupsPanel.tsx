@@ -4,17 +4,29 @@ import { Link } from '@tanstack/react-router'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
 import { groups, kindOf, reasonText, wakeLine, inText, type FollowupRow } from '@/api/followups'
 import { LoadFailed } from '@/components/LoadFailed'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { plural } from '@/lib/time'
 import { CancelButton, RescheduleButton, RunNowButton, StateBadges, usePersonName, useFollowups } from './FollowupParts'
 
 /** The buttons of one row, by what it is. The viewer who cannot act sees none (a viewer has no buttons, never disabled ones that explain nothing). */
 export function RowButtons({ row, ws, can, primaryRun = false }: { row: FollowupRow; ws: string; can: { cancel: boolean; reschedule: boolean; undo: boolean }; primaryRun?: boolean }) {
-  if (!can.cancel) return null
   const k = kindOf(row)
   const live = k === 'waiting' || k === 'needs_person'
   const stuck = k === 'failed' || k === 'did_not_run'
   if (!live && !stuck) return null
+  if (!can.cancel) {
+    // A viewer sees what the buttons would be, switched off, and why.
+    return (
+      <div className="flex flex-wrap items-center gap-2" data-testid="followup-buttons-off" title="Viewers cannot change follow-ups.">
+        {['Run now as me', 'Reschedule', 'Cancel follow-up'].map((t) => (
+          <Button key={t} type="button" size="sm" variant="outline" disabled>
+            {t}
+          </Button>
+        ))}
+      </div>
+    )
+  }
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="followup-buttons">
       <RunNowButton row={row} ws={ws} primary={primaryRun || stuck || k === 'needs_person'} />

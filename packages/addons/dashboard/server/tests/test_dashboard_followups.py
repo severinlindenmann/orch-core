@@ -91,3 +91,19 @@ def test_cancel_is_one_fixed_op():
     assert not ok([{**event, "followup": FU[:-1] + "1"}])
     assert not ok([{**event, "reason": "dismissed"}])
     assert not ok([event, event])
+
+
+def test_a_follow_up_grant_is_listed_with_its_parent():
+    from orch_dashboard.adapters import settings
+
+    parent, child = "gr_" + "0" * 25 + "1", "fgr_" + "0" * 25 + "2"
+    base = {
+        "person": "p_1",
+        "scope": "t",
+        "verbs": "all",
+        "issued_at": "2026-10-27T09:00:00Z",
+        "expires_at": "2026-10-27T17:00:00Z",
+        "sessions": 0,
+    }
+    out = settings.grants({"grants": [{**base, "id": parent}, {**base, "id": child, "parent": parent}]}, ext=False)
+    assert [g.parent for g in out] == [None, parent]

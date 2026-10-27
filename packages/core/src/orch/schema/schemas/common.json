@@ -1103,6 +1103,15 @@
     "runId": {
       "type": "string",
       "pattern": "^(?:r_[0-7][0-9A-HJKMNP-TV-Z]{25})(?![\\s\\S])"
+    },
+    "hex64": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}(?![\\s\\S])"
+    },
+    "eventRef": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9._:-]*(?![\\s\\S])"
     }
   }
 }

@@ -77,8 +77,18 @@ def until(fn, what: str, secs: float = 10.0):
 
 @pytest.fixture
 def hub(tmp_path):
+    yield from _hub(tmp_path, real=False)
+
+
+@pytest.fixture
+def hub_real(tmp_path):
+    """The same wired hub as a NON-dev hub (card dev: false), the kind a normal install runs (run-11 B1)."""
+    yield from _hub(tmp_path, real=True)
+
+
+def _hub(tmp_path, real):
     state = tmp_path / "hub"
-    keys = HubKeys.init(state, relay_url="http://127.0.0.1:9")
+    keys = HubKeys.init(state, relay_url="http://127.0.0.1:9", real=real)
     # the operator side, before the hub runs: a user with password and TOTP, a group with edit on the workspace, an
     # admin-issued invite that names the user as the workspace owner, a pairing code for the user's phone
     acc = Access(str(state / "access.db"))
@@ -87,7 +97,7 @@ def hub(tmp_path):
     acc.add_group("team")
     acc.add_member("team", user)
     acc.grant(WS, "team", "edit")
-    ch = Channels(keys, acc, state / CHANNELS_FILE, dev_mode=True)
+    ch = Channels(keys, acc, state / CHANNELS_FILE, dev_mode=not real)
     ch.set_password(user, PW)
     b32 = ch.new_totp(user)["secret"]
     secret = base64.b32decode(b32 + "=" * (-len(b32) % 8))

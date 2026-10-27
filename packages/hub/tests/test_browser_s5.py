@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from channels_helpers import PW
 from custodial_helpers import LOG, WK
-from test_serve_wired import WS, host_link, hub  # noqa: F401  (the wired hub fixture)
+from test_serve_wired import WS, host_link, hub, hub_real  # noqa: F401  (the wired hub fixtures)
 from view_helpers import OWNER, Host
 
 from orch_hub.channels.service import totp_code
@@ -39,14 +39,29 @@ def playwright_path() -> str | None:
 
 @pytest.mark.skipif(playwright_path() is None, reason="playwright for node is not installed")
 def test_s5_browser_registers_a_key_and_signs_a_question(hub):  # noqa: F811
-    c = host_link(hub)
-    h = Host(ws=WS, wk=WK, key=G.K.priv["wsk_a"])
-    h.genesis()
-    h.append("workspace", "member.added", roster_v=1)
-    h.ticket()
-    h.ask(to=OWNER, text="CSV or API?", options=[{"key": "csv", "label": "CSV"}, {"key": "api", "label": "API"}])
-    for log in ("workspace", LOG):
-        assert "seq" in c.request("log_sync", h.page(log))
+    _s5(hub)
+
+
+@pytest.mark.skipif(playwright_path() is None, reason="playwright for node is not installed")
+def test_s5_browser_registers_a_key_on_a_non_dev_hub(hub_real):  # noqa: F811
+    """Run-11 B1: a normal hub sends dev:false; the page used to refuse every challenge that was not dev:true."""
+    assert hub_real["keys"].dev is False
+    _s5(hub_real, register_only=True)  # the workspace link of a non-dev hub needs a real host; the key is the point
+
+
+def _s5(hub, register_only=False):  # noqa: F811
+    if register_only:
+        c = None
+    else:
+        c = host_link(hub)
+    if c is not None:
+        h = Host(ws=WS, wk=WK, key=G.K.priv["wsk_a"])
+        h.genesis()
+        h.append("workspace", "member.added", roster_v=1)
+        h.ticket()
+        h.ask(to=OWNER, text="CSV or API?", options=[{"key": "csv", "label": "CSV"}, {"key": "api", "label": "API"}])
+        for log in ("workspace", LOG):
+            assert "seq" in c.request("log_sync", h.page(log))
 
     # two single-use codes: sign-in takes the previous step, registration the current one (no 30 s wait)
     while (time.time() % 30) > 15:  # keep the whole run inside one step
@@ -54,6 +69,7 @@ def test_s5_browser_registers_a_key_and_signs_a_question(hub):  # noqa: F811
     step = int(time.time()) // 30
     env = {
         **os.environ,
+        **({"S5_STOP": "register"} if register_only else {}),
         "NODE_PATH": playwright_path(),
         "HUB_URL": f"http://127.0.0.1:{hub['web'].port}",
         "HUB_USER": hub["user"],
@@ -65,4 +81,5 @@ def test_s5_browser_registers_a_key_and_signs_a_question(hub):  # noqa: F811
     r = subprocess.run([NODE, str(script)], env=env, capture_output=True, text=True, timeout=120, check=False)
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-3000:]
     assert "S5 browser: ok" in r.stdout
-    c.close()
+    if c is not None:
+        c.close()

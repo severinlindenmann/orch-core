@@ -335,3 +335,9 @@ def test_a_switch_session_counts_as_no_sign_in_and_mints_no_child_session(w):
     ):
         w.call(method, path, body, token=tok)
     assert w.api.d.channels.db.q("SELECT COUNT(*) FROM sessions")[0][0] == before
+
+
+def test_owner_get_names_the_owner_alias_and_nothing_else(w):
+    """FB15: the host asks over its own link who the hub names as owner; no argument, no stored origin."""
+    r = ops.owner_get(ctx(w, WS, "owner_get", {}))
+    assert r == {"user_id": w.ann}

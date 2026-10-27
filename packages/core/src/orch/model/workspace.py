@@ -567,7 +567,9 @@ def addon_requested(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     sg = identity.signer(ws, e)
     if isinstance(sg, Refusal):
         return sg
-    if sg.role != "owner" or sg.person not in ws.members:
+    # `sg.role` is the effective role: the aliased member's (lower of member and hub role) or, for a hub user the owner
+    # never aliased (a console-link join), the hub role mapped by D70 (admin = owner). Either way an owner.
+    if sg.role != "owner":
         return Refusal(Code.ROLE_DENIED, "addon.requested is for a workspace owner")
     if e["id"] in ws.addon_requests:
         return Refusal(Code.GRANT_EXISTS, e["id"])
@@ -605,8 +607,7 @@ def _host_addon_grant(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.GRANT_TERMS, "this request was answered already")
     if any(o is not req and o["handoff"] == req["handoff"] and o["used"] for o in ws.addon_requests.values()):
         return Refusal(Code.GRANT_TERMS, "this hand-off was answered already")  # one hand-off, one grant
-    holder = ws.members.get(req["person"])
-    if holder is None or holder.role != "owner":
+    if identity.role_of(ws, req["person"]) != "owner":  # a member's role, or a hub user's mapped hub role
         return Refusal(Code.ROLE_DENIED, "the person who asked is not an owner now")
     if _addon_terms(e) != {k: req[k] for k in ("name", "version", "package_sha256", "capabilities", "runtime")}:
         return Refusal(Code.GRANT_TERMS, "the grant is not what was requested")

@@ -912,6 +912,26 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 _SWITCH_OPS = {"ticket": "switch_ticket", "redeem": "switch_redeem", "rail": "rail_get"}
 
 
+def owner_user(service: Any, state: Any) -> str | None:
+    """The hub user the bound hub names as the owner of this workspace (``owner_get`` over the host's OWN link), or
+    ``None`` when it cannot say (no owner alias, hub away). FB15: only the host asks, never a caller; the answer is the
+    hub's word (V3-D19, #1394). Runs on the workspace worker like the snapshot fetch of an event delivery."""
+    import re
+
+    try:
+        wsk_pub, sign = _wsk_sign(service)
+        hub_link, transport = _snapshot_link(service, state, wsk_pub, sign, workspace_dev(service))
+    except Exception:  # noqa: BLE001 - no usable link: no owner known
+        return None
+    try:
+        user = hub_link.call("owner_get", {}).get("user_id")
+    except Exception:  # noqa: BLE001 - the hub refuses or is away: fail closed
+        return None
+    finally:
+        getattr(transport, "close", lambda: None)()
+    return user if isinstance(user, str) and re.fullmatch(r"[0-9a-f]{32}", user) else None
+
+
 def _switch(service: Any, plan: dict[str, Any], wsk_pub: bytes, sign: Any) -> dict[str, Any]:
     """``hub.switch`` (H1, 27 Oct): the hub decides the person (the owner alias of this workspace), the host relays.
     ``ticket``: a one-time ticket to open (or sign out of) the hub console; ``redeem``: the hub answers for a ticket the

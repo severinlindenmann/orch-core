@@ -219,7 +219,7 @@ class StoreLanding:
             or record.get("hub_handoff") is not True
             or record.get("submit")
             or record.get("workspace_id") != self.service.workspace_id
-            or record.get("person") != req["person"]
+            or not _same_asker(ws, record, req["person"])
             or requests.lapsed(record)
         ):
             return None  # no live local hand-off for these terms: the request is inert
@@ -302,6 +302,28 @@ class StoreLanding:
                     "scope": req["scope"],
                 }
         return probe, secret, plan
+
+
+def _same_asker(ws: Any, record: dict[str, Any], signer: str) -> bool:
+    """Is the hub signer of an ``addon.requested`` the person who prepared the hand-off here? An aliased hub user is
+    that member (canonical ``p_`` id). A hub user the owner never aliased (a console-link join) is ``u_...``: it is
+    accepted only when it is THE hub user the hub named as this workspace's owner when the hand-off was made
+    (``hub_user``, hub ``owner_get``) and the hand-off was prepared by a workspace owner of this host. Any other hub
+    user, admin or not, is refused."""
+    from orch.model import identity
+
+    local = record.get("person")
+    if type(local) is not str:
+        return False
+    if local == signer:
+        return True
+    hub_user = record.get("hub_user")
+    return (
+        signer.startswith("u_")
+        and type(hub_user) is str
+        and signer == "u_" + hub_user
+        and identity.role_of(ws, local) == "owner"
+    )
 
 
 def _plus_hours(stamp: str, hours: int) -> str:

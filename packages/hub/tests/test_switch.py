@@ -315,3 +315,23 @@ def test_peek_is_rate_limited_and_a_workspace_cannot_flood_the_store(w):
         w.sw.issue_to_hub(w.ann, WS, "/")
     with pytest.raises(SwitchError):
         w.sw.redeem(first, "to_hub")  # its own oldest went, not other workspaces' tickets
+
+
+def test_a_switch_session_counts_as_no_sign_in_and_mints_no_child_session(w):
+    """N1: `login_ms` is 0 for a switch row (fail closed for every recency check); the allowed handlers make no
+    pairing or channel session (a child row would carry via NULL)."""
+    _, _, h = w.call("POST", "/switch/redeem", {"t": w.sw.issue_to_hub(w.ann, WS, "/")})
+    tok = _tok(h)
+    w.browser_tokens.add(tok)
+    assert w.api.d.channels.session_info(tok)["login_ms"] == 0
+    before = w.api.d.channels.db.q("SELECT COUNT(*) FROM sessions")[0][0]
+    w.sw.set_origin(WS, DASH)
+    for method, path, body in (
+        ("GET", "/session", None),
+        ("GET", "/me/workspaces", None),
+        ("GET", "/me/needs-you", None),
+        ("GET", "/rail", None),
+        ("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/", "kind": "open"}),
+    ):
+        w.call(method, path, body, token=tok)
+    assert w.api.d.channels.db.q("SELECT COUNT(*) FROM sessions")[0][0] == before

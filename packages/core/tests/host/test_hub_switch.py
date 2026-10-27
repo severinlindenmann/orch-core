@@ -129,3 +129,22 @@ def test_an_agent_is_refused_every_switch_kind(human, served, hub):
         res = served.client().req("hub.switch", args, idem=False, grant=served.grant, session=SESSION)
         assert err(res) in ("op.not_allowed", "role.denied")
     assert len(hub.sent) == n
+
+
+def test_owner_check_refuses_a_member_who_is_not_the_owner():
+    """N1/B2: `serve` calls `_owner` first for every hub op, hub.switch included."""
+    import types
+
+    from orch.host.errors import HostError
+
+    def call(role):
+        members = {"p1": types.SimpleNamespace(role=role)}
+        service = types.SimpleNamespace(
+            store=types.SimpleNamespace(state=types.SimpleNamespace(workspace=types.SimpleNamespace(members=members)))
+        )
+        return types.SimpleNamespace(column=types.SimpleNamespace(name="P"), viewer="p1", service=service)
+
+    assert hubops._owner(call("owner")) == "p1"
+    with pytest.raises(HostError) as e:
+        hubops._owner(call("member"))
+    assert e.value.code == "role.denied"

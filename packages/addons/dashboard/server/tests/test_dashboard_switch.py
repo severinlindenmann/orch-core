@@ -220,5 +220,6 @@ def test_a_switch_session_also_works_on_loopback_but_only_as_a_reader(client, li
     token = _switch_token(client, link)
     assert auth.listener_of(token) == "loopback" and auth.login_kind(token) == "switch"
     h = {"Authorization": "Bearer " + token, "Origin": ORIGIN}
-    assert client.get(f"/api/w/{WS}/hub/rail", headers=h).status_code != 403
+    link.answers["rail"] = {"hub": {"name": "Acme", "origin": None}, "user_id": "u", "workspaces": []}
+    assert client.get(f"/api/w/{WS}/hub/rail", headers=h).status_code == 200
     assert client.post(f"/api/w/{WS}/settings", json={}, headers=h).status_code == 403

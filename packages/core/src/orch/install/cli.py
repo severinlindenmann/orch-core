@@ -164,7 +164,7 @@ def choose_address(ctx: Ctx, given: str | None, st: dict[str, Any]) -> str:
         return st["address"]
     found = ctx.detect()
     if sys.platform == "darwin" and any(_is_cgnat(ip) for ip, _ in found):
-        ctx.say("Note: this Mac cannot open its own NetBird address in a browser; use 127.0.0.1 on this Mac.")
+        ctx.say("Note: on this computer, open it at 127.0.0.1 (a Mac cannot open its own private-network address).")
     if not ctx.interactive or len(found) == 1:
         return found[0][0]
     ctx.say("Which address should the parts listen on?")
@@ -501,7 +501,7 @@ def phone_origin(rec: dict[str, Any]) -> str:
     if host in ("localhost", P.ADDRESS_LOOPBACK, "::1") or host.startswith("127."):
         raise InstallError(
             "this hub only listens on this computer (127.0.0.1), a phone cannot reach it. "
-            "Reinstall it on a LAN or NetBird address: orch install hub --address <your address>"
+            "Reinstall it on a LAN or private-network address: orch install hub --address <your address>"
         )
     return f"http://{host}:{rec['port']}"
 

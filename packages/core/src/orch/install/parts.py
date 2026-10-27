@@ -98,7 +98,7 @@ def classify(ip: str, iface: str = "") -> str:
     if a.is_loopback:
         return "this computer only"
     if a in _NETBIRD or iface.startswith("wt"):
-        return "NetBird"
+        return "private network"
     if a.is_private:
         return "local network"
     return "public"

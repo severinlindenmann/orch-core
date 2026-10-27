@@ -53,7 +53,7 @@ def make(home, **kw):
         run=run,
         resolve_ref=lambda url, ref: "a" * 40,
         health=lambda h, p: True,
-        detect=lambda: [("127.0.0.1", "this computer only"), ("100.64.1.2", "NetBird")],
+        detect=lambda: [("127.0.0.1", "this computer only"), ("100.64.1.2", "private network")],
         port_free=lambda p, h: True,
         token=lambda: "TOKEN",
         dashboard_entry=lambda: ["/bin/orch-dashboard"],
@@ -158,7 +158,7 @@ def test_detected_addresses_offer_the_netbird_ip():
         "en0: flags=8863\n\tinet 192.168.1.10 netmask 0xffffff00\n"
     )
     got = detect_addresses(lambda argv: ifc if argv == ["ifconfig"] else "")
-    assert ("100.64.9.9", "NetBird") in got and ("192.168.1.10", "local network") in got and got[0][0] == "127.0.0.1"
+    assert ("100.64.9.9", "private network") in got and ("192.168.1.10", "local network") in got and got[0][0] == "127.0.0.1"
 
 
 def test_an_agent_is_refused(home):
@@ -298,13 +298,13 @@ def test_mac_is_told_it_cannot_open_its_own_netbird_address(home, monkeypatch):
     ctx, out, err, _ = make(home)
     monkeypatch.setattr(cli.sys, "platform", "darwin")
     cli.choose_address(ctx, None, {})
-    assert out.getvalue().count("cannot open its own NetBird address") == 1
+    assert out.getvalue().count("open it at 127.0.0.1") == 1
     out.truncate(0), out.seek(0)
     monkeypatch.setattr(cli.sys, "platform", "linux")
     cli.choose_address(ctx, None, {})
-    assert "NetBird address" not in out.getvalue()
+    assert "open it at 127.0.0.1" not in out.getvalue()
     out.truncate(0), out.seek(0)
     monkeypatch.setattr(cli.sys, "platform", "darwin")
     ctx.detect = lambda: [("127.0.0.1", "this computer only")]
     cli.choose_address(ctx, None, {})
-    assert "NetBird" not in out.getvalue()
+    assert "127.0.0.1 (a Mac" not in out.getvalue()

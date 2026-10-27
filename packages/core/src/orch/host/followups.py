@@ -6,10 +6,12 @@ import asyncio
 import contextlib
 import copy
 import logging
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from orch.identity import new_grant, new_ulid
 from orch.model import claims
+from orch.model import followup_events as fe
 from orch.model import followups as rules
 from orch.model import followups_wire as wire
 from orch.model.types import ts
@@ -26,10 +28,18 @@ class FollowupRunner:
         self.service, self.clock, self.mono, self.tick_s = service, clock, mono, tick_s
         self.path = service.state_dir / "hosts" / service.workspace_id / "followups.json"
         self.intents = custody.read_json(self.path, service.host_uid) or {}
+        self.rings_path = self.path.with_name("hook-rings.json")  # rings live apart from the run intents
+        self.rings = custody.read_json(self.rings_path, service.host_uid) or {}
+        #: hook hashes of this workspace's pending webhook follow-ups, refreshed by every read; the receiver asks this
+        #: set first so an unknown id never costs a store read
+        self.hooks = frozenset()
+        self.intents.pop("_rings", None)  # rings used to live here; they have their own file now
         self.task = None
         self._wall, self._mono = clock(), mono()
         self._last_tick, self._slept_s, self._blocked = None, 0, {}
         self._lock = asyncio.Lock()
+        self._wake = asyncio.Event()
+        self._cursor = {}  # follow-up id -> last ticket-log seq scanned for its event
 
     def start(self):
         self.task = asyncio.create_task(self._loop())
@@ -46,10 +56,16 @@ class FollowupRunner:
                 await self.tick_once()
             except Exception:  # noqa: BLE001 - a failed workspace tick must not kill the timer
                 LOG.exception("follow-up tick failed")
-            await asyncio.sleep(self.tick_s)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._wake.wait(), self.tick_s)
+            self._wake.clear()
 
     def status(self):
         return {"last_tick": self._last_tick, "slept_s": self._slept_s, "blocked": dict(self._blocked)}
+
+    def _save_rings(self):
+        custody.ensure_private_dir(self.rings_path.parent, self.service.host_uid)
+        custody.write_private(self.rings_path, self.rings)
 
     def _save(self):
         custody.ensure_private_dir(self.path.parent, self.service.host_uid)
@@ -74,14 +90,17 @@ class FollowupRunner:
         core = store.state._core
         if not self._owns(store, core):
             return [], 0, (0, rules.FU_TIME_EARLY_S)
-        rows, today = [], 0
+        rows, today, hooks = [], 0, set()
         for ticket in core.tickets.values():
             for rec in ticket.followups.values():
                 if rec.fired_at and ts(rec.fired_at) // 86400 == now // 86400:
                     today += 1
                 state = wire.view_state(core, ticket, rec, now)[0]
-                if state == "fired" or (state == "pending" and rec.trigger == "time"):
+                if state == "pending" and rec.hook:
+                    hooks.add(rec.hook)
+                if state == "fired" or (state == "pending" and rec.trigger in ("time", "orch", "webhook")):
                     rows.append((ticket.uid, ticket.key, copy.copy(rec)))
+        self.hooks = frozenset(hooks)
         caps = wire.caps_of(core.ws)
         return rows, today, (caps.runs_per_day, caps.early_s)
 
@@ -125,12 +144,13 @@ class FollowupRunner:
                         "failed" if failed or not wrote else "ran",
                         "harness_failed" if failed else "no_writes" if not wrote else None,
                     )
-            pending = sorted((r for r in rows if r[2].state == "pending"), key=lambda r: ts(r[2].due))
+            pending = sorted((r for r in rows if r[2].state == "pending"), key=lambda r: ts(r[2].due or r[2].deadline))
             for uid, key, rec in pending:
                 if now > ts(rec.deadline or rec.due) + rules.FU_LATE_S:
                     await self._outcome(uid, rec, "did_not_run", "no_host")
                     continue
-                if now < ts(rec.due) - early or live >= rules.FU_CONCURRENT_RUNS or today >= cap:
+                wake = await self._wake_reason(uid, rec, now, early)
+                if wake is None or live >= rules.FU_CONCURRENT_RUNS or today >= cap:
                     continue
                 reason = (
                     "runner_unavailable"
@@ -141,9 +161,71 @@ class FollowupRunner:
                     self._blocked[rec.id] = reason
                     LOG.info("follow-up %s blocked: %s", rec.id, reason)
                     continue
-                if await self.fire(uid, key, rec, hub):
+                if await self.fire(uid, key, rec, hub, *wake):
                     live += 1
                 today += 1
+
+    # -- what wakes a pending follow-up: (trigger, fallback, event) or None
+    async def _wake_reason(self, uid, rec, now, early):
+        if rec.trigger == "time":
+            return ("time", None, None) if now >= ts(rec.due) - early else None
+        if rec.trigger == "webhook":
+            rang = self.rings.get(rec.hook)
+            if rang is not None:
+                return ("webhook", None, fe.webhook_event(rec.hook, rang))
+        else:
+            event = await self.service.call(self._scan, uid, rec)
+            if event is not None:
+                return ("orch", None, event)
+        if now >= ts(rec.deadline):  # the source never came: the deadline wakes it, with the reason
+            return ("deadline", "no_ring" if rec.trigger == "webhook" else "no_event", None)
+        return None
+
+    def _scan(self, uid, rec):
+        """The first ticket-log event after the set that matches the follow-up's `on`; only its closed shape leaves."""
+        store = self.service.store
+        store.refresh()
+        after = self._cursor.get(rec.id)
+        if after is None:
+            after = store.seq_before(uid, ts(rec.set_at))
+        while True:
+            batch = store.events_after(uid, after, 256)
+            for event, _ in batch:
+                after = event["seq"]
+                shape = fe.from_ledger(event)
+                if shape is not None and ts(shape["at"]) >= ts(rec.set_at) and fe.matches(rec.on, shape):
+                    self._cursor[rec.id] = after
+                    return shape
+            if len(batch) < 256:
+                self._cursor[rec.id] = after
+                return None
+
+    # -- doorbell (host/hooks.py calls this; the body of a request never gets here)
+    def _hook_pending(self, hook_hash):
+        store = self.service.store
+        if store is None or self.service.state != "ok" or self.service.closing:
+            return False
+        store.refresh()
+        store.load_all()
+        core = store.state._core
+        now = int(self.clock())
+        return self._owns(store, core) and any(
+            r.hook == hook_hash and wire.view_state(core, t, r, now)[0] == "pending"
+            for t in core.tickets.values()
+            for r in t.followups.values()
+        )
+
+    async def ring(self, hook_hash):
+        """True when a pending follow-up of this workspace is bound to the hook. Only the first ring counts."""
+        if hook_hash not in self.hooks or not await self.service.call(self._hook_pending, hook_hash):
+            LOG.info("webhook ring ignored: no pending follow-up for hook %s", hook_hash[:8])
+            return False
+        LOG.info("webhook ring accepted for hook %s", hook_hash[:8])
+        if hook_hash not in self.rings:
+            self.rings[hook_hash] = datetime.fromtimestamp(self.clock(), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            await self.service.call(self._save_rings)
+        self._wake.set()
+        return True
 
     def _wrote(self, uid, rec, session):
         fired = False
@@ -220,7 +302,7 @@ class FollowupRunner:
         )
         return call, data, grant.expires_at
 
-    async def fire(self, uid, key, rec, hub):
+    async def fire(self, uid, key, rec, hub, trigger="time", fallback=None, event=None):
         run = "r_" + new_ulid()
         self.intents[rec.id] = {"fu": rec.id, "run": run, "at": self.clock(), "state": "intent"}
         await self.service.call(self._save)
@@ -232,12 +314,17 @@ class FollowupRunner:
             {
                 "followup": rec.id,
                 "grant": token.grant_id,
-                "trigger": "time",
+                "trigger": trigger,
                 "secret_hash": secret_hash,
                 "run": run,
+                **({"fallback": fallback} if fallback else {}),
+                **({"event": event} if event else {}),
             },
         )
         rec.run, rec.grant = run, token.grant_id
+        if rec.hook:
+            self.rings.pop(rec.hook, None)
+            await self.service.call(self._save_rings)
         LOG.info("follow-up %s fired run %s", rec.id, run)
         try:
             self.intents[rec.id]["state"] = "fired"
@@ -261,6 +348,7 @@ class FollowupRunner:
             return True
         except Exception as exc:  # noqa: BLE001 - a fired follow-up must settle, never retry
             code = getattr(exc, "code", None) or ""
+            LOG.warning("follow-up %s start failed: %s %s", rec.id, code, str(exc)[:200])
             if code == "outcome.unknown" or hub.store.records.get(run) is not None:
                 self.intents.setdefault(rec.id, {})["attempted"] = True
                 with contextlib.suppress(Exception):

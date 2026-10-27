@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from . import claims, identity
+from . import followup_events as fe
 from . import followups as fu
 from .codes import Code, Refusal
 from .types import Core, FollowupRec, Grant, TCore, WsCore, ts
@@ -80,8 +81,15 @@ def set_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
     ws, a, now = core.ws, e["actor"], ts(e["at"])
     if e["followup"] in t.followups:
         return Refusal(Code.FOLLOWUP_DENIED, "duplicate follow-up id")
-    if e.get("trigger") != "time":
-        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: only time follow-ups are built so far")
+    if e.get("trigger") == "addon":
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: addon follow-ups are not built yet")
+    if e.get("trigger") == "time":
+        if "on" in e or "hook" in e:
+            return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: a time follow-up has no event match")
+    elif not fe.valid_match(e.get("on")) or e["on"]["source"] != e["trigger"]:
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event match does not fit the trigger")
+    elif (e["trigger"] == "webhook") != ("hook" in e) or (e["trigger"] == "webhook" and e["hook"] != e["on"]["hook"]):
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: a webhook follow-up names exactly its hook")
     pending = [r for r in t.followups.values() if view_state(core, t, r, now)[0] == "pending"]
     ctx = fu.SetContext(
         a["kind"] == "agent",
@@ -124,6 +132,7 @@ def set_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         e["id"],
     )
     rec.label = e.get("label")
+    rec.on, rec.hook = e.get("on"), e.get("hook")
     t.followups[rec.id] = rec
     t.claim = None
     claims.release_leases(t)
@@ -150,6 +159,9 @@ def fired_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
         return r
     if e["grant"] in ws.grants:
         return Refusal(Code.GRANT_EXISTS, e["grant"])
+    wake = e.get("event")
+    if wake is not None and (e["trigger"] in ("time", "deadline") or not fe.matches(rec.on or {}, wake)):
+        return Refusal(Code.FOLLOWUP_DENIED, "bad_trigger: the event does not match the follow-up")
     assert chain
     g = fu.derive_grant(
         chain[0],
@@ -164,6 +176,7 @@ def fired_event(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
 
     ws.grants[g.id] = Grant(g.id, g.person, g.scope, g.verbs, stamp(g.issued_at), stamp(g.expires_at), parent=g.parent)
     rec.state, rec.fired_at, rec.grant, rec.run, rec.fallback = "fired", e["at"], g.id, e["run"], e.get("fallback")
+    rec.event = wake
     return None
 
 

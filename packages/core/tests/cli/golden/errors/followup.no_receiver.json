@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "followup.no_receiver",
+    "message": "this host does not receive webhooks",
+    "hint": "ask an owner to start the host with --hook-listen and --hook-url",
+    "fix": {
+      "argv": [
+        "orch",
+        "follow-up",
+        "--help"
+      ]
+    },
+    "retryable": false
+  }
+}

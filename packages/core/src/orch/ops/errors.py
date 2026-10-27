@@ -87,6 +87,15 @@ _SPECS = [
         "Schedules is switched off in this workspace; an owner can turn it on in Add-ons",
     ),
     _e(
+        "followup.no_receiver",
+        3,
+        False,
+        "this host does not receive webhooks",
+        "ask an owner to start the host with --hook-listen and --hook-url",
+        ["orch", "follow-up", "--help"],
+        "this host does not receive webhooks",
+    ),
+    _e(
         "followup.denied",
         3,
         False,

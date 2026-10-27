@@ -5,6 +5,12 @@ Status: **draft, 21 Oct 2026** (orch-core #714, #715-#720; orch-relay #81). Writ
 engine, ops/CLI (`orch follow-up`), runner one-run grant slot and host runner (time triggers) are built (parts 1 and 2); event/webhook triggers, add-on events, the skill, the dashboard and the relay inbox are not. The owner answered Q1, Q2, Q5 and Q7 on 21 Oct 2026 (the recommended answers, §9); the numbers are named constants
 in the code.
 
+**Built (27 Oct 2026, #717/#719):** the event shape `{source, kind, ref, status, at}` (`model/followup_events.py`: orch kinds
+question.asked/answered, ticket.changed/closed, gate.approved/changes_requested, task.done; webhook hook.rang; `addon` stays refused until #718),
+`orch follow-up --on question.answered | ticket.changed:testing | webhook:<id>` (`--in/--at` is then the deadline), `orch webhook new`
+(a doorbell address, shown once; only `H(id)` is stored), the host receiver (`host/hooks.py`), the deadline fallback with `follow-up show`
+printing the reason before the brief, and the work-skill text (`orch help wait`). Laptop delivery through the relay is #1285.
+
 ## 1. What it is
 
 An agent working on a ticket can schedule **its own next session** on that ticket: "look at the backfill again on
@@ -136,8 +142,8 @@ cancels its follow-ups."
 |---|---|---|
 | Q1 | Chain ceiling | **decided:** progress counts only tasks that existed at chain start; a chain also ends after 30 days or 10 follow-ups (`FU_CHAIN_CEILING_DAYS`, `FU_CHAIN_CEILING_COUNT`) |
 | Q2 | How long a follow-up session may run | **decided:** the parent grant's length, at most 8 h (`FU_RUN_HOURS`) |
-| Q3 | Webhooks on a VPS | relay inbox in v1; direct receive later |
-| Q4 | Optional HMAC | drop in v1 (the relay drops the body) |
+| Q3 | Webhooks on a VPS | relay inbox later (#1285); **built (#717):** direct receive on the host, `orch host run --hook-listen HOST:PORT --hook-url URL` |
+| Q4 | Optional HMAC | **built (#717), direct receive only:** GitHub `X-Hub-Signature-256`, secret kept in `<state>/hosts/hook-secrets.json` by `orch host hook-secret <id>`; the body is read (64 KiB) only to verify, then dropped |
 | Q5 | Budgets | **decided:** 20 pending per workspace, 24 runs a day, 2 at once (`FU_PENDING_MAX`, `FU_RUNS_PER_DAY`, `FU_CONCURRENT_RUNS`) |
 | Q6 | Cancel and Reschedule by a person are signed events | yes |
 | Q7 | Another session claims the waiting ticket | **decided:** cancel ("someone picked the ticket up") |

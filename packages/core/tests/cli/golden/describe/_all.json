@@ -117,6 +117,13 @@
         "summary": "List pending follow-ups across visible tickets."
       },
       {
+        "name": "webhook.new",
+        "cli": "webhook new",
+        "group": "Lifecycle",
+        "who": "read",
+        "summary": "Make a doorbell address that wakes one follow-up when an outside job calls it."
+      },
+      {
         "name": "handoff",
         "cli": "handoff",
         "group": "Lifecycle",

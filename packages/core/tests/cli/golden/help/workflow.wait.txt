@@ -1,0 +1,9 @@
+ok help wait
+wait more than an hour: set a follow-up (a fresh session later), then end this one
+1. orch follow-up --in 36h --brief-file brief.md  # Schedule a fresh session, release your claim, then end this session
+2. orch webhook new --label 'backfill 8812 done'  # Make a doorbell address that wakes one follow-up when an outside job calls it
+3. orch follow-up --on webhook:<id> --in 3d --brief-file brief.md  # Schedule a fresh session, release your claim, then end this session
+4. orch follow-up --on question.answered --in 2d --brief-file brief.md  # Schedule a fresh session, release your claim, then end this session
+5. orch follow-up show <id>  # Show a follow-up and its brief
+6. orch follow-up cancel <id>  # Cancel a pending follow-up
+next: orch describe CMD

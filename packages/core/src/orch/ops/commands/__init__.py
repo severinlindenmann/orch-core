@@ -23,6 +23,7 @@ MODULES = (
     "follow_up_cancel",
     "follow_up_show",
     "follow_up_list",
+    "webhook_new",
     "handoff",
     "submit",
     "ask",

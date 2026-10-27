@@ -118,7 +118,7 @@ def test_each_skill_is_small(skill: Skill):
 # its orch.skill.json is raised and the hash below is updated, so installed copies are reported as old, not "edited".
 PINNED = {
     "orch-tickets": ("1.0.2", "aba26b31bdaa0d3f"),
-    "orch-work-on-ticket": ("1.0.5", "e35b63167bea8f00"),
+    "orch-work-on-ticket": ("1.0.6", "11708d4502da8da9"),
     "orch-refine-ticket": ("1.0.3", "da9d160285d125ca"),
 }
 

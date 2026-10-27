@@ -1,6 +1,7 @@
 """Set a time follow-up and release the claim in the same event."""
 
 from orch.identity import new_ulid
+from orch.model import followup_events as fe
 from orch.ops import followup, plans
 from orch.ops._dsl import FILE, REF, STR, S, err, obj, operation
 from orch.ops.errors import OrchError
@@ -22,19 +23,25 @@ def build(c, p, args):
         raise OrchError("invalid.input", "give exactly one of --brief or --brief-file")
     brief = c.read_text_source({"text": args["brief"]} if "brief" in args else {"file": args["brief_file"]})
     fid = "fu_" + new_ulid()
-    event = {
-        "type": "followup.set",
-        "followup": fid,
-        "trigger": "time",
-        "due": stamp,
-        "deadline": stamp,
-        "brief": brief,
-    }
+    event = {"type": "followup.set", "followup": fid, "brief": brief}
+    if "on" in args:
+        try:
+            on = fe.parse_on(args["on"], c.store.workspace_id)
+        except ValueError as e:
+            raise OrchError("invalid.input", str(e)) from None
+        # an event follow-up carries its deadline (the fallback); `due` stays absent
+        event.update(trigger=on["source"], deadline=stamp, on=on)
+        if "hook" in on:
+            event["hook"] = on["hook"]
+    else:
+        event.update(trigger="time", due=stamp, deadline=stamp)
     if "label" in args:
         event["label"] = c.text(args["label"], one_line=True, limit=200, what="label")
     view = followup.add(p, event)
     rec = next(f for f in view.followups if f["id"] == fid)
-    data = {k: rec[k] for k in ("id", "due", "deadline", "state", "label") if k in rec}
+    data = {k: rec[k] for k in ("id", "deadline", "state", "label") if k in rec}
+    data["due"] = rec.get("due") or rec["deadline"]  # for an event follow-up: the latest time it runs
+    data["trigger"] = rec["trigger"]
     return plans.Out(data, [f"orch follow-up show {fid}; end your session now"])
 
 
@@ -50,12 +57,17 @@ OP = operation(
         "brief_file": FILE,
         "brief": S("instructions for the fresh session", **{"x-metavar": "TEXT"}),
         "label": S("optional label", maxLength=200),
+        "on": S(
+            "wake on an event instead of a time (--in/--at is then the deadline): question.answered, "
+            "ticket.changed:testing, gate.approved:plan or webhook:<id from orch webhook new>",
+            **{"x-metavar": "EVENT"},
+        ),
     },
     positional=("ref",),
     one_of=("in", "at"),
     emits=("followup.set",),
     text="ok {key} followup.set {id} due={due} state={state}\nnext: {next}",
-    data=obj({"id": STR, "due": STR, "deadline": STR, "state": STR, "label": STR}, optional=("label",)),
+    data=obj({"id": STR, "due": STR, "deadline": STR, "state": STR, "trigger": STR, "label": STR}, optional=("label",)),
     errors=tuple(
         err(c)
         for c in (

@@ -23,6 +23,17 @@ WORKFLOWS: dict[str, tuple[str, list[tuple[str, str]]]] = {
             ("wait", "orch wait"),
         ],
     ),
+    "wait": (
+        "wait more than an hour: set a follow-up (a fresh session later), then end this one",
+        [
+            ("follow_up", "orch follow-up --in 36h --brief-file brief.md"),
+            ("webhook.new", "orch webhook new --label 'backfill 8812 done'"),
+            ("follow_up", "orch follow-up --on webhook:<id> --in 3d --brief-file brief.md"),
+            ("follow_up", "orch follow-up --on question.answered --in 2d --brief-file brief.md"),
+            ("follow_up.show", "orch follow-up show <id>"),
+            ("follow_up.cancel", "orch follow-up cancel <id>"),
+        ],
+    ),
     "refine": (
         "turn a rough ticket into requirements, acceptance criteria, a plan and tasks",
         [

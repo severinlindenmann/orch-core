@@ -164,6 +164,27 @@ def request_idem(op: str, opts: Mapping[str, Any] | None) -> str | None:
     return None
 
 
+_HOOK_ID = re.compile(r"hk_[0-7][0-9A-HJKMNP-TV-Z]{25}")
+
+
+def _mask(value: Any) -> Any:
+    """The hk_ regex over every string in dicts, lists and tuples; other values pass as they are (never raises)."""
+    if isinstance(value, str):
+        return _HOOK_ID.sub("hk_…", value)
+    if isinstance(value, Mapping):
+        return {_mask(k): _mask(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_mask(v) for v in value)  # plain tuple: a namedtuple's constructor would raise
+    return value
+
+
+def _mask_hooks(args: Mapping[str, Any]) -> dict[str, Any]:
+    """A webhook address is shown to the agent once and never written to disk: the record keeps ``hk_…`` only."""
+    return _mask(args)
+
+
 def principal_of(uid: int, column: str, grant: str | None = None) -> str:
     """``g:<grant id>@<uid>`` for the verified grant column (``grant`` is the verified ``auth.grant``), else
     ``uid:<n>`` (F4): a grant id never makes a principal by itself. Raises for column R (its principal is
@@ -465,7 +486,7 @@ class OutcomeStore(IntentStore):
                             "principal": principal,
                             "binding": binding,
                             "op": op,
-                            "args_normalised": args,
+                            "args_normalised": _mask_hooks(args),
                             "files": dict(files or {}),
                             "session": session,
                             "planned": [{k: v for k, v in p._asdict().items() if v is not None} for p in planned],

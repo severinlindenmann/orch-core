@@ -13,6 +13,7 @@ followup.too_soon 3 retry:false
 followup.too_far 3 retry:false
 followup.bad_brief 3 retry:false
 followup.off 3 retry:false
+followup.no_receiver 3 retry:false
 followup.denied 3 retry:false
 internal 1 retry:false
 not_implemented 1 retry:false

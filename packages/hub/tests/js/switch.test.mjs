@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { colour, initials, landing, railRows, safeReturn, safeUrl, ticketFromHash } from "../../src/orch_hub/web/switch.js";
+import { colour, initials, landing, landingPlan, railRows, safeReturn, safeUrl, ticketFromHash } from "../../src/orch_hub/web/switch.js";
 
 test("ticketFromHash takes only a well formed #t= fragment", () => {
   const ok = "a".repeat(32) + "." + "b".repeat(32);
@@ -46,4 +46,13 @@ test("initials, colour and safeUrl", () => {
   assert.equal(safeUrl("http://127.0.0.1:5/switch#t=abc"), "http://127.0.0.1:5/switch#t=abc");
   assert.equal(safeUrl("javascript:alert(1)"), null);
   assert.equal(safeUrl("nonsense"), null);
+});
+
+test("landingPlan never signs in silently", () => {
+  assert.equal(landingPlan({ kind: "signout", user_id: "u", signed_in_as: null }), "redeem");
+  assert.equal(landingPlan({ kind: "open", user_id: "u", signed_in_as: { user_id: "u" } }), "redeem");
+  assert.equal(landingPlan({ kind: "open", user_id: "u", signed_in_as: null }), "confirm");
+  assert.equal(landingPlan({ kind: "open", user_id: "u", signed_in_as: { user_id: "v" } }), "conflict");
+  assert.equal(landingPlan(null), "confirm");
+  assert.equal(landingPlan({ kind: "open" }), "confirm");
 });

@@ -64,3 +64,13 @@ export function landing(status, body) {
   const p = safeReturn(body.return_to);
   return p && p !== "/" ? { kind: "path", path: p } : { kind: "home" };
 }
+
+/** What the landing does with a peek answer: "redeem" (a sign-out, or the same person is already here), "confirm" (nobody
+ * is signed in: ask first), "conflict" (another person is signed in). A ticket never signs anyone in silently. */
+export function landingPlan(peek) {
+  if (!peek || typeof peek !== "object") return "confirm";
+  if (peek.kind === "signout") return "redeem";
+  const cur = peek.signed_in_as;
+  if (!cur) return "confirm";
+  return cur.user_id === peek.user_id ? "redeem" : "conflict";
+}

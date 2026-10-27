@@ -5,7 +5,7 @@ import { CanonError, parseStrict } from "./cj.js";
 import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, signProof, signRegistration } from "./channel.js";
 import { homeView } from "./home.js";
 import { adminView } from "./admin.js";
-import { OPEN_FIRST, colour, initials, landing, railRows, safeUrl, ticketFromHash } from "./switch.js";
+import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl, ticketFromHash } from "./switch.js";
 import { Refusal, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
@@ -171,15 +171,38 @@ async function signOutAlso(w) {
   if (url) location.assign(url);
 }
 
-// A ticket in the address (#t=...): strip it at once, exchange it once, then land on the page it names.
-async function landFromTicket(t) {
-  history.replaceState(null, "", location.pathname);
-  const r = await api("POST", "/switch/redeem", { t });
+// A ticket in the address (#t=...): strip it at once and NEVER sign in silently (login CSRF): ask the hub what the ticket is for,
+// then either redeem (same person, or a sign-out), or let the person confirm.
+const plain = (...kids) => show(h("div", { class: "plain" }, kids));
+const expiredView = () => plain(h("h1", { text: "This link expired" }), h("p", { class: "muted", text: "This link expired. Go back and click again." }), h("button", { text: "Sign in with your password", onclick: () => loginView() }));
+
+async function redeemTicket(t, replace) {
+  const r = await api("POST", "/switch/redeem", replace ? { t, replace: true } : { t });
   const l = landing(r.status, r.body);
-  if (l.kind === "signout") { state.user = null; return show(h("div", { class: "plain" }, h("h1", { text: "You are signed out" }), h("p", { class: "muted", text: "Your hub session ended." }), h("button", { class: "pri", text: "Sign in again", onclick: () => loginView() }))); }
-  if (l.kind === "expired") return show(h("div", { class: "plain" }, h("h1", { text: "This link expired" }), h("p", { class: "muted", text: "This link expired. Go back and click again." }), h("button", { text: "Sign in with your password", onclick: () => loginView() })));
+  if (l.kind === "signout") { state.user = null; return plain(h("h1", { text: "You are signed out" }), h("p", { class: "muted", text: "Your hub session ended." }), h("button", { class: "pri", text: "Sign in again", onclick: () => loginView() })); }
+  if (l.kind === "expired") return expiredView();
   if (l.kind === "path") return location.replace(l.path);
   await home();
+}
+
+async function landFromTicket(t) {
+  history.replaceState(null, "", location.pathname);
+  const p = await api("POST", "/switch/peek", { t });
+  if (p.status !== 200) return expiredView();
+  const name = renderText(p.body.name ?? "you");
+  const plan = landingPlan(p.body);
+  if (plan === "redeem") return redeemTicket(t, false);
+  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You came from a workspace. Nothing happens until you continue." }),
+    h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { text: "Cancel", onclick: () => loginView() })));
+  const cur = renderText(p.body.signed_in_as?.name ?? "someone else");
+  return plain(h("h1", { text: "Different person" }), h("p", { text: "You are signed in as " + cur + " here. This link is for " + name + "." }),
+    h("div", { class: "row" }, h("button", { text: "Stay signed in as " + cur, onclick: () => home() }), h("button", { class: "pri", text: "Sign out and continue as " + name, onclick: () => redeemTicket(t, true) })));
+}
+
+// A session that came from a workspace ticket cannot use admin tools until a real password sign-in.
+function reauthView() {
+  show(h("div", { class: "plain" }, h("h1", { text: "Sign in again to use admin tools" }), h("p", { class: "muted", text: "You arrived from a workspace. Admin tools need your password and code." }),
+    h("button", { class: "pri", text: "Sign in again", onclick: async () => { await api("DELETE", "/session"); state.user = null; loginView(); } })));
 }
 
 async function admin() {
@@ -187,9 +210,11 @@ async function admin() {
   state.menu = false;
   await loadRail();
   if (!state.user.is_admin) return home();
+  if (state.user.needs_sign_in) return reauthView();
   const notice = state.notice;
   state.notice = null;
-  shell("admin", adminView({ api, say, notice, refresh }));
+  const adminApi = async (m, path, body) => { const r = await api(m, path, body); if (r.status === 403 && r.body.error === "reauth_required") reauthView(); return r; };
+  shell("admin", adminView({ api: adminApi, say, notice, refresh }));
 }
 
 async function home() {

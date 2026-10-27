@@ -116,7 +116,6 @@ def test_every_non_human_op_renders_byte_identically_in_both_modes(tmp_path_fact
     assert any(c[0] == 0 for c in want) and any(c[0] != 0 for c in want)
 
 
-ADDON_OPS = {"quick.list", "follow_up", "follow_up.list", "follow_up.show", "follow_up.cancel", "webhook.new"}
 WORKSPACE_DEPENDENT = {
     "describe/_all.txt", "describe/_all.json", "help/_all.txt", "help/_all.json",
     "help/workflow.wait.txt", "help/workflow.wait.json",
@@ -127,26 +126,40 @@ def test_the_local_golden_paths_are_unchanged_with_the_workspace_registered(lab,
     """The golden cases are help, describe, rendered error envelopes and parser errors: none of them is a request to
     the host. This only shows that those stay local and unchanged while the workspace is registered and served; the
     parity of everything that does reach the host is ``test_every_non_human_op_renders_byte_identically...``."""
+    import orch.ops as ops
     from tests.cli import conftest as cc
     from tests.cli import golden_cases
 
+    # every operation an add-on declares, from the registry: a hand-kept list missed some (follow_up.reschedule/.undo)
+    addon_ops = {op.name for op in ops.all() if op.addon is not None}
     served = hosted(lab)
+    # help and describe ask this host which add-ons are on (addon.list), one connection per call: the cases below make
+    # hundreds within a second, past the connection-rate bucket (20/s, burst 40). A refused call made help list every
+    # command, as if there were no workspace, so which cases were really compared against the host depended on timing.
+    served.h.host.limits.connection_rate = None
+    served.h.host.limits.attempts.clear()
     try:
         base = {"ORCH_WORKSPACE": str(lab.root), "ORCH_STATE_DIR": str(lab.state), "ORCH_HOST_RUN_DIR": str(lab.run)}
 
         def run_cli(*argv, env=None, **kw):
             return cc.run_cli(*argv, env={**base, **(env or {})}, **kw)
 
+        from orch.cli import main as cli_main
+
+        read = cli_main._addons_on
+        answers = []
+        monkeypatch.setattr(cli_main, "_addons_on", lambda *a: answers.append(read(*a)) or answers[-1])
         monkeypatch.setattr(golden_cases, "run_cli", run_cli)
         checked = 0
         for name, text in golden_cases.cases():
             if name == "errors/_not-implemented.txt":
                 continue  # binds a stub over a handler of this process: the host runs its own
-            if name in WORKSPACE_DEPENDENT or name.split("/")[-1].rsplit(".", 1)[0] in ADDON_OPS:
+            if name in WORKSPACE_DEPENDENT or name.split("/")[-1].rsplit(".", 1)[0] in addon_ops:
                 continue  # help and describe list an add-on's commands only while it is on: this workspace has none on
             assert (cc.GOLDEN / name).read_text(encoding="utf-8") == text, name
             checked += 1
         assert checked > 200
+        assert answers and all(a == {} for a in answers)  # every help/describe read this workspace: none on, no refusal
     finally:
         served.close()
 

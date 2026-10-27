@@ -44,8 +44,6 @@ export type HandoffAction =
 
   /** Reduced workspace settings (M4). Repos have their own actions (`repo_set`, `repo_remove`). */
   | { action: 'settings_set'; grant_hours?: number; claim_ttl_min?: number; lease_ttl_min?: number }
-  /** The workspace icon (`settings.set` of `icon`, a click): an icon and a colour of the closed lists, or null for the automatic one. */
-  | { action: 'icon_set'; icon: { icon: string; colour: string } | null }
   /** Add or change one workspace repository (Repos add-on); the host checks the folder before anything is signed. */
   | { action: 'repo_set'; name: string; path: string; remote?: string; default_branch?: string }
   /** Take one repository off the list. The folder and its files stay on disk. */

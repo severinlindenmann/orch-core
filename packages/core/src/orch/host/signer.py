@@ -246,7 +246,6 @@ _SETTINGS_KEYS = frozenset(
         "lease_ttl_min",
         "repos",
         "publish",
-        "icon",
         ADDONS_KEY,
     }  # fmt: skip
 )

@@ -2,6 +2,7 @@
 // knows this workspace. Changing the addresses is a signed settings change (terminal only); registering is a plain
 // request. Plain words first; the ids the server's admin needs sit under Technical details.
 import { useQuery } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { adminCommand, isUnknownWorkspace, newIdem, reachNote, shareError, shareQueries, sharesApi } from '@/api/shares'
@@ -121,7 +122,7 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
                   <Button
                     size="sm"
                     variant="secondary"
-                    onClick={() => void copyText(`Please allow this workspace on the sharing server:\n${adminCommand(data.workspace, data.owner)}`).then((ok) => setCopyNote(ok ? 'Setup details copied.' : 'Could not copy. Open Technical details and copy the line by hand.'))}
+                    onClick={() => void copyText(`Please allow this workspace on the sharing server:\n${adminCommand(data.workspace, data.owner)}`).then((ok) => setCopyNote(ok ? 'Setup details copied.' : 'Could not copy. Press the i and copy the line by hand.'))}
                   >
                     Copy setup details for the server administrator
                   </Button>
@@ -129,11 +130,10 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
                     {copyNote}
                   </span>
                 </div>
-                <details className="text-[12px] text-text-muted">
-                  <summary className="cursor-pointer select-none">Technical details</summary>
+                <InfoDrawer>
                   <p className="mt-1">The server’s admin runs:</p>
                   <p className="break-all font-mono">{adminCommand(data.workspace, data.owner)}</p>
-                </details>
+                </InfoDrawer>
               </>
             )}
             {owner && (

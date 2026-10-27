@@ -1,42 +1,68 @@
-import { enrolBrowser, upgradeSession } from './trustedKey'
+import { enrolBrowser, switchProof } from './trustedKey'
 
 const STORAGE = 'orch-session'
 let currentToken: string | null = null
 let channel: BroadcastChannel | null = null
-/** A hub switch ticket found in the address (`#t=`): never used until the person clicks Continue (login CSRF). */
+/** A hub switch ticket found in the address (`#t=`). Used silently only after this browser's key proved itself
+ * (`landSwitch`), otherwise only when the person clicks Open (login CSRF). */
 let pendingSwitch: string | null = null
 export const getPendingSwitch = () => pendingSwitch
 export const declineSwitch = () => { pendingSwitch = null }
-/** The person clicked Continue: the server (and the hub behind it) uses the ticket once. Returns where to go, or
- * `null` after a sign-out ticket, or `undefined` when the ticket is not good (expired, used, not for this person). */
-export async function confirmSwitch(fetcher: typeof fetch = fetch): Promise<string | null | undefined> {
-  const t = pendingSwitch
-  pendingSwitch = null
-  if (!t) return undefined
+
+type Redeemed = { ok: true; to: string | null } | { ok: false; unverified: boolean }
+
+async function redeem(t: string, proof: { key_id: string; sig: string } | null, fetcher: typeof fetch): Promise<Redeemed> {
   const response = await fetcher('/auth/switch', {
     method: 'POST', credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(20_000),
-    headers: { 'content-type': 'application/json' }, body: JSON.stringify({ t }),
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify(proof ? { t, ...proof } : { t }),
   })
-  if (!response.ok) return undefined
+  if (!response.ok) {
+    const code = await response.json().then((b: { error?: { code?: unknown } }) => b?.error?.code, () => null)
+    return { ok: false, unverified: response.status === 401 && code === 'switch.unverified' }
+  }
   const body = await response.json() as { token?: string; return_to?: string; signed_out?: boolean }
   if (body.signed_out) {
     const old = currentToken ?? sessionStorage.getItem(STORAGE)
     if (old) await fetcher('/auth/logout', { method: 'POST', credentials: 'omit', cache: 'no-store', headers: { Authorization: `Bearer ${old}` } }).catch(() => null)
     clearSession()
-    return null
+    return { ok: true, to: null }
   }
-  if (typeof body.token !== 'string') return undefined
+  if (typeof body.token !== 'string') return { ok: false, unverified: false }
   remember(body.token)
-  // Same browser as a real sign-in on this computer: its enrolled key makes the session a full one, no prompt.
-  const full = await upgradeSession(body.token, fetcher)
-  if (full) remember(full)
-  return safeDestination(body.return_to ?? '/')
+  return { ok: true, to: safeDestination(body.return_to ?? '/') }
+}
+
+/** What a hub switch link leads to: a landing (`to`, `null` after a sign-out ticket), the one "Open <name>?" confirm
+ * (the ticket is still unused), or an error page (the link is not good: expired, used, not for this person). */
+export type SwitchLanding = { kind: 'landed'; to: string | null } | { kind: 'confirm'; name: string | null } | { kind: 'failed' }
+
+/** E4: right after boot. This browser proves its enrolled key for this origin BEFORE the ticket is used; the server
+ * then redeems and opens a full session in one step. No key, or a proof the server refuses: the ticket stays unused
+ * and the person is asked once. */
+export async function landSwitch(fetcher: typeof fetch = fetch): Promise<SwitchLanding> {
+  const t = pendingSwitch
+  if (!t) return { kind: 'failed' }
+  const { name, proof } = await switchProof(t, fetcher)
+  if (!proof) return { kind: 'confirm', name }
+  const got = await redeem(t, proof, fetcher).catch((): Redeemed => ({ ok: false, unverified: true }))
+  if (got.ok) { pendingSwitch = null; return { kind: 'landed', to: got.to } }
+  if (got.unverified) return { kind: 'confirm', name }
+  pendingSwitch = null
+  return { kind: 'failed' }
+}
+
+/** The person clicked Open: the server (and the hub behind it) uses the ticket once, with no proof: a read-mostly
+ * session. Returns where to go, or `null` after a sign-out ticket, or `undefined` when the ticket is not good. */
+export async function confirmSwitch(fetcher: typeof fetch = fetch): Promise<string | null | undefined> {
+  const t = pendingSwitch
+  pendingSwitch = null
+  if (!t) return undefined
+  const got = await redeem(t, null, fetcher)
+  return got.ok ? got.to : undefined
 }
 const listeners = new Set<() => void>()
 export const isForeignNavigation = () => document.querySelector('meta[name="orch-nav"][content="foreign"]') !== null
 export const getToken = () => currentToken
-/** A new full session replaced the read-mostly one (after a step-up). */
-export const adoptToken = (token: string) => remember(token)
 export function onSessionChange(listener: () => void) {
   listeners.add(listener)
   return () => { listeners.delete(listener) }

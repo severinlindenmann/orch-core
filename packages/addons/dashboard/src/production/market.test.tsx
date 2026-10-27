@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { ARM_MS } from '@/api/click'
 import * as gesture from '@/components/sign/trustedPress'
 import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { openInfo } from '@/test/info'
 import { market, stage, installedAddon, updateStage } from '@/test/fixtures/market'
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
@@ -159,10 +160,18 @@ it.each(['member', 'no-actions'] as const)('hides every write control for %s', a
   await screen.findByText('Available', {}, T)
   expect(screen.queryByRole('button', { name: 'Install...' })).toBeNull()
   await userEvent.click(screen.getByRole('button', { name: 'Installed' }))
-  await screen.findByText('1.0.0')
+  // The version sits behind the row's "i": informational only, the drawer holds no control.
+  const versionInfo = await openInfo(await screen.findByTestId('addon-calendar', {}, T))
+  expect(versionInfo).toHaveTextContent('Version 1.0.0')
+  expect(within(versionInfo).queryAllByRole('button')).toHaveLength(0)
+  await userEvent.keyboard('{Escape}')
   expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Update...' })).toBeNull()
   await userEvent.click(screen.getByRole('button', { name: 'Marketplaces' }))
+  await userEvent.click(await screen.findByRole('button', { name: 'About this marketplace' }, T))
+  const about = await screen.findByTestId('info-drawer-content')
+  expect(about).toHaveTextContent('Allowed by:')
+  expect(within(about).queryAllByRole('button')).toHaveLength(0)
   expect(screen.queryByRole('button', { name: '+ Add marketplace' })).toBeNull()
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
 })

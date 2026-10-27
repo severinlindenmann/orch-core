@@ -261,12 +261,19 @@ def digest(view: Mapping[str, Any]) -> str:
     return "sha256:" + hashlib.sha256(canon.dumps(stable)).hexdigest()
 
 
+def workspace_label(workspace: Mapping[str, str]) -> str:
+    """The workspace as a review names it: the unsigned name (D6: an owner may change it at any time, nothing signs
+    it) never alone, always with the prefix and the last eight of the id (``Acme (DEMO · 1a2b3c4d)``)."""
+    wid = signer._clean(workspace.get("id") or "")
+    return f"{signer._clean(workspace['name'])} ({signer._clean(workspace.get('prefix') or '')} · {wid[-8:]})"
+
+
 def rotation(*, workspace: Mapping[str, str], old: str, new: str, pk: str) -> dict[str, Any]:
     """#1198 C13: the review of ``device.rotate`` from the dashboard: what is replaced (this computer's key, old and new
     device id, as the terminal shows them), and the signer's per-offer key for the two typed secrets (the recovery code
     and the passphrase of the new key file). No event exists yet: the new key signs it after the secrets are opened."""
     lines = [
-        f"Replace the signing key of this computer for {signer._clean(workspace['name'])}.",
+        f"Replace the signing key of this computer for {workspace_label(workspace)}.",
         "The old key stops signing everywhere, also while a hub is down. The new key is signed by your recovery code "
         "for this workspace only; nothing is re-shared with a hub.",
         f"old device: {old}",
@@ -288,7 +295,7 @@ def rotation(*, workspace: Mapping[str, str], old: str, new: str, pk: str) -> di
 def runner_switch(*, workspace: Mapping[str, str], on: bool, terminals: bool, text: str) -> dict[str, Any]:
     """#1198 C14: the review of dashboard execution on or off, from core's own words (``enablement.risk_text``: the
     terminal shows the same). The page shows ``lines``; the signer acts only on this View's digest."""
-    name = signer._clean(workspace["name"])
+    name = workspace_label(workspace)
     if on:
         rest = [x.strip() for x in text.splitlines()[1:] if x.strip()]
         lines = [f"Turn on dashboard execution for {name}.", RUNNER_LINE, *rest]

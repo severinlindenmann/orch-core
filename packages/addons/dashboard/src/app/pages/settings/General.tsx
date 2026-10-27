@@ -15,7 +15,8 @@ import { plural } from '@/lib/time'
 import { OwnerNote } from './OwnerNote'
 import { toastApiError } from '@/app/toast'
 import { useSettingsSign } from './useSettingsSign'
-import { WorkspaceIconPicker, iconWords } from './WorkspaceIconPicker'
+import { WorkspaceIconPicker } from './WorkspaceIconPicker'
+import { useCosmetic } from './useCosmetic'
 import { queries } from '@/api/queries'
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
@@ -64,6 +65,7 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
   }
   const id = identity.data
   const { ask, prompt } = useSettingsSign(workspace.id)
+  const cosmetic = useCosmetic(workspace)
   const current = grantDefaultHours(workspace)
   const [hours, setHours] = useState<string | null>(null)
   const hoursValue = hours ?? String(current)
@@ -120,13 +122,7 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
           <WorkspaceIconPicker
             workspace={workspace}
             canEdit={canEdit}
-            onSave={(choice) =>
-              ask({
-                title: 'Change the workspace icon',
-                covers: [choice ? `Workspace icon: ${iconWords(choice)}` : 'Workspace icon: back to the automatic one', 'Shown beside the prefix and name in menus; it never replaces them'],
-                req: { op: 'icon', icon: choice },
-              })
-            }
+            onSave={(choice) => void cosmetic.save({ icon: choice })}
           />
         </Section>
       )}

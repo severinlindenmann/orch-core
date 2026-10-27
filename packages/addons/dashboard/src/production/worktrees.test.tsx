@@ -1,4 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react'
+import { openInfo } from '@/test/info'
 import userEvent from '@testing-library/user-event'
 import { runsApi, type Run } from '@/api/runs'
 import { onDockRequest } from '@/app/terminal/dock/request'
@@ -47,8 +48,7 @@ it('lists each ticket’s worktree in plain words and keeps folder and branch be
   expect(second).toHaveTextContent('not checked') // unknown is never zero
   expect(second).toHaveTextContent('by you')
   expect(second).not.toHaveTextContent(/0 changed|no unsaved/)
-  const details = within(first).getByText('Technical details').closest('details')!
-  expect(details).not.toHaveAttribute('open')
+  const details = await openInfo(first)
   expect(details).toHaveTextContent('/work/code.worktrees/aaaaaaaa-DEMO-0001')
   expect(calls('/worktrees')[0].method).toBe('GET')
 })

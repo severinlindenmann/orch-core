@@ -33,6 +33,8 @@ import {
   type Workspace,
   type WorkspaceIdentity,
   type SettingsRequest,
+  type Cosmetic,
+  type CosmeticBody,
   type ArtifactPage,
   type ArtifactQuery,
   type RelayRequest,
@@ -252,6 +254,21 @@ export function createApi(transport: Transport) {
     getIdentity: (ws: string) => call<WorkspaceIdentity>('GET', `/api/workspaces/${ws}/identity`),
     /** Owner only. Everything except rename is signed in the dashboard. */
     postSettings: (ws: string, req: SettingsRequest) => call<{ ok: true; workspace: Workspace }>('POST', `/api/workspaces/${ws}/settings`, req),
+    /**
+     * D6: the name and icon, unsigned, owner only. The mock runs its own `rename` and `icon` settings ops after the
+     * host's stale check: 409 `cosmetic.conflict` when `if_current` is not what the workspace has now.
+     */
+    setCosmetic: async (ws: string, body: CosmeticBody): Promise<Cosmetic> => {
+      const now = (await call<Workspace[]>('GET', '/api/workspaces')).find((x) => x.id === ws)
+      const sameIcon = (a: Cosmetic['icon'], b: Cosmetic['icon']) => a === b || (!!a && !!b && a.icon === b.icon && a.colour === b.colour)
+      if (!now || now.name !== body.if_current.name || !sameIcon(now.icon ?? null, body.if_current.icon))
+        throw new ApiError(409, { code: 'cosmetic.conflict', message: 'Someone changed the name or icon meanwhile', retryable: false })
+      const settings = (req: SettingsRequest) => call<{ ok: true; workspace: Workspace }>('POST', `/api/workspaces/${ws}/settings`, req)
+      let after = now
+      if (body.name !== undefined) after = (await settings({ op: 'rename', name: body.name })).workspace
+      if (body.icon !== undefined) after = (await settings({ op: 'icon', icon: body.icon })).workspace
+      return { name: after.name, icon: after.icon ?? null }
+    },
     /** Artifacts of the tickets the viewer can see in `ws`, filtered and paged by the host. */
     listArtifacts: (ws: string, q: ArtifactQuery = {}) =>
       call<ArtifactPage>(

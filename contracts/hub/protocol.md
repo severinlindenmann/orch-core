@@ -1302,7 +1302,8 @@ otherwise), so the host can never ask for another person. `origin` is the dashbo
 128-bit id the hub stores in memory only: single use, 30 s, bound to a user and a direction. `switch_ticket` returns a
 hub-console ticket (`url` = `<console origin>/#t=<ticket>`, fragment only); `switch_redeem` spends a ticket the hub made for
 THIS link's workspace (`<workspace_id>.<hex>`) and answers `bad_ticket` for anything else (unknown, used, expired, other
-workspace, user no longer the owner alias). `return_to` is a relative path (`/`, no `//`, `\\`, `..`), else `/`. `kind`
+workspace, user no longer the owner alias). A ticket for this workspace whose user is not the owner alias is refused
+WITHOUT being used; one presented at another workspace's link is spent. `return_to` is a relative path (`/`, no `//`, `\\`, `..`), else `/`. `kind`
 `signout` ends the browser's session at the target instead of opening one. These ops sign nothing.
 
 **Verification by the receiver** (hub for w2h with the binding's `WSK`, host for h2w with the held card's `HK_op`):

@@ -71,6 +71,31 @@ def test_the_cap_settings_1_is_in_the_welcome(w):
     assert w.client().welcome["ops"]["workspace.settings"] == 1
 
 
+def test_the_defaults_are_marked_and_the_four_gates_are_given(w):
+    data = ok(w.client().req("workspace.settings"))
+    assert set(data) == {
+        "settings",
+        "next_page",
+        "gates",
+        "defaults",
+        "addons",
+        "publish",
+        "settings_at",
+        "policy_at",
+        "sub_cursor",
+    }
+    assert data["publish"] is None
+    assert data["settings"] == {"grant_hours": 8, "claim_ttl_min": 120, "lease_ttl_min": 60, "repos": {}}
+    assert data["defaults"] == ["grant_hours", "claim_ttl_min", "lease_ttl_min"]
+    assert data["next_page"] is None and data["settings_at"] is None and data["policy_at"] is None
+    assert list(data["gates"]) == ["requirements", "plan", "verify", "code"]
+    for gate in data["gates"].values():
+        assert set(gate) == {"approvers", "count", "not", "applies", "independent"}
+        assert gate["approvers"] == sorted(gate["approvers"]) and gate["not"] == sorted(gate["not"])
+    assert data["gates"]["code"]["applies"] == "off" and data["gates"]["code"]["independent"] is True
+    assert data["sub_cursor"].startswith("c1.")
+
+
 def test_a_set_duration_leaves_defaults_and_settings_at_names_its_event(w):
     c = w.client()
     event = settings(w, claim_ttl_min=30, grant_hours=8)  # 8 is the default value, but it was set: not a default
@@ -196,6 +221,34 @@ def test_the_remote_rule_is_the_f1_canonical_identity(remote):
 
 
 # --- no-person -------------------------------------------------------------------------------------------------------
+
+
+def test_no_person_gets_less_and_only_repos_a_visible_ticket_links(w):
+    seed_repos(w)
+    repos(w, hidden={"path": "/srv/hidden", "default_branch": "dev"}, unlinked={"path": "/srv/u"})
+    uid_open, open_key = w.ticket("linked in the open")
+    uid_secret, secret_key = w.ticket("linked in secret")
+    c = w.client()
+    link(w, c, open_key, "proj")
+    link(w, c, secret_key, "hidden")
+    w.restrict(uid_secret, [w.lab.owner])
+    settings(w, grant_hours=4)
+    as_agent_class(w)
+    for call in (c.req("workspace.settings"), c.req("workspace.settings", grant=wrong_secret(w.grant))):
+        got = ok(call)
+        assert set(got) == {
+            "settings",
+            "next_page",
+            "gates",
+            "defaults",
+            "sub_cursor",
+        }  # no settings_at, policy_at
+        assert got["settings"]["repos"] == {"proj": {"default_branch": "main"}}  # linked by a visible ticket only
+        assert got["settings"]["grant_hours"] == 4 and got["defaults"] == ["claim_ttl_min", "lease_ttl_min"]
+        assert list(got["gates"]) == ["requirements", "plan", "verify", "code"]
+        text = json.dumps(got)
+        for secret in ("/srv", "example.org", "hidden", "unlinked", "bare", "remote", "path"):
+            assert secret not in text, secret
 
 
 def test_no_person_repos_follow_the_visibility_now(w):

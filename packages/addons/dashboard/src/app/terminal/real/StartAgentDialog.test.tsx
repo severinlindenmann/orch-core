@@ -14,6 +14,7 @@ import { ApiError } from '@/api/types'
 import { nowMs } from '@/lib/time'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import * as gesture from '@/components/sign/trustedPress'
+import { openInfo } from '@/test/info'
 import { EXECUTION_LINE } from './executionLine'
 import { RunnerGrantCard, StartAgentDialog } from './StartAgentDialog'
 
@@ -108,7 +109,11 @@ describe('the preview', () => {
     expect(await screen.findByTestId('agent-cwd', {}, T)).toHaveTextContent('A worktree for DEMO-1 in billing will be created at /w/billing.worktrees/0a1b2c3d-DEMO-1.')
     expect(s.preview).toHaveBeenCalledWith(WS, { ticket: 'DEMO-1', harness: 'claude-code', mode: 'work', worktree: true, policy: { delegate: false, max_children: 3 } })
     expect(screen.getByTestId('execution-line')).toHaveTextContent(EXECUTION_LINE)
-    expect(screen.getByTestId('agent-grant')).toHaveTextContent(GRANT)
+    // The scope and end stay in view; only the grant id sits behind the "i".
+    const grant = screen.getByTestId('agent-grant')
+    expect(grant).toHaveTextContent('Tickets you may work on, until')
+    expect(grant).not.toHaveTextContent(GRANT)
+    expect(await openInfo(grant)).toHaveTextContent(GRANT)
   })
 
   it('says "shared working copy" in the approved words for cwd.kind repo', async () => {

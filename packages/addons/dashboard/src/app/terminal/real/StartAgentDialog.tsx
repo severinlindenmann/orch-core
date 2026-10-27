@@ -6,6 +6,7 @@
 // signer to the runner, never through this page.
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { KeyRound } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -476,7 +477,7 @@ function PreviewLines({ ws, data, ticket, harness }: { ws: string; data: AgentPr
         <dt className="text-text-muted">Will use</dt>
         <dd data-testid="agent-model-line">{data.model ? modelLabel(choices.data, harness, data.model) : 'Chosen by the agent app'}{data.model_source === 'addon' ? ` (chosen by ${data.model_by ?? 'an add-on'})` : data.model_source === 'chosen' ? ' (your choice)' : ''}</dd>
         {data.grant && (<>
-          <dt className="text-text-muted">Agent access</dt><dd data-testid="agent-grant">{data.grant.scope === 'all' ? 'All tickets' : 'Tickets you may work on'}, until {clock(data.grant.until)}. <details className="inline"><summary className="inline cursor-pointer text-text-muted">Technical details</summary> <Raw>{data.grant.id}</Raw></details></dd>
+          <dt className="text-text-muted">Agent access</dt><dd data-testid="agent-grant">{data.grant.scope === 'all' ? 'All tickets' : 'Tickets you may work on'}, until {clock(data.grant.until)}. <InfoDrawer> <Raw>{data.grant.id}</Raw></InfoDrawer></dd>
         </>)}
         <dt className="text-text-muted">Runs</dt>
         <dd>{data.display !== null ? <Raw>{data.display}</Raw> : <span className="text-text-muted">{data.display_hidden ? 'Hidden: the command has invisible characters' : 'Not shown'}</span>}</dd>

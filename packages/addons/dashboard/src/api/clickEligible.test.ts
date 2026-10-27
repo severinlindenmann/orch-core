@@ -3,6 +3,11 @@ import { clickEligible } from '@/api/click'
 
 // Run 8 (1.1): on a one-click workspace every settings action the signer serves must be offered as a click, so the
 // person gets one Sign button; only the terminal-only ones fall back to the terminal hand-off (which works with One click on).
+it('settings actions the signer serves by click are click-eligible', () => {
+  expect(clickEligible({ action: 'repo_set', name: 'a', path: '/x' })).toBe(true)
+  expect(clickEligible({ action: 'settings_set', grant_hours: 4 })).toBe(true)
+  expect(clickEligible({ action: 'repo_remove', name: 'a' })).toBe(true)
+})
 it('Publish is click-eligible (#1198 C2)', () => {
   expect(clickEligible({ action: 'publish_setup', server: 'https://a.test', share: 'https://b.test' })).toBe(true)
   expect(clickEligible({ action: 'publish_share', key: 'DEMO-1', staged_id: 's' })).toBe(true)

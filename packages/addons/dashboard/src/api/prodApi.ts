@@ -31,6 +31,8 @@ import {
   type Workspace,
   type WorkspaceIdentity,
   type OrchEvent,
+  type Cosmetic,
+  type CosmeticBody,
 } from './types'
 
 interface ServerWorkspace {
@@ -356,7 +358,15 @@ const click = {
     call<{ done: true } & ClickCard>(`${w(ws)}/click/rotate`, 'POST', body),
 }
 
-const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records }
+/**
+ * D6: the workspace name and icon, unsigned and owner only (no hand-off). `if_current` is what the page showed; the host
+ * answers the new values, or 409 `cosmetic.conflict` when it is stale.
+ */
+const cosmetic = {
+  setCosmetic: (ws: string, body: CosmeticBody) => call<Cosmetic>(`${w(ws)}/workspace/cosmetic`, 'PUT', body),
+}
+
+const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records, ...cosmetic }
 
 /** Every other method of the mock's api refuses plainly: a control that reaches one is a bug, not a silent no-op. */
 export const api = new Proxy(implemented, {

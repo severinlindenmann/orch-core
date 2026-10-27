@@ -3,6 +3,7 @@
 // the input element only: they are read once at the click, the field is emptied at once, and nothing else holds them
 // (no state, no storage). Core refuses the step unless the key is the person's own.
 import { KeyRound, Loader2 } from 'lucide-react'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { useEffect, useRef, useState } from 'react'
 import { backupViewOk, plainHubViewOk, type HubJoinAction, type HubLeaveAction, type HubModeFullAction } from '@/api/click'
 import { ApiError } from '@/api/types'
@@ -159,11 +160,11 @@ export function HubStep({ ws, action, onClose, onChanged, onFailedChange, doneTe
       {failed && (
         <div className="space-y-3">
           <p role="alert" className="text-[13px] text-danger">{failureText}</p>
-          <details><summary className="cursor-pointer">Technical details</summary>
+          <InfoDrawer>
             {click.problem && <p><Raw>{click.problem.title}</Raw>: <Raw>{click.problem.body}</Raw></p>}
             {click.problem?.details && <p><Raw>{click.problem.details}</Raw></p>}
             {click.error instanceof ApiError && <p><Raw>{click.error.code}</Raw>: <Raw>{click.error.message}</Raw></p>}
-          </details>
+          </InfoDrawer>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={cancel}>Cancel</Button>
             <Button onClick={() => { setFilled(false); setRefused(null); void click.again(action) }}>Try again</Button>

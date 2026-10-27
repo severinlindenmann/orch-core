@@ -2,6 +2,7 @@
 // signed settings change like the others: it opens the same review and signing step (`addon.grant` to turn on,
 // `addon.disable` to turn off). Nothing is written without a signature. A switch that cannot move says why.
 import { Inline, plain } from '@/components/sign/visible'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
 import { AddonSetup } from './AddonSetup'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -123,7 +124,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
                         {needsSetup && <span data-testid={`addon-${row.id}-state`} className="rounded-full border border-warning/50 px-1.5 text-[11px] leading-4 text-warning">Needs setup</span>}
                       </div>
                       {!fixed && row.desc && <p className="text-text-muted"><Inline>{row.desc}</Inline></p>}
-                      {!mine && row.version && <details className="text-xs text-text-muted"><summary className="cursor-pointer">Technical details</summary><p>Version <Inline>{row.version}</Inline></p></details>}
+                      {!mine && row.version && <InfoDrawer><p>Version <Inline>{row.version}</Inline></p></InfoDrawer>}
                       {why && <OwnerNote id={`addon-${row.id}-why`}>{why}</OwnerNote>}
                       {owner && !on && row.runner_switch && <div className="mt-1.5"><RunnerSwitch ws={workspace.id} on initialTerminals={row.id === 'terminals'} testId={`addon-${row.id}-runner`} variant="secondary" /></div>}
                       {row.state === 'attention' && !why && (

@@ -13,7 +13,7 @@ __all__ = ["make_private_dir", "tighten"]
 
 def healable(mode: int) -> bool:
     """The ONE rule for a too-open private directory of ours (custody and the creators share it): only read/execute
-    for group/others is tightened (e.g. launchd's 0744). Writable by group/others may hold planted files: never healed."""
+    for group/others is tightened (launchd makes 0744). Writable by them may hold planted files: never healed."""
     return bool(mode & 0o077) and not mode & 0o022
 
 

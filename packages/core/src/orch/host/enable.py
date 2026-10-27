@@ -442,6 +442,7 @@ class Manager:
         if self._system:
             raise self._root_only("starting")
         ran: list[list[str]] = []
+        self._undo_stop(ran)
 
         def do(argv: list[str], *, check: bool = True) -> None:
             ran.append(argv)
@@ -466,6 +467,17 @@ class Manager:
         do(["systemctl", "--user", "enable", self.plan.systemd_name])
         do(["systemctl", "--user", "restart" if changed else "start", self.plan.systemd_name])
         return ran
+
+    def _undo_stop(self, ran: list[list[str]]) -> None:
+        """A service ``orch stop`` disabled starts again when the person asks for it (enable, register, setup)."""
+        from orch.lifecycle.units import clear_stopped, stopped_by_orch
+
+        if self.plan.label not in stopped_by_orch(self.plan.state):
+            return
+        if self.plan.kind == "launchd":
+            ran.append(["launchctl", "enable", self._target()])
+            self.run(ran[-1])
+        clear_stopped(self.plan.state, self.plan.label)
 
     def restart_command(self) -> list[str]:
         """The command that restarts the loaded service at once, for this platform only."""

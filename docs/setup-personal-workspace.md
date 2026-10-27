@@ -359,7 +359,25 @@ orch dashboard --print-url   # a 127.0.0.1 link (open it within 30 seconds)
 `orch doctor` and `orch check` report `0` problems. If `orch doctor` reports problems, run `orch host doctor` and read what it names. When all is well it prints the host
 state (`host: answers on ...`, `workspace DEMO ... ok`) and ends with the line `ok`.
 
-## 11. Uninstall
+## 11. Stop and start orch
+
+```bash
+orch services          # one table: what runs, what is stopped, what is installed
+orch stop              # inside a workspace folder: stop this workspace (its running agents end the normal way)
+orch stop all          # every workspace and every background service on this computer
+orch start all         # bring back exactly what is installed (orch start does the same outside a folder)
+```
+
+`orch stop all` stops the agent runner (it ends running agents first, then the host), the dashboard, the records timer
+and, if they are installed here, the hub, the relay and publish. They stay stopped, also after you restart the
+computer, until `orch start`. Nothing is removed: the units, your keys and your workspaces stay (`orch host prune`
+removes things). The host, runner and dashboard are shared by every workspace of the person, so `orch stop` in a
+folder ends only that workspace's agents while other workspaces are on this computer, and stops the shared services
+too when it is the only one. A host or dashboard you started by hand is not a service: orch names it and leaves it.
+Starting and stopping is a person's job; an agent is refused. Windows has no host, runner or records timer: only the
+installed parts and the dashboard are managed there.
+
+## 12. Uninstall
 
 One command takes orch off this computer, as if it had never been installed:
 

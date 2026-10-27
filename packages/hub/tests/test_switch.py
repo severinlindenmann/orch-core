@@ -1,0 +1,182 @@
+"""Hub one-app: switch tickets (hub side), the three link ops and the web routes (TECH.md, 27 Oct)."""
+
+from __future__ import annotations
+
+import pytest
+from webapi_helpers import ORIGIN, WS, WS_SEL, Web
+
+from orch_hub.contract.hub import Refused
+from orch_hub.link import ops
+from orch_hub.switch import SwitchError, SwitchService, clean_return_to
+
+DASH = "http://127.0.0.1:7001"
+
+
+@pytest.fixture
+def w(tmp_path):
+    x = Web(tmp_path)
+    x.t = [1_000_000]
+    x.sw = SwitchService(hub_origin=lambda: ORIGIN, hub_name="Acme", now_ms=lambda: x.t[0])
+    x.api.d.switch = x.sw
+    x.reg.add(WS_SEL, "selective", owner=x.ann)
+    x.reg.ws[WS]["owner"] = x.ann
+    yield x
+    x.close()
+
+
+def ctx(w, ws, op, body, user=None):
+    return ops.OpContext(
+        hub_id="h",
+        workspace_id=ws,
+        link_wsk_pub=b"",
+        body=body,
+        registry=w.reg,
+        invites=None,
+        snapshots=None,
+        publish=None,
+        downstream=None,
+        now_ms=0,
+        dev_mode=True,
+        access=w.env.acc,
+        switch=w.sw,
+    )
+
+
+def test_return_to_is_a_plain_relative_path():
+    assert clean_return_to("/t/DEMO-43?x=1") == "/"  # a query is not part of a path
+    assert clean_return_to("/t/DEMO-43") == "/t/DEMO-43"
+    for bad in ("//evil.com", "https://evil.com", "/a\\b", "/a/../b", "x", "", None, "/" + "a" * 300):
+        assert clean_return_to(bad) == "/"
+
+
+def test_ticket_single_use_and_expiry(w):
+    t = w.sw.issue_to_hub(w.ann, WS, "/x")
+    assert w.sw.redeem(t, "to_hub")["rt"] == "/x"
+    with pytest.raises(SwitchError):
+        w.sw.redeem(t, "to_hub")
+    t = w.sw.issue_to_hub(w.ann, WS, "/x")
+    w.t[0] += 30_001
+    with pytest.raises(SwitchError):
+        w.sw.redeem(t, "to_hub")
+
+
+def test_ticket_direction_and_workspace_are_bound(w):
+    t = w.sw.issue_to_ws(w.ann, WS, "/x")
+    with pytest.raises(SwitchError):
+        w.sw.redeem(t, "to_ws", ws=WS_SEL)  # another workspace's link
+    t = w.sw.issue_to_ws(w.ann, WS, "/x")
+    with pytest.raises(SwitchError):
+        w.sw.redeem(t.split(".")[1], "to_hub")  # a to_ws ticket is not a to_hub ticket
+    t = w.sw.issue_to_ws(w.ann, WS, "/x")
+    assert w.sw.redeem(t, "to_ws", ws=WS)["user"] == w.ann
+
+
+def test_link_ops_to_hub_and_rail(w):
+    r = ops.switch_ticket(ctx(w, WS, "switch_ticket", {"origin": DASH + "/", "return_to": "/t/1", "kind": "open"}))
+    assert r["url"] == f"{ORIGIN}/#t={r['ticket']}"
+    assert w.sw.origin_of(WS) == DASH
+    rail = ops.rail_get(ctx(w, WS, "rail_get", {"origin": DASH}))
+    assert rail["hub"] == {"name": "Acme", "origin": ORIGIN}
+    cur = [x for x in rail["workspaces"] if x["current"]]
+    assert [x["workspace_id"] for x in cur] == [WS] and cur[0]["origin"] == DASH
+    with pytest.raises(Refused):
+        ops.rail_get(ctx(w, WS, "rail_get", {"origin": "javascript:alert(1)"}))
+
+
+def test_link_op_without_owner_alias_is_refused(w):
+    w.reg.ws[WS]["owner"] = None
+    with pytest.raises(Refused) as e:
+        ops.switch_ticket(ctx(w, WS, "switch_ticket", {"origin": DASH, "return_to": "/", "kind": "open"}))
+    assert e.value.code == "no_owner_alias"
+
+
+def test_hub_to_workspace_redeem_over_the_link(w):
+    w.sw.set_origin(WS, DASH)
+    token = w.login(w.ann)
+    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/t/9", "kind": "open"}, token=token)
+    assert s == 200 and o["url"].startswith(DASH + "/#t=" + WS + ".")
+    t = o["url"].split("#t=")[1]
+    # another workspace's link cannot redeem it, and that spends it
+    with pytest.raises(Refused):
+        ops.switch_redeem(ctx(w, WS_SEL, "switch_redeem", {"ticket": t}))
+    with pytest.raises(Refused):
+        ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
+    s, o, _ = w.call("POST", "/switch/ticket", {"workspace_id": WS, "return_to": "/t/9", "kind": "open"}, token=token)
+    t = o["url"].split("#t=")[1]
+    r = ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
+    assert (r["user_id"], r["return_to"], r["kind"]) == (w.ann, "/t/9", "open")
+    with pytest.raises(Refused):
+        ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
+
+
+def test_redeem_needs_the_owner_alias(w):
+    w.sw.set_origin(WS, DASH)
+    t = w.sw.issue_to_ws(w.admin, WS, "/")  # a hub user who is not the workspace's owner alias
+    with pytest.raises(Refused):
+        ops.switch_redeem(ctx(w, WS, "switch_redeem", {"ticket": t}))
+
+
+def test_web_ticket_refusals(w):
+    token = w.login(w.ann)
+    body = {"workspace_id": WS, "return_to": "/", "kind": "open"}
+    s, o, _ = w.call("POST", "/switch/ticket", body, token=token)
+    assert (s, o["error"]) == (503, "unavailable")  # no dashboard origin known yet
+    w.sw.set_origin(WS, DASH)
+    other = w.login(w.env.user("bob"))  # no group, no grant: no part in WS
+    s, o, _ = w.call("POST", "/switch/ticket", body, token=other)
+    assert (s, o["error"]) == (403, "forbidden_role")
+    s, o, _ = w.call("POST", "/switch/ticket", body)
+    assert s == 401
+
+
+def test_workspace_to_hub_redeem_sets_cookie_once(w):
+    r = ops.switch_ticket(ctx(w, WS, "switch_ticket", {"origin": DASH, "return_to": "/home", "kind": "open"}))
+    t = r["ticket"]
+    s, o, h = w.call("POST", "/switch/redeem", {"t": t})
+    assert s == 200 and o == {"user_id": w.ann, "return_to": "/home", "kind": "open"}
+    cookie = h["Set-Cookie"]
+    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+    tok = cookie.split(";")[0].split("=", 1)[1]
+    w.browser_tokens.add(tok)
+    s, me, _ = w.call("GET", "/session", token=tok)
+    assert s == 200 and me["user_id"] == w.ann
+    s, o, _ = w.call("POST", "/switch/redeem", {"t": t})
+    assert (s, o["error"]) == (403, "bad_ticket")  # one use
+    s, o, _ = w.call("POST", "/switch/redeem", {"t": t}, origin=None)
+    assert s == 403  # a browser label is required
+
+
+def test_redeem_expired_ticket_is_refused(w):
+    t = ops.switch_ticket(ctx(w, WS, "switch_ticket", {"origin": DASH, "return_to": "/", "kind": "open"}))["ticket"]
+    w.t[0] += 31_000
+    s, o, _ = w.call("POST", "/switch/redeem", {"t": t})
+    assert (s, o["error"]) == (403, "bad_ticket")
+
+
+def test_signout_kind_ends_the_presented_session(w):
+    tok = w.login(w.ann)
+    t = ops.switch_ticket(ctx(w, WS, "switch_ticket", {"origin": DASH, "return_to": "/", "kind": "signout"}))["ticket"]
+    s, o, h = w.call("POST", "/switch/redeem", {"t": t}, token=tok)
+    assert s == 200 and o["kind"] == "signout" and "Max-Age=0" in h["Set-Cookie"]
+    s, _, _ = w.call("GET", "/session", token=tok)
+    assert s == 401
+
+
+def test_rail_lists_my_workspaces_with_origins_and_badges(w):
+    w.sw.set_origin(WS, DASH)
+    w.sw.badge = lambda ws, user: 3
+    token = w.login(w.ann)
+    s, o, _ = w.call("GET", "/rail", token=token)
+    assert s == 200 and o["hub"] == {"name": "Acme", "origin": ORIGIN}
+    row = next(x for x in o["workspaces"] if x["workspace_id"] == WS)
+    assert (row["origin"], row["badge"], row["online"]) == (DASH, 3, True)
+    assert all(x["origin"] is None for x in o["workspaces"] if x["workspace_id"] != WS)
+
+
+def test_no_switch_service_means_unavailable(tmp_path):
+    x = Web(tmp_path)
+    try:
+        s, o, _ = x.call("GET", "/rail", token=x.login(x.ann))
+        assert (s, o["error"]) == (503, "unavailable")
+    finally:
+        x.close()

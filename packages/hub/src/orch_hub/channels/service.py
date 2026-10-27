@@ -375,6 +375,24 @@ class Channels:
         self._guard(go)
         return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
 
+    def open_session(self, user_id: str) -> dict[str, Any]:
+        """A ``full`` (browser) session for a user the hub itself has just authenticated by other means (a one-time switch
+        ticket from the user's workspace). No password, no TOTP, no failure counters touched."""
+        u = self._known_user(user_id)
+        token = secrets.token_urlsafe(32)
+        now = self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
+                db.execute(
+                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms) VALUES (?,?,?,?,?,?)",
+                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", now),
+                )
+
+        self._guard(go)
+        return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
+
     def session_user(self, token: str) -> str:
         if type(token) is not str or not token or len(token) > 200:
             raise ChannelError("no_session")

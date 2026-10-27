@@ -841,7 +841,9 @@ def test_c12_wrong_binding_is_refused_and_does_not_burn_the_offer(switch):
         "sealed": {
             "custody.passphrase": {
                 **good["sealed"]["custody.passphrase"],
-                "ct": "A" + good["sealed"]["custody.passphrase"]["ct"][1:],
+                # a different first character every time: ct starts with "A" in 1 of 64 runs
+                "ct": ("B" if good["sealed"]["custody.passphrase"]["ct"][0] == "A" else "A")
+                + good["sealed"]["custody.passphrase"]["ct"][1:],
             }
         },
     }

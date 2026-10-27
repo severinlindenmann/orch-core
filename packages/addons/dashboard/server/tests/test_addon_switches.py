@@ -15,7 +15,19 @@ def parse(body):
 
 @pytest.mark.parametrize(
     "name",
-    ["start-agent", "terminals", "worktrees", "publish", "usage", "estimate", "explorer", "wiki", "quick", "focus"],
+    [
+        "start-agent",
+        "terminals",
+        "worktrees",
+        "publish",
+        "usage",
+        "estimate",
+        "explorer",
+        "wiki",
+        "quick",
+        "focus",
+        "schedules",
+    ],
 )
 def test_every_switchable_addon_has_typed_actions(name):
     from orch_dashboard.addon_switches import SWITCHABLE
@@ -276,3 +288,12 @@ def test_focus_feature_follows_its_grant(gateway, stub, monkeypatch, on):
     original = gateway.addon_on
     monkeypatch.setattr(gateway, "addon_on", lambda link, name: on if name == "focus" else original(link, name))
     assert ("focus" in gateway.workspaces()[0].features) is on
+
+
+def test_every_built_in_add_on_but_the_dashboard_is_switchable():
+    """Run 12: Schedules had no switch, so in Full hub mode it could not be turned on at all (no hub path either)."""
+    from orch.addons import builtin
+
+    from orch_dashboard.addon_switches import LOCKED, SWITCHABLE
+
+    assert set(builtin.NAMES) == set(SWITCHABLE) | set(LOCKED)

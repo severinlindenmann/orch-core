@@ -330,6 +330,11 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
                     "person": r.person,
                     "setter_session": r.setter_session,
                     **({"label": r.label} if r.label is not None else {}),
+                    **{
+                        k: v
+                        for k, v in (("on", r.on), ("hook", r.hook), ("event", r.event), ("fallback", r.fallback))
+                        if v
+                    },
                 }
             )
             for r in t.followups.values()

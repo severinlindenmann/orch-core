@@ -41944,6 +41944,678 @@
      ],
      "handoff": "hr_01J9ZP0000000000000000HND1",
      "log": "workspace",
+     "name": "ticket",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_ticket",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "status",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_status",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "visibility",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_visibility",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "people",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_people",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "policy",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_policy",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "claim",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_claim",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "followup",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_followup",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "task",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_task",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "handoff",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_handoff",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "log",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_log",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "question",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_question",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "gate",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_gate",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "verdict",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_verdict",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "branch",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_branch",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "artifact",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_artifact",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "edit",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_edit",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "projection",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_projection",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "restore",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_restore",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "workspace",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_workspace",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "member",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_member",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "role",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_role",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "device",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_device",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "settings",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_settings",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "grant",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_grant",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "addon",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_addon",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "invalid",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_invalid",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "hub",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_hub",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
+     "name": "relay",
+     "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
+     "type": "addon.requested",
+     "version": "1.2.0"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_addon_requested_reserved_name_relay",
+   "note": "a name core's schema reserves",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "capabilities": [
+      "network",
+      "serve_http"
+     ],
+     "handoff": "hr_01J9ZP0000000000000000HND1",
+     "log": "workspace",
      "name": "wiki",
      "package_sha256": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
      "type": "addon.requested",

@@ -730,7 +730,7 @@ nothing (D70: read = see). Unknown or unlisted → `not_custodial`.
 | Lowest role | Ticket log | Workspace log |
 |---|---|---|
 | `edit` | `ticket.created`, `ticket.updated` (`set` of the paths below only), `status.changed`, `ticket.submitted`, `ticket.closed`, `ticket.reopened`, `claim.released`, `log.added`, `handoff.written`, `question.asked`, `question.answered`, `gate.approved`, `gate.changes_requested`, `verdict.given` | — |
-| `admin` | `ticket.moved`, `people.changed`, `visibility.changed` | `addon.disabled`, `addon.purged` |
+| `admin` | `ticket.moved`, `people.changed`, `visibility.changed` | `addon.disabled`, `addon.purged`, `addon.requested` (§8.8b) |
 
 The role is the floor; the F1 rules decide the rest (eligible approvers, ticket owner, D59 independence; §8.3 step 9).
 **Phase 5 (§8.8, V3-D29):** `grant.requested`, `grant.revoked`, `device.excluded`, `policy.changed` (workspace and
@@ -739,7 +739,7 @@ them as `not_custodial`. People and visibility changes are `admin`-only through 
 why:** `workspace.created`, `member.*`, `role.changed` (members and roles come from
 grants and snapshots); `device.*` except `device.excluded` (§8.8) (hub users have no device keys); `hub.joined`, `hub.left` (owner's local key at the
 terminal, break-glass); `grant.issued` (the host makes the secret: §8.8 `grant.requested`); `addon.granted` (the host derives the
-manifest fields); `restore`, `invalid.acknowledged` (owner recovery); `artifact.*` and `ticket.updated` with
+manifest fields; a full-mode workspace gets it from the host as the answer to `addon.requested`, §8.8b); `restore`, `invalid.acknowledged` (owner recovery); `artifact.*` and `ticket.updated` with
 `sections` (the file bytes and body text are the host's; no transport for them yet); agent-only types (`claim.taken`,
 `task.*`); host types; addon types. Adding a type later needs no new `hv`: a host that does not list it refuses it,
 which fails closed.
@@ -766,6 +766,7 @@ ticket's uid). `log` is `"workspace"` or a ticket ULID. The fields are exactly (
 | `gate.changes_requested` | `gate`, `hash`, `text` |
 | `verdict.given` | `outcome`, `hash`, `text?` (required on `fail`) |
 | `addon.disabled`, `addon.purged` | `name` (addon name) |
+| `addon.requested` | `name`, `version`, `package_sha256`, `capabilities`, `handoff`, `runtime?` (§8.8b) |
 
 **A new ticket's uid and key (L2-D15-4).** For `ticket.created` the hub proposes the `key` and the new uid. The uid is
 any fresh ULID (its derivation is not normative). The host accepts only `key == next_key` (its own allocator, which may
@@ -966,6 +967,37 @@ C8/C10 merge: `host_grant_issued_{needs_request,request_reused,other_terms,late}
 `device_excluded_owner_device_refused`, `policy_changed_channel_keeps_factor`, `left_hub_events_refused_after_leave`,
 `leave_voids_open_hub_decisions_only` (incl. non-counting, no revival after rejoin), `leave_ends_hub_requested_grants`,
 `rejoin_refuses_pre_leave_custodial`, `pre_c10_non_dev_full_join_not_cut_over` (design-c8 Tests, design-c10 Tests).
+
+### 8.8b Turning an add-on on through a channel: `addon.requested` (FB15, 27 Oct)
+
+Why: in full mode no local human signature exists, and `addon.granted` carries declarations (`fields`, `sections`,
+`artifact_kinds`, `runtime`) that only the host can derive from the package, so the hub cannot build it. Same pattern as
+`grant.requested` (§8.8): the channel signs flat terms, the host answers with its own event.
+
+| Type | Log | Lowest role | Action fields (exact) | Derived by the hub |
+|---|---|---|---|---|
+| `addon.requested` | workspace | `admin` | `name` (`[a-z][a-z0-9-]{0,39}`, not a name core reserves: core schema `common#/$defs/addonName`, one list), `version` (strict semver), `package_sha256` (`sha256:` hash), `capabilities` (sorted unique tokens of the closed list `serve_http`, `spawn_agent`, `pty`, `network`, `git_push`, `choose_model`, `credential`), `handoff` (`hr_` + ULID: the id of the host's prepared request), `runtime?` (exactly `{kind, lock, packages}` as signed in `addon.granted`) | nothing |
+
+- **The link.** The owner prepares the grant at the host as a hand-off (`human.prepare {op: addon.grant, handoff}`: nothing is
+  signed, no local signature will ever land) and the host read `hub.handoff {kind: addon, request}` returns the terms and ONE link,
+  `https://<hub>/#/w/<workspace_id>/addon/<b64u(JSON terms)>` (a fragment). The hub web parses the terms strictly, shows them
+  in its own words (capability words come from the page's table; the fingerprint in full), and signs through the normal
+  prepare -> review -> sign prompt only after a click, against the action it sent. The link is a convenience, never authority.
+- **The host's answer.** After admitting `addon.requested`, the host appends in the same store-lock hold a **host-actor**
+  `addon.granted` with `request` = the request's id, whose `name`, `version`, `package_sha256`, `capabilities` and `runtime` equal the
+  request's; `fields`, `sections` and `artifact_kinds` are the host's, from the package the digest names (re-checked under the lock,
+  `marketinstall.recheck`). The model admits a host-actor `addon.granted` only with `request` naming an admitted unused
+  `addon.requested` of equal terms, `0 <= at - request.at <= 300 s`, whose signer is still an owner, and only once per `handoff`;
+  a person never writes `request`.
+- **Only for a live hand-off.** The host answers only when the prepared request named by `handoff` is the same canonical person's,
+  still open on the host's clock (10 min), of op `addon.grant`, and carries exactly the requested terms; then the request ends
+  `submitted` and the staged bytes are installed. Otherwise the request stays in the log and turns nothing on. A hub alone cannot
+  turn an add-on on; a compromised custodial hub can sign for exactly what the owner prepared (accepted, as in §8.8).
+- **Not on the channel (hv 0):** the add-on settings step (`settings.set` of the `addons` key) of a sequence; an add-on that needs it
+  is turned on at the terminal or after leaving. The phone has no screen for this type.
+- Vectors: `action_addon_requested_*` (incl. `reserved_name_<name>` for every reserved name, smuggling of `fields`, `sections`,
+  `request`), `action_addon_granted_ws_not_custodial`, `custodial_event_addon_requested`; core replays them in
+  `tests/hub` and the host side in `tests/host/test_hub_addon.py`.
 
 ## 9. Join, binding, leave
 

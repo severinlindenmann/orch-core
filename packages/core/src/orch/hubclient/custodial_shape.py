@@ -49,6 +49,16 @@ _GRANT = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
 _DEVICE = re.compile(r"d_[0-9a-f]{32}")
 #: FB15 (8.8b): the value grammars of ``addon.requested`` (the add-on name of the manifest, a semver, the capabilities)
 _ADDON_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
+
+
+def _reserved_addon_names() -> frozenset[str]:
+    """The names core's schema refuses for an add-on (``common#/$defs/addonName`` ``not.enum``): one list, read from it."""
+    from orch import schema
+
+    return frozenset(schema.load("common")["$defs"]["addonName"]["not"]["enum"])
+
+
+RESERVED_ADDON_NAMES = _reserved_addon_names()
 _SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 CAPABILITIES = ("serve_http", "spawn_agent", "pty", "network", "git_push", "choose_model", "credential")
 _HANDOFF = re.compile(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}")
@@ -302,7 +312,7 @@ PAYLOAD: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
     "grant.revoked": ({"grant": _re(_GRANT)}, {"reason": _text(500)}),
     "addon.requested": (
         {
-            "name": _re(_ADDON_NAME),
+            "name": lambda x: _re(_ADDON_NAME)(x) and x not in RESERVED_ADDON_NAMES,
             "version": _re(_SEMVER),
             "package_sha256": _hash,
             "capabilities": _sorted_unique(_enum(*CAPABILITIES), 0, len(CAPABILITIES)),

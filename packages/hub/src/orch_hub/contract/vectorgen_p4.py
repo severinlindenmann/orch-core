@@ -402,6 +402,7 @@ def build_p4(
         ("no_handoff", {k: v for k, v in ar.items() if k != "handoff"}, "the prepared request it is for"),
         ("handoff_not_an_id", {**ar, "handoff": "hr_x"}, ""),
         ("bad_name", {**ar, "name": "Wiki"}, "core add-on name grammar"),
+        *((f"reserved_name_{n}", {**ar, "name": n}, "a name core's schema reserves") for n in _core_reserved_names()),
         ("bad_version", {**ar, "version": "1.2"}, "strict semver"),
         ("bad_digest", {**ar, "package_sha256": "abc"}, ""),
         ("capabilities_unsorted", {**ar, "capabilities": ["serve_http", "network"]}, "sorted unique"),
@@ -2348,3 +2349,13 @@ def build_p4(
 
 __all__ = ["build_p4"]
 _ = (resign, WS_B)
+
+
+def _core_reserved_names() -> list[str]:
+    """The add-on names core reserves, read from core's own schema file (monorepo; generation time only), so a vector
+    exists for each and a drift between the two lists fails the replay on one side."""
+    import json
+    from pathlib import Path
+
+    p = Path(__file__).resolve().parents[4] / "core/src/orch/schema/schemas/common.json"
+    return list(json.loads(p.read_text())["$defs"]["addonName"]["not"]["enum"])

@@ -53,7 +53,7 @@ it('the stepper: done steps, the first open one is current, the rest still to do
   doc.gates.requirements.state = 'approved'
   doc.gates.plan.state = 'approved'
   doc.gates.verify = { ...doc.gates.verify, state: 'pending', approvals: [] }
-  doc.status = 'in_progress'
+  doc.status = 'in-progress'
   let view = show(doc)
   expect(within(screen.getByTestId('stepper')).queryAllByRole('button')).toHaveLength(0)
   expect(states()).toEqual(['done', 'current', 'todo', 'todo'])
@@ -71,7 +71,7 @@ it('the stepper: done steps, the first open one is current, the rest still to do
 it('while the agent works: one calm line, no buttons', async () => {
   const doc = await demo()
   expect(doc.claim).toBeTruthy()
-  doc.status = 'in_progress'
+  doc.status = 'in-progress'
   doc.gates.requirements.state = 'approved'
   doc.gates.plan.state = 'approved'
   show(doc)

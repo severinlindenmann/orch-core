@@ -123,7 +123,7 @@ function NextStepCard({ ticket, viewer, sign, jump }: Props) {
     )
   }
   // Owner feedback 5/14: the agent ended its run before the requirements or the plan were complete, and nothing said so.
-  if ((status === 'open' || status === 'in_progress') && !working) {
+  if ((status === 'open' || status === 'in_progress' || status === 'in-progress') && !working) {
     const stuck = (['requirements', 'plan'] as const).find((g) => ticket.gates[g].state !== 'approved' && !!ticket.gates[g].missing?.length)
     if (stuck) return <Card title="The agent stopped early" text={`${addFirst(ticket.gates[stuck].missing ?? [])} Start the agent again to finish it.`} />
   }

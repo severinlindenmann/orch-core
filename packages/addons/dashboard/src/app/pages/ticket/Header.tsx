@@ -230,16 +230,14 @@ function PrimaryButton({ ticket, viewer, sign, jump, start, signing }: { ticket:
   if (p && (p.kind === 'approve' || p.kind === 'verdict')) return null
   if (!p) return agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
   const run = () => {
-    if (p.kind === 'verdict') sign({ kind: 'verdict' })
-    else if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
-    else if (p.kind === 'start') start.run()
-    else sign({ kind: 'approve', gate: p.gate })
+    if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
+    else start.run()
   }
   // A real host: Start agent is a split button, the main part starts at once, the chevron changes the agent or model first.
   if (p.kind === 'start' && start.choose && workspace) return <StartAgentSplit harness={lastHarness(workspace.id)} onStart={start.run} onChoose={start.choose} />
   return (
     <Button size="sm" onClick={run}>
-      {p.kind === 'answer' ? <CircleHelp /> : p.kind === 'start' ? <Bot /> : <Check />}
+      {p.kind === 'answer' ? <CircleHelp /> : <Bot />}
       {primaryLabel(p, av)}
     </Button>
   )

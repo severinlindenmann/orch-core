@@ -3,6 +3,7 @@
 // with the backup key: the hub always requires the owner's proof), and the host tells the hub (hub.connect, with the
 // link's code and address). Both modes use this review and one-click flow.
 import { useEffect, useRef, useState } from 'react'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
 import type { HubLinkInfo } from '@/api/hub'
@@ -56,7 +57,7 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
       {!failed && <><div className="rounded-md border border-border p-3" data-testid="hub-link-hub">
         <p className="font-bold">Hub <Raw>{info.name}</Raw></p>
       </div>
-      <details><summary>Technical details</summary><p>Hub id: <Raw>{info.hub_id}</Raw></p></details>
+      <InfoDrawer><p>Hub id: <Raw>{info.hub_id}</Raw></p></InfoDrawer>
       {!signed && <ModeChoice mode={mode} onChange={setMode} />}
       <p>{mode === 'full' ? 'The hub will read everything.' : 'You choose what to share.'}</p>
       {mode === 'full' && !info.owner_user && <p role="alert" data-testid="hub-link-old" className="text-warning">This link does not name you on the hub, so your agents could not work in this mode. Make a new connect link in the hub and paste that one.</p>}
@@ -88,7 +89,7 @@ function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkIn
     {(state === 'idle' || state === 'working') && <p role="status">Signed. Telling the hub…</p>}
     {state === 'failed' && <div role="alert" className="space-y-2" data-testid="hub-connect-failed">
       <p className="text-danger">Couldn't connect. Try again.</p>
-      <details><summary>Technical details</summary><p><Raw>{why}</Raw></p></details>
+      <InfoDrawer><p><Raw>{why}</Raw></p></InfoDrawer>
       <div className="flex flex-wrap gap-2"><Action id="hub-connect-close" onClick={onClose}>Cancel</Action><Action id="hub-connect-retry" onClick={run}>Try again</Action></div>
     </div>}
   </div>

@@ -1,4 +1,5 @@
 import { effectiveState } from '@/api/shares'
+import { openInfo } from '@/test/info'
 import { QueryClient } from '@tanstack/react-query'
 import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -274,7 +275,7 @@ it('a server that does not know the workspace is said in words, with the admin s
   expect(alert).toHaveTextContent('has not allowed this workspace yet')
   expect(alert).toHaveTextContent('Ask the person who runs the server to allow it')
   expect(alert).not.toHaveTextContent('publish.server_refused')
-  expect(screen.getByText('Technical details').closest('details')).toHaveTextContent(`orch-publish admin ws allow ${A} p_owner`)
+  expect(await openInfo()).toHaveTextContent(`orch-publish admin ws allow ${A} p_owner`)
 })
 
 it('Settings: the addresses in words, and the registration message when the server does not know the workspace', async () => {
@@ -291,7 +292,7 @@ it('Settings: the addresses in words, and the registration message when the serv
   await waitFor(() => expect(reg).toHaveTextContent('Ask the person who runs the server to allow it'), T)
   expect(reg).not.toHaveTextContent('publish.server_refused')
   expect((reg.textContent ?? '').match(/Ask the person who runs the server/g)).toHaveLength(1)
-  expect(within(reg).getByText('Technical details').closest('details')).toHaveTextContent('orch-publish admin ws allow')
+  expect(await openInfo(reg)).toHaveTextContent('orch-publish admin ws allow')
   // changing the addresses is a signed hand-off with both addresses
   await user.click(within(box).getByRole('button', { name: 'Edit server' }))
   const dlg = await screen.findByRole('dialog', { name: 'Where shared files go' })

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import type { AddOnRow } from '@/api/addOnSwitches'
 import type { SignContent } from '@/api/signing'
 import type { Workspace } from '@/api/types'
@@ -59,7 +60,7 @@ export function AddonReview({ workspace, row, marketplace, onBusy, onDone, onClo
   const close = async () => { if (viaClick) { if (click.problem?.next !== 'check') await click.cancel() } else await terminal.cancel(); onClose() }
   return <div ref={panel} className="mt-2 space-y-2 rounded-lg border border-border bg-surface p-3 [&_[data-testid=sign-exact]]:max-h-[30vh] [&_[data-testid=sign-exact]]:overflow-auto" aria-label={`${label} ${row.title}`}>
     <p className="font-medium">{label} <Inline>{row.title}</Inline></p>
-    {row.version && <details className="text-xs text-text-muted"><summary className="cursor-pointer">Technical details</summary><p>Version <Inline>{row.version}</Inline></p></details>}
+    {row.version && <InfoDrawer><p>Version <Inline>{row.version}</Inline></p></InfoDrawer>}
     {viaClick && click.view ? <ClickSignPanel answer={{ ...click.view, view: { ...click.view.view, content: click.view.view.content && addonContent(click.view.view.content, marketplace) } }} ws={workspace.id} problem={click.problem} signing={signing} ready={click.phase === 'ready'} waitUntil={waitUntil} extra={click.phase === 'failed' && click.problem?.next !== 'check' ? <Button onClick={() => void (click.problem?.next === 'review' ? click.review() : click.again(action))}>Review again</Button> : undefined} label={`Approve and ${label.toLowerCase()}`} onSign={() => void click.sign()} onCancel={() => void close()} /> : terminal.request && terminal.phase === 'waiting' ? <>
       <HandoffPanel request={{ ...terminal.request, content: terminal.request.content && addonContent(terminal.request.content, marketplace) }} />
       <Button variant="ghost" onClick={() => void close()}>Cancel</Button>

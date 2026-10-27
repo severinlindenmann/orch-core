@@ -2,6 +2,7 @@
 // Read-only. The server writes each sentence and withholds hidden text; restricted tickets never arrive for a viewer
 // who cannot see them (the host filters every item). Filters: who, which kind of event, which ticket.
 import { useMemo, useState } from 'react'
+import { Dropdown } from '@/components/pickers/Dropdown'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { Bot, Cpu, User } from 'lucide-react'
@@ -20,8 +21,6 @@ import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
 
 const KEY = /^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}$/
-const SELECT =
-  'h-9 rounded-md border border-border bg-surface px-2 text-[13px] text-text outline-none focus-visible:ring-2 focus-visible:ring-ring'
 
 /** The actor in words: a person's name, "Claude Code for Severin", an add-on's id, or "orch". */
 export function actorName(a: ActivityRow['actor']): string {
@@ -121,25 +120,11 @@ export function ActivityPage() {
       <div role="search" aria-label="Filter the activity" className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-surface p-3">
         <div className="space-y-1.5">
           <Label htmlFor="activity-who">Who</Label>
-          <select id="activity-who" className={SELECT} value={who} onChange={(e) => setWho(e.target.value)}>
-            <option value="">Everyone</option>
-            <option value="agents">Agents only</option>
-            {people.map((m) => (
-              <option key={m.person} value={m.person}>
-                {m.name} and their agents
-              </option>
-            ))}
-          </select>
+          <Dropdown id="activity-who" className="min-w-40" value={who} onChange={setWho} options={[{ value: '', label: 'Everyone' }, { value: 'agents', label: 'Agents only' }, ...people.map((m) => ({ value: m.person, label: `${m.name} and their agents` }))]} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="activity-kind">What</Label>
-          <select id="activity-kind" className={SELECT} value={group} onChange={(e) => setGroup(e.target.value as ActivityGroup)}>
-            {ACTIVITY_GROUPS.map((g) => (
-              <option key={g.id} value={g.id}>
-                {g.label}
-              </option>
-            ))}
-          </select>
+          <Dropdown id="activity-kind" className="min-w-40" value={group} onChange={(v) => setGroup(v as ActivityGroup)} options={ACTIVITY_GROUPS.map((g) => ({ value: g.id, label: g.label }))} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="activity-ticket">Ticket</Label>

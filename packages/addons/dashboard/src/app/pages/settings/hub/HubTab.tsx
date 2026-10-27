@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import type { Workspace } from '@/api/types'
 import { hubQueries, hubServed, type HubStatus } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
@@ -34,7 +35,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
       {s.mode === 'selective' && <SelectivePage ws={ws} fullAllowed={fullAllowed} onShare={() => setFlow('share')} onFull={() => setFlow('full')} onLeave={() => setFlow('leave')} />}
       {s.mode === 'full' && <FullPage status={s} onLeave={() => setFlow('leave')} />}
       {hubName && <p className="text-sm font-semibold">Hub <Raw>{hubName}</Raw></p>}
-      {s.hub_id && <details><summary data-testid="hub-status-details" className="cursor-pointer text-sm text-text-muted">Technical details</summary><p className="break-words text-sm">Hub id (from the hub, not signed): <Raw>{s.hub_id}</Raw></p></details>}
+      {s.hub_id && <InfoDrawer testId="hub-status-details"><p className="break-words text-sm">Hub id (from the hub, not signed): <Raw>{s.hub_id}</Raw></p></InfoDrawer>}
     </>}
     {flow === 'join' && <JoinFlow ws={ws} onClose={() => setFlow(undefined)} />}
     {flow === 'full' && <FullSwitch ws={ws} onClose={() => setFlow(undefined)} />}

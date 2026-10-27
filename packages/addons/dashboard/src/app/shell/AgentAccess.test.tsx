@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { openInfo } from '@/test/info'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { beforeEach, expect, it, vi } from 'vitest'
 import { AgentAccess } from './AgentAccess'
@@ -35,7 +36,7 @@ it('shows the runner expiry and short-grant reminder and opens Extend', async ()
   fireEvent.click(screen.getByRole('button', { name: 'Extend agent access' }))
   expect(screen.getByRole('heading', { name: 'Extend agent access' })).toBeInTheDocument()
   expect(screen.getByText(/counted from now and replaces your current access/)).toBeInTheDocument()
-  expect(screen.getByText('Technical details').closest('details')).not.toHaveAttribute('open')
+  expect(screen.getByRole('button', { name: 'More information' })).toBeTruthy()
   expect(await screen.findByRole('button', { name: 'Complete runner' })).toBeInTheDocument()
 })
 it('with no agent access at all (also after a reload) the pill offers to let agents work', async () => {
@@ -53,9 +54,9 @@ it('the Stop review says whose access and until when in plain words, the id only
   fireEvent.click(screen.getByRole('button', { name: 'Stop agent access' }))
   await screen.findByRole('button', { name: 'Sign stop runner' })
   expect(screen.getByText(/This ends the agent access for you, which runs until/)).toBeInTheDocument()
-  const details = screen.getByText('Technical details').closest('details')!
+  const details = await openInfo()
   expect(details).toHaveTextContent('Access id: runner')
-  expect(screen.getByText(/This ends the agent access/).closest('details')).toBeNull()
+  expect(screen.getByText(/This ends the agent access/).closest('[data-testid="info-drawer-content"]')).toBeNull()
 })
 it('confirms Stop and signs each own grant separately with progress', async () => {
   show()

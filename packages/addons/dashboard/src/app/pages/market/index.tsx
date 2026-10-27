@@ -19,7 +19,7 @@ import { AddonFrame } from '@/addon-ui/AddonFrame'
 import { Inline, Raw, visible } from '@/components/sign/visible'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { LoadFailed } from '@/components/LoadFailed'
-import { InfoHint } from '@/components/InfoHint'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
@@ -124,12 +124,11 @@ function Review({
           </p>
         )}
         <p>
-          Package digest: <Inline>{s.package_sha256.slice(0, 12)}</Inline>… (full value in Technical details)
+          Package digest: <Inline>{s.package_sha256.slice(0, 12)}</Inline>… (full value behind the i)
         </p>
         <p>Publisher: {publisherWording(s.market.publisher.tofu)}</p>
         <p>A signature does not prove the code is safe.</p>
-        <details>
-          <summary>Technical details</summary>
+        <InfoDrawer>
           <p>
             Package digest <Raw>{s.package_sha256}</Raw>
           </p>
@@ -145,7 +144,7 @@ function Review({
           <p>
             Source note <Inline>{s.market.source_note}</Inline>
           </p>
-        </details>
+        </InfoDrawer>
         <p>{HELP}</p>
         {error && <p role="alert">{error}</p>}
         {expired && <p role="status">This review expired. Review again before approving.</p>}
@@ -324,7 +323,7 @@ function MarketWorkspace() {
                       <p className="text-xs text-text-muted">
                         <Inline>{`${m.class === 'official' ? 'official - ' : ''}${m.url.replace(/^https:\/\/github\.com\//, '')}`}</Inline>
                       </p>
-                      <details className="text-xs text-text-muted"><summary>Technical details</summary><p>Version <Inline>{a.version}</Inline></p></details>
+                      <InfoDrawer><p>Version <Inline>{a.version}</Inline></p></InfoDrawer>
                       <AddonFrame addon={a.id} title="From the addon" compact className="flex-1 items-start text-sm">
                         <Inline>{a.from_marketplace.summary}</Inline>
                       </AddonFrame>
@@ -432,11 +431,11 @@ function MarketWorkspace() {
                                 Refresh
                               </Button>
                             )}
-                            <InfoHint label="About this marketplace">
+                            <InfoDrawer label="About this marketplace">
                               <p>Allowed by: <Inline>{m.allowed_by ?? 'Not reported'}</Inline></p>
                               <p>Added by: <Inline>{m.added_by ?? 'Not reported'}</Inline></p>
                               <p className="text-text-muted">Shown by this computer, not covered by your approval.</p>
-                            </InfoHint>
+                            </InfoDrawer>
                           </div>
                         </div>
                       </li>

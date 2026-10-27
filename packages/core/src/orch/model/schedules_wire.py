@@ -36,15 +36,22 @@ def device_live(ws, person, device, now):
     return bool(d and d.person == person and device_valid(d, d.cert, now, False) is None)
 
 
+def first_allowed(ws, rec):
+    """The earliest occurrence a schedule may fire or settle: never before it was signed plus the minimum lead, so
+    a backdated `starts` cannot reach an occurrence the person never scheduled ahead of time."""
+    return max(ts(rec.starts), ts(rec.set_at) + caps_of(ws).min_lead_s)
+
+
 def run_grant_live(ws, grant_id, now):
-    """A live run grant: one derived by a schedule or follow-up firing (it has a parent) that has not ended."""
-    g = ws.grants.get(grant_id)
-    return g is not None and g.parent is not None and not claims.grant_ended(ws, grant_id, now)
+    """A live grant behind a claim: any grant (a person's ordinary grant or one derived by a firing) that is neither
+    revoked, ended nor expired."""
+    return grant_id in ws.grants and not claims.grant_ended(ws, grant_id, now)
 
 
 def claim_block(core, t, rec, now):
     """Who holds the ticket's live claim, as a firing sees it: another person (`claimed_by_other`), the setter's
-    session with a live run grant in the ledger (`busy`), or nobody that keeps the firing from releasing it (None)."""
+    session under any live grant (`busy`: the ledger cannot tell a running session from an idle one, so it never
+    releases it), or nobody that keeps the firing from releasing a lapsed claim (None)."""
     c = t.claim
     if c is None or claims.lapse_reason(core.ws, t, now) is not None:
         return None
@@ -54,6 +61,9 @@ def claim_block(core, t, rec, now):
 
 
 def blocked(core, t, rec, now):
+    # The right to act is the one authorize_agent applies to the run's person: a role that may run agents and
+    # `can_see`. Ticket people (assignees, reviewers, watchers) never gate writes, so people.changed cannot remove
+    # it while the setter still sees the ticket; a viewer role or leaving the restricted list does.
     if identity.member_role(core.ws, rec.person) not in ("owner", "maintainer", "member"):
         return "role_lost"
     if not device_live(core.ws, rec.person, rec.device, now):
@@ -107,6 +117,7 @@ def set_event(core, t, e):
         e["ends"],
         e["brief"],
         e["run_hours"],
+        e["at"],
         e.get("label"),
     )
     t.schedules[rec.id] = rec
@@ -134,6 +145,8 @@ def fired_event(core, t, e):
         return denied("schedule is outside its interval")
     if schedules.occurrences(rec.rule, ts(rec.starts), ts(rec.ends), occurrence - 1) != occurrence:
         return denied("not a rule occurrence")
+    if occurrence < first_allowed(core.ws, rec):
+        return denied("before_set: the occurrence precedes the schedule's signing plus the minimum lead")
     if not occurrence - early_s(core.ws) <= now <= occurrence + fu.FU_LATE_S:
         return denied("missed")
     if reason := blocked(core, t, rec, now):
@@ -172,13 +185,15 @@ def fired_event(core, t, e):
     core.ws.grants[derived.id] = Grant(
         derived.id, rec.person, t.uid, derived.verbs, e["at"], until, parent=rec.set_event
     )
-    rec.occurrences[e["occurrence"]] = {"fired_at": e["at"], "grant": derived.id, "run": e["run"]}
-    # The firing replaces the setter's own claim atomically, so the fresh session can claim the ticket. A different
-    # person's live claim, or the setter's session with a live run grant (busy), was refused above; the host decides
-    # a session without a run grant is not running (its runner), the ledger never lets it release a live run.
+    row = {"fired_at": e["at"], "grant": derived.id, "run": e["run"]}
+    # The firing clears the setter's own lapsed claim atomically, so the fresh session can claim the ticket; only
+    # then does the row record `released`, the one case claim.taken admits this run without the ordinary rule. A
+    # different person's live claim, or the setter's session under a live grant (busy), was refused above.
     if t.claim and identity.canonical(core.ws, t.claim.for_person) == rec.person:
         t.claim = None
         claims.release_leases(t)
+        row["released"] = True
+    rec.occurrences[e["occurrence"]] = row
     return None
 
 
@@ -192,6 +207,8 @@ def outcome_event(core, t, e):
     instant = ts(occ)
     if schedules.occurrences(rec.rule, ts(rec.starts), ts(rec.ends), instant - 1) != instant:
         return denied("not a rule occurrence")
+    if instant < first_allowed(core.ws, rec):
+        return denied("before_set: the occurrence precedes the schedule's signing plus the minimum lead")
     row = rec.occurrences.get(occ, {})
     if row.get("outcome") or (not row and e["outcome"] != "did_not_run"):
         return denied("invalid outcome transition")

@@ -297,8 +297,11 @@ class ScheduleRec:
     ends: str
     brief: str
     run_hours: int
+    set_at: str  # the `at` of schedule.set: no occurrence before set_at + min lead is ever fired or settled
     label: str | None = None
     cancelled: bool = False
+    # occurrence -> {"fired_at", "grant", "run", "released"?: true when the firing cleared the setter's claim,
+    # "outcome"?, "reason"?}
     occurrences: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 

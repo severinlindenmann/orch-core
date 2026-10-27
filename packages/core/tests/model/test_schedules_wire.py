@@ -22,8 +22,8 @@ def grant_addon(w):
     )
 
 
-def setup():
-    w = World().bootstrap({"tom": "member"})
+def setup(extra=None):
+    w = World().bootstrap({"tom": "member", **(extra or {})})
     grant_addon(w)
     uid = w.ticket(owner="tom")
     due = w.clock.replace(second=0) + timedelta(hours=2)
@@ -402,11 +402,14 @@ def test_host_early_window_is_the_model_window():
 
 def test_fire_releases_own_claim_but_refuses_another_person():
     w, uid, e, due = setup()
-    w.clock = due - timedelta(minutes=1)
-    w.claim(uid, "tom")
+    # The setter's own session claimed under a one-hour grant: by the occurrence the claim has lapsed (dead session).
+    w.claim(uid, "tom", gid=w.grant("tom", "workable", hours=1))
     w.clock = due
-    assert not hasattr(fire(w, uid, e, due)[1], "code")
+    f, result = fire(w, uid, e, due)
+    assert not hasattr(result, "code"), result
     assert w.view(uid).claim is None
+    assert w.state()._core.tickets[uid].schedules[e["schedule"]].occurrences[stamp(due)]["released"] is True
+    assert refused(w, uid, "claim.taken", w.agent("tom", f["grant"])) is None
 
     w, uid, e, due = setup()
     w.clock = due - timedelta(minutes=1)
@@ -462,3 +465,162 @@ def test_busy_is_a_schedule_outcome_reason():
         reason="busy",
     )
     assert not hasattr(result, "code"), result
+
+
+def backdated_daily(w, uid):
+    """A daily 09:00 rule signed at 09:30 whose `starts` is backdated to 08:40 (inside SET_PAST_S)."""
+    nine = (w.clock + timedelta(days=1)).replace(hour=9, minute=0, second=0)
+    w.clock = nine + timedelta(minutes=30) - timedelta(seconds=10)
+    e, result = w.try_(
+        uid,
+        "schedule.set",
+        "tom",
+        schedule="sc_" + w.nid(),
+        brief="Daily check",
+        rule={"every": "day", "at": "09:00", "tz": "UTC"},
+        starts=stamp(nine - timedelta(minutes=20)),
+        ends=stamp(nine + timedelta(days=2)),
+        run_hours=2,
+    )
+    assert not hasattr(result, "code"), result
+    assert e["at"] == stamp(nine + timedelta(minutes=30))
+    return e, nine
+
+
+def test_backdated_starts_never_admits_an_occurrence_before_signing():
+    w = World().bootstrap({"tom": "member"})
+    grant_addon(w)
+    uid = w.ticket(owner="tom")
+    e, nine = backdated_daily(w, uid)
+    assert w.state()._core.tickets[uid].schedules[e["schedule"]].set_at == e["at"]
+    # 09:00 is inside the late window and after `starts`, but before the person signed: never fired nor settled.
+    w.clock = nine + timedelta(minutes=31)
+    result = fire(w, uid, e, nine)[1]
+    assert result.code == Code.SCHEDULE_DENIED and "before_set" in result.detail
+    _, result = w.try_(
+        uid,
+        "schedule.outcome",
+        w.HOST,
+        schedule=e["schedule"],
+        occurrence=stamp(nine),
+        outcome="did_not_run",
+        reason="missed",
+    )
+    assert result.code == Code.SCHEDULE_DENIED and "before_set" in result.detail
+    assert w.state()._core.tickets[uid].schedules[e["schedule"]].occurrences == {}
+    nxt = nine + timedelta(days=1)
+    w.clock = nxt
+    assert not hasattr(fire(w, uid, e, nxt)[1], "code")
+
+
+def test_run_claims_without_takeover_only_after_its_firing_released_the_setters_claim():
+    w, uid, e, due = setup({"bob": "member"})
+    # Bob worked the ticket and released it through a follow-up he then cancelled: in_progress, no claim.
+    bob = w.claim(uid, "bob")
+    fu, result = w.try_(
+        uid,
+        "followup.set",
+        bob,
+        followup="fu_" + w.nid(),
+        trigger="time",
+        due=stamp(w.clock + timedelta(hours=2)),
+        brief="Check later",
+    )
+    assert not hasattr(result, "code"), result
+    w.tev(uid, "followup.cancelled", "bob", followup=fu["followup"], reason="person")
+    v = w.view(uid)
+    assert v.status == "in_progress" and v.claim is None
+    w.clock = due
+    f, result = fire(w, uid, e, due)
+    assert not hasattr(result, "code"), result
+    row = w.state()._core.tickets[uid].schedules[e["schedule"]].occurrences[stamp(due)]
+    assert "released" not in row
+    # Nothing of Tom's was released: his run follows the rule Tom himself would (a takeover from nobody is refused).
+    assert refused(w, uid, "claim.taken", w.agent("tom", f["grant"])) == Code.CLAIM_EXISTS
+
+
+def test_released_row_admits_only_its_live_grant():
+    w, uid, e, due = setup()
+    w.claim(uid, "tom", gid=w.grant("tom", "workable", hours=1))
+    w.clock = due
+    f, result = fire(w, uid, e, due)
+    assert not hasattr(result, "code"), result
+    w.tev(
+        uid,
+        "schedule.outcome",
+        w.HOST,
+        schedule=e["schedule"],
+        occurrence=stamp(due),
+        outcome="did_not_run",
+        reason="runner_unavailable",
+    )
+    core = w.state()._core
+    from orch.model import claims
+
+    e2 = {"actor": w.agent("tom", f["grant"]), "at": w.at(), "id": "x"}
+    assert claims.taken(core.ws, core.tickets[uid], e2).code == Code.CLAIM_EXISTS
+
+
+def test_live_claim_of_the_setter_under_an_ordinary_grant_is_busy():
+    from orch.model.schedules_wire import blocked
+
+    w, uid, e, due = setup()
+    w.clock = due - timedelta(minutes=1)
+    a = w.claim(uid, "tom")  # an interactive session's claim under an ordinary grant, live at the occurrence
+    w.clock = due
+    result = fire(w, uid, e, due)[1]
+    assert result.code == Code.SCHEDULE_DENIED and result.detail == "busy"
+    core = w.state()._core
+    t = core.tickets[uid]
+    assert blocked(core, t, t.schedules[e["schedule"]], ts(w.at())) == "busy"
+    assert w.view(uid).claim.session == a["session"]
+
+
+def test_ended_run_grant_lapses_the_runs_claim():
+    from orch.model import claims
+
+    for end in ("outcome", "cancelled", "addon_off"):
+        w, uid, e, due = setup()
+        w.clock = due
+        f, result = fire(w, uid, e, due)
+        assert not hasattr(result, "code"), result
+        run = w.claim(uid, "tom", gid=f["grant"])
+        assert refused(w, uid, "log.added", run, text="working") is None
+        if end == "outcome":
+            w.tev(uid, "schedule.outcome", w.HOST, schedule=e["schedule"], occurrence=stamp(due), outcome="ran")
+        elif end == "cancelled":
+            w.tev(uid, "schedule.cancelled", "tom", schedule=e["schedule"])
+        else:
+            w.wev("addon.disabled", "sev", name="schedules")
+        core = w.state()._core
+        t = core.tickets[uid]
+        # t.claim stays recorded until the host releases it lazily, but it is not live: the grant ended.
+        assert t.claim is not None and t.claim.session == run["session"]
+        assert claims.lapse_reason(core.ws, t, ts(w.at())) == "grant_ended", end
+        assert refused(w, uid, "log.added", run, text="after end") is not None
+
+
+def test_ticket_people_changes_do_not_remove_the_right_to_act():
+    """`blocked` uses the model's acting predicate for an agent's person (authorize_agent): a role that may run
+    agents plus `can_see`. Ticket people (assignees, reviewers) never gate writes, so dropping the setter from the
+    assignees of a ticket restricted to them leaves both the firing and the run's writes admitted; a viewer role or
+    leaving the restricted list is what removes it (role_lost, access_lost)."""
+    from orch.model.schedules_wire import blocked
+
+    w, uid, e, due = setup()
+    w.tev(uid, "visibility.changed", "sev", visibility={"restricted": [w.people["sev"], w.people["tom"]]})
+    w.tev(uid, "people.changed", "sev", role="assignees", add=[w.people["tom"]], remove=[])
+    w.tev(uid, "people.changed", "sev", role="assignees", add=[], remove=[w.people["tom"]])
+    w.clock = due
+    core = w.state()._core
+    t = core.tickets[uid]
+    assert blocked(core, t, t.schedules[e["schedule"]], ts(w.at())) is None
+    f, result = fire(w, uid, e, due)
+    assert not hasattr(result, "code"), result
+    run = w.agent("tom", f["grant"])
+    assert refused(w, uid, "claim.taken", run) is None
+    w.wev("role.changed", "sev", person=w.people["tom"], role="viewer")
+    core = w.state()._core
+    t = core.tickets[uid]
+    assert blocked(core, t, t.schedules[e["schedule"]], ts(w.at())) == "role_lost"
+    assert refused(w, uid, "log.added", run, text="as a viewer") is not None

@@ -87,8 +87,16 @@ def taken(ws: WsCore, t: TCore, e: dict[str, Any]) -> Refusal | None:
         and g.parent is not None
         and (
             any(r.grant == g.id for r in t.followups.values())
-            # a schedule firing released the setter's claim for its own run (U7)
-            or any(o.get("grant") == g.id for s in t.schedules.values() for o in s.occurrences.values())
+            # a schedule firing released the setter's claim for its own run (U7): only the row whose firing actually
+            # cleared that claim, and only while its grant is live; otherwise the run follows the ordinary rule
+            or (
+                not grant_ended(ws, g.id, at)
+                and any(
+                    o.get("released") is True and o.get("grant") == g.id
+                    for s in t.schedules.values()
+                    for o in s.occurrences.values()
+                )
+            )
         )
     )
     resumed = t.status == "in_progress" and t.claim is None and (waiting or own)

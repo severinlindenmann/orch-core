@@ -1,6 +1,7 @@
 """Host timer for bounded person-signed schedules. Ledger occurrence keys are authoritative."""
 
 import contextlib
+import logging
 from types import SimpleNamespace
 
 from orch.identity import new_grant, new_ulid
@@ -11,6 +12,8 @@ from orch.model.types import ts
 
 from .followups import FollowupRunner
 from .runners import LIVE
+
+LOG = logging.getLogger(__name__)
 
 
 class ScheduleRunner(FollowupRunner):
@@ -45,9 +48,13 @@ class ScheduleRunner(FollowupRunner):
                         rows.append((ticket.uid, ticket.key, self._run(rec, occurrence, row), None))
                 if rec.cancelled:
                     continue
-                after = max((ts(o) for o in rec.occurrences), default=ts(rec.starts) - 1)
+                # Never an occurrence before the signing plus the minimum lead (a backdated `starts`).
+                floor = schedules_wire.first_allowed(core.ws, rec) - 1
+                after = max([floor, *(ts(o) for o in rec.occurrences)])
                 due = schedules.occurrences(rec.rule, ts(rec.starts), ts(rec.ends), after)
                 if due is not None and now >= due - (schedules_wire.early_s(core.ws) if on else 0):
+                    # A live claim of the setter is `busy` in the ledger itself (blocked), whatever the runner
+                    # reports for its session: only a lapsed claim is released by the firing.
                     reason = (
                         "addon_disabled"
                         if not on
@@ -55,12 +62,7 @@ class ScheduleRunner(FollowupRunner):
                         if now > due + rules.FU_LATE_S or now >= ts(rec.ends)
                         else schedules_wire.blocked(core, ticket, rec, now)
                     )
-                    run = self._run(rec, stamp(due), {})
-                    if reason is None and claims.live(core.ws, ticket, now):
-                        # The setter's own session holds the claim without a live run grant in the ledger: the
-                        # runner decides whether it still runs (busy) or the firing releases it.
-                        run.claim_session = ticket.claim.session
-                    rows.append((ticket.uid, ticket.key, run, reason))
+                    rows.append((ticket.uid, ticket.key, self._run(rec, stamp(due), {}), reason))
         return rows, today, schedules_wire.early_s(core.ws)
 
     @staticmethod
@@ -73,16 +75,6 @@ class ScheduleRunner(FollowupRunner):
             run=row.get("run"),
             grant=row.get("grant"),
             cancelled=rec.cancelled,
-            claim_session=None,
-        )
-
-    def _running(self, records, session):
-        """The runner still runs a session of the claim's family in this workspace."""
-        return bool(session) and any(
-            r.get("state") in LIVE
-            and r.get("workspace_id") in (None, self.service.workspace_id)
-            and claims.in_family(r.get("session") or "", session)
-            for r in records.values()
         )
 
     async def _outcome(self, uid, rec, outcome, reason=None):
@@ -130,36 +122,49 @@ class ScheduleRunner(FollowupRunner):
                 for r in records.values()
             )
             for uid, key, rec, reason in rows:
-                if rec.grant:
-                    run = records.get(rec.run)
-                    if run is None:
-                        if hub and hub.connected:
-                            await self._outcome(uid, rec, "did_not_run", "host_restarted")
-                    elif run.get("state") not in LIVE:
-                        info = run.get("exit") or {}
-                        failed = (
-                            info.get("code") not in (None, 0)
-                            or info.get("signal")
-                            or info.get("reason") in ("spawn_failed", "lost", "runner_restarted")
-                        )
-                        wrote = await self.service.call(self._wrote, uid, rec, run.get("session"))
-                        await self._outcome(
-                            uid,
-                            rec,
-                            "failed" if failed or not wrote else "ran",
-                            "harness_failed" if failed else "no_writes" if not wrote else None,
-                        )
+                # One refused append (the model re-checks every firing and outcome) must not abort the tick: that
+                # row records nothing now and is judged again from the ledger on the next tick; the rest proceed.
+                try:
+                    if rec.grant:
+                        await self._settle(uid, rec, records, hub)
+                        continue
+                    if reason:
+                        await self._outcome(uid, rec, "did_not_run", reason)
+                        continue
+                    if (
+                        live >= rules.FU_CONCURRENT_RUNS
+                        or today >= rules.FU_RUNS_PER_DAY
+                        or not hub
+                        or not hub.connected
+                    ):
+                        continue
+                    started = await self.fire(uid, key, rec, hub)
+                except Exception:  # noqa: BLE001 - logged; the next tick retries from the ledger
+                    LOG.warning("schedule %s occurrence %s: append refused", rec.id, rec.occurrence, exc_info=True)
                     continue
-                if not reason and self._running(records, rec.claim_session):
-                    reason = "busy"  # a live run holds the claim: this occurrence does not run, the next one tries
-                if reason:
-                    await self._outcome(uid, rec, "did_not_run", reason)
-                    continue
-                if live >= rules.FU_CONCURRENT_RUNS or today >= rules.FU_RUNS_PER_DAY or not hub or not hub.connected:
-                    continue
-                if await self.fire(uid, key, rec, hub):
-                    live += 1
+                live += started
                 today += 1
+
+    async def _settle(self, uid, rec, records, hub):
+        """Record the outcome of a fired occurrence once its run is gone."""
+        run = records.get(rec.run)
+        if run is None:
+            if hub and hub.connected:
+                await self._outcome(uid, rec, "did_not_run", "host_restarted")
+        elif run.get("state") not in LIVE:
+            info = run.get("exit") or {}
+            failed = (
+                info.get("code") not in (None, 0)
+                or info.get("signal")
+                or info.get("reason") in ("spawn_failed", "lost", "runner_restarted")
+            )
+            wrote = await self.service.call(self._wrote, uid, rec, run.get("session"))
+            await self._outcome(
+                uid,
+                rec,
+                "failed" if failed or not wrote else "ran",
+                "harness_failed" if failed else "no_writes" if not wrote else None,
+            )
 
     async def fire(self, uid, key, rec, hub):
         token, secret, secret_hash = new_grant()

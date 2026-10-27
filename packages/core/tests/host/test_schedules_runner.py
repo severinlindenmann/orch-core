@@ -353,7 +353,76 @@ def daily_harness(monkeypatch, tmp_path):
     def occurrences():
         return w.state()._core.tickets[uid].schedules[event["schedule"]].occurrences
 
-    return NS(w=w, uid=uid, due=due, hub=hub, commands=commands, appended=appended, tick=tick, occurrences=occurrences)
+    return NS(
+        w=w,
+        uid=uid,
+        due=due,
+        hub=hub,
+        commands=commands,
+        appended=appended,
+        tick=tick,
+        occurrences=occurrences,
+        event=event,
+        store=service.store,
+        runner=runner,
+        clock=clock,
+    )
+
+
+def test_backdated_starts_host_never_fires_an_occurrence_before_signing(monkeypatch, tmp_path):
+    asyncio.run(_backdated(monkeypatch, tmp_path))
+
+
+async def _backdated(monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    from tests.model.test_schedules_wire import backdated_daily
+    from tests.model.world import stamp
+
+    h = daily_harness(monkeypatch, tmp_path)
+    h.w.tev(h.uid, "schedule.cancelled", "tom", schedule=h.event["schedule"])  # only the backdated rule is live
+    e, nine = backdated_daily(h.w, h.uid)
+
+    def occurrences():
+        return h.w.state()._core.tickets[h.uid].schedules[e["schedule"]].occurrences
+
+    await h.tick(nine + timedelta(minutes=31))
+    # 09:00 precedes the signing: the host neither fires nor settles it (the model would refuse both).
+    assert stamp(nine) not in occurrences()
+    assert not [x for x in h.appended if x.get("schedule") == e["schedule"]]
+    nxt = nine + timedelta(days=1)
+    await h.tick(nxt)
+    fired = [x for x in h.appended if x.get("schedule") == e["schedule"]]
+    assert [(x["type"], x["occurrence"]) for x in fired] == [("schedule.fired", stamp(nxt))]
+
+
+def test_a_refused_append_does_not_abort_the_tick(monkeypatch, tmp_path):
+    asyncio.run(_refused_append(monkeypatch, tmp_path))
+
+
+async def _refused_append(monkeypatch, tmp_path):
+    from tests.model.world import stamp
+
+    h = daily_harness(monkeypatch, tmp_path)
+    payload = {k: h.event[k] for k in ("brief", "rule", "starts", "ends", "run_hours")}
+    other, result = h.w.try_(h.uid, "schedule.set", "tom", schedule="sc_" + h.w.nid(), **payload)
+    assert not hasattr(result, "code"), result
+    append, calls = h.store.append, []
+
+    def flaky(payload, log):
+        calls.append(payload)
+        if len(calls) == 1:
+            raise RuntimeError("schedule.denied: refused by the model")
+        return append(payload, log)
+
+    h.store.append = flaky
+    await h.tick(h.due)
+    # The first row's append was refused: nothing recorded for it; the second row still fired.
+    assert stamp(h.due) not in h.occurrences()
+    second = h.w.state()._core.tickets[h.uid].schedules[other["schedule"]].occurrences
+    assert "grant" in second[stamp(h.due)] and len(h.commands) == 1
+    await h.tick(h.due)  # the next tick re-evaluates the first row from the ledger
+    assert "grant" in h.occurrences()[stamp(h.due)] and len(h.commands) == 2
 
 
 def test_dead_own_session_claim_is_released_by_the_firing(monkeypatch, tmp_path):
@@ -366,14 +435,35 @@ async def _dead_own_session(monkeypatch, tmp_path):
     from tests.model.world import stamp
 
     h = daily_harness(monkeypatch, tmp_path)
-    h.w.clock = h.due - timedelta(minutes=5)
-    a = h.w.claim(h.uid, "tom")
-    # The runner knows that session, and it has ended: no live run holds the claim.
+    h.w.clock = h.due - timedelta(minutes=90)
+    a = h.w.claim(h.uid, "tom", gid=h.w.grant("tom", "workable", hours=1))
+    # The runner knows that session, and it has ended; its one-hour grant expired, so the claim has lapsed.
     h.hub.store.records["r_old"] = {"state": "exited", "session": a["session"], "workspace_id": h.w.workspace_id}
     await h.tick(h.due)
     assert [e["type"] for e in h.appended] == ["schedule.fired"] and len(h.commands) == 1
-    assert "grant" in h.occurrences()[stamp(h.due)]
+    row = h.occurrences()[stamp(h.due)]
+    assert "grant" in row and row["released"] is True
     assert h.w.view(h.uid).claim is None  # released as part of schedule.fired
+
+
+def test_live_own_claim_is_busy_even_when_the_runner_says_its_session_ended(monkeypatch, tmp_path):
+    asyncio.run(_live_own_claim_dead_session(monkeypatch, tmp_path))
+
+
+async def _live_own_claim_dead_session(monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    from tests.model.world import stamp
+
+    h = daily_harness(monkeypatch, tmp_path)
+    h.w.clock = h.due - timedelta(minutes=5)
+    a = h.w.claim(h.uid, "tom")  # an ordinary grant, live at the occurrence
+    h.hub.store.records["r_old"] = {"state": "exited", "session": a["session"], "workspace_id": h.w.workspace_id}
+    await h.tick(h.due)
+    assert not h.commands and [e["type"] for e in h.appended] == ["schedule.outcome"]
+    row = h.occurrences()[stamp(h.due)]
+    assert (row["outcome"], row["reason"]) == ("did_not_run", "busy")
+    assert h.w.view(h.uid).claim.session == a["session"]
 
 
 def test_live_run_holding_the_claim_is_busy_and_next_occurrence_fires(monkeypatch, tmp_path):
@@ -401,13 +491,12 @@ async def _live_run_busy(monkeypatch, tmp_path):
     await h.tick(h.due + timedelta(minutes=1))
     assert not h.commands and len(h.appended) == 1  # no retry of this occurrence
 
-    # The run ends; the claim is still live (same person's session, activity within the TTL) and the next day fires.
+    # The run ends and the session stays idle past the claim TTL: the claim lapsed, so the next day fires.
     h.hub.store.records["r_live"]["state"] = "exited"
     second = h.due + timedelta(days=1)
     h.w.clock = second - timedelta(minutes=5)
-    h.w.tev(h.uid, "log.added", a, text="still mine")
     core = h.w.state()._core
-    assert claims.live(core.ws, core.tickets[h.uid], ts(h.w.at()))
+    assert claims.lapse_reason(core.ws, core.tickets[h.uid], ts(h.w.at())) == "expired"
     await h.tick(second)
     assert len(h.commands) == 1 and "grant" in h.occurrences()[stamp(second)]
     assert h.w.view(h.uid).claim is None

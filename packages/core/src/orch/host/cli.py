@@ -534,6 +534,20 @@ def enable(
     return {"ok": True, "result": {"data": data}}
 
 
+def refresh_stale_runner(state: Path, env: Mapping[str, str]) -> dict[str, Any]:
+    """Setup and ``orch install``: leave a current agent runner. A runner service of an older orch release is
+    restarted (only when it has no live runs; the result says so otherwise). Never raises; ``{}`` when nothing ran."""
+    from . import enable as svc
+    from .release import code_digest
+
+    data: dict[str, Any] = {}
+    try:
+        _restart_stale_runner(Path(state), env, svc.run_dir_for(Path(state), None, env), code_digest(), data)
+    except Exception:  # noqa: BLE001 - best effort; the host still refuses a stale start with runner.stale
+        pass
+    return data
+
+
 def _restart_stale_runner(
     state: Path, env: Mapping[str, str], run_dir: Path, mine: str, data: dict[str, Any], *, force: bool = False
 ) -> None:

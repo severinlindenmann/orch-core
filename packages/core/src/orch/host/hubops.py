@@ -115,7 +115,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
     "hub.handoff": {  # V3 C11: a read; see host/hubhandoff.py
         "type": "object",
         "properties": {
-            "kind": {"enum": ["gate", "verdict", "question", "status", "grant"]},
+            "kind": {"enum": ["gate", "verdict", "question", "status", "grant", "addon"]},
             "ticket": {"type": "string", "minLength": 1, "maxLength": 64},
             "gate": {"enum": ["requirements", "plan", "code", "verify"]},
             "question": {"type": "string", "minLength": 1, "maxLength": 64},
@@ -125,6 +125,8 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "hours": {"type": "integer", "minimum": 1, "maximum": 168},
             "label": {"type": "string", "minLength": 1, "maxLength": 200},
             "cancel": {"const": True},
+            # kind addon (FB15): the prepared hand-off request (op addon.grant) the hub link is for
+            "request": {"type": "string", "pattern": "^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
         },
         "required": ["kind"],
         "additionalProperties": False,

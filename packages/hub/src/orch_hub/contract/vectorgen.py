@@ -304,6 +304,10 @@ EVENT_PAYLOADS: dict[str, tuple[str, dict[str, Any] | None]] = {
     "people.changed": (TICKET, {"role": "reviewers", "add": ["u_" + U_BOB], "remove": []}),
     "addon.disabled": ("workspace", {"name": "wiki"}),
     "addon.purged": ("workspace", {"name": "wiki"}),
+    # FB15 (§8.8b): the owner's ask to turn an add-on on; the host answers with a host-actor addon.granted
+    "addon.requested": ("workspace", {"name": "wiki", "version": "1.2.0", "package_sha256": _h("wiki_package"),
+                                      "capabilities": ["network", "serve_http"], "handoff": "hr_01J9ZP0000000000000000HND1",
+                                      "runtime": {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3}}),
     # phase 5 (§8.8, V3-D29)
     "grant.requested": ("workspace", {"scope": "workable", "verbs": "agent", "hours": 72, "label": "Tariff import"}),
     "grant.revoked": ("workspace", {"grant": "gr_01J9ZP0000000000000000GRT1", "reason": "done"}),

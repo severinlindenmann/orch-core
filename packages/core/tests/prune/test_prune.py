@@ -1090,3 +1090,74 @@ def test_b3_the_keychain_store_filters_every_query_by_orchs_service():
     assert "kSecAttrService" in base and "SERVICE" in base and "self._base(" in query
     for fn in (keychain.KeychainStore.accounts, keychain.KeychainStore.delete, keychain.KeychainStore._count):
         assert "self._query(" in inspect.getsource(fn)  # list, delete and count all go through the service-scoped query
+
+
+# ---------------------------------------------------------------------------------- run 12a findings
+
+
+def _host_unit_run(m, running: bool):
+    def run(argv, env=None):
+        m.calls.append(list(argv))
+        if argv[:3] == ["launchctl", "print", "gui/501/io.orch.host"]:
+            return 0, "io.orch.host = {\n\tpid = 4242\n}\n" if running else "io.orch.host = {\n\tstate = waiting\n}\n"
+        return 0, "orch-core v2\n" if argv[:3] == ["uv", "tool", "list"] else ""
+
+    m.run = run
+
+
+def test_a_host_run_by_orchs_own_unit_does_not_block_and_hubs_are_told_first(m, monkeypatch):
+    from orch.prune import inventory
+
+    monkeypatch.setattr(inventory, "_answers", lambda p: True)
+    _host_unit_run(m, running=True)
+    assert not gather(m.ctx()).blockers
+    order = []
+    m.left = order
+    ctx_calls = m.calls
+    m.answers = ["y", "n", "y"]  # remove all; keep the folder; tell the hub
+    real_ctx = m.ctx
+
+    def ctx(**kw):
+        c = real_ctx(**kw)
+        c.hub_leave = lambda root, env: (order.append(("leave", len(ctx_calls))) or True, "ok")
+        return c
+
+    m.ctx = ctx
+    assert m.prune(interactive=True) == 0, m.err.getvalue()
+    assert order and order[0][0] == "leave"
+    stop = next(i for i, c in enumerate(ctx_calls) if c[:2] == ["launchctl", "bootout"])
+    assert order[0][1] <= stop  # the hub was told while the host was still up, then the services stopped
+
+
+def test_a_host_that_orchs_unit_does_not_run_still_blocks(m, monkeypatch):
+    from orch.prune import inventory
+
+    monkeypatch.setattr(inventory, "_answers", lambda p: True)
+    _host_unit_run(m, running=False)
+    assert any("started by hand" in b for b in gather(m.ctx()).blockers)
+    (m.home / "Library/LaunchAgents/io.orch.host.plist").unlink()
+    assert any("started by hand" in b for b in gather(m.ctx()).blockers)  # no unit at all
+
+
+def test_only_the_tool_left_says_so_and_still_removes_it(tmp_path):
+    m = Machine(tmp_path / "a")
+
+    def run(argv, env=None):
+        m.calls.append(list(argv))
+        if argv[:2] == ["launchctl", "print"]:
+            return 1, ""  # nothing is loaded any more
+        return 0, "orch-core v2\n" if argv[:3] == ["uv", "tool", "list"] else ""
+
+    m.run = run
+    assert m.go("--workspaces", "keep") == 0
+    m.answers = ["y"]
+    assert m.prune(interactive=True) == 0
+    assert "Nothing to remove except the orch tool itself." in m.out.getvalue()
+    assert ["uv", "tool", "uninstall", "orch-core"] in m.calls
+    assert m.prune("--keep-tool", "--yes") == 0 and "Nothing to remove." in m.out.getvalue()
+
+
+def test_the_report_never_names_a_vpn_product(m):
+    assert m.prune("--dry-run") == 0
+    text = m.out.getvalue()
+    assert "NetBird" not in text and "private network (VPN)" in text

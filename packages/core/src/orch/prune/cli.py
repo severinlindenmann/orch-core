@@ -196,9 +196,12 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         for b in inv.blockers:
             err.write(f"orch host prune: {b}\n")
         return 2
+    only_tool = n == 1 and any(i.kind == "tool" for i in inv.items)
     if n == 0:
         ctx.say("\nNothing to remove.")
         return 0
+    if only_tool:
+        ctx.say("\nNothing to remove except the orch tool itself.")
     if not a.yes:
         if not ctx.interactive:
             err.write("orch host prune: needs a terminal to ask; use --yes to run without asking (or --dry-run)\n")

@@ -71,7 +71,7 @@ _NOT_REMOVABLE = (
     "browser data: the dashboard's cookies, saved passkeys and local storage in your browsers (out of reach)",
     "git history in workspace folders: the empty first commit and any branches orch made are your history",
     "Claude Code's own records of past sessions (~/.claude) and shell history",
-    "NetBird and other tools orch only talked to (not installed by orch)",
+    "your private network (VPN) and other tools orch only talked to (not installed by orch)",
     "the PATH line that `uv tool update-shell` may have added to your shell file (uv's, not orch's)",
     "copies in backups (Time Machine, snapshots) of anything removed here",
 )
@@ -174,6 +174,15 @@ def loaded_state(ctx: Ctx, kind: str, name: str) -> tuple[bool, str | None]:
     return False, None
 
 
+def unit_running(ctx: Ctx, kind: str, name: str) -> bool:
+    """Whether the person's service manager has ``name`` running now (a process, not just loaded)."""
+    if kind == "launchd":
+        rc, out = ctx.exec(["launchctl", "print", f"gui/{ctx.uid}/{name}"])
+        return rc == 0 and any(ln.strip().startswith("pid = ") for ln in out.splitlines())
+    rc, out = ctx.exec(["systemctl", "--user", "show", name, "-p", "ActiveState"])
+    return rc == 0 and "ActiveState=active" in out
+
+
 def install_runner(ctx: Ctx, layout: Any, kind: str | None) -> Any:
     """The runner that started a part: the one its install record names (a part started by the pidfile runner is
     stopped by it, whatever this computer's default is); ``ctx.runner`` when a test or caller fixed one."""
@@ -266,7 +275,16 @@ def _services(ctx: Ctx, inv: Inventory) -> None:
                 )
             )
     control = inv.state / "run" / "control" / "host.sock"
-    if _answers(control):
+    host_unit = next(
+        (
+            i
+            for i in inv.items
+            if i.kind == "unit" and i.data.get("name") in (host_units.LAUNCHD_LABEL, host_units.SYSTEMD_NAME)
+        ),
+        None,
+    )
+    if _answers(control) and not (host_unit and unit_running(ctx, host_unit.data["kind"], host_unit.data["name"])):
+        # a host that orch's own installed unit runs is stopped with the unit; only one started by hand blocks
         inv.blockers.append(
             "a host is running that is not a service (started by hand): prune cannot stop it and it would write its "
             f"state again. Stop it first (it answers on {control})"

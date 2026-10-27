@@ -26,8 +26,8 @@ import { ClickProblemBox, RefusalDevices, TechnicalDetails } from './RefusalDevi
 import { ClickSignPanel } from './ClickSignPanel'
 import { useClickSign } from './useClickSign'
 import { HandoffPanel } from './HandoffPanel'
-import { HubSignPanel, NotFromHub } from './HubSignPanel'
-import { hubOnly, hubRequestOf } from '@/api/hubsign'
+import { HubAddonPanel, HubSignPanel, NotFromHub } from './HubSignPanel'
+import { hubOnly, hubRequestOf, isAddonGrant } from '@/api/hubsign'
 import { Inline, Raw } from './visible'
 import { failedSubmit, useHandoff, type HandoffPhase } from './useHandoff'
 import { fmtClock } from '@/lib/time'
@@ -280,7 +280,7 @@ export function SignPopover(p: SignPopoverProps) {
     const request = hubRequestOf(p.action)
     return (
       <SignShell inline={p.inline} anchor={anchor} open onDismiss={p.onClose} title={<Inline>{p.title}</Inline>} description={null} showClose onOpenAutoFocus={(e) => e.preventDefault()}>
-        {request && p.ws ? <HubSignPanel ws={p.ws} request={request} /> : <NotFromHub />}
+        {isAddonGrant(p.action) && p.ws ? <HubAddonPanel ws={p.ws} action={p.action} onDone={() => p.onSettled?.('done', null, null)} /> : request && p.ws ? <HubSignPanel ws={p.ws} request={request} /> : <NotFromHub />}
         <div className="flex justify-end gap-2">
           <Button variant="outline" ref={cancelRef} onClick={p.onClose}>
             Close

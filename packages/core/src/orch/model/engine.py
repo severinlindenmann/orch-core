@@ -269,6 +269,7 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
         "grant.requested": lambda: workspace.grant_requested(ws, e),
         "grant.revoked": lambda: workspace.grant_revoked(ws, e),
         "device.excluded": lambda: workspace.device_excluded(core, e),
+        "addon.requested": lambda: workspace.addon_requested(ws, e),
         "addon.granted": lambda: workspace.addon_event(core, e),
         "addon.disabled": lambda: workspace.addon_event(core, e),
         "addon.purged": lambda: workspace.addon_event(core, e),

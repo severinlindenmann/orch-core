@@ -98,6 +98,8 @@ CUSTODIAL_TYPES: dict[tuple[str, str], str] = {
     **{(t, "workspace"): "admin" for t in ("addon.disabled", "addon.purged")},
     # phase 5 (hub protocol 8.8, owner V3-D29, C10): grants, device exclusion, policy and settings. ``grant.issued`` is
     # NOT custodial: the host makes the secret and appends it itself, naming the ``grant.requested`` it answers.
+    # FB15 (8.8b): the owner's ask to turn an add-on on; the host answers with a host-actor ``addon.granted``
+    ("addon.requested", "workspace"): "admin",
     ("grant.requested", "workspace"): "edit",
     ("grant.revoked", "workspace"): "edit",
     ("device.excluded", "workspace"): "admin",

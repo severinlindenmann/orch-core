@@ -420,3 +420,17 @@ def test_preview_is_read_only_and_equals_the_grant_that_follows(hws, me):
     assert read_package(d).digest == before.doc["data"]["grant"]["package_sha256"]
     missing = me("addon", "preview", "nope", "--json")
     assert missing.code != 0 and missing.doc["error"]["code"] == "not_found"
+
+
+def test_grant_event_capabilities_are_sorted_and_unique_whatever_the_manifest_order(monkeypatch):
+    """FB15 B1: the hub's terms are sorted and unique, so the grant the host builds is too."""
+    from orch.addons import install
+
+    class M:
+        name, version, capabilities, runtime = "x", "1.0.0", ["pty", "network", "pty", "git_push"], None
+
+    class P:
+        digest = "sha256:" + "a" * 64
+
+    monkeypatch.setattr(install, "declarations", lambda m: {"fields": {}, "sections": [], "artifact_kinds": []})
+    assert install.grant_event(M(), P())["capabilities"] == ["git_push", "network", "pty"]

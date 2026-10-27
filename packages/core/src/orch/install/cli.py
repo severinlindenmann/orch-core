@@ -163,6 +163,8 @@ def choose_address(ctx: Ctx, given: str | None, st: dict[str, Any]) -> str:
     if st.get("address"):
         return st["address"]
     found = ctx.detect()
+    if sys.platform == "darwin" and any(_is_cgnat(ip) for ip, _ in found):
+        ctx.say("Note: on this computer, open it at 127.0.0.1 (a Mac cannot open its own private-network address).")
     if not ctx.interactive or len(found) == 1:
         return found[0][0]
     ctx.say("Which address should the parts listen on?")
@@ -171,6 +173,15 @@ def choose_address(ctx: Ctx, given: str | None, st: dict[str, Any]) -> str:
     ctx.say("  or type your own address (an IP; a domain is only noted)")
     ans = ctx.ask("address", "1")
     return found[int(ans) - 1][0] if ans.isdigit() and 1 <= int(ans) <= len(found) else ans
+
+
+def _is_cgnat(ip: str) -> bool:
+    """100.64.0.0/10: where NetBird addresses live."""
+    try:
+        a, b, *_ = (int(x) for x in ip.split("."))
+    except ValueError:
+        return False
+    return a == 100 and 64 <= b <= 127
 
 
 def _taken(st: dict[str, Any], skip: str = "") -> set[int]:
@@ -390,10 +401,13 @@ def status(ctx: Ctx, as_json: bool) -> int:
             }
         )
     dash = st.get("dashboard")
+    dver, dref = installed_version(ctx, "orch-dashboard") if dash else (None, None)
     for w in st["workspaces"]:
         rows.append(
             {
                 "part": "workspace",
+                "version": (dash or {}).get("version") or dver,
+                "ref": (dash or {}).get("ref") or dref,
                 "state": ("running" if ctx.runner.info("dashboard")["running"] else "stopped")
                 if dash
                 else "registered",
@@ -413,6 +427,25 @@ def status(ctx: Ctx, as_json: bool) -> int:
     if dash:
         ctx.say(f"workspace dashboard login link (single use, 5 min):  {dashboard_login_hint(dash)}")
     return 0
+
+
+def installed_version(ctx: Ctx, dist: str) -> tuple[str | None, str | None]:
+    """(version, git commit) of an installed Python distribution, read from its metadata (the dashboard runs from the
+    same tool environment as ``orch``; its commit is in ``direct_url.json`` when it was installed from git)."""
+    from importlib import metadata
+
+    for name in (dist, "orch-core"):
+        try:
+            d = metadata.distribution(name)
+        except metadata.PackageNotFoundError:
+            continue
+        commit = None
+        try:
+            commit = (json.loads(d.read_text("direct_url.json") or "{}").get("vcs_info") or {}).get("commit_id")
+        except (ValueError, OSError):
+            pass
+        return d.version, commit
+    return None, None
 
 
 def _short(ref: Any) -> str:
@@ -468,7 +501,7 @@ def phone_origin(rec: dict[str, Any]) -> str:
     if host in ("localhost", P.ADDRESS_LOOPBACK, "::1") or host.startswith("127."):
         raise InstallError(
             "this hub only listens on this computer (127.0.0.1), a phone cannot reach it. "
-            "Reinstall it on a LAN or NetBird address: orch install hub --address <your address>"
+            "Reinstall it on a LAN or private-network address: orch install hub --address <your address>"
         )
     return f"http://{host}:{rec['port']}"
 

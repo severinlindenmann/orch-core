@@ -15,6 +15,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
+from orch.privdir import make_private_dir
+
 from .state import Layout
 
 __all__ = ["Runner", "PidfileRunner", "LaunchdRunner", "SystemdRunner", "pick_runner"]
@@ -52,7 +54,7 @@ class PidfileRunner:
 
     def start(self, part, argv, env, log):
         self.stop(part)
-        log.parent.mkdir(parents=True, exist_ok=True)
+        make_private_dir(log.parent)
         with open(log, "ab") as lf:
             p = subprocess.Popen(
                 list(argv),
@@ -101,7 +103,7 @@ class LaunchdRunner:
         self.stop(part)
         path = self.plist(part)
         path.parent.mkdir(parents=True, exist_ok=True)
-        log.parent.mkdir(parents=True, exist_ok=True)
+        make_private_dir(log.parent)
         path.write_bytes(
             plistlib.dumps(
                 {
@@ -154,7 +156,7 @@ class SystemdRunner:
     def start(self, part, argv, env, log):
         path = self.path(part)
         path.parent.mkdir(parents=True, exist_ok=True)
-        log.parent.mkdir(parents=True, exist_ok=True)
+        make_private_dir(log.parent)
         envs = "".join(f"Environment={shlex.quote(f'{k}={v}')}\n" for k, v in env.items())
         path.write_text(
             f"[Unit]\nDescription=orch {part}\n\n[Service]\nExecStart={shlex.join(argv)}\n{envs}Restart=on-failure\n"

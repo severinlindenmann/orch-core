@@ -172,20 +172,6 @@ def test_leaving_the_hub_is_prepared_in_full_mode(client, token, stub, script, b
     assert script.prepared == 1  # the signer was asked: the full-mode refusal did not fire
 
 
-def test_addon_install_in_full_mode_does_not_point_to_a_hub_screen(client, token, stub, script, monkeypatch):
-    """Run-11 FB15: the hub cannot sign `addon.granted`, so the refusal must not say "approve in the hub"."""
-    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "full")
-    res = client.post(
-        f"/api/w/{stub.ws}/click/prepare",
-        json={"action": "market_grant", "name": "model-routing", "staged": "st_" + "0" * 32},
-        headers=hdr(token),
-    )
-    err = res.json()["error"]
-    assert res.status_code == 403 and err["code"] == "sign.hub_only"
-    assert "cannot approve add-on installs" in err["message"] and "in the hub" not in err["message"]
-    assert script.prepared == 0
-
-
 def test_unknown_mode_is_refused_like_full(client, token, stub, script, monkeypatch):
     monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "unknown")
     assert prepare(client, token, stub).json()["error"]["code"] == "sign.hub_only"
@@ -210,3 +196,50 @@ def test_the_error_code_is_allowed_through_and_is_a_403():
     res = host_response(fail("sign.hub_only", exit=3))
     assert res.status_code == 403
     assert ORIGIN
+
+
+RID = "hr_01J9ZP0000000000000000HND1"
+ADDON = {
+    "mode": "full", "where": "hub", "kind": "addon", "pending": True,
+    "summary": {"kind": "addon", "name": "wiki", "version": "1.2.0", "package_sha256": "sha256:" + "a" * 64,
+                "capabilities": ["network"]},
+    "short_hash": "aaaa aaaa aaaa",
+    "url": f"https://hub.example.test:4443/#/w/{WS}/addon/eyJhIjoxfQ",
+}  # fmt: skip
+
+
+def test_an_add_on_approval_is_relayed_with_a_closed_shape():
+    link = Link({"hub.handoff": ADDON})
+    res = post(app_for(link), {"kind": "addon", "request": RID})
+    assert res.status_code == 200
+    summary = {"kind": "addon", "name": "wiki", "version": "1.2.0", "capabilities": ["network"]}
+    assert res.json() == {"mode": "full", "kind": "addon", "summary": summary, "short_hash": "aaaa aaaa aaaa",
+                          "url": ADDON["url"]}  # fmt: skip
+    assert link.calls == [("hub.handoff", {"kind": "addon", "request": RID})]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"kind": "addon"},
+        {"kind": "addon", "request": "x"},
+        {"kind": "addon", "request": RID, "ticket": "DEMO-0001"},
+        {"kind": "gate", "request": RID},
+        {"kind": "gate"},
+    ],
+)
+def test_an_add_on_approval_and_a_ticket_approval_never_mix(body):
+    assert post(app_for(Link({"hub.handoff": ADDON})), body).status_code in (400, 422)
+
+
+BAD_ADDON = [
+    {"url": f"https://hub.example.test/#/w/{WS}/addon/a b"},
+    {"url": "https://evil.example/x"},
+    {"summary": {"name": 1}},
+]
+
+
+@pytest.mark.parametrize("bad", BAD_ADDON)
+def test_an_add_on_answer_off_the_grammar_is_dropped(bad):
+    res = post(app_for(Link({"hub.handoff": {**ADDON, **bad}})), {"kind": "addon", "request": RID})
+    assert res.status_code == 500 or res.json()["error"]["code"] == "internal"

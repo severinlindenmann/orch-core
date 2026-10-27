@@ -27,13 +27,19 @@ URL = re.compile(
     r"^https://(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])(?::[0-9]{1,5})?/#/w/[0-9a-f]{32}/t/"
     r"[0-7][0-9A-HJKMNP-TV-Z]{25}(?:/g/(?:requirements|plan|code|verify))?$"
 )
+#: FB15: the add-on approval link, ``/#/w/<workspace>/addon/<b64u terms>`` (the host's `build_addon_url`)
+ADDON_URL = re.compile(
+    r"^https://(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])(?::[0-9]{1,5})?/#/w/[0-9a-f]{32}/addon/[A-Za-z0-9_-]{1,8192}$"
+)
+RequestId = Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Qid = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.-]{1,64}$")]
 
 
 class HubSign(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    kind: Literal["gate", "verdict", "question", "status"]
-    ticket: Key
+    kind: Literal["gate", "verdict", "question", "status", "addon"]
+    ticket: Key | None = None
+    request: RequestId | None = None  # kind addon: the prepared hand-off request the link is for
     gate: Literal["requirements", "plan", "code", "verify"] | None = None
     question: Qid | None = None
 
@@ -57,20 +63,9 @@ def mode_of(gateway: Gateway, ws: str) -> str | None:
         return None
 
 
-#: what the hub cannot sign yet: `addon.granted` is not a custodial type (protocol.md, "Not custodial in hv 0")
-NOT_IN_HUB = ("addon_grant", "market_grant")
-
-
-def refuse_if_hub_only(gateway: Gateway, ws: str, action: str | None = None) -> None:
+def refuse_if_hub_only(gateway: Gateway, ws: str) -> None:
     """`sign.hub_only` before any local signing is prepared: full (or unknown) hub mode takes no click signature."""
     if mode_of(gateway, ws) in HUB_ONLY:
-        if action in NOT_IN_HUB:  # run-11 FB15: never point to a hub screen that does not exist
-            raise fail(
-                "sign.hub_only",
-                "This workspace signs through the hub, and the hub cannot approve add-on installs yet. "
-                "Leave the hub first to install add-ons here.",
-                exit=3,
-            )
         raise fail(
             "sign.hub_only",
             "Approvals go through the hub in this workspace: approve on your phone or in the hub.",
@@ -78,8 +73,34 @@ def refuse_if_hub_only(gateway: Gateway, ws: str, action: str | None = None) -> 
         )
 
 
+def addon_panel(got: dict) -> dict:
+    """FB15: of the host's add-on answer only the closed fields, each checked (the link by the host's grammar)."""
+    s, short, url = got.get("summary"), got.get("short_hash"), got.get("url")
+    caps = s.get("capabilities") if isinstance(s, dict) else None
+    if (
+        got.get("mode") not in HUB_ONLY
+        or not isinstance(s, dict)
+        or not (isinstance(short, str) and SHORT.fullmatch(short))
+        or not (isinstance(url, str) and ADDON_URL.fullmatch(url))
+        or not isinstance(s.get("name"), str)
+        or not isinstance(s.get("version"), str)
+        or not isinstance(caps, list)
+        or not all(isinstance(c, str) for c in caps)
+    ):
+        raise fail("internal", exit=1)
+    return {
+        "mode": got["mode"],
+        "kind": "addon",
+        "summary": {"kind": "addon", "name": s["name"][:60], "version": s["version"][:40], "capabilities": caps[:12]},
+        "short_hash": short,
+        "url": url,
+    }
+
+
 def panel(got: dict) -> dict:
     """Of the host's answer only the closed fields, each checked; anything off is the dashboard's own `internal`."""
+    if got.get("kind") == "addon":
+        return addon_panel(got)
     s = got.get("summary")
     short, url = got.get("short_hash"), got.get("url")
     if (
@@ -106,4 +127,6 @@ def register(app: FastAPI, gateway: Gateway):
         link = gateway.enabled(ws)
         if not link.supports("hub.handoff", "hub/1"):
             raise fail("click.contract", "Update orch-core: it cannot hand an approval to the hub yet.", exit=9)
+        if (body.kind == "addon") != (body.request is not None) or (body.kind == "addon") == (body.ticket is not None):
+            raise fail("invalid.input", "An add-on names its request; a ticket approval names its ticket.", exit=5)
         return panel(link.call("hub.handoff", body.model_dump(exclude_none=True)))

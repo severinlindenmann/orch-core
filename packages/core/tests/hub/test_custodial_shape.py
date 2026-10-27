@@ -49,6 +49,7 @@ VALID: dict[str, dict[str, Any]] = {
     "verdict.given": {"outcome": "pass", "hash": H1, "source_sha": [{"repo": "r", "ref": "main", "sha": "a" * 40}], **_DECISION},  # noqa: E501
     "addon.disabled": {"name": "wiki"},
     "addon.purged": {"name": "wiki"},
+    "addon.requested": {"name": "wiki", "version": "1.2.0", "package_sha256": H1, "capabilities": ["network", "serve_http"], "handoff": "hr_01J9ZP0000000000000000HND1", "runtime": {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3}},  # noqa: E501
     "grant.requested": {"scope": "workable", "verbs": ["log", "task.done"], "hours": 8, "label": "runner"},
     "grant.revoked": {"grant": "gr_01J9ZP0000000000000000GRT1", "reason": "done"},
     "device.excluded": {"device": "d_" + "c" * 32, "reason": "lost"},

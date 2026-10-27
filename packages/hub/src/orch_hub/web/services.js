@@ -1,0 +1,74 @@
+// The Services page (run-11 feedback 12): hub, relay and publish, how they connect, whether they answer, and how to restart
+// them. The hub cannot start or stop other services, so it offers "Check now" and the exact command with a Copy button.
+import { ago, chip, dot, h, text } from "./ui.js";
+
+const WHAT = {
+  hub: "This server. Your workspaces, people and approvals live here.",
+  relay: "Sends phone alerts so you can approve on your iPhone.",
+  publish: "Shows shared pages to people outside the company.",
+};
+const NAME = { hub: "Hub", relay: "Relay", publish: "Publish" };
+const COMMAND = { hub: "orch install hub", relay: "orch install relay", publish: "orch install publish" };
+
+/** One row's state in plain words: label, chip kind, dot kind. */
+export function stateOf(svc) {
+  if (svc.state === "up") return { label: svc.name === "hub" ? "Running" : "Responding", kind: "ok", dot: "up" };
+  if (svc.state === "not_set_up") return { label: "Not set up", kind: "", dot: "" };
+  return { label: "Not answering", kind: "warn", dot: "warn" };
+}
+
+/** The banner above the list. Never green while a service that is set up does not answer. */
+export function summary(data) {
+  const bad = ["hub", "relay", "publish"].filter((n) => data[n] && data[n].state === "down").map((n) => NAME[n]);
+  if (bad.length) return { kind: "warn", text: bad.length === 1 ? bad[0] + " is not answering" : bad.join(" and ") + " are not answering" };
+  const off = ["relay", "publish"].filter((n) => data[n].state === "not_set_up").map((n) => NAME[n]);
+  return { kind: "", text: off.length ? "Everything that is set up is working. " + off.join(" and ") + (off.length === 1 ? " is" : " are") + " not set up." : "All services are working" };
+}
+
+function detail(name, svc, now) {
+  const bits = [];
+  if (name === "hub") bits.push(ago(svc.started_ms, now) === "just now" ? "Just started" : "Running for " + ago(svc.started_ms, now).replace(" ago", ""));
+  else if (svc.state === "not_set_up") bits.push("Not set up on this hub");
+  else if (svc.state === "up") bits.push("Answered " + ago(svc.checked_ms ?? now, now));
+  else bits.push(svc.last_ok_ms ? "Last answered " + ago(svc.last_ok_ms, now) : "Has not answered yet");
+  if (svc.url) bits.push(text(svc.url));
+  return bits.join(" · ");
+}
+
+function restart(name, copy) {
+  const where = name === "hub" ? "on this server" : "on the computer that hosts " + NAME[name];
+  const cmd = COMMAND[name];
+  const btn = h("button", { class: "copy", type: "button", text: "Copy", "aria-label": "Copy the command for " + NAME[name], onclick: async () => { const ok = await copy(cmd); btn.textContent = ok ? "Copied" : "Select and copy"; btn.setAttribute("aria-label", btn.textContent); } });
+  return h("details", { class: "how", id: "how-" + name },
+    h("summary", { text: "How to restart" }),
+    h("p", { class: "small muted", text: "The hub cannot restart this itself. Ask your IT person to run this " + where + (name === "hub" ? ". Your workspaces reconnect on their own." : ".") }),
+    h("div", { class: "cmd" }, h("code", { text: cmd }), btn));
+}
+
+/** data: GET /admin/services. actions: {check, open, copy}. */
+export function servicesView(data, actions, now = Date.now()) {
+  const sum = summary(data);
+  const rows = ["hub", "relay", "publish"].map((name) => {
+    const svc = data[name], st = stateOf({ ...svc, name });
+    return h("article", { class: "svc-row", id: "svc-" + name, "data-state": svc.state },
+      h("div", { class: "svc-main" },
+        h("h3", {}, dot(st.dot), NAME[name]),
+        h("p", { class: "small muted", text: WHAT[name] }),
+        h("p", { class: "small muted", text: detail(name, svc, now) })),
+      h("div", { class: "svc-side" },
+        chip(st.label, st.kind),
+        h("span", { class: "small muted", text: svc.version ? "Version " + text(svc.version) : "Version -" }),
+        name !== "hub" ? h("button", { class: svc.state === "down" ? "pri" : "", text: "Check now", onclick: () => actions.check() }) : null),
+      restart(name, actions.copy));
+  });
+  const ws = data.workspaces ?? { count: 0, online: 0 };
+  return [
+    h("h1", { text: "Services" }),
+    h("div", { class: "overall " + sum.kind, id: "services-summary", role: "status" }, dot(sum.kind ? "warn" : "up"), sum.text),
+    h("p", { class: "muted", text: "Workspaces connect to this hub. The hub sends phone alerts through Relay and outside pages through Publish." }),
+    h("section", { class: "card svc-list", "aria-label": "Services" }, rows),
+    h("section", { class: "card row" },
+      h("div", { class: "grow" }, h("h3", { text: "Workspaces" }), h("p", { class: "small muted", id: "services-ws", text: ws.count + (ws.count === 1 ? " workspace" : " workspaces") + ", " + ws.online + " online" })),
+      h("button", { text: "See workspaces and hand-offs", onclick: () => actions.open() })),
+  ];
+}

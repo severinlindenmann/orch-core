@@ -30,6 +30,7 @@ _NO_TICKET_EFFECT = frozenset(
         "device.rotated",
         "grant.issued",
         "grant.requested",
+        "addon.requested",
         "projection.repaired",
         "invalid.acknowledged",
         "hub.joined",

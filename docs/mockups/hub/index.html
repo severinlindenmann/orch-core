@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>orch hub · full mockup</title>
+<style>
+:root{
+  --bg:#0e1014; --sidebar:#0a0c0f; --rail:#07090b; --surface:#15181d; --surface-2:#1c2027; --surface-3:#242a32;
+  --border:#2a3038; --border-strong:#3a424d; --text:#e8eaed; --text-muted:#9aa3ad; --text-faint:#8b949e;
+  --brand:#2fc6a3; --on-brand:#06231c; --brand-soft:rgba(47,198,163,.14);
+  --success:#4ade80; --success-soft:rgba(74,222,128,.12); --warning:#fbbf24; --warning-soft:rgba(251,191,36,.13);
+  --danger:#f87171; --danger-soft:rgba(248,113,113,.13); --info:#60a5fa; --info-soft:rgba(96,165,250,.13);
+  --violet:#b392f0; --violet-soft:rgba(179,146,240,.14);
+  --note:#e9c46a; --note-soft:rgba(233,196,106,.09); --note-line:rgba(233,196,106,.45);
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.5 Geist,-apple-system,system-ui,"Segoe UI",sans-serif}
+.mono,code{font-family:"Geist Mono",ui-monospace,Menlo,monospace}
+code{font-size:12px;background:var(--surface-3);padding:1px 5px;border-radius:4px}
+svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+a{color:var(--brand)}
+button{font:inherit;color:inherit}
+.bnr{height:30px;display:flex;align-items:center;gap:12px;padding:0 12px;font:500 11px "Geist Mono",monospace;color:var(--text-faint);border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden}
+.bnr b{color:var(--note)}
+.bnr .sp{flex:1}
+.bnr label{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text-muted)}
+.app{display:grid;grid-template-columns:60px 236px minmax(0,1fr);height:calc(100vh - 30px)}
+/* rail */
+.rail{background:var(--rail);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px 0;overflow-y:auto}
+.ra{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:var(--surface-2);color:var(--text);font:700 14px Geist,system-ui,sans-serif;position:relative;cursor:pointer;border:2px solid transparent;flex:none}
+.ra.hub{border-radius:50%;border:3px solid var(--brand);background:transparent;color:var(--brand)}
+.ra.on::before{content:"";position:absolute;left:-12px;top:8px;bottom:8px;width:4px;border-radius:0 3px 3px 0;background:var(--text)}
+.ra .bd{position:absolute;top:-6px;right:-7px;background:var(--brand);color:var(--on-brand);font:700 10px/15px "Geist Mono",monospace;min-width:17px;height:17px;border-radius:999px;text-align:center;border:2px solid var(--rail);padding:0 3px}
+.ra .dot{position:absolute;bottom:-3px;right:-3px;width:11px;height:11px;border-radius:50%;background:var(--text-faint);border:2px solid var(--rail)}
+.ra .dot.ok{background:var(--success)}
+.ra.add{background:transparent;border:1px dashed var(--border-strong);color:var(--text-muted)}
+.ra.me{border-radius:50%;font:600 11px "Geist Mono",monospace;background:var(--surface-3);color:var(--text-muted)}
+.rsep{width:24px;height:1px;background:var(--border);flex:none}
+.rail .grow{flex:1}
+/* sidebar */
+.side{background:var(--sidebar);border-right:1px solid var(--border);padding:12px 8px;display:flex;flex-direction:column;gap:1px;font-size:13px;overflow-y:auto}
+.hubname{display:flex;align-items:center;gap:9px;padding:4px 8px 12px}
+.hubname .lg{width:22px;height:22px;border-radius:50%;border:3px solid var(--brand)}
+.hubname b{font-size:15px;letter-spacing:-.01em}
+.hubname small{display:block;color:var(--text-faint);font:500 11px "Geist Mono",monospace}
+.grp{font:600 10px "Geist Mono",monospace;letter-spacing:.12em;color:var(--text-faint);padding:14px 9px 4px}
+.nv{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;color:var(--text-muted);cursor:pointer;user-select:none}
+.nv:hover{color:var(--text);background:var(--surface)}
+.nv.on{background:var(--surface-2);color:var(--text)}
+.nv .ct{margin-left:auto;font:600 11px "Geist Mono",monospace;background:var(--brand-soft);color:var(--brand);padding:0 6px;border-radius:999px}
+.nv .ct.w{background:var(--warning-soft);color:var(--warning)}
+.nv .nw{margin-left:auto;font:600 9px "Geist Mono",monospace;color:var(--note);border:1px solid var(--note-line);padding:0 4px;border-radius:4px}
+.side .foot{margin-top:auto;padding:12px 9px 0;color:var(--text-faint);font-size:12px;border-top:1px solid var(--border)}
+/* main */
+.main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.top{display:flex;align-items:center;gap:10px;padding:12px 22px;border-bottom:1px solid var(--border);min-height:56px}
+.top .t{font-weight:600;font-size:15px}
+.top .sp{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;font:500 12px Geist,system-ui,sans-serif;padding:3px 9px;border-radius:999px;border:1px solid var(--border-strong);color:var(--text-muted);white-space:nowrap}
+.pill i{width:7px;height:7px;border-radius:50%;background:var(--success);display:inline-block}
+.pill i.w{background:var(--warning)} .pill i.o{background:var(--text-faint)} .pill i.d{background:var(--danger)}
+.content{overflow-y:auto;padding:22px 22px 80px;min-height:0}
+.content>.inner{max-width:1080px}
+h1{font-size:24px;letter-spacing:-.02em;margin:0 0 4px}
+.lead{color:var(--text-muted);margin:0 0 18px;max-width:760px}
+h2{font-size:15px;margin:26px 0 10px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:14px;overflow:hidden}
+.card .hd{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);font-weight:600}
+.card .hd .sp{flex:1}
+.card .cb{padding:14px 16px}
+.row{display:flex;align-items:center;gap:12px;padding:11px 16px;border-top:1px solid var(--border)}
+.card .row:first-child{border-top:0}
+.card .hd+.row{border-top:0}
+.row .tx{flex:1;min-width:0}
+.row .tx b{font-weight:600}
+.row .tx .s{color:var(--text-muted);font-size:12.5px}
+.row:hover{background:rgba(255,255,255,.015)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:14px}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;cursor:pointer}
+.stat .n{font-size:26px;font-weight:700;letter-spacing:-.02em}
+.stat .l{color:var(--text-muted);font-size:12.5px}
+.stat.w .n{color:var(--warning)} .stat.g .n{color:var(--brand)}
+.btn{display:inline-flex;align-items:center;gap:6px;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px;white-space:nowrap;min-height:32px}
+.btn:hover{border-color:var(--text-faint)}
+.btn.pri{background:var(--brand);color:var(--on-brand);border-color:var(--brand);font-weight:600}
+.btn.dan{color:var(--danger);border-color:rgba(248,113,113,.4)}
+.btn.sm{padding:3px 9px;font-size:12px;min-height:28px}
+.btn.gh{background:transparent;border-color:transparent;color:var(--text-muted)}
+.tag{display:inline-flex;align-items:center;font:500 11px "Geist Mono",monospace;padding:1px 7px;border-radius:5px;background:var(--surface-3);color:var(--text-muted);white-space:nowrap}
+.tag.g{background:var(--brand-soft);color:var(--brand)} .tag.w{background:var(--warning-soft);color:var(--warning)}
+.tag.d{background:var(--danger-soft);color:var(--danger)} .tag.v{background:var(--violet-soft);color:var(--violet)}
+.tag.i{background:var(--info-soft);color:var(--info)}
+.av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font:600 11px "Geist Mono",monospace;background:var(--surface-3);color:var(--text-muted);flex:none}
+.wsb{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font:700 12px Geist,sans-serif;flex:none}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font:600 10.5px "Geist Mono",monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);padding:9px 16px;border-bottom:1px solid var(--border)}
+td{padding:10px 16px;border-top:1px solid var(--border);vertical-align:middle}
+tr:first-child td{border-top:0}
+.tw{overflow-x:auto}
+.seg{display:inline-flex;border:1px solid var(--border-strong);border-radius:8px;overflow:hidden;background:var(--bg)}
+.seg button{background:transparent;border:0;color:var(--text-muted);padding:3px 10px;font-size:12px;cursor:pointer;min-height:28px}
+.seg button+button{border-left:1px solid var(--border)}
+.seg button.on{background:var(--brand-soft);color:var(--brand)}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:0 0 16px}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:8px 12px;color:var(--text-muted);cursor:pointer}
+.tabs button.on{color:var(--text);border-bottom-color:var(--brand)}
+.ban{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:14px;background:var(--surface)}
+.ban.w{border-color:rgba(251,191,36,.4);background:var(--warning-soft)}
+.ban.g{border-color:rgba(47,198,163,.4);background:var(--brand-soft)}
+.ban .tx{flex:1}
+.ban .tx .s{color:var(--text-muted);font-size:13px}
+.input{width:100%;background:var(--bg);border:1px solid var(--border-strong);border-radius:8px;padding:8px 10px;color:var(--text);font:inherit}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12.5px;color:var(--text-muted);margin-bottom:4px}
+.facts{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;font-size:13px;margin:0}
+.facts dt{color:var(--text-muted)} .facts dd{margin:0}
+.flow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:16px}
+.node{border:1px solid var(--border-strong);border-radius:10px;padding:10px 12px;background:var(--bg);min-width:130px}
+.node b{display:block}
+.node .s{font-size:12px;color:var(--text-muted)}
+.node.ok{border-color:rgba(74,222,128,.45)} .node.off{border-color:rgba(251,191,36,.5)} .node.hubn{border-color:var(--brand);background:var(--brand-soft)}
+.arrow{color:var(--text-faint);font:500 11px "Geist Mono",monospace;text-align:center}
+.wsgrid{display:grid;grid-template-columns:1fr;gap:6px}
+/* notes (requirements layer) */
+.note{border:1px dashed var(--note-line);background:var(--note-soft);border-radius:10px;padding:10px 14px;margin:0 0 14px;font-size:13px;color:#e8dcb8}
+.note .nt{font:600 10.5px "Geist Mono",monospace;letter-spacing:.1em;color:var(--note);margin-bottom:4px;display:flex;gap:8px;align-items:center}
+.note ul{margin:4px 0 0;padding-left:18px}
+.note li{margin:2px 0}
+.st-today{color:var(--success)} .st-part{color:var(--warning)} .st-new{color:var(--note)}
+body.nonotes .note{display:none}
+/* dialogs & toast */
+.ovl{position:fixed;inset:0;background:rgba(5,7,9,.62);display:grid;place-items:center;z-index:50;padding:16px}
+.dlg{background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;width:min(520px,100%);max-height:calc(100vh - 32px);overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.dlg .dh{padding:16px 18px 6px;font-weight:600;font-size:16px;display:flex;gap:10px;align-items:center}
+.dlg .db{padding:6px 18px 12px}
+.dlg .df{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px 16px;border-top:1px solid var(--border)}
+.signbox{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--bg);margin:8px 0}
+.signbox .h{font-weight:600;margin-bottom:4px}
+details summary{cursor:pointer;color:var(--text-muted);font-size:13px;margin:6px 0}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--border-strong);border-radius:10px;padding:10px 16px;z-index:60;box-shadow:0 10px 30px rgba(0,0,0,.4);max-width:calc(100vw - 24px)}
+.qr{width:150px;height:150px;background:repeating-conic-gradient(#e8eaed 0 25%,#0e1014 0 50%) 0 0/18px 18px;border-radius:8px;border:8px solid #e8eaed}
+.req td .seg button{padding:2px 8px}
+.muted{color:var(--text-muted)} .faint{color:var(--text-faint)} .small{font-size:12.5px}
+.empty{padding:26px 16px;text-align:center;color:var(--text-muted)}
+.sw{width:34px;height:20px;border-radius:999px;background:var(--surface-3);position:relative;cursor:pointer;flex:none;border:1px solid var(--border-strong)}
+.sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--text-muted);transition:left .15s}
+.sw.on{background:var(--brand)} .sw.on::after{left:16px;background:var(--on-brand)}
+.menu-btn{display:none}
+/* ---- look & feel patterns */
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px;border-radius:6px}
+.sk{background:linear-gradient(90deg,var(--surface-2) 25%,var(--surface-3) 37%,var(--surface-2) 63%);background-size:400% 100%;animation:shim 1.2s ease infinite;border-radius:6px}
+@keyframes shim{0%{background-position:100% 50%}100%{background-position:0 50%}}
+.enter{animation:enter .22s ease both}
+@keyframes enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.leaving{animation:leave .32s ease forwards;overflow:hidden}
+@keyframes leave{0%{max-height:90px}40%{opacity:0;transform:translateX(28px)}100%{opacity:0;transform:translateX(28px);max-height:0;padding-top:0;padding-bottom:0;border-width:0}}
+.flash{animation:flash 1.8s ease}
+@keyframes flash{0%,30%{background:var(--brand-soft)}100%{background:transparent}}
+.pill i.live,.ra .dot.ok{animation:pulse 2.4s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(74,222,128,.55)}70%{box-shadow:0 0 0 6px rgba(74,222,128,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}}
+.ovl{animation:fadein .15s ease}
+.dlg{animation:pop .18s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes fadein{from{opacity:0}}
+@keyframes pop{from{opacity:0;transform:scale(.96) translateY(6px)}}
+.toast{animation:toastin .22s ease;display:flex;align-items:center;gap:12px}
+@keyframes toastin{from{opacity:0;transform:translate(-50%,10px)}}
+.btn{transition:border-color .12s,background .12s,transform .08s}
+.btn:active{transform:scale(.97)}
+.nv,.row,.stat{transition:background .12s,color .12s,border-color .12s}
+.stat:hover{border-color:var(--border-strong)}
+.btn.loading{pointer-events:none;opacity:.8}
+.btn.loading::before{content:"";width:12px;height:12px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.offbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:10px;padding:8px 22px;background:var(--warning-soft);border-bottom:1px solid rgba(251,191,36,.4);font-size:13px}
+.offbar .sp{flex:1}
+.kbd{font:600 11px "Geist Mono",monospace;border:1px solid var(--border-strong);border-bottom-width:2px;border-radius:5px;padding:0 5px;color:var(--text-muted);background:var(--surface-2)}
+.pal{position:fixed;inset:0;z-index:55;background:rgba(5,7,9,.55);display:flex;justify-content:center;align-items:flex-start;padding:12vh 16px 16px;animation:fadein .12s}
+.pal .box{width:min(620px,100%);background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);overflow:hidden;animation:pop .16s ease}
+.pal input{width:100%;background:transparent;border:0;border-bottom:1px solid var(--border);padding:14px 16px;color:var(--text);font:16px Geist,system-ui,sans-serif;outline:none}
+.pal .res{max-height:50vh;overflow-y:auto;padding:6px}
+.pal .it{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer}
+.pal .it.sel{background:var(--surface-2)}
+.pal .it .k{margin-left:auto;font:500 11px "Geist Mono",monospace;color:var(--text-faint)}
+.pal .gh2{font:600 10px "Geist Mono",monospace;letter-spacing:.12em;color:var(--text-faint);padding:8px 10px 2px}
+.hint{position:fixed;right:16px;bottom:16px;z-index:30;font-size:12px;color:var(--text-faint);display:flex;gap:6px;align-items:center;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:4px 10px;cursor:pointer}
+.lf{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.lf .card{margin:0}
+.lf .cb p{margin:4px 0 10px;color:var(--text-muted);font-size:13px}
+@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+@media(max-width:860px){
+  .app{grid-template-columns:56px minmax(0,1fr)}
+  .side{position:fixed;left:56px;top:30px;bottom:0;width:250px;z-index:40;transform:translateX(-120%);transition:transform .2s}
+  .app.open .side{transform:none}
+  .menu-btn{display:inline-flex}
+  .content{padding:16px 16px 80px}
+  .top{padding:10px 16px}
+  .facts{grid-template-columns:1fr}
+  .profgrid{grid-template-columns:1fr!important}
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="hm" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+<symbol id="ck" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+<symbol id="inb" viewBox="0 0 24 24"><path d="M3 13l3-8h12l3 8v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM3 13h5l1 3h6l1-3h5"/></symbol>
+<symbol id="swp" viewBox="0 0 24 24"><path d="M7 4L3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/></symbol>
+<symbol id="act" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+<symbol id="gr" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+<symbol id="us" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3 3-5 6-5s6 2 6 5M16 5a3 3 0 0 1 0 6M21 20c0-2-1-4-3-4.5"/></symbol>
+<symbol id="grp" viewBox="0 0 24 24"><circle cx="12" cy="7" r="3"/><circle cx="5" cy="10" r="2"/><circle cx="19" cy="10" r="2"/><path d="M7 20c0-3 2-5 5-5s5 2 5 5M2 18c0-2 1-3 3-3M22 18c0-2-1-3-3-3"/></symbol>
+<symbol id="bk" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 19V5"/></symbol>
+<symbol id="srv" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></symbol>
+<symbol id="ph" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></symbol>
+<symbol id="sh" viewBox="0 0 24 24"><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 11l7.6-4M8.2 13l7.6 4"/></symbol>
+<symbol id="pz" viewBox="0 0 24 24"><path d="M10 3h4v3a2 2 0 1 0 4 0V3h3v7h-3a2 2 0 1 0 0 4h3v7h-7v-3a2 2 0 1 0-4 0v3H3v-7h3a2 2 0 1 0 0-4H3V3z"/></symbol>
+<symbol id="ky" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3"/></symbol>
+<symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></symbol>
+<symbol id="me" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></symbol>
+<symbol id="lst" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></symbol>
+<symbol id="bld" viewBox="0 0 24 24"><path d="M4 21V4h10v17M14 9h6v12M2 21h20M8 8h2M8 12h2M8 16h2"/></symbol>
+<symbol id="pl" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="mnu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+<symbol id="bl" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0"/></symbol>
+<symbol id="ex" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+</svg>
+
+<div class="bnr"><b>MOCKUP</b><span>orch hub · demo data · nothing here is real or saved (except your Need/Later/No picks, in this browser)</span><span class="sp"></span>
+<label title="Pages load slower so you can see the loading skeletons"><input type="checkbox" id="slowT"> Slow network</label><label title="Shows what happens when the hub connection drops"><input type="checkbox" id="offT"> Hub offline</label><label><input type="checkbox" id="notesT" checked> Show requirement notes</label></div>
+
+<div class="app" id="app">
+  <nav class="rail" id="rail" aria-label="Hub and workspaces"></nav>
+  <aside class="side" id="side"></aside>
+  <div class="main">
+    <div class="top" id="top"></div>
+    <div class="content"><div id="offbar"></div><div class="inner" id="view"></div></div>
+  </div>
+</div>
+<div id="layer"></div>
+<div class="hint" id="kHint" title="Search everything"><span class="kbd">⌘</span><span class="kbd">K</span> search · <span class="kbd">?</span> shortcuts</div>
+<div id="pbar" style="position:fixed;top:30px;left:0;height:2px;width:0;background:var(--brand);z-index:70;opacity:0;transition:opacity .2s"></div>
+
+<script>
+// ---------------------------------------------------------------- demo data
+const D = {
+  hub: {name:"Acme hub", company:"Acme AG", addr:"100.71.188.237:8100", local:"127.0.0.1:8100", version:"0.1.0 · a7579733", since:"27 Oct 09:04"},
+  me: {id:"sev", name:"Severin", initials:"SV"},
+  ws: [
+    {id:"pr", ver:"0.1.0 · a7579733", name:"Product", prefix:"PR", color:"#2fc6a3", mode:"Everything", online:true, owner:"Severin", people:6, needs:3, host:"MacBook Pro (Severin)", addr:"100.71.188.237:8151", seen:"now", tickets:42, agents:2},
+    {id:"mk", ver:"0.1.0 · a7579733", name:"Marketing", prefix:"MK", color:"#b392f0", mode:"Only what I choose", online:true, owner:"Anna Keller", people:4, needs:1, host:"Mac mini (office)", addr:"100.71.20.11:8151", seen:"now", tickets:18, agents:1},
+    {id:"lg", ver:"0.0.9 · 5c1e02f1", name:"Legal", prefix:"LG", color:"#fbbf24", mode:"Only what I choose", online:false, owner:"Lea Brunner", people:2, needs:0, host:"VPS legal-1", addr:"100.71.44.3:8151", seen:"yesterday 17:55", tickets:9, agents:0},
+    {id:"an", ver:"0.1.0 · a7579733", name:"Anna / personal", prefix:"AK", color:"#60a5fa", mode:"Only what I choose", online:true, owner:"Anna Keller", people:1, needs:0, host:"MacBook Air (Anna)", addr:"100.71.90.7:8151", seen:"4 min ago", tickets:5, agents:0},
+    {id:"su", ver:"0.1.1 · 9d2f4410", name:"Support", prefix:"SU", color:"#f472b6", mode:"Everything", online:true, owner:"Marco Rossi", people:3, needs:0, host:"VPS support-1", addr:"100.71.52.8:8151", seen:"now", tickets:27, agents:3},
+    {id:"fi", ver:"0.0.9 · 5c1e02f1", name:"Finance", prefix:"FI", color:"#4ade80", mode:"Only what I choose", online:true, owner:"Severin", people:2, needs:0, host:"Mac mini (office)", addr:"100.71.20.11:8152", seen:"now", tickets:4, agents:0},
+  ],
+  // workspace profiles: set in each workspace's Settings › Profile, published to the hub (the "routing card" agents read)
+  prof: {
+    pr: {tags:["shop","engineering","releases"], desc:"Builds and runs the Acme online shop: features, bugs, releases, infrastructure.",
+         handles:["bugs and features of the shop","releases and deployments","API and integrations"], not:["marketing texts","contracts"], accepts:["bug","feature","question"], contact:"Severin, Marco Rossi", lang:"German, English", hours:"Mon–Fri 8–18"},
+    mk: {tags:["marketing","content","newsletter"], desc:"Campaigns, newsletter, landing pages and release notes for customers.",
+         handles:["release notes","newsletter","landing pages","social posts"], not:["code changes","legal review"], accepts:["content request","review"], contact:"Anna Keller", lang:"German, English, French", hours:"Mon–Fri 9–17"},
+    lg: {tags:["legal","contracts","compliance"], desc:"Contracts, licences, GDPR and compliance checks.",
+         handles:["licence checks of libraries","contract drafts","GDPR questions"], not:["technical work"], accepts:["review"], contact:"Lea Brunner", lang:"German", hours:"Tue–Thu"},
+    an: {tags:["personal"], desc:"Anna's personal workspace: ideas and drafts.",
+         handles:["ideas"], not:["requests from others"], accepts:[], contact:"Anna Keller", lang:"German", hours:"-"},
+    su: {tags:["support","customers","tickets"], desc:"Answers customer emails and chats; turns real problems into bugs for Product.",
+         handles:["customer questions","refund requests","bug reports from customers"], not:["code changes","contracts"], accepts:["question"], contact:"Marco Rossi", lang:"German, English, Italian", hours:"Mon–Sat 8–20"},
+    fi: {tags:["finance","invoices","budget"], desc:"Invoices, refunds, budgets and cost reports.",
+         handles:["refunds","invoices","cost reports (e.g. AI usage)"], not:["customer chats"], accepts:["review","question"], contact:"Severin", lang:"German", hours:"Mon–Fri 9–16"},
+  },
+  // allowed directions: [from, to]  (A may send hand-offs / ask B)
+  conns: [["pr","mk"],["mk","pr"],["pr","lg"],["mk","lg"],["an","pr"],["an","mk"],["su","pr"],["pr","su"],["su","fi"],["su","mk"],["fi","lg"],["pr","fi"]],
+  pendingWs: [{name:"HR", by:"Severin", made:"today 09:20", expires:"in 18 min"}],
+  leftWs: [{name:"Old ops", prefix:"OP", left:"20 Oct", by:"Marco Rossi"}],
+  people: [
+    {id:"sev", name:"Severin", initials:"SV", role:"Hub admin", groups:["Hub admins","Product team"], signin:"Password + code", devices:["Chrome · MacBook Pro","iPhone 15"], last:"now", status:"active"},
+    {id:"ak", name:"Anna Keller", initials:"AK", role:"Member", groups:["Marketing","Product team"], signin:"Password + code", devices:["Safari · MacBook Air","iPhone 13 (needs app update)"], last:"4 min ago", status:"active"},
+    {id:"mr", name:"Marco Rossi", initials:"MR", role:"Member", groups:["Product team"], signin:"Password + code", devices:["Firefox · ThinkPad"], last:"2 h ago", status:"active"},
+    {id:"lb", name:"Lea Brunner", initials:"LB", role:"Member", groups:["Legal"], signin:"Password + code", devices:["Edge · Windows"], last:"yesterday", status:"active"},
+    {id:"tw", name:"Tom Weber (IT)", initials:"TW", role:"IT contact", groups:["Hub admins"], signin:"Not set up yet", devices:[], last:"never", status:"invited"},
+  ],
+  groups: [
+    {name:"Hub admins", members:["Severin","Tom Weber (IT)"], desc:"Manage the hub, every workspace (admin)", grants:{pr:"admin",mk:"admin",lg:"admin",an:"-",su:"admin",fi:"admin"}},
+    {name:"Product team", members:["Severin","Anna Keller","Marco Rossi"], desc:"", grants:{pr:"edit",mk:"read",lg:"-",an:"-",su:"read",fi:"-"}},
+    {name:"Marketing", members:["Anna Keller"], desc:"", grants:{pr:"read",mk:"edit",lg:"-",an:"-",su:"read",fi:"-"}},
+    {name:"Legal", members:["Lea Brunner"], desc:"", grants:{pr:"read",mk:"read",lg:"edit",an:"-",su:"-",fi:"read"}},
+  ],
+  approvals: [
+    {id:1, ws:"pr", kind:"Add-on install", title:"Install Model routing 1.0.0 in Product", by:"Severin (from Mission Control)", when:"09:41",
+     lines:["Add-on: model-routing · version 1.0.0 · from orch-marketplace (official)","After installation: turned off. You turn it on later in Add-ons.","Can read: ticket titles and task text of Product"], sig:"addon.grant"},
+    {id:2, ws:"pr", kind:"Gate", title:"PR-0142 · Deploy release 2.4 to the shop", by:"agent (Claude) on PR-0142", when:"09:12",
+     lines:["Ticket PR-0142 moves past the gate 'deploy'","Proof attached: tests green (412), preview link checked by Marco"], sig:"gate.pass"},
+    {id:3, ws:"mk", kind:"Verdict", title:"MK-0031 · Newsletter October: accept the result", by:"agent (Claude) on MK-0031", when:"yesterday 18:20",
+     lines:["Verdict: accept · closes MK-0031","Result: newsletter draft + 3 images, checked against the brief"], sig:"verdict"},
+    {id:4, ws:"pr", kind:"Question", title:"PR-0150 · Which API name should we use?", by:"agent (Claude) on PR-0150", when:"08:55",
+     options:["Use v2-api","Keep old-path"], lines:["The agent waits for your answer"], sig:"answer"},
+    {id:5, ws:"lg", kind:"Agent access", title:"Legal · let agents start for 7 more days", by:"Lea Brunner", when:"yesterday 17:40",
+     lines:["Longest agent access: 3 days → 7 days, in Legal"], sig:"grant", note:"Legal is offline: delivered when it comes back"},
+  ],
+  handoffs: [
+    {from:"pr", to:"mk", title:"Write release notes for 2.4", ref:"PR-0142 → MK-0034", when:"09:30", state:"Delivered", by:"Marco Rossi"},
+    {from:"pr", to:"lg", title:"Check the licence of the new map library", ref:"PR-0139 → (waiting)", when:"yesterday 17:58", state:"Waiting", by:"Severin", why:"Waiting for Legal to come online since yesterday 17:55"},
+    {from:"mk", to:"pr", title:"Landing page form sends twice", ref:"MK-0029 → PR-0147", when:"yesterday 11:02", state:"Delivered", by:"Anna Keller"},
+    {from:"an", to:"pr", title:"Idea: dark mode for the shop", ref:"AK-0004 → PR-0149", when:"Mon 15:10", state:"Delivered", by:"Anna Keller"},
+  ],
+  services: [
+    {id:"hub", name:"Hub", what:"This console, sign-in, approvals, workspace links", addr:"100.71.188.237:8100 · link 8105", ver:"0.1.0 · a7579733", state:"running", up:"1 h 12 min", last:"just now", cpu:"0.4 %", mem:"62 MB"},
+    {id:"relay", name:"Relay", what:"Phone alerts (push) and phone answers", addr:"100.71.188.237:8101", ver:"0.1.0 · a7579733", state:"running", up:"1 h 12 min", last:"12 s ago", cpu:"0.1 %", mem:"41 MB", extra:"2 phones · 14 pushes today"},
+    {id:"publish", name:"Publish", what:"Share files and pages outside the company", addr:"100.71.188.237:8102", ver:"0.2.0 · a7579733", state:"running", up:"1 h 12 min", last:"40 s ago", cpu:"0.0 %", mem:"35 MB", extra:"3 links active"},
+    {id:"edge", name:"Edge (public address)", what:"Optional: a public https address for phones outside your private network", addr:"not set up", ver:"-", state:"off", up:"-", last:"-", cpu:"-", mem:"-"},
+  ],
+  phones: [
+    {who:"Severin", dev:"iPhone 15", app:"orch 0.1.0 (261026)", push:"working", paired:"27 Oct", last:"2 min ago"},
+    {who:"Anna Keller", dev:"iPhone 13", app:"orch 0.0.9", push:"needs app update", paired:"21 Oct", last:"yesterday", warn:"Has not said which keys it can read: One click in Anna's workspaces is blocked until the app is updated"},
+  ],
+  browsers: [
+    {who:"Severin", dev:"Chrome · MacBook Pro", reg:"today 09:15", last:"now", me:true},
+    {who:"Anna Keller", dev:"Safari · MacBook Air", reg:"22 Oct", last:"4 min ago"},
+    {who:"Marco Rossi", dev:"Firefox · ThinkPad", reg:"23 Oct", last:"2 h ago"},
+  ],
+  links: [
+    {what:"hello.txt", ws:"pr", ref:"PR-0001", by:"Severin", made:"today 09:50", exp:"in 7 days", views:2, state:"active"},
+    {what:"Release notes 2.4 (page)", ws:"mk", ref:"MK-0034", by:"Anna Keller", made:"today 09:44", exp:"in 30 days", views:11, state:"active"},
+    {what:"Contract draft v3.pdf", ws:"lg", ref:"LG-0007", by:"Lea Brunner", made:"Fri 14:02", exp:"in 2 days", views:1, state:"active", pw:true},
+    {what:"Logo pack.zip", ws:"mk", ref:"MK-0020", by:"Anna Keller", made:"12 Oct", exp:"expired", views:24, state:"expired"},
+  ],
+  apps: [
+    {name:"Shop preview 2.4", ws:"pr", ref:"PR-0142", by:"agent on PR-0142 (Marco)", kind:"Web app", url:"apps/shop-preview", access:"Company only", ver:"build 18 · today 09:20", visits:37, state:"running"},
+    {name:"Release notes 2.4", ws:"mk", ref:"MK-0034", by:"Anna Keller", kind:"Landing page", url:"acme.example/releases/2-4", access:"Public", ver:"v3 · today 09:44", visits:412, state:"running"},
+    {name:"Customer FAQ assistant", ws:"su", ref:"SU-0011", by:"Marco Rossi", kind:"Web app", url:"apps/faq", access:"Public", ver:"v7 · Fri", visits:1290, state:"running"},
+    {name:"Event sign-up (Nov meetup)", ws:"mk", ref:"MK-0027", by:"Anna Keller", kind:"Form app", url:"apps/meetup-signup", access:"Password", ver:"v2 · 20 Oct", visits:58, state:"stopped"},
+    {name:"Budget dashboard", ws:"fi", ref:"FI-0003", by:"Severin", kind:"Dashboard", url:"apps/budget", access:"People in Finance", ver:"v1 · Mon", visits:9, state:"running"},
+  ],
+  addons: [
+    {name:"Model routing", ver:"1.0.0", src:"orch-marketplace (official)", allowed:"All workspaces", used:"Product (installing)", state:"allowed"},
+    {name:"GitHub", ver:"0.3.1", src:"orch-marketplace (official)", allowed:"Product, Marketing", used:"Product", state:"allowed"},
+    {name:"Landing", ver:"0.2.0", src:"orch-marketplace (official)", allowed:"Marketing", used:"Marketing", state:"allowed"},
+    {name:"Slack bridge", ver:"0.1.0", src:"community · github.com/someone/orch-slack", allowed:"-", used:"-", state:"requested", req:"Anna Keller for Marketing"},
+    {name:"Wiki · Focus mode · Quick tasks · Worktrees", ver:"built in", src:"orch core", allowed:"Always", used:"all", state:"builtin"},
+  ],
+  skills: [
+    {name:"Acme writing style", kind:"Skill", share:"all", by:"Anna Keller", upd:"20 Oct", uses:31},
+    {name:"Release checklist", kind:"Skill", share:["pr","su"], by:"Marco Rossi", upd:"Mon", uses:8},
+    {name:"Contract review rules", kind:"Skill", share:["lg"], by:"Lea Brunner", upd:"14 Oct", uses:3},
+    {name:"Customer tone (support)", kind:"Skill", share:["su","mk"], by:"Marco Rossi", upd:"Fri", uses:44},
+  ],
+  mcp: [
+    {name:"GitHub", how:"Remote", where:"https://api.githubcopilot.com/mcp/", auth:"GitHub token (read only)", state:"connected", share:["pr","mk"], by:"Severin", upd:"24 Oct", uses:86,
+     tools:[["search_code","read",true],["get_issue","read",true],["list_pull_requests","read",true],["create_issue","write",false],["merge_pull_request","write",false]]},
+    {name:"Google Drive", how:"Remote", where:"https://drive.mcp.example/acme", auth:"Sign-in per person", state:"needs sign-in", share:"all", by:"Anna Keller", upd:"20 Oct", uses:41,
+     tools:[["search_files","read",true],["read_file","read",true],["create_file","write",true]]},
+    {name:"Shop database (staging)", how:"Runs on the workspace computer", where:"npx @acme/shop-db-mcp", auth:"Shop staging password", state:"connected", share:["pr","su"], by:"Marco Rossi", upd:"Mon", uses:19,
+     tools:[["query_orders","read",true],["refund_order","write",false]]},
+    {name:"Playwright browser", how:"Runs on the workspace computer", where:"npx @playwright/mcp", auth:"none", state:"connected", share:["pr"], by:"Marco Rossi", upd:"19 Oct", uses:12,
+     tools:[["navigate","read",true],["click","write",true],["screenshot","read",true]]},
+  ],
+  secrets: [
+    {name:"GitHub token (read only)", share:["pr","mk"], by:"Severin", upd:"24 Oct", exp:"in 83 days", uses:12},
+    {name:"Shop staging password", share:["pr"], by:"Marco Rossi", upd:"19 Oct", exp:"-", uses:5},
+    {name:"Newsletter API key", share:["mk"], by:"Anna Keller", upd:"2 Oct", exp:"in 5 days", uses:2},
+    {name:"Company OpenAI key", share:"all", by:"Severin", upd:"1 Oct", exp:"-", uses:220},
+  ],
+  spaces: [
+    {name:"Company wiki", kind:"Wiki", purpose:"How we work: policies, onboarding, who to ask.", items:"38 pages",
+     use:[["pr","edits"],["mk","edits"],["su","reads"],["lg","reads"],["fi","reads"]],
+     hist:[["agent","Marketing's agent","added the page 'Q4 launch plan'","2 h ago"],["person","Severin","changed 'Expenses policy'","today 08:30"],["agent","Support's agent","fixed a link in 'Refund rules'","yesterday"]]},
+    {name:"Templates", kind:"Files", purpose:"Offer, invoice and contract templates everyone starts from.", items:"12 files",
+     use:[["pr","reads"],["mk","reads"],["su","reads"],["fi","edits"],["lg","edits"]],
+     hist:[["person","Lea Brunner","replaced 'NDA template.docx'","Fri"],["person","Severin","added 'Invoice 2026.xlsx'","20 Oct"]]},
+    {name:"Product ↔ Marketing launches", kind:"Board", purpose:"One board for every release: dates, owners, what is ready.", items:"6 cards",
+     use:[["pr","edits"],["mk","edits"]],
+     hist:[["agent","Product's agent","moved 'Release 2.4' to Ready","09:30"],["person","Anna Keller","added 'Newsletter 2.4'","yesterday"]]},
+  ],
+  activity: [
+    {t:"09:52", who:"Severin", what:"approved", obj:"Usage add-on on in Product", ws:"pr"},
+    {t:"09:50", who:"Severin", what:"shared", obj:"hello.txt (link, 7 days)", ws:"pr"},
+    {t:"09:41", who:"Severin", what:"requested", obj:"Install Model routing in Product", ws:"pr"},
+    {t:"09:30", who:"Marco Rossi", what:"handed over", obj:"PR-0142 → Marketing: release notes", ws:"pr"},
+    {t:"09:20", who:"Severin", what:"made a connect link", obj:"for a new workspace (Finance)", ws:null},
+    {t:"09:15", who:"Severin", what:"registered", obj:"this browser (Chrome · MacBook Pro)", ws:null},
+    {t:"09:05", who:"Severin", what:"connected", obj:"Product (Everything)", ws:"pr"},
+    {t:"yesterday 17:55", who:"system", what:"lost contact with", obj:"Legal", ws:"lg"},
+    {t:"yesterday 11:02", who:"Anna Keller", what:"handed over", obj:"MK-0029 → Product", ws:"mk"},
+  ],
+};
+
+// requirement notes per page: [status, text]; status: today | part | new
+const N = {
+  home:[["new","One home for the whole company: everything that needs me in any workspace, plus health of hub, relay, publish"],["new","Counts are per person: I only see workspaces I have a role in"],["part","Rail on the left = switch between hub and workspaces without a second sign-in (lane H1, #1329)"]],
+  approvals:[["part","Approve in the hub with this browser's key (run-11 bug B1: browser key refused on non-dev hubs)"],["new","One inbox across workspaces: add-on installs, gates, verdicts, questions, agent access"],["new","What is signed is shown in plain words; the exact signed data stays behind a closed fold"],["new","Items for an offline workspace are queued and delivered when it is back"],["today","Phone (Face ID) as the other way to approve"]],
+  handoffs:[["part","List of tickets sent between workspaces (run-11 FB 14; lane R3 builds a first version)"],["new","Hub only knows sender, receiver, time and Delivered / Waiting; contents stay sealed"],["new","Send a hand-off from here (pick ticket, target workspace)"],["new","Filter by workspace, state, person"]],
+  activity:[["new","Company audit log: who did what, in which workspace, when (approvals, links, add-ons, people)"],["new","Filter + export (CSV) for IT"],["new","Agent actions shown as agent:<session>, never as the person"]],
+  workspaces:[["today","Connect a workspace by a one-time link (30 min), mode Selective or Everything"],["today","Left workspaces behind 'Show left workspaces', with Remove"],["part","Online / last seen, host and address per workspace (lane R3)"],["new","orch version (and commit) each workspace runs right now, reported over its hub link; mark older ones and ask the owner to update"],["new","Hub says which oldest workspace version it still supports"],["new","Open the workspace (switch with no new sign-in), change its mode, see who has which role"],["new","Create a new workspace on a server from the hub (remote setup)"]],
+  profile:[["new","Every workspace has a profile: tags, a short description, what it handles and what not, which requests it accepts, contact, languages, hours"],["new","The profile is a workspace setting (Mission Control › Settings › Profile), edited by the workspace admin and published to the hub"],["new","Agents ask the hub for the directory (e.g. `orch hub directory` or a skill) to find the right workspace and redirect a request there"],["new","The directory only lists workspaces the asking workspace is allowed to reach (see Connections)"]],
+  connections:[["new","Visual map of how workspaces are connected (spider web)"],["new","Per pair and direction: may A send hand-offs to / ask B? (A→B allowed does not mean B→A)"],["new","Hand-offs, questions and agent redirects only go along allowed connections; others are refused by the hub"],["new","Changing a connection is signed by an admin of the receiving workspace"],["new","Show traffic per connection (hand-offs last 30 days)"]],
+  people:[["today","Users with password + 6-digit code"],["part","Sign in with your name, not a generated id (run-11 FB 10)"],["new","Invite by link, reset password/code, disable a person, see their devices"],["new","Later: company login (Entra / Google) instead of hub passwords"]],
+  groups:[["new","Groups with read / edit / admin per workspace (hub vision 22 Oct)"],["new","Hub admins manage every workspace"],["new","Personal workspaces stay private unless the owner shares them"],["new","Changes are collected and sent for approval; each shows 'waiting for <workspace owner>' until signed"],["new","'Check a person': every workspace someone can reach, at which level, and why (via which group)"],["new","View by group or by workspace; warning before removing the last admin of a workspace"],["new","Later: access with an end date (contractors) and a 'still needed?' review; default group for new workspaces"]],
+  spaces:[["new","Shared spaces the hub hosts (wiki, files, boards); the hub can read these (option B), said plainly on the page and when creating one"],["new","Workspaces read/write them like a local folder; per workspace 'reads' or 'edits'"],["new","History with Restore for every change; agent edits marked differently from people's edits"],["new","Warning when content moves from a workspace into a shared space ('the hub can read this')"],["new","Later: archive a space; 'notify me of changes'"]],
+  services:[["part","Every part of the install on one page: Hub, Relay, Publish, Edge; health, version, address (run-11 FB 12; lane R3 = read-only first)"],["new","Start / stop / restart / update a service from here (needs a small helper on the server)"],["new","Show logs of the last hour; 'Copy for IT' button"],["new","How they connect: diagram with live status"]],
+  phones:[["part","Pair a phone by QR with the hub (orch install phone)"],["new","See every phone and browser that can approve; remove one"],["new","Warn when an old app blocks One click (run-11 bug: phone_device)"]],
+  publish:[["today","Share a file from a ticket: link shown once"],["new","List all active links of the company: who, what, until when, views"],["new","Revoke a link, extend it, add a password"],["part","Landing pages published from a workspace (Landing add-on)"],["new","Shared apps: web apps, forms and dashboards an agent built in a ticket, published by Publish and reachable by link"],["new","Per app: who may open it (public, password, company, one group), version history with rollback, visits, stop/start"],["new","Publishing or updating an app needs a person's approval (it runs code other people open)"],["new","Apps can only reach what their workspace allows (no secrets unless lent)"]],
+  addons:[["part","Official marketplace built in; add-ons install Off"],["new","Company allowlist: which add-ons each workspace may install"],["new","Requests from workspaces for non-allowed add-ons, approve or refuse here"]],
+  skills:[["new","Company skills shared to workspaces (writing style, checklists)"],["new","Secrets held by the hub and lent to workspaces (e.g. GitHub token), with expiry and use log"],["new","Each skill and secret is shared with all workspaces (default) or only with chosen ones"],["new","A workspace sees only the skills and secrets shared with it; removing a workspace takes effect at once"],["new","Workspace admins see in Mission Control which company skills and secrets they got"],
+    ["new","MCP servers (tools for agents, e.g. GitHub, Google Drive, a database) managed once in the hub and shared with all or chosen workspaces"],["new","Remote MCP (a URL) or local MCP (a command each workspace computer runs); the hub hands out the setup, agents get it automatically"],["new","MCP sign-in uses a hub secret or each person's own login; tokens never shown to agents"],["new","Per MCP server: which tools are on; tools that change things (write) start off and need an admin to turn on"],["new","Status per server (connected / needs sign-in / failing) and a use log: which workspace and agent called which tool"],["new","Adding or widening an MCP server needs approval (it gives agents new powers)"]],
+  settings:[["today","Hub address fixed at install"],["new","Change hub name, address (private network / office network / public), sign-in rules"],["new","Backup + restore of the hub; update orch from here (human only)"],["new","Danger zone: remove the hub (orch host prune)"]],
+  account:[["part","Register this browser to approve here (run-11 bug B1)"],["new","Change password, new authenticator, sign out everywhere"],["new","My phones and browsers"]],
+};
+N.switching = [["part","Rail on the left in hub AND every workspace; clicking a workspace opens it in the same tab, already signed in (one-time switch ticket, lane H1 #1329)"],["new","Feels like one page: the rail and top bar stay, only sidebar and content change, no white flash, no new tab, no second sign-in"],["new","Truly one page (no reload at all) needs one address for everything: the hub serves each workspace's Mission Control under /w/<workspace>/ (hub as a front door / reverse proxy); approvals still need the person's own key"],["new","Back button and deep links work: hub › Product › PR-0142 is one link you can share"],["new","An offline workspace shows 'offline since …' in place, instead of an error page"]];
+const NOTE_TITLES = {switching:"Switching workspaces",home:"Home",approvals:"Approvals",handoffs:"Hand-offs",activity:"Activity",workspaces:"Workspaces",profile:"Workspace profile",connections:"Connections",people:"People",groups:"Groups & access",spaces:"Shared spaces",services:"Services",phones:"Phones & browsers",publish:"Published",addons:"Add-ons",skills:"Skills, MCP & secrets",settings:"Hub settings",account:"My account"};
+
+const LATEST = "0.1.1";
+const vOld = (w) => w.ver.split(" ")[0] < "0.1.0";
+// ---------------------------------------------------------------- helpers
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const ic = (id) => `<svg class="i"><use href="#${id}"/></svg>`;
+const W = (id) => D.ws.find((w) => w.id === id) || {name:id, prefix:"?", color:"#888"};
+const wsb = (id) => { const w = W(id); return `<span class="wsb" style="background:${w.color}22;color:${w.color}">${esc(w.prefix[0])}</span>`; };
+const wsTag = (id) => { const w = W(id); return `<span class="tag" style="background:${w.color}22;color:${w.color}">${esc(w.name)}</span>`; };
+let picks = {}; try { picks = JSON.parse(localStorage.getItem("hubfull-picks") || "{}"); } catch {}
+const savePicks = () => { try { localStorage.setItem("hubfull-picks", JSON.stringify(picks)); } catch {} };
+function note(page){
+  const items = N[page]; if (!items) return "";
+  const lab = {today:["st-today","TODAY"],part:["st-part","PARTLY / IN WORK"],new:["st-new","NEW IDEA"]};
+  return `<div class="note"><div class="nt">REQUIREMENT NOTES · ${esc(NOTE_TITLES[page])} <span class="sp"></span><a href="#requirements" style="color:var(--note);font-weight:500;letter-spacing:0">pick Need / Later / No →</a></div><ul>${items.map(([s,t]) => `<li><b class="${lab[s][0]}">${lab[s][1]}</b> · ${esc(t)}</li>`).join("")}</ul></div>`;
+}
+let lastUndo = null;
+function toast(msg, ms = 3200){ document.querySelectorAll(".toast").forEach((x) => x.remove()); const el = document.createElement("div"); el.className = "toast"; el.innerHTML = `<span>${msg}</span>`; document.body.appendChild(el); setTimeout(() => el.remove(), ms); }
+function dialog(title, body, actions){
+  const L = $("#layer");
+  L.innerHTML = `<div class="ovl" id="ovl"><div class="dlg" role="dialog" aria-modal="true"><div class="dh">${title}</div><div class="db">${body}</div><div class="df">${actions}</div></div></div>`;
+  $("#ovl").addEventListener("click", (e) => { if (e.target.id === "ovl") close(); });
+}
+function close(){ $("#layer").innerHTML = ""; }
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+
+// ---------------------------------------------------------------- shell
+const NAV = [
+  ["", [["home","hm","Home"],["approvals","inb","Approvals",() => D.approvals.length],["handoffs","swp","Hand-offs"],["activity","act","Activity"]]],
+  ["COMPANY", [["workspaces","gr","Workspaces",() => D.ws.length],["connections","sh","Connections"],["people","us","People"],["groups","grp","Groups & access"],["spaces","bk","Shared spaces"]]],
+  ["SERVICES", [["services","srv","Services"],["phones","ph","Phones & browsers"],["publish","ex","Published"]]],
+  ["EXTEND", [["addons","pz","Add-ons",() => D.addons.filter(a=>a.state==="requested").length || null,"w"],["skills","ky","Skills, MCP & secrets"]]],
+  ["", [["settings","gear","Hub settings"],["account","me","My account"],["lookfeel","act","Look & feel"],["requirements","lst","Requirements"]]],
+];
+function renderRail(cur){
+  const r = $("#rail");
+  r.innerHTML = `<div class="ra hub ${cur ? "" : "on"}" title="Acme hub" data-nav="home">${ic("bld")}</div><i class="rsep"></i>` +
+    D.ws.map((w) => `<div class="ra ${cur === w.id ? "on" : ""}" data-ws="${w.id}" title="${esc(w.name)}${w.online ? "" : " (offline)"}" style="background:${w.color}22;color:${w.color}">${esc(w.prefix[0])}${w.needs ? `<b class="bd">${w.needs}</b>` : ""}<i class="dot ${w.online ? "ok" : ""}"></i></div>`).join("") +
+    `<div class="ra add" title="Connect a workspace" data-act="connect">${ic("pl")}</div><span class="grow"></span><div class="ra me" title="My account" data-nav="account">${D.me.initials}</div>`;
+}
+function renderSide(page){
+  $("#side").innerHTML = `<div class="hubname"><span class="lg"></span><div><b>${esc(D.hub.name)}</b><small>${esc(D.hub.company)} · hub</small></div></div>` +
+    NAV.map(([g, items]) => (g ? `<div class="grp">${g}</div>` : `<div style="height:6px"></div>`) + items.map(([id, i, label, cnt, cls]) => {
+      const c = cnt ? cnt() : null;
+      return `<div class="nv ${page === id ? "on" : ""}" data-nav="${id}">${ic(i)}<span>${label}</span>${c ? `<span class="ct ${cls || ""}">${c}</span>` : ""}</div>`;
+    }).join("")).join("") +
+    `<div class="foot">Signed in as <b>${esc(D.me.name)}</b> · Hub admin<br><span class="faint">${esc(D.hub.version)}</span></div>`;
+}
+function renderTop(title){
+  const down = D.services.filter((s) => s.state === "stopped").length, off = D.ws.filter((w) => !w.online).length;
+  $("#top").innerHTML = `<button class="btn gh menu-btn" id="menuB" aria-label="Menu">${ic("mnu")}</button><span class="t">${esc(title)}</span><span class="sp"></span>
+    <span class="pill"><i class="${down ? "d" : "live"}"></i>${down ? down + " service down" : "All services running"}</span>
+    <span class="pill"><i class="${off ? "w" : ""}"></i>${D.ws.length - off} of ${D.ws.length} workspaces online</span>
+    <button class="btn sm" data-nav="approvals">${ic("bl")} ${D.approvals.length}</button>`;
+}
+
+// ---------------------------------------------------------------- pages
+const P = {};
+P.home = () => {
+  const off = D.ws.filter((w) => !w.online);
+  return `<h1>Good morning, ${esc(D.me.name)}</h1><p class="lead">Everything across Acme's workspaces that needs you, and how the company setup is doing.</p>${note("home")}
+  ${off.length ? `<div class="ban w">${ic("bl")}<div class="tx"><b>${esc(off[0].name)} is offline</b><div class="s">Last seen ${esc(off[0].seen)} on ${esc(off[0].host)}. Hand-offs and approvals for it wait until it is back.</div></div><button class="btn sm" data-ws-open="${off[0].id}">Details</button></div>` : ""}
+  <div class="grid">
+    <div class="stat g" data-nav="approvals"><div class="n">${D.approvals.length}</div><div class="l">approvals wait for you</div></div>
+    <div class="stat" data-nav="handoffs"><div class="n">${D.handoffs.filter(h=>h.state==="Waiting").length}</div><div class="l">hand-off waiting</div></div>
+    <div class="stat" data-nav="workspaces"><div class="n">${D.ws.filter(w=>w.online).length}/${D.ws.length}</div><div class="l">workspaces online</div></div>
+    <div class="stat" data-nav="services"><div class="n">3/3</div><div class="l">services running</div></div>
+  </div>
+  <div class="card"><div class="hd">Needs you<span class="sp"></span><button class="btn sm gh" data-nav="approvals">All approvals →</button></div>
+    ${D.approvals.slice(0,4).map(apRow).join("")}</div>
+  <div class="card"><div class="hd">Your workspaces</div>${D.ws.map(wsRow).join("")}</div>
+  <div class="card"><div class="hd">Latest activity<span class="sp"></span><button class="btn sm gh" data-nav="activity">All →</button></div>${D.activity.slice(0,5).map(actRow).join("")}</div>`;
+};
+const apRow = (a) => `<div class="row">${wsb(a.ws)}<div class="tx"><b>${esc(a.title)}</b><div class="s">${esc(a.kind)} · ${esc(W(a.ws).name)} · ${esc(a.by)} · ${esc(a.when)}${a.note ? ` · <span style="color:var(--warning)">${esc(a.note)}</span>` : ""}</div></div><button class="btn sm pri" data-ap="${a.id}">Review</button></div>`;
+const wsRow = (w) => `<div class="row">${wsb(w.id)}<div class="tx"><b>${esc(w.name)}</b> <span class="tag">${esc(w.prefix)}</span><div class="s">${w.online ? `<span style="color:var(--success)">● online</span>` : `<span style="color:var(--warning)">● offline since ${esc(w.seen)}</span>`} · ${esc(w.mode)} · ${w.people} people · ${w.tickets} open tickets${w.needs ? ` · <b style="color:var(--brand)">${w.needs} need you</b>` : ""}</div></div><button class="btn sm" data-ws="${w.id}">Open ${ic("ex")}</button></div>`;
+const actRow = (a) => `<div class="row"><span class="mono faint small" style="min-width:110px">${esc(a.t)}</span><div class="tx"><b>${esc(a.who)}</b> ${esc(a.what)} <span>${esc(a.obj)}</span></div>${a.ws ? wsTag(a.ws) : `<span class="tag">hub</span>`}</div>`;
+
+P.approvals = () => `<h1>Approvals</h1><p class="lead">Everything waiting for a person's signature, from every workspace you have a role in. You approve with this browser's key or with your phone.</p>${note("approvals")}
+  <div class="tabs"><button class="on">Waiting (${D.approvals.length})</button><button data-toast="Mockup: history of signed approvals with who, what, when">Done</button></div>
+  <div class="card">${D.approvals.length ? D.approvals.map(apRow).join("") : `<div class="empty">Nothing waits for you.</div>`}</div>
+  <div class="ban">${ic("ph")}<div class="tx"><b>This browser can approve</b><div class="s">Registered today 09:15 (Chrome · MacBook Pro). Your iPhone 15 can approve too.</div></div><button class="btn sm" data-nav="phones">Manage</button></div>`;
+
+function openApproval(id){
+  const a = D.approvals.find((x) => x.id === id); if (!a) return;
+  const opts = a.options ? `<div class="field" style="margin-top:10px"><label>Your answer</label>${a.options.map((o,i) => `<label style="display:flex;gap:8px;align-items:center;padding:6px 0;color:var(--text)"><input type="radio" name="opt" ${i===0?"checked":""}> ${esc(o)}</label>`).join("")}</div>` : "";
+  dialog(`${wsb(a.ws)} ${esc(a.kind)}`,
+    `<div class="signbox"><div class="h">${esc(a.title)}</div><div class="small muted">${esc(W(a.ws).name)} · asked by ${esc(a.by)} · ${esc(a.when)}</div><ul class="small" style="margin:8px 0 0;padding-left:18px">${a.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>${opts}
+     <details><summary>Show exactly what is signed</summary><pre class="mono small" style="white-space:pre-wrap;background:var(--bg);padding:10px;border-radius:8px;border:1px solid var(--border)">op: ${esc(a.sig)}\nworkspace: ${esc(W(a.ws).name)} (${esc(a.ws)}…)\nsigner: Severin · browser key Chrome · MacBook Pro\nreview: sha256:7c1e…a90b</pre></details>
+     <p class="small muted" style="margin:10px 0 0">You approve with the key held by this browser. Nobody else can approve as you.</p>`,
+    `<button class="btn" data-close>Cancel</button>${a.kind === "Question" ? "" : `<button class="btn dan" data-decide="${a.id}" data-how="refuse">Refuse</button>`}<button class="btn pri" data-decide="${a.id}" data-how="ok">${a.kind === "Question" ? "Send answer" : "Approve"}</button>`);
+}
+
+P.handoffs = () => `<h1>Hand-offs</h1><p class="lead">Tickets sent from one workspace to another. The hub carries them; it sees who sent what to whom and when, but not the content.</p>${note("handoffs")}
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap"><div class="seg"><button class="on">All</button><button>Waiting</button><button>Delivered</button></div><span class="sp" style="flex:1"></span><button class="btn pri" data-act="handoff">${ic("swp")} Send a hand-off</button></div>
+  <div class="card tw"><table><tr><th>Ticket</th><th>From → to</th><th>State</th><th>Sent</th></tr>
+  ${D.handoffs.map((h) => `<tr><td><b>${esc(h.title)}</b><div class="small muted mono">${esc(h.ref)} · by ${esc(h.by)}</div></td><td>${wsTag(h.from)} → ${wsTag(h.to)}</td><td>${h.state === "Waiting" ? `<span class="tag w">Waiting</span><div class="small muted">${esc(h.why)}</div>` : `<span class="tag g">Delivered</span>`}</td><td class="small muted">${esc(h.when)}</td></tr>`).join("")}</table></div>
+  <p class="small muted">Delivered means it reached the other workspace, not that someone accepted it.</p>`;
+
+P.activity = () => `<h1>Activity</h1><p class="lead">Who did what across the company. Agents appear as agents, never as the person who started them.</p>${note("activity")}
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap"><select class="input" style="width:auto"><option>All workspaces</option>${D.ws.map(w=>`<option>${esc(w.name)}</option>`).join("")}</select><select class="input" style="width:auto"><option>All people</option>${D.people.map(p=>`<option>${esc(p.name)}</option>`).join("")}</select><span style="flex:1"></span><button class="btn" data-toast="Mockup: activity.csv downloaded">Export CSV</button></div>
+  <div class="card">${D.activity.map(actRow).join("")}</div>`;
+
+P.workspaces = () => `<h1>Workspaces</h1><p class="lead">Every workspace connected to this hub: what it does, where it runs, how much it shares with the hub, who works in it.</p>${note("workspaces")}${note("profile")}
+  <div style="display:flex;gap:8px;margin-bottom:12px"><span style="flex:1"></span><button class="btn" data-toast="Mockup: create a workspace on a server you name; the hub runs the setup there">New workspace on a server</button><button class="btn pri" data-act="connect">${ic("pl")} Connect a workspace</button></div>
+  ${(() => { const old = D.ws.filter((w) => vOld(w)); return old.length ? `<div class="ban w">${ic("bl")}<div class="tx"><b>${old.length} workspaces run an older orch</b><div class="s">${esc(old.map((w) => w.name + " (" + w.ver.split(" ")[0] + ")").join(", "))} · newest is ${LATEST}. Older versions miss fixes; the hub still works with 0.0.9 and newer.</div></div><button class="btn sm" data-toast="Mockup: each workspace owner gets an 'Update orch' request (human only; one click in Mission Control)">Ask owners to update</button></div>` : ""; })()}
+  <div class="card tw"><table><tr><th>Workspace</th><th>Status</th><th>orch version</th><th>Shares with hub</th><th>Runs on</th><th></th></tr>
+  ${D.ws.map((w) => `<tr><td><div style="display:flex;gap:10px;align-items:center">${wsb(w.id)}<div><b>${esc(w.name)}</b><div class="small muted">${esc(D.prof[w.id].desc)}</div><div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:3px">${D.prof[w.id].tags.map((t) => `<span class="tag i">#${esc(t)}</span>`).join("")}</div><div class="small faint">${esc(w.prefix)} · owner ${esc(w.owner)} · ${w.people} people</div></div></div></td>
+    <td>${w.online ? `<span class="pill"><i></i>Online</span>` : `<span class="pill"><i class="w"></i>Offline</span><div class="small muted">since ${esc(w.seen)}</div>`}</td>
+    <td class="small"><div class="mono">${esc(w.ver)}</div>${vOld(w) ? `<span class="tag w">update to ${LATEST}</span>` : w.ver.startsWith(LATEST) ? `<span class="tag g">newest</span>` : `<span class="tag">same as hub</span>`}</td>
+    <td><span class="tag ${w.mode === "Everything" ? "v" : ""}">${esc(w.mode)}</span></td>
+    <td class="small"><div>${esc(w.host)}</div><div class="mono faint">${esc(w.addr)}</div></td>
+    <td style="text-align:right;white-space:nowrap"><button class="btn sm" data-ws-open="${w.id}">Details</button> <button class="btn sm" data-ws="${w.id}">Open ${ic("ex")}</button></td></tr>`).join("")}</table></div>
+  <h2>Waiting to connect</h2><div class="card">${D.pendingWs.map((p) => `<div class="row"><span class="wsb" style="border:1px dashed var(--border-strong)">?</span><div class="tx"><b>${esc(p.name)}</b><div class="s">Connect link made by ${esc(p.by)} ${esc(p.made)} · works once · expires ${esc(p.expires)}</div></div><button class="btn sm" data-toast="Link copied (mockup)">Copy link</button><button class="btn sm dan" data-toast="Link cancelled (mockup)">Cancel</button></div>`).join("")}</div>
+  <details><summary>Show left workspaces (${D.leftWs.length})</summary><div class="card">${D.leftWs.map((l) => `<div class="row"><span class="wsb" style="opacity:.5;background:var(--surface-3)">${esc(l.prefix[0])}</span><div class="tx"><b>${esc(l.name)}</b> <span class="tag">Left</span><div class="s">Left ${esc(l.left)} · by ${esc(l.by)}</div></div><button class="btn sm dan" data-toast="Removed from the list (mockup)">Remove</button></div>`).join("")}</div></details>`;
+
+function openWs(id){
+  const w = W(id);
+  const roles = D.groups.filter((g) => g.grants[id] && g.grants[id] !== "-").map((g) => `<div class="row"><span class="av">${ic("grp")}</span><div class="tx"><b>${esc(g.name)}</b><div class="s">${esc(g.members.join(", "))}</div></div><span class="tag ${g.grants[id] === "admin" ? "v" : g.grants[id] === "edit" ? "g" : ""}">${g.grants[id]}</span></div>`).join("");
+  dialog(`${wsb(id)} ${esc(w.name)}`,
+    `<p class="muted" style="margin-top:0">${esc(D.prof[id].desc)}</p><div style="display:flex;gap:4px;flex-wrap:wrap;margin:-4px 0 12px">${D.prof[id].tags.map((t) => `<span class="tag i">#${esc(t)}</span>`).join("")}</div>
+     <dl class="facts"><dt>Status</dt><dd>${w.online ? "Online" : "Offline since " + esc(w.seen)}</dd><dt>Owner</dt><dd>${esc(w.owner)}</dd><dt>Runs on</dt><dd>${esc(w.host)} · <span class="mono">${esc(w.addr)}</span></dd><dt>orch version</dt><dd><span class="mono">${esc(w.ver)}</span> ${vOld(w) ? `<span class="tag w">update to ${LATEST}</span>` : ""}<div class="small faint">reported by the workspace at its last contact (${esc(w.seen)})</div></dd><dt>Ticket prefix</dt><dd>${esc(w.prefix)}</dd><dt>Open tickets</dt><dd>${w.tickets} · ${w.agents} agents working</dd></dl>
+     <h2>Shares with the hub</h2><div class="seg" id="modeSeg"><button class="${w.mode !== "Everything" ? "on" : ""}">Only what I choose</button><button class="${w.mode === "Everything" ? "on" : ""}">Everything</button></div>
+     <p class="small muted">Everything: the hub can read tickets and help across workspaces. Only what I choose: the hub sees only what this workspace sends.</p>
+     <h2>Who has access</h2><div class="card">${roles || `<div class="empty">Only the owner.</div>`}</div>
+     <h2>Can reach</h2><p class="small">${D.conns.filter(([f]) => f === id).map(([, t]) => wsTag(t)).join(" ") || `<span class="muted">no other workspace</span>`} <a href="#connections" class="small" data-close>Connections →</a></p>`,
+    `<button class="btn dan" data-toast="Mockup: the workspace leaves the hub (owner signs)">Disconnect</button><span style="flex:1"></span><button class="btn" data-profile="${id}">Profile</button><button class="btn pri" data-ws="${id}">Open ${esc(w.name)} ${ic("ex")}</button>`);
+}
+
+let curProf = "lg", selNode = null;
+P.profile = () => {
+  const id = curProf, w = W(id), p = D.prof[id];
+  const reach = D.conns.filter(([, t]) => t === id).map(([f]) => W(f).name);
+  const card = `name: ${w.name}\nid: ${w.prefix}\ntags: [${p.tags.join(", ")}]\ndescription: ${p.desc}\nhandles:\n${p.handles.map((h) => "  - " + h).join("\n")}\nnot_handled:\n${p.not.map((h) => "  - " + h).join("\n")}\naccepts: [${p.accepts.join(", ")}]\ncontact: ${p.contact}\nlanguages: ${p.lang}\nhours: ${p.hours}\nonline: ${w.online ? "yes" : "no (last seen " + w.seen + ")"}`;
+  const list = (k, label) => `<div class="field"><label>${label}</label>${p[k].map((h, i) => `<div style="display:flex;gap:6px;margin-bottom:4px"><input class="input" value="${esc(h)}"><button class="btn sm gh" data-toast="Removed (mockup)">✕</button></div>`).join("")}<button class="btn sm" data-toast="Mockup: new line">${ic("pl")} Add</button></div>`;
+  return `<h1>Workspace profile</h1><p class="lead">What a workspace does, written once by its admin. People see it in the hub; agents read it to find the right workspace for a request.</p>${note("profile")}
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap"><span class="muted small">Workspace:</span><div class="seg">${D.ws.map((x) => `<button class="${x.id === id ? "on" : ""}" data-prof-pick="${x.id}">${esc(x.name)}</button>`).join("")}</div></div>
+  <div style="display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:14px" class="profgrid">
+   <div class="card"><div class="hd">${wsb(id)} Mission Control › Settings › Profile <span class="sp"></span><span class="tag">in the workspace</span></div><div class="cb">
+    <div class="field"><label>Description (one or two sentences)</label><textarea class="input" rows="2">${esc(p.desc)}</textarea></div>
+    <div class="field"><label>Tags</label><div style="display:flex;gap:4px;flex-wrap:wrap">${p.tags.map((t) => `<span class="tag i">#${esc(t)} ✕</span>`).join("")}<button class="btn sm" data-toast="Mockup: add a tag">${ic("pl")} Tag</button></div></div>
+    ${list("handles", "We handle")}${list("not", "We don't handle (send elsewhere)")}
+    <div class="field"><label>We accept from other workspaces</label>${["bug","feature","question","content request","review"].map((k) => `<label style="display:inline-flex;gap:6px;align-items:center;margin:0 12px 4px 0;color:var(--text)"><input type="checkbox" ${p.accepts.includes(k) ? "checked" : ""}> ${k}</label>`).join("")}</div>
+    <div class="field"><label>Contact person(s)</label><input class="input" value="${esc(p.contact)}"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><div class="field"><label>Languages</label><input class="input" value="${esc(p.lang)}"></div><div class="field"><label>Hours</label><input class="input" value="${esc(p.hours)}"></div></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn pri" data-toast="Saved and published to the hub with one click (mockup)">Save</button></div>
+   </div></div>
+   <div>
+    <div class="card"><div class="hd">What agents see <span class="sp"></span><span class="tag">profile.yaml</span></div><pre class="mono small" style="margin:0;padding:14px 16px;white-space:pre-wrap">${esc(card)}</pre></div>
+    <div class="card"><div class="hd">Example: an agent in Product looks for help</div><div class="cb small">
+      <div class="mono" style="color:var(--text-muted)">$ orch hub directory --find "check the licence of a library"</div>
+      <pre class="mono" style="white-space:pre-wrap;margin:8px 0 0">1. Legal (LG)  #legal #contracts #compliance
+   handles: licence checks of libraries
+   accepts: review · offline since yesterday 17:55 (request waits)
+   → orch handoff PR-0139 --to LG</pre>
+      <p class="muted" style="margin:8px 0 0">The agent only sees workspaces Product may reach. Visible to: ${reach.length ? esc(reach.join(", ")) : "nobody (no incoming connections)"}.</p>
+    </div></div>
+   </div>
+  </div>`;
+};
+
+function webSvg(){
+  const n = D.ws.length, cx = 300, cy = 200, R = 158, r = 32;
+  const pos = {}; D.ws.forEach((w, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / n; pos[w.id] = [cx + R * Math.cos(a), cy + R * Math.sin(a)]; });
+  const has = (a, b) => D.conns.some(([f, t]) => f === a && t === b);
+  let edges = "";
+  for (const [f, t] of D.conns) {
+    const [x1, y1] = pos[f], [x2, y2] = pos[t], dx = x2 - x1, dy = y2 - y1, L = Math.hypot(dx, dy), ux = dx / L, uy = dy / L;
+    const off = has(t, f) ? 7 : 0, ox = -uy * off, oy = ux * off;
+    const hi = selNode && (f === selNode || t === selNode), dim = selNode && !hi;
+    edges += `<line x1="${x1 + ux * r + ox}" y1="${y1 + uy * r + oy}" x2="${x2 - ux * (r + 6) + ox}" y2="${y2 - uy * (r + 6) + oy}" stroke="${hi ? (f === selNode ? "#2fc6a3" : "#b392f0") : "#5b6573"}" stroke-width="${hi ? 2.6 : 1.8}" opacity="${dim ? .18 : 1}" marker-end="url(#ar${hi ? (f === selNode ? "g" : "v") : ""})"/>`;
+  }
+  const nodes = D.ws.map((w) => { const [x, y] = pos[w.id], on = selNode === w.id; return `<g data-node="${w.id}" style="cursor:pointer"><circle cx="${x}" cy="${y}" r="${r}" fill="${w.color}22" stroke="${on ? "#e8eaed" : w.color}" stroke-width="${on ? 3 : 2}"/><text x="${x}" y="${y + 6}" text-anchor="middle" fill="${w.color}" font-weight="700" font-size="17">${esc(w.prefix)}</text><text x="${x}" y="${y + r + 17}" text-anchor="middle" fill="#e8eaed" font-size="12.5">${esc(w.name)}${w.online ? "" : " · offline"}</text></g>`; }).join("");
+  const mk = (id, c) => `<marker id="ar${id}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="${c}"/></marker>`;
+  return `<svg viewBox="0 0 600 410" style="width:100%;max-width:640px;display:block;margin:0 auto" role="img" aria-label="Connections between workspaces"><defs>${mk("", "#5b6573")}${mk("g", "#2fc6a3")}${mk("v", "#b392f0")}</defs>${edges}${nodes}</svg>`;
+}
+P.connections = () => {
+  const s = selNode ? W(selNode) : null;
+  const out = selNode ? D.conns.filter(([f]) => f === selNode).map(([, t]) => wsTag(t)).join(" ") : "";
+  const inc = selNode ? D.conns.filter(([, t]) => t === selNode).map(([f]) => wsTag(f)).join(" ") : "";
+  return `<h1>Connections</h1><p class="lead">Which workspace may send hand-offs to, ask, or redirect agents to which other workspace. An arrow A → B means A may reach B; B may not reach A unless there is an arrow back.</p>${note("connections")}
+  <div class="card"><div class="hd">Map<span class="sp"></span><span class="small muted">Click a workspace to highlight its connections</span></div><div class="cb">${webSvg()}
+   ${s ? `<div class="ban" style="margin:10px 0 0">${wsb(selNode)}<div class="tx"><b>${esc(s.name)}</b><div class="s"><span style="color:var(--brand)">can reach →</span> ${out || "nobody"} &nbsp; · &nbsp; <span style="color:var(--violet)">reached by ←</span> ${inc || "nobody"}</div></div><button class="btn sm" data-node="">Show all</button></div>` : ""}
+  </div></div>
+  <div class="card tw"><div class="hd">Who may reach whom<span class="sp"></span><span class="small muted">row = from, column = to</span></div><table><tr><th>From \\ to</th>${D.ws.map((w) => `<th>${esc(w.name)}</th>`).join("")}</tr>
+   ${D.ws.map((a) => `<tr><td><b>${esc(a.name)}</b></td>${D.ws.map((b) => a.id === b.id ? `<td class="faint">–</td>` : `<td><button class="btn sm ${D.conns.some(([f, t]) => f === a.id && t === b.id) ? "pri" : ""}" data-conn="${a.id}|${b.id}">${D.conns.some(([f, t]) => f === a.id && t === b.id) ? "allowed" : "no"}</button></td>`).join("")}</tr>`).join("")}</table></div>
+  <p class="small muted">Allowing a new connection is approved by an admin of the receiving workspace. Workspaces without a connection don't see each other in the directory.</p>`;
+};
+
+P.people = () => `<h1>People</h1><p class="lead">Everyone who can sign in to the hub. People sign in with their name, a password and a 6-digit code.</p>${note("people")}
+  <div style="display:flex;gap:8px;margin-bottom:12px"><input class="input" placeholder="Search people" style="max-width:260px"><span style="flex:1"></span><button class="btn pri" data-act="invite">${ic("pl")} Invite a person</button></div>
+  <div class="card">${D.people.map((p) => `<div class="row"><span class="av">${esc(p.initials)}</span><div class="tx"><b>${esc(p.name)}</b> ${p.role !== "Member" ? `<span class="tag v">${esc(p.role)}</span>` : ""} ${p.status === "invited" ? `<span class="tag w">Invited</span>` : ""}<div class="s">${esc(p.groups.join(" · "))} · ${p.devices.length} device(s) · last seen ${esc(p.last)}</div></div><button class="btn sm" data-person="${p.id}">Manage</button></div>`).join("")}</div>`;
+
+function openPerson(id){
+  const p = D.people.find((x) => x.id === id);
+  dialog(`<span class="av">${esc(p.initials)}</span> ${esc(p.name)}`,
+    `<dl class="facts"><dt>Role</dt><dd>${esc(p.role)}</dd><dt>Groups</dt><dd>${esc(p.groups.join(", "))}</dd><dt>Sign-in</dt><dd>${esc(p.signin)}</dd><dt>Last seen</dt><dd>${esc(p.last)}</dd></dl>
+     <h2>Devices that can approve</h2><div class="card">${p.devices.length ? p.devices.map((d) => `<div class="row"><span class="av">${ic(d.includes("iPhone") ? "ph" : "srv")}</span><div class="tx">${esc(d)}</div><button class="btn sm dan" data-toast="Device removed (mockup)">Remove</button></div>`).join("") : `<div class="empty">None yet.</div>`}</div>`,
+    `<button class="btn dan" data-toast="Mockup: person disabled, sessions ended">Disable</button><span style="flex:1"></span><button class="btn" data-toast="Mockup: reset link copied (works once, 30 min)">Reset password + code</button><button class="btn" data-close>Close</button>`);
+}
+
+// ---- Groups & access: list + detail panel, pending changes, check a person, by-workspace view
+let gSel = 0, gView = "group", wSel = "pr", gPending = [], gWaiting = {};
+const LV = {read:["Read","see tickets and results","i"], edit:["Edit","create tickets, start agents","g"], admin:["Admin","settings, add-ons, people","v"]};
+const lvTag = (l) => l && LV[l] ? `<span class="tag ${LV[l][2]}">${LV[l][0]}</span>` : "";
+const grantable = () => D.ws.filter((w) => w.id !== "an");
+const effGrant = (gi, ws) => { const p = gPending.find((x) => x.gi === gi && x.ws === ws); return p ? p.to : (D.groups[gi].grants[ws] || "-"); };
+const gSummary = (gi) => { const g = grantable().map((w) => [w, effGrant(gi, w.id)]).filter(([, l]) => l !== "-"); if (!g.length) return "No workspaces yet"; const top = g.sort((a, b) => "admin edit read".indexOf(a[1]) - "admin edit read".indexOf(b[1]))[0]; return `${LV[top[1]][0]}s ${top[0].name}${g.length > 1 ? ` · ${g.length - 1} more` : ""}`; };
+const avs = (names) => names.slice(0, 4).map((n) => `<span class="av" style="width:24px;height:24px;font-size:9px;margin-left:-6px;border:2px solid var(--surface)">${esc(n.split(" ").map((x) => x[0]).join("").slice(0, 2))}</span>`).join("") + (names.length > 4 ? `<span class="small muted" style="margin-left:4px">+${names.length - 4}</span>` : "");
+P.groups = () => {
+  const isAdmins = (gi) => D.groups[gi].name === "Hub admins";
+  const left = gView === "group"
+    ? `<input class="input" placeholder="Search groups" style="margin-bottom:8px">${D.groups.map((g, gi) => `<div class="row ${gi === gSel ? "on" : ""}" data-gsel="${gi}" style="cursor:pointer;border-radius:10px;border:1px solid ${gi === gSel ? "var(--border-strong)" : "transparent"};background:${gi === gSel ? "var(--surface-2)" : "transparent"};margin-bottom:4px"><div class="tx"><b>${esc(g.name)}</b> ${isAdmins(gi) ? `<span class="tag v">all workspaces</span>` : ""}<div class="s" style="margin-top:3px;display:flex;align-items:center;padding-left:6px">${avs(g.members)}</div><div class="s">${isAdmins(gi) ? "Manage every workspace" : esc(gSummary(gi))}</div></div></div>`).join("")}<button class="btn sm" style="margin-top:6px" data-toast="Mockup: name the group, then add people and workspaces">${ic("pl")} New group</button>`
+    : `${grantable().map((w) => `<div class="row" data-wsel="${w.id}" style="cursor:pointer;border-radius:10px;border:1px solid ${w.id === wSel ? "var(--border-strong)" : "transparent"};background:${w.id === wSel ? "var(--surface-2)" : "transparent"};margin-bottom:4px">${wsb(w.id)}<div class="tx"><b>${esc(w.name)}</b><div class="s">${D.groups.filter((g, gi) => effGrant(gi, w.id) !== "-").length} groups · owner ${esc(w.owner)}</div></div></div>`).join("")}<p class="small muted" style="padding:6px 10px">Personal workspaces are private. Only their owner can share them.</p>`;
+  let right;
+  if (gView === "group") {
+    const g = D.groups[gSel];
+    right = `<div class="card"><div class="hd">${esc(g.name)}<span class="sp"></span><button class="btn sm gh" data-toast="Mockup: rename or delete the group">⋯</button></div><div class="cb">
+      <div class="small muted" style="margin-bottom:6px">Members</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${g.members.map((m) => `<span class="tag" style="padding:3px 8px;font-size:12px">${esc(m)} <span style="cursor:pointer;margin-left:4px" data-toast="Mockup: ${esc(m)} removed from ${esc(g.name)} (waits for approval)">✕</span></span>`).join("")}<select class="input" style="width:auto;padding:4px 8px" data-addperson="${gSel}"><option>+ Add person…</option>${D.people.filter((p) => !g.members.includes(p.name)).map((p) => `<option>${esc(p.name)}</option>`).join("")}</select></div>
+      ${isAdmins(gSel) ? `<div class="ban v" style="margin:16px 0 0;background:var(--violet-soft);border-color:rgba(179,146,240,.35)">${ic("ky")}<div class="tx"><b>Hub admins manage every workspace</b><div class="s">This is a fixed rule: members are admin in all company workspaces (not in personal ones).</div></div></div>` : `
+      <div class="small muted" style="margin:18px 0 6px">Workspace access</div>
+      <div class="card" style="margin:0">${grantable().filter((w) => effGrant(gSel, w.id) !== "-").map((w) => { const l = effGrant(gSel, w.id), pend = gPending.find((x) => x.gi === gSel && x.ws === w.id), wait = gWaiting[gSel + "|" + w.id]; return `<div class="row">${wsb(w.id)}<div class="tx"><b>${esc(w.name)}</b><div class="s">${esc(LV[l][1])}</div></div>${pend ? `<span class="tag w">changed</span>` : wait === "wait" ? `<span class="tag w">waiting for ${esc(w.owner)}</span>` : wait === "ok" ? `<span class="tag g">✓ approved</span>` : ""}<select class="input" style="width:auto;padding:4px 8px" data-setlv="${gSel}|${w.id}">${Object.keys(LV).map((k) => `<option value="${k}" ${k === l ? "selected" : ""}>${LV[k][0]}</option>`).join("")}</select><button class="btn sm gh" data-setlv-rm="${gSel}|${w.id}">Remove</button></div>`; }).join("") || `<div class="empty">This group has no workspaces yet.</div>`}
+        <div class="row"><select class="input" style="width:auto;padding:4px 8px" data-addws="${gSel}"><option>+ Add workspace…</option>${grantable().filter((w) => effGrant(gSel, w.id) === "-").map((w) => `<option value="${w.id}">${esc(w.name)}</option>`).join("")}</select><span class="small muted">starts as Read</span></div></div>`}
+    </div></div>`;
+  } else {
+    const w = W(wSel);
+    right = `<div class="card"><div class="hd">${wsb(wSel)} Who can use ${esc(w.name)}</div>${D.groups.map((g, gi) => [g, gi, effGrant(gi, wSel)]).filter(([, , l]) => l !== "-").map(([g, gi, l]) => `<div class="row"><div class="tx"><b>${esc(g.name)}</b><div class="s" style="display:flex;align-items:center;padding-left:6px;margin-top:3px">${avs(g.members)}</div></div>${lvTag(l)}<button class="btn sm gh" data-gsel-go="${gi}">Edit group</button></div>`).join("")}</div>
+    <p class="small muted">Owner: ${esc(w.owner)} signs every change to this workspace's access.</p>`;
+  }
+  const bar = gPending.length ? `<div style="position:sticky;bottom:0;margin-top:14px;display:flex;gap:10px;align-items:center;padding:12px 16px;border:1px solid var(--border-strong);border-radius:12px;background:var(--surface-2);box-shadow:0 -8px 24px rgba(0,0,0,.35)"><b>${gPending.length} change${gPending.length > 1 ? "s" : ""} waiting</b><span class="small muted">${esc(gPending.map((p) => `${D.groups[p.gi].name} → ${W(p.ws).name}: ${p.to === "-" ? "no access" : LV[p.to][0]}`).join(" · "))}</span><span style="flex:1"></span><button class="btn sm" data-gdiscard>Discard</button><button class="btn sm pri" data-gsend>Send for approval</button></div>` : "";
+  return `<h1>Groups &amp; access</h1><p class="lead">People get into workspaces through groups. Pick a group to see its people and what it may do.</p>${note("groups")}
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap"><div class="seg"><button class="${gView === "group" ? "on" : ""}" data-gview="group">By group</button><button class="${gView === "ws" ? "on" : ""}" data-gview="ws">By workspace</button></div><span style="flex:1"></span><button class="btn" data-checkperson>${ic("me")} Check a person</button></div>
+  <div style="display:grid;grid-template-columns:minmax(240px,320px) minmax(0,1fr);gap:16px;align-items:start" class="profgrid"><div>${left}</div><div>${right}</div></div>
+  <p class="small muted" style="margin-top:12px">${Object.values(LV).map(([n, d]) => `<b>${n}</b>: ${d}`).join(" · ")}</p>${bar}`;
+};
+function checkPerson(name){
+  const p = D.people.find((x) => x.name === name) || D.people[1];
+  const rows = [];
+  D.groups.forEach((g, gi) => { if (!g.members.includes(p.name)) return; grantable().forEach((w) => { const l = g.name === "Hub admins" ? "admin" : effGrant(gi, w.id); if (l !== "-") rows.push([w, l, g.name]); }); });
+  const best = {}; rows.forEach(([w, l, g]) => { if (!best[w.id] || "admin edit read".indexOf(l) < "admin edit read".indexOf(best[w.id][1])) best[w.id] = [w, l, g]; });
+  const own = D.ws.filter((w) => w.owner === p.name);
+  dialog(`${ic("me")} Check a person`,
+    `<div class="field"><select class="input" data-checkpick>${D.people.map((x) => `<option ${x.name === p.name ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div>
+     <div class="card">${Object.values(best).map(([w, l, g]) => `<div class="row">${wsb(w.id)}<div class="tx"><b>${esc(w.name)}</b><div class="s">via ${esc(g)}</div></div>${lvTag(l)}</div>`).join("") || `<div class="empty">No workspace access through groups.</div>`}
+     ${own.map((w) => `<div class="row">${wsb(w.id)}<div class="tx"><b>${esc(w.name)}</b><div class="s">owner</div></div><span class="tag v">Owner</span></div>`).join("")}</div>`,
+    `<button class="btn" data-close>Close</button>`);
+}
+
+// ---- Shared spaces: privacy promise, cards with who-uses-it and last change, detail page with tabs
+let spSel = 0, spTab = "content", spFilter = "All";
+const SPI = {Wiki:["bk","#60a5fa"], Files:["inb","#fbbf24"], Board:["gr","#b392f0"]};
+const spIcon = (k) => `<span style="width:44px;height:44px;border-radius:12px;display:grid;place-items:center;background:${SPI[k][1]}22;color:${SPI[k][1]};flex:none"><svg class="i" style="width:22px;height:22px"><use href="#${SPI[k][0]}"/></svg></span>`;
+const useChips = (use) => use.slice(0, 4).map(([w, r]) => `<span class="tag" style="background:${W(w).color}1f;color:${W(w).color}">${esc(W(w).name)} · ${r}</span>`).join(" ") + (use.length > 4 ? ` <span class="tag">+${use.length - 4} more</span>` : "");
+const who = ([kind, name]) => kind === "agent" ? `<span class="tag v">agent</span> ${esc(name)}` : `<b>${esc(name)}</b>`;
+P.spaces = () => {
+  const list = D.spaces.map((s, i) => [s, i]).filter(([s]) => spFilter === "All" || s.kind + "s" === spFilter);
+  return `<h1>Shared spaces</h1><p class="lead">Wikis, files and boards that several workspaces use together.</p>
+  <div class="ban w">${ic("ky")}<div class="tx"><b>The hub and its admins can read shared spaces.</b><div class="s">Keep secrets and private work inside a workspace: workspace content stays sealed, even from the hub.</div></div><button class="btn sm" data-toast="Workspace content is end-to-end sealed; shared spaces are stored readable on the hub so several workspaces can use them (mockup)">What's the difference?</button></div>${note("spaces")}
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><input class="input" placeholder="Search spaces" style="max-width:220px"><div class="seg">${["All","Wikis","Files","Boards"].map((f) => `<button class="${spFilter === f ? "on" : ""}" data-spf="${f}">${f}</button>`).join("")}</div><select class="input" style="width:auto"><option>Used by any workspace</option>${D.ws.map((w) => `<option>${esc(w.name)}</option>`).join("")}</select><span style="flex:1"></span><button class="btn pri" data-spnew="1">${ic("pl")} New shared space</button></div>
+  ${list.map(([s, i]) => `<div class="card"><div class="cb" style="display:flex;gap:14px;align-items:flex-start">${spIcon(s.kind)}<div style="flex:1;min-width:0"><div><b style="font-size:15px">${esc(s.name)}</b> <span class="small muted">${esc(s.kind)} · ${esc(s.items)}</span></div><div class="muted small" style="margin:2px 0 8px">${esc(s.purpose)}</div><div style="display:flex;gap:4px;flex-wrap:wrap">${useChips(s.use)}</div><div class="small" style="margin-top:8px;color:var(--text-muted)">Last change: ${who(s.hist[0])} ${esc(s.hist[0][2])} · ${esc(s.hist[0][3])}</div></div><div style="display:flex;flex-direction:column;gap:6px"><button class="btn sm pri" data-spopen="${i}|content">View content</button><button class="btn sm" data-spopen="${i}|who">Settings</button></div></div></div>`).join("") || `<div class="card"><div class="empty">No ${esc(spFilter.toLowerCase())} yet.</div></div>`}`;
+};
+P.space = () => {
+  const s = D.spaces[spSel];
+  const tabs = [["content","Content"],["who","Who can use it"],["hist","History"]].map(([k, l]) => `<button class="${spTab === k ? "on" : ""}" data-sptab="${k}">${l}</button>`).join("");
+  let body = "";
+  if (spTab === "content") body = s.kind === "Board"
+    ? `<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">${[["Planned",["Newsletter 2.4","Webinar Nov"]],["In progress",["Landing page 2.4"]],["Ready",["Release 2.4","Release notes 2.4","Press kit"]]].map(([c, it]) => `<div class="card" style="margin:0"><div class="hd">${c} <span class="tag">${it.length}</span></div><div class="cb" style="display:grid;gap:6px">${it.map((x) => `<div class="signbox" style="margin:0">${esc(x)}</div>`).join("")}</div></div>`).join("")}</div>`
+    : `<div class="card">${(s.kind === "Wiki" ? ["Welcome","How we work","Expenses policy","Refund rules","Q4 launch plan","Who to ask"] : ["Offer template.docx","Invoice 2026.xlsx","NDA template.docx","Brand guide.pdf"]).map((x) => `<div class="row"><span class="av">${ic(s.kind === "Wiki" ? "bk" : "inb")}</span><div class="tx"><b>${esc(x)}</b></div><button class="btn sm gh" data-toast="Mockup: opens it">Open</button></div>`).join("")}</div>`;
+  if (spTab === "who") body = `<div class="card">${s.use.map(([w, r], j) => `<div class="row">${wsb(w)}<div class="tx"><b>${esc(W(w).name)}</b></div><div class="seg"><button class="${r === "reads" ? "on" : ""}" data-spuse="${j}|reads">Reads</button><button class="${r === "edits" ? "on" : ""}" data-spuse="${j}|edits">Edits</button></div><button class="btn sm gh" data-toast="Mockup: ${esc(W(w).name)} removed; its agents lose access at once">Remove</button></div>`).join("")}<div class="row"><select class="input" style="width:auto"><option>+ Add a workspace…</option>${D.ws.filter((w) => !s.use.some(([u]) => u === w.id)).map((w) => `<option>${esc(w.name)}</option>`).join("")}</select></div></div>
+    <div class="card" style="border-color:rgba(248,113,113,.3)"><div class="row"><div class="tx"><b>Archive this space</b><div class="s">Nobody can change it any more; you can bring it back later.</div></div><button class="btn sm dan" data-toast="Mockup: archived">Archive</button></div></div>`;
+  if (spTab === "hist") body = `<div class="card">${s.hist.map((h) => `<div class="row"><span class="av">${ic(h[0] === "agent" ? "act" : "me")}</span><div class="tx">${who(h)} ${esc(h[2])}<div class="s">${esc(h[3])}</div></div><button class="btn sm" data-toast="Mockup: restored the version before this change">Restore</button></div>`).join("")}</div>`;
+  return `<div class="small"><a href="#spaces" style="color:var(--text-muted);text-decoration:none">Shared spaces</a> ›</div><div style="display:flex;gap:14px;align-items:center;margin:6px 0 4px">${spIcon(s.kind)}<div><h1 style="margin:0">${esc(s.name)}</h1><div class="muted">${esc(s.purpose)}</div></div></div>
+  <p class="small muted" style="margin:8px 0 14px">${ic("ky")} The hub can read this space. Used by ${s.use.length} workspace${s.use.length > 1 ? "s" : ""}.</p>
+  <div class="tabs">${tabs}</div>${body}`;
+};
+NOTE_TITLES.space = "Shared space";
+function newSpace(step, st = {}){
+  const types = [["Wiki","Pages people and agents write together, like a handbook."],["Files","A folder of documents everyone starts from."],["Board","Cards in columns to plan work across teams."]];
+  if (step === 1) return dialog("New shared space · 1 of 3", `<div style="display:grid;gap:8px">${types.map(([k, d]) => `<button class="btn" style="justify-content:flex-start;padding:12px;min-height:auto;text-align:left" data-spstep="2|${k}">${spIcon(k)}<span><b>${k}</b><br><span class="small muted" style="white-space:normal">${d}</span></span></button>`).join("")}</div>`, `<button class="btn" data-close>Cancel</button>`);
+  if (step === 2) return dialog(`New shared space · 2 of 3`, `<div class="field"><label>Name</label><input class="input" id="spName" placeholder="e.g. Sales playbook"></div><div class="field"><label>What is it for? (one line)</label><input class="input" id="spPurpose" placeholder="e.g. How we sell, prices, objections"></div>`, `<button class="btn" data-close>Cancel</button><button class="btn pri" data-spstep="3|${st.kind}">Next</button>`);
+  return dialog(`New shared space · 3 of 3`, `<p class="small muted" style="margin-top:0">Which workspaces may use it?</p>${D.ws.filter((w) => w.id !== "an").map((w) => `<div class="row" style="padding:6px 0">${wsb(w.id)}<div class="tx">${esc(w.name)}</div><div class="seg"><button class="on">No</button><button>Reads</button><button>Edits</button></div></div>`).join("")}
+    <div class="ban w" style="margin:12px 0 0">${ic("ky")}<div class="tx"><label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="spOk"> I understand the hub and its admins can read this space.</label></div></div>`,
+    `<button class="btn" data-close>Cancel</button><button class="btn pri" data-spcreate="${st.kind}">Create</button>`);
+}
+
+P.services = () => {
+  const down = D.services.filter((s) => s.state === "stopped");
+  return `<h1>Services</h1><p class="lead">Every part of this orch install, how they connect, and whether they work. Workspaces connect to the hub; the hub sends phone alerts through Relay and outside links through Publish.</p>${note("services")}
+  ${down.length ? `<div class="ban w">${ic("bl")}<div class="tx"><b>${esc(down.map(s=>s.name).join(", "))} stopped</b><div class="s">${down[0].id === "relay" ? "Phones get no alerts until it runs again." : "Shared links do not open until it runs again."}</div></div><button class="btn sm pri" data-svc="${down[0].id}|start">Start</button></div>` : `<div class="ban g">${ic("ck")}<div class="tx"><b>Everything runs</b><div class="s">Last check just now · on this server: 100.71.188.237 (private network), 192.168.60.30 (office network)</div></div><button class="btn sm" data-toast="Checked again: all answer">Check now</button></div>`}
+  <div class="card"><div class="hd">How it connects</div><div class="flow">
+    <div class="wsgrid">${D.ws.map((w) => `<div class="node ${w.online ? "ok" : "off"}" style="padding:6px 10px"><b class="small">${esc(w.name)}</b><span class="s">${w.online ? "online" : "offline"}</span></div>`).join("")}</div>
+    <div class="arrow">link<br>──▶<br>8105</div>
+    <div class="node hubn"><b>Hub</b><span class="s">${esc(stateWord("hub"))}</span></div>
+    <div class="arrow">──▶</div>
+    <div style="display:grid;gap:8px"><div class="node ${svc("relay").state === "running" ? "ok" : "off"}"><b>Relay</b><span class="s">${esc(stateWord("relay"))} · 2 phones</span></div><div class="node ${svc("publish").state === "running" ? "ok" : "off"}"><b>Publish</b><span class="s">${esc(stateWord("publish"))} · 4 apps · 3 links</span></div><div class="node" style="opacity:.6"><b>Edge</b><span class="s">not set up</span></div></div>
+  </div></div>
+  <div class="card tw"><table><tr><th>Service</th><th>State</th><th>Address</th><th>Version</th><th></th></tr>
+  ${D.services.map((s) => `<tr><td><b>${esc(s.name)}</b><div class="small muted">${esc(s.what)}${s.extra ? " · " + esc(s.extra) : ""}</div></td>
+    <td>${s.state === "running" ? `<span class="pill"><i></i>Running</span><div class="small muted">up ${esc(s.up)} · answered ${esc(s.last)}</div>` : s.state === "stopped" ? `<span class="pill"><i class="d"></i>Stopped</span>` : s.state === "restarting" ? `<span class="pill"><i class="w"></i>Restarting…</span>` : `<span class="pill"><i class="o"></i>Not set up</span>`}</td>
+    <td class="mono small">${esc(s.addr)}</td><td class="mono small">${esc(s.ver)}</td>
+    <td style="text-align:right;white-space:nowrap">${s.state === "off" ? `<button class="btn sm" data-toast="Mockup: guided setup of a public https address">Set up</button>` : `${s.state === "running" ? `<button class="btn sm" data-svc="${s.id}|restart">Restart</button> <button class="btn sm" data-svc="${s.id}|stop">Stop</button>` : `<button class="btn sm pri" data-svc="${s.id}|start">Start</button>`} <button class="btn sm" data-logs="${s.id}">Logs</button>`}</td></tr>`).join("")}</table></div>
+  <div class="card"><div class="hd">Updates</div><div class="row"><div class="tx"><b>orch 0.1.1 is available</b><div class="s">Fixes the browser key on normal installs and One click on fresh installs. Updates hub, relay and publish; about 1 minute; workspaces reconnect by themselves.</div></div><button class="btn sm pri" data-toast="Mockup: update asks you to approve, then restarts the services one by one">Update all</button></div></div>`;
+};
+const svc = (id) => D.services.find((s) => s.id === id);
+const stateWord = (id) => ({running:"running",stopped:"stopped",restarting:"restarting",off:"not set up"})[svc(id).state];
+function svcAction(id, how){
+  const s = svc(id);
+  if (how === "stop") {
+    dialog(`Stop ${esc(s.name)}?`, `<p>${id === "hub" ? "This console and every workspace link go offline. Workspaces keep working on their own; you start the hub again on the server." : id === "relay" ? "Phones get no alerts and cannot answer until you start it again." : "Shared links stop opening until you start it again."}</p>`,
+      `<button class="btn" data-close>Cancel</button><button class="btn dan" data-svc-do="${id}|stop">Stop ${esc(s.name)}</button>`);
+    return;
+  }
+  doSvc(id, how);
+}
+function doSvc(id, how){
+  const s = svc(id); close();
+  if (how === "stop") { s.state = "stopped"; toast(`${esc(s.name)} stopped`); render(); return; }
+  s.state = "restarting"; render();
+  setTimeout(() => { s.state = "running"; s.up = "a few seconds"; s.last = "just now"; toast(`${esc(s.name)} runs again`); render(); }, 1600);
+}
+function openLogs(id){
+  const s = svc(id);
+  const lines = {hub:["09:52:10 approval signed: addon.grant (Product)","09:41:33 link: Product sent request addon.grant","09:20:02 connect link made (expires 09:50)","09:15:47 browser registered: Severin · Chrome","09:05:12 workspace connected: Product (full)"],
+    relay:["09:52:11 push sent to Severin iPhone 15 (ok)","09:41:34 push sent to Severin iPhone 15 (ok)","08:12:00 phone Anna iPhone 13: app 0.0.9 (update needed)"],
+    publish:["09:50:20 link made: hello.txt (7 days)","09:44:02 link made: Release notes 2.4","09:44:40 opened: Release notes 2.4 (external)"]}[id] || [];
+  dialog(`Logs · ${esc(s.name)}`, `<pre class="mono small" style="white-space:pre-wrap;background:var(--bg);padding:12px;border-radius:8px;border:1px solid var(--border);margin:0">${lines.map(esc).join("\n")}</pre><p class="small muted">Last hour. No secrets or contents are logged.</p>`,
+    `<button class="btn" data-toast="Copied for IT (mockup)">Copy for IT</button><button class="btn" data-close>Close</button>`);
+}
+
+P.phones = () => `<h1>Phones &amp; browsers</h1><p class="lead">Every phone and browser that can approve for someone. Phones also get alerts when an agent needs a person.</p>${note("phones")}
+  <div style="display:flex;margin-bottom:12px"><span style="flex:1"></span><button class="btn pri" data-act="pair">${ic("ph")} Pair a phone</button></div>
+  <h2>Phones</h2><div class="card">${D.phones.map((p) => `<div class="row"><span class="av">${ic("ph")}</span><div class="tx"><b>${esc(p.who)} · ${esc(p.dev)}</b> ${p.warn ? `<span class="tag w">Update needed</span>` : `<span class="tag g">Alerts work</span>`}<div class="s">${esc(p.app)} · paired ${esc(p.paired)} · last seen ${esc(p.last)}</div>${p.warn ? `<div class="s" style="color:var(--warning)">${esc(p.warn)}</div>` : ""}</div><button class="btn sm" data-toast="Test alert sent (mockup)">Test alert</button><button class="btn sm dan" data-toast="Phone removed (mockup)">Remove</button></div>`).join("")}</div>
+  <h2>Browsers</h2><div class="card">${D.browsers.map((b) => `<div class="row"><span class="av">${ic("srv")}</span><div class="tx"><b>${esc(b.who)} · ${esc(b.dev)}</b> ${b.me ? `<span class="tag g">This browser</span>` : ""}<div class="s">registered ${esc(b.reg)} · last used ${esc(b.last)}</div></div><button class="btn sm dan" data-toast="Browser removed (mockup)">Remove</button></div>`).join("")}</div>`;
+
+let pubTab = "apps";
+P.publish = () => `<h1>Published</h1><p class="lead">Everything workspaces put out through Publish: apps and pages people can use, and files shared by link.</p>${note("publish")}
+  <div class="tabs"><button class="${pubTab === "apps" ? "on" : ""}" data-pubtab="apps">Apps &amp; pages (${D.apps.length})</button><button class="${pubTab === "links" ? "on" : ""}" data-pubtab="links">Shared files (${D.links.length})</button></div>
+  ${pubTab === "apps" ? pubApps() : pubLinks()}`;
+const pubApps = () => `<div style="display:flex;margin-bottom:12px"><span style="flex:1"></span><button class="btn pri" data-toast="Mockup: pick a ticket whose result is an app; a person approves the publish">${ic("pl")} Publish an app</button></div>
+  <div class="card tw"><table><tr><th>App</th><th>From</th><th>Who can open it</th><th>Version</th><th>Visits</th><th></th></tr>
+  ${D.apps.map((a, i) => `<tr style="${a.state === "stopped" ? "opacity:.6" : ""}"><td><b>${esc(a.name)}</b> <span class="tag">${esc(a.kind)}</span><div class="small mono faint">${esc(a.url)}</div><div class="small">${a.state === "running" ? `<span style="color:var(--success)">● running</span>` : `<span style="color:var(--text-faint)">● stopped</span>`}</div></td>
+  <td>${wsTag(a.ws)}<div class="small muted mono">${esc(a.ref)}</div><div class="small muted">${esc(a.by)}</div></td>
+  <td><span class="tag ${a.access === "Public" ? "w" : a.access === "Password" ? "" : "g"}">${esc(a.access)}</span></td>
+  <td class="small">${esc(a.ver)}</td><td class="small">${a.visits}</td>
+  <td style="text-align:right;white-space:nowrap"><button class="btn sm" data-app="${i}">Manage</button> ${a.state === "running" ? `<button class="btn sm" data-toast="Mockup: opens the app">Open ${ic("ex")}</button>` : `<button class="btn sm pri" data-appstart="${i}">Start</button>`}</td></tr>`).join("")}</table></div>`;
+function openApp(i){
+  const a = D.apps[i];
+  dialog(`${wsb(a.ws)} ${esc(a.name)}`,
+    `<dl class="facts"><dt>Kind</dt><dd>${esc(a.kind)}</dd><dt>Address</dt><dd class="mono">http://100.71.188.237:8102/${esc(a.url)}</dd><dt>Built in</dt><dd>${esc(W(a.ws).name)} · ${esc(a.ref)} · ${esc(a.by)}</dd><dt>Visits</dt><dd>${a.visits} (last 30 days)</dd></dl>
+     <h2>Who can open it</h2><div class="seg">${["Public","Password","Company only","People in " + W(a.ws).name].map((o) => `<button class="${a.access === o ? "on" : ""}">${esc(o)}</button>`).join("")}</div>
+     <h2>Versions</h2><div class="card"><div class="row"><div class="tx"><b>${esc(a.ver)}</b> <span class="tag g">live</span><div class="s">approved by Severin</div></div></div><div class="row"><div class="tx">previous version<div class="s">approved by Severin</div></div><button class="btn sm" data-toast="Mockup: rollback asks for approval">Roll back</button></div></div>`,
+    `<button class="btn dan" data-toast="Mockup: app removed, its address stops working">Remove</button><span style="flex:1"></span>${a.state === "running" ? `<button class="btn" data-toast="Mockup: app stopped">Stop</button>` : ""}<button class="btn" data-close>Close</button>`);
+}
+const pubLinks = () => `
+  <div class="card tw"><table><tr><th>What</th><th>From</th><th>Expires</th><th>Opened</th><th></th></tr>
+  ${D.links.map((l) => `<tr style="${l.state === "expired" ? "opacity:.55" : ""}"><td><b>${esc(l.what)}</b> ${l.pw ? `<span class="tag">password</span>` : ""}<div class="small muted">by ${esc(l.by)} · ${esc(l.made)}</div></td><td>${wsTag(l.ws)} <span class="mono small faint">${esc(l.ref)}</span></td><td class="small">${esc(l.exp)}</td><td class="small">${l.views}×</td>
+  <td style="text-align:right;white-space:nowrap">${l.state === "active" ? `<button class="btn sm" data-toast="Mockup: extended by 7 days">Extend</button> <button class="btn sm dan" data-toast="Link revoked: it no longer opens (mockup)">Revoke</button>` : `<span class="tag">expired</span>`}</td></tr>`).join("")}</table></div>`;
+
+P.addons = () => `<h1>Add-ons</h1><p class="lead">Which add-ons workspaces may install. The official orch marketplace is built in; anything else needs your OK.</p>${note("addons")}
+  ${D.addons.filter(a=>a.state==="requested").map((a) => `<div class="ban w">${ic("pz")}<div class="tx"><b>${esc(a.req)} asks to allow ${esc(a.name)} ${esc(a.ver)}</b><div class="s">Not from the official marketplace: ${esc(a.src)}</div></div><button class="btn sm dan" data-toast="Refused; Anna is told (mockup)">Refuse</button><button class="btn sm pri" data-toast="Allowed for Marketing (mockup; signed by you)">Allow for Marketing</button></div>`).join("")}
+  <div class="card tw"><table><tr><th>Add-on</th><th>Source</th><th>Allowed in</th><th>Installed in</th><th></th></tr>
+  ${D.addons.map((a) => `<tr><td><b>${esc(a.name)}</b> <span class="mono small faint">${esc(a.ver)}</span></td><td class="small">${esc(a.src)}</td><td class="small">${esc(a.allowed)}</td><td class="small">${esc(a.used)}</td><td style="text-align:right">${a.state === "allowed" ? `<button class="btn sm" data-toast="Mockup: pick workspaces">Change</button>` : a.state === "builtin" ? `<span class="tag">Built in</span>` : `<span class="tag w">Requested</span>`}</td></tr>`).join("")}</table></div>
+  <div class="card"><div class="hd">Marketplaces</div><div class="row"><div class="tx"><b>orch-marketplace</b> <span class="tag g">official · signed</span><div class="s">github.com/severinlindenmann/orch-marketplace · 9 add-ons</div></div></div><div class="row"><div class="tx"><b>Community add-ons</b> <span class="tag">blocked</span><div class="s">Allowed only one by one, after review</div></div><span class="sw" data-toggle></span></div></div>`;
+
+P.skills = () => `<h1>Skills, MCP &amp; secrets</h1><p class="lead">What the company gives its agents: knowledge (skills), tools (MCP servers) and credentials (secrets). Each one goes to all workspaces or only the ones you pick.</p>${note("skills")}
+  <h2>MCP servers <span class="small muted" style="font-weight:400">tools agents can use</span></h2><div class="card">${D.mcp.map((m, i) => `<div class="row"><span class="av">${ic("pz")}</span><div class="tx"><b>${esc(m.name)}</b> ${m.state === "connected" ? `<span class="tag g">connected</span>` : `<span class="tag w">${esc(m.state)}</span>`} <span class="tag">${esc(m.how)}</span><div class="s mono">${esc(m.where)}</div><div class="s">sign-in: ${esc(m.auth)} · ${m.tools.filter((t) => t[2]).length} of ${m.tools.length} tools on${m.tools.some((t) => t[1] === "write" && t[2]) ? " · <span style='color:var(--warning)'>can change things</span>" : " · read only"} · used ${m.uses}× this month</div><div style="margin-top:4px">${shareChips(m.share)}</div></div><button class="btn sm" data-mcptools="${i}">Tools</button><button class="btn sm" data-share="mcp|${i}">Share with…</button>${m.state !== "connected" ? `<button class="btn sm pri" data-toast="Mockup: each person signs in once; the hub keeps the token">Sign in</button>` : ""}</div>`).join("")}<div class="row"><button class="btn sm" data-mcpnew="1">${ic("pl")} Add an MCP server</button></div></div>
+  <h2>Skills</h2><div class="card">${D.skills.map((s, i) => `<div class="row"><span class="av">${ic("bk")}</span><div class="tx"><b>${esc(s.name)}</b><div class="s">by ${esc(s.by)} · updated ${esc(s.upd)} · used ${s.uses}× this month</div><div style="margin-top:4px">${shareChips(s.share)}</div></div><button class="btn sm" data-share="skills|${i}">Share with…</button><button class="btn sm" data-toast="Mockup: edit the skill text">Edit</button></div>`).join("")}<div class="row"><button class="btn sm" data-new="skills">${ic("pl")} New skill</button></div></div>
+  <h2>Secrets</h2><div class="card">${D.secrets.map((s, i) => `<div class="row"><span class="av">${ic("ky")}</span><div class="tx"><b>${esc(s.name)}</b> ${s.exp.startsWith("in 5") ? `<span class="tag w">expires soon</span>` : ""}<div class="s">by ${esc(s.by)} · ${esc(s.upd)} · expires ${esc(s.exp)} · used ${s.uses}× this month</div><div style="margin-top:4px">${shareChips(s.share)}</div></div><button class="btn sm" data-share="secrets|${i}">Share with…</button><button class="btn sm" data-toast="Mockup: which workspace and agent used it when">Use log</button><button class="btn sm" data-toast="Mockup: replace the value (typed once, never shown again)">Replace</button><button class="btn sm dan" data-toast="Mockup: revoked from all workspaces">Revoke</button></div>`).join("")}<div class="row"><button class="btn sm" data-new="secrets">${ic("pl")} Add a secret</button></div></div>`;
+const shareChips = (sh) => sh === "all" ? `<span class="tag g">All workspaces</span>` : `<span class="small muted">Only: </span>${sh.map(wsTag).join(" ")}`;
+function openShare(kind, i){
+  const isNew = i === null, it = isNew ? {name:"", share:"all"} : D[kind][i], all = it.share === "all";
+  dialog(`${isNew ? (kind === "skills" ? "New skill" : "Add a secret") : "Share " + esc(it.name)}`,
+    `${isNew ? `<div class="field"><label>Name</label><input class="input" id="shName" placeholder="${kind === "skills" ? "e.g. Offer template rules" : "e.g. Stripe test key"}"></div>${kind === "secrets" ? `<div class="field"><label>Value (typed once, never shown again)</label><input class="input" type="password"></div><div class="field"><label>Expires</label><select class="input"><option>never</option><option>in 30 days</option><option>in 90 days</option></select></div>` : `<div class="field"><label>Skill text</label><textarea class="input" rows="4" placeholder="What agents should know or do…"></textarea></div>`}` : ""}
+     <div class="field"><label>Shared with</label>
+      <label style="display:flex;gap:8px;align-items:center;padding:4px 0;color:var(--text)"><input type="radio" name="shm" value="all" ${all ? "checked" : ""}> All workspaces <span class="small faint">(default, also new ones)</span></label>
+      <label style="display:flex;gap:8px;align-items:center;padding:4px 0;color:var(--text)"><input type="radio" name="shm" value="some" ${all ? "" : "checked"}> Only these workspaces</label>
+      <div id="shList" style="padding-left:24px">${D.ws.map((w) => `<label style="display:flex;gap:8px;align-items:center;padding:3px 0;color:var(--text)"><input type="checkbox" value="${w.id}" ${!all && it.share.includes(w.id) ? "checked" : ""}> ${wsb(w.id)} ${esc(w.name)}</label>`).join("")}</div></div>
+     <p class="small muted">${kind === "secrets" ? "Agents in these workspaces can use the secret; they never see it in plain text where the tool allows it. Each use is logged." : kind === "mcp" ? "Agents in these workspaces get this MCP server and its turned-on tools automatically. Widening it needs approval." : "Agents in these workspaces load this skill."} A workspace you remove loses access at once.</p>`,
+    `<button class="btn" data-close>Cancel</button><button class="btn pri" data-share-save="${kind}|${isNew ? "new" : i}">Save</button>`);
+  const sync = () => { const some = document.querySelector('input[name=shm][value=some]').checked; document.querySelectorAll("#shList input").forEach((c) => c.disabled = !some); $("#shList").style.opacity = some ? 1 : .45; };
+  document.querySelectorAll("input[name=shm]").forEach((r) => r.addEventListener("change", sync)); sync();
+}
+function mcpTools(i){
+  const m = D.mcp[i];
+  dialog(`${ic("pz")} ${esc(m.name)} · tools`, `<p class="small muted" style="margin-top:0">Only turned-on tools reach agents. Tools that change things start off.</p><div class="card">${m.tools.map(([t, k, on], j) => `<div class="row"><div class="tx"><b class="mono">${esc(t)}</b> ${k === "write" ? `<span class="tag w">changes things</span>` : `<span class="tag">reads</span>`}</div><span class="sw ${on ? "on" : ""}" data-mcptool="${i}|${j}"></span></div>`).join("")}</div>
+    <dl class="facts"><dt>Runs</dt><dd>${esc(m.how)} · <span class="mono">${esc(m.where)}</span></dd><dt>Sign-in</dt><dd>${esc(m.auth)}</dd><dt>Added by</dt><dd>${esc(m.by)} · ${esc(m.upd)}</dd></dl>`,
+    `<button class="btn" data-toast="Mockup: which workspace and agent called which tool, when">Use log</button><button class="btn dan" data-toast="Mockup: removed from all workspaces">Remove</button><span style="flex:1"></span><button class="btn pri" data-close>Done</button>`);
+}
+function mcpNew(){
+  dialog("Add an MCP server", `<div class="field"><label>Name</label><input class="input" id="mcpName" placeholder="e.g. Notion, Jira, our CRM"></div>
+    <div class="field"><label>How does it run?</label><div class="seg" style="display:flex"><button class="on" style="flex:1">Remote (a web address)</button><button style="flex:1">On each workspace computer (a command)</button></div></div>
+    <div class="field"><label>Address or command</label><input class="input mono" placeholder="https://mcp.example.com/  or  npx @vendor/mcp"></div>
+    <div class="field"><label>Sign-in</label><select class="input"><option>None</option><option>Use a hub secret…</option><option>Each person signs in with their own account</option></select></div>
+    <div class="field"><label>Shared with</label><select class="input"><option>All workspaces</option><option>Only these workspaces…</option></select></div>
+    <p class="small muted">The hub checks the server and lists its tools. Tools that change things start off. Adding it needs approval because it gives agents new powers.</p>`,
+    `<button class="btn" data-close>Cancel</button><button class="btn pri" data-mcpadd="1">Check and add</button>`);
+}
+function saveShare(kind, i){
+  const some = document.querySelector('input[name=shm][value=some]').checked;
+  const sel = [...document.querySelectorAll("#shList input:checked")].map((c) => c.value);
+  if (some && !sel.length) return toast("Pick at least one workspace, or choose All workspaces");
+  const share = some ? sel : "all";
+  if (i === "new") { const name = ($("#shName")?.value || "").trim() || (kind === "skills" ? "New skill" : "New secret"); D[kind].push(kind === "skills" ? {name, kind:"Skill", share, by:D.me.name, upd:"now", uses:0} : {name, share, by:D.me.name, upd:"now", exp:"never", uses:0}); }
+  else D[kind][+i].share = share;
+  close(); toast(`Shared with ${share === "all" ? "all workspaces" : share.map((s) => esc(W(s).name)).join(", ")} (signed by you; mockup)`); render();
+}
+
+P.settings = () => `<h1>Hub settings</h1><p class="lead">How this hub is reached, how people sign in, backups and updates.</p>${note("settings")}
+  <div class="card"><div class="hd">General</div><div class="cb"><div class="field"><label>Hub name</label><input class="input" value="${esc(D.hub.name)}"></div><div class="field"><label>Company</label><input class="input" value="${esc(D.hub.company)}"></div></div></div>
+  <div class="card"><div class="hd">Address</div><div class="cb"><dl class="facts"><dt>Private network (VPN)</dt><dd class="mono">http://${esc(D.hub.addr)}</dd><dt>On this server</dt><dd class="mono">http://${esc(D.hub.local)} <span class="faint">(on the server itself, use this one)</span></dd><dt>Office network</dt><dd class="mono">http://192.168.60.30:8100</dd><dt>Public (Edge)</dt><dd>not set up</dd></dl><div style="margin-top:12px"><button class="btn" data-toast="Mockup: change address; workspaces get the new address through their link">Change address</button></div></div></div>
+  <div class="card"><div class="hd">Sign-in</div><div class="row"><div class="tx"><b>Name + password + 6-digit code</b><div class="s">For everyone</div></div><span class="sw on" data-toggle></span></div><div class="row"><div class="tx"><b>Passkey (Touch ID / Face ID)</b><div class="s">Later</div></div><span class="sw" data-toggle></span></div><div class="row"><div class="tx"><b>Company login (Microsoft Entra / Google)</b><div class="s">Later</div></div><span class="tag">later</span></div></div>
+  <div class="card"><div class="hd">Backup</div><div class="row"><div class="tx"><b>Last backup today 03:00</b><div class="s">Encrypted, kept 14 days on this server · copy to another place not set up</div></div><button class="btn sm" data-toast="Backup made (mockup)">Back up now</button><button class="btn sm" data-toast="Mockup: restore asks for the recovery words">Restore</button></div></div>
+  <div class="card" style="border-color:rgba(248,113,113,.35)"><div class="hd" style="color:var(--danger)">Danger zone</div><div class="row"><div class="tx"><b>Remove this hub</b><div class="s">Disconnects every workspace and removes hub, relay and publish from this server (orch host prune). Workspaces keep working on their own.</div></div><button class="btn sm dan" data-toast="Mockup: asks for your signature and the hub name typed… (or one click?)">Remove hub</button></div></div>`;
+
+P.account = () => `<h1>My account</h1><p class="lead">${esc(D.me.name)} · Hub admin</p>${note("account")}
+  <div class="card"><div class="hd">Sign-in</div><div class="row"><div class="tx"><b>Name</b><div class="s">${esc(D.me.name)} (you sign in with this)</div></div></div><div class="row"><div class="tx"><b>Password</b><div class="s">changed 27 Oct</div></div><button class="btn sm" data-toast="Mockup">Change</button></div><div class="row"><div class="tx"><b>Authenticator code</b><div class="s">set up 27 Oct</div></div><button class="btn sm" data-toast="Mockup: new secret shown once">New authenticator</button></div></div>
+  <div class="card"><div class="hd">This browser</div><div class="row"><div class="tx"><b>Chrome · MacBook Pro</b> <span class="tag g">can approve</span><div class="s">registered today 09:15 · key stays in this browser</div></div><button class="btn sm" data-act="register">Register again</button></div></div>
+  <div class="card"><div class="row"><div class="tx"><b>Sign out everywhere</b><div class="s">Ends every session of yours on every browser</div></div><button class="btn sm dan" data-toast="Mockup">Sign out everywhere</button></div></div>`;
+
+P.requirements = () => {
+  const lab = {today:["g","today"],part:["w","partly"],new:["i","new"]};
+  let rows = "", n = 0;
+  for (const [page, items] of Object.entries(N)) items.forEach(([s, t], i) => {
+    const k = page + ":" + i, v = picks[k] || ""; n++;
+    rows += `<tr><td class="small"><a href="#${page}">${esc(NOTE_TITLES[page])}</a></td><td><span class="tag ${lab[s][0]}">${lab[s][1]}</span></td><td>${esc(t)}</td><td><div class="seg">${["Need","Later","No"].map((o) => `<button class="${v === o ? "on" : ""}" data-pick="${k}|${o}">${o}</button>`).join("")}</div></td></tr>`;
+  });
+  const done = Object.keys(picks).length;
+  return `<h1>Requirements</h1><p class="lead">Every note from the mockup in one list. Mark each one Need, Later or No, then copy the list and send it to the lead (Feedback page or chat).</p>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap"><span class="muted">${done} of ${n} picked</span><span style="flex:1"></span><button class="btn" data-act="clearpicks">Clear picks</button><button class="btn pri" data-act="copyreq">Copy as list</button></div>
+  <div class="card tw req"><table><tr><th>Page</th><th>Status</th><th>What</th><th>Your pick</th></tr>${rows}</table></div>
+  <div class="field"><label>Anything missing? (copied with the list)</label><textarea class="input" id="extraReq" rows="4" placeholder="e.g. a page for billing, a weekly summary mail …">${esc(picks.__extra || "")}</textarea></div>`;
+};
+
+// ---------------------------------------------------------------- dialogs from actions
+const ACT = {
+  connect: () => dialog("Connect a workspace", `<p>Open this link in the workspace's Mission Control (Settings › Hub › Connect). It works once, for 30 minutes.</p>
+    <div class="signbox mono small">http://100.71.188.237:8105/#join=k3m9…w2 <span class="faint">(demo)</span></div>
+    <div class="field" style="margin-top:12px"><label>Suggested mode</label><div class="seg"><button class="on">Only what I choose</button><button>Everything</button></div></div>
+    <p class="small muted">The workspace owner confirms the mode with one click in Mission Control.</p>`,
+    `<button class="btn" data-close>Close</button><button class="btn pri" data-toast="Link copied (mockup)">Copy link</button>`),
+  invite: () => dialog("Invite a person", `<div class="field"><label>Name (they sign in with it)</label><input class="input" placeholder="e.g. Julia Meier"></div><div class="field"><label>Groups</label>${D.groups.map((g) => `<label style="display:flex;gap:8px;align-items:center;padding:3px 0;color:var(--text)"><input type="checkbox"> ${esc(g.name)}</label>`).join("")}</div><p class="small muted">They get a one-time link to choose a password and add the 6-digit code.</p>`,
+    `<button class="btn" data-close>Cancel</button><button class="btn pri" data-toast="Invite link copied (works once, 24 h) – mockup">Make invite link</button>`),
+  pair: () => dialog("Pair a phone", `<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap"><div class="qr" aria-label="QR code (demo)"></div><div style="flex:1;min-width:180px"><ol class="small" style="padding-left:18px;margin:0"><li>Install orch from TestFlight</li><li>Connect the phone to the company's private network (VPN), unless the hub has a public address</li><li>In the app: Scan, then allow notifications</li></ol><p class="small muted">The code works once, for 10 minutes. It pairs the phone with <b>you</b>, not with a workspace.</p></div></div>`,
+    `<button class="btn" data-close>Done</button>`),
+  handoff: () => dialog("Send a hand-off", `<div class="field"><label>Ticket</label><select class="input"><option>PR-0150 · Which API name should we use?</option><option>PR-0142 · Deploy release 2.4</option></select></div><div class="field"><label>To workspace</label><select class="input">${D.ws.map((w) => `<option>${esc(w.name)}${w.online ? "" : " (offline: waits)"}</option>`).join("")}</select></div><div class="field"><label>Note for them</label><textarea class="input" rows="3" placeholder="What should they do?"></textarea></div>`,
+    `<button class="btn" data-close>Cancel</button><button class="btn pri" data-toast="Sent: Delivered to Marketing (mockup)">Send</button>`),
+  register: () => dialog("Register this browser", `<p class="small muted">Type your password and a new 6-digit code. The key is made in this browser and never leaves it.</p><div class="field"><label>Browser name</label><input class="input" value="Chrome · MacBook Pro"></div><div class="field"><label>Password</label><input class="input" type="password"></div><div class="field"><label>6-digit code</label><input class="input" inputmode="numeric" maxlength="6"></div>`,
+    `<button class="btn" data-close>Cancel</button><button class="btn pri" data-toast="Browser registered: it can approve now (mockup)">Register</button>`),
+  copyreq: () => {
+    const ex = $("#extraReq")?.value || "";
+    picks.__extra = ex; savePicks();
+    const out = ["Hub mockup requirements (owner picks)"];
+    for (const [page, items] of Object.entries(N)) items.forEach(([s, t], i) => { const v = picks[page + ":" + i]; out.push(`- [${v || "?"}] ${NOTE_TITLES[page]}: ${t} (${s})`); });
+    if (ex.trim()) out.push("", "Missing: " + ex.trim());
+    navigator.clipboard?.writeText(out.join("\n")).then(() => toast("Copied. Paste it in the Feedback page or the chat."), () => toast("Copy failed: select the text by hand"));
+  },
+  clearpicks: () => { picks = {}; savePicks(); render(); },
+};
+
+// ---------------------------------------------------------------- workspace view (Mission Control inside the same page)
+const TK = {
+  pr:[["PR-0150","Which API name should we use?","Waiting for you","w"],["PR-0149","Idea: dark mode for the shop","New","" ],["PR-0147","Landing page form sends twice","Agent working","g"],["PR-0142","Deploy release 2.4 to the shop","Gate: deploy","w"],["PR-0139","Check the licence of the map library","Handed to Legal","i"]],
+  mk:[["MK-0034","Release notes 2.4","Agent working","g"],["MK-0031","Newsletter October","Verdict waits","w"],["MK-0029","Landing page form sends twice","Handed to Product","i"]],
+  lg:[["LG-0007","Contract draft v3","In review",""],["LG-0006","GDPR question from Support","New",""]],
+  an:[["AK-0005","Notes for the meetup talk","Draft",""],["AK-0004","Idea: dark mode for the shop","Handed to Product","i"]],
+  su:[["SU-0040","Refund for order 88213","Agent working","g"],["SU-0039","Customer asks for invoice copy","Handed to Finance","i"],["SU-0011","FAQ assistant v7","Done",""]],
+  fi:[["FI-0004","AI cost report October","Agent working","g"],["FI-0003","Budget dashboard","Done",""]],
+};
+const MC_NAV = [["today","hm","Today"],["tickets","lst","Tickets"],["agents","act","Agents"],["wiki","bk","Wiki"],["addons","pz","Add-ons"],["settings","gear","Settings"]];
+function renderWs(id, sub){
+  const w = W(id), p = D.prof[id];
+  $("#side").innerHTML = `<div class="hubname"><span class="wsb" style="background:${w.color}22;color:${w.color}">${esc(w.prefix[0])}</span><div><b>${esc(w.name)}</b><small>workspace · ${esc(w.prefix)}</small></div></div>` +
+    MC_NAV.map(([k, i, l]) => `<div class="nv ${sub === k ? "on" : ""}" data-nav="w/${id}/${k}">${ic(i)}<span>${l}</span>${k === "today" && w.needs ? `<span class="ct">${w.needs}</span>` : ""}</div>`).join("") +
+    `<div class="foot">Mission Control of ${esc(w.name)}<br><span class="faint">orch ${esc(w.ver)}</span></div>`;
+  $("#top").innerHTML = `<button class="btn gh menu-btn" id="menuB" aria-label="Menu">${ic("mnu")}</button><span class="small muted"><a href="#home" style="color:var(--text-muted);text-decoration:none">Acme hub</a> › </span><span class="t">${esc(w.name)}</span><span class="sp"></span>
+    ${w.online ? `<span class="pill"><i></i>Online · connected to hub</span>` : `<span class="pill"><i class="w"></i>Offline since ${esc(w.seen)}</span>`}<span class="pill mono" title="Where this workspace runs">${esc(w.addr)}</span>`;
+  if (!w.online) return `<h1>${esc(w.name)} is offline</h1><p class="lead">Last seen ${esc(w.seen)} on ${esc(w.host)}. When it is back, this page fills in by itself. Hand-offs and approvals for it wait in the hub.</p>${note("switching")}<div class="card"><div class="empty">Nothing to show while it is offline.</div></div>`;
+  const tk = TK[id] || [], aps = D.approvals.filter((a) => a.ws === id);
+  if (sub === "tickets") return `<h1>Tickets</h1><p class="lead">${esc(p.desc)}</p>${note("switching")}<div class="card">${tk.map(([r, t, s, c]) => `<div class="row"><span class="mono small faint" style="min-width:70px">${r}</span><div class="tx"><b>${esc(t)}</b></div><span class="tag ${c}">${esc(s)}</span></div>`).join("")}</div>`;
+  if (sub !== "today") return `<h1>${esc(MC_NAV.find((n) => n[0] === sub)?.[2] || "")}</h1><p class="lead">Mission Control page of ${esc(w.name)} (not drawn in this mockup).</p>${note("switching")}`;
+  return `<h1>Today</h1><p class="lead">${esc(new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long"}))} · ${aps.length ? aps.length + " need you" : "Nothing needs you"}</p>${note("switching")}
+   <div class="ban g">${ic("swp")}<div class="tx"><b>You switched from the hub to ${esc(w.name)} in the same tab</b><div class="s">No new tab, no second sign-in. The rail on the left stays; click the round hub icon or another workspace to switch again. The browser's Back button returns to where you were.</div></div></div>
+   ${aps.length ? `<div class="card"><div class="hd">Needs you</div>${aps.map(apRow).join("")}</div>` : ""}
+   <div class="card"><div class="hd">Active tickets<span class="sp"></span><button class="btn sm gh" data-nav="w/${id}/tickets">All →</button></div>${tk.slice(0, 4).map(([r, t, s, c]) => `<div class="row"><span class="mono small faint" style="min-width:70px">${r}</span><div class="tx"><b>${esc(t)}</b></div><span class="tag ${c}">${esc(s)}</span></div>`).join("")}</div>
+   <div class="card"><div class="hd">Agents</div><div class="row"><div class="tx">${w.agents} agents working · ${w.people} people in this workspace</div></div></div>`;
+}
+
+// the switch: a thin progress bar, sidebar and content cross-fade, the rail stays
+function switchTo(hash){
+  const bar = $("#pbar"); bar.style.transition = "none"; bar.style.width = "0"; bar.style.opacity = "1";
+  requestAnimationFrame(() => { bar.style.transition = "width .28s ease"; bar.style.width = "85%"; });
+  const fade = [$("#side"), $(".content"), $("#top")]; fade.forEach((el) => { el.style.transition = "opacity .12s"; el.style.opacity = ".35"; });
+  setTimeout(() => { location.hash = hash; fade.forEach((el) => el.style.opacity = "1"); bar.style.width = "100%"; setTimeout(() => bar.style.opacity = "0", 180); }, 260);
+}
+// ---------------------------------------------------------------- command palette (⌘K)
+function palItems(){
+  const out = [];
+  NAV.forEach(([, items]) => items.forEach(([id, i, label]) => out.push({g:"Pages", i, label, k:"hub", go:() => switchOrGo(id)})));
+  D.ws.forEach((w) => out.push({g:"Workspaces", i:"gr", label:w.name, k:w.online ? "open" : "offline", go:() => switchTo("w/" + w.id)}));
+  Object.entries(TK).forEach(([ws, list]) => list.forEach(([r, t]) => out.push({g:"Tickets", i:"lst", label:`${r} · ${t}`, k:W(ws).name, go:() => switchTo(`w/${ws}/tickets`)})));
+  D.people.forEach((p) => out.push({g:"People", i:"me", label:p.name, k:p.role, go:() => { switchOrGo("people"); setTimeout(() => openPerson(p.id), 400); }}));
+  [["Connect a workspace","connect"],["Invite a person","invite"],["Pair a phone","pair"],["Send a hand-off","handoff"]].forEach(([l, a]) => out.push({g:"Actions", i:"pl", label:l, k:"action", go:() => ACT[a]()}));
+  return out;
+}
+const switchOrGo = (h) => location.hash.startsWith("#w/") ? switchTo(h) : (location.hash = h);
+function openPalette(){
+  if ($(".pal")) return;
+  const all = palItems(); let sel = 0, list = all;
+  const el = document.createElement("div"); el.className = "pal";
+  el.innerHTML = `<div class="box"><input placeholder="Search pages, workspaces, tickets, people, actions…" aria-label="Search"><div class="res"></div><div class="small faint" style="padding:8px 14px;border-top:1px solid var(--border)"><span class="kbd">↑</span> <span class="kbd">↓</span> move · <span class="kbd">↵</span> open · <span class="kbd">esc</span> close</div></div>`;
+  document.body.appendChild(el);
+  const inp = el.querySelector("input"), res = el.querySelector(".res");
+  const draw = () => {
+    let g = ""; res.innerHTML = list.slice(0, 40).map((x, i) => { const h = x.g !== g ? `<div class="gh2">${x.g.toUpperCase()}</div>` : ""; g = x.g; return `${h}<div class="it ${i === sel ? "sel" : ""}" data-i="${i}">${ic(x.i)}<span>${esc(x.label)}</span><span class="k">${esc(x.k)}</span></div>`; }).join("") || `<div class="empty">Nothing found</div>`;
+    res.querySelector(".sel")?.scrollIntoView({block:"nearest"});
+  };
+  const pick = (i) => { const x = list[i]; el.remove(); x && x.go(); };
+  inp.addEventListener("input", () => { const q = inp.value.toLowerCase().trim(); list = q ? all.filter((x) => (x.label + " " + x.k + " " + x.g).toLowerCase().includes(q)) : all; sel = 0; draw(); });
+  inp.addEventListener("keydown", (e) => { if (e.key === "ArrowDown") { sel = Math.min(sel + 1, list.length - 1); draw(); e.preventDefault(); } if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); draw(); e.preventDefault(); } if (e.key === "Enter") pick(sel); if (e.key === "Escape") el.remove(); });
+  res.addEventListener("click", (e) => { const it = e.target.closest(".it"); if (it) pick(+it.dataset.i); });
+  el.addEventListener("click", (e) => { if (e.target === el) el.remove(); });
+  draw(); inp.focus();
+}
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); return openPalette(); }
+  if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "") || $(".pal") || $("#ovl")) return;
+  if (e.key === "?") return LF.keys();
+  if (e.key === "/") { e.preventDefault(); return openPalette(); }
+  if (gKey) { const m = {h:"home",a:"approvals",w:"workspaces",c:"connections",s:"services",p:"people"}[e.key]; gKey = false; if (m) switchOrGo(m); return; }
+  if (e.key === "g") { gKey = true; setTimeout(() => gKey = false, 900); }
+});
+let gKey = false;
+
+// ---------------------------------------------------------------- hub offline + live updates
+let offTimer = null;
+function setOffline(on){
+  clearInterval(offTimer);
+  if (!on) { $("#offbar").innerHTML = ""; document.body.classList.remove("hub-off"); toast("Connected to the hub again · everything is up to date"); return; }
+  let s = 10; document.body.classList.add("hub-off");
+  const draw = () => { $("#offbar").innerHTML = `<div class="offbar">${ic("bl")}<b>No connection to the hub.</b><span class="muted">What you see may be out of date; approving is paused. Trying again in ${s} s…</span><span class="sp"></span><button class="btn sm" id="retryB">Try now</button></div>`; };
+  draw(); offTimer = setInterval(() => { s = s <= 1 ? 10 : s - 1; draw(); }, 1000);
+}
+function liveApproval(){
+  const id = Math.max(0, ...D.approvals.map((a) => a.id)) + 1;
+  D.approvals.unshift({id, ws:"su", kind:"Question", title:"SU-0041 · Refund 120 CHF without receipt?", by:"agent (Claude) on SU-0041", when:"just now", options:["Yes, refund","No, ask for the receipt"], lines:["The agent waits for your answer"], sig:"answer"});
+  W("su").needs = (W("su").needs || 0) + 1;
+  render();
+  document.querySelectorAll(`[data-ap="${id}"]`).forEach((b) => b.closest(".row")?.classList.add("flash"));
+  toast(`New: Support asks you something <button class="btn sm pri" data-ap="${id}">Review</button>`, 5000);
+}
+
+// ---------------------------------------------------------------- look & feel page
+const LF = {
+  skeleton: () => { $("#slowT").checked = true; toast("Slow network on: watch the grey shimmer while each page loads"); setTimeout(() => switchOrGo("home"), 300); },
+  switch: () => switchTo("w/mk"),
+  undo: () => { location.hash = "approvals"; setTimeout(() => toast("Approve something: the button spins, the row slides out, then Undo for 5 s"), 400); },
+  palette: () => openPalette(),
+  offline: () => { $("#offT").checked = true; setOffline(true); },
+  live: () => liveApproval(),
+  empty: () => dialog("Empty states", `<div class="card"><div class="empty">${ic("ck")}<div style="font-weight:600;color:var(--text);margin-top:6px">Nothing needs you</div><div class="small">All approvals are done. New ones show up here by themselves.</div></div></div><div class="card"><div class="empty"><div style="font-weight:600;color:var(--text)">No workspaces yet</div><div class="small" style="margin-bottom:10px">Connect the first one with a one-time link.</div><button class="btn pri sm">Connect a workspace</button></div></div>`, `<button class="btn" data-close>Close</button>`),
+  keys: () => dialog("Keyboard shortcuts", `<dl class="facts"><dt><span class="kbd">⌘</span> <span class="kbd">K</span> or <span class="kbd">/</span></dt><dd>Search everything</dd><dt><span class="kbd">g</span> <span class="kbd">h</span></dt><dd>Home</dd><dt><span class="kbd">g</span> <span class="kbd">a</span></dt><dd>Approvals</dd><dt><span class="kbd">g</span> <span class="kbd">w</span></dt><dd>Workspaces</dd><dt><span class="kbd">g</span> <span class="kbd">c</span></dt><dd>Connections</dd><dt><span class="kbd">g</span> <span class="kbd">s</span></dt><dd>Services</dd><dt><span class="kbd">esc</span></dt><dd>Close a dialog</dd><dt><span class="kbd">?</span></dt><dd>This list</dd></dl>`, `<button class="btn" data-close>Close</button>`),
+  motion: () => toast("Reduced motion: if the computer asks for less motion (accessibility setting), all animations here switch off"),
+};
+N.lookfeel = [["new","Skeleton placeholders while a page or workspace loads (no blank page, no layout jump)"],["new","Smooth page change: content fades in, the rail and top bar never move; thin progress bar on top"],["new","Buttons show a spinner while signing; done rows slide out; Undo for 5 s where the action can be undone"],["new","Search everything with ⌘K: pages, workspaces, tickets, people, actions"],["new","Keyboard shortcuts (g h, g a …, ? for the list)"],["new","Live updates: new approvals and status changes appear by themselves, with a short highlight and a toast"],["new","Clear connection-lost bar with automatic retry; approving pauses while offline"],["new","Friendly empty states that say what to do next"],["new","Pulsing dot for live/online, dialogs that pop in, toasts that slide up"],["new","Respect 'reduce motion' and keyboard focus rings (accessibility)"]];
+NOTE_TITLES.lookfeel = "Look & feel";
+P.lookfeel = () => {
+  const demos = [["skeleton","Loading skeletons","Grey shimmer blocks in the shape of the page while data loads; turns on 'Slow network' so you can see it."],["switch","Smooth switch","Switch to Marketing: progress bar, cross-fade, the rail stays."],["undo","Signing + Undo","The button spins while signing, the row slides out, Undo for 5 seconds."],["palette","Search everything (⌘K)","One box for pages, workspaces, tickets, people and actions; arrows + Enter."],["live","Live update","A new approval arrives from Support: badge goes up, the row lights up, a toast offers Review."],["offline","Connection lost","A calm bar on top with automatic retry; nothing breaks."],["empty","Empty states","What a page says when there is nothing to show."],["keys","Keyboard shortcuts","g h, g a, g w … and ? for the list."],["motion","Reduced motion","Animations switch off when the computer asks for less motion."]];
+  return `<h1>Look &amp; feel</h1><p class="lead">Small things that make the hub feel fast and calm. Try each one here; they work across the whole mockup.</p>${note("lookfeel")}
+  <div class="lf">${demos.map(([k, t, s]) => `<div class="card"><div class="cb"><b>${t}</b><p>${s}</p><button class="btn sm pri" data-lf="${k}">Try it</button></div></div>`).join("")}</div>`;
+};
+
+// ---------------------------------------------------------------- router + events
+const TITLES = Object.assign({}, NOTE_TITLES, {requirements:"Requirements"});
+function render(){
+  const page = (location.hash.slice(1) || "home");
+  const wm = /^w\/(\w+)(?:\/(\w+))?$/.exec(page);
+  if (wm && D.prof[wm[1]]) {
+    renderRail(wm[1]);
+    $("#view").innerHTML = renderWs(wm[1], wm[2] || "today");
+    $("#app").classList.remove("open");
+    return;
+  }
+  const fn = P[page] || P.home;
+  renderRail(null); renderSide(P[page] ? page : "home"); renderTop(TITLES[page] || "Home");
+  $("#view").innerHTML = fn();
+  $("#app").classList.remove("open");
+}
+// route change: skeleton first (longer with "Slow network"), then the page fades in
+let routeSeq = 0;
+function skeleton(){
+  const bar = (w, h = 12, mb = 8) => `<div class="sk" style="width:${w};height:${h}px;margin-bottom:${mb}px"></div>`;
+  const rows = (n) => Array.from({length:n}, () => `<div class="row"><div class="sk" style="width:30px;height:30px;border-radius:8px"></div><div class="tx">${bar("55%", 12, 6)}${bar("35%", 10, 0)}</div><div class="sk" style="width:70px;height:28px"></div></div>`).join("");
+  return `${bar("260px", 26, 10)}${bar("520px", 13, 22)}<div class="grid">${Array.from({length:4}, () => `<div class="stat">${bar("40px", 26)}${bar("70%", 10, 0)}</div>`).join("")}</div><div class="card"><div class="hd">${bar("120px", 12, 0)}</div>${rows(4)}</div>`;
+}
+function routeChanged(){
+  const seq = ++routeSeq, slow = $("#slowT").checked;
+  document.querySelector(".content").scrollTop = 0;
+  render();
+  const real = $("#view").innerHTML;
+  $("#view").innerHTML = skeleton();
+  setTimeout(() => { if (seq !== routeSeq) return; $("#view").innerHTML = real; $("#view").classList.remove("enter"); void $("#view").offsetWidth; $("#view").classList.add("enter"); }, slow ? 1400 : 220);
+}
+window.addEventListener("hashchange", routeChanged);
+document.addEventListener("click", (e) => {
+  if (e.target.closest("#kHint")) return openPalette();
+  const t = e.target.closest("[data-mcptools],[data-mcptool],[data-mcpnew],[data-mcpadd],[data-gsel],[data-gsel-go],[data-gview],[data-wsel],[data-setlv-rm],[data-gdiscard],[data-gsend],[data-checkperson],[data-spf],[data-spnew],[data-spopen],[data-sptab],[data-spuse],[data-spstep],[data-spcreate],[data-undo],[data-lf],[data-share],[data-share-save],[data-new],[data-pubtab],[data-app],[data-appstart],[data-node],[data-conn],[data-profile],[data-prof-pick],[data-nav],[data-ws],[data-ws-open],[data-act],[data-ap],[data-decide],[data-close],[data-toast],[data-svc],[data-svc-do],[data-logs],[data-person],[data-grant],[data-pick],[data-toggle],#menuB,.seg button");
+  if (!t) return;
+  const d = t.dataset;
+  if (t.id === "menuB") return $("#app").classList.toggle("open");
+  if (d.mcptools) return mcpTools(+d.mcptools);
+  if (d.mcptool) { const [i, j] = d.mcptool.split("|"); const tl = D.mcp[+i].tools[+j]; tl[2] = !tl[2]; t.classList.toggle("on", tl[2]); toast(`${esc(tl[0])} ${tl[2] ? "on" : "off"}${tl[2] && tl[1] === "write" ? " · agents can now change things with it (approval sent; mockup)" : ""}`); render(); return; }
+  if (d.mcpnew) return mcpNew();
+  if (d.mcpadd) { const name = ($("#mcpName")?.value || "").trim() || "New MCP server"; close(); t.classList?.add("loading"); D.mcp.push({name, how:"Remote", where:"https://mcp.example.com/", auth:"none", state:"connected", share:"all", by:D.me.name, upd:"now", uses:0, tools:[["search","read",true],["read_item","read",true],["create_item","write",false]]}); toast(`${esc(name)}: checked, 3 tools found, sent for approval (mockup)`); return render(); }
+  if (d.gsel !== undefined) { gSel = +d.gsel; return render(); }
+  if (d.gselGo !== undefined) { gSel = +d.gselGo; gView = "group"; return render(); }
+  if (d.gview) { gView = d.gview; return render(); }
+  if (d.wsel) { wSel = d.wsel; return render(); }
+  if (d.setlvRm) { const [gi, ws] = d.setlvRm.split("|"); setLv(+gi, ws, "-"); return; }
+  if (d.gdiscard !== undefined) { gPending = []; toast("Changes discarded"); return render(); }
+  if (d.gsend !== undefined) {
+    const sent = gPending.slice(); gPending = [];
+    sent.forEach((p) => { if (p.to === "-") delete D.groups[p.gi].grants[p.ws]; else D.groups[p.gi].grants[p.ws] = p.to; gWaiting[p.gi + "|" + p.ws] = "wait"; });
+    render(); toast(`Sent to ${esc([...new Set(sent.map((p) => W(p.ws).owner))].join(", "))} for approval`);
+    setTimeout(() => { sent.forEach((p) => gWaiting[p.gi + "|" + p.ws] = "ok"); if (location.hash === "#groups") render(); toast(`${esc(W(sent[0].ws).owner)} approved: access is live`); }, 2600);
+    return;
+  }
+  if (d.checkperson !== undefined) return checkPerson(D.people[1].name);
+  if (d.spf) { spFilter = d.spf; return render(); }
+  if (d.spnew) return newSpace(1);
+  if (d.spopen) { const [i, tab] = d.spopen.split("|"); spSel = +i; spTab = tab; if (location.hash === "#space") return render(); location.hash = "space"; return; }
+  if (d.sptab) { spTab = d.sptab; return render(); }
+  if (d.spuse) { const [j, r] = d.spuse.split("|"); D.spaces[spSel].use[+j][1] = r; toast(`${esc(W(D.spaces[spSel].use[+j][0]).name)} now ${r} this space (mockup)`); return render(); }
+  if (d.spstep) { const [s, kind] = d.spstep.split("|"); return newSpace(+s, {kind}); }
+  if (d.spcreate) { if (!$("#spOk").checked) return toast("Please tick that you understand the hub can read it"); close(); D.spaces.push({name:"New " + d.spcreate.toLowerCase(), kind:d.spcreate, purpose:"(your purpose)", items:"empty", use:[["pr","edits"]], hist:[["person", D.me.name, "created it", "now"]]}); toast("Shared space created (mockup)"); return render(); }
+  if (d.share) { const [k, i] = d.share.split("|"); return openShare(k, +i); }
+  if (d.new) return openShare(d.new, null);
+  if (d.shareSave) { const [k, i] = d.shareSave.split("|"); return saveShare(k, i); }
+  if (d.pubtab) { pubTab = d.pubtab; return render(); }
+  if (d.app) return openApp(+d.app);
+  if (d.appstart) { D.apps[+d.appstart].state = "running"; toast(`${esc(D.apps[+d.appstart].name)} runs again`); return render(); }
+  if (d.node !== undefined) { selNode = d.node && d.node !== selNode ? d.node : null; return render(); }
+  if (d.conn) { const [a, b] = d.conn.split("|"); const i = D.conns.findIndex(([f, t2]) => f === a && t2 === b); if (i >= 0) { D.conns.splice(i, 1); toast(`${esc(W(a).name)} can no longer reach ${esc(W(b).name)}`); } else { D.conns.push([a, b]); toast(`${esc(W(a).name)} → ${esc(W(b).name)} allowed (an admin of ${esc(W(b).name)} approves; mockup)`); } return render(); }
+  if (d.profile) { curProf = d.profile; close(); location.hash = "profile"; return render(); }
+  if (d.profPick) { curProf = d.profPick; return render(); }
+  if (d.nav) { const fromWs = location.hash.startsWith("#w/"), toWs = d.nav.startsWith("w/"); if (fromWs !== toWs || (fromWs && d.nav.split("/")[1] !== location.hash.split("/")[1])) return switchTo(d.nav); location.hash = d.nav; return; }
+  if (d.ws) { close(); return switchTo("w/" + d.ws); }
+  if (d.wsOpen) return openWs(d.wsOpen);
+  if (d.act) return ACT[d.act] && ACT[d.act]();
+  if (d.ap) return openApproval(+d.ap);
+  if (d.decide) {
+    // button spinner while "signing", then the row slides out; Undo for 5 s before it is final
+    t.classList.add("loading"); t.textContent = " Signing…";
+    setTimeout(() => {
+      const id = +d.decide, a = D.approvals.find((x) => x.id === id), idx = D.approvals.indexOf(a);
+      close();
+      document.querySelectorAll(`[data-ap="${id}"]`).forEach((b) => b.closest(".row")?.classList.add("leaving"));
+      setTimeout(() => {
+        D.approvals = D.approvals.filter((x) => x.id !== id);
+        D.activity.unshift({t:"now", who:D.me.name, what:d.how === "ok" ? (a.kind === "Question" ? "answered" : "approved") : "refused", obj:a.title, ws:a.ws});
+        render();
+        toast(`${d.how === "ok" ? (a.kind === "Question" ? "Answer sent" : "Approved") : "Refused"}: ${esc(a.title)} <button class="btn sm" data-undo="${id}|${idx}">Undo</button>`, 5000);
+        lastUndo = a;
+      }, 320);
+    }, 650);
+    return;
+  }
+  if (d.undo) { const [, idx] = d.undo.split("|"); if (lastUndo) { D.approvals.splice(+idx, 0, lastUndo); D.activity.shift(); lastUndo = null; document.querySelectorAll(".toast").forEach((x) => x.remove()); render(); toast("Undone: it waits for you again"); } return; }
+  if (d.lf) return LF[d.lf]();
+  if (d.close !== undefined) return close();
+  if (d.svc) { const [id, how] = d.svc.split("|"); return svcAction(id, how); }
+  if (d.svcDo) { const [id, how] = d.svcDo.split("|"); return doSvc(id, how); }
+  if (d.logs) return openLogs(d.logs);
+  if (d.person) return openPerson(d.person);
+  if (d.grant) { const [gi, ws, l] = d.grant.split("|"); D.groups[+gi].grants[ws] = l; toast(`${esc(D.groups[+gi].name)} → ${esc(W(ws).name)}: ${l === "-" ? "no access" : l} (the workspace owner signs this)`); return render(); }
+  if (d.pick) { const [k, v] = d.pick.split("|"); if (picks[k] === v) delete picks[k]; else picks[k] = v; const ex = $("#extraReq"); if (ex) picks.__extra = ex.value; savePicks(); return render(); }
+  if (d.toggle !== undefined) { t.classList.toggle("on"); return toast("Mockup: setting changed"); }
+  if (d.toast) { if (t.closest(".dlg") && !t.closest("[data-keep]")) close(); return toast(esc(d.toast)); }
+  if (t.matches(".seg button")) { t.parentElement.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b === t)); }
+});
+$("#offT").addEventListener("change", (e) => setOffline(e.target.checked));
+function setLv(gi, ws, to){
+  const orig = D.groups[gi].grants[ws] || "-";
+  gPending = gPending.filter((p) => !(p.gi === gi && p.ws === ws));
+  if (to !== orig) gPending.push({gi, ws, to});
+  delete gWaiting[gi + "|" + ws];
+  render();
+}
+document.addEventListener("change", (e) => {
+  const d = e.target.dataset;
+  if (d.setlv) { const [gi, ws] = d.setlv.split("|"); setLv(+gi, ws, e.target.value); }
+  if (d.addws) { setLv(+d.addws, e.target.value, "read"); }
+  if (d.addperson) { const g = D.groups[+d.addperson]; g.members.push(e.target.value); toast(`${esc(e.target.value)} added to ${esc(g.name)} (mockup)`); render(); }
+  if (d.checkpick !== undefined) checkPerson(e.target.value);
+});
+document.addEventListener("click", (e) => { if (e.target.id === "retryB") { e.target.classList.add("loading"); e.target.textContent = " Trying…"; setTimeout(() => { if ($("#offT").checked) { e.target.classList.remove("loading"); e.target.textContent = "Try now"; toast("Still no connection · next try in 10 s"); } }, 900); } });
+$("#notesT").addEventListener("change", (e) => { document.body.classList.toggle("nonotes", !e.target.checked); try { localStorage.setItem("hubfull-notes", e.target.checked ? "1" : "0"); } catch {} });
+try { if (localStorage.getItem("hubfull-notes") === "0") { $("#notesT").checked = false; document.body.classList.add("nonotes"); } } catch {}
+render();
+</script>
+</body>
+</html>

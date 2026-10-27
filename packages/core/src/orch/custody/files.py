@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import stat
 from pathlib import Path
 
 from .base import CustodyError, KeyExists, KeyNotFound, check_key_id
@@ -14,11 +15,9 @@ __all__ = ["check_private", "delete_file", "key_path", "private_dir", "write_new
 
 
 def private_dir(directory: str | os.PathLike[str]) -> Path:
-    p = Path(directory)
-    p.mkdir(parents=True, exist_ok=True)
-    with contextlib.suppress(OSError):  # not meaningful on Windows
-        os.chmod(p, 0o700)
-    return p
+    from orch.privdir import make_private_dir
+
+    return make_private_dir(directory)
 
 
 def key_path(directory: Path, key_id: str, suffix: str) -> Path:
@@ -71,9 +70,13 @@ def check_private(path: Path) -> None:
     if os.name == "nt":  # pragma: no cover
         return
     try:
-        st = os.stat(path)
+        st = os.lstat(path)
     except FileNotFoundError:
         raise KeyNotFound(path.stem) from None
+    if not stat.S_ISREG(st.st_mode):
+        raise CustodyError(f"key file {path.name} is not a regular file")
+    if st.st_nlink != 1:
+        raise CustodyError(f"key file {path.name} has another hard link")
     if st.st_mode & 0o077:
         raise CustodyError(f"key file {path.name} is accessible by others (mode {st.st_mode & 0o777:03o}); chmod 600")
     if st.st_uid != os.getuid():

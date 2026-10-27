@@ -23,6 +23,30 @@ CLICK_BODY_LIMIT = 16_384
 CLICK_STEP = ("/view", "/sign", "/cancel", "/state", "/custody")
 
 
+#: The global routes a switch session may use (their answers are cut down to the bound workspace in app.py).
+SWITCH_GLOBAL = frozenset(
+    {
+        ("GET", "/api/session"),
+        ("GET", "/api/me"),
+        ("GET", "/api/workspaces"),
+        ("GET", "/api/events"),  # only with ?ws=<bound>
+        ("POST", "/auth/logout"),
+    }
+)
+
+
+def switch_allows(method, path, bound, query=None) -> bool:
+    """The ONE table of what a switch session may reach: its own workspace's routes (never a shell on the server) and
+    the named global routes. `bound` is the workspace of its ticket."""
+    if (method, path) in SWITCH_GLOBAL:
+        return path != "/api/events" or (query or {}).get("ws") == [bound]
+    parts = path.split("/")
+    if len(parts) > 4 and parts[:3] == ["", "api", "w"] and parts[3] == bound:
+        shell = parts[4] == "terminals" or parts[-1] == "attach"
+        return not shell
+    return False
+
+
 class Security:
     """ASGI checks before routing, including duplicate headers and streamed body limits."""
 
@@ -141,7 +165,7 @@ class Security:
             if not (self.auth.valid_setup(token) if setup else self.session_ok(token, policy)):
                 return await reject("session.required", 401)
             scope.setdefault("state", {})["token"] = token
-            refusal = self.switch_refused(token, path, scope)
+            refusal = self.switch_refused(token, path, method, scope)
             if refusal:
                 return await reject("remote.refused", 403)
         if method not in ("GET", "HEAD", "OPTIONS"):
@@ -219,20 +243,15 @@ class Security:
             # No body/header interpolation in errors or logs.
             await reject("internal", 500)
 
-    def switch_refused(self, token, path, scope) -> bool:
-        """A session opened by a hub switch (H1) is less than a fresh login: it reads only the workspace its ticket
-        was for, and it never opens a shell on the server (terminals) whatever the listener."""
+    def switch_refused(self, token, path, method, scope) -> bool:
+        """A session opened by a hub switch (H1) is read-mostly on ONE workspace until a real sign-in: routes default
+        CLOSED. It reaches only `switch_allows` (below); every other API or auth route is refused, so a route added
+        later is closed for it until someone opens it here on purpose."""
         bound = self.auth.switch_workspace(token)
         if bound is None:
             return False
-        parts = path.split("/")
-        if len(parts) > 3 and parts[:3] == ["", "api", "w"] and parts[3] != bound:
-            return True
-        if path == "/api/events":
-            wanted = urllib.parse.parse_qs(scope.get("query_string", b"").decode("latin1")).get("ws", [])
-            return wanted != [bound]
-        shell = len(parts) > 5 and parts[:3] == ["", "api", "w"] and (parts[4] == "terminals" or parts[-1] == "attach")
-        return shell
+        query = urllib.parse.parse_qs(scope.get("query_string", b"").decode("latin1"))
+        return not switch_allows(method, path, bound, query)
 
     async def refuse(self, scope, receive, send):
         if scope["type"] == "websocket":

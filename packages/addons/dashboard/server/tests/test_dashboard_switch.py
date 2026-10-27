@@ -161,3 +161,34 @@ def test_remote_logout_everywhere_ends_switch_sessions(client, link, auth):
     token = _switch_token(client, link)
     auth.logout_everywhere()
     assert not auth.valid(token)
+
+
+def test_every_route_a_switch_session_may_not_use_is_closed(client, link):
+    """New routes default CLOSED for a switch session: only the table in security.py opens one."""
+    from orch_dashboard.security import SWITCH_GLOBAL, switch_allows
+
+    bound = WS
+    seen = 0
+    for route in client.app.routes:
+        template = getattr(route, "path", "")
+        methods = getattr(route, "methods", None) or {"GET"}
+        if not template.startswith(("/api", "/auth")):
+            continue
+        for method in methods - {"HEAD", "OPTIONS"}:
+            seen += 1
+            path = template.replace("{ws}", bound)
+            for name in ("key", "run", "name", "page", "tab", "ticket", "id"):
+                path = path.replace("{" + name + "}", "x")
+            path = path.replace("{route:path}", "x").replace("{path:path}", "x")
+            query = {"ws": [bound]}
+            want = (method, template) in SWITCH_GLOBAL or (
+                template.startswith("/api/w/{ws}/")
+                and "/terminals" not in template
+                and not template.endswith("/attach")
+            )
+            assert switch_allows(method, path, bound, query) == want, (method, template)
+    assert seen > 50
+    assert not switch_allows("GET", "/api/w/" + "c" * 32 + "/head", bound)
+    assert not switch_allows("GET", "/api/events", bound, {"ws": ["c" * 32]})
+    for closed in ("/api/host", "/api/testrun/x", "/auth/passkey/options", "/api/passkeys"):
+        assert not switch_allows("GET", closed, bound) and not switch_allows("POST", closed, bound)

@@ -354,6 +354,12 @@ SCOPE_ROUTES: dict[str, frozenset[str]] = {
 }
 
 
+#: What a session that came from a switch ticket (``via_switch``: a workspace vouched for it, no password sign-in) may
+#: call: reading what it sees, the rail, opening another workspace, signing out. Every OTHER route (admin, channels,
+#: signing, credentials) answers ``reauth_required`` until a real sign-in: routes default closed.
+SWITCH_HANDLERS = frozenset({"whoami", "sign_out", "my_workspaces", "needs_you", "item", "switch_ticket", "rail"})
+
+
 def route_scopes(rt: Route) -> frozenset[str]:
     """The session scopes that may call this ROUTE (keyed by route, not handler: ``/admin/channels/{id}/revoke`` shares the
     ``revoke`` handler with the channel's own revoke, but an admin route is ``full`` only, L2H1-1)."""

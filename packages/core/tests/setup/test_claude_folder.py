@@ -75,13 +75,53 @@ def test_a_folder_with_foreign_project_config_is_not_offered_and_nothing_is_writ
         assert json.loads((home / ".claude.json").read_text()) == {"projects": {}}
 
 
-def test_foreign_config_in_a_parent_folder_blocks_it_too(tmp_path):
+def test_config_in_a_parent_folder_does_not_block_a_workspace_below_it(tmp_path):
     home, env = _home(tmp_path, {"projects": {}})
-    repo = tmp_path / "work" / "cloned"
-    (repo / ".claude").mkdir(parents=True)
-    root = repo / "ws"
+    docs = tmp_path / "work" / "Documents"
+    (docs / ".claude").mkdir(parents=True)
+    (docs / "CLAUDE.md").write_text("mine")
+    root = docs / "demo1"
     root.mkdir()
-    assert claude_folder.foreign_config(root, env) is True and claude_folder.trust_folder(env, root) is False
+    assert claude_folder.foreign_config(root, env) is False and claude_folder.refusal(env, root) is None
+    assert claude_folder.trust_folder(env, root) is True
+
+
+def test_a_refusal_names_the_file_found_in_the_folder(tmp_path):
+    home, env = _home(tmp_path, {"projects": {}})
+    root = tmp_path / "ws"
+    (root / ".claude").mkdir(parents=True)
+    why = claude_folder.refusal(env, root)
+    assert why and str(root.resolve() / ".claude") in why
+
+
+def test_claude_is_found_in_the_usual_install_dirs_when_path_is_short(tmp_path):
+    home = tmp_path / "h"
+    exe = home / ".local" / "bin" / "claude"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    env = {"HOME": str(home), "PATH": "/usr/bin:/bin"}
+    assert claude_folder.claude_path(env) == str(exe) and claude_folder.claude_installed(env)
+
+
+def test_trust_step_writes_the_consent_marker_the_runner_needs(tmp_path):
+    home, env = _home(tmp_path, {"projects": {}})
+    root = tmp_path / "ws"
+    (root / ".orch").mkdir(parents=True)
+    assert claude_folder.trust_folder(env, root) is True
+    from orch.runner.claude_trust import _consented
+
+    assert _consented(os.path.realpath(root))
+
+
+def test_settings_can_grant_the_consent_later(tmp_path):
+    home, env = _home(tmp_path, {"projects": {}})
+    root = tmp_path / "ws"
+    (root / ".orch").mkdir(parents=True)
+    assert claude_folder.grant_consent(env, root) is None
+    from orch.runner.claude_trust import _consented
+
+    assert _consented(os.path.realpath(root))
 
 
 def test_orchs_own_claude_md_in_a_fresh_setup_folder_is_fine_after_setup_wrote_it(tmp_path):
@@ -91,3 +131,20 @@ def test_orchs_own_claude_md_in_a_fresh_setup_folder_is_fine_after_setup_wrote_i
     assert claude_folder.foreign_config(root, env) is False  # fresh: offered (if claude is installed)
     (root / "CLAUDE.md").write_text("@AGENTS.md\n")  # what setup writes
     assert claude_folder.trust_folder(env, root) is True
+
+
+def test_a_failed_row_is_never_ready_a_macos_block_is_named_and_try_again_works(tmp):
+    from tests.setup.fakes import FakePorts
+    from tests.setup.test_create import progress
+
+    ports = FakePorts()
+    ports.blocked = ["io.orch.host"]
+    ports.fail_runner = True
+    f, ports, p, rv = run_ok(tmp, AGENT, ports=ports)
+    assert p["done"] is False and p["error"]["code"] == "background.blocked" and f.phase == "failed"
+    assert "Login Items & Extensions" in p["error"]["message"] and "Try again" in p["error"]["message"]
+    ports.fail_runner, ports.blocked = False, []
+    out = f.dispatch("POST", "retry", {}, {})[1]
+    f.thread.join(10)
+    p2 = progress(f, out["run_id"])
+    assert p2["error"] is None and p2["done"] is True and f.phase == "done"

@@ -133,6 +133,12 @@ class FakePorts:
         self.log.append(("trust_folder", str(root)))
         return True
 
+    def background_blocked(self) -> list[str]:
+        return list(getattr(self, "blocked", []))
+
+    def trust_why(self, root: Path) -> str:
+        return "fake why"
+
     def records_setup(self, wid: str, root: Path) -> None:
         self.log.append(("records_setup", wid, str(root)))
         if getattr(self, "fail_records", False):

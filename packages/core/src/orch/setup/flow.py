@@ -78,6 +78,7 @@ class SetupFlow:
         self.run: Run | None = None
         self.error: dict[str, Any] | None = None
         self._running = False
+        self._creator: Creator | None = None
         self._closed = False
         self.cancel_event = threading.Event()
         self.thread: threading.Thread | None = None
@@ -160,6 +161,7 @@ class SetupFlow:
             ("GET", "progress"): self._progress,
             ("POST", "finish"): self._finish,
             ("POST", "cancel"): self._cancel,
+            ("POST", "retry"): self._retry,
         }
 
     def _state(self, _q: Any) -> dict[str, Any]:
@@ -209,7 +211,8 @@ class SetupFlow:
             "agent_hours": list(AGENT_HOURS),
             "git": facts.git_state(Path(self.dir)) if self.dir else {"repo": True},
             "claude": {
-                "available": bool(self.dir) and self.mode == "new" and claude_folder.offered(self.e.env, self.dir)
+                "available": bool(self.dir) and self.mode == "new" and claude_folder.offered(self.e.env, self.dir),
+                "why_not": (claude_folder.refusal(self.e.env, self.dir) or "") if self.dir else "",
             },
             "relay": {"available": bool(relay.get("available")), "enabled": bool(relay.get("enabled"))},
             "missing": missing,
@@ -343,6 +346,7 @@ class SetupFlow:
             cancelled=self.cancel_event,
             manifest_bytes=self.e.manifest_bytes,
         )
+        self._creator = creator
         self.phase = "confirming" if plan.tty_confirm else "running"
         self._running = True
         self.thread = threading.Thread(target=self._work, args=(creator,), name="orch-setup-run")
@@ -374,9 +378,20 @@ class SetupFlow:
             ids.append("trust")
         return ids
 
-    def _work(self, creator: Creator) -> None:
+    def _retry(self, _body: Any) -> dict[str, Any]:
+        creator = self._creator
+        if self.phase != "failed" or creator is None or self._running or self.run is None:
+            raise SetupError("setup.phase", "there is nothing to try again", 409)
+        if self.run.error is None or self.run.error.get("code") not in ("background.blocked", "steps.failed"):
+            raise SetupError("setup.phase", "there is nothing to try again", 409)
+        self.phase, self._running = "running", True
+        self.thread = threading.Thread(target=self._work, args=(creator, True), name="orch-setup-retry")
+        self.thread.start()
+        return {"run_id": self.run.id}
+
+    def _work(self, creator: Creator, again: bool = False) -> None:
         try:
-            creator.execute()
+            creator.retry() if again else creator.execute()
         finally:
             with self.lock:
                 self._running = False

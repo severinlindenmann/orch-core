@@ -389,6 +389,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [review, setReview] = useState<Review>()
   const [run, setRun] = useState<string>()
   const [progress, setProgress] = useState<Progress>()
+  const [pollTick, setPollTick] = useState(0) // bumped by "Try again": the same run is polled again
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [ended, setEnded] = useState(false)
@@ -543,7 +544,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       active = false
       clearTimeout(timer)
     }
-  }, [api, run])
+  }, [api, run, pollTick])
   // The setup in the terminal can end while this page is open (Ctrl-C, closed terminal, "Finish setup later" elsewhere).
   // Notice within about two seconds, wipe the secret words from the page and say so (B11 finding 4).
   const progressDone = !!progress?.done
@@ -1304,6 +1305,20 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </p>
               )}
               <footer>
+                {(progress.error.code === 'background.blocked' || progress.error.code === 'steps.failed') && (
+                  <button
+                    className="primary"
+                    onClick={() =>
+                      void act(async () => {
+                        await api.call('retry', {})
+                        setProgress(undefined)
+                        setPollTick((n) => n + 1)
+                      })
+                    }
+                  >
+                    Try again
+                  </button>
+                )}
                 <button className="cancel"
                   onClick={() =>
                     void act(async () => {

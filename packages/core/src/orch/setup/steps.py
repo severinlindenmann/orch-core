@@ -363,6 +363,9 @@ class Ports(Protocol):
     def runner_refresh(self) -> None: ...
     def records_setup(self, wid: str, root: Path) -> None: ...
     def trust_folder(self, root: Path) -> bool | None: ...
+
+    def trust_why(self, root: Path) -> str: ...
+    def background_blocked(self) -> list[str]: ...  # io.orch labels macOS turned off (Login Items & Extensions)
     def workspace(self, wid: str) -> Any: ...  # a connection: .call(op, args, **kw) -> result dict; .close()
     def unlock(self, wid: str, passphrase: str | None, digest: str, fields: tuple[tuple[str, str], ...]) -> Any: ...
     def convenience_on(self, wid: str) -> None: ...
@@ -447,6 +450,12 @@ STEP_LABELS = {
 HELLO_SECONDS = 30.0
 
 
+BLOCKED_TEXT = (
+    "macOS has turned off orch in the background. Allow orch in System Settings > General > "
+    "Login Items & Extensions, then press Try again."
+)
+
+
 def _runner_failure(exc: BaseException, safe: Callable[[str, int | None], str]) -> str:
     """The reason the runner could not be turned on, and the command to run next (one line, no control characters).
     The exception text goes through the setup redaction gate (``safe`` = ``Creator._safe``) before it is cut or shown;
@@ -529,7 +538,7 @@ class Creator:
             self._flags()  # ... and the convenience flag is set LAST: never "flag on, key not held"
             self._records()
             self._trust()
-            self.run.done = True
+            self._conclude()
         except KeyboardInterrupt:
             self._fail(SetupError("stop", "setup was stopped from the terminal", 409), post_genesis)
         except SetupError as e:
@@ -547,6 +556,38 @@ class Creator:
             self._passphrase = None
             if self.secrets is not None:
                 self.secrets.wipe()
+
+    def _conclude(self) -> None:
+        """ "Ready" only when no row failed. macOS turning orch off in the background is named in plain words."""
+        bad = [s["label"] for s in self.run.steps if s["status"] == "failed"]
+        if not bad:
+            self.run.error = None
+            self.run.done = True
+            return
+        blocked: list[str] = []
+        with contextlib.suppress(Exception):
+            blocked = list(self.ports.background_blocked())
+        if blocked:
+            self._fail(SetupError("background.blocked", BLOCKED_TEXT, 409), True)
+        else:
+            self._fail(SetupError("steps.failed", "Some steps did not work: " + ", ".join(bad) + ".", 409), True)
+
+    def retry(self) -> None:
+        """ "Try again" after the person allowed orch in System Settings: the failed background steps run once more."""
+        self.run.error = None
+        self.run.done = False
+        self.run.retry = []
+        for s in self.run.steps:
+            if s["status"] == "failed":
+                self.run.set(s["id"], "todo")
+        try:
+            self._runner()
+            self._records()
+            self._conclude()
+        except SetupError as e:
+            self._fail(e, True)
+        except Exception as e:  # noqa: BLE001
+            self._fail(SetupError("internal", f"setup failed ({type(e).__name__})", 500), True)
 
     def _rescue_passphrase(self) -> None:
         """HIGH-1: in one-click mode the passphrase is never shown up front. Any failure after the genesis and before
@@ -653,6 +694,12 @@ class Creator:
             ok = self.ports.trust_folder(self.root)
         except Exception:  # noqa: BLE001 - Claude Code simply asks itself, as before
             ok = False
+        if ok is False:
+            why = ""
+            with contextlib.suppress(Exception):
+                why = self.ports.trust_why(self.root)
+            if why:
+                self.run.explain("trust", why)
         self.run.set("trust", "skipped" if ok is False else "done")
 
     def _records(self) -> None:
@@ -1031,6 +1078,21 @@ class RealPorts:
         from .claude_folder import trust_folder
 
         return trust_folder(self.env, root)
+
+    def background_blocked(self) -> list[str]:
+        import sys
+
+        from orch.lifecycle.units import Env, blocked_orch_labels
+
+        return blocked_orch_labels(Env(env=self.env, out=sys.stdout, err=sys.stderr))
+
+    def trust_why(self, root: Path) -> str:
+        """Why the trust step was skipped, in plain words (shown on the page and in the setup log)."""
+        from .claude_folder import refusal
+
+        return refusal(self.env, root) or (
+            "Claude Code has no settings file yet (~/.claude.json): start claude once, then allow it in Settings."
+        )
 
     def records_setup(self, wid: str, root: Path) -> None:
         """``orch records init`` and ``orch records auto on`` (no ``--push``): the records tool's own code, with the

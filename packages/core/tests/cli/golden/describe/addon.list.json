@@ -73,6 +73,9 @@
                     "type": "string"
                   }
                 },
+                "fields": {
+                  "type": "object"
+                },
                 "paused": {
                   "type": "object",
                   "properties": {

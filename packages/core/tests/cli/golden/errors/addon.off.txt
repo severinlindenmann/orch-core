@@ -1,0 +1,1 @@
+err addon.off the add-on is off in this workspace · retry:false · next: tell the person; do not work around it · fix: orch addon list

@@ -116,6 +116,13 @@ def test_every_non_human_op_renders_byte_identically_in_both_modes(tmp_path_fact
     assert any(c[0] == 0 for c in want) and any(c[0] != 0 for c in want)
 
 
+ADDON_OPS = {"quick.list", "follow_up", "follow_up.list", "follow_up.show", "follow_up.cancel", "webhook.new"}
+WORKSPACE_DEPENDENT = {
+    "describe/_all.txt", "describe/_all.json", "help/_all.txt", "help/_all.json",
+    "help/workflow.wait.txt", "help/workflow.wait.json",
+}  # fmt: skip
+
+
 def test_the_local_golden_paths_are_unchanged_with_the_workspace_registered(lab, monkeypatch):
     """The golden cases are help, describe, rendered error envelopes and parser errors: none of them is a request to
     the host. This only shows that those stay local and unchanged while the workspace is registered and served; the
@@ -135,6 +142,8 @@ def test_the_local_golden_paths_are_unchanged_with_the_workspace_registered(lab,
         for name, text in golden_cases.cases():
             if name == "errors/_not-implemented.txt":
                 continue  # binds a stub over a handler of this process: the host runs its own
+            if name in WORKSPACE_DEPENDENT or name.split("/")[-1].rsplit(".", 1)[0] in ADDON_OPS:
+                continue  # help and describe list an add-on's commands only while it is on: this workspace has none on
             assert (cc.GOLDEN / name).read_text(encoding="utf-8") == text, name
             checked += 1
         assert checked > 200

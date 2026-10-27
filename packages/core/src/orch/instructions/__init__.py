@@ -26,6 +26,7 @@ from .harness import (
     plugin_files,
     safe_read,
     sync_addon_part,
+    sync_if_changed,
     workspace_files,
     write_workspace_files,
 )
@@ -77,6 +78,7 @@ __all__ = [
     "stale_findings",
     "stamp_rev",
     "sync_addon_part",
+    "sync_if_changed",
     "workspace_files",
     "write_workspace_files",
 ]

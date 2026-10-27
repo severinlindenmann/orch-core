@@ -380,7 +380,7 @@
         "cli": "instructions hook",
         "group": "Admin",
         "who": "read",
-        "summary": "The text a harness hook injects at session start or before compaction: at most six lines."
+        "summary": "The text a harness hook injects at session start or before compaction: at most seven lines."
       },
       {
         "name": "import.v1",

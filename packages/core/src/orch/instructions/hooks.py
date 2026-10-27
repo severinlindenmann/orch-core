@@ -1,5 +1,5 @@
 """The text of the session-start and pre-compact hooks (ticket-format §10.2): who the agent works for, its grant, its
-claim, what has not been read yet and what to do next. At most six lines, built from what ``orch status`` knows.
+claim, what has not been read yet and what to do next. At most seven lines, built from what ``orch status`` knows.
 
 These are pure functions over plain values, so the budget is tested without a workspace. The operation
 ``instructions.hook`` (``orch instructions hook session-start``) gathers the values and calls them.
@@ -25,8 +25,8 @@ __all__ = [
     "session_start_lines",
 ]
 
-SESSION_START_MAX_LINES = 6
-PRE_COMPACT_MAX_LINES = 4
+SESSION_START_MAX_LINES = 7
+PRE_COMPACT_MAX_LINES = 5
 STALE_LINE = "instructions stale: run orch instructions sync"
 _UNREAD_SHOWN = 2
 
@@ -40,10 +40,13 @@ def session_start_lines(
     unread: Sequence[str],
     stale: bool,
     next_hint: str,
+    addons: str | None = None,
 ) -> list[str]:
     """The lines (the first is the ``ok`` line the CLI prints). ``claim_line`` is the status line of the claim
     (``DEMO-0043 in-progress (your claim) · T3 next · 2 new events``), ``unread`` the undelivered decisions
-    (``DEMO-0043 #4 answered Q1``), only the first few are shown. Never more than six lines."""
+    (``DEMO-0043 #4 answered Q1``), only the first few are shown. ``addons`` is the add-on line
+    (:func:`orch.instructions.addon_set.addons_line`), present whenever an add-on is installed. Never more than seven
+    lines."""
     head = f"ok session-start {person}" + (f" · grant {grant}" if grant else " · no grant")
     out = [head]
     if not grant:
@@ -58,20 +61,27 @@ def session_start_lines(
         out.append("unread: " + "; ".join(shown) + (f"; +{more} more" if more > 0 else "") + " (orch wait)")
     if stale:
         out.append(STALE_LINE)
+    if addons:
+        out.append(addons)
     out.append(f"next: {next_hint}")
-    assert len(out) <= SESSION_START_MAX_LINES  # head, no-grant, claim, unread, stale, next: six at most
+    # head, no-grant, claim, unread, stale, add-ons, next: seven at most
+    assert len(out) <= SESSION_START_MAX_LINES
     return out
 
 
-def pre_compact_lines(*, claim: str | None, open_questions: int) -> list[str]:
-    """What to keep when the context is summarised (the first line is the ``ok`` line, the last the ``next:`` line)."""
+def pre_compact_lines(*, claim: str | None, open_questions: int, addons: str | None = None) -> list[str]:
+    """What to keep when the context is summarised (the first line is the ``ok`` line, the last the ``next:`` line).
+    ``addons``: the same add-on line as at session start, so the off rule survives the summary."""
     out = [
         "ok pre-compact \u00b7 keep in the summary: your claim, the current task, open questions, decisions handed over"
     ]
     out.append(f"your claim: {claim}" if claim else "you hold no claim")
     if open_questions:
         out.append(f"{open_questions} question(s) still open")
+    if addons:
+        out.append(addons)
     out.append("next: orch status, then orch show")
+    assert len(out) <= PRE_COMPACT_MAX_LINES
     return out
 
 

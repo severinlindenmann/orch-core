@@ -24,7 +24,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from .agents_md import AddonRow, render_agents_md
+from .agents_md import INSTRUCTIONS_REV, AddonRow, addon_fingerprint, render_agents_md, stamp_rev, stamp_set
 from .skills import builtin_skills
 
 __all__ = [
@@ -40,6 +40,7 @@ __all__ = [
     "safe_read",
     "plugin_files",
     "sync_addon_part",
+    "sync_if_changed",
     "workspace_files",
     "write_workspace_files",
 ]
@@ -417,6 +418,23 @@ def sync_addon_part(
     changed = [where] if (safe_read(root, where) != text if dry_run else _write(root, where, text)) else []
     c, kept = reconcile(root, addons, store=store, worktrees=worktrees, force=force, dry_run=dry_run, now=now)
     return changed + [x for x in c if x not in changed], kept
+
+
+def sync_if_changed(
+    root: Path, addons: Sequence[AddonRow], *, store: Path | None = None, worktrees: Sequence[Path | str] = ()
+) -> bool:
+    """The session-start half of the sync (design D2): when ``AGENTS.orch.md`` was written by this orch for another
+    add-on set (its stamp's fingerprint differs), run :func:`sync_addon_part`. A file that is missing, unstamped or
+    from another revision is the full ``instructions sync``'s business and is left alone. True if it ran and wrote;
+    a problem (a link, an add-on block over budget, a read-only folder) is False, and the stale line says why."""
+    try:
+        text = safe_read(root, _where(root, store, AGENTS_FILE))
+        if text is None or stamp_rev(text) != INSTRUCTIONS_REV or stamp_set(text) == addon_fingerprint(addons):
+            return False
+        changed, _kept = sync_addon_part(root, addons, store=store, worktrees=worktrees)
+    except (OSError, UnicodeDecodeError, ValueError):  # UnsafePath and AddonBlockError are among them
+        return False
+    return bool(changed)
 
 
 def _skill_dir(rel: str) -> str | None:

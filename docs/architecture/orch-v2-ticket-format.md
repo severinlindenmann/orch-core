@@ -1623,11 +1623,23 @@ field or section.
 
 **`agents_md`.** `""` or one line of 1 to 200 printable ASCII characters (U+0020 to U+007E), starting with a letter or
 digit, not starting with digits followed by `.` or `)` and a space, and with none of `<`, `>`, `[`, `]`, `` ` ``, `*`
-or `|`. The host never writes it verbatim: it renders it as `- addon <name> (hint, grants nothing): <line>`, after the
-core lines of `AGENTS.orch.md` (one line per addon, addons by name, within the 40-line limit), and `orch addon grant`
-shows it as it will read. It is part of the package, so only a grant makes it effective, and it grants nothing: an
-agent keeps the capabilities its own grant has. P1 validates the key; `instructions sync` adds the lines when addons
-run (P2).
+or `|`. It is the add-on's trigger (`Use when ... Not for ...`, a `pack` warning if it does not read so). The host
+writes it into the `## Add-ons here` block of `AGENTS.orch.md`, after the core text and outside its 40-line limit: at
+most 16 lines and 3000 characters, one line `- <name>: <line> Skill: orch-addon-<name>.` per active add-on (by name, at
+most 12; more is an error with a hint, never a silent cut) and one `Off here:` line naming each installed add-on that
+is not active with its reason (`disabled`, `incompatible`, `missing`, `changed`) or `none`. `orch addon grant` shows
+the line as it will read. It is part of the package, so only a grant makes it effective, and it grants nothing: an
+agent keeps the capabilities its own grant has. `instructions sync`, the host after a grant, disable, purge or remove,
+and the session-start hook keep the block in line with the log.
+
+**`skill`.** (`orch.addon/3`, `api` excluding 1.1.) The package folder of the add-on's one skill, e.g. `"skills/main"`,
+which holds exactly `SKILL.md` (the reserved `skills` array stays reserved). Frontmatter: exactly `name`
+(`orch-addon-<addon>`) and `description` (1 to 300 printable characters); at most 2400 characters, no NUL, no CR; every
+`` `orch ...` `` in it names a core operation (or `orch set REF <addon>.<field>=` for the add-on's own fields); it names
+no `tickets/`, no `.orch/` and no other skill. A breach is `market.package_invalid`. Core writes it to
+`.agents/skills/orch-addon-<name>/` and `.claude/skills/` (root and registered worktrees, gitignored, sidecar
+`orch.skill.json` with `scope: "addon"`) while the add-on is active, and removes it (an edited copy is moved to
+`.orch/removed-skills/`) when it is not.
 
 **`needs`.** A list of at most 16 rules `{"id": token, "when": EXPR, "who": [approver token, …], "text": line ≤ 120}`
 with unique `id`. A rule fires for a ticket when `EXPR` evaluates to `true`: it makes one "needs you" entry with ref

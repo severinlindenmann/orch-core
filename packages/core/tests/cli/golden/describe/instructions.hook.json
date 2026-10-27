@@ -5,14 +5,14 @@
     "target": "instructions.hook",
     "name": "instructions.hook",
     "cli": "orch instructions hook",
-    "summary": "The text a harness hook injects at session start or before compaction: at most six lines.",
+    "summary": "The text a harness hook injects at session start or before compaction: at most seven lines.",
     "who": "read",
     "usage": "orch instructions hook session-start|pre-compact|waiting",
     "pre": [],
     "emits": [],
     "input": {
       "type": "object",
-      "description": "The text a harness hook injects at session start or before compaction: at most six lines.",
+      "description": "The text a harness hook injects at session start or before compaction: at most seven lines.",
       "properties": {
         "event": {
           "type": "string",

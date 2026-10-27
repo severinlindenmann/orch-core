@@ -123,7 +123,13 @@ def _check_private_fd(fd: int, what: str) -> None:
     if st.st_uid != os.getuid():
         raise CustodyError(f"{what} belongs to another user")
     if st.st_mode & 0o077:
-        raise CustodyError(f"{what} is accessible by others (mode {st.st_mode & 0o777:03o}); it must be 0700")
+        # ours but too open (another tool, e.g. launchd opening a log, made it loose): tighten it ourselves
+        try:
+            os.fchmod(fd, 0o700)
+        except OSError:
+            raise CustodyError(
+                f"the folder {what} is accessible by others (mode {st.st_mode & 0o777:03o}); run: chmod 700 on it"
+            ) from None
 
 
 def secure_dir(root: Path, parts: tuple[str, ...], *, create: bool) -> int:

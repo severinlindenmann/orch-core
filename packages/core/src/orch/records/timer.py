@@ -193,6 +193,12 @@ class TimerManager:
                 hint="orch records auto on --replace installs this one instead (the other's workspaces stop)",
             )
         changed = False
+        if self.plan.state is not None:
+            # launchd/systemd open the log inside <state>/person before the program runs: if it is missing they create it
+            # loose (launchd: 0744), and custody then refuses the whole person directory
+            from orch.privdir import make_private_dir
+
+            make_private_dir(Path(self.plan.state) / "person")
         for path, content in self.plan.files:
             try:
                 if path.read_bytes() == content:

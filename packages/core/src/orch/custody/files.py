@@ -14,11 +14,9 @@ __all__ = ["check_private", "delete_file", "key_path", "private_dir", "write_new
 
 
 def private_dir(directory: str | os.PathLike[str]) -> Path:
-    p = Path(directory)
-    p.mkdir(parents=True, exist_ok=True)
-    with contextlib.suppress(OSError):  # not meaningful on Windows
-        os.chmod(p, 0o700)
-    return p
+    from orch.privdir import make_private_dir
+
+    return make_private_dir(directory)
 
 
 def key_path(directory: Path, key_id: str, suffix: str) -> Path:

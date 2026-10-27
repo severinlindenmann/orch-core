@@ -77,12 +77,13 @@ class HookReceiver:
             peer = (writer.get_extra_info("peername") or ("?",))[0]
             try:
                 head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 10)
-            except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, TimeoutError):
+            except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, TimeoutError) as exc:
+                LOG.info("webhook request without a complete head: %s", type(exc).__name__)
                 head = b""
             if head and len(head) <= MAX_HEAD and not self._limited(peer):
                 await self._ring(head, reader)
         except Exception:  # noqa: BLE001 - a bad request must not look different from a good one
-            LOG.debug("webhook request failed", exc_info=True)
+            LOG.warning("webhook request failed", exc_info=True)
         finally:
             with contextlib.suppress(Exception):
                 writer.write(ANSWER)
@@ -94,6 +95,7 @@ class HookReceiver:
         parts = lines[0].split(b" ")
         m = PATH.fullmatch(parts[1].split(b"?")[0]) if len(parts) == 3 and parts[0] == b"POST" else None
         if m is None:
+            LOG.info("webhook request ignored: not POST /h/<id>")
             return
         hook_hash = fe.hook_hash(m.group(1).decode())
         headers = {}
@@ -106,6 +108,8 @@ class HookReceiver:
             return
         # the body (if any) is never read past this point: the doorbell carries nothing
         for service in list(self.host.services.values()):
+            if getattr(service, "followups", None) is None and hasattr(self.host, "_start_followups"):
+                await self.host._start_followups(service)  # the journal check may not have started it yet
             runner = getattr(service, "followups", None)
             if runner and await runner.ring(hook_hash):
                 return

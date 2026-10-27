@@ -205,7 +205,9 @@ class FollowupRunner:
     async def ring(self, hook_hash):
         """True when a pending follow-up of this workspace is bound to the hook. Only the first ring counts."""
         if not await self.service.call(self._hook_pending, hook_hash):
+            LOG.info("webhook ring ignored: no pending follow-up for hook %s", hook_hash[:8])
             return False
+        LOG.info("webhook ring accepted for hook %s", hook_hash[:8])
         rings = self.intents.setdefault("_rings", {})
         if hook_hash not in rings:
             rings[hook_hash] = datetime.fromtimestamp(self.clock(), UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

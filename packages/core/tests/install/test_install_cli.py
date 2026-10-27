@@ -52,6 +52,7 @@ def make(home, **kw):
         runner=FakeRunner(),
         run=run,
         resolve_ref=lambda url, ref: "a" * 40,
+        core_commit=lambda: None,
         health=lambda h, p: True,
         detect=lambda: [("127.0.0.1", "this computer only"), ("100.64.1.2", "private network")],
         port_free=lambda p, h: True,
@@ -231,6 +232,22 @@ def test_default_ref_is_develop_override_works_and_status_shows_sha(home):
     out.truncate(0), out.seek(0)
     cli.main(["status"], env=ctx.env, out=out, err=err, ctx=ctx)
     assert "b" * 12 in out.getvalue()
+
+
+def test_parts_default_to_the_commit_of_the_installed_core_not_develop(home):
+    ctx, out, err, calls = make(home)
+    seen = []
+    ctx.resolve_ref = lambda url, ref: seen.append(ref) or "b" * 40
+    ctx.core_commit = lambda: "c" * 40
+    cli.main(["relay"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert seen == []  # no lookup of develop
+    assert any("c" * 40 in " ".join(c) for c in calls if "install" in c)
+    cli.main(["hub", "--ref", "v1"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert seen == ["v1"]  # --ref still overrides
+    ctx.core_commit = lambda: None
+    out.truncate(0), out.seek(0)
+    cli.main(["publish"], env=ctx.env, out=out, err=err, ctx=ctx)
+    assert seen[-1] == "develop" and "no known commit" in out.getvalue()
 
 
 def _phone_ctx(home, address="100.64.1.2", users=None, qr=None):

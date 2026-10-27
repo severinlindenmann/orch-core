@@ -32,13 +32,25 @@ USAGE = (
     "                    [--publish-url U] [--relay-url U] [--dev] [--yes] | status [--json] | remove PART [--purge]\n"
 )
 # Git ref the parts are installed from. Prototype: develop carries the current work; this moves to release tags later.
-DEFAULT_REF = "develop"
+DEFAULT_REF = "develop"  # only when the installed orch-core has no known commit (e.g. an editable dev install)
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 
 
 def _run(argv: Sequence[str], env: Mapping[str, str] | None = None) -> tuple[int, str]:
     r = subprocess.run(list(argv), env=dict(env) if env else None, capture_output=True, text=True)
     return r.returncode, (r.stdout + r.stderr)
+
+
+def core_commit() -> str | None:
+    """The git commit the installed orch-core was installed from (``direct_url.json``), or None (editable, wheel)."""
+    from importlib import metadata
+
+    try:
+        d = metadata.distribution("orch-core")
+        commit = (json.loads(d.read_text("direct_url.json") or "{}").get("vcs_info") or {}).get("commit_id")
+    except (metadata.PackageNotFoundError, ValueError, OSError):
+        return None
+    return commit if isinstance(commit, str) and len(commit) == 40 else None
 
 
 def _resolve_ref(url: str, ref: str) -> str:
@@ -71,6 +83,7 @@ class Ctx:
     ask: Callable[[str, str], str] = lambda prompt, default: default
     run: Callable[..., tuple[int, str]] = _run
     resolve_ref: Callable[[str, str], str] = _resolve_ref
+    core_commit: Callable[[], str | None] = core_commit
     health: Callable[[str, int], bool] = _health
     detect: Callable[[], list[tuple[str, str]]] = P.detect_addresses
     port_free: Callable[[int, str], bool] = P.port_free
@@ -222,7 +235,7 @@ def install_part(
     port: int | None = None,
     domain: str | None = None,
     source: str | None = None,
-    ref: str = DEFAULT_REF,
+    ref: str | None = None,
     publish_url: str | None = None,
     relay_url: str | None = None,
     dev: bool = False,
@@ -243,7 +256,14 @@ def install_part(
     if source:
         pkg, sha = str(Path(source).resolve()), "local:" + str(Path(source).resolve())
     else:
-        sha = ctx.resolve_ref(P.REPO_URL, ref)
+        if ref is None:
+            # the parts must match the orch-core that runs them: its own commit, not whatever develop is today
+            sha = ctx.core_commit()
+            if sha is None:
+                ctx.say(f"  this orch has no known commit (dev install): taking the latest {DEFAULT_REF} of the parts")
+                sha = ctx.resolve_ref(P.REPO_URL, DEFAULT_REF)
+        else:
+            sha = ctx.resolve_ref(P.REPO_URL, ref)
         pkg = spec.package_url(sha)
     ctx.say(f"orch install {part}: installing {spec.binary} ({sha[:12] if not source else 'local checkout'}) ...")
     rc, out = ctx.run(["uv", "tool", "install", "--force", "--python", "3.14", pkg], tool_env)
@@ -584,7 +604,7 @@ def full_server(
     *,
     address: str | None = None,
     source_for: Mapping[str, str] | None = None,
-    ref: str = DEFAULT_REF,
+    ref: str | None = None,
     dev: bool = False,
 ) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
@@ -675,7 +695,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
     p.add_argument("--port", type=int)
     p.add_argument("--domain")
     p.add_argument("--source")
-    p.add_argument("--ref", default=DEFAULT_REF)
+    p.add_argument("--ref", default=None)
     p.add_argument("--publish-url")
     p.add_argument("--relay-url")
     p.add_argument("--dev", action="store_true")

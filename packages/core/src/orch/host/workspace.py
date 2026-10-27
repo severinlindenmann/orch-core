@@ -355,6 +355,12 @@ class WorkspaceService:
         self._snapshot()  # delivery revalidates against this: a revoke or removal it carries counts at once
         if self.publish is not None:
             self.publish(batch)
+        runner = getattr(self, "followups", None)
+        if runner and any(e.type == "followup.set" for e in batch.entries):
+            try:
+                runner.learn_hooks()  # N4: a webhook follow-up's hook is known before its first ring
+            except Exception:  # noqa: BLE001 - the tick still learns it
+                LOG.warning("learning follow-up hooks failed", exc_info=True)
 
     def _prepared(self, record: dict[str, Any]) -> dict[str, Any] | str:
         from .human import outcome_prepared

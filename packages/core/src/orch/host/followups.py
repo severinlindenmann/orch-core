@@ -22,9 +22,6 @@ from .runners import LIVE
 
 LOG = logging.getLogger(__name__)
 
-#: an unknown hook costs at most one authoritative store read per this many seconds (N4)
-HOOK_PROBE_S = 5.0
-
 
 class FollowupRunner:
     def __init__(self, service, *, clock, mono, tick_s=30):
@@ -42,7 +39,6 @@ class FollowupRunner:
         self._last_tick, self._slept_s, self._blocked = None, 0, {}
         self._lock = asyncio.Lock()
         self._wake = asyncio.Event()
-        self._hook_probe = self.mono()
         self._cursor = {}  # follow-up id -> last ticket-log seq scanned for its event
 
     def start(self):
@@ -204,6 +200,26 @@ class FollowupRunner:
                 self._cursor[rec.id] = after
                 return None
 
+    def learn_hooks(self):
+        """N4 (c): called on the worker thread right after a ``followup.set`` is committed, so a real pending hook is
+        known before its first ring (the tick is 30 s on a real host and a webhook sender rings once). Only adds hashes;
+        an unknown hash still costs nothing (no store read) and shares no slot with a known one."""
+        store = self.service.store
+        if store is None or self.service.state != "ok" or self.service.closing:
+            return
+        core = store.state._core
+        if not self._owns(store, core):
+            return
+        now = int(self.clock())
+        new = {
+            rec.hook
+            for t in core.tickets.values()
+            for rec in t.followups.values()
+            if rec.hook and wire.view_state(core, t, rec, now)[0] == "pending"
+        }
+        if new - self.hooks:
+            self.hooks = self.hooks | frozenset(new)
+
     # -- doorbell (host/hooks.py calls this; the body of a request never gets here)
     def _hook_pending(self, hook_hash):
         store = self.service.store
@@ -221,13 +237,6 @@ class FollowupRunner:
 
     async def ring(self, hook_hash):
         """True when a pending follow-up of this workspace is bound to the hook. Only the first ring counts."""
-        if hook_hash not in self.hooks and self.mono() - self._hook_probe >= HOOK_PROBE_S:
-            # N4 (c): a follow-up set since the last tick is not in ``self.hooks`` yet (the tick is 30 s on a real host),
-            # and a webhook sender rings once. One authoritative store read per HOOK_PROBE_S for an unknown hook, so a
-            # flood of unknown rings still costs at most one read per interval (B2).
-            self._hook_probe = self.mono()
-            if await self.service.call(self._hook_pending, hook_hash):
-                self.hooks = self.hooks | {hook_hash}
         if hook_hash not in self.hooks or not await self.service.call(self._hook_pending, hook_hash):
             LOG.info("webhook ring ignored: no pending follow-up for hook %s", hook_hash[:8])
             return False

@@ -8,6 +8,7 @@ import { ApiError } from '@/api/types'
 import { WorkspaceProvider } from '@/app/workspace'
 import { AddonNode } from './AddonNode'
 import { parseNode } from './nodes'
+import { withoutTitle } from './TreeNode'
 import { resetSelections } from './viewSelection'
 
 type Handler = (name: string, query: URLSearchParams) => unknown
@@ -152,6 +153,7 @@ describe('tree', () => {
     show(TREE)
     expect(await screen.findByText('No wiki folder in this project yet.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Create the wiki folder' })).toBeInTheDocument()
+    expect(screen.queryByText('Choose an item to read it.')).not.toBeInTheDocument() // no empty pane beside an empty list
   })
 
   it('falls back to the node\'s empty text', async () => {
@@ -224,6 +226,16 @@ describe('tree', () => {
     expect(container.querySelector('script')).toBeNull()
     expect(container.querySelector('img[onerror]')).toBeNull()
     vi.unstubAllGlobals()
+  })
+})
+
+describe('page header', () => {
+  it('does not repeat a first "# title" line, and keeps any other text', () => {
+    expect(withoutTitle('# Runbook\n\nBody', 'Runbook')).toBe('\nBody')
+    expect(withoutTitle('\n# Runbook\r\nBody', 'Runbook')).toBe('Body')
+    expect(withoutTitle('# Runbook', 'Runbook')).toBe('')
+    expect(withoutTitle('# Other\nBody', 'Runbook')).toBe('# Other\nBody')
+    expect(withoutTitle('## Runbook\nBody', 'Runbook')).toBe('## Runbook\nBody')
   })
 })
 

@@ -28,7 +28,7 @@ interface Ctx {
 }
 const TreeCtx = createContext<Ctx | null>(null)
 
-function Row({ entry, level, parent }: { entry: TreeEntry; level: number; parent: string | null }) {
+function Row({ entry, level, parent, gutter }: { entry: TreeEntry; level: number; parent: string | null; gutter: boolean }) {
   const c = useContext(TreeCtx) as Ctx
   const isOpen = c.open.has(entry.id)
   const on = c.selected === entry.id
@@ -63,9 +63,9 @@ function Row({ entry, level, parent }: { entry: TreeEntry; level: number; parent
           >
             <ChevronRight className={cn('size-4 transition-transform', isOpen && 'rotate-90')} />
           </button>
-        ) : (
+        ) : gutter ? (
           <span aria-hidden className="size-5 shrink-0" />
-        )}
+        ) : null}
         <span className="min-w-0 flex-1 truncate">
           <Inline>{entry.label}</Inline>
         </span>
@@ -95,10 +95,18 @@ function Children({ parent, level }: { parent: string; level: number }) {
   return (
     <>
       {q.data.nodes.map((n) => (
-        <Row key={n.id} entry={n} level={level} parent={parent} />
+        <Row key={n.id} entry={n} level={level} parent={parent} gutter={q.data.nodes.some((x) => x.children)} />
       ))}
     </>
   )
+}
+
+/** The text without its first line when that line is `# <title>` (the header shows the title already). */
+export function withoutTitle(text: string, title: string): string {
+  const t = text.trimStart()
+  const nl = t.indexOf('\n')
+  const first = (nl < 0 ? t : t.slice(0, nl)).trim()
+  return first === `# ${title}` ? (nl < 0 ? '' : t.slice(nl + 1)) : text
 }
 
 function Detail({ addon, cfg, id, onBack }: { addon: string; cfg: NonNullable<NodeOf<'tree'>['detail']>; id: string; onBack: () => void }) {
@@ -121,6 +129,8 @@ function Detail({ addon, cfg, id, onBack }: { addon: string; cfg: NonNullable<No
   const text = q.data[cfg.text]
   const updated = q.data.updated
   const by = q.data.by
+  // A page that starts with its own title as a "# " heading would show it twice: the header already says it.
+  const body = text && title ? withoutTitle(text, title) : text
   return (
     <article className="space-y-3">
       <header className="space-y-0.5">
@@ -141,13 +151,13 @@ function Detail({ addon, cfg, id, onBack }: { addon: string; cfg: NonNullable<No
           </p>
         )}
       </header>
-      {text === null || text === undefined ? (
+      {body === null || body === undefined ? (
         <p className="text-[13px] text-text-muted">{cfg.empty ?? 'Nothing to show here.'}</p>
-      ) : text.trim() === '' ? (
+      ) : body.trim() === '' ? (
         <p className="text-[13px] text-text-muted">This page is empty.</p>
       ) : (
         <div className="max-w-[72ch]">
-          <SafeMarkdown text={text} />
+          <SafeMarkdown text={body} />
         </div>
       )}
     </article>
@@ -244,7 +254,7 @@ export function TreeNode({ node, addon, ws, renderOffer }: { node: NodeOf<'tree'
       <>
         <div ref={box} role="tree" aria-label={node.label} onKeyDown={onKeyDown} onFocus={(e) => setFocused((e.target as HTMLElement).dataset.id ?? null)} className="space-y-0.5">
           {shown.map((n) => (
-            <Row key={n.id} entry={n} level={1} parent={null} />
+            <Row key={n.id} entry={n} level={1} parent={null} gutter={d.nodes.some((x) => x.children)} />
           ))}
         </div>
         {shown.length < d.nodes.length && (
@@ -257,11 +267,13 @@ export function TreeNode({ node, addon, ws, renderOffer }: { node: NodeOf<'tree'
     )
   }
 
+  // The pane has nothing to say while the list is loading, failed or empty: the list's own message stands alone.
+  const pane = !!node.detail && !!roots.data && roots.data.nodes.length > 0
   return (
     <TreeCtx.Provider value={ctx}>
-      <div className="grid min-w-0 items-start gap-4 md:grid-cols-[minmax(13rem,17rem)_minmax(0,1fr)]">
-        <div className={cn('min-w-0 rounded-lg border border-border bg-surface p-1.5 md:max-h-[calc(100dvh-13rem)] md:overflow-y-auto', node.detail && selected && 'max-md:hidden')}>{list}</div>
-        {node.detail && (
+      <div className={cn('grid min-w-0 items-start gap-4', pane && 'md:grid-cols-[minmax(13rem,17rem)_minmax(0,1fr)]')}>
+        <div className={cn('min-w-0 rounded-lg border border-border bg-surface p-1.5 md:max-h-[calc(100dvh-13rem)] md:overflow-y-auto', pane && selected && 'max-md:hidden')}>{list}</div>
+        {pane && node.detail && (
           <section aria-label="Open item" className={cn('min-w-0 rounded-lg border border-border bg-surface p-4 md:p-5', !selected && 'max-md:hidden')}>
             {selected ? (
               <>

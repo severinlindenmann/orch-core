@@ -1,6 +1,7 @@
 // Worktrees on a real host (H11d, host contract 12.7): one git worktree per ticket and repository. The list is
 // `worktree.list` (what the host's reader sees in each folder now); adding and removing are the host's own writes.
 import { useQuery } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { hasFeature } from '@/api/features'
@@ -46,15 +47,14 @@ function Row({ w, canRemove, onRemove, onTerminal }: { w: Worktree; canRemove: b
         {w.created_at ? ` · made ${fmtDateTime(w.created_at)} by ${who(w)}` : ''}
       </p>
       {!s.usable && <p className="text-warning">{s.detail}</p>}
-      <details className="text-[12px] text-text-muted">
-        <summary className="cursor-pointer select-none">Technical details</summary>
+      <InfoDrawer>
         <dl className="mt-1 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5">
           <dt>Branch</dt>
           <dd className="break-all font-mono">{w.branch ? <Inline>{w.branch}</Inline> : 'not shown'}</dd>
           <dt>Folder</dt>
           <dd className="break-all font-mono">{w.path ? <Inline>{w.path}</Inline> : 'not shown'}</dd>
         </dl>
-      </details>
+      </InfoDrawer>
     </li>
   )
 }

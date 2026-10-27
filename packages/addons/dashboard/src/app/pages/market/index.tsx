@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { useNavigate, useSearch } from '@tanstack/react-router'
 import { api } from '@/api/client'
 import { canAct, hasFeature } from '@/api/features'
@@ -140,12 +141,11 @@ function Review({
           </p>
         )}
         <p>
-          Package digest: <Inline>{s.package_sha256.slice(0, 12)}</Inline>… (full value in Technical details)
+          Package digest: <Inline>{s.package_sha256.slice(0, 12)}</Inline>… (full value behind the i)
         </p>
         <p>Publisher: {publisherWording(s.market.publisher.tofu)}</p>
         <p>A signature does not prove the code is safe.</p>
-        <details>
-          <summary>Technical details</summary>
+        <InfoDrawer>
           <p>
             Package digest <Raw>{s.package_sha256}</Raw>
           </p>
@@ -161,7 +161,7 @@ function Review({
           <p>
             Source note <Inline>{s.market.source_note}</Inline>
           </p>
-        </details>
+        </InfoDrawer>
         <p>{HELP}</p>
         {error && <p role="alert">{error}</p>}
         {expired && <p role="status">This review expired. Review again before approving.</p>}
@@ -340,7 +340,7 @@ function MarketWorkspace() {
                       <p className="text-xs text-text-muted">
                         <Inline>{`${m.class === 'official' ? 'official - ' : ''}${m.url.replace(/^https:\/\/github\.com\//, '')}`}</Inline>
                       </p>
-                      <details className="text-xs text-text-muted"><summary>Technical details</summary><p>Version <Inline>{a.version}</Inline></p></details>
+                      <InfoDrawer><p>Version <Inline>{a.version}</Inline></p></InfoDrawer>
                       <AddonFrame addon={a.id} title="From the addon" compact className="flex-1 items-start text-sm">
                         <Inline>{a.from_marketplace.summary}</Inline>
                       </AddonFrame>

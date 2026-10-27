@@ -2,6 +2,7 @@
 // how much is in it, and "Delete work folder" (the person's own action, behind a confirmation). The files stay after the
 // ticket closes until the person deletes them; results the agent filed are ticket artifacts and are not touched.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { FolderOpen } from 'lucide-react'
 import { useState } from 'react'
 import { isRealHost } from '@/api/features'
@@ -35,12 +36,11 @@ export function WorkFolder({ ticket }: { ticket: TicketDocument }) {
           </span>
           <span className="block text-[12px] text-text-muted">It stays after the ticket closes until you delete it. Files an agent added to the ticket are kept either way.</span>
           {f.folder && (
-            <details className="text-[12px] text-text-muted">
-              <summary className="cursor-pointer select-none">Technical details</summary>
+            <InfoDrawer>
               <span className="block break-all font-mono">
                 <Inline>{f.folder}</Inline>
               </span>
-            </details>
+            </InfoDrawer>
           )}
         </span>
         {atLeast(role, 'member') && (

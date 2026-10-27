@@ -1,6 +1,7 @@
 // The ticket page's view of its worktrees (real host): per linked repository either its own folder (state, changes) or
 // "shared working copy". Shown only where the host serves worktrees; adding and removing use the page's dialogs.
 import { useQuery } from '@tanstack/react-query'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { FolderGit2 } from 'lucide-react'
 import { useState } from 'react'
 import { hasFeature, isRealHost } from '@/api/features'
@@ -47,12 +48,11 @@ export function TicketWorktree({ ticket }: { ticket: TicketDocument }) {
                     </span>
                     {!s.usable && <span className="block text-warning">{s.detail}</span>}
                     {w.path && (
-                      <details className="text-[12px] text-text-muted">
-                        <summary className="cursor-pointer select-none">Technical details</summary>
+                      <InfoDrawer>
                         <span className="block break-all font-mono">
                           <Inline>{w.path}</Inline>
                         </span>
-                      </details>
+                      </InfoDrawer>
                     )}
                   </>
                 ) : (

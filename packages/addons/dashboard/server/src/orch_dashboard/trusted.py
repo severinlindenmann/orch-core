@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import base64
 import contextlib
-import fcntl
 import hashlib
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -28,10 +28,27 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, utils
 
+try:  # POSIX
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+    import msvcrt
+
+log = logging.getLogger(__name__)
+
 IDLE = 30 * 86400  # a trusted browser idle this long is forgotten
 MAX_KEYS = 20
 _B64 = re.compile(r"^[A-Za-z0-9_-]{43}$")
 DOMAIN = b"orch-switch-upgrade-v1\0"
+
+
+def _lock(fd: int) -> None:
+    """Block until this process holds the exclusive lock on ``fd`` (released by closing it)."""
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return
+    os.lseek(fd, 0, os.SEEK_SET)
+    msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # retries for about 10 s, then raises OSError
 
 
 def _unb64(value: str) -> bytes:
@@ -130,8 +147,8 @@ class TrustedKeys:
         lock = None
         try:
             with contextlib.suppress(OSError):
-                lock = os.open(str(self.path) + ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-                fcntl.flock(lock, fcntl.LOCK_EX)
+                lock = os.open(str(self.path) + ".lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+                _lock(lock)
             self._refresh(force=True)
             yield
             self._save()
@@ -142,15 +159,20 @@ class TrustedKeys:
     def _save(self):
         if self.path is None:
             return
-        with contextlib.suppress(OSError):  # the keys still work in memory; they are just not kept across a restart
+        try:
             tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
             with contextlib.suppress(FileNotFoundError):
                 tmp.unlink()
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
             with os.fdopen(fd, "w") as f:
                 json.dump({"keys": self.keys}, f)
             os.replace(tmp, self.path)
             self._seen = self._stamp()
+        except OSError as exc:  # the keys still work in memory; they are just not kept across a restart
+            log.warning(
+                "trusted browsers could not be saved (%s): they are kept until the dashboard restarts",
+                type(exc).__name__,
+            )
 
     def sweep(self):
         self._refresh()

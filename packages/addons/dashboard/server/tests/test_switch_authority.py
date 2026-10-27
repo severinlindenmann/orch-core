@@ -284,3 +284,27 @@ def test_a_missing_host_header_is_not_a_server_error(client, auth):
     local = local_session(auth)
     res = client.post("/api/trusted/enrol", json={"jwk": {}}, headers={**bearer(local)})
     assert res.status_code < 500
+
+
+def test_trusted_imports_and_locks_without_fcntl(monkeypatch, tmp_path):
+    """Windows has no fcntl: the module must still import, and the lock falls back to msvcrt."""
+    import importlib
+    import sys
+    import types
+
+    calls = []
+    fake = types.ModuleType("msvcrt")
+    fake.LK_LOCK = 1
+    fake.locking = lambda fd, mode, n: calls.append((mode, n))
+    monkeypatch.setitem(sys.modules, "fcntl", None)  # `import fcntl` raises ImportError
+    monkeypatch.setitem(sys.modules, "msvcrt", fake)
+    mod = importlib.reload(trusted)
+    try:
+        assert mod.fcntl is None
+        store = mod.TrustedKeys(tmp_path / "t.json", lambda: 1.0)
+        b = Browser()
+        kid = store.enrol(mod.clean_jwk(b.jwk), ORIGIN)
+        assert store.remove(kid) and calls  # a change took the msvcrt lock
+    finally:
+        monkeypatch.undo()
+        importlib.reload(trusted)

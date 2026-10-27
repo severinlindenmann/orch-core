@@ -223,24 +223,3 @@ def test_a_switch_session_also_works_on_loopback_but_only_as_a_reader(client, li
     link.answers["rail"] = {"hub": {"name": "Acme", "origin": None}, "user_id": "u", "workspaces": []}
     assert client.get(f"/api/w/{WS}/hub/rail", headers=h).status_code == 200
     assert client.post(f"/api/w/{WS}/settings", json={}, headers=h).status_code == 403
-
-
-# --- FB10: the hub origin the browser can open ---------------------------------------------------------------------
-from orch_dashboard.switch import reachable_origin, reachable_url  # noqa: E402
-
-LOCAL = lambda host: host.startswith("100.")  # noqa: E731
-UP = lambda host, port: True  # noqa: E731
-DOWN = lambda host, port: False  # noqa: E731
-
-
-def test_a_hub_on_this_computer_is_opened_on_loopback_when_the_browser_is_on_loopback():
-    got = reachable_url("http://100.64.0.7:8443/#t=abc", "http://127.0.0.1:8151", is_local=LOCAL, probe=UP)
-    assert got == "http://127.0.0.1:8443/#t=abc"
-
-
-def test_other_cases_keep_the_hubs_own_origin():
-    keep = "http://100.64.0.7:8443"
-    assert reachable_origin(keep, "http://127.0.0.1:8151", is_local=LOCAL, probe=DOWN) == keep  # nothing on loopback
-    assert reachable_origin(keep, "http://127.0.0.1:8151", is_local=lambda h: False, probe=UP) == keep  # remote hub
-    assert reachable_origin(keep, "http://100.64.0.7:8151", is_local=LOCAL, probe=UP) == keep  # browser not on loopback
-    assert reachable_origin("https://hub.example", "http://127.0.0.1:8151", is_local=LOCAL, probe=UP) == "https://hub.example"

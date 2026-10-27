@@ -19,11 +19,8 @@ The ticket lives in the fragment only (never a query, never a log); the browser 
 
 from __future__ import annotations
 
-import ipaddress
 import re
-import socket
 import time
-import urllib.parse
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
@@ -67,57 +64,7 @@ def browser_origin(request: Request) -> str:
     return policy.origin_for(request.headers["host"])
 
 
-def _tcp_open(host: str, port: int) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=0.4):
-            return True
-    except OSError:
-        return False
-
-
-def _is_local_address(host: str) -> bool:
-    """True when ``host`` is an IP address assigned to THIS computer (a bind to it works)."""
-    try:
-        ip = ipaddress.ip_address(host.strip("[]"))
-    except ValueError:
-        return False
-    family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
-    try:
-        with socket.socket(family, socket.SOCK_STREAM) as s:
-            s.bind((str(ip), 0))
-        return True
-    except OSError:
-        return False
-
-
-def reachable_origin(origin, browser, is_local=_is_local_address, probe=_tcp_open):
-    """FB10: the hub names its own address (often a private one such as a NetBird IP). A computer cannot always dial
-    its own private address, so when the browser reached THIS dashboard over loopback and the hub runs on this same
-    computer, the hub is opened on 127.0.0.1 instead (same port), but only when something answers there. Anything
-    else (a remote hub, a browser on another address, nothing listening on loopback) keeps the hub's own origin."""
-    if not isinstance(origin, str) or not isinstance(browser, str):
-        return origin
-    try:
-        o, b = urllib.parse.urlsplit(origin), urllib.parse.urlsplit(browser)
-        port = o.port
-    except ValueError:
-        return origin
-    if (b.hostname or "") not in ("127.0.0.1", "localhost", "::1") or not o.hostname or port is None:
-        return origin
-    if o.hostname in ("127.0.0.1", "localhost", "::1") or not is_local(o.hostname):
-        return origin
-    return f"{o.scheme}://127.0.0.1:{port}" if probe("127.0.0.1", port) else origin
-
-
-def reachable_url(url, browser, **kw):
-    """The ticket address (`<hub origin>/#t=...`) on an origin this browser can open (see `reachable_origin`)."""
-    if not isinstance(url, str):
-        return url
-    base, sep, rest = url.partition("/#")
-    return reachable_origin(base, browser, **kw) + sep + rest
-
-
-def rail_view(raw, browser=None) -> dict:
+def rail_view(raw) -> dict:
     """The hub's `rail_get` answer reduced to the closed fields the page shows; anything else is dropped."""
     raw = raw if isinstance(raw, dict) else {}
     hub = raw.get("hub") if isinstance(raw.get("hub"), dict) else {}
@@ -143,7 +90,7 @@ def rail_view(raw, browser=None) -> dict:
     return {
         "hub": {
             "name": hub["name"][:80] if isinstance(hub.get("name"), str) else "Hub",
-            "origin": reachable_origin(origin, browser)
+            "origin": origin
             if isinstance(origin, str) and re.fullmatch(r"https?://[A-Za-z0-9.\[\]:-]{1,200}", origin)
             else None,
         },
@@ -189,7 +136,7 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
                 "ticket_kind": body.kind,
             },
         )
-        return {"url": reachable_url(got["url"], browser_origin(request))}
+        return {"url": got["url"]}
 
     @app.get("/api/w/{ws}/hub/rail")
     def rail(request: Request, ws: str = Depends(reads.workspace)):
@@ -202,6 +149,6 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
             if exc.error["code"] in _NO_HUB or exc.error["code"] == "hub.refused":
                 return {"hub": None, "workspaces": []}
             raise
-        out = rail_view(raw, browser_origin(request))
+        out = rail_view(raw)
         cache[ws] = (clock(), out)
         return out

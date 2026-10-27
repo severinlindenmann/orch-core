@@ -401,6 +401,7 @@ def test_a_one_click_setup_workspace_still_takes_a_hub_answer(served, human, stu
 
     human.run("settings.set", {"set": {"sign_methods": list(ONE_CLICK_SIGN_METHODS)}})
     env = Env(served, human, alias=False, role="admin")
-    ok(served.client().req("ask", {"ref": env.key, "text": "which one?"}, grant=served.grant, session=SESSION, idem=True))
+    ask = {"ref": env.key, "text": "which one?"}
+    ok(served.client().req("ask", ask, grant=served.grant, session=SESSION, idem=True))
     h = next(e["hash"] for e in env.lines(env.uid) if e["type"] == "question.asked")
     assert env.deliver(env.event("question.answered", question="Q1", hash=h, text="yes")) is None

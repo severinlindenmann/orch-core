@@ -196,7 +196,7 @@ def plan(
     sets: dict[str, Any] = {}
     if profile["method"] == "click":
         if facts is None:
-            # terminal stays allowed until the conversion is done; phone and hub stay allowed too: one click on this computer
+            # terminal stays allowed until the conversion is done; phone and hub too: one click on this computer
             # must not silently refuse the owner's later phone or hub join (run 12a: every hub answer was dropped)
             sets["sign_methods"] = list(ONE_CLICK_SIGN_METHODS)
         elif facts.sign_methods is not None and "click" not in facts.sign_methods:

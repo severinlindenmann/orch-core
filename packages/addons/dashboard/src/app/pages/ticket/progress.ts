@@ -1,5 +1,8 @@
+import type { QueryClient } from '@tanstack/react-query'
 import { useSyncExternalStore } from 'react'
+import { toast } from 'sonner'
 import type { TicketDocument } from '@/api/types'
+import { startAfterCreate, type StartOutcome, type StartRequest } from '@/app/pages/new-ticket/useStartAfterCreate'
 import type { StartInitial } from '@/app/terminal/real/StartAgentDialog'
 
 /** The agent's progress on a ticket, in the one status pill. */
@@ -44,6 +47,32 @@ export function failMark(ws: string, key: string, reason: string, initial?: Star
 
 export function clearMark(ws: string, key: string) {
   set(ws, key, null)
+}
+
+/**
+ * Start the agent without making anyone wait: the ticket page shows "Getting started…" from the mark. A started run keeps
+ * the mark (the header clears it when the agent claims the ticket); a start that needs a person fails the mark with the reason.
+ */
+export async function startInBackground(qc: QueryClient, r: StartRequest): Promise<StartOutcome> {
+  startMark(r.ws, r.key)
+  try {
+    const out = await startAfterCreate(r)
+    if (out.kind === 'started') {
+      void qc.invalidateQueries({ queryKey: ['runs', r.ws] })
+      void qc.invalidateQueries({ queryKey: ['ticket', r.ws, r.key] })
+      void qc.invalidateQueries({ queryKey: ['today', r.ws] })
+    } else {
+      failMark(r.ws, r.key, out.reason, out.initial)
+      toast.warning(out.reason)
+    }
+    return out
+  } catch {
+    const reason = 'The agent was not started.'
+    const { harness, mode, model } = r.reviewed.choice
+    const initial: StartInitial = { harness, mode, ...(model ? { model } : {}) }
+    failMark(r.ws, r.key, reason, initial)
+    return { kind: 'ask', reason, initial }
+  }
 }
 
 export function markOf(ws: string, key: string): Mark | undefined {

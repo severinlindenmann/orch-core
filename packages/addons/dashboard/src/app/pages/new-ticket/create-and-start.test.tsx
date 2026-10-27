@@ -6,6 +6,7 @@ import { agentsApi, LOGIN_NOTICE, type AgentPreview } from '@/api/agents'
 import { api, mockStore } from '@/api/client'
 import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { ApiError } from '@/api/types'
+import { markOf } from '@/app/pages/ticket/progress'
 import { fakeRequest, state } from '@/test/handoffHarness'
 import { renderApp } from '@/test/renderApp'
 import { nowMs } from '@/lib/time'
@@ -30,18 +31,13 @@ vi.mock('@/components/sign/SignPopover', () => ({
     )
   },
 }))
-vi.mock('@/app/terminal/real/StartAgentDialog', () => ({
-  StartAgentDialog: (p: { ticket?: string; initial?: unknown; onClose: () => void }) => (
-    <div role="dialog" aria-label="Start agent dialog">
-      <span data-testid="dialog-ticket">{p.ticket}</span>
-      <pre data-testid="dialog-initial">{JSON.stringify(p.initial)}</pre>
-      <button onClick={p.onClose}>close-start-dialog</button>
-    </div>
-  ),
-}))
 
 const T = { timeout: 5000 }
 const WS = () => mockStore.workspaces[0].id
+const failedOf = async (key = 'DEMO-0044') => {
+  await waitFor(() => expect(markOf(WS(), key)?.failed).toBeDefined(), T)
+  return markOf(WS(), key)!.failed!
+}
 const inHours = (h: number) => new Date(nowMs() + h * 3_600_000).toISOString().replace(/\.\d+Z$/, 'Z')
 const CHOICES: RoutingChoices = {
   harnesses: [
@@ -199,10 +195,11 @@ describe('after the ticket exists', () => {
 
   it('#1127: once the ticket exists the emptied form shows no red validation errors while the agent starts', async () => {
     s.preview.mockReturnValue(new Promise(() => {})) // the start stays "running"
-    const { sheet } = await signed()
-    await within(sheet).findByRole('button', { name: /Starting agent/ }, T)
-    expect(within(sheet).queryByText(/needs 3 to 120 characters/)).toBeNull()
-    expect(within(sheet).queryByText(/need your attention|needs your attention/)).toBeNull()
+    const { r } = await signed()
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T) // the form closes at once, the start goes on in the background
+    expect(screen.queryByText(/needs 3 to 120 characters/)).toBeNull()
+    expect(screen.queryByText(/need your attention|needs your attention/)).toBeNull()
+    expect(markOf(WS(), 'DEMO-0044')?.failed).toBeUndefined()
   })
 
   it('previews for the ticket\'s own key, then starts once with the preview\'s spec and the review\'s idem', async () => {
@@ -213,7 +210,7 @@ describe('after the ticket exists', () => {
     expect([ws, args, spec]).toEqual([WS(), { ticket: 'DEMO-0044', harness: 'claude-code', mode: 'refine', worktree: true }, 'f'.repeat(64)])
     expect(String(idem)).toMatch(/^[0-9A-Za-z_-]{8,}$/)
     await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
-    expect(screen.queryByRole('dialog', { name: 'Start agent dialog' })).toBeNull()
+    expect(markOf(WS(), 'DEMO-0044')?.failed).toBeUndefined()
   })
 
   it('never starts for a key that is not the one of its own request (the state is another request\'s)', async () => {
@@ -232,21 +229,19 @@ describe('after the ticket exists', () => {
     ['a block', { blocked: { code: 'launch.claimed', message: 'DEMO-0044 is claimed', detail: {} } }],
     ['another warning', { warnings: ['ORCH_WORKTREES leaves out x'] }],
     ['a hidden command', { display: null }],
-  ])('%s in the preview: no start, the Start agent dialog opens prefilled', async (_n, over) => {
+  ])('%s in the preview: no start, the failure mark carries the reason and the prefill', async (_n, over) => {
     s.preview.mockResolvedValue(preview(over as Partial<AgentPreview>))
     await signed()
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(within(dlg).getByTestId('dialog-ticket')).toHaveTextContent('DEMO-0044')
-    expect(JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')).toMatchObject({ harness: 'claude-code', mode: 'refine' })
+    const failed = await failedOf()
+    expect(failed.reason).toMatch(/^Created DEMO-0044\. The agent was not started: /)
+    expect(failed.initial).toMatchObject({ harness: 'claude-code', mode: 'refine' })
     expect(s.start).not.toHaveBeenCalled()
-    await userClose()
   })
 
-  it('an unacknowledged "runs as you" notice: the dialog, not an automatic start', async () => {
+  it('an unacknowledged "runs as you" notice: a failure mark, not an automatic start', async () => {
     setup({ acked: {} })
     await signed()
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(dlg).toBeInTheDocument()
+    await failedOf()
     expect(s.start).not.toHaveBeenCalled()
   })
 
@@ -255,40 +250,38 @@ describe('after the ticket exists', () => {
     setup({ acked: { start_agent: true } })
     s.preview.mockResolvedValue(preview({ warnings: [LOGIN_NOTICE] }))
     await signed()
-    await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
+    await failedOf()
     expect(s.start).not.toHaveBeenCalled()
   })
 
-  it('a changed start (launch.changed, runner.stale text as it is) is not retried: the dialog shows the host words', async () => {
+  it('a changed start (launch.changed, runner.stale text as it is) is not retried: the mark shows the host words', async () => {
     s.start.mockRejectedValue(new ApiError(409, { code: 'launch.changed', message: 'What would run changed: the runner restarted (runner.stale).', retryable: false }))
     await signed()
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    const initial = JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')
-    expect(initial.note).toContain('What would run changed: the runner restarted (runner.stale).')
-    expect(initial.idem).toBeUndefined() // a refused start is not a lost answer: the dialog gets its own idem
+    const initial = (await failedOf()).initial as { note?: string; idem?: string } | undefined
+    expect(initial?.note).toContain('What would run changed: the runner restarted (runner.stale).')
+    expect(initial?.idem).toBeUndefined() // a refused start is not a lost answer: the dialog gets its own idem
     expect(s.preview).toHaveBeenCalledTimes(1)
     expect(s.start).toHaveBeenCalledTimes(1)
   })
 
-  it('a lost answer (network error): the dialog reuses the review\'s idem, so Start returns the same run', async () => {
+  it('a lost answer (network error): the mark reuses the review\'s idem, so Start returns the same run', async () => {
     s.start.mockRejectedValue(new TypeError('network'))
     await signed()
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    const initial = JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')
-    expect(initial.idem).toBe(s.start.mock.calls[0][3])
+    const initial = (await failedOf()).initial as { idem?: string } | undefined
+    expect(initial?.idem).toBe(s.start.mock.calls[0][3])
   })
 
-  it('a preview that cannot be read goes to the dialog and nothing starts', async () => {
+  it('a preview that cannot be read goes to the failure mark and nothing starts', async () => {
     s.preview.mockRejectedValue(new ApiError(503, { code: 'host.unavailable', message: 'Host not available', retryable: true }))
     await signed()
-    await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
+    await failedOf()
     expect(s.start).not.toHaveBeenCalled()
   })
 
   it('a reload never starts: a fresh page with nothing in memory previews and starts nothing', async () => {
     s.preview.mockResolvedValue(preview({ blocked: { code: 'launch.claimed', message: 'x', detail: {} } }))
     await signed()
-    await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
+    await failedOf()
     s.preview.mockClear()
     cleanup()
     const again = renderApp('/ticket/DEMO-0044')
@@ -298,36 +291,29 @@ describe('after the ticket exists', () => {
     expect(s.preview).not.toHaveBeenCalled()
   })
 })
-async function userClose() {
-  const b = screen.queryByRole('button', { name: 'close-start-dialog' })
-  if (b) b.click()
-}
 
 describe('partial failures', () => {
-  it('the ticket landed, the access did not: said, with Start agent, and nothing started', async () => {
+  it('the ticket landed, the access did not: said in the failure mark, and nothing started', async () => {
     setup({ grant: null })
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
     expect((await sent()).agent).toEqual({ hours: 24 })
     await r.user.click(await screen.findByRole('button', { name: 'access-missing' }))
     await r.user.click(screen.getByRole('button', { name: 'cancelled' }))
-    const info = await screen.findByTestId('agent-no-access', {}, T)
-    expect(info).toHaveTextContent('DEMO-0044 exists. Agent access is not confirmed yet')
-    // M-1: the emptied form is not left open behind the notice and the dialog that follows.
-    expect(document.querySelector('[data-ticket-created]')).not.toBeNull()
-    await r.user.click(within(info).getByRole('button', { name: 'Start agent' }))
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(within(dlg).getByTestId('dialog-ticket')).toHaveTextContent('DEMO-0044')
+    const failed = await failedOf()
+    expect(failed.reason).toBe('Agent access is not confirmed yet. Start an agent to give access.')
+    // M-1: the emptied form is not left open; the ticket page is.
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
   })
 
-  it('stopped earlier: the draft ticket is today\'s message only; no dialog, no start', async () => {
+  it('stopped earlier: the draft ticket is today\'s message only; no failure mark, no start', async () => {
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
     await r.user.click(await screen.findByRole('button', { name: 'stopped-early' }))
     await r.user.click(screen.getByRole('button', { name: 'cancelled' }))
-    expect(screen.queryByTestId('agent-no-access')).toBeNull()
+    expect(markOf(WS(), 'DEMO-0044')?.failed).toBeUndefined()
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
   })
@@ -341,10 +327,8 @@ describe('partial failures', () => {
     await r.user.click(screen.getByRole('button', { name: 'cancelled' }))
     // the person changes the agent in the form behind the dialog
     localStorage.setItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`, JSON.stringify({ start: true, harness: 'codex', mode: 'refine', model: '' }))
-    const info = await screen.findByTestId('agent-no-access', {}, T)
-    await r.user.click(within(info).getByRole('button', { name: 'Start agent' }))
-    const dlg = await screen.findByRole('dialog', { name: 'Start agent dialog' }, T)
-    expect(JSON.parse(within(dlg).getByTestId('dialog-initial').textContent ?? '{}')).toEqual({ harness: 'claude-code', mode: 'refine' })
+    const failed = await failedOf()
+    expect(failed.initial).toEqual({ harness: 'claude-code', mode: 'refine' })
   })
 })
 

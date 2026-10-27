@@ -201,6 +201,8 @@ export const frameNode = z.object({
 })
 /** One open decision of this addon (by id), rendered and signed by core in place. The id is looked up in core's list. */
 export const decisionNode = z.object({ type: z.literal('decision'), id: z.string().min(1).max(200) })
+/** The Follow-ups list of the Schedules add-on, drawn and acted on by core (its own data, never the add-on's). Only `schedules` gets it. */
+export const followupsNode = z.object({ type: z.literal('followups') })
 /** `session` may be empty (bound to state that has no session for this ticket yet): core then draws nothing. */
 export const terminalNode = z.object({ type: z.literal('terminal'), session: z.string().regex(/^[a-z0-9_-]{0,40}$/) })
 /**
@@ -285,6 +287,7 @@ export const nodeSchema = z.discriminatedUnion('type', [
   frameNode,
   terminalNode,
   decisionNode,
+  followupsNode,
   widgetNode,
   widgetIndexNode,
   tabsNode,

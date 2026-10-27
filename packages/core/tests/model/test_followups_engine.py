@@ -292,3 +292,23 @@ def test_the_claim_of_a_follow_up_session_is_not_live_after_its_outcome(env):
     assert lapse_reason(w.state()._core.ws, w.state()._core.tickets[uid], ts(w.at())) is None
     w.tev(uid, "followup.outcome", w.HOST, followup=e1["followup"], outcome="ran", run=f1["run"])
     assert lapse_reason(w.state()._core.ws, w.state()._core.tickets[uid], ts(w.at())) == "grant_ended"
+
+
+def test_a_person_cancel_needs_the_followups_person_or_a_manager():
+    w = World().bootstrap({"tom": "member", "ida": "member", "mara": "maintainer"})
+    w.wev(
+        "addon.granted", "sev", name="schedules", version="1.0.0", package_sha256=digest("schedules"),
+        capabilities=[], fields={}, sections=[], artifact_kinds=[],
+    )  # fmt: skip
+    uid = w.ticket(owner="tom")
+    a = w.claim(uid, "tom")
+    for i in range(6):  # the sixth is needs_person: it can be cancelled too
+        if i:
+            w.tev(uid, "claim.taken", a)
+        e = set_followup(w, uid, a)
+    assert w.view(uid).followups[-1]["state"] == "needs_person"
+    assert refused(w, uid, "followup.cancelled", "ida", followup=e["followup"], reason="person") == Code.FOLLOWUP_DENIED
+    assert w.view(uid).followups[-1]["state"] == "needs_person"
+    _, result = w.try_(uid, "followup.cancelled", "mara", followup=e["followup"], reason="person")  # a manager may
+    assert not hasattr(result, "code"), result
+    assert w.view(uid).followups[-1]["state"] == "cancelled"

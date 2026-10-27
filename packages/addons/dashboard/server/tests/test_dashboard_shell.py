@@ -103,6 +103,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/shares/register",
         "/api/w/{ws}/activity",
         "/api/w/{ws}/usage",
+        "/api/w/{ws}/followups",
         "/api/w/{ws}/records",
         "/api/w/{ws}/records/commit",
         "/api/w/{ws}/records/auto-off",

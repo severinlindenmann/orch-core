@@ -169,6 +169,8 @@ class GrantView:
     #: the ``grant.issued`` label (H11c: only ``"runner"`` can be handed to the runner) and issue time
     label: str | None = None
     issued_at: str | None = None
+    #: a follow-up grant (`fgr_`) names the grant it was derived from (Schedules, #720)
+    parent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -381,6 +383,7 @@ def workspace_view(core: Core, now: int) -> WorkspaceView:
                     not (g.revoked or g.ended) and ts(g.expires_at) > now,
                     g.label,
                     g.issued_at,
+                    g.parent,
                 )
                 for i, g in ws.grants.items()
             }

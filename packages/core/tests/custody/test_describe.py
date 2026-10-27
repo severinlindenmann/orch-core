@@ -163,6 +163,7 @@ CASES: dict[str, tuple[str, dict]] = {
     "hub.left": ("workspace", {"hub_id": "38d8abed52ccfb538da401fd54e64bdc", "binding_seq": 1}),
     # A types a person signs through human.prepare (H5a: person versions of agent ops, and move)
     "ticket.moved": (TICKET, {"from": "in_progress", "to": "backlog", "reason": "parked"}),
+    "followup.cancelled": (TICKET, {"followup": "fu_01J9ZK4Q7M3R8T2V6X0B5N1C9D", "reason": "person"}),
     "ticket.created": (TICKET, {"key": "DEMO-0042", "ticket_type": "feature", "title": "Login", "owner": PERSON}),
     "ticket.updated": (
         TICKET,
@@ -458,3 +459,10 @@ def test_long_field_names_refuse_instead_of_truncating():
         rendered(p)
     ok = payload("settings.changed", "workspace", {"set": {"repos": {"demo": {"path": "/x"}}}})
     assert "set.repos.demo.path: /x" in rendered(ok)
+
+
+def test_a_followup_cancel_carrying_a_field_the_prompt_does_not_list_is_refused():
+    log, fields = CASES["followup.cancelled"]
+    assert set(fields) == {"followup", "reason"}
+    with pytest.raises(CustodyError, match="does not show"):
+        describe_payload(payload("followup.cancelled", log, {**fields, "sneaky": "fu_x"}))

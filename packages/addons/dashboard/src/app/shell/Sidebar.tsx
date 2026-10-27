@@ -4,6 +4,7 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Bot,
+  CalendarClock,
   ChevronsUpDown,
   Ellipsis,
   Files,
@@ -481,6 +482,8 @@ const CORE_NAV = [
   { to: '/shares', label: 'Shares', icon: Share2, feature: 'publish', real: true },
   /** Usage (add-on): agent time per ticket; listed only while the add-on is ON (the server adds `usage` then). */
   { to: '/usage', label: 'Usage', icon: Gauge, feature: 'usage', real: true },
+  /** Schedules (add-on): the follow-ups agents set; listed only while the add-on is ON (the server adds `schedules` then). */
+  { to: '/schedules', label: 'Schedules', icon: CalendarClock, feature: 'schedules', real: true },
   /** Wiki (add-on): pages of the project's wiki folder; listed only while the add-on is ON (the server adds `wiki` then). */
   { to: '/wiki', label: 'Wiki', icon: BookText, feature: 'wiki', real: true },
   /** Activity (#595): who did what; listed where the host serves `activity/1`. */

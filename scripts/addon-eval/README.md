@@ -30,7 +30,8 @@ is not installed. A task can set `stub_off=[...]`: the workspace is rendered wit
 - `dev`: the 19 tasks of the 27 Oct simulation (every prompt says the project "uses orch").
 - `heldout`: 16 tasks written fresh: vague phrasing, no "orch" cue anywhere in the prompt, a multi-step task, lookalikes
   (only at N = 12: reminders/runbook/retro/todo-list next to schedules/wiki/decisions/quick), an off add-on, a command
-  that fails with `addon.off` mid-run, a field-only write (`orch set REF changelog.line=...`), a too-soon follow-up.
+  that fails with `addon.off` mid-run, a field-only write (`orch set REF changelog.line=...`), a call that fails once with a retryable `host.busy`
+  (`stub_flaky`).
 - A task runs at a given N only if all add-ons it `needs` are active there (N = 3, 5, 8, 12 add-ons, in `addons.ORDER`).
 - Failure cells (`tasks.CELLS`): routing, lookalike, off, mid-run-off, side-chore, field-write, multi-step,
   reference-lookup, fail-recovery, none-needed. Judge a design change per cell, not by the total.

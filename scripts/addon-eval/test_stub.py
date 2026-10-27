@@ -86,3 +86,15 @@ def test_help_result_is_cached(env):
     e["EVAL_REAL_ORCH"] = json.dumps([sys.executable, "-c", "import sys; sys.exit(9)"])
     p, _ = run(env, "describe", "set")
     assert p.stdout.strip() == "REAL describe set" and p.returncode == 0
+
+
+def test_flaky_command_fails_once_then_works(tmp_path):
+    meta = tmp_path / "meta"
+    meta.mkdir()
+    (meta / "state.json").write_text(json.dumps({"active": ["schedules"], "off": [], "flaky": ["follow-up"]}))
+    e = dict(os.environ, EVAL_META=str(meta), EVAL_LOG=str(tmp_path / "log"))
+    args = [sys.executable, STUB, "follow-up", "--in", "2d", "--brief", "x"]
+    p1 = subprocess.run(args, env=e, capture_output=True, text=True)
+    assert p1.returncode == 3 and "host.busy" in p1.stderr and "retry:true" in p1.stderr
+    p2 = subprocess.run(args, env=e, capture_output=True, text=True)
+    assert p2.returncode == 0 and "followup.set" in p2.stdout

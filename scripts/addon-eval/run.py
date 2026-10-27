@@ -86,6 +86,7 @@ def one(job):
     st = json.load(open(meta + "/state.json"))
     st["active"] = [a for a in st["active"] if a not in off]
     st["off"] = st["off"] + off
+    st["flaky"] = list(t.get("stub_flaky", []))
     json.dump(st, open(meta + "/state.json", "w"))
     t0 = time.time()
     try:

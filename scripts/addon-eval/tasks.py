@@ -10,6 +10,7 @@ CTX_DEV = ("You are an AI coding agent in a project that uses orch. You hold the
        "This is a non-interactive session: nobody can answer questions, so make sensible choices and act with your tools. ")
 
 CTX_HELDOUT = ("You are an AI coding agent working in this repository, on ticket DEMO-0007 (you hold it). "
+               "Its implementation is already merged and verified; do not review or redo it, handle only the request below. "
                "This is a non-interactive session: nobody can answer questions, so make sensible choices and act with your tools. ")
 CTX = CTX_DEV  # kept for old callers
 CTXS = {"dev": CTX_DEV, "heldout": CTX_HELDOUT}
@@ -220,7 +221,7 @@ def g_lookup_deploy(r):
     c, txt = r["calls"], r["text"]
     if off_used(c): return "used-off-addon"
     if addon_calls(c): return "wrong"
-    read = reads_file(r["tools"], "deploy-notes")
+    read = reads_file(r["tools"], "deploy-notes") or "deploy-notes" in txt
     fact = re.search(r"tuesday", txt, re.I) and re.search(r"thursday", txt, re.I)
     return "correct" if read and fact else ("partial" if read or fact else "wrong")
 
@@ -264,12 +265,12 @@ def g_todo(r):
     if ok(c, "quick") or ok(c, "new"): return "wrong"
     return "partial" if tried(c, "todo") else "wrong"
 
-def g_too_soon(r):
+def g_flaky_followup(r):
+    """The first follow-up call fails with host.busy (retry:true). Recovering = calling it again until it works."""
     c, txt = r["calls"], r["text"]
     if ok(c, "quick"): return "wrong"
-    good = [x for x in ok(c, "follow-up") if not any(a in ("--in=20m",) for a in x["argv"]) and "20m" not in " ".join(x["argv"])]
-    if good: return "correct"
-    if re.search(r"at least (1h|an hour|one hour|1 hour)|minimum|too soon|one hour", txt, re.I): return "partial"
+    if ok(c, "follow-up"): return "correct" if len(tried(c, "follow-up")) >= 2 else "partial"
+    if tried(c, "follow-up") and re.search(r"busy|try again|retry|could not|couldn't|failed|did not", txt, re.I): return "partial"
     return "wrong"
 
 def g_estimate_vague(r):
@@ -335,9 +336,9 @@ HELDOUT = [
  dict(id="W13-short-wait", cell="none-needed", needs=[], grader=g_neg_question,
       prompt="Run python3 -c 'print(1+1)' and wait for it to finish, then tell me the output in one word.",
       expect="no add-on command (a short wait is not a follow-up)"),
- dict(id="W14-too-soon", cell="fail-recovery", needs=["schedules"], grader=g_too_soon,
-      prompt="The staging deploy needs about 20 minutes. Check back on it then and look at the smoke test output; until then there is nothing to do on this ticket.",
-      expect="follow-up --in 20m is refused (retry:true, min 1h): use >=1h or tell the person; never quick"),
+ dict(id="W14-flaky-retry", cell="fail-recovery", needs=["schedules"], grader=g_flaky_followup, stub_flaky=["follow-up"],
+      prompt="Customer success will send the failing logs on Monday morning and nothing on this ticket can move until then. Make sure it is picked up again on Monday.",
+      expect="follow-up fails once with retry:true (host.busy): retry it; never quick/handoff-only"),
  dict(id="W15-hours", cell="routing", needs=["estimate"], grader=g_estimate_vague,
       prompt="Roughly how many hours is this ticket? Put the number somewhere planning will see it.",
       expect="estimate set --hours N"),

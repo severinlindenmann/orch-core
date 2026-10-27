@@ -59,10 +59,12 @@ def test_field_write_and_lookalikes():
     assert T.g_triple(rec([("quick add y", 0)])) == "partial"
 
 
-def test_too_soon_recovery():
-    assert T.g_too_soon(rec([("follow-up --in 20m", 3), ("follow-up --in 1h", 0)])) == "correct"
-    assert T.g_too_soon(rec([("follow-up --in 20m", 3)], text="A follow-up must be at least 1h away.")) == "partial"
-    assert T.g_too_soon(rec([("follow-up --in 20m", 3), ("quick add check deploy", 0)])) == "wrong"
+def test_flaky_followup_recovery():
+    assert T.g_flaky_followup(rec([("follow-up --in 4d", 3), ("follow-up --in 4d", 0)])) == "correct"
+    assert T.g_flaky_followup(rec([("follow-up --in 4d", 0)])) == "partial"
+    assert T.g_flaky_followup(rec([("follow-up --in 4d", 3)], text="The host was busy, so I could not set it.")) == "partial"
+    assert T.g_flaky_followup(rec([("follow-up --in 4d", 3), ("quick add check logs", 0)])) == "wrong"
+    assert T.g_flaky_followup(rec()) == "wrong"
 
 
 def test_none_needed_flags_overuse():

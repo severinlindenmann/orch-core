@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from webapi_helpers import ORIGIN, WS, WS_SEL, Web
 
@@ -127,6 +129,38 @@ def test_web_ticket_refusals(w):
     assert (s, o["error"]) == (403, "forbidden_role")
     s, o, _ = w.call("POST", "/switch/ticket", body)
     assert s == 401
+
+
+def _mint(w, token, method="POST", **headers):
+    h = {"host": "127.0.0.1:9000", "cookie": f"{w.api._cookie_name}={token}", "x-orch-csrf": "1", **headers}
+    body = json.dumps({"workspace_id": WS, "return_to": "/", "kind": "open"}).encode()
+    h.setdefault("content-type", "application/json")
+    status, _, out = w.api.handle(method, "/api/v1/switch/ticket", {k: v for k, v in h.items() if v}, body)
+    return status, json.loads(out)
+
+
+def test_a_ticket_is_minted_only_on_a_same_origin_authenticated_post(w):
+    """E4: a cross-site page cannot make the hub mint a switch ticket (and so cannot land the person silently)."""
+    w.sw.set_origin(WS, DASH)
+    token = w.login(w.ann)
+    s, o = _mint(w, token, origin=ORIGIN, **{"sec-fetch-site": "same-origin"})
+    assert s == 200 and o["url"].startswith(DASH + "/#t=")
+    s, o = _mint(w, token, origin=ORIGIN)  # an older browser without Fetch Metadata, same origin
+    assert s == 200
+    for refused in (
+        {"origin": "https://evil.test", "sec-fetch-site": "cross-site"},  # a cross-site page
+        {"origin": ORIGIN, "sec-fetch-site": "cross-site"},  # a forged Origin cannot hide the browser's own label
+        {"origin": ORIGIN, "sec-fetch-site": "same-site"},  # a sibling subdomain is not the console
+        {"origin": ORIGIN, "sec-fetch-site": "none"},  # typed or bookmarked: no page asked for it
+        {"origin": None},  # no Origin at all with the ambient cookie
+        {"origin": ORIGIN, "x-orch-csrf": None},  # a simple (form) POST
+    ):
+        s, o = _mint(w, token, **refused)
+        assert (s, o["error"]) == (403, "not_allowed"), refused
+    s, o = _mint(w, token, method="GET", origin=ORIGIN, **{"sec-fetch-site": "same-origin"})
+    assert s == 404 and o["error"] == "unknown_op"  # there is no GET mint
+    s, o = _mint(w, "", origin=ORIGIN, **{"sec-fetch-site": "same-origin"})
+    assert s == 401  # unauthenticated
 
 
 def test_workspace_to_hub_redeem_sets_cookie_once(w):

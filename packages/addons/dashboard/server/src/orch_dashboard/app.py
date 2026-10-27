@@ -303,7 +303,7 @@ def create_app(
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
     switch.register(app, gateway, auth)
-    trust_routes.register(app, auth)
+    trust_routes.register(app, auth, gateway)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
     signprefs.register(app, gateway)

@@ -174,6 +174,15 @@ class Gateway:
         except (OSError, ValueError, KeyError):
             raise fail("host.unavailable", "Host registry unavailable") from None
 
+    def people(self):
+        """``{workspace id: person}``: who this computer's user is in each pinned workspace (the registry pins, no host
+        call). Empty when the registry cannot be read."""
+        try:
+            pins = self._pins()
+        except HostError:
+            return {}
+        return {ws: row["peers"][str(os.getuid())]["person"] for ws, row in pins.items()}
+
     def workspace_folder(self, ws):
         """``(project folder, store folder)`` of workspace ``ws`` from the trusted host registry (the store is the
         project's ``.orch``). The File Explorer's root; browser input never names it."""

@@ -403,6 +403,7 @@ class Ctx:
     source: str = ""
     via_switch: bool = False  # the session came from a switch ticket, not a password sign-in
     cookie_value: str = ""  # the session cookie the browser sent, if any (auth-none routes may use it, never trust it)
+    fetch_site: str | None = None  # the browser's Sec-Fetch-Site label, when it sent one
 
 
 class _Limiter:
@@ -616,7 +617,12 @@ class WebApi:
         bearer = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
         if method != "GET":
             self._csrf(headers, bool(raw), use_cookie=not bearer and bool(cookie_token))
-        ctx = Ctx(origin=headers.get("origin"), source=source, cookie_value=cookie_token)
+        ctx = Ctx(
+            origin=headers.get("origin"),
+            source=source,
+            cookie_value=cookie_token,
+            fetch_site=headers.get("sec-fetch-site"),
+        )
         if route.auth != "none":
             ctx.token, ctx.cookie = (bearer, False) if bearer else (cookie_token, True)
             if not ctx.token:
@@ -914,6 +920,11 @@ class WebApi:
         return self.d.switch
 
     def _h_switch_ticket(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """E4 invariant: a ticket is minted only on an authenticated POST from the console's own origin (the route has no
+        GET). The browser's cookie session, an allowed ``Origin`` and, when the browser labels it, ``Sec-Fetch-Site:
+        same-origin``: a cross-site page cannot make the hub mint a ticket and land the person silently."""
+        if not c.cookie or c.origin not in self.d.allowed_origins or c.fetch_site not in (None, "same-origin"):
+            raise ApiError("not_allowed")
         b = _need(b, workspace_id=str, return_to=str, kind=str)
         sw = self._switch()
         ws = _hex32(b["workspace_id"])

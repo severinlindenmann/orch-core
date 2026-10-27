@@ -12,6 +12,7 @@ agents. Refused in the orch dev kit unless ``--i-know-dev``.
 from __future__ import annotations
 
 import argparse
+import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TextIO
@@ -26,7 +27,7 @@ __all__ = ["main"]
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 USAGE = (
     "usage: orch host prune [--dry-run] [--yes] [--workspaces ask|keep|delete] [--workspace PATH] [--keep-tool] "
-    "[--i-know-dev]\n"
+    "[--i-know-dev] [--include-default-config]\n"
 )
 
 
@@ -38,6 +39,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--workspace", action="append", default=[])
     p.add_argument("--keep-tool", action="store_true")
     p.add_argument("--i-know-dev", action="store_true")
+    p.add_argument("--include-default-config", action="store_true")
     return p
 
 
@@ -171,7 +173,7 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         return 2
     ctx = ctx or Ctx(env=env, out=out, err=err, interactive=tty_available())
     try:
-        inv = gather(ctx, a.workspace)
+        inv = gather(ctx, a.workspace, a.include_default_config)
     except Exception as e:  # noqa: BLE001 - the person gets a message, not a traceback
         err.write(f"orch host prune: could not look at this computer: {type(e).__name__}: {e}\n")
         return 1
@@ -205,6 +207,13 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
             ctx.say("Nothing was removed.")
             return 5
     notes: list[str] = []
+    for it in [i for i in inv.items if i.data.get("default_config")]:
+        if not (
+            ctx.interactive and _confirm(ctx, f"Also remove {it.path}, a separate orch setup with its own keys? [y/N] ")
+        ):
+            inv.items.remove(it)
+            inv.rmdirs[:] = [d for d in inv.rmdirs if os.fspath(d) != it.path]
+            notes.append(f"{it.path}: kept (needs an answer at a terminal)")
     folders, skip = _workspaces(ctx, inv, a.yes, a.workspaces, notes)
     _tell_hubs(ctx, inv, folders)
     ctx.say("")

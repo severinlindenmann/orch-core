@@ -140,7 +140,7 @@ class Ctx:
         """Run a program: through the test seam, or by absolute path, scrubbed environment, from the home folder."""
         if self.run is not None:
             return self.run(list(argv), env)
-        return safe_run(argv, self.env, self.deny)
+        return safe_run(argv, {**self.env, **(env or {})}, self.deny)
 
     @property
     def home(self) -> Path:

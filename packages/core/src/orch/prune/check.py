@@ -16,16 +16,51 @@ __all__ = ["MESSAGE", "older_install"]
 MESSAGE = "Found an older orch install. Run `orch host prune` first."
 
 
-def older_install(env: Mapping[str, str]) -> str | None:
-    """:data:`MESSAGE` (with what was found) when the state folder holds an identity that no registry explains."""
+#: written by ``orch setup`` of this version when it starts (nothing older was found): a setup that crashed after it
+#: wrote the identity but before the workspace was registered is resumed, never mistaken for an older install
+MARKER = "setup-started"
+
+
+def _mark(state: Path) -> None:
+    from orch import __version__
+
+    try:
+        os.makedirs(state, mode=0o700, exist_ok=True)
+        fd = os.open(state / MARKER, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(__version__ + "\n")
+    except OSError:
+        pass  # the check then has no marker: at worst a later rerun is asked to prune, never data lost
+
+
+def _marked(state: Path) -> bool:
+    from orch import __version__
+
+    try:
+        return (state / MARKER).read_text(encoding="utf-8").strip() == __version__
+    except (OSError, ValueError):
+        return False
+
+
+def older_install(env: Mapping[str, str], *, mark: bool = False) -> str | None:
+    """:data:`MESSAGE` (with what was found) when the state folder holds an identity that no registry explains and no
+    setup of this version started it. ``mark=True`` (``orch setup``): when nothing older is found, record that this
+    version's setup started here."""
     from orch.ops.runtime import state_dir
 
     try:
         state = state_dir(env)
     except Exception:  # noqa: BLE001 - no state folder to look at: nothing found
         return None
+    found = _older(state)
+    if found is None and mark:
+        _mark(state)
+    return found
+
+
+def _older(state: Path) -> str | None:
     identity = [n for n in ("person", "person-key") if os.path.lexists(state / n)]
-    if not identity:
+    if not identity or _marked(state):
         return None
     registry = state / "host" / "workspaces.json"
     try:

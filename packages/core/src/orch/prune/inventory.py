@@ -46,6 +46,7 @@ STATE_LABELS = {
     "addon-env": "environments of installed add-ons",
     "records.json": "records tips",
     "person-key": "your person key file",
+    "setup-started": "marker of a started setup",
 }
 #: the root-owned files orch's setup writes on Linux (osusers, osapply, osfront, oslauncher); macOS helper dirs
 OS_ROOT_PATHS = {
@@ -117,7 +118,7 @@ def _read_json(path: Path, limit: int = 8 << 20) -> Any:
 # ------------------------------------------------------------------------------------------------------------ gather
 
 
-def gather(ctx: Ctx, extra_workspaces: Iterable[str] = ()) -> Inventory:
+def gather(ctx: Ctx, extra_workspaces: Iterable[str] = (), include_default_config: bool = False) -> Inventory:
     from orch.ops.runtime import state_dir
 
     state = state_dir(ctx.env)
@@ -128,10 +129,11 @@ def gather(ctx: Ctx, extra_workspaces: Iterable[str] = ()) -> Inventory:
     inv.not_removable.extend(_NOT_REMOVABLE)
     _services(ctx, inv)
     _state(ctx, inv)
-    _older_default(ctx, inv)
+    _older_default(ctx, inv, include_default_config)
     _releases(ctx, inv)
     registry = _registry(state)
     ws_roots = _workspace_roots(ctx, inv, registry, extra_workspaces)
+    ctx.deny = [state, *(r for r, _ in ws_roots)]  # no program is taken from below a workspace or the state folder
     for root, wid in ws_roots:
         inv.workspaces.append(_workspace(ctx, inv, root, wid))
     _remote(ctx, inv, registry)
@@ -318,18 +320,26 @@ def _state(ctx: Ctx, inv: Inventory) -> None:
     inv.rmdirs.extend([state / "install" / "parts", state / "install", state / "hosts", state])
 
 
-def _older_default(ctx: Ctx, inv: Inventory) -> None:
+def _older_default(ctx: Ctx, inv: Inventory, include: bool) -> None:
     """The default state folder (``~/.config/orch``) when this run uses another one: an older or other setup's leftovers
     (a person identity and devices from an older version survive a manual clean-up there)."""
     legacy = ctx.home / ".config" / "orch"
     if legacy == inv.state or not os.path.isdir(legacy) or _is_link(legacy):
         return
-    if any(os.path.lexists(legacy / n) for n in ("host", "hosts", "person", "install", "person-key")):
-        inv.roots.append(legacy)
-        inv.items.append(
-            _tree_item(G_STATE, "orch state folder at the default place (an older or other setup)", legacy)
+    if not any(os.path.lexists(legacy / n) for n in ("host", "hosts", "person", "install", "person-key")):
+        return
+    if not include:
+        # it may be a live, separate setup with its own identity: never removed in the normal run
+        inv.warnings.append(
+            f"{legacy} holds another orch setup (this run uses {inv.state}): left alone. To remove it too, run "
+            "orch host prune --include-default-config (it asks once more at the terminal)"
         )
-        inv.rmdirs.append(legacy)
+        return
+    inv.roots.append(legacy)
+    item = _tree_item(G_STATE, "orch state folder at the default place (another setup)", legacy)
+    item.data["default_config"] = True
+    inv.items.append(item)
+    inv.rmdirs.append(legacy)
 
 
 def _install_children(inv: Inventory, install: Path) -> None:

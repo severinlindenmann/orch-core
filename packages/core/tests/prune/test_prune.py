@@ -932,14 +932,35 @@ def test_defers_crlf_files_keep_their_line_endings():
     )
 
 
-def test_older_state_folder_at_the_default_place_is_listed_when_another_is_in_use(m):
+def _other_state(m):
     custom = m.home / "mystate"
     custom.mkdir()
     ctx = m.ctx()
     ctx.env = {**ctx.env, "ORCH_STATE_DIR": str(custom)}
-    inv = gather(ctx)
-    assert str(m.state) in {i.path for i in inv.items}  # the default ~/.config/orch of an older install
-    assert m.state in inv.rmdirs
+    return ctx
+
+
+def test_n1_the_default_config_of_another_setup_is_only_a_warning(m):
+    inv = gather(_other_state(m))
+    assert str(m.state) not in {i.path for i in inv.items}
+    assert m.state not in inv.rmdirs and m.state not in inv.roots
+    assert any("--include-default-config" in w and str(m.state) in w for w in inv.warnings)
+
+
+def test_n1_removing_it_needs_the_flag_and_a_terminal_answer(m):
+    inv = gather(_other_state(m), include_default_config=True)
+    assert any(i.data.get("default_config") and i.path == str(m.state) for i in inv.items)
+    # through main: no terminal -> kept; "n" -> kept; "y" -> gone
+    for answers, interactive, gone in (([], False, False), (["y", "n"], True, False), (["y", "y"], True, True)):
+        mach = Machine(m.root / f"t{len(answers)}{gone}")
+        custom = mach.home / "mystate"
+        custom.mkdir()
+        mach.answers = list(answers)
+        args = ["--workspaces", "keep"] if interactive else ["--yes"]
+        extra = {"ORCH_STATE_DIR": str(custom)}
+        rc = mach.prune(*args, "--include-default-config", env_extra=extra, interactive=interactive)
+        assert rc == 0, mach.err.getvalue()
+        assert (not mach.state.exists()) == gone, answers
 
 
 def test_a_unit_still_loaded_without_its_file_is_listed_and_unloaded(m):
@@ -1022,3 +1043,50 @@ def test_b1_tty_ask_answer_through_a_pty():
     time.sleep(0.5)
     assert b"GOT=y" in os.read(fd, 4096)
     os.waitpid(pid, 0)
+
+
+def test_n2_a_setup_of_this_version_that_crashed_resumes_instead_of_asking_for_prune(tmp_path):
+    from orch.prune.check import MARKER, MESSAGE, older_install
+
+    state = tmp_path / "s"
+    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state)}
+    (state / "host").mkdir(parents=True)
+    assert older_install(env, mark=True) is None  # setup starts: nothing older, so it records that it started
+    assert (state / MARKER).exists()
+    (state / "person-key").write_text("k")  # ... and crashes after the identity was written, before registration
+    (state / "person" / "w").mkdir(parents=True)
+    assert older_install(env, mark=True) is None  # the rerun resumes
+    (state / MARKER).unlink()  # the same identity with no record of a setup of ours: an older install
+    assert MESSAGE in older_install(env, mark=True)
+    (state / MARKER).write_text("1.0.0\n")  # a marker of another version is not ours either
+    assert MESSAGE in older_install(env)
+
+
+def test_n4_an_injected_ctx_has_an_euid_and_main_judges_by_it(m, monkeypatch):
+    import pwd
+
+    seen = []
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: seen.append(uid) or type("P", (), {"pw_name": "ann"})())
+    assert isinstance(Ctx(env={}, out=io.StringIO(), err=io.StringIO()).euid, int)
+    ctx = m.ctx()
+    assert ctx.euid == 1000
+    assert main(["--dry-run"], env=ctx.env, out=m.out, err=m.err, ctx=ctx) == 0
+    assert 1000 in seen
+
+
+def test_b2_the_inventory_phase_already_refuses_programs_from_a_workspace(m):
+    ctx = m.ctx()
+    gather(ctx)
+    assert m.ws in ctx.deny and m.state in ctx.deny
+
+
+def test_b3_the_keychain_store_filters_every_query_by_orchs_service():
+    import inspect
+
+    from orch.custody import keychain
+
+    assert keychain.SERVICE == "io.orch.device-key"
+    base, query = inspect.getsource(keychain.KeychainStore._base), inspect.getsource(keychain.KeychainStore._query)
+    assert "kSecAttrService" in base and "SERVICE" in base and "self._base(" in query
+    for fn in (keychain.KeychainStore.accounts, keychain.KeychainStore.delete, keychain.KeychainStore._count):
+        assert "self._query(" in inspect.getsource(fn)  # list, delete and count all go through the service-scoped query

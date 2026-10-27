@@ -632,7 +632,7 @@ def main(
         return 3
     from orch.prune.check import older_install
 
-    if (found := older_install(env)) is not None:  # an older install's identity must not meet a new setup
+    if (found := older_install(env, mark=True)) is not None:  # an older install's identity must not meet a new setup
         err.write(f"orch setup: {found}\n")
         return 3
     set_no_core_dumps()

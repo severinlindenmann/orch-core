@@ -176,11 +176,6 @@ def method_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     return Refusal(Code.SIGN_METHOD, f"auth {e['auth']} ({need}) is not an allowed way to sign in this workspace")
 
 
-#: #1097: hub membership acts a leaked One click key must not do silently, in every hub mode (a device key with a
-#: signed ``device.exposed`` mark; the recovery key signs a new device, which is clean)
-EXPOSED_GATED = frozenset({"hub.joined", "hub.left", "hub.repinned"})
-
-
 def person_has_valid_device(ws: WsCore, person: str, at: int) -> bool:
     return any(d.person == person and device_valid(d, d.cert, at, False) is None for d in ws.devices.values())
 
@@ -202,8 +197,6 @@ def authorize_person(core: Core, log: str, e: dict[str, Any], v: Verifier) -> Re
         return r
     if (r := method_refusal(ws, e)) is not None:
         return r
-    if typ in EXPOSED_GATED and dev is not None and dev.exposed:
-        return Refusal(Code.SIGN_KEY_EXPOSED, f"{typ} is refused for a device key that was in one-click custody")
     if m.role == "viewer" and typ not in VIEWER_MAY:
         return Refusal(Code.ROLE_DENIED, "a viewer cannot write")
     if e["roster_v"] != ws.roster_v:

@@ -1905,7 +1905,6 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `device.scope` | §5.3 the certificate lacks `decide` (or `operate`), or has a `drop:` scope |
 | `device.lockout` | a `device.removed` of an owner's last device that can sign now (not removed or revoked, certificate not expired at the event's `at`, with `decide`, held by a member) |
 | `sign.method` | B6: the person event's `auth` is a way (`convenience` is `click`, `secure-enclave-unlocked` is `phone`) that the workspace's `settings.sign_methods` leaves out, judged by the state at the event's own position; honest labels only |
-| `sign.key_exposed` | #1097 (kept by A1): `hub.joined`, `hub.left` or `hub.repinned` signed by a device whose key has a signed `device.exposed` mark (One click custody), in every hub mode, judged by the state before the event. Any other event from that device is unaffected. |
 | `device.cert` | §5.3 an embedded certificate or revocation is not signed by the person key, or is for another person |
 | `grant.invalid` | §10.1 the grant is unknown, expired, revoked, ended, another person's, or its person may not run agents |
 | `grant.scope` | §10.1 the grant's scope does not cover the ticket, or the person can't see it |

@@ -39,9 +39,6 @@ class Code(StrEnum):
     DEVICE_SCOPE = "device.scope"
     DEVICE_LOCKOUT = "device.lockout"  # #1198 C15: the last working device of an owner stays
     SIGN_METHOD = "sign.method"
-    SIGN_KEY_EXPOSED = (
-        "sign.key_exposed"  # #1097: a hub join/leave/repin signed by a device key that was in One click custody
-    )
     DEVICE_CERT = "device.cert"
     GRANT_INVALID = "grant.invalid"
     GRANT_SCOPE = "grant.scope"

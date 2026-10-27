@@ -168,25 +168,36 @@ def test_a_failed_verifier_refuses_the_rotation(w):
 LABELS = [None, "passphrase", "click", "convenience", "secure-enclave-unlocked", "no-such-label"]
 
 
-# --- A1: the exposed-key check stays on hub membership acts, in every mode, and nowhere else ------------------------
+# --- A1: parity with develop for the exposed-key check (#1097) ------------------------------------------------
+# develop's model refused an exposed (One click) key only as a flavour of the full-mode "hub_only" rule, and exactly
+# there: hub.left by an exposed or convenience key was ALLOWED (the break-glass row lists them), hub.joined was not
+# checked for exposure (that check was disabled for the prototype) and every other local event was refused in full mode.
+# Standalone and selective checked nothing. A1 lifts the full-mode refusal, so the answers below are develop's, and the
+# only change is that other local events of an exposed key are no longer refused in full mode (One click keeps working).
 
 
-def test_an_exposed_key_cannot_leave_or_rejoin_a_hub_but_still_signs_everything_else(w):
-    mark(w)  # device A of sev is exposed (One click)
-    assert admit(strict(w), leave(w, "sev"), log="workspace").code == Code.SIGN_KEY_EXPOSED
-    rejoin = w.build_unappended(
-        "workspace", "hub.joined", "sev", roster_v=w.roster_v, hub_id=HUB, hk_root_pub=ROOT, mode="full",
-        binding_seq=2, aliases=[],
+def _joined(w, mode, seq):
+    return w.build_unappended(
+        "workspace", "hub.joined", "sev", roster_v=w.roster_v, hub_id=HUB, hk_root_pub=ROOT, mode=mode,
+        binding_seq=seq, aliases=[],
     )  # fmt: skip
-    assert admit(strict(w), rejoin, log="workspace").code == Code.SIGN_KEY_EXPOSED
-    other = w.build_unappended("workspace", "settings.changed", "sev", roster_v=w.roster_v, set={"claim_ttl_min": 30})
-    assert not hasattr(admit(strict(w), other, log="workspace"), "code")  # One click keeps working for the rest
-    assert not hasattr(admit(strict(w), leave(w, w.b), log="workspace"), "code")  # a clean device still leaves
 
 
-def test_the_exposed_key_check_holds_in_selective_mode_too():
+@pytest.mark.parametrize("auth", [None, "convenience"])
+def test_parity_full_exposed_key_leaves(w, auth):
+    mark(w)  # device A of sev is exposed
+    extra = {} if auth is None else {"auth": auth}
+    assert not hasattr(admit(strict(w), leave(w, "sev", **extra), log="workspace"), "code")  # develop: allowed
+
+
+@pytest.mark.parametrize("mode", ["selective", "standalone"])
+def test_parity_selective_and_standalone_check_nothing(mode):
     w = World(validate=False).bootstrap({})
-    w.wev("hub.joined", "sev", hub_id=HUB, hk_root_pub=ROOT, mode="selective", binding_seq=1, aliases=[])
+    if mode == "selective":
+        w.wev("hub.joined", "sev", hub_id=HUB, hk_root_pub=ROOT, mode="selective", binding_seq=1, aliases=[])
     mark(w)
-    e = w.build_unappended("workspace", "hub.left", "sev", roster_v=w.roster_v, hub_id=HUB, binding_seq=1)
-    assert admit(strict(w), e, log="workspace").code == Code.SIGN_KEY_EXPOSED
+    seq = 2 if mode == "selective" else 1
+    assert not hasattr(admit(strict(w), _joined(w, "full", seq), log="workspace"), "code")  # develop: allowed
+    if mode == "selective":
+        left = w.build_unappended("workspace", "hub.left", "sev", roster_v=w.roster_v, hub_id=HUB, binding_seq=1)
+        assert not hasattr(admit(strict(w), left, log="workspace"), "code")

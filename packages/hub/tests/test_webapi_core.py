@@ -316,3 +316,27 @@ def test_web_server_accept_queue_holds_a_burst():
     from orch_hub.webapi.server import _BoundedServer
 
     assert _BoundedServer.request_queue_size >= 128  # the Admin page opens 7 connections at once
+
+
+def test_sign_in_by_name_or_id_and_wrong_names_are_generic(w):
+    """Run-11 #10/#11: the setup name signs in too; unknown ids and names are bad_credentials, never malformed."""
+    s, o, _ = w.call(
+        "POST", "/session", {**sign_in_body(w, w.ann), "user_id": "Ann"}
+    )  # the name chosen at setup, any case
+    assert s == 200 and o["user_id"] == w.ann
+    for who in ("nobody", "zz" * 16, "abc"):
+        s, o, _ = w.call(
+            "POST", "/session", {"user_id": who, "password": "x" * 12, "totp": "000000", "client": "app"}, origin=None
+        )
+        assert (s, o) == (401, {"error": "bad_credentials"}), who
+
+
+def test_ambiguous_name_asks_for_the_id(w):
+    other = w.env.user("ann")
+    assert other != w.ann
+    s, o, _ = w.call(
+        "POST", "/session", {"user_id": "ann", "password": "x" * 12, "totp": "000000", "client": "app"}, origin=None
+    )
+    assert (s, o) == (409, {"error": "ambiguous_name"})
+    s, o, _ = w.call("POST", "/session", sign_in_body(w, w.ann))  # the id still works
+    assert s == 200

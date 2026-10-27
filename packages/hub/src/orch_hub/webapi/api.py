@@ -88,6 +88,7 @@ STATUS = {
     "unknown_snapshot": 409,
     "no_session": 401,
     "bad_credentials": 401,
+    "ambiguous_name": 409,
     "unauthorized": 403,
     "bad_channel_proof": 403,
     "forbidden_role": 403,
@@ -716,6 +717,21 @@ class WebApi:
                 self._busy.discard(c.source)
         return result
 
+    def _resolve_user(self, who: str) -> str:
+        """Sign-in takes the user id or the name chosen at setup (run-11 #10). Anything that is neither is the one
+        generic ``bad_credentials`` (never ``malformed``, run-11 #11); two users with one name: ask for the id."""
+        who = who.strip()
+        if _HEX32.fullmatch(who):
+            return who
+        hits = [
+            u["user_id"] for u in self.d.access.users() if u["name"] is not None and u["name"].lower() == who.lower()
+        ]
+        if len(hits) > 1:
+            raise ApiError("ambiguous_name")
+        if not hits:
+            raise ApiError("bad_credentials")
+        return hits[0]
+
     def _h_sign_in(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, user_id=str, password=str, totp=str)
         client = b.get("client", "browser")
@@ -723,11 +739,12 @@ class WebApi:
             raise ApiError("malformed")
         if client == "browser" and c.origin is None:  # a cookie is only ever set for a request the browser labelled
             raise ApiError("not_allowed")
+        uid = self._resolve_user(b["user_id"])
         s = self._guarded_credentials(
             c,
-            b["user_id"],
+            uid,
             lambda: self.d.channels.sign_in(
-                b["user_id"], b["password"], b["totp"], c.source, scope="full" if client == "browser" else "pairing"
+                uid, b["password"], b["totp"], c.source, scope="full" if client == "browser" else "pairing"
             ),
         )
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}

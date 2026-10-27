@@ -12,7 +12,6 @@
 followup.too_soon 3 retry:false
 followup.too_far 3 retry:false
 followup.bad_brief 3 retry:false
-followup.off 3 retry:false
 followup.no_receiver 3 retry:false
 followup.denied 3 retry:false
 internal 1 retry:false
@@ -39,7 +38,7 @@ custody.no_batch 3 retry:false
 grant.required 3 retry:false
 grant.expired 3 retry:false
 grant.verb 3 retry:false
-quick.off 3 retry:false
+addon.off 3 retry:false
 role.denied 3 retry:false
 transition.refused 3 retry:false
 verify.unapproved 3 retry:false

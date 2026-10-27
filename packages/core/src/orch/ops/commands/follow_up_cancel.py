@@ -9,7 +9,6 @@ from orch.ops.runtime import Call
 def handle(ctx, args):
     c = Call.of(ctx, "follow_up.cancel")
     with c.locked():
-        followup.require_on(c.store.state.workspace.addons)
         target = args["id_or_ref"]
         if target.startswith("fu_"):
             view, rec = followup.find(c, target)
@@ -47,6 +46,7 @@ OP = operation(
     emits=("followup.cancelled",),
     text="ok {key} followup.cancelled {id} state=cancelled\nnext: {next}",
     data=obj({"id": STR, "state": STR, "reason": STR}),
-    errors=tuple(err(c) for c in ("followup.off", "followup.denied", "not_found", "ambiguous_ref")),
+    errors=tuple(err(c) for c in ("followup.denied", "not_found", "ambiguous_ref")),
     handler=handle,
+    addon="schedules",
 )

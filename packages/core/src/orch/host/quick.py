@@ -73,10 +73,17 @@ class Pending:
 
 def prepare(call: Call, args: dict[str, Any]) -> Pending:
     """Phase 1, on the worker thread (args already passed :data:`SCHEMA`)."""
+    from orch.ops import addon_gate
     from orch.ops.diff_core import diff_plan
     from orch.ops.errors import OrchError
 
+    from .errors import HostError
     from .reads_query import ticket_query
+
+    # the host serves ``quick.list`` itself (not through the registry handler), so the availability check of
+    # ``operation(addon="quick")`` is made here, with the same code and words
+    if not addon_gate.is_on(call.service.store.state.workspace.addons, core.ADDON):
+        raise HostError("addon.off", addon_gate.off_message(core.ADDON))
 
     query: dict[str, Any] = {"label": [core.LABEL], "sort": "key", "order": "desc", "limit": args.get("limit", 100)}
     for k in ("status", "page"):

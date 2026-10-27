@@ -6,5 +6,5 @@ args:
   ID  follow-up ID
 errors:
   not_found (exit 2): orch list
-  followup.off (exit 3): ask an owner to turn Schedules on in Add-ons | fix: orch addon list
+  addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
 out: ok {key} followup {id}

@@ -14,9 +14,9 @@ args:
 errors:
   ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
   not_found (exit 2): orch list
+  addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
   followup.bad_brief (exit 3): provide a brief of 1 to 4096 UTF-8 bytes | fix: orch follow-up --help
   followup.denied (exit 3): read the denial code and resolve it before retrying | fix: orch show
-  followup.off (exit 3): ask an owner to turn Schedules on in Add-ons | fix: orch addon list
   followup.too_far (exit 3): choose a time within 14 days | fix: orch follow-up --help
   followup.too_soon (exit 3): wait inside the session | fix: orch wait
   grant.expired (exit 3): ask the person for a new grant | fix: orch status

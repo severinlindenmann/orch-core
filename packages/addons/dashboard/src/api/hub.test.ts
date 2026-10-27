@@ -10,9 +10,9 @@ describe('hubChip (A5.1)', () => {
   it('is grey and quiet when standalone', () => {
     expect(hubChip(base)).toMatchObject({ tone: 'neutral', label: 'Local only', icon: 'none' })
   })
-  it('is violet for selective and solid violet for full, saying what the hub can read', () => {
-    expect(hubChip(status({ mode: 'selective' }))).toMatchObject({ tone: 'violet', label: 'Hub sees only what you share', icon: 'eye-off' })
-    expect(hubChip(status({ mode: 'full', member: true }))).toMatchObject({ tone: 'violet-solid', label: 'Hub can read everything', icon: 'eye' })
+  it('is quiet grey for selective and full: online, connected (the access level lives in Settings)', () => {
+    expect(hubChip(status({ mode: 'selective' }))).toMatchObject({ tone: 'neutral', label: 'Online · connected to hub', icon: 'dot' })
+    expect(hubChip(status({ mode: 'full', member: true }))).toMatchObject({ tone: 'neutral', label: 'Online · connected to hub', icon: 'dot' })
   })
   it('is amber when the hub is offline, not told, or needs attention', () => {
     expect(hubChip(status({ reachable: false }))?.tone).toBe('amber')

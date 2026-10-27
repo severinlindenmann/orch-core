@@ -87,8 +87,8 @@ describe('the Hub tab has a different page for each mode', () => {
 describe('the top-bar chip', () => {
   it.each([
     ['standalone', 'Only on this computer'],
-    ['selective', 'Hub sees only what you share'],
-    ['full', 'Hub can read everything'],
+    ['selective', 'Online · connected to hub'],
+    ['full', 'Online · connected to hub'],
     ['offline', 'Hub offline, working locally'],
     ['nottold', 'Left the hub, hub not told yet'],
   ] as const)('%s says "%s"', async (scenario, label) => {

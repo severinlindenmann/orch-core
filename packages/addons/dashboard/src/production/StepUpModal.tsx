@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { adoptToken, getToken } from '../api/bootstrap'
 import { onStepUp, settleStepUp, type StepUpInfo } from '../api/stepUp'
 import { upgradeSession } from '../api/trustedKey'
@@ -14,12 +14,15 @@ export function StepUpModal() {
   const [info, setInfo] = useState<StepUpInfo | null>(null)
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState(false)
-  useEffect(() => onStepUp((i) => { setInfo(i); setFailed(false); setBusy(false) }), [])
+  // The session the refusal came from: if a launch link was opened meanwhile, this tab already holds another one.
+  const refused = useRef<string | null>(null)
+  useEffect(() => onStepUp((i) => { refused.current = i ? getToken() : null; setInfo(i); setFailed(false); setBusy(false) }), [])
   if (!info) return null
   const here = info.where === 'this_computer'
   const retry = async () => {
-    setBusy(true)
     const token = getToken()
+    if (token !== refused.current) { settleStepUp(true); return } // a real sign-in replaced the session: run the action
+    setBusy(true)
     const full = token ? await upgradeSession(token) : null
     setBusy(false)
     if (full) { adoptToken(full); settleStepUp(true) } else setFailed(true)

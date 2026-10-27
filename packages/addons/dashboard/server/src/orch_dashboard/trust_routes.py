@@ -31,7 +31,7 @@ class UpgradeBody(BaseModel):
 def _origin(request: Request) -> str:
     policies = request.app.state.policies
     policy = policies.get(request.scope.get("orch_listener", LOOPBACK)) or policies[LOOPBACK]
-    return policy.origin_for(request.headers["host"])
+    return policy.origin_for(request.headers.get("host", ""))
 
 
 def register(app: FastAPI, auth):

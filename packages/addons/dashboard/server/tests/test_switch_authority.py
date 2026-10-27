@@ -186,16 +186,15 @@ def test_a_stale_challenge_is_refused(client, link, auth, now):
     assert res.status_code == 401
 
 
-def test_revoking_a_browser_downgrades_the_sessions_it_upgraded(client, link, auth):
+def test_revoking_a_browser_ends_the_sessions_it_upgraded(client, link, auth):
     b = Browser()
     local, kid = enrol(client, auth, b)
     full = upgrade(client, switch_session(client, link), b, kid).json()["token"]
     assert client.post(WRITE, json={}, headers=bearer(full)).status_code != 403
     assert client.get("/api/trusted", headers=bearer(local)).json()[0]["id"] == kid
     assert client.delete(f"/api/trusted/{kid}", headers=bearer(local)).json() == {"revoked": True}
-    assert auth.login_kind(full) == "switch" and auth.switch_workspace(full) == WS
-    assert refused_as_step_up(client.post(WRITE, json={}, headers=bearer(full)))
-    assert refused_as_step_up(client.get("/api/trusted", headers=bearer(full)))
+    assert not auth.valid(full)  # ended: its terminal sockets and event streams watch `valid` and close with it
+    assert client.post(WRITE, json={}, headers=bearer(full)).status_code == 401
     # and a new switch cannot come back up with the revoked key
     assert upgrade(client, switch_session(client, link), b, kid).status_code == 401
 
@@ -232,3 +231,56 @@ def test_no_hub_means_a_local_session_is_what_it_was(client, auth):
     local = local_session(auth)
     assert auth.login_kind(local) == "local"
     assert client.post(WRITE, json={}, headers=bearer(local)).status_code != 403
+
+
+def test_a_key_idle_expiry_ends_the_session_it_upgraded(client, link, auth, now):
+    b = Browser()
+    _, kid = enrol(client, auth, b)
+    full = upgrade(client, switch_session(client, link), b, kid).json()["token"]
+    now[0] += trusted.IDLE + 1
+    assert not auth.valid(full)
+
+
+def test_an_upgraded_session_is_pinned_to_loopback_and_holds_no_step_up(client, link, auth):
+    b = Browser()
+    _, kid = enrol(client, auth, b)
+    sw = switch_session(client, link)
+    # a step-up the switch session might hold must not carry over
+    auth.stepups[sw] = {("a", "d"): (auth.clock(), "proof", None)}
+    full = upgrade(client, sw, b, kid).json()["token"]
+    assert auth.listener_of(full) == "loopback"
+    assert auth.stepups.get(full) is None
+    assert auth.stepup_take(full, "a", "d") == (False, None)
+
+
+def test_host_info_for_a_switch_session_is_one_workspace_only(client, link, auth, monkeypatch):
+    other = "c" * 32
+    info = {
+        "dev": {"sim_convenience": True, "sandbox": "abcd1234"},
+        "alarms": [{"code": "a_one", "workspace_id": WS}, {"code": "b_two", "workspace_id": other}, {"code": "c_host"}],
+    }
+    monkeypatch.setattr(Gw, "host_info", lambda self: info, raising=False)
+    sw = switch_session(client, link)
+    got = client.get("/api/host", headers=bearer(sw)).json()
+    assert set(got) == {"dev", "alarms"} and got["alarms"] == [{"code": "a_one", "workspace_id": WS}]
+    full = client.get("/api/host", headers=bearer(local_session(auth))).json()
+    assert len(full["alarms"]) == 3
+
+
+def test_two_processes_share_the_file_without_resurrecting_a_revoked_key(now, tmp_path):
+    f = tmp_path / "t.json"
+    a, b = Auth(clock=lambda: now[0], trust_file=f), Auth(clock=lambda: now[0], trust_file=f)
+    k1, k2 = Browser(), Browser()
+    kid1 = a.enrol_key(local_session(a), k1.jwk, ORIGIN)
+    assert [r["id"] for r in b.trusted_list()] == [kid1]  # B sees A's key without restarting
+    kid2 = b.enrol_key(local_session(b), k2.jwk, ORIGIN)
+    assert a.revoke_key(kid1) is True
+    b.trusted.touch(kid2)  # B writes after A's revoke: it must not bring kid1 back
+    assert [r["id"] for r in b.trusted_list()] == [kid2]
+    assert [r["id"] for r in Auth(clock=lambda: now[0], trust_file=f).trusted_list()] == [kid2]
+
+
+def test_a_missing_host_header_is_not_a_server_error(client, auth):
+    local = local_session(auth)
+    res = client.post("/api/trusted/enrol", json={"jwk": {}}, headers={**bearer(local)})
+    assert res.status_code < 500

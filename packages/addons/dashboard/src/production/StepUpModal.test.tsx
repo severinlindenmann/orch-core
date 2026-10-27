@@ -4,11 +4,12 @@ import { StepUpModal } from './StepUpModal'
 import { requestStepUp, settleStepUp } from '../api/stepUp'
 
 vi.mock('../api/trustedKey', () => ({ upgradeSession: vi.fn() }))
-vi.mock('../api/bootstrap', () => ({ getToken: () => 'switch-token', adoptToken: vi.fn() }))
+let current = 'switch-token'
+vi.mock('../api/bootstrap', () => ({ getToken: () => current, adoptToken: vi.fn() }))
 import { upgradeSession } from '../api/trustedKey'
 import { adoptToken } from '../api/bootstrap'
 
-afterEach(() => { cleanup(); settleStepUp(false); vi.clearAllMocks() })
+afterEach(() => { current = 'switch-token'; cleanup(); settleStepUp(false); vi.clearAllMocks() })
 
 it('asks to confirm on this computer, and a confirmed browser resumes the action', async () => {
   vi.mocked(upgradeSession).mockResolvedValueOnce(null).mockResolvedValueOnce('full')
@@ -32,4 +33,14 @@ it('a session from another computer is told where the change can be made, with n
   expect(screen.queryByTestId('stepup-retry')).toBeNull()
   await act(async () => { fireEvent.click(screen.getByText('Close')) })
   expect(await result).toBe(false)
+})
+
+it('if a launch link replaced the session meanwhile, Try again runs the action without a challenge', async () => {
+  render(<StepUpModal />)
+  let result: Promise<boolean> = Promise.resolve(false)
+  act(() => { result = requestStepUp({ where: 'this_computer', message: 'x' }) })
+  current = 'local-token' // the person opened the terminal's link; the tab got its session
+  await act(async () => { fireEvent.click(screen.getByTestId('stepup-retry')) })
+  expect(await result).toBe(true)
+  expect(upgradeSession).not.toHaveBeenCalled()
 })

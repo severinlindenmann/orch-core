@@ -254,8 +254,17 @@ def create_app(
         return bound_only(request, gateway.workspaces())
 
     @app.get("/api/host")
-    def host():
-        return gateway.host_info()
+    def host(request: Request):
+        info = gateway.host_info()
+        bound = auth.switch_workspace(request.state.token)
+        if bound is None:
+            return info
+        # A hub-made session knows ONE workspace: the dev marker, and only the alarms of that workspace.
+        out = {k: v for k, v in info.items() if k == "dev"}
+        alarms = [a for a in info.get("alarms", []) if a.get("workspace_id") == bound]
+        if alarms:
+            out["alarms"] = alarms
+        return out
 
     def identity_row(ws):
         link = gateway.enabled(ws)

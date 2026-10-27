@@ -269,23 +269,20 @@ class Auth:
             return self.trusted.listing()
 
     def revoke_key(self, kid):
-        """Forget a browser key; every session it upgraded goes back to read-mostly (a switch session)."""
+        """Forget a browser key; every session it upgraded ends (see `_downgrade_unknown_keys`)."""
         with self.lock:
             found = self.trusted.remove(kid)
             self._downgrade_unknown_keys()
             return found
 
     def _downgrade_unknown_keys(self):
-        """Hold ``self.lock``. A session upgraded by a key that is revoked or idle-expired is a switch session again."""
+        """Hold ``self.lock``. A session upgraded by a key that is revoked or idle-expired ENDS (it is dropped, not
+        flipped back): every terminal socket and event stream of that token watches ``valid`` and closes with it, so
+        no authority opened while the session was full outlives the key. The next hub switch is read-mostly."""
         self.trusted.sweep()
-        for token, (kid, ws) in list(self.upgraded.items()):
-            if kid in self.trusted.keys:
-                continue
-            del self.upgraded[token]
-            if token in self.sessions:
-                self.kinds[token] = "switch"
-                self.switch_ws[token] = ws
-                self.stepups.pop(token, None)
+        for token, (kid, _ws) in list(self.upgraded.items()):
+            if kid not in self.trusted.keys:
+                self._drop(token)
 
     def challenge(self, token):
         """A nonce for a switch session (loopback only, where keys are enrolled) to sign with its browser key; at most
@@ -332,7 +329,8 @@ class Auth:
                 return None
             self.trusted.touch(kid)
             self._drop(token)
-            minted = self._mint(now, "local")
+            minted = self._mint(now, "local", LOOPBACK)  # pinned to loopback, whatever the defaults become
+            self.stepups.pop(minted["token"], None)  # a hub navigation opens no step-up window of its own
             self.upgraded[minted["token"]] = (kid, ws)
             return minted
 

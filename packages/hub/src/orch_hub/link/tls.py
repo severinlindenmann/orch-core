@@ -59,6 +59,7 @@ class TlsConn:
             mine = ipaddress.ip_address(self._s.getsockname()[0].split("%")[0])
         except OSError, ValueError, IndexError:
             return False
+        peer, mine = getattr(peer, "ipv4_mapped", None) or peer, getattr(mine, "ipv4_mapped", None) or mine
         return peer.is_loopback or peer == mine
 
     def _wait(self, write: bool, deadline: float) -> None:

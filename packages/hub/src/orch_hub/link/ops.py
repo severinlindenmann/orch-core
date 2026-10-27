@@ -460,7 +460,7 @@ def switch_ticket(c: OpContext) -> dict[str, Any]:
     user = _owner_user(c)
     try:
         sw.set_origin(c.workspace_id, c.body["origin"])
-        base = sw.hub_origin_for(c.body["origin"], c.same_computer)
+        base = sw.hub_origin_for(c.body.get("origin"), c.same_computer)
         if not base:
             raise Refused("unavailable")
         t = sw.issue_to_hub(user, c.workspace_id, c.body["return_to"], c.body["kind"])
@@ -502,7 +502,7 @@ def rail_get(c: OpContext) -> dict[str, Any]:
     except SwitchError as e:
         raise Refused(e.code) from None
     return {
-        "hub": {"name": sw.hub_name, "origin": sw.hub_origin_for(c.body["origin"], c.same_computer)},
+        "hub": {"name": sw.hub_name, "origin": sw.hub_origin_for(c.body.get("origin"), c.same_computer)},
         "user_id": user,
         "workspaces": sw.rail_rows(c.registry, c.access, user, current=c.workspace_id),
     }

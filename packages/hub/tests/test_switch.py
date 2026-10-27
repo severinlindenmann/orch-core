@@ -382,5 +382,7 @@ def test_same_computer_comes_from_the_socket_not_the_peer():
         return TlsConn(None, S(peer, mine)).same_computer()
 
     assert same("127.0.0.1", "127.0.0.1") and same("::1", "::1")
+    assert same("::ffff:127.0.0.1", "::ffff:127.0.0.1")  # a dual-stack socket reports mapped addresses
+    assert same("::ffff:100.64.0.7", "100.64.0.7")
     assert same("100.64.0.7", "100.64.0.7")  # this computer dialling its own private address
     assert not same("100.64.0.9", "100.64.0.7")  # another computer

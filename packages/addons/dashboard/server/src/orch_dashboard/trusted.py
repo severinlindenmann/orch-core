@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import base64
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import re
-import threading
 from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
@@ -81,54 +81,97 @@ def verify(jwk: dict, nonce: str, origin: str, signature: str) -> bool:
 
 
 class TrustedKeys:
-    """Enrolled browser keys, kept in memory and (when ``path`` is given) in a 0600 file. Not locked: `Auth` holds its
-    own lock around every call."""
+    """Enrolled browser keys, kept in memory and (when ``path`` is given) in a 0600 file shared by every dashboard
+    process of this state directory. Another process may change the file at any time, so: a read re-reads it when its
+    modification time changed (writes replace the file whole, so a read is never torn), and a change takes an ``fcntl``
+    lock on a sidecar file, re-reads, changes and writes, so a revoke in one process is never undone by another's save.
+    `Auth` holds its own lock around every call."""
 
     def __init__(self, path: Path | None, clock):
         self.path, self.clock = path, clock
         self.keys: dict[str, dict] = {}
-        if path is not None:
-            with contextlib.suppress(OSError, ValueError):
-                data = json.loads(path.read_text())
-                for kid, row in (data.get("keys") or {}).items():
-                    jwk = clean_jwk(row.get("jwk"))
-                    if jwk and key_id(jwk) == kid:
-                        self.keys[kid] = {
-                            "jwk": jwk,
-                            "origin": str(row.get("origin", ""))[:200],
-                            "created": float(row.get("created", 0)),
-                            "last_used": float(row.get("last_used", 0)),
-                        }
-        self._lock = threading.Lock()
+        self._seen: tuple | None = None
+        self._refresh(force=True)
+
+    def _stamp(self):
+        try:
+            st = self.path.stat()
+            return (st.st_mtime_ns, st.st_size, st.st_ino)
+        except OSError:
+            return None
+
+    def _refresh(self, force=False):
+        if self.path is None:
+            return
+        stamp = self._stamp()
+        if not force and stamp == self._seen:
+            return
+        self._seen = stamp
+        keys: dict[str, dict] = {}
+        with contextlib.suppress(OSError, ValueError, AttributeError):
+            data = json.loads(self.path.read_text())
+            for kid, row in (data.get("keys") or {}).items():
+                jwk = clean_jwk(row.get("jwk"))
+                if jwk and key_id(jwk) == kid:
+                    keys[kid] = {
+                        "jwk": jwk,
+                        "origin": str(row.get("origin", ""))[:200],
+                        "created": float(row.get("created", 0)),
+                        "last_used": float(row.get("last_used", 0)),
+                    }
+        self.keys = keys
+
+    @contextlib.contextmanager
+    def _change(self):
+        """Lock, re-read, let the caller change ``self.keys``, write."""
+        if self.path is None:
+            yield
+            return
+        lock = None
+        try:
+            with contextlib.suppress(OSError):
+                lock = os.open(str(self.path) + ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            self._refresh(force=True)
+            yield
+            self._save()
+        finally:
+            if lock is not None:
+                os.close(lock)  # closing releases the lock
 
     def _save(self):
         if self.path is None:
             return
         with contextlib.suppress(OSError):  # the keys still work in memory; they are just not kept across a restart
-            tmp = self.path.with_name(self.path.name + ".tmp")
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.tmp")
+            with contextlib.suppress(FileNotFoundError):
+                tmp.unlink()
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "w") as f:
                 json.dump({"keys": self.keys}, f)
             os.replace(tmp, self.path)
+            self._seen = self._stamp()
 
     def sweep(self):
+        self._refresh()
         now = self.clock()
-        dead = [k for k, r in self.keys.items() if now - r["last_used"] >= IDLE]
-        for k in dead:
-            del self.keys[k]
-        if dead:
-            self._save()
+        if not any(now - r["last_used"] >= IDLE for r in self.keys.values()):
+            return
+        with self._change():
+            now = self.clock()
+            for k in [k for k, r in self.keys.items() if now - r["last_used"] >= IDLE]:
+                del self.keys[k]
 
     def enrol(self, jwk: dict, origin: str) -> str | None:
         self.sweep()
         kid = key_id(jwk)
-        now = self.clock()
-        if kid not in self.keys and len(self.keys) >= MAX_KEYS:
-            oldest = min(self.keys, key=lambda k: self.keys[k]["last_used"])
-            del self.keys[oldest]
-        row = self.keys.get(kid)
-        self.keys[kid] = {"jwk": jwk, "origin": origin, "created": row["created"] if row else now, "last_used": now}
-        self._save()
+        with self._change():
+            now = self.clock()
+            if kid not in self.keys and len(self.keys) >= MAX_KEYS:
+                oldest = min(self.keys, key=lambda k: self.keys[k]["last_used"])
+                del self.keys[oldest]
+            row = self.keys.get(kid)
+            self.keys[kid] = {"jwk": jwk, "origin": origin, "created": row["created"] if row else now, "last_used": now}
         return kid
 
     def get(self, kid: str) -> dict | None:
@@ -136,15 +179,13 @@ class TrustedKeys:
         return self.keys.get(kid)
 
     def touch(self, kid: str):
-        if kid in self.keys:
-            self.keys[kid]["last_used"] = self.clock()
-            self._save()
+        with self._change():
+            if kid in self.keys:
+                self.keys[kid]["last_used"] = self.clock()
 
     def remove(self, kid: str) -> bool:
-        found = self.keys.pop(kid, None) is not None
-        if found:
-            self._save()
-        return found
+        with self._change():
+            return self.keys.pop(kid, None) is not None
 
     def listing(self) -> list[dict]:
         self.sweep()

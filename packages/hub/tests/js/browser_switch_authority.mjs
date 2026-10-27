@@ -68,7 +68,7 @@ try {
 
   // 5. revoke: the session the key upgraded goes back to read-mostly
   assert((await api(switcher, "DELETE", `/api/trusted/${keyId}`, full)).status === 200, "revoked");
-  assert(stepUp(await api(switcher, "POST", WRITE, full, {})), "after revoke the upgraded session is read-mostly again");
+  assert((await api(switcher, "POST", WRITE, full, {})).status === 401, "after revoke the upgraded session has ended (its streams and terminals close with it)");
   console.log("switch authority browser: ok");
 } finally {
   await browser.close();

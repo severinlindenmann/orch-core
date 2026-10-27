@@ -5,7 +5,7 @@ with the REAL hub web API and the REAL dashboard server + built single-page app 
   FULL with no prompt.
 * A fresh profile lands read-mostly: reads work, every change gets the structured `step_up_required`.
 * That hub-made session, replayed from the trusted browser (same machine, loopback), still cannot change anything.
-* Revoking the browser sends the session it upgraded back to read-mostly.
+* Revoking the browser ends the session it upgraded.
 
 Needs the built app (`npm run build` in packages/addons/dashboard) and Playwright for node; skipped without them.
 Run under the playwright lease: ``~/orch-dev/scripts/lease.sh run playwright switchauth -- uv run pytest tests/test_switch_authority_browser.py -q``

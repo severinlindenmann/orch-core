@@ -2,6 +2,7 @@
 import type { GrantInfo, Role, Workspace } from './types'
 import { atLeast } from './permissions'
 import { fmtClock, fmtDateTime, nowMs, sameLocalDay } from '@/lib/time'
+import { usableGrant } from '@/app/pages/new-ticket/startAfterCreate'
 
 /** The longest grant an owner or maintainer signs. */
 export const GRANT_MAX_HOURS = 168
@@ -75,6 +76,23 @@ export function accessReminder(g: Pick<GrantInfo, 'issued_at' | 'until'>, now: n
   const total = end - start
   const left = end - now
   return total >= 24 * 3_600_000 ? left < 24 * 3_600_000 : left < total * 0.25
+}
+
+/**
+ * What the header says about agent access: enough left to start agents (`ok`, 60 min or more), ending soon (15 to 60 min,
+ * still startable) or `missing` (none, not startable, or under 15 min left). Display only: the host enforces.
+ */
+export function accessLine(
+  grant: { until: string; startable?: boolean; startable_until?: string | null } | null | undefined,
+  now: number,
+): { kind: 'ok' } | { kind: 'ending'; until: string } | { kind: 'missing' } {
+  if (!grant) return { kind: 'missing' }
+  const left = Date.parse(grant.until) - now
+  if (!Number.isFinite(left) || left <= 0 || grant.startable === false) return { kind: 'missing' }
+  if (grant.startable_until && Date.parse(grant.startable_until) <= now) return { kind: 'missing' }
+  if (left < 15 * 60_000) return { kind: 'missing' }
+  if (!usableGrant({ grant } as Parameters<typeof usableGrant>[0], now)) return { kind: 'missing' }
+  return left < 60 * 60_000 ? { kind: 'ending', until: grant.until } : { kind: 'ok' }
 }
 
 /**

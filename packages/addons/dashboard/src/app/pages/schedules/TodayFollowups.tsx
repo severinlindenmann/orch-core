@@ -25,7 +25,7 @@ function Card({ row, ws, can, onHide }: { row: FollowupRow; ws: string; can: { c
   return (
     <li className="space-y-2 px-3 py-3" data-testid="followup-card" data-followup={row.id} data-kind={kind}>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Pill tone="border-transparent bg-addon text-on-addon">Schedules</Pill>
+        <Pill tone="border-border bg-surface-2 text-text-muted">Schedules</Pill>
         <StateBadges row={row} />
       </div>
       <h3 className="text-[14px] font-semibold">

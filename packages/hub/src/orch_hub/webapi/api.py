@@ -685,14 +685,15 @@ class WebApi:
 
     # --- (a) session -------------------------------------------------------------------------------------------------
 
-    def _guarded_credentials(self, c: Ctx, user_id: str | list[str], check: Callable[[], Any]) -> Any:
+    def _guarded_credentials(self, c: Ctx, user_id: str | Callable[[], list[str]], check: Callable[[], Any]) -> Any:
         """Every password + TOTP check (sign-in and the browser registration re-entry) goes through these caps."""
         # caps BEFORE any hashing: per source, and the sign-ins hashing right now (never queue: refuse)
         self._limit.hit("signin-src", c.source, SIGNIN_SOURCE_LIMIT)
         # the aggregate (IPv6 /48, IPv4 /24): a neighbour cannot exhaust our bucket, one allocation cannot spray; a
         # source that signed in as this user is exempt (cheap indexed read, no hashing), so neighbours cannot lock it out
-        ids = [user_id] if isinstance(user_id, str) else user_id
-        if not any(self.d.channels.known_source(u, c.source) for u in ids):
+        ids = [user_id] if isinstance(user_id, str) else user_id()  # the only lookup, after the source cap
+        # the exemption only for exactly one real user that knows this source: 0 or 2+ candidates always count
+        if not (len(ids) == 1 and self.d.channels.known_source(ids[0], c.source)):
             try:
                 net = ipaddress.ip_network(c.source, strict=False)
                 net = net.supernet(new_prefix=48 if net.version == 6 else 24)
@@ -737,12 +738,12 @@ class WebApi:
         if client == "browser" and c.origin is None:  # a cookie is only ever set for a request the browser labelled
             raise ApiError("not_allowed")
         who = b["user_id"].strip()[:64]
-        cands = self._candidates(who)
+        cands: list[str] = []
         scope = "full" if client == "browser" else "pairing"
 
         def attempt() -> Any:  # run inside the caps: they are charged before any lookup
             failure: ChannelError | None = None
-            for uid in cands:
+            for uid in cands:  # filled by the guard (once, after the source cap)
                 try:
                     return self.d.channels.sign_in(uid, b["password"], b["totp"], c.source, scope=scope)
                 except ChannelError as e:
@@ -751,7 +752,11 @@ class WebApi:
                     failure = e
             raise failure  # type: ignore[misc]  # _candidates never returns an empty list
 
-        s = self._guarded_credentials(c, cands, attempt)
+        def resolve() -> list[str]:
+            cands[:] = self._candidates(who)
+            return cands
+
+        s = self._guarded_credentials(c, resolve, attempt)
         out: dict[str, Any] = {"user_id": s["user_id"], "expires_ms": s["expires_ms"]}
         if client == "app":  # the phone keeps the token itself and sends it as a bearer
             out["token"] = s["token"]

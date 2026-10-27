@@ -352,3 +352,15 @@ def test_unknown_name_is_charged_to_the_limiter(w):
         )
         codes.append(s)
     assert 429 in codes  # guessing names cannot bypass the per-source cap
+
+
+def test_unknown_and_shared_names_count_against_the_network_limit(w):
+    """Run-11: 0 or 2+ candidates never get the known-source exemption; many sources in one /24 hit the aggregate."""
+
+    def spray(name, net, n=230):
+        bad = {"user_id": name, "password": "x" * 12, "totp": "000000", "client": "app"}
+        return [w.call("POST", "/session", bad, origin=None, peer=f"10.{net}.1.{i % 250 + 1}")[0] for i in range(n)]
+
+    assert 429 in spray("ghost", 1)  # zero candidates: counted
+    w.env.user("ann")  # now "ann" names two users
+    assert 429 in spray("ann", 2)

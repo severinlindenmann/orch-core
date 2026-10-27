@@ -351,3 +351,29 @@ def test_event_reader_still_gets_events_and_nothing_is_lost():
     t.join()
     link.close()
     assert got == ["1", "2"]
+
+
+def test_addon_list_is_read_once_per_request_and_a_write_clears_it():
+    from orch_dashboard.gateway import Gateway
+    from orch_dashboard.hostlink import REQUEST_MEMO
+
+    class Link:
+        calls = 0
+
+        def call(self, op, args=None, **kw):
+            Link.calls += 1
+            return {"addons": [{"name": "a", "state": "active"}]}
+
+    link = Link()
+    assert Gateway.addon_rows(link) and Gateway.addon_rows(link) and Link.calls == 2  # no request: every call reads
+    token = REQUEST_MEMO.set({})
+    try:
+        Link.calls = 0
+        rows = Gateway.addon_rows(link)
+        rows.clear()  # a caller's change must not leak into the memo
+        assert Gateway.addon_rows(link) and Link.calls == 1
+        REQUEST_MEMO.get().clear()  # what HostLink.call(write=True) does
+        Gateway.addon_rows(link)
+        assert Link.calls == 2
+    finally:
+        REQUEST_MEMO.reset(token)

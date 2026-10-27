@@ -82,6 +82,10 @@ class Capture:
     #: before the handler runs: a handler has no state directory of its own under the host
     market_files: Any = None
 
+    #: FB15: this prepare is the hand-off of an ``addon.grant`` in a full-mode workspace: judged without the D78 rule
+    #: (nothing is signed here; the grant lands only as the host-actor answer to the hub's ``addon.requested``)
+    hub_handoff: bool = False
+
     statement: str | None = None
 
     @property
@@ -111,6 +115,17 @@ def accepting(state: Any) -> Any:
     return dataclasses.replace(state, _ctx=dataclasses.replace(state._ctx, verifier=_AcceptAll(), admit=True))
 
 
+def judging(state: Any, capture: Capture | None) -> Any:
+    """:func:`accepting`, and for a hub hand-off prepare (:attr:`Capture.hub_handoff`, FB15) also without the D78 rule:
+    nothing is signed by that prepare, so the full-mode refusal of a local signature has nothing to judge."""
+    import dataclasses
+
+    state = accepting(state)
+    if capture is not None and capture.hub_handoff:
+        state = dataclasses.replace(state, _ctx=dataclasses.replace(state._ctx, hub_only=False))
+    return state
+
+
 def judge(store: Any, log: str, payload: dict[str, Any], capture: Capture) -> None:
     """Judge one unsigned person event (``payload``: its type and payload keys) as ``Store.append`` will, signature
     aside; raises the store's refusal."""
@@ -120,7 +135,7 @@ def judge(store: Any, log: str, payload: dict[str, Any], capture: Capture) -> No
 
     store.refresh()
     stamp = store.peek_stamp(log)
-    state = accepting(store.state)
+    state = judging(store.state, capture)
     probe = {
         "v": 2,
         "id": new_ulid(),

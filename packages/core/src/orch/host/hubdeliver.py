@@ -53,6 +53,9 @@ class StoreLanding:
         #: C10: the secret of a hub-requested grant that a pending local hand-off matched, with the runner plan. It
         #: lives here from the append until ``deliver`` gives it to the runner (or drops it); never logged or stored.
         self.deposits: list[tuple[dict[str, Any], str]] = []
+        #: FB15: ``(hand-off request record, the host-actor addon.granted that was appended)`` of an add-on the hub's
+        #: ``addon.requested`` turned on; ``deliver`` finishes the install and the request after the lock is released.
+        self.granted: list[tuple[dict[str, Any], dict[str, Any]]] = []
 
     @contextlib.contextmanager
     def locked(self) -> Iterator[None]:
@@ -141,6 +144,14 @@ class StoreLanding:
                 if isinstance(r, Refusal):
                     raise LandRefused(r)
                 state = r
+        addon = None
+        if log == WORKSPACE and event.get("type") == "addon.requested":
+            addon = self._answer_addon(state, event, at, seq, probes[-1][1])
+            if addon is not None:  # the host-actor addon.granted in the same lock hold; judged like every other line
+                r = preview(state, addon[0], log=WORKSPACE)
+                if isinstance(r, Refusal):
+                    raise LandRefused(r)
+                state = r
         old_check = store.append_check
 
         def check(
@@ -165,8 +176,69 @@ class StoreLanding:
                 store.append(grant, log=WORKSPACE)
                 if answer[2] is not None:  # a pending local hand-off matched: the runner gets the secret, only it
                     self.deposits.append((answer[2], answer[1]))
+            if addon is not None:
+                grant = {k: v for k, v in addon[0].items() if k not in ("seq", "prev", "at", "based_on")}
+                self.granted.append((addon[1], store.append(grant, log=WORKSPACE).event))
         finally:
             store.append_check = old_check
+
+    def _answer_addon(
+        self, state: Any, event: dict[str, Any], at: str, seq: int, request: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]] | None:
+        """The host-actor ``addon.granted`` that answers an admitted ``addon.requested`` (hub protocol 8.8b, FB15), or
+        ``None``: the request then stays in the log and turns nothing on. It is answered only when the prepared
+        hand-off request it names (``handoff``, made by the owner at this host: ``human.prepare {handoff}`` of
+        ``addon.grant``) is of the same canonical person, still open on the host's clock, and carries exactly the
+        requested terms. The declarations come from that request's event (the package the host staged and re-checks
+        under this lock: :func:`marketinstall.recheck`), never from the hub. Returns ``(event with seq/prev/at/based_on,
+        the request record)``."""
+        from orch import canon
+        from orch.hubclient.custodial import LandRefused
+        from orch.identity import new_ulid
+        from orch.model import Code, Refusal
+
+        from . import marketinstall
+
+        ws = state._core.ws  # noqa: SLF001 - the model's own state, read under the lock
+        req = ws.addon_requests.get(event["id"])
+        if req is None:  # the model admitted the request and recorded it; anything else is a bug: refuse, write nothing
+            raise LandRefused(Refusal(Code.GRANT_TERMS, "the add-on request was not recorded"))
+        requests = self.service.requests
+        try:
+            record = requests.read(req["handoff"]) if requests is not None else None
+        except Exception:  # noqa: BLE001 - an unreadable record is no hand-off
+            record = None
+        if (
+            record is None
+            or record.get("op") != "addon.grant"
+            or record.get("state") != "prepared"
+            or record.get("submit")
+            or record.get("workspace_id") != self.service.workspace_id
+            or record.get("person") != req["person"]
+            or requests.lapsed(record)
+        ):
+            return None  # no live local hand-off for these terms: the request is inert
+        ev = record["prepared"]["events"][0]
+        keys = ("name", "version", "package_sha256", "capabilities", "fields", "sections", "artifact_kinds", "runtime")
+        body = {k: ev[k] for k in keys if k in ev}
+        terms = ("name", "version", "package_sha256", "capabilities", "runtime")
+        if ev.get("type") != "addon.granted" or any(body.get(k) != req[k] for k in terms):
+            return None
+        grant = {
+            "v": 2,
+            "hash_v": 1,
+            "id": new_ulid(),
+            "type": "addon.granted",
+            "actor": {"kind": "host"},
+            **body,
+            "request": event["id"],
+        }
+        try:
+            marketinstall.recheck(self.service, record, [grant])  # the staged bytes as they are now (C2), before append
+        except Exception as exc:  # noqa: BLE001 - a changed stage or a revoked package: refuse, nothing is written
+            raise LandRefused(Refusal(Code.GRANT_TERMS, str(getattr(exc, "code", "the staged package changed")))) from None
+        prev = canon.event_head(request)
+        return {**grant, "based_on": prev, "seq": seq + 1, "prev": prev, "at": at}, record
 
     def _answer(
         self, state: Any, event: dict[str, Any], at: str, seq: int, request: dict[str, Any]
@@ -306,6 +378,8 @@ def deliver(service: WorkspaceService, state: Any, log: str, event: dict[str, An
         return "internal"
     finally:
         _to_runner(service, landing)
+        _finish_addons(service, landing)
+        _finish_addons(service, landing)
 
 
 def _to_runner(service: WorkspaceService, landing: StoreLanding) -> None:
@@ -323,6 +397,28 @@ def _to_runner(service: WorkspaceService, landing: StoreLanding) -> None:
         fut.add_done_callback(
             lambda f, g=plan["grant"]: _log.info("hub-requested grant %s: deposit %s", g, _outcome(f))
         )
+
+
+def _finish_addons(service: WorkspaceService, landing: StoreLanding) -> None:
+    """FB15: after an ``addon.granted`` the hub's request caused: put the granted bytes in place (idempotent, by digest,
+    as ``human.finish`` does) and end the prepared request ``submitted``. Outside the store lock; failures are logged,
+    never raised (the registry fails closed on a directory whose digest is not the grant's, and start-up finishes it)."""
+    from . import marketinstall
+    from .workspace import ok_result
+
+    granted, landing.granted = landing.granted, []
+    for record, event in granted:
+        try:
+            marketinstall.after_grant(service, record, [event])
+            template = record.get("result") or {}
+            result = ok_result(template.get("data") or {}, seq=int(event.get("seq") or 0))
+            result["key"] = template.get("key")
+            result["hints"] = list(template.get("hints") or [])[:8]
+            result["lines"] = [str(line) for line in template.get("lines") or []][:10000]
+            outcome = {"state": "committed", "result": result, "exit": 0}
+            service.requests.write({**record, "state": "submitted", "done_at": service.clock(), "outcome": outcome})
+        except Exception:  # noqa: BLE001 - one bad finish never stops the loop
+            _log.exception("add-on request: finishing the install failed")
 
 
 def _outcome(fut: Any) -> str:

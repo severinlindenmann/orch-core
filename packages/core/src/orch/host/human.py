@@ -441,6 +441,7 @@ class HumanOps:
             dry_run=dry_run,
         )
         capture.dry_run = dry_run
+        capture.hub_handoff = name == "addon.grant" and handoff and signer is None  # FB15
         capture.market_files = marketinstall.files_of(service)
         if args.get("sequence") is not None and name == "artifact.add":
             self._check_pasted_image(inner, files)
@@ -490,7 +491,11 @@ class HumanOps:
         built = prepared["events"]
         convenience.refuse_reader_op(service, name, events=built, readers=capture.readers)
         convenience.refuse_click_removal(service, name, built)  # B6: never lock the honest signer out
-        if (refused := hubsign.refusal(service, built, None)) is not None:
+        # FB15: in full hub mode an add-on grant may be PREPARED as a hand-off (signer None): nothing is signed here and
+        # no local signature will ever land (submit and append_signed refuse it). The hub's channel signs an
+        # ``addon.requested`` that names this request, and the host answers it (hubdeliver).
+        hub_addon = name == "addon.grant" and handoff and signer is None
+        if not hub_addon and (refused := hubsign.refusal(service, built, None)) is not None:
             raise refused  # V3 C11: early and friendly; append_signed is the enforcement (under the store lock)
         if capture.checks:  # N3: the clean-tree checks of a decision that binds a commit (not signed)
             prepared["checks"] = capture.checks

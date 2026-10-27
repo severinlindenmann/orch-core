@@ -133,3 +133,31 @@ def test_no_hub_means_an_empty_rail(client, link, auth):
     link.answers["rail"] = fail("hub.not_joined")
     got = client.get(f"/api/w/{WS}/hub/rail", headers={"Authorization": "Bearer " + token})
     assert got.json() == {"hub": None, "workspaces": []}
+
+
+def _switch_token(client, link):
+    link.answers["redeem"] = {"user_id": "u", "name": None, "return_to": "/", "kind": "open"}
+    return client.post("/auth/switch", json={"t": TICKET}, headers=H).json()["token"]
+
+
+def test_a_switch_session_reads_only_its_own_workspace_and_never_a_shell(client, link):
+    h = {"Authorization": "Bearer " + _switch_token(client, link), "Origin": ORIGIN}
+    other = "c" * 32
+    assert client.get(f"/api/w/{other}/head", headers=h).status_code == 403
+    assert client.get(f"/api/events?ws={other}", headers=h).status_code == 403
+    assert client.post(f"/api/w/{WS}/terminals/open", json={}, headers=h).status_code == 403
+    assert client.post(f"/api/w/{WS}/runs/x/attach", json={}, headers=h).status_code == 403
+    own = client.get(f"/api/w/{WS}/hub/rail", headers=h)
+    assert own.status_code != 403
+
+
+def test_ticket_tries_are_limited_and_a_refusal_costs_more(client, link):
+    link.answers["redeem"] = fail("hub.refused", "x")
+    codes = [client.post("/auth/switch", json={"t": TICKET}, headers=H).status_code for _ in range(8)]
+    assert codes[0] == 401 and 429 in codes  # the loopback limiter (10 a minute) runs out early: two charges each
+
+
+def test_remote_logout_everywhere_ends_switch_sessions(client, link, auth):
+    token = _switch_token(client, link)
+    auth.logout_everywhere()
+    assert not auth.valid(token)

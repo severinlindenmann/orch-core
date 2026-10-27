@@ -30,7 +30,7 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 from . import reads
 from .errors import HostError, fail, response
 from .gateway import Gateway
-from .policy import LOOPBACK
+from .policy import LOOPBACK, REMOTE
 
 TICKET = re.compile(r"^([0-9a-f]{32})\.[0-9a-f]{32}$")
 RETURN_TO = re.compile(r"^/(?!/)[A-Za-z0-9._~!$&'()*+,;=:@%/?#-]{0,255}$")
@@ -110,14 +110,19 @@ def register(app: FastAPI, gateway: Gateway, auth=None, clock=time.monotonic):
     @app.post("/auth/switch")
     def redeem(body: SwitchBody, request: Request):
         ws = TICKET.fullmatch(body.t).group(1)
+        a = auth or app.state.auth
+        client = getattr(request.state, "client", None) if request.scope.get("orch_listener") == REMOTE else None
+        if not a.switch_attempt(client):
+            return response("rate.limited", 429)
         try:
             got = link_for(ws).call("hub.switch", {"kind": "redeem", "ticket": body.t})
         except HostError:
+            a.switch_attempt(client)  # a refused ticket costs its source a second charge
             return response("session.required", 401)  # one answer for a bad, used, expired or foreign ticket
         if got.get("kind") == "signout":
             return JSONResponse({"signed_out": True})
         listener = request.scope.get("orch_listener", LOOPBACK)
-        minted = (auth or app.state.auth).open_switch(listener)
+        minted = a.open_switch(listener, ws)
         return JSONResponse({**minted, "return_to": safe_return_to(got.get("return_to")), "workspace_id": ws})
 
     @app.post("/api/w/{ws}/hub/switch")

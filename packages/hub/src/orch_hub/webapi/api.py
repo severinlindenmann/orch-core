@@ -115,6 +115,7 @@ STATUS = {
     "internal": 500,
     "not_bound": 409,
     "bad_ticket": 403,
+    "reauth_required": 403,
     # contract refusals a registration or a prepare/sign can surface (protocol.md §14)
     "bad_signature": 403,
     "cert_invalid": 403,
@@ -312,6 +313,13 @@ ROUTES: tuple[Route, ...] = (
     ),
     _r("POST", "/admin/connect", "admin", "a_connect", "Mint a workspace invite and return the one connect link"),
     _r("POST", "/switch/ticket", "session", "switch_ticket", "A one-time ticket to open one of my workspaces"),
+    _r(
+        "POST",
+        "/switch/peek",
+        "none",
+        "switch_peek",
+        "Look at a ticket from a workspace without using it (who, and who is signed in here)",
+    ),
     _r("POST", "/switch/redeem", "none", "switch_redeem", "Redeem a ticket from a workspace: signs me in here"),
     _r("GET", "/rail", "session", "rail", "The hub and my workspaces, for the switcher"),
     _r("GET", "/admin/audit", "admin", "a_audit", "Read the audit chain (?since=N, up to 100 records)"),
@@ -366,6 +374,7 @@ class Ctx:
     channel_id: str | None = None  # the channel a ``channel`` session is bound to
     origin: str | None = None
     source: str = ""
+    via_switch: bool = False  # the session came from a switch ticket, not a password sign-in
     cookie_value: str = ""  # the session cookie the browser sent, if any (auth-none routes may use it, never trust it)
 
 
@@ -587,6 +596,7 @@ class WebApi:
                 raise ApiError("no_session")
             info = self.d.channels.session_info(ctx.token)
             ctx.user_id, ctx.scope, ctx.channel_id = info["user_id"], info["scope"], info["channel_id"]
+            ctx.via_switch = info["login_ms"] == 0
             # a session is for the carrier it was issued for (cookie = browser: ``full``; bearer = app: ``pairing`` or
             # ``channel``); the scope is stored with the session, so it also holds across a restart
             if (ctx.scope == "full") != ctx.cookie:
@@ -603,6 +613,10 @@ class WebApi:
                     raise ApiError("no_session")
             if route.auth == "admin" and not self.d.access.is_hub_admin(ctx.user_id):
                 raise ApiError("forbidden_role")
+            if (
+                route.auth == "admin" and ctx.via_switch
+            ):  # a workspace vouched for this session: admin needs a real sign-in
+                raise ApiError("reauth_required")
         body = self._body(raw)
         try:
             q = urllib.parse.parse_qs(u.query, keep_blank_values=True, strict_parsing=bool(u.query), max_num_fields=8)
@@ -824,7 +838,16 @@ class WebApi:
 
     def _h_whoami(self, c: Ctx, p: dict, q: dict, b: dict | None):
         name = next((u["name"] for u in self.d.access.users() if u["user_id"] == c.user_id), None)
-        return 200, {"user_id": c.user_id, "name": name, "is_admin": self.d.access.is_hub_admin(c.user_id)}
+        return (
+            200,
+            {
+                "user_id": c.user_id,
+                "name": name,
+                "is_admin": self.d.access.is_hub_admin(c.user_id),
+                "needs_sign_in": c.via_switch,  # admin pages need a password sign-in (a workspace vouched for this one)
+            },
+            [],
+        )
 
     def _h_sign_out(self, c: Ctx, p: dict, q: dict, b: dict | None):
         self.d.channels.sign_out(c.token)
@@ -851,12 +874,55 @@ class WebApi:
             raise ApiError("unavailable")
         return 200, {"url": f"{origin}/#t={sw.issue_to_ws(c.user_id, ws, b['return_to'], b['kind'])}"}, []
 
+    def _session_name(self, token: str) -> dict[str, Any] | None:
+        """Who the presented cookie is, or None (no cookie, dead session)."""
+        if not token:
+            return None
+        try:
+            uid = self.d.channels.session_info(token)["user_id"]
+        except ChannelError:
+            return None
+        return {"user_id": uid, "name": self._user_name(uid)}
+
+    def _user_name(self, uid: str) -> str | None:
+        return next((u["name"] for u in self.d.access.users() if u["user_id"] == uid), None)
+
+    def _h_switch_peek(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """The landing page asks before it signs anybody in (login CSRF): who the ticket is for and who, if anyone,
+        is signed in here already. The ticket is not used."""
+        b = _need(b, t=str)
+        try:
+            r = self._switch().peek(b["t"], "to_hub")
+        except SwitchError:
+            raise ApiError("bad_ticket") from None
+        return (
+            200,
+            {
+                "kind": r["kind"],
+                "user_id": r["user"],
+                "name": self._user_name(r["user"]),
+                "signed_in_as": self._session_name(c.cookie_value),
+            },
+            [],
+        )
+
     def _h_switch_redeem(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, t=str)
         if c.origin is None:  # a cookie is only ever set for a request the browser labelled
             raise ApiError("not_allowed")
+        replace = b.get("replace", False)
+        if type(replace) is not bool:
+            raise ApiError("malformed")
+        sw = self._switch()
         try:
-            r = self._switch().redeem(b["t"], "to_hub")
+            want = sw.peek(b["t"], "to_hub")
+        except SwitchError:
+            raise ApiError("bad_ticket") from None
+        mine = self._session_name(c.cookie_value)
+        if want["kind"] == "open" and mine is not None and mine["user_id"] != want["user"] and not replace:
+            raise ApiError("other_user")  # never replace another person's session silently (login CSRF)
+        try:
+            r = sw.redeem(b["t"], "to_hub")
         except SwitchError:
             raise ApiError("bad_ticket") from None
         clear = f"{self._cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
@@ -865,6 +931,8 @@ class WebApi:
             if c.cookie_value:
                 self.d.channels.sign_out(c.cookie_value)
             return 200, {"user_id": None, "return_to": "/", "kind": "signout"}, [("Set-Cookie", clear + secure)]
+        if mine is not None and c.cookie_value:
+            self.d.channels.sign_out(c.cookie_value)
         try:
             s = self.d.channels.open_session(r["user"])
         except ChannelError:

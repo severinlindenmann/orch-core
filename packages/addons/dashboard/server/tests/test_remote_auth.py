@@ -55,7 +55,7 @@ def test_the_remote_kind_is_only_what_the_passkey_login_opens():
 
 
 def test_remote_sessions_live_12_hours_and_2_idle_and_local_ones_keep_24_and_12():
-    assert LIFETIMES == {"local": (86400, 43200), "remote": (43200, 7200)}
+    assert LIFETIMES == {"local": (86400, 43200), "remote": (43200, 7200), "switch": (43200, 7200)}
     clock = Clock()
     auth = Auth(clock=clock)
     local = auth.exchange(auth.launch(PORT)["code"], "local")[0]

@@ -180,3 +180,64 @@ def test_no_switch_service_means_unavailable(tmp_path):
         assert (s, o["error"]) == (503, "unavailable")
     finally:
         x.close()
+
+
+def _tok(h):
+    tok = h["Set-Cookie"].split(";")[0].split("=", 1)[1]
+    return tok
+
+
+def test_peek_does_not_use_the_ticket_and_names_both_people(w):
+    t = w.sw.issue_to_hub(w.ann, WS, "/x")
+    mine = w.login(w.admin)
+    s, o, _ = w.call("POST", "/switch/peek", {"t": t}, token=mine)
+    assert s == 200 and o["user_id"] == w.ann and o["kind"] == "open"
+    assert o["signed_in_as"]["user_id"] == w.admin
+    s, o, _ = w.call("POST", "/switch/peek", {"t": t})
+    assert s == 200 and o["signed_in_as"] is None
+    s, o, _ = w.call("POST", "/switch/redeem", {"t": t})
+    assert s == 200  # still unused after two peeks
+
+
+def test_a_ticket_never_replaces_another_persons_session_silently(w):
+    mine = w.login(w.admin)
+    t = w.sw.issue_to_hub(w.ann, WS, "/x")
+    s, o, _ = w.call("POST", "/switch/redeem", {"t": t}, token=mine)
+    assert (s, o["error"]) == (403, "other_user")
+    assert w.call("GET", "/session", token=mine)[0] == 200  # still signed in as the admin; the ticket is not spent
+    s, o, h = w.call("POST", "/switch/redeem", {"t": t, "replace": True}, token=mine)
+    assert s == 200 and o["user_id"] == w.ann
+    assert w.call("GET", "/session", token=mine)[0] == 401  # the old session ended
+    w.browser_tokens.add(_tok(h))
+
+
+def test_the_same_person_may_pass_through(w):
+    mine = w.login(w.ann)
+    t = w.sw.issue_to_hub(w.ann, WS, "/x")
+    assert w.call("POST", "/switch/redeem", {"t": t}, token=mine)[0] == 200
+
+
+def test_a_switch_session_cannot_do_admin_until_a_real_sign_in(w):
+    t = w.sw.issue_to_hub(w.admin, WS, "/")
+    s, o, h = w.call("POST", "/switch/redeem", {"t": t})
+    assert s == 200
+    tok = _tok(h)
+    w.browser_tokens.add(tok)
+    s, me, _ = w.call("GET", "/session", token=tok)
+    assert s == 200 and me["needs_sign_in"] is True and me["is_admin"] is True
+    s, o, _ = w.call("GET", "/admin/users", token=tok)
+    assert (s, o["error"]) == (403, "reauth_required")
+    real = w.login(w.admin)  # a normal sign-in is unaffected
+    assert w.call("GET", "/admin/users", token=real)[0] == 200
+    assert w.call("GET", "/session", token=real)[2] is not None
+
+
+def test_the_rail_lists_only_my_workspaces(w):
+    w.sw.set_origin(WS, DASH)
+    w.sw.set_origin(WS_SEL, "http://127.0.0.1:7002")
+    bob = w.login(w.env.user("bob"))  # in no group, owns nothing
+    s, o, _ = w.call("GET", "/rail", token=bob)
+    assert s == 200 and o["workspaces"] == []
+    r = ops.rail_get(ctx(w, WS, "rail_get", {"origin": DASH}))  # the link's user is the owner alias of WS (ann)
+    assert {x["workspace_id"] for x in r["workspaces"]} <= {WS, WS_SEL}
+    assert all(x["workspace_id"] != WS_SEL or w.reg.owner_alias(WS_SEL) == w.ann for x in r["workspaces"])

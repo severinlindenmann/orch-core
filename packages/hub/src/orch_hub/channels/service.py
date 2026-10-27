@@ -377,7 +377,9 @@ class Channels:
 
     def open_session(self, user_id: str) -> dict[str, Any]:
         """A ``full`` (browser) session for a user the hub itself has just authenticated by other means (a one-time switch
-        ticket from the user's workspace). No password, no TOTP, no failure counters touched."""
+        ticket from the user's workspace). No password, no TOTP, no failure counters touched.
+        ``login_ms`` is 0: the hub did not see a password sign-in, so hub-admin routes refuse this session until the
+        person signs in for real (``reauth_required``)."""
         u = self._known_user(user_id)
         token = secrets.token_urlsafe(32)
         now = self._now()
@@ -387,7 +389,7 @@ class Channels:
                 db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
                 db.execute(
                     "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms) VALUES (?,?,?,?,?,?)",
-                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", now),
+                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", 0),  # login_ms 0: no password sign-in
                 )
 
         self._guard(go)

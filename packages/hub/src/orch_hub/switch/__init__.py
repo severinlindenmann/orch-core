@@ -143,6 +143,17 @@ class SwitchService:
     def issue_to_hub(self, user: str, ws: str, return_to: str, kind: str = "open") -> str:
         return self._mint("to_hub", user, ws, return_to, kind)
 
+    def peek(self, ticket: Any, direction: str) -> dict[str, Any]:
+        """Look at a live ticket without using it (a copy)."""
+        if type(ticket) is not str or not 1 <= len(ticket) <= 100:
+            raise SwitchError("bad_ticket")
+        token = ticket.rsplit(".", 1)[-1] if direction == "to_ws" else ticket
+        with self._mu:
+            r = self._tickets.get(token)
+            if r is None or r["exp"] <= self._now() or r["dir"] != direction:
+                raise SwitchError("bad_ticket")
+            return dict(r)
+
     def redeem(self, ticket: Any, direction: str, *, ws: str | None = None) -> dict[str, Any]:
         """Use a ticket once. ``to_ws`` needs ``ws`` = the redeeming link's workspace. Any problem is ``bad_ticket``
         (and a ticket presented in the wrong place is spent, not left for the right one)."""

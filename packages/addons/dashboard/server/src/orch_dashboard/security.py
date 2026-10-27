@@ -1,4 +1,5 @@
 import contextlib
+import urllib.parse
 
 from . import widget_frame
 from .errors import response
@@ -140,6 +141,9 @@ class Security:
             if not (self.auth.valid_setup(token) if setup else self.session_ok(token, policy)):
                 return await reject("session.required", 401)
             scope.setdefault("state", {})["token"] = token
+            refusal = self.switch_refused(token, path, scope)
+            if refusal:
+                return await reject("remote.refused", 403)
         if method not in ("GET", "HEAD", "OPTIONS"):
             if origins != [origin]:
                 return await reject("origin.bad", 403)
@@ -214,6 +218,21 @@ class Security:
                 raise
             # No body/header interpolation in errors or logs.
             await reject("internal", 500)
+
+    def switch_refused(self, token, path, scope) -> bool:
+        """A session opened by a hub switch (H1) is less than a fresh login: it reads only the workspace its ticket
+        was for, and it never opens a shell on the server (terminals) whatever the listener."""
+        bound = self.auth.switch_workspace(token)
+        if bound is None:
+            return False
+        parts = path.split("/")
+        if len(parts) > 3 and parts[:3] == ["", "api", "w"] and parts[3] != bound:
+            return True
+        if path == "/api/events":
+            wanted = urllib.parse.parse_qs(scope.get("query_string", b"").decode("latin1")).get("ws", [])
+            return wanted != [bound]
+        shell = len(parts) > 5 and parts[:3] == ["", "api", "w"] and (parts[4] == "terminals" or parts[-1] == "attach")
+        return shell
 
     async def refuse(self, scope, receive, send):
         if scope["type"] == "websocket":

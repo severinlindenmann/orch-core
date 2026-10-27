@@ -93,6 +93,7 @@ class Auth:
         self.kinds: dict[str, str] = {}
         # The listener each session was opened on; Security refuses the token on any other (see KIND_LISTENER).
         self.listeners: dict[str, str] = {}
+        self.switch_ws: dict[str, str] = {}  # switch session -> the one workspace its ticket was for (H1)
         self.session_sources: dict[str, str] = {}  # remote session -> the source bucket that opened it
         #: remote session -> {(action, digest of the op) -> (verified at, the proof the signer checks again, the
         #: credential that made it)}; single use
@@ -218,7 +219,7 @@ class Auth:
                 self.credentials[minted["token"]] = credential_id
             return minted
 
-    def open_switch(self, listener):
+    def open_switch(self, listener, workspace):
         """H1 (27 Oct): a session born from a hub switch ticket (the hub vouched for the workspace owner; the browser
         presented a one-use ticket). Kind ``switch`` is NOT ``local``: the local-only gates and the step-up rule treat
         it like a remote session (a passkey touch for the sensitive actions). It works on the listener it was
@@ -228,7 +229,21 @@ class Auth:
             self._drop_dead(now)
             self._evict("switch", SWITCH_SESSIONS - 1)
             minted = self._mint(now, "switch", listener)
+            self.switch_ws[minted["token"]] = workspace
             return minted
+
+    def switch_workspace(self, token):
+        """The one workspace a switch session may read, or None for any other kind of session."""
+        with self.lock:
+            return self.switch_ws.get(token) if token in self.sessions else None
+
+    def switch_attempt(self, address):
+        """One switch-ticket try: a remote source has its own bucket (like a passkey login); on loopback there is no
+        client address, so the launch limiter (10 a minute) applies. False when the bucket is full."""
+        if address is None:
+            with self.lock:
+                return self._attempt(self.clock())
+        return self.remote_attempt(address)
 
     def _evict(self, kind, keep, source=None):
         """Hold ``self.lock``. Drop the oldest sessions of ``kind`` (of one ``source`` when given) until at most
@@ -243,7 +258,15 @@ class Auth:
 
     def _drop(self, token):
         """Hold ``self.lock``."""
-        for table in (self.sessions, self.kinds, self.listeners, self.session_sources, self.stepups, self.credentials):
+        for table in (
+            self.sessions,
+            self.kinds,
+            self.listeners,
+            self.session_sources,
+            self.stepups,
+            self.credentials,
+            self.switch_ws,
+        ):
             table.pop(token, None)
 
     def _drop_dead(self, now):
@@ -253,7 +276,7 @@ class Auth:
             for t, (born, last) in self.sessions.items()
             if self._alive(self.kinds.get(t), born, last, now)
         }
-        for table in (self.kinds, self.listeners, self.session_sources, self.stepups, self.credentials):
+        for table in (self.kinds, self.listeners, self.session_sources, self.stepups, self.credentials, self.switch_ws):
             for token in [t for t in table if t not in self.sessions]:
                 del table[token]
 
@@ -382,9 +405,11 @@ class Auth:
             self._drop(token)
 
     def logout_everywhere(self, kind="remote"):
-        """End every session of ``kind`` ("Log out everywhere" in Settings, R1-8)."""
+        """End every session of ``kind`` ("Log out everywhere" in Settings, R1-8); a remote logout ends the sessions
+        opened by a hub switch too."""
         with self.lock:
-            for token in [t for t, k in self.kinds.items() if k == kind]:
+            kinds = {kind, "switch"} if kind == "remote" else {kind}
+            for token in [t for t, k in self.kinds.items() if k in kinds]:
                 self._drop(token)
 
     def bind_setup(self, token, setup_id):

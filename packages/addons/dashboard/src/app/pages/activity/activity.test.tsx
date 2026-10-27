@@ -55,9 +55,15 @@ describe('Activity page (real host)', () => {
   it('sends the chosen filters to the server and starts again from the first page', async () => {
     const { spy, view } = open(page([row('1')]))
     await screen.findAllByTestId('activity-row', {}, T)
-    await view.user.selectOptions(screen.getByLabelText('What'), 'reviews')
+    // The filters are Dropdowns (radix Select): open the combobox, press the option.
+    const choose = async (label: string, option: string) => {
+      await view.user.click(screen.getByRole('combobox', { name: label }))
+      await view.user.click(await screen.findByRole('option', { name: option }))
+      await waitFor(() => expect(screen.getByRole('combobox', { name: label })).toHaveTextContent(option))
+    }
+    await choose('What', 'Reviews')
     await waitFor(() => expect(spy).toHaveBeenLastCalledWith(expect.any(String), { group: 'reviews' }))
-    await view.user.selectOptions(screen.getByLabelText('Who'), 'agents')
+    await choose('Who', 'Agents only')
     await waitFor(() => expect(spy).toHaveBeenLastCalledWith(expect.any(String), { group: 'reviews', who: 'agents' }))
     await view.user.type(screen.getByLabelText('Ticket'), 'demo-0002')
     await waitFor(() => expect(spy).toHaveBeenLastCalledWith(expect.any(String), { group: 'reviews', who: 'agents', ticket: 'DEMO-0002' }))

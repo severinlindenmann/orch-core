@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from orch.setup import claude_folder
-from tests.setup.fakes import FakePorts, names
+from tests.setup.fakes import names
 from tests.setup.test_create import AGENT, fake_signer, run_ok  # noqa: F401 - fake_signer: signing stand-ins
 
 

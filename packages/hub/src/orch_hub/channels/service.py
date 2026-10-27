@@ -428,7 +428,9 @@ class Channels:
             "scope": scope,
             "channel_id": cid,
             "expires_ms": exp,
-            "login_ms": 0 if via == "switch" else (login if login is not None else created),  # no sign-in seen: fail closed
+            "login_ms": 0
+            if via == "switch"
+            else (login if login is not None else created),  # no sign-in seen: fail closed
             "via": via,
         }
 

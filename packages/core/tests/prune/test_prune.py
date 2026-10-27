@@ -203,6 +203,11 @@ class Machine:
         ctx.env = env
         return main(list(args), env=env, out=self.out, err=self.err, ctx=ctx)
 
+    def go(self, *args: str, answers: list[str] | None = None, **kw) -> int:
+        """A person at a terminal who confirms ("y"), then answers ``answers`` (the per-workspace questions)."""
+        self.answers = ["y", *(answers or [])]
+        return self.prune(*args, interactive=True, **kw)
+
     def snapshot(self) -> list[str]:
         out = []
         for base in (self.home, self.outside):
@@ -281,7 +286,7 @@ def test_system_files_listed_with_commands_for_an_admin(m):
 
 
 def test_yes_keep_removes_orch_and_leaves_the_users_files(m):
-    assert m.prune("--yes", "--workspaces", "keep") == 0, m.err.getvalue() + m.out.getvalue()
+    assert m.go("--workspaces", "keep") == 0, m.err.getvalue() + m.out.getvalue()
     assert os.listdir(m.state) == ["evil-link"]  # only the link out of the folder is left, with a note, not followed
     assert "evil-link" in m.out.getvalue()
     assert not (m.home / ".config" / "systemd").exists() and not (m.home / ".local/share/orch").exists()
@@ -305,19 +310,36 @@ def test_yes_keep_removes_orch_and_leaves_the_users_files(m):
 
 
 def test_after_prune_a_second_run_finds_nothing(m):
-    assert m.prune("--yes", "--workspaces", "keep") == 0
+    assert m.go("--workspaces", "keep") == 0
     m.runner.stopped.clear()
-    assert m.prune("--yes", "--workspaces", "keep", "--keep-tool") == 0
+    assert m.go("--workspaces", "keep", "--keep-tool") == 0
     assert "Nothing to remove" in m.out.getvalue() or "Done" in m.out.getvalue()
 
 
-def test_yes_alone_never_deletes_a_workspace_folder(m):
+def test_yes_without_a_terminal_leaves_workspaces_untouched(m):
     assert m.prune("--yes") == 0
-    assert m.ws.exists() and (m.ws / "notes.txt").exists() and (m.ws / "src" / "main.py").exists()
+    assert (m.ws / ".orch").exists() and (m.ws / "notes.txt").exists() and (m.ws / "src" / "main.py").exists()
+    assert not m.state.joinpath("host").exists()  # everything that is not a workspace did go
+    assert "kept untouched" in m.out.getvalue()
+
+
+def test_yes_with_a_terminal_asks_per_workspace_and_never_deletes_the_folder(m):
+    m.answers = ["y"]  # only the workspace question: --yes skips the main confirm
+    assert m.prune("--yes", interactive=True) == 0
+    assert any("Also remove orch's own files in" in a for a in m.asked)
+    assert not any("Also delete the folder" in a for a in m.asked)
+    assert not (m.ws / ".orch").exists() and (m.ws / "notes.txt").exists()
+
+
+def test_yes_with_a_terminal_and_a_no_keeps_the_workspace_store(m):
+    m.answers = ["n"]
+    assert m.prune("--yes", interactive=True) == 0
+    assert (m.ws / ".orch" / "tickets" / "T1.md").exists() and not m.state.joinpath("host").exists()
 
 
 def test_workspaces_delete_removes_the_folder_after_its_worktrees(m):
-    assert m.prune("--yes", "--workspaces", "delete") == 0, m.err.getvalue()
+    assert m.go("--workspaces", "delete", answers=["y"]) == 0, m.err.getvalue()
+    assert any("including its git history" in a for a in m.asked)
     assert not m.ws.exists()
     assert ["git", "-C", str(m.ws), "worktree", "remove", "--force", str(m.wt)] in m.calls
     assert (m.outside / "precious.txt").exists()
@@ -325,7 +347,7 @@ def test_workspaces_delete_removes_the_folder_after_its_worktrees(m):
 
 def test_a_folder_prune_does_not_recognise_is_never_deleted(m):
     (m.ws / ".orch" / "config.json").unlink()
-    assert m.prune("--yes", "--workspaces", "delete") == 0
+    assert m.go("--workspaces", "delete", answers=["y"]) == 0
     assert m.ws.exists() and (m.ws / "notes.txt").exists()
     assert "no orch store" in m.out.getvalue()
 
@@ -334,7 +356,9 @@ def test_interactive_confirm_and_per_workspace_question(m):
     m.answers = ["y", "n", "n"]  # remove all? yes; delete the folder? no; tell the hub? no
     assert m.prune(interactive=True) == 0, m.err.getvalue()
     assert any("Remove all of this?" in a for a in m.asked)
-    assert any(f"Also delete the folder {m.ws} (" in a and a.endswith("[y/N] ") for a in m.asked)
+    assert any(
+        f"Also delete the folder {m.ws} including its git history (" in a and a.endswith("[y/N] ") for a in m.asked
+    )
     assert m.ws.exists() and not (m.ws / ".orch").exists()
 
 
@@ -361,7 +385,7 @@ def test_hub_leave_is_offered_only_with_a_person_at_the_terminal(tmp_path):
     assert not any("hub membership" in ln and "has a hub" in ln for ln in m.out.getvalue().split("Left on other")[-1:])
     m2 = Machine(tmp_path / "b")
     m2.left = []
-    assert m2.prune("--yes", "--workspaces", "keep") == 0
+    assert m2.go("--workspaces", "keep") == 0
     assert m2.left == []
     assert "Left on other computers" in m2.out.getvalue() and "hub membership" in m2.out.getvalue()
 
@@ -386,7 +410,7 @@ def test_dev_kit_is_refused_unless_told(m, var):
     assert m.prune("--yes", env_extra={var: "1"}) == 4
     assert "dev kit" in m.err.getvalue() and m.snapshot() == before
     assert m.prune("--dry-run", env_extra={var: "1"}) == 0  # looking is harmless
-    assert m.prune("--yes", "--workspaces", "keep", "--i-know-dev", env_extra={var: "1"}) == 0
+    assert m.go("--workspaces", "keep", "--i-know-dev", env_extra={var: "1"}) == 0
 
 
 def test_dev_sandbox_marker_in_the_state_dir_is_refused(m):
@@ -396,7 +420,7 @@ def test_dev_sandbox_marker_in_the_state_dir_is_refused(m):
 
 def test_stops_at_the_first_error_and_says_what_is_left(m):
     m.runner.fail = "hub"
-    assert m.prune("--yes", "--workspaces", "keep") == 1
+    assert m.go("--workspaces", "keep") == 1
     text = m.out.getvalue()
     assert "orch host prune stopped" in text and "could not stop the hub service" in text
     assert m.state.exists() and (m.ws / ".orch").exists()  # nothing after the failed step ran
@@ -404,13 +428,13 @@ def test_stops_at_the_first_error_and_says_what_is_left(m):
 
 
 def test_keychain_items_of_orch_only(m):
-    assert m.prune("--yes", "--workspaces", "keep", env_extra={"ORCH_KEYCHAIN": ""}) == 0
+    assert m.go("--workspaces", "keep", env_extra={"ORCH_KEYCHAIN": ""}) == 0
     assert m.keychain_deleted == []  # no keychain file on this fake machine
     kc = m.home / "Library" / "Keychains" / "login.keychain-db"
     m.w(kc)
     m2 = m
     m2.state.mkdir(parents=True, exist_ok=True)
-    assert m2.prune("--yes", "--workspaces", "keep") == 0
+    assert m2.go("--workspaces", "keep") == 0
     assert m.keychain_deleted == [f"{WID}/d_{'1' * 32}"]  # "something-else" is not ours
 
 
@@ -446,7 +470,7 @@ def test_windows_prints_the_uninstall_command_instead_of_running_it(m):
 
 def test_systemd_units_are_stopped_with_systemctl(tmp_path):
     m = Machine(tmp_path, platform="linux")
-    assert m.prune("--yes", "--workspaces", "keep") == 0
+    assert m.go("--workspaces", "keep") == 0
     assert ["systemctl", "--user", "disable", "--now", "orch-host.service"] in m.calls
     assert not (m.home / ".config" / "systemd" / "user" / "orch-host.service").exists()
 
@@ -525,7 +549,7 @@ def test_a_hand_edited_orch_skill_is_kept(m):
     sidecar = m.ws / ".agents/skills/orch-tickets/orch.skill.json"
     side = json.loads(sidecar.read_text())
     assert side["scope"] == "builtin"
-    assert m.prune("--yes", "--workspaces", "keep") == 0
+    assert m.go("--workspaces", "keep") == 0
     assert (m.ws / ".agents/skills/orch-tickets/SKILL.md").read_text().endswith("mine\n")
 
 
@@ -534,7 +558,7 @@ def test_files_orch_created_alone_are_deleted(tmp_path):
     (m.ws / "AGENTS.md").unlink()
     harness.write_workspace_files(m.ws, pointers=True, store=m.ws / ".orch")  # AGENTS.md and CLAUDE.md are orch's now
     assert (m.ws / "CLAUDE.md").exists() and harness.BEGIN in (m.ws / "AGENTS.md").read_text()
-    assert m.prune("--yes", "--workspaces", "keep") == 0, m.err.getvalue()
+    assert m.go("--workspaces", "keep") == 0, m.err.getvalue()
     assert not (m.ws / "AGENTS.md").exists() and not (m.ws / "CLAUDE.md").exists()
     assert (m.ws / "notes.txt").exists()
 
@@ -549,7 +573,7 @@ def test_a_unit_loaded_from_another_file_is_left_running(m):
         return 0, ""
 
     m.run = run
-    assert m.prune("--yes", "--workspaces", "keep") == 0
+    assert m.go("--workspaces", "keep") == 0
     assert ["launchctl", "bootout", "gui/501/io.orch.host"] not in m.calls  # the other install keeps running
     assert ["launchctl", "bootout", "gui/501/io.orch.runner"] in m.calls
     assert "left running" in m.out.getvalue()
@@ -574,7 +598,11 @@ def test_a_host_started_by_hand_is_reported(m, monkeypatch):
         os.unlink(sock_dir / "h.sock")
         sock_dir.rmdir()
     monkeypatch.setattr(inventory, "_answers", lambda p: True)
-    assert any("not a service" in w for w in gather(m.ctx()).warnings)
+    assert any("not a service" in w for w in gather(m.ctx()).blockers)
+    before = m.snapshot()
+    assert m.go("--workspaces", "keep") == 2  # refuses: the host would write its state again
+    assert m.snapshot() == before and "not a service" in m.err.getvalue()
+    assert m.prune("--dry-run") == 0
 
 
 def test_a_part_is_stopped_by_the_runner_its_record_names(tmp_path):
@@ -600,7 +628,7 @@ def test_the_claude_code_plugin_entries_go_through_claude_itself(m):
         json.dumps({"version": 2, "plugins": {"orch-core@orch-core": [{}], "x@y": [{}]}}),
     )
     m.w(plug / "known_marketplaces.json", json.dumps({"orch-core": {}, "other": {}}))
-    assert m.prune("--yes", "--workspaces", "keep") == 0
+    assert m.go("--workspaces", "keep") == 0
     assert ["claude", "plugin", "uninstall", "orch-core@orch-core"] in m.calls
     assert ["claude", "plugin", "marketplace", "remove", "orch-core"] in m.calls
     assert (plug / "installed_plugins.json").exists()  # Claude's files are never edited by prune
@@ -641,3 +669,320 @@ def test_the_dashboard_stop_runs_with_the_sanitized_environment(m):
     X.execute(ctx, inv, [i for i in X.build_steps(inv, set()) if i.kind == "launcher"])
     [(argv, env)] = [x for x in seen if x[0][-1] == "stop"]
     assert env["PYTHONPATH"] == "/abs"
+
+
+# ---------------------------------------------------------------------------- merge-gate review (B1 to B7)
+
+
+def test_b1_answers_come_from_the_terminal_never_from_stdin(monkeypatch):
+    import builtins
+    import sys
+
+    from orch.prune import safe
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO("y\n"))
+    real_open = builtins.open
+
+    def no_tty(path, *a, **k):
+        if path == "/dev/tty":
+            raise OSError("no controlling terminal")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(builtins, "open", no_tty)
+    monkeypatch.setattr(safe.os, "open", lambda *a, **k: (_ for _ in ()).throw(OSError("no tty")))
+    assert safe.tty_ask("Remove all of this? [y/N] ") == ""  # stdin said "y": ignored
+    assert safe.tty_available() is False
+    assert Ctx(env={}, out=io.StringIO(), err=io.StringIO()).ask is safe.tty_ask
+
+
+@pytest.mark.parametrize("var", ["ORCH_GRANT", "ORCH_SESSION", "ORCH_TICKET", "ORCH_WORKDIR", "ORCH_HARNESS"])
+def test_b1_every_runner_marker_means_an_agent(m, var):
+    before = m.snapshot()
+    assert m.prune("--yes", env_extra={var: "x"}) == 3
+    assert m.snapshot() == before
+
+
+def test_b1_an_agent_account_is_refused_even_without_markers(m, monkeypatch):
+    import pwd
+
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: type("P", (), {"pw_name": "orch-agent-ann"})())
+    before = m.snapshot()
+    assert m.prune("--yes") == 3 and "agent account" in m.err.getvalue()
+    assert m.snapshot() == before
+
+
+def test_b2_programs_come_from_absolute_places_outside_every_root(tmp_path):
+    from orch.prune import safe
+
+    ws = tmp_path / "ws"
+    (ws / "bin").mkdir(parents=True)
+    fake = ws / "bin" / "orchfaketool"
+    fake.write_text("#!/bin/sh\necho hijacked\n")
+    fake.chmod(0o755)
+    env = {"PATH": f"{ws / 'bin'}:relative/bin::/usr/bin:/bin"}
+    assert safe.resolve_bin("orchfaketool", env, [ws]) is None  # the workspace's bin/ is never searched
+    assert safe.resolve_bin("orchfaketool", {"PATH": "relative/bin:"}, []) is None  # nor relative or empty entries
+    assert safe.resolve_bin(str(fake), env, [ws]) is None
+    assert safe.safe_run(["orchfaketool"], env, [ws])[0] == 127
+    assert safe.resolve_bin("orchfaketool", {"PATH": str(ws / "bin")}, []) == str(fake)  # outside any root it is fine
+    assert safe.resolve_bin("sh", env, [ws]) in ("/bin/sh", "/usr/bin/sh")
+
+
+def test_b2_the_environment_is_scrubbed_and_the_folder_is_the_home(tmp_path):
+    from orch.prune import safe
+
+    home = tmp_path / "h"
+    home.mkdir()
+    env = {
+        "HOME": str(home),
+        "PATH": "/usr/bin:/bin",
+        "GIT_DIR": "/x",
+        "PYTHONPATH": "/x",
+        "DYLD_INSERT_LIBRARIES": "/x",
+        "LD_PRELOAD": "/x",
+        "KEEP": "1",
+    }
+    rc, out = safe.safe_run(["env"], env, [])
+    assert rc == 0 and "KEEP=1" in out
+    assert not any(k in out for k in ("GIT_DIR", "PYTHONPATH", "DYLD_", "LD_PRELOAD"))
+    rc, out = safe.safe_run(["pwd"], env, [])
+    assert os.path.realpath(out.strip()) == os.path.realpath(home)
+
+
+def test_b2_git_runs_without_fsmonitor_hooks_or_protocols(tmp_path, monkeypatch):
+    from orch.prune import safe
+
+    seen = {}
+    monkeypatch.setattr(
+        safe.subprocess,
+        "run",
+        lambda args, **kw: (
+            seen.update(args=args, **kw) or type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        ),
+    )
+    monkeypatch.setattr(safe, "resolve_bin", lambda name, env, deny: "/usr/bin/git")
+    safe.safe_run(["git", "-C", "/w", "worktree", "prune"], {"HOME": str(tmp_path), "PATH": "/usr/bin"}, [])
+    a = seen["args"]
+    assert a[:7] == [
+        "/usr/bin/git",
+        "-c",
+        "core.fsmonitor=",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "protocol.allow=never",
+    ]
+    assert a[7:] == ["-C", "/w", "worktree", "prune"] and seen["cwd"] == str(tmp_path)
+
+
+def test_b3_the_real_keychain_is_wired_on_a_mac_and_scoped_to_orchs_service():
+    from orch.prune import safe
+
+    ctx = Ctx(env={}, out=io.StringIO(), err=io.StringIO(), platform="darwin")
+    assert ctx.keychain is safe.real_keychain
+    calls = []
+
+    class Store:
+        def accounts(self, prefix):
+            calls.append(("accounts", prefix))
+            return ["a"]
+
+        def delete(self, account):
+            calls.append(("delete", account))
+
+        def close(self):
+            calls.append("close")
+
+    h = safe._Handle(Store())
+    assert h.accounts() == ["a"]
+    h.delete("a")
+    h.close()
+    assert calls == [("accounts", ""), ("delete", "a"), "close"]  # KeychainStore itself filters on io.orch.device-key
+    from orch.custody import keychain
+
+    assert keychain.SERVICE == "io.orch.device-key"
+
+
+def test_b3_an_unchecked_keychain_is_said_not_hidden(m):
+    kc = m.home / "Library" / "Keychains" / "login.keychain-db"
+    m.w(kc)
+    ctx = m.ctx()
+    ctx.keychain = None
+    assert any("keychain was not checked" in w for w in gather(ctx).warnings)
+
+
+def test_b4_only_accounts_with_a_setup_record_are_orchs(tmp_path, monkeypatch):
+    import grp
+    import pwd
+
+    from orch.prune.inventory import _default_accounts
+
+    pins = tmp_path / "pins"
+    pins.mkdir()
+    (pins / "1001.json").write_text('{"class": "agent"}')
+
+    def pw(name, uid, gid=None, home="/home/x", shell="/bin/bash"):
+        return type(
+            "P", (), {"pw_name": name, "pw_uid": uid, "pw_gid": gid or uid, "pw_dir": home, "pw_shell": shell}
+        )()
+
+    monkeypatch.setattr(
+        pwd, "getpwall", lambda: [pw("orch-agent-ann", 1001), pw("orch-agent-evil", 1002), pw("orch-addon-1", 1003)]
+    )
+    monkeypatch.setattr(
+        grp,
+        "getgrall",
+        lambda: [
+            type("G", (), {"gr_name": n, "gr_gid": g})()
+            for n, g in (("orch-agent-ann", 1001), ("orch-agent-evil", 1002), ("orch-agent-ann", 5))
+        ],
+    )
+    got = _default_accounts(str(pins), str(tmp_path / "no-unit"))
+    assert got == [("orch-agent-ann", "user"), ("orch-agent-ann", "group")]  # no pin, no account; wrong gid, no group
+
+
+def test_b5_a_surprise_in_a_step_still_gives_the_report(m, monkeypatch):
+    monkeypatch.setattr(X, "rm_tree", lambda p: (_ for _ in ()).throw(KeyError("boom")))
+    assert m.go("--workspaces", "keep") == 1
+    out = m.out.getvalue()
+    assert "orch host prune stopped" in out and "KeyError" in out and "Still on this computer" in out
+
+
+def test_b5_a_file_that_is_not_utf8_is_skipped_with_a_note(m):
+    (m.ws / "AGENTS.md").write_bytes(
+        b"\xff\xfe orch:begin broken " + harness.BEGIN.encode() + b"\n" + harness.END.encode()
+    )
+    assert m.go("--workspaces", "keep") == 0, m.out.getvalue() + m.err.getvalue()
+    assert "AGENTS.md cannot be read as UTF-8" in m.out.getvalue()
+    assert (m.ws / "AGENTS.md").exists() and not (m.ws / ".orch").exists()
+
+
+def test_b6_claude_json_changed_under_us_is_read_again_then_given_up(m, monkeypatch):
+    real = X._write_atomic
+    attempts = []
+
+    def flaky(path, text, expect=None):
+        if Path(path).name != ".claude.json":
+            return real(path, text, expect)
+        attempts.append(1)
+        if len(attempts) < 2:
+            raise X.Changed()
+        return real(path, text, expect)
+
+    monkeypatch.setattr(X, "_write_atomic", flaky)
+    cfg = m.home / ".claude.json"
+    cfg.chmod(0o600)
+    assert m.go("--workspaces", "keep") == 0
+    assert len(attempts) >= 2 and stat.S_IMODE(os.stat(cfg).st_mode) == 0o600
+    assert "PW-0001" not in cfg.read_text()
+
+
+def test_b6_it_stops_asking_to_close_claude_code_when_the_file_keeps_changing(m, monkeypatch):
+    real = X._write_atomic
+    monkeypatch.setattr(
+        X,
+        "_write_atomic",
+        lambda path, *a, **k: (
+            (_ for _ in ()).throw(X.Changed()) if Path(path).name == ".claude.json" else real(path, *a, **k)
+        ),
+    )
+    assert m.go("--workspaces", "keep") == 1
+    assert "close Claude Code" in m.out.getvalue()
+
+
+def test_b6_write_atomic_refuses_when_the_file_changed_after_it_was_read(tmp_path):
+    f = tmp_path / "c.json"
+    f.write_text("{}")
+    f.chmod(0o640)
+    st = os.lstat(f)
+    X._write_atomic(f, "{}\n", expect=(st.st_mtime_ns, st.st_size))
+    assert stat.S_IMODE(os.stat(f).st_mode) == 0o640
+    with pytest.raises(X.Changed):
+        X._write_atomic(f, "x", expect=(st.st_mtime_ns - 1, st.st_size))
+    assert f.read_text() == "{}\n"
+
+
+def test_b7_a_root_swapped_for_a_link_after_the_inventory_is_refused(m):
+    ctx = m.ctx()
+    inv = gather(ctx)
+    steps = X.build_steps(inv, set())
+    evil = m.root / "evil"
+    (evil / ".orch").mkdir(parents=True)
+    (evil / ".orch" / "keep.txt").write_text("precious")
+    moved = m.ws.with_name("proj-moved")
+    m.ws.rename(moved)
+    os.symlink(evil, m.ws)
+    res = X.execute(ctx, inv, [s for s in steps if s.kind == "tree" and s.path.startswith(str(m.ws))])
+    assert res.failed is not None and "not the folder prune found" in res.error
+    assert (evil / ".orch" / "keep.txt").read_text() == "precious"
+
+
+def test_b7_the_worktree_folder_is_a_fenced_root_too(m):
+    inv = gather(m.ctx())
+    assert m.wt.parent in inv.roots and "uncommitted work" in next(
+        i.label for i in inv.workspaces[0].items if i.kind == "worktree"
+    )
+
+
+def test_defers_crlf_files_keep_their_line_endings():
+    assert edit_text("gitignore", "dist/\r\n.orch/\r\n.orch-work/\r\n") == "dist/\r\n"
+    assert (
+        edit_text("agents-block", "# mine\r\n\r\n" + harness.AGENTS_BLOCK_STORE.replace("\n", "\r\n") + "\r\n")
+        == "# mine\r\n"
+    )
+
+
+def test_older_state_folder_at_the_default_place_is_listed_when_another_is_in_use(m):
+    custom = m.home / "mystate"
+    custom.mkdir()
+    ctx = m.ctx()
+    ctx.env = {**ctx.env, "ORCH_STATE_DIR": str(custom)}
+    inv = gather(ctx)
+    assert str(m.state) in {i.path for i in inv.items}  # the default ~/.config/orch of an older install
+    assert m.state in inv.rmdirs
+
+
+def test_a_unit_still_loaded_without_its_file_is_listed_and_unloaded(m):
+    (m.home / "Library/LaunchAgents/io.orch.runner.plist").unlink()
+
+    def run(argv, env=None):
+        m.calls.append(list(argv))
+        if argv[:3] == ["launchctl", "print", "gui/501/io.orch.runner"]:
+            return 0, "path = /gone/io.orch.runner.plist\n"
+        return 0, "orch-core v1\n" if argv[:3] == ["uv", "tool", "list"] else ""
+
+    m.run = run
+    assert m.go("--workspaces", "keep") == 0
+    assert ["launchctl", "bootout", "gui/501/io.orch.runner"] in m.calls
+
+
+# ---------------------------------------------------------------------------- orch setup's check
+
+
+def test_setup_stops_on_an_identity_without_a_registry(tmp_path):
+    from orch.prune.check import MESSAGE, older_install
+
+    state = tmp_path / "s"
+    env = {"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state)}
+    assert older_install(env) is None  # a clean computer
+    (state / "host").mkdir(parents=True)
+    (state / "run").mkdir()
+    assert older_install(env) is None  # a host that just started
+    (state / "person" / "w").mkdir(parents=True)
+    assert MESSAGE in older_install(env) and "host registry" in older_install(env)
+    (state / "host" / "workspaces.json").write_text('{"v": 1, "workspaces": []}')
+    assert older_install(env) is None
+    (state / "host" / "workspaces.json").write_text("not json")
+    assert MESSAGE in older_install(env)
+
+
+def test_orch_setup_calls_the_check_before_it_does_anything(tmp_path, monkeypatch):
+    from orch.ops import workspace_init as wi
+    from orch.setup import flow
+
+    state = tmp_path / "s"
+    (state / "person").mkdir(parents=True)
+    monkeypatch.setattr(wi.TERMINAL, "available", lambda: True, raising=False)
+    out, err = io.StringIO(), io.StringIO()
+    rc = flow.main(["--role", "workspace"], env={"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state)}, out=out, err=err)
+    assert rc == 3 and "Found an older orch install. Run `orch host prune` first." in err.getvalue()

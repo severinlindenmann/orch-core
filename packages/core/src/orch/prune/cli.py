@@ -18,7 +18,8 @@ from typing import TextIO
 
 from .execute import Result, build_steps, execute
 from .inventory import dev_markers, gather
-from .model import Ctx, Inventory, PruneError, human_size
+from .model import Ctx, Inventory, Item, human_size
+from .safe import agent_reason, tty_available
 
 __all__ = ["main"]
 
@@ -80,22 +81,38 @@ def _confirm(ctx: Ctx, prompt: str) -> bool:
     return ctx.ask(prompt).strip().lower() in ("y", "yes")
 
 
-def _folders(ctx: Ctx, inv: Inventory, mode: str) -> set[Path]:
-    out: set[Path] = set()
+def _workspaces(ctx: Ctx, inv: Inventory, yes: bool, mode: str, res_notes: list[str]) -> tuple[set[Path], set[Path]]:
+    """``(folders to delete, workspaces to leave alone)``. Workspace data is never touched on ``--yes`` alone: orch's
+    own files in a workspace (its store holds tickets, events and log keys that cannot be recovered) and a whole folder
+    each need an answer typed at the person's own terminal (``/dev/tty``); without one they are kept."""
+    delete: set[Path] = set()
+    skip: set[Path] = set()
     for ws in inv.workspaces:
-        if ws.folder_refusal:
-            if mode == "delete":
-                ctx.say(f"Keeping the folder {ws.root}: {ws.folder_refusal}")
+        if yes and ws.items:
+            if not ctx.interactive:
+                skip.add(ws.root)
+                res_notes.append(f"{ws.root}: kept untouched (--yes does not cover workspaces; no terminal to ask)")
+                continue
+            if not _confirm(
+                ctx, f"Also remove orch's own files in {ws.root} (its tickets and events cannot be recovered)? [y/N] "
+            ):
+                skip.add(ws.root)
+                continue
+        if mode == "keep" or (mode == "ask" and yes):
             continue
-        if mode == "delete":
-            out.add(ws.root)
-        elif (
-            mode == "ask"
-            and ctx.interactive
-            and _confirm(ctx, f"Also delete the folder {ws.root} ({ws.files} files, {human_size(ws.size)})? [y/N] ")
+        if ws.folder_refusal:
+            ctx.say(f"Keeping the folder {ws.root}: {ws.folder_refusal}")
+            continue
+        if not ctx.interactive:
+            res_notes.append(f"{ws.root}: folder kept (deleting a folder needs an answer at a terminal)")
+            continue
+        if _confirm(
+            ctx,
+            f"Also delete the folder {ws.root} including its git history "
+            f"({ws.files} files, {human_size(ws.size)})? [y/N] ",
         ):
-            out.add(ws.root)
-    return out
+            delete.add(ws.root)
+    return delete, skip
 
 
 def _tell_hubs(ctx: Ctx, inv: Inventory, folders: set[Path]) -> None:
@@ -143,23 +160,20 @@ def report(ctx: Ctx, inv: Inventory, res: Result) -> int:
 
 
 def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextIO, ctx: Ctx | None = None) -> int:
-    if any(env.get(k) for k in AGENT_ENV):
-        err.write("orch host prune: removing orch is a person's job; an agent never does it\n")
+    reason = agent_reason(env, ctx.euid if ctx else None)
+    if reason:
+        err.write(f"orch host prune: removing orch is a person's job; an agent never does it ({reason})\n")
         return 3
     try:
         a = _parser().parse_args(list(argv))
     except SystemExit:
         err.write(USAGE)
         return 2
-    ctx = ctx or Ctx(env=env, out=out, err=err, interactive=_tty())
-    if a.yes:
-        ctx.interactive = (
-            False  # nobody is asked anything: --yes never includes workspace folders (--workspaces delete does)
-        )
+    ctx = ctx or Ctx(env=env, out=out, err=err, interactive=tty_available())
     try:
         inv = gather(ctx, a.workspace)
-    except PruneError as e:
-        err.write(f"orch host prune: {e}\n")
+    except Exception as e:  # noqa: BLE001 - the person gets a message, not a traceback
+        err.write(f"orch host prune: could not look at this computer: {type(e).__name__}: {e}\n")
         return 1
     if a.keep_tool:
         inv.items = [i for i in inv.items if i.kind != "tool"]
@@ -176,6 +190,10 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
             "environment, so it is refused here. Run it in a clean environment (env -i), or pass --i-know-dev.\n"
         )
         return 4
+    if inv.blockers:
+        for b in inv.blockers:
+            err.write(f"orch host prune: {b}\n")
+        return 2
     if n == 0:
         ctx.say("\nNothing to remove.")
         return 0
@@ -186,17 +204,15 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
         if not _confirm(ctx, "\nRemove all of this? [y/N] "):
             ctx.say("Nothing was removed.")
             return 5
-    folders = _folders(ctx, inv, a.workspaces)
+    notes: list[str] = []
+    folders, skip = _workspaces(ctx, inv, a.yes, a.workspaces, notes)
     _tell_hubs(ctx, inv, folders)
     ctx.say("")
-    res = execute(ctx, inv, build_steps(inv, folders))
-    return report(ctx, inv, res)
-
-
-def _tty() -> bool:
-    import sys
-
+    res = Result()
     try:
-        return sys.stdin.isatty()
-    except (OSError, ValueError):
-        return False
+        res = execute(ctx, inv, build_steps(inv, folders, skip))
+    except BaseException as e:  # noqa: BLE001 - the report must always come
+        res.error = f"{type(e).__name__}: {e}"
+        res.failed = Item("", "internal", "the removal itself")
+    res.notes[:0] = notes
+    return report(ctx, inv, res)

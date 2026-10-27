@@ -65,7 +65,14 @@ def guard() -> None:
 def run(argv: list[str], *, ok: bool = True, timeout: int = 900, **env: str) -> subprocess.CompletedProcess[str]:
     log("$ " + " ".join(argv))
     done = subprocess.run(
-        argv, env=clean_env(**env), capture_output=True, text=True, timeout=timeout, cwd=HOME, check=False
+        argv,
+        env=clean_env(**env),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=HOME,
+        check=False,
+        start_new_session=True,  # no controlling terminal
     )
     if ok and done.returncode != 0:
         raise SystemExit(f"FAILED ({done.returncode}): {' '.join(argv)}\n{done.stdout[-1500:]}\n{done.stderr[-1500:]}")
@@ -153,13 +160,22 @@ def main() -> int:
         for needle in ("Installed parts", "Keys", "Workspace " + str(ws_root), "Not removable by prune"):
             assert needle in dry.stdout, f"the inventory lacks {needle!r}"
 
-        # -- 4. prune for real: --yes never touches the workspace folder; the tool is kept for now to run it twice
-        prune = [str(BIN / "orch"), "host", "prune", "--yes", "--keep-tool"]
-        done = run([*prune, "--workspaces", "keep"], ok=False)
-        log(f"prune exit {done.returncode}\n{done.stdout}\n{done.stderr}")
-        assert done.returncode == 0, "prune failed"
+        # -- 4. prune for real. A host started by hand blocks prune (it would write its state again): stop it first
+        ws.stop_host()
+        prune = [str(BIN / "orch"), "host", "prune", "--keep-tool"]
+        refused = run([*prune, "--yes"], ok=False)
+        assert refused.returncode == 0  # (no host any more) --yes without a terminal keeps the workspace untouched
+        assert (ws_root / ".orch").exists(), "--yes without a terminal must not touch the workspace store"
+        # a person at a terminal: confirm, keep the folder. Answers come from /dev/tty, so a pty plays the person.
+        rules = [(r"Remove all of this\? \[y/N\] $", lambda m, t: "y"),
+                 (r"Also delete the folder .* \[y/N\] $", lambda m, t: "n")]  # fmt: skip
+        pty = K.Pty(
+            [*prune, "--workspace", str(ws_root)], clean_env(), HOME, rules, 300
+        ).run()  # the state is gone: name it
+        log(f"prune (pty) exit {pty.code}\n{pty.output}")
+        assert pty.code == 0, "prune failed"
     finally:
-        ws.stop_host()  # the foreground host is not a service: prune reports it, the owner of the process stops it
+        ws.stop_host()
     time.sleep(1.0)
 
     # -- 5. nothing of orch is left except the command itself
@@ -178,7 +194,7 @@ def main() -> int:
     assert "my first commit" in log_out, f"git history lost: {log_out}"
 
     # -- 6. a second run finds nothing; a run without --keep-tool takes the command away too
-    again = run(prune)
+    again = run([*prune, "--yes"])
     assert "Nothing to remove" in again.stdout, again.stdout
     last = run([str(BIN / "orch"), "host", "prune", "--yes"])
     log("last run:\n" + last.stdout)

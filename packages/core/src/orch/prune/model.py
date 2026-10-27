@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TextIO
 
+from .safe import real_keychain, safe_run, tty_ask
+
 __all__ = ["Ctx", "Fence", "Inventory", "Item", "PruneError", "WorkspaceInv", "human_size", "measure"]
 
 
@@ -81,6 +83,8 @@ class Inventory:
     roots: list[Path] = field(default_factory=list)  # every root a removal may lie below
     root_commands: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)  # why prune must not run now (a hand-started host)
+    idents: dict[Path, tuple[int, int]] = field(default_factory=dict)  # (st_dev, st_ino) of each folder root
     rmdirs: list[Path] = field(default_factory=list)  # removed after everything else, only if empty
 
     def groups(self) -> dict[str, list[Item]]:
@@ -88,23 +92,6 @@ class Inventory:
         for it in self.items:
             out.setdefault(it.group, []).append(it)
         return out
-
-
-def _run(argv: Sequence[str], timeout: float = 60.0, env: Mapping[str, str] | None = None) -> tuple[int, str]:
-    try:
-        r = subprocess.run(
-            list(argv), capture_output=True, text=True, timeout=timeout, check=False, env=dict(env) if env else None
-        )
-    except (OSError, subprocess.SubprocessError) as e:
-        return 127, str(e)
-    return r.returncode, (r.stdout or "") + (r.stderr or "")
-
-
-def _ask(prompt: str) -> str:
-    try:
-        return input(prompt)
-    except EOFError:
-        return ""
 
 
 def _leave(root: Path, env: Mapping[str, str]) -> tuple[bool, str]:
@@ -128,8 +115,11 @@ class Ctx:
     err: TextIO
     interactive: bool = False
     platform: str = sys.platform
-    run: Callable[..., tuple[int, str]] = lambda argv, env=None: _run(argv, env=env)
-    ask: Callable[[str], str] = _ask
+    #: test seam for running programs: ``(argv, env | None) -> (exit code, output)``; ``None``: :func:`safe_run`
+    run: Callable[..., tuple[int, str]] | None = None
+    ask: Callable[[str], str] = tty_ask
+    #: folders prune may touch (set by the inventory): no program is ever taken from below them
+    deny: list[Path] = field(default_factory=list)
     hub_leave: Callable[[Path, Mapping[str, str]], tuple[bool, str]] = _leave
     #: install runner (launchd / systemd / pidfile) of the installed parts; ``None``: pick it from the layout
     runner: Any = None
@@ -141,6 +131,16 @@ class Ctx:
     euid: int = field(default_factory=lambda: os.geteuid() if hasattr(os, "geteuid") else 1)
     uid: int = field(default_factory=lambda: os.getuid() if hasattr(os, "getuid") else 1)
     root_exists: Callable[[str], bool] = lambda p: os.path.lexists(p)
+
+    def __post_init__(self) -> None:
+        if self.keychain is None and self.platform == "darwin":
+            self.keychain = real_keychain
+
+    def exec(self, argv: Sequence[str], env: Mapping[str, str] | None = None) -> tuple[int, str]:
+        """Run a program: through the test seam, or by absolute path, scrubbed environment, from the home folder."""
+        if self.run is not None:
+            return self.run(list(argv), env)
+        return safe_run(argv, self.env, self.deny)
 
     @property
     def home(self) -> Path:
@@ -191,11 +191,25 @@ def measure(path: str | os.PathLike[str]) -> tuple[int, int]:
 
 
 class Fence:
-    """The one decision whether a path may be removed. ``roots``: folders and exact files orch owns."""
+    """The one decision whether a path may be removed. ``roots``: folders and exact files orch owns. ``idents``: the
+    ``(st_dev, st_ino)`` of each folder root as the inventory saw it; a root that is now a link or another folder is
+    refused (a swap after the inventory). Prototype level: the check and the operation still go by name."""
 
-    def __init__(self, roots: Sequence[Path], home: Path) -> None:
+    def __init__(self, roots: Sequence[Path], home: Path, idents: Mapping[Path, tuple[int, int]] | None = None) -> None:
         self.roots = [Path(os.path.abspath(r)) for r in roots]
         self.home = Path(os.path.abspath(home))
+        self.idents = {Path(os.path.abspath(k)): v for k, v in (idents or {}).items()}
+
+    def _verify_root(self, root: Path) -> None:
+        want = self.idents.get(root)
+        if want is None:
+            return
+        try:
+            st = os.lstat(root)
+        except FileNotFoundError:
+            return
+        if stat.S_ISLNK(st.st_mode) or (st.st_dev, st.st_ino) != want:
+            raise PruneError(f"refusing {root}: it is not the folder prune found (it is a link or was replaced)")
 
     def check(self, path: str | os.PathLike[str]) -> Path:
         p = Path(os.path.abspath(path))
@@ -206,6 +220,7 @@ class Fence:
         root = next((r for r in self.roots if p == r or r in p.parents), None)
         if root is None:
             raise PruneError(f"refusing {p}: it is not a place orch records or owns")
+        self._verify_root(root)
         cur = root
         for part in p.relative_to(root).parts[:-1]:  # a link on the way would lead out of the root
             cur = cur / part

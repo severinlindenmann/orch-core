@@ -124,9 +124,11 @@ def gather(ctx: Ctx, extra_workspaces: Iterable[str] = ()) -> Inventory:
     home = ctx.home
     inv = Inventory(state=state, home=home)
     inv.roots.append(state)
+    ctx.deny = [state]
     inv.not_removable.extend(_NOT_REMOVABLE)
     _services(ctx, inv)
     _state(ctx, inv)
+    _older_default(ctx, inv)
     _releases(ctx, inv)
     registry = _registry(state)
     ws_roots = _workspace_roots(ctx, inv, registry, extra_workspaces)
@@ -135,13 +137,39 @@ def gather(ctx: Ctx, extra_workspaces: Iterable[str] = ()) -> Inventory:
     _remote(ctx, inv, registry)
     _claude_trust(ctx, inv)
     _claude_plugin(ctx, inv)
+    ctx.deny = list(inv.roots)  # from here on no program is taken from a folder prune manages
     _keychain(ctx, inv)
     _os_accounts(ctx, inv, registry)
     _tool(ctx, inv)
+    for r in inv.roots:
+        try:
+            st = os.lstat(r)
+        except OSError:
+            continue
+        if stat.S_ISDIR(st.st_mode):
+            inv.idents[r] = (st.st_dev, st.st_ino)
     return inv
 
 
 # --------------------------------------------------------------------------------------------------------- services
+
+
+def loaded_state(ctx: Ctx, kind: str, name: str) -> tuple[bool, str | None]:
+    """``(loaded, unit file it was loaded from)`` in the person's service manager."""
+    if kind == "launchd":
+        rc, out = ctx.exec(["launchctl", "print", f"gui/{ctx.uid}/{name}"])
+        if rc != 0:
+            return False, None
+        for line in out.splitlines():
+            key, _, value = line.strip().partition(" = ")
+            if key == "path" and value.startswith("/"):
+                return True, value
+        return True, None
+    rc, out = ctx.exec(["systemctl", "--user", "show", name, "-p", "LoadState", "-p", "FragmentPath"])
+    kv = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    if rc == 0 and kv.get("LoadState") == "loaded":
+        return True, kv.get("FragmentPath") or None
+    return False, None
 
 
 def install_runner(ctx: Ctx, layout: Any, kind: str | None) -> Any:
@@ -154,7 +182,13 @@ def install_runner(ctx: Ctx, layout: Any, kind: str | None) -> Any:
     cls = {"launchd": service.LaunchdRunner, "systemd": service.SystemdRunner, "pidfile": service.PidfileRunner}.get(
         kind or ""
     )
-    return cls(layout) if cls is not None else service.pick_runner(layout, ctx.env)
+    if cls is None:
+        return service.pick_runner(layout, ctx.env)
+    if kind == "pidfile":
+        return cls(layout)
+    from .safe import runner_run
+
+    return cls(layout, run=runner_run(ctx.env, ctx.deny))
 
 
 def _services(ctx: Ctx, inv: Inventory) -> None:
@@ -194,6 +228,16 @@ def _services(ctx: Ctx, inv: Inventory) -> None:
         if os.path.lexists(path):
             inv.roots.append(path)
             inv.items.append(Item(G_SERVICES, "unit", label, os.fspath(path), data={"kind": kind, "name": name}))
+            continue
+        loaded, where = loaded_state(ctx, kind, name)  # loaded without its file: a leftover of an older install
+        if not loaded:
+            continue
+        if where and os.path.exists(where):
+            inv.warnings.append(f"{name} is loaded from {where} (another setup): left running")
+        else:
+            inv.items.append(
+                Item(G_SERVICES, "unit", f"{label} (still loaded, its file is gone)", data={"kind": kind, "name": name})
+            )
 
     from orch.install.state import Layout, load
 
@@ -221,9 +265,9 @@ def _services(ctx: Ctx, inv: Inventory) -> None:
             )
     control = inv.state / "run" / "control" / "host.sock"
     if _answers(control):
-        inv.warnings.append(
-            "a host is running that is not a service (started by hand): prune cannot stop it. Stop it yourself first "
-            f"(it answers on {control})"
+        inv.blockers.append(
+            "a host is running that is not a service (started by hand): prune cannot stop it and it would write its "
+            f"state again. Stop it first (it answers on {control})"
         )
     sock = inv.state / "dashboard" / "ctl.sock"
     if os.path.lexists(sock):
@@ -241,7 +285,10 @@ def _state(ctx: Ctx, inv: Inventory) -> None:
         inv.warnings.append(f"{state} is a link: prune does not follow links, so it is left; remove it by hand")
         inv.roots.remove(state)
         return
-    default = state.name == "orch"
+    xdg = ctx.env.get("XDG_CONFIG_HOME", "")
+    default = state == (Path(xdg) if xdg.startswith("/") else ctx.home / ".config") / "orch" and not ctx.env.get(
+        "ORCH_STATE_DIR"
+    )
     for e in _entries(state):
         p = Path(e.path)
         if e.is_symlink():
@@ -269,6 +316,20 @@ def _state(ctx: Ctx, inv: Inventory) -> None:
         )
     )
     inv.rmdirs.extend([state / "install" / "parts", state / "install", state / "hosts", state])
+
+
+def _older_default(ctx: Ctx, inv: Inventory) -> None:
+    """The default state folder (``~/.config/orch``) when this run uses another one: an older or other setup's leftovers
+    (a person identity and devices from an older version survive a manual clean-up there)."""
+    legacy = ctx.home / ".config" / "orch"
+    if legacy == inv.state or not os.path.isdir(legacy) or _is_link(legacy):
+        return
+    if any(os.path.lexists(legacy / n) for n in ("host", "hosts", "person", "install", "person-key")):
+        inv.roots.append(legacy)
+        inv.items.append(
+            _tree_item(G_STATE, "orch state folder at the default place (an older or other setup)", legacy)
+        )
+        inv.rmdirs.append(legacy)
 
 
 def _install_children(inv: Inventory, install: Path) -> None:
@@ -389,7 +450,8 @@ def edit_text(what: str, have: str, *, agents_gone: bool = False) -> str | None:
     file would be empty (the caller decides whether to delete it)."""
     from orch.instructions import harness as H
 
-    lines = have.split("\n")
+    crlf = "\r\n" in have  # keep the file's line endings
+    lines = have.replace("\r\n", "\n").split("\n")
     if what == "agents-block":
         begins = [i for i, x in enumerate(lines) if x.strip() == H.BEGIN]
         ends = [i for i, x in enumerate(lines) if x.strip() == H.END]
@@ -415,7 +477,9 @@ def edit_text(what: str, have: str, *, agents_gone: bool = False) -> str | None:
         out.pop()
     # a blank line the block was separated by goes with it
     text = "\n".join(out)
-    return (text + "\n") if text.strip() else ""
+    if not text.strip():
+        return ""
+    return (text + "\n").replace("\n", "\r\n") if crlf else text + "\n"
 
 
 def _workspace(ctx: Ctx, inv: Inventory, root: Path, wid: str | None) -> WorkspaceInv:
@@ -451,6 +515,7 @@ def _workspace(ctx: Ctx, inv: Inventory, root: Path, wid: str | None) -> Workspa
         try:
             have = H.safe_read(root, rel) or ""
         except (OSError, ValueError):
+            inv.warnings.append(f"{p} cannot be read as UTF-8 text: orch's lines in it (if any) are left")
             continue
         new = edit_text(what, have, agents_gone=agents_gone)
         if new is None:
@@ -496,11 +561,11 @@ def _worktrees(inv: Inventory, wid: str) -> Iterable[Item]:
             m = _WT.fullmatch(path) if isinstance(path, str) else None
             if not m or m["ws8"] != wid[:8] or ".." in path.split("/"):
                 continue
-            inv.roots.append(Path(path))
+            inv.roots.extend([Path(path), Path(path).parent])
             yield Item(
                 "workspace",
                 "worktree",
-                f"git worktree of ticket work in {repo}",
+                f"git worktree of ticket work in {repo} (uncommitted work in it is lost)",
                 path,
                 data={"declared": m["decl"], "path": path},
             )
@@ -589,7 +654,10 @@ def _claude_plugin(ctx: Ctx, inv: Inventory) -> None:
 
 
 def _keychain(ctx: Ctx, inv: Inventory) -> None:
-    if ctx.platform != "darwin" or ctx.keychain is None:
+    if ctx.platform != "darwin":
+        return
+    if ctx.keychain is None:
+        inv.warnings.append("the macOS keychain was not checked; delete items named io.orch.device-key by hand")
         return
     path = ctx.env.get("ORCH_KEYCHAIN") or os.fspath(ctx.home / "Library" / "Keychains" / "login.keychain-db")
     if not os.path.isfile(path):
@@ -597,6 +665,8 @@ def _keychain(ctx: Ctx, inv: Inventory) -> None:
     try:
         handle = ctx.keychain(path)
         accounts = [a for a in handle.accounts() if _ACCOUNT.fullmatch(a)] if handle else []
+        if handle is not None and hasattr(handle, "close"):
+            handle.close()
     except Exception as e:  # noqa: BLE001 - locked, denied or unavailable: say so, do not guess
         inv.warnings.append(
             f"could not look into the keychain {path} ({e}); if you turned on a keychain key, delete the items "
@@ -615,21 +685,39 @@ def _keychain(ctx: Ctx, inv: Inventory) -> None:
         )
 
 
-def _default_accounts() -> list[tuple[str, str]]:
+def _default_accounts(
+    pins_dir: str = "/etc/orch/pins", front_unit: str = "/etc/systemd/system/orch-front.service"
+) -> list[tuple[str, str]]:
+    """The OS users and groups orch's setup RECORDED, never anything chosen by name alone: an agent or add-on user
+    counts only with its pin file ``<pins_dir>/<uid>.json`` (the root-owned record ``orch-os-setup`` writes), the front
+    user only with its unit file naming it and its home/shell as setup made them; a group only when it is the user group
+    of such a user (same name, that user's primary gid)."""
     try:
         import grp
         import pwd
     except ImportError:  # Windows
         return []
-    from orch.setup.osfront import FRONT_USER
+    from orch.setup.osfront import FRONT_HOME, FRONT_USER
     from orch.setup.osusers import AGENT_PREFIX, SLOT_PREFIX
 
-    def ours(n: str) -> bool:
-        return n.startswith((AGENT_PREFIX, SLOT_PREFIX)) or n == FRONT_USER
-
-    return [(u.pw_name, "user") for u in pwd.getpwall() if ours(u.pw_name)] + [
-        (g.gr_name, "group") for g in grp.getgrall() if ours(g.gr_name)
-    ]
+    ours: dict[str, int] = {}
+    for u in pwd.getpwall():
+        if u.pw_uid == 0:
+            continue
+        if u.pw_name.startswith((AGENT_PREFIX, SLOT_PREFIX)):
+            pin = _read_json(Path(pins_dir) / f"{u.pw_uid}.json", 1 << 16)
+            if isinstance(pin, dict):
+                ours[u.pw_name] = u.pw_gid
+        elif u.pw_name == FRONT_USER and u.pw_dir == FRONT_HOME:
+            try:
+                unit = Path(front_unit).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if f"User={FRONT_USER}" in unit and u.pw_shell in ("/usr/sbin/nologin", "/sbin/nologin", "/bin/false"):
+                ours[u.pw_name] = u.pw_gid
+    out = [(n, "user") for n in sorted(ours)]
+    out += [(g.gr_name, "group") for g in grp.getgrall() if ours.get(g.gr_name) == g.gr_gid]
+    return out
 
 
 def _os_accounts(ctx: Ctx, inv: Inventory, registry: list[dict[str, Any]]) -> None:
@@ -680,7 +768,7 @@ def _os_accounts(ctx: Ctx, inv: Inventory, registry: list[dict[str, Any]]) -> No
 
 
 def _tool(ctx: Ctx, inv: Inventory) -> None:
-    rc, out = ctx.run(["uv", "tool", "list"])
+    rc, out = ctx.exec(["uv", "tool", "list"])
     if rc == 0 and any(line.startswith("orch-core ") for line in out.splitlines()):
         inv.items.append(
             Item(G_TOOL, "tool", "the orch command (uv tool orch-core, with the dashboard add-on)", note="removed last")

@@ -4,6 +4,8 @@ The socket is authenticated against a local registry pin before hello. No automa
 write retries: callers must keep their original idem for outcome recovery.
 """
 
+import contextvars
+import copy
 import ctypes
 import json
 import os
@@ -137,6 +139,17 @@ RUN_OPS = {"run.sub", "run.list", "run.stop", "agent.preview", "agent.start", "g
 #: ops this process never sends, whatever a caller asks: `grant.deposit` carries the runner grant's secret
 #: (`auth.grant`), which never reaches the dashboard's HTTP process (D-P2-27, section 0.8.6 item 6).
 FORBIDDEN = frozenset({"grant.deposit"})
+#: Read ops asked on nearly every request (addon.list alone was 56% of the host time of a page load). The shared link
+#: answers one call at a time, so these pile up behind the lock; callers that queued together share ONE
+#: answer. Nothing is ever served from the past: a caller accepts only an answer whose request went to the host AFTER
+#: the caller arrived (a counter, not a clock), so a
+#: member removed, an add-on turned off or a setting changed before the call is always seen (gates read fresh).
+#: One HTTP request's own memo of `addon.list` (set by the RequestMemo middleware, gone when the request ends: nothing
+#: outlives a request). A write through any link in that request clears it.
+REQUEST_MEMO: contextvars.ContextVar = contextvars.ContextVar("orch_request_memo", default=None)
+COALESCED_READS = frozenset(
+    {"addon.list", "whoami", "workspace.show", "workspace.settings", "member.list", "hub.status"}
+)
 WORKTREE_OPS = {"worktree.list", "worktree.create", "worktree.remove", "worktree.diff"}
 WORKDIR_OPS = {"workdir.get", "workdir.delete"}
 FOCUS_OPS = {"run.transcript", "run.sources", "delegation.list", "run.link", "run.detach"}
@@ -251,6 +264,8 @@ class HostLink:
         self.sock, self.lock, self.send_lock = sock, threading.Lock(), threading.Lock()
         self.events = deque(maxlen=256)
         self.serial = 0
+        self.read_cache: dict = {}  # key -> (number of the request that fetched it, data); see COALESCED_READS
+        self.sent_seq = 0
         try:
             check_uid(sock, host_uid)
             sock.settimeout(2)
@@ -380,7 +395,24 @@ class HostLink:
         )
         if not self.supports(op, cap):
             raise fail("op.unsupported", exit=1)
+        memo = REQUEST_MEMO.get()
+        if write and memo is not None:
+            memo.clear()
+        arrived_seq = self.sent_seq  # a request sent after this point has a higher number: no clock, so no ties
+        cache_key = None
+        if op in COALESCED_READS and not write and dry_run is None and not files:
+            try:
+                # everything that shapes the request or its permission: op, capability, this link's acting person
+                who = (self.welcome.get("peer") or {}).get("person")
+                cache_key = json.dumps([op, cap, who, args or {}], sort_keys=True)  # strict: no coalescing if it fails
+            except (TypeError, ValueError):
+                cache_key = None
         with self.lock:
+            hit = self.read_cache.get(cache_key) if cache_key is not None else None
+            if hit and hit[0] > arrived_seq:  # sent after this caller arrived: as fresh as its own request would be
+                return copy.deepcopy(hit[1])
+            self.sent_seq += 1
+            sent_seq = self.sent_seq
             self.serial += 1
             rid = f"d{self.serial}"
             req = {"t": "req", "id": rid, "op": op, "args": args or {}}
@@ -409,7 +441,12 @@ class HostLink:
                         raise fail("frame.invalid", exit=6)
                     if frame.get("ok") is not True:
                         raise HostError(frame.get("error"), frame.get("exit"))  # both checked by HostError
-                    return frame["result"]["data"]
+                    data = frame["result"]["data"]
+                    if cache_key is not None:
+                        if len(self.read_cache) >= 32:  # bounded: the few ops above, a handful of argument shapes
+                            self.read_cache.clear()
+                        self.read_cache[cache_key] = (sent_seq, data)
+                    return copy.deepcopy(data)
             except (OSError, EOFError):
                 self.close()
                 raise fail("outcome.unknown" if write else "host.unavailable") from None

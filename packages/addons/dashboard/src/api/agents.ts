@@ -95,7 +95,7 @@ export const agentsApi = {
   acknowledge: (ws: string, notice: 'start_agent' | 'login_shell' | 'grant') => call<{ acknowledged: { start_agent?: boolean; login_shell?: boolean; grant?: boolean } }>('POST', `${w(ws)}/me/risk_notices`, { notice }),
 }
 
-export const runnerQuery = (ws: string) => queryOptions({ queryKey: ['runner', ws], queryFn: () => agentsApi.runner(ws) })
+export const runnerQuery = (ws: string) => queryOptions({ queryKey: ['runner', ws], queryFn: () => agentsApi.runner(ws), staleTime: 60_000 })
 
 // -- approved texts (owner / orch-52 answers of 15 Oct 2026) ----------------------------------------------------------
 

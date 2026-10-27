@@ -1258,3 +1258,15 @@ def test_794_an_unrecognised_answer_state_is_not_treated_as_free():
 
     assert not request_ended({"request": {"state": "weird"}})
     assert not request_ended({"request": "x"}) and not request_ended(None) and not request_ended({})
+
+
+def test_an_add_on_switch_in_full_hub_mode_is_not_refused_by_the_dashboard_it_goes_to_the_host(ready, monkeypatch):
+    """FB15 / run 12a: the hand-off route (the one the hub panel uses) has no sign.hub_only refusal of its own: the host
+    decides (an `addon.grant` hand-off for the hub: core tests/host/test_hub_addon.py). This stub host serves
+    no addon.grant, so the answer is its op.unsupported, never the dashboard's hub-only refusal."""
+    from orch_dashboard import hubapprove
+
+    monkeypatch.setattr(hubapprove, "mode_of", lambda gateway, ws: "full")
+    client, token, stub, rich, signing = ready
+    res = post(client, token, stub, {"action": "addon_grant", "name": "estimate"})
+    assert res.json()["error"]["code"] != "sign.hub_only"

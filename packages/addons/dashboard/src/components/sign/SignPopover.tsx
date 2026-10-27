@@ -104,6 +104,8 @@ export interface SignPopoverProps {
   onPending?: (pending: boolean) => void
   /** True while the signature itself is being made. With this set the review folds into the anchor button, which says "Signing…". */
   onSigning?: (signing: boolean) => void
+  /** FB15: the host said `sign.hub_only` although this page's workspace card was stale: show the hub panel. */
+  forceHub?: boolean
   /** A click signature was rejected or cancelled. */
   onInterrupted?: () => void
   /** The ONE toast after a signature (default: "<title>: signed"). An empty string: the caller says the outcome itself once its follow-up step is done. */
@@ -130,7 +132,7 @@ export function SignPopover(p: SignPopoverProps) {
   const known = useQuery(queries.workspaces())
   const here = workspaces.find((w) => w.id === p.ws) ?? known.data?.find((w) => w.id === p.ws)
   // V3 C11 (D78/D81): in full hub mode no local key signs; the dialog shows the hub panel and prepares nothing here.
-  const viaHub = hubOnly(here)
+  const viaHub = hubOnly(here) || p.forceHub === true
   // Click-to-sign (H5c): offered where the signer says the flag is on and it can sign, for the actions it serves.
   const click = useClickSign(p.ws, (_phase, state, request) => {
     if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)

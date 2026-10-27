@@ -11,10 +11,10 @@ const doc = {
 }
 
 describe('answeredNow', () => {
-  it('marks the question answered in the cached ticket', () => {
+  it('marks the question answered in the cached ticket', async () => {
     const qc = new QueryClient()
     qc.setQueryData(['ticket', 'w1', 'T-1'], doc)
-    answeredNow(qc, 'w1', 'T-1', 'q1', { option: 'a' }, 'ann')
+    await answeredNow(qc, 'w1', 'T-1', 'q1', { option: 'a' }, 'ann')
     const d = qc.getQueryData<typeof doc & { questions_state: Array<{ id: string; state: string; answer?: { by: string; option?: string; at: string } }> }>(['ticket', 'w1', 'T-1'])!
     expect(d.questions_state[0].state).toBe('answered')
     expect(d.questions_state[0].answer?.by).toBe('ann')
@@ -23,9 +23,9 @@ describe('answeredNow', () => {
     expect(d.questions_state[1].state).toBe('open')
   })
 
-  it('does nothing for a ticket that is not loaded', () => {
+  it('does nothing for a ticket that is not loaded', async () => {
     const qc = new QueryClient()
-    answeredNow(qc, 'w1', 'T-9', 'q1', { text: 'yes' }, 'ann')
+    await answeredNow(qc, 'w1', 'T-9', 'q1', { text: 'yes' }, 'ann')
     expect(qc.getQueryData(['ticket', 'w1', 'T-9'])).toBeUndefined()
   })
 })

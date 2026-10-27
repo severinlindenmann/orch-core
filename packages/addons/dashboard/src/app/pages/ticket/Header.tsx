@@ -22,7 +22,7 @@ import { VIEWER_REASON } from '@/components/DisabledReason'
 import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
 import { availableActions, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
-import { clearMark, phaseOf, useMark, type Phase, type ProgressRun } from './progress'
+import { clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
 import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
@@ -285,11 +285,41 @@ function newestRun(runs: ReadonlyArray<{ ticket?: string | null; kind?: string; 
   return newest as ProgressRun | null
 }
 
-/** The one status pill for the agent's progress, in plain words. */
-function ProgressPill({ phase, start }: { phase: Phase; start: StartAgent }) {
-  if (phase.kind === 'idle') return null
+/** The one status pill for the agent's progress, in plain words, in a live region so changes are announced. */
+function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; start: StartAgent; ticket: TicketDocument; viewer: Viewer; ws?: string }) {
+  const [pending, setPending] = useState(false)
+  const stage = phase.kind === 'starting' && phase.slow ? 'slow' : phase.kind
+  useEffect(() => {
+    setPending(false)
+  }, [stage])
+  useEffect(() => {
+    if (!pending) return
+    const t = setTimeout(() => setPending(false), 3000)
+    return () => clearTimeout(t)
+  }, [pending])
+  const retry = () => {
+    if (pending) return
+    setPending(true)
+    if (ws) {
+      if (phase.kind === 'failed') clearMark(ws, ticket.key)
+      startMark(ws, ticket.key)
+    }
+    start.run()
+  }
   return (
-    <span className="inline-flex flex-wrap items-center gap-2" data-testid="progress-pill">
+    <span role="status" aria-live="polite" className="inline-flex flex-wrap items-center gap-x-3 gap-y-1.5" data-testid={phase.kind === 'idle' ? undefined : 'progress-pill'}>
+      {phase.kind === 'idle' ? (
+        <>
+          <StatusChip status={ticket.status} landing={ticket.landing} />
+          <span className="text-[13px] text-text-muted">
+            Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span>{turnReason(ticket.turn.why)}
+          </span>
+        </>
+      ) : (
+        <span className="sr-only">
+          <StatusChip status={ticket.status} landing={ticket.landing} />
+        </span>
+      )}
       {phase.kind === 'starting' && (
         <>
           <Pill tone={phase.slow ? 'warning' : undefined}>
@@ -297,7 +327,7 @@ function ProgressPill({ phase, start }: { phase: Phase; start: StartAgent }) {
             {phase.slow ? 'Taking longer than usual' : 'Getting started…'}
           </Pill>
           {phase.slow && (
-            <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[12px]" onClick={start.run}>
+            <Button type="button" size="sm" variant="ghost" className="h-6 px-2 text-[12px]" disabled={pending} onClick={retry}>
               Try again
             </Button>
           )}
@@ -313,7 +343,7 @@ function ProgressPill({ phase, start }: { phase: Phase; start: StartAgent }) {
       {phase.kind === 'failed' && (
         <>
           <Pill tone="warning">{phase.reason}</Pill>
-          <Button type="button" size="sm" variant="outline" onClick={start.run}>
+          <Button type="button" size="sm" variant="outline" disabled={pending} onClick={retry}>
             <Bot />
             Start agent
           </Button>
@@ -385,16 +415,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {phase.kind === 'idle' ? (
-          <>
-            <StatusChip status={ticket.status} landing={ticket.landing} />
-            <span className="text-[13px] text-text-muted">
-              Turn: <span className="text-text">{viewer.name(ticket.turn.who)}</span>{turnReason(ticket.turn.why)}
-            </span>
-          </>
-        ) : (
-          <ProgressPill phase={phase} start={start} />
-        )}
+        <ProgressPill phase={phase} start={start} ticket={ticket} viewer={viewer} ws={home} />
         {shown.map((l) => (
           <Pill key={l}>
             <Tag />

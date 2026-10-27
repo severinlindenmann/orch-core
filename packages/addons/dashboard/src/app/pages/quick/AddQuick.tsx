@@ -85,6 +85,7 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
   const input = useRef<HTMLInputElement>(null)
   const startBtn = useRef<HTMLButtonElement>(null)
   const plainBtn = useRef<HTMLButtonElement>(null)
+  const doneRef = useRef(false)
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const title = oneLine(text)
   const tooLong = [...text.trim()].length > MAX_QUICK_TITLE
@@ -101,6 +102,16 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
     input.current?.focus()
   }
 
+  // The signature was cancelled or failed: give the person back what they typed, unless they started something new.
+  const restore = (p: Pending) => {
+    if (doneRef.current || text) return
+    setText(p.text)
+    setDetails(p.details)
+    setSteps(p.steps)
+    setMore(!!p.details || p.steps.some((s) => s.text || s.cmd))
+    input.current?.focus()
+  }
+
   const begin = (start: boolean, el: HTMLElement | null) => {
     const fresh = plan.grantNow()
     const startNow = start && canStart
@@ -111,6 +122,7 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
     const choice = { harness: plan.pref.harness, mode: 'work' as const, model: plan.pref.model }
     const reviewed: Reviewed = { choice, model: shownModel(choice), grantId: fresh?.id ?? null }
     setAnchor(el)
+    doneRef.current = false
     setPending({ n: (pending?.n ?? 0) + 1, action, startNow, withAccess, title, text, details, steps, reviewed, idem: newIdem(), priorGrantIds: plan.priorGrantIds })
     reset()
   }
@@ -209,9 +221,15 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
           doneToast={pending.startNow ? '' : 'Task created'}
           onSigning={setSigning}
           onSettled={(phase, state, request) => {
-            if (phase === 'done') settled(pending, quickKey(state, request), state?.deposit)
+            if (phase === 'done') {
+              doneRef.current = true
+              settled(pending, quickKey(state, request), state?.deposit)
+            } else if (phase === 'failed') restore(pending)
           }}
-          onClose={() => setPending(null)}
+          onClose={() => {
+            restore(pending)
+            setPending(null)
+          }}
         />
       )}
     </section>

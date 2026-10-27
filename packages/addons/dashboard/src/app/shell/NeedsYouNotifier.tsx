@@ -40,7 +40,6 @@ export function NeedsYouNotifier() {
   const total = attention.needsYou.total
   const seen = useRef(new Set<string>())
   const seededFor = useRef<string | undefined | null>(null)
-  const base = useRef(titleFor(document.title, 0))
 
   useEffect(() => {
     const data = today.data
@@ -70,13 +69,15 @@ export function NeedsYouNotifier() {
         },
       })
     }
+    // Forget what left the list, so a step that comes back is announced again.
+    seen.current = new Set(items.map(itemId))
   }, [today.data, ws, navigate])
 
   useEffect(() => {
-    const plain = base.current
-    document.title = titleFor(plain, total)
+    // The base is whatever the title is now (pages set their own), never a value kept from mount.
+    document.title = titleFor(document.title, total)
     return () => {
-      document.title = plain
+      document.title = titleFor(document.title, 0)
     }
   }, [total])
 

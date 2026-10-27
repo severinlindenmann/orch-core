@@ -83,7 +83,7 @@ export function AnswerSend({
     signedNow(qc, ws, ticket, question.id, question.hash)
     // The card says "You answered" at once, without waiting for the next read of the ticket.
     const by = me.data?.person
-    if (by) answeredNow(qc, ws, ticket, question.id, { option: option ?? undefined, text: note }, by)
+    if (by) void answeredNow(qc, ws, ticket, question.id, { option: option ?? undefined, text: note }, by)
   })
   const clickRef = useRef(click)
   clickRef.current = click

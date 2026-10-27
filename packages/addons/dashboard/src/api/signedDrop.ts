@@ -34,7 +34,7 @@ export function signedNow(qc: QueryClient, ws: string | undefined, ticket: strin
 }
 
 /** The host confirmed this answer: the question shows as answered now, without waiting for the next read of the ticket. */
-export function answeredNow(
+export async function answeredNow(
   qc: QueryClient,
   ws: string | undefined,
   ticketKey: string,
@@ -44,6 +44,8 @@ export function answeredNow(
 ) {
   if (!ws) return
   const at = new Date().toISOString()
+  // A read of the ticket still in flight would overwrite the answer with the old state.
+  await qc.cancelQueries({ queryKey: ['ticket', ws, ticketKey] })
   qc.setQueryData<TicketDocument>(['ticket', ws, ticketKey], (d) => {
     if (!d) return d
     const done = (q: QuestionStatus) => ({ ...q, state: 'answered', answer: { by, at, ...(answer.option ? { option: answer.option } : {}), ...(answer.text ? { text: answer.text } : {}) } }) as QuestionStatus

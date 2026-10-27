@@ -59,6 +59,36 @@ describe('phaseOf', () => {
     expect(phaseOf(ticket(), { needsYou: false, run, now: NOW })).toEqual({ kind: 'idle' })
   })
 
+  it('a lost run newer than the mark means failed', () => {
+    const run = { state: 'lost' as const, started_at: iso(NOW - 1000) }
+    const p = phaseOf(ticket(), { needsYou: false, mark: { since: NOW - 5000 }, run, now: NOW })
+    expect(p).toEqual({ kind: 'failed', reason: 'The agent stopped before it began. Start it again.' })
+  })
+
+  it('an exited run without a mark, started recently, means failed', () => {
+    const run = { state: 'exited' as const, started_at: iso(NOW - 60_000) }
+    expect(phaseOf(ticket(), { needsYou: false, run, now: NOW })).toMatchObject({ kind: 'failed' })
+  })
+
+  it('an exited run older than the mark is not a failure', () => {
+    const run = { state: 'exited' as const, started_at: iso(NOW - 60_000) }
+    expect(phaseOf(ticket(), { needsYou: false, mark: { since: NOW - 1000 }, run, now: NOW })).toEqual({ kind: 'starting', slow: false })
+  })
+
+  it('an old exited run without a mark is idle', () => {
+    const run = { state: 'exited' as const, started_at: iso(NOW - STARTING_MAX_MS - 1000) }
+    expect(phaseOf(ticket(), { needsYou: false, run, now: NOW })).toEqual({ kind: 'idle' })
+  })
+
+  it('a dead run with a live claim is working', () => {
+    const run = { state: 'lost' as const, started_at: iso(NOW - 1000) }
+    expect(phaseOf(ticket({ claim: live }), { needsYou: false, mark: { since: NOW - 5000 }, run, now: NOW })).toEqual({ kind: 'working' })
+  })
+
+  it('a mark older than 3 minutes with no run or claim is idle', () => {
+    expect(phaseOf(ticket(), { needsYou: false, mark: { since: NOW - STARTING_MAX_MS }, now: NOW })).toEqual({ kind: 'idle' })
+  })
+
   it('nothing at all is idle', () => {
     expect(phaseOf(ticket(), { needsYou: false, now: NOW })).toEqual({ kind: 'idle' })
   })

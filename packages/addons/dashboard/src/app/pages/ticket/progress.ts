@@ -66,8 +66,10 @@ export async function startInBackground(qc: QueryClient, r: StartRequest): Promi
       toast.warning(out.reason)
     }
     return out
-  } catch {
+  } catch (e) {
+    console.error(e)
     const reason = 'The agent was not started.'
+    toast.warning(reason)
     const { harness, mode, model } = r.reviewed.choice
     const initial: StartInitial = { harness, mode, ...(model ? { model } : {}) }
     failMark(r.ws, r.key, reason, initial)
@@ -96,9 +98,15 @@ export function phaseOf(ticket: TicketDocument, o: { needsYou: boolean; mark?: M
   if (ticket.claim && ticket.claim.live !== false) return { kind: 'working' }
   if (o.mark?.failed) return { kind: 'failed', reason: o.mark.failed.reason, initial: o.mark.failed.initial }
   const runStart = o.run ? Date.parse(o.run.started_at) : NaN
+  // A run of this ticket that ended before an agent claimed it, newer than our ask: the start did not work.
+  const runDead = o.run?.state === 'lost' || o.run?.state === 'exited'
+  if (runDead && (o.mark ? runStart > o.mark.since : o.now - runStart < STARTING_MAX_MS))
+    return { kind: 'failed', reason: 'The agent stopped before it began. Start it again.' }
   const runStarting = o.run?.state === 'starting'
   const runRunning = o.run?.state === 'running' && o.now - runStart < STARTING_MAX_MS
-  if (!o.mark && !runStarting && !runRunning) return { kind: 'idle' }
+  // A mark nobody answered for 3 minutes is dropped, so the pill cannot stick.
+  const liveMark = !!o.mark && o.now - o.mark.since < STARTING_MAX_MS
+  if (!liveMark && !runStarting && !runRunning) return { kind: 'idle' }
   const since = o.mark?.since ?? runStart
   return { kind: 'starting', slow: o.now - since >= STARTING_SLOW_MS }
 }

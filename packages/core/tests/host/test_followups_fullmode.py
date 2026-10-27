@@ -1,6 +1,6 @@
 """N4 (c): a webhook ring wakes a follow-up in a workspace joined to a hub in Full mode (host-actor events only)."""
 
-import json  # noqa: F401
+# ruff: noqa: E501
 
 from orch.model import followup_events as fe
 from tests.host.test_agents import w  # noqa: F401
@@ -12,7 +12,9 @@ def join_full(e, monkeypatch):
     from orch.hubclient import wire
 
     monkeypatch.setattr(wire, "check_recorded_owner_proof", lambda *a, **k: None)
-    e.w.person_event("hub.joined", hub_id=HUB, hk_root_pub=ROOT, mode="full", binding_seq=1, aliases=[], owner_proof=None)
+    e.w.person_event(
+        "hub.joined", hub_id=HUB, hk_root_pub=ROOT, mode="full", binding_seq=1, aliases=[], owner_proof=None
+    )
 
 
 def test_webhook_ring_fires_in_full_mode(env, monkeypatch):  # noqa: F811

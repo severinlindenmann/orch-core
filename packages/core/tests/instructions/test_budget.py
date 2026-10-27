@@ -48,11 +48,12 @@ WORST_SESSION_START = session_start_lines(
     unread=["DEMO-0043 #14 answered Q1 option=b"] * 9,
     stale=True,
     next_hint="orch wait",
+    addons="add-ons: addon01, addon02, addon03, addon04 \u00b7 off: addon05 \u00b7 read a skill before using one",
 )
 
 
-def test_the_worst_session_start_text_is_six_lines_and_150_tokens():
-    assert len(WORST_SESSION_START) <= SESSION_START_MAX_LINES == 6
+def test_the_worst_session_start_text_is_seven_lines_and_150_tokens():
+    assert len(WORST_SESSION_START) <= SESSION_START_MAX_LINES == 7
     assert TOKENS("\n".join(WORST_SESSION_START)) <= SESSION_START_MAX_TOKENS
 
 
@@ -61,7 +62,7 @@ def test_always_loaded_text_together_stays_small():
     assert total <= ALWAYS_LOADED_MAX_TOKENS, total
 
 
-def test_the_real_session_start_output_in_a_busy_workspace_stays_within_six_lines(tmp_path):
+def test_the_real_session_start_output_in_a_busy_workspace_stays_within_seven_lines(tmp_path):
     ws = Ws(tmp_path)
     ws.bootstrap()
     try:
@@ -78,7 +79,7 @@ def test_the_real_session_start_output_in_a_busy_workspace_stays_within_six_line
             stderr=io.StringIO(),
             now=lambda: ws.clock[0],
         )
-        assert code == 0 and len(out.getvalue().splitlines()) <= 6 and TOKENS(out.getvalue()) <= 150
+        assert code == 0 and len(out.getvalue().splitlines()) <= 7 and TOKENS(out.getvalue()) <= 150
     finally:
         ws.store.close()
 

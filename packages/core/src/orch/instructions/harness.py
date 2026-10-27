@@ -21,10 +21,10 @@ import json
 import os
 import stat
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from .agents_md import render_agents_md
+from .agents_md import INSTRUCTIONS_REV, AddonRow, addon_fingerprint, render_agents_md, stamp_rev, stamp_set
 from .skills import builtin_skills
 
 __all__ = [
@@ -39,6 +39,8 @@ __all__ = [
     "check_targets",
     "safe_read",
     "plugin_files",
+    "sync_addon_part",
+    "sync_if_changed",
     "workspace_files",
     "write_workspace_files",
 ]
@@ -66,10 +68,11 @@ def _with_header(text: str) -> str:
     return "\n".join([*lines[: end + 1], COPY_HEADER, *lines[end + 1 :]])
 
 
-def workspace_files(extra: tuple[str, ...] = ()) -> dict[str, str]:
+def workspace_files(addons: Sequence[AddonRow] = ()) -> dict[str, str]:
     """``{path relative to the workspace: content}`` of the files orch owns and rewrites on ``instructions sync``:
-    ``AGENTS.orch.md``, the skills in ``.agents/skills`` and the generated copy in ``.claude/skills``."""
-    files = {AGENTS_FILE: render_agents_md(extra)}
+    ``AGENTS.orch.md`` (with the block of ``addons``), the skills in ``.agents/skills`` and the generated copy in
+    ``.claude/skills``."""
+    files = {AGENTS_FILE: render_agents_md(addons)}
     for skill in builtin_skills():
         for rel, text in skill.files().items():
             files[f"{SKILLS_DIR}/{rel}"] = text
@@ -221,11 +224,13 @@ def agents_rel(root: Path, store: Path | None) -> str:
     return _where(root, store, AGENTS_FILE)
 
 
-def check_targets(root: Path, store: Path | None = None) -> list[str]:
+def check_targets(root: Path, store: Path | None = None, addons: Sequence[AddonRow] = ()) -> list[str]:
     """Why the instruction files cannot be written safely into ``root`` and ``store`` (the directory that holds
-    ``AGENTS.orch.md``; ``None``: ``root``) (empty when they can)."""
+    ``AGENTS.orch.md``; ``None``: ``root``) (empty when they can). ``addons``: the set whose skills are written too."""
+    from .addon_skills import skill_rels
+
     problems = []
-    rels = [AGENTS_FILE, "AGENTS.md", "CLAUDE.md", ".gitignore", *workspace_files()]
+    rels = [AGENTS_FILE, "AGENTS.md", "CLAUDE.md", ".gitignore", *workspace_files(addons), *skill_rels(addons)]
     link = _claude_is_agents_link(root)
     for rel in dict.fromkeys(rels):
         if rel == "CLAUDE.md" and link:
@@ -312,6 +317,9 @@ def write_workspace_files(
     force: bool = False,
     dry_run: bool = False,
     store: Path | None = None,
+    addons: Sequence[AddonRow] = (),
+    worktrees: Sequence[Path | str] = (),
+    now: float | None = None,
 ) -> tuple[list[str], list[str]]:
     """Write the instruction files into ``root``. Returns ``(changed, kept)``: the relative paths that changed (or
     would, with ``dry_run``) and a line for each file left alone and why.
@@ -324,7 +332,10 @@ def write_workspace_files(
     another scope than ``builtin`` is the owner's and is kept; so is one without a sidecar unless its ``SKILL.md`` is
     the shipped text, and a ``SKILL.md`` that differs from the shipped text at the same ``skill_version`` (edited by
     hand) unless ``force``. Nothing is written through a symbolic link: :class:`UnsafePath`. ``store``: the store
-    directory (``.orch``); ``AGENTS.orch.md`` is written there, everything else under ``root``."""
+    directory (``.orch``); ``AGENTS.orch.md`` is written there, everything else under ``root``. ``addons``: the
+    workspace's add-on set (:func:`orch.instructions.addon_set.collect_rows`), written as the add-on block; the skills
+    of its active add-ons are written to ``root`` and each of ``worktrees`` and those of add-ons that are not active
+    are removed or quarantined (:mod:`orch.instructions.addon_skills`)."""
     if not dry_run and store is not None and store != root:  # the store folder is never made here
         try:
             mode = os.lstat(store).st_mode
@@ -336,9 +347,18 @@ def write_workspace_files(
             raise UnsafePath(f"{store} is not a store folder; nothing was written")
     changed: list[str] = []
     kept: list[str] = []
+    if owned is None:  # the add-on skills are part of the files orch owns, unless the caller names its own set
+        from .addon_skills import reconcile, skill_rels
+
+        for rel in skill_rels(addons):  # before anything is written
+            _check_chain(root, rel)
+        # skills first, AGENTS.orch.md (with the stamp of the set) in the loop below
+        c, lines = reconcile(root, addons, store=store, worktrees=worktrees, force=force, dry_run=dry_run, now=now)
+        changed += c
+        kept += lines
     skip_dirs: set[str] = set()
     checked: set[str] = set()
-    files = dict(owned) if owned is not None else workspace_files()
+    files = dict(owned) if owned is not None else workspace_files(addons)
     moved = store is not None and store != root  # the store is <root>/.orch: the pointers and the ignore line follow it
     # the pointer files first: any problem is found before anything is written
     agents_have = _read_pointer_file(root, "AGENTS.md")
@@ -377,6 +397,57 @@ def write_workspace_files(
         if dry_run or _ensure_line(root, ".gitignore", ignore_line):
             changed.append(".gitignore")
     return changed, kept
+
+
+def sync_addon_part(
+    root: Path,
+    addons: Sequence[AddonRow],
+    *,
+    store: Path | None = None,
+    worktrees: Sequence[Path | str] = (),
+    force: bool = False,
+    dry_run: bool = False,
+    now: float | None = None,
+) -> tuple[list[str], list[str]]:
+    """The add-on part of ``instructions sync`` (design D2): ``AGENTS.orch.md`` with the block for ``addons`` and the
+    add-on skills of ``root`` and ``worktrees``. Returns ``(changed, kept)`` like :func:`write_workspace_files`. The
+    built-in skills and the pointer files are not touched; an unsafe path in ``root`` is :class:`UnsafePath`."""
+    from .addon_skills import reconcile, skill_rels
+
+    where = _where(root, store, AGENTS_FILE)
+    for rel in (where, *skill_rels(addons)):
+        _check_chain(root, rel)
+    # the skills first, AGENTS.orch.md last: its stamp (the fingerprint of the set) is the commit marker, so a skill
+    # that could not be written leaves the old stamp and the next session start tries again
+    c, kept = reconcile(root, addons, store=store, worktrees=worktrees, force=force, dry_run=dry_run, now=now)
+    text = render_agents_md(addons)  # over budget: AddonBlockError, after the removals above have run
+    changed = [where] if (safe_read(root, where) != text if dry_run else _write(root, where, text)) else []
+    return changed + [x for x in c if x not in changed], kept
+
+
+def sync_if_changed(
+    root: Path, addons: Sequence[AddonRow], *, store: Path | None = None, worktrees: Sequence[Path | str] = ()
+) -> bool:
+    """The session-start half of the sync (design D2): when ``AGENTS.orch.md`` was written by this orch for another
+    add-on set (its stamp's fingerprint differs), or a skill folder of the root or a worktree is not what the set
+    says, run :func:`sync_addon_part`. A file that is missing, unstamped or
+    from another revision is the full ``instructions sync``'s business and is left alone. True if it ran and wrote;
+    a problem (a link, an add-on block over budget, a read-only folder) is False, and the stale line says why."""
+    from .addon_skills import can_move, problems, repairable
+
+    try:
+        text = safe_read(root, _where(root, store, AGENTS_FILE))
+        if text is None or stamp_rev(text) != INSTRUCTIONS_REV:
+            return False
+        bases = [root, *(Path(w) for w in worktrees if Path(w).is_absolute() and Path(w).is_dir())]
+        if stamp_set(text) == addon_fingerprint(addons) and not any(
+            repairable(x) for b in bases for x in problems(b, addons, movable=can_move(root, store))
+        ):
+            return False
+        changed, kept = sync_addon_part(root, addons, store=store, worktrees=worktrees)
+    except (OSError, UnicodeDecodeError, ValueError):  # UnsafePath and AddonBlockError are among them
+        return False
+    return bool(changed or any(x.startswith(("removed", "moved")) for x in kept))
 
 
 def _skill_dir(rel: str) -> str | None:

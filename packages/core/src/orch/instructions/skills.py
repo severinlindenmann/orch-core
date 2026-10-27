@@ -85,8 +85,30 @@ def parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return meta, "\n".join(lines[end + 1 :])
 
 
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+_ADDON_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
+ADDON_SIDECAR_KEYS = {"scope", "addon", "version", "package_sha256", "text_sha256"}
+
+
+def _check_addon_sidecar(doc: dict[str, Any]) -> dict[str, Any]:
+    """The sidecar core writes next to an add-on's skill (addon-skills D2): ``{scope: "addon", addon, version,
+    package_sha256, text_sha256}``, where ``text_sha256`` is the hash of the text core wrote into that copy."""
+    if set(doc) != ADDON_SIDECAR_KEYS:
+        raise SkillError("an add-on sidecar has exactly scope, addon, version, package_sha256, text_sha256")
+    if not isinstance(doc["addon"], str) or not _ADDON_NAME.fullmatch(doc["addon"]):
+        raise SkillError("addon must be an add-on name")
+    if not isinstance(doc["version"], str) or not 0 < len(doc["version"]) <= 64 or not doc["version"].isprintable():
+        raise SkillError("version must be a short printable string")
+    for key in ("package_sha256", "text_sha256"):
+        if not isinstance(doc[key], str) or not _DIGEST.fullmatch(doc[key]):
+            raise SkillError(f"{key} must be sha256:<64 hex digits>")
+    return doc
+
+
 def check_sidecar(doc: object) -> dict[str, Any]:
-    """The sidecar if it is valid (D55), else :class:`SkillError`."""
+    """The sidecar if it is valid (D55; scope ``addon``: addon-skills D2), else :class:`SkillError`."""
+    if isinstance(doc, dict) and doc.get("scope") == "addon":
+        return _check_addon_sidecar(doc)
     if not isinstance(doc, dict) or set(doc) != {"schema_version", "skill_version", "scope", "connections", "env"}:
         raise SkillError("the sidecar has exactly schema_version, skill_version, scope, connections, env")
     if doc["schema_version"] != 1 or isinstance(doc["schema_version"], bool):

@@ -1,12 +1,12 @@
 # The add-on API contract `orch.addon-api/1`
 
-Status: v1.1, 24 Oct 2026 (v1.0 of 22 Oct plus section 8; additions only). Part of the add-on platform ([design](../design/addon-platform.md), section 2). This file
+Status: v1.2, 27 Oct 2026 (v1.0 of 22 Oct plus section 8 for 1.1, plus the `skill` key for 1.2; additions only). Part of the add-on platform ([design](../design/addon-platform.md), section 2). This file
 is the contract between orch core and an add-on package. Core declares the API it implements; an add-on declares the
 API range it needs. The registry compares them and never runs an add-on that does not fit.
 
 ## 1. Version of the API
 
-- Core declares `ADDON_API` (`orch.addons.manifest.ADDON_API`), `"<major>.<minor>"`. Today: `1.1`.
+- Core declares `ADDON_API` (`orch.addons.manifest.ADDON_API`), `"<major>.<minor>"`. Today: `1.2`.
 - Inside one major version, changes only **add** things: new optional manifest keys, new capabilities, new events,
   new UI components. Removing or narrowing anything is a new major version. After a major bump, core keeps reading
   the previous major for at least 6 months.
@@ -23,6 +23,8 @@ API range it needs. The registry compares them and never runs an add-on that doe
 
 All other keys (`name`, `version`, `title`, `entry`, `fields`, `sections`, `artifact_kinds`, `capabilities`, `needs`,
 `cli`, `skills`, `agents_md`) keep the meaning they have in [the ticket format, section 8](orch-v2-ticket-format.md).
+API 1.2 adds `skill` (one `SKILL.md` per add-on, ticket format section 8.1); a package that uses it needs an `api` range
+that excludes 1.1.
 
 **Range grammar.** One to four comparators joined by `,`, each `<op><major>[.<minor>]` with op one of `>=`, `<=`,
 `==`, `>`, `<`. A missing minor is `0`. All comparators must hold (logical AND). Anything else is refused when the

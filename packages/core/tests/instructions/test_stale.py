@@ -182,3 +182,14 @@ def test_an_r1_workspace_is_stale_and_sync_brings_it_up_to_date(ws):
     assert (root / ".agents/skills/orch-tickets/SKILL.md").is_file()
     assert cli(ws, "check")[0] == 0
     assert cli(ws, "instructions", "sync")[1].count("already current") == 1
+
+
+def test_a_sync_that_stops_says_what_it_did_not_do(ws):
+    import os
+
+    cli(ws, "instructions", "sync")
+    root = ws.root
+    os.rename(root / ".claude", root / ".claude-real")
+    os.symlink(root / ".claude-real", root / ".claude")
+    code, out, err = cli(ws, "instructions", "sync")
+    assert code != 0 and "nothing written" not in out + err and "symbolic link" in out + err, out + err

@@ -226,3 +226,41 @@ def test_the_scaffolded_main_file_answers_a_propose_request():
     run = subprocess.run([sys.executable, "-c", files["main.py"].decode()], input=json.dumps(other) + "\n",
                          capture_output=True, text=True, check=True)  # fmt: skip
     assert json.loads(run.stdout)["error"]["code"] == -32601
+
+
+def test_pack_reports_the_skill_conventions_as_warnings_not_errors(repo):
+    files = author.scaffold(NAME)
+    doc = json.loads(files["orch-addon.json"])
+    doc.update(api=">=1.2,<2", skill="skills/main")
+    files["orch-addon.json"] = (json.dumps(doc) + "\n").encode()
+    files["skills/main/SKILL.md"] = (
+        f"---\nname: orch-addon-{NAME}\ndescription: Helps with notes.\n---\n# Notes\n\nDo things with `orch show`.\n"
+    ).encode()
+    commit_files(repo, files)
+    packed = author.pack(str(repo), git="https://github.com/acme/orch-addon-changelog")
+    joined = "\n".join(packed.warnings)
+    assert 'start with "Use when"' in joined and '"Steps" section' in joined and "agents_md" not in joined
+    import argparse
+
+    from orch.cli.addon_market import _author_text  # noqa: PLC0415
+
+    text = _author_text(
+        argparse.Namespace(cmd="pack"),
+        {"name": NAME, "version": "0.1.0", "commit": "c", "package_sha256": "d", "entry": {}, "placeholder_git": False,
+         "warnings": list(packed.warnings)},
+    )  # fmt: skip
+    assert 'warning: the skill description should start with "Use when"' in text
+
+
+def test_pack_refuses_a_skill_that_names_a_command_that_does_not_exist(repo):
+    files = author.scaffold(NAME)
+    doc = json.loads(files["orch-addon.json"])
+    doc.update(api=">=1.2,<2", skill="skills/main")
+    files["orch-addon.json"] = (json.dumps(doc) + "\n").encode()
+    files["skills/main/SKILL.md"] = (
+        f"---\nname: orch-addon-{NAME}\ndescription: Use when notes. Not for x.\n---\n`orch frobnicate`\n"
+    ).encode()
+    commit_files(repo, files)
+    with pytest.raises(author.AuthorError) as e:
+        author.pack(str(repo))
+    assert e.value.code == "market.package_invalid"

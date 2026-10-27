@@ -432,21 +432,29 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     change = None
     if prior is not None:
         old_plan = None
+        old_skill = None
         try:
             opkg, old = install.read_installed(plan["root"], name)
             if plan["previous"] is None or opkg.digest != plan["previous"].package_sha256:
                 old = None  # not the bytes of the signed grant: everything counts as widened (review F1)
-            elif old.runtime is not None:
-                with contextlib.suppress(MarketError):  # unreadable old lock: every row of the new one counts as new
-                    old_plan = lockfile.plan(install.read_lock(old, opkg), lockfile.current_host())
+            else:
+                if old.skill is not None:
+                    old_skill = opkg.files.get(old.skill + "/SKILL.md")  # the bytes the owner signed before
+                if old.runtime is not None:
+                    with contextlib.suppress(
+                        MarketError
+                    ):  # unreadable old lock: every row of the new one counts as new
+                        old_plan = lockfile.plan(install.read_lock(old, opkg), lockfile.current_host())
         except (PackageError, ManifestError):
             old = None
-        change = mi.diff(old, manifest, prior, facts, old_plan, planned)
+        new_skill = None if manifest.skill is None else pkg.files.get(manifest.skill + "/SKILL.md")
+        change = mi.diff(old, manifest, prior, facts, old_plan, planned, old_skill, new_skill)
         if dep_view is not None or change["deps"]["runtime"] is not None:
             diff = {"lines": list(change["deps"]["lines"]), "widened": bool(change["widened"])}
             if dep_view is not None:
                 dep_view["diff"] = diff  # carried to the signer: host-derived, labelled, not signed
         review += [f"update: {x}" for x in change["changes"]]
+        review += [f"skill diff: {x}" for x in change["skill"]["diff"]]
         review.append("widened: yes, read all of it" if change["widened"] else "widened: no")
     stage = "st_" + secrets.token_hex(16)
     expires = now + constants.STAGE_TTL
@@ -955,4 +963,7 @@ def _uninstall(service: WorkspaceService, name: str) -> dict[str, Any]:
             del cur[ADDONS][name]  # the rollback floor ("seen") and the publisher key stay
             write(cur)
     credential.remove(service.state_dir, service.workspace_id, name)  # V3 G6 C4: the key goes with the package
+    from . import addonsync
+
+    addonsync.refresh(Path(service.entry.root), service.store, getattr(service, "caps", None))  # D2: the files follow
     return {"name": name, "removed": True}

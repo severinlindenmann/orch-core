@@ -61,7 +61,15 @@ def _marker(ctx: Context, ws: Any, event: str) -> Result:
 
 
 def handle(ctx: Context, args: dict[str, Any]) -> Result:
-    from orch.instructions import pre_compact_lines, session_start_lines, stale_findings
+    from orch.instructions import (
+        addons_line,
+        collect_rows,
+        known_worktrees,
+        pre_compact_lines,
+        session_start_lines,
+        stale_findings,
+        sync_if_changed,
+    )
     from orch.ops.commands import status
 
     event = args["event"]
@@ -92,6 +100,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             )
             # exit 0 on purpose: a harness adds a hook's stdout to the context only when it exits 0
             return res
+        rows = collect_rows(c.store.layout.store, c.store.state.workspace.addons)
+        line = addons_line(rows)  # present whenever an add-on is installed (design D4)
         mine = c.mine() if ctx.session else []
         unread: list[str] = []
         for v in mine:
@@ -99,15 +109,23 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         claim_line = st.lines[0] if st.lines and st.lines[0] != "no claim" else None
         if event == "pre-compact":
             open_q = sum(len(views.open_questions(v)) for v in mine)
-            return _split(event, pre_compact_lines(claim=st.data.get("claim"), open_questions=open_q))
+            return _split(event, pre_compact_lines(claim=st.data.get("claim"), open_questions=open_q, addons=line))
+        # a change pulled from another machine (or made while no session ran) is picked up here, once per change
+        if not ctx.hosted:  # the host syncs after add-on events; a hosted read hook has no side effect
+            # only the root and the worktrees the git reader registered: never a path the agent's env names
+            with c.store.locked():  # the host and the sync command do not interleave with this
+                rows = collect_rows(c.store.layout.store, c.store.state.workspace.addons)  # fresh, under the lock
+                line = addons_line(rows)
+                sync_if_changed(ws.root, rows, store=ws.store_dir, worktrees=known_worktrees(ctx.caps))
         lines = session_start_lines(
             person=flat(st.data["person"]),
             grant=st.data.get("grant"),
             claim=st.data.get("claim"),
             claim_line=short(claim_line, 110) if claim_line else None,
             unread=[short(u, 60) for u in unread],
-            stale=bool(stale_findings(ws.root, ws.store_dir)),
+            stale=bool(stale_findings(ws.root, ws.store_dir, rows, known_worktrees(ctx.caps))),
             next_hint=st.hints[0] if st.hints else "orch status",
+            addons=line,
         )
         return _split(event, lines)
     except OrchError as e:
@@ -117,7 +135,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
 OP = operation(
     "instructions.hook",
     "Admin",
-    "The text a harness hook injects at session start or before compaction: at most six lines.",
+    "The text a harness hook injects at session start or before compaction: at most seven lines.",
     who="read",
     props={"event": E("which hook", "session-start", "pre-compact", "waiting", **{"x-metavar": "EVENT"})},
     required=("event",),

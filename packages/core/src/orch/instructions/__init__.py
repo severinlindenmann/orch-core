@@ -2,15 +2,31 @@
 
 Everything an agent is told is generated or shipped from here and checked against the operation registry, so the text
 cannot name a command that does not exist (core §2, ticket-format §10.2). The budgets are tests: AGENTS.orch.md at most
-40 lines, the session-start text at most 6, each skill under a fixed size.
+40 lines, the session-start text at most 7, each skill under a fixed size.
 """
 
-from .agents_md import AGENTS_MAX_LINES, INSTRUCTIONS_REV, render_agents_md, stamp_rev
+from .addon_set import addons_line, collect_rows, known_worktrees
+from .agents_md import (
+    ADDON_BLOCK_MAX_CHARS,
+    ADDON_BLOCK_MAX_LINES,
+    ADDON_MAX_ACTIVE,
+    AGENTS_MAX_LINES,
+    INSTRUCTIONS_REV,
+    AddonBlockError,
+    AddonRow,
+    addon_block,
+    addon_fingerprint,
+    render_agents_md,
+    stamp_rev,
+    stamp_set,
+)
 from .harness import (
     UnsafePath,
     check_targets,
     plugin_files,
     safe_read,
+    sync_addon_part,
+    sync_if_changed,
     workspace_files,
     write_workspace_files,
 )
@@ -28,6 +44,17 @@ from .skills import SKILL_MAX_CHARS, Skill, builtin_skills, check_sidecar, parse
 from .stale import stale_findings
 
 __all__ = [
+    "ADDON_BLOCK_MAX_CHARS",
+    "ADDON_BLOCK_MAX_LINES",
+    "ADDON_MAX_ACTIVE",
+    "AddonBlockError",
+    "AddonRow",
+    "addon_block",
+    "addon_fingerprint",
+    "addons_line",
+    "collect_rows",
+    "known_worktrees",
+    "stamp_set",
     "AGENTS_MAX_LINES",
     "INSTRUCTIONS_REV",
     "PRE_COMPACT_MAX_LINES",
@@ -50,6 +77,8 @@ __all__ = [
     "session_start_lines",
     "stale_findings",
     "stamp_rev",
+    "sync_addon_part",
+    "sync_if_changed",
     "workspace_files",
     "write_workspace_files",
 ]

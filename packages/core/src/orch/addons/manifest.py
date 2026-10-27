@@ -27,7 +27,7 @@ __all__ = [
     "load_package_manifest",
 ]
 
-ADDON_API = "1.1"  # the add-on API this core implements, major.minor (docs/architecture/addon-api.md)
+ADDON_API = "1.2"  # the add-on API this core implements, major.minor (docs/architecture/addon-api.md)
 LEGACY_API = ">=1.0,<2"  # what an orch.addon/2 manifest (no api key) is read as
 
 # the closed list (§11.4; addon-api 1.1 adds choose_model and credential; credential needs network)
@@ -103,6 +103,11 @@ class Manifest:
     def agents_md(self) -> str:
         return self.doc.get("agents_md", "")
 
+    @property
+    def skill(self) -> str | None:
+        """The package folder of the add-on's one skill (``skills/main``), or ``None`` (addon-skills D1)."""
+        return self.doc.get("skill")
+
 
 def load_manifest(raw: bytes) -> Manifest:
     """Parse and validate the bytes of an ``orch-addon.json``. Raises :class:`ManifestError`."""
@@ -148,6 +153,12 @@ def load_package_manifest(package: Package, directory_name: str | None = None) -
     m = load_manifest(package.files[MANIFEST_FILE])
     if directory_name is not None and m.name != directory_name:
         raise ManifestError(f"the directory is {directory_name!r} but {MANIFEST_FILE} names the addon {m.name!r}")
+    from orch.addons import skill
+
+    try:  # the folder rule and the file rules; the command lint runs where a package enters (pack, install)
+        skill.check_package(m, package.files, lint=False)
+    except skill.SkillError as e:
+        raise ManifestError(f"skill: {e}") from None
     return m
 
 

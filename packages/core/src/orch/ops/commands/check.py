@@ -15,7 +15,7 @@ def what(f: Any) -> str:
 
 
 def _handle(ctx: Context, args: dict[str, Any]) -> Result:
-    from orch.instructions import stale_findings
+    from orch.instructions import collect_rows, known_worktrees, stale_findings
     from orch.ops import health
 
     ws = ctx.workspace or Workspace(ctx.env, ctx.now, files=ctx.caps.files)
@@ -26,7 +26,12 @@ def _handle(ctx: Context, args: dict[str, Any]) -> Result:
         c = Call.of(ctx, "check")
         findings, _ = health.inspect(
             root, c.store.workspace_id, None, fast=True, caps=ctx.caps, store=c.store, sees=c.sees,
-            instructions=stale_findings(root, c.store.layout.store),
+            instructions=stale_findings(
+                root,
+                c.store.layout.store,
+                collect_rows(c.store.layout.store, c.store.state.workspace.addons),
+                known_worktrees(ctx.caps),
+            ),
         )  # fmt: skip
         if args.get("staged"):
             findings += health.check_staged(c.store, root, ctx.caps)

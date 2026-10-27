@@ -41,19 +41,25 @@ def test_the_session_start_text_in_the_normal_case():
     ]
 
 
+ADDONS = "add-ons: quick, schedules, wiki \u00b7 off: time-tracking \u00b7 read a skill before using one"
+
+
 @pytest.mark.parametrize(
-    ("grant", "claimed", "unread", "stale"),
-    list(itertools.product([None, "gr_1 until x"], [True, False], [0, 1, 2, 9], [True, False])),
+    ("grant", "claimed", "unread", "stale", "addons"),
+    list(itertools.product([None, "gr_1 until x"], [True, False], [0, 1, 2, 9], [True, False], [None, ADDONS])),
 )
-def test_never_more_than_six_lines_and_always_an_ok_line_and_a_next_line(grant, claimed, unread, stale):
+def test_never_more_than_seven_lines_and_always_an_ok_line_and_a_next_line(grant, claimed, unread, stale, addons):
     out = lines(
         grant=grant,
         claim="DEMO-1" if claimed else None,
         claim_line="DEMO-1 in-progress (your claim)" if claimed else None,
         unread=[f"DEMO-1 #{i} answered Q{i}" for i in range(unread)],
         stale=stale,
+        addons=addons,
     )
-    assert len(out) <= SESSION_START_MAX_LINES == 6
+    assert len(out) <= SESSION_START_MAX_LINES == 7
+    assert (addons in out) is bool(addons) and out[-1].startswith("next: ")
+    assert not addons or out[-2] == addons  # just before the next line
     assert out[0].startswith("ok session-start ") and out[-1].startswith("next: ")
     assert ("instructions stale: run orch instructions sync" in out) is stale
     assert (not grant) == any(x.startswith("no grant:") for x in out)
@@ -68,10 +74,13 @@ def test_unread_decisions_are_cut_to_two_with_a_count():
 
 def test_pre_compact_text_is_short_and_says_what_to_keep():
     out = pre_compact_lines(claim="DEMO-0043", open_questions=2)
-    assert len(out) <= PRE_COMPACT_MAX_LINES == 4
+    assert len(out) <= PRE_COMPACT_MAX_LINES == 5
     assert out[0].startswith("ok pre-compact") and out[-1].startswith("next: ")
     assert any("DEMO-0043" in x for x in out) and any("2 question" in x for x in out)
     assert len(pre_compact_lines(claim=None, open_questions=0)) <= 4
+    with_line = pre_compact_lines(claim="DEMO-0043", open_questions=2, addons=ADDONS)
+    assert len(with_line) == PRE_COMPACT_MAX_LINES and with_line[-2] == ADDONS and with_line[-1].startswith("next: ")
+    assert ADDONS not in out
 
 
 # ------------------------------------------------------------------------------------------------ through the command
@@ -103,7 +112,7 @@ def test_the_hook_names_the_person_the_grant_the_claim_and_the_next_step(ws):
     cli("claim", "1")
     code, out, err = hook(ws, "session-start")
     got = out.splitlines()
-    assert code == 0 and len(got) <= 6, out + err
+    assert code == 0 and len(got) <= 7, out + err
     assert got[0].startswith("ok session-start Owner · grant gr_")
     assert any(x.startswith("DEMO-0001 ") and "(your claim)" in x for x in got)
     assert got[-1].startswith("next: orch ")
@@ -119,7 +128,7 @@ def test_an_unread_decision_shows_up_and_wait_clears_it(ws):
     ws.sign("1", "question.answered", question="Q1", hash=q.hash, option="b", text="because")
     out = hook(ws, "session-start")[1]
     assert any(x.startswith("unread: DEMO-0001 #") and "answered Q1" in x for x in out.splitlines()), out
-    assert len(out.splitlines()) <= 6
+    assert len(out.splitlines()) <= 7
     assert cli("wait", "--timeout", "2").code == 0
     assert "unread:" not in hook(ws, "session-start")[1]
 
@@ -127,7 +136,7 @@ def test_an_unread_decision_shows_up_and_wait_clears_it(ws):
 def test_without_a_grant_it_says_what_works(ws):
     out = hook(ws, "session-start", ORCH_GRANT="")[1].splitlines()
     assert out[0] == "ok session-start unattended · no grant" or out[0].startswith("ok session-start ")
-    assert any(x.startswith("no grant:") for x in out) and len(out) <= 6
+    assert any(x.startswith("no grant:") for x in out) and len(out) <= 7
 
 
 def test_pre_compact_through_the_command(ws):

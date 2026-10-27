@@ -1,0 +1,4 @@
+List manual schedules across visible tickets.
+usage: orch schedule list [REF]
+  REF  ticket REF (DEMO-0043, 43); default: your claim
+more: orch describe schedule.list

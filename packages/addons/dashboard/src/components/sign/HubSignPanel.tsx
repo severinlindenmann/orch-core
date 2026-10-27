@@ -23,6 +23,8 @@ const UNSUPPORTED: Record<string, string> = {
   new: 'Creating a ticket',
   new_sequence: 'Creating a ticket',
   quick_start: 'Creating a ticket',
+  schedule_add: 'Scheduling a run',
+  schedule_cancel: 'Cancelling a schedule',
 }
 
 /** Fixed copy for an action the hub cannot build yet (D78): no local fallback exists. It names the action; the way to

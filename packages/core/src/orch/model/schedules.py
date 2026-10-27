@@ -1,0 +1,102 @@
+"""Manual calendar schedules: pure rules, supplied clock, UTC epoch seconds."""
+
+from __future__ import annotations
+
+import calendar
+import re
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from orch.canon.text import is_clean_text
+
+from .followups import FU_BRIEF_MAX_BYTES, FU_RUN_HOURS
+from .followups import REASONS as FU_REASONS
+
+MAX_DAYS = 30
+REASONS = (*FU_REASONS, "role_lost", "device_lost", "ticket_closed", "claimed_by_other", "missed")
+
+
+def validate_rule(rule):
+    if not isinstance(rule, dict) or set(rule) - {"every", "at", "tz", "weekdays", "day", "date"}:
+        raise ValueError("invalid rule fields")
+    every = rule.get("every")
+    if every not in ("once", "day", "week", "month"):
+        raise ValueError("unknown frequency")
+    if not isinstance(rule.get("at"), str) or not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", rule["at"]):
+        raise ValueError("at must be HH:MM")
+    try:
+        zone = ZoneInfo(rule["tz"])
+    except (KeyError, TypeError, ValueError, ZoneInfoNotFoundError) as exc:
+        raise ValueError("unknown IANA timezone") from exc
+    for field, frequency in (("weekdays", "week"), ("day", "month"), ("date", "once")):
+        if (field in rule) != (every == frequency):
+            raise ValueError(f"{field} is required only for {frequency}")
+    if every == "week":
+        days = rule["weekdays"]
+        if (
+            not isinstance(days, list)
+            or not days
+            or any(type(d) is not int or not 0 <= d <= 6 for d in days)
+            or len(set(days)) != len(days)
+        ):
+            raise ValueError("weekdays must be unique integers 0..6")
+    if every == "month" and (type(rule["day"]) is not int or not 1 <= rule["day"] <= 31):
+        raise ValueError("day must be 1..31")
+    if every == "once":
+        if not isinstance(rule["date"], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", rule["date"]):
+            raise ValueError("date must be YYYY-MM-DD")
+        date.fromisoformat(rule["date"])
+    return zone
+
+
+def occurrences(rule, starts: int, ends: int, after: int) -> int | None:
+    """First occurrence strictly after `after`, inside the inclusive signed interval.
+
+    Resolve fold=0 (first overlap). Gaps advance minute by minute until a roundtrip
+    through UTC preserves the wall time, including zones that skip an entire day.
+    """
+    zone = validate_rule(rule)
+    if ends < starts or after >= ends:
+        return None
+    day = datetime.fromtimestamp(max(starts, after), zone).date() - timedelta(days=1)
+    last = datetime.fromtimestamp(ends, zone).date()
+    local_time = time.fromisoformat(rule["at"])
+    while day <= last:
+        every = rule["every"]
+        matches = (
+            every == "day"
+            or (every == "once" and day.isoformat() == rule["date"])
+            or (every == "week" and day.weekday() in rule["weekdays"])
+            or (every == "month" and day.day == min(rule["day"], calendar.monthrange(day.year, day.month)[1]))
+        )
+        if matches:
+            local = datetime.combine(day, local_time)
+            while True:
+                utc = local.replace(tzinfo=zone, fold=0).astimezone(UTC)
+                if utc.astimezone(zone).replace(tzinfo=None) == local:
+                    break
+                local += timedelta(minutes=1)
+            instant = int(utc.timestamp())
+            if starts <= instant <= ends and instant > after:
+                return instant
+        day += timedelta(days=1)
+    return None
+
+
+def validate_set(rule, starts, ends, now, brief, run_hours):
+    try:
+        validate_rule(rule)
+    except ValueError as exc:
+        return str(exc)
+    if any(type(v) is not int for v in (starts, ends, now)) or not 0 < ends - starts <= MAX_DAYS * 86400 or ends <= now:
+        return "schedule interval must be positive, future, and at most 30 days"
+    if type(run_hours) is not int or not 1 <= run_hours <= min(8, FU_RUN_HOURS):
+        return "run_hours must be 1..8"
+    if (
+        not isinstance(brief, str)
+        or not brief.strip()
+        or not is_clean_text(brief)
+        or len(brief.encode("utf-8")) > FU_BRIEF_MAX_BYTES
+    ):
+        return "brief must be clean text of at most 4096 bytes"
+    return None

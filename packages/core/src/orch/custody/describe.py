@@ -54,6 +54,10 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     # a person cancels a follow-up (Schedules, #720): which one and why; `follow_up.cancel` through human.prepare
     "followup.rescheduled": ("followup", "due", "deadline"),
     "followup.restored": ("followup",),
+    "schedule.set": ("schedule", "brief", "label", "rule", "starts", "ends", "run_hours"),
+    "schedule.cancelled": ("schedule",),
+    "schedule.fired": ("schedule", "occurrence", "grant", "run"),
+    "schedule.outcome": ("schedule", "occurrence", "outcome", "reason"),
     "followup.cancelled": ("followup", "reason"),
     # ticket log, actor A or AU, signed by a person through human.prepare (H5a: person versions of agent ops)
     "ticket.created": ("key", "ticket_type", "title", "owner"),

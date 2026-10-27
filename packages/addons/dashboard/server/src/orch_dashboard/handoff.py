@@ -20,6 +20,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Request
@@ -138,6 +139,60 @@ class FollowupUndo(Action):
     action: Literal["followup_undo"]
     key: Key
     id: Annotated[str, StringConstraints(pattern=r"^fu_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+
+
+RECURRING_AT = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+ONCE_AT = re.compile(r"\d{4}-\d\d-\d\d ([01]\d|2[0-3]):[0-5]\d")
+
+
+class ScheduleAdd(Action):
+    """Add a schedule (Schedules, #720): a person signs `schedule.add`. `at` is "HH:MM" for a recurring schedule and
+    "YYYY-MM-DD HH:MM" for a one-off one (no `every`); both are in `tz`."""
+
+    action: Literal["schedule_add"]
+    key: Key
+    brief: Text
+    at: Annotated[str, StringConstraints(min_length=5, max_length=16)]
+    every: Literal["day", "week", "month"] | None = None
+    tz: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_+/-]{1,64}$")]
+    weekdays: list[Annotated[int, Field(ge=0, le=6)]] | None = Field(default=None, min_length=1, max_length=7)
+    day: Annotated[int, Field(ge=1, le=31)] | None = None
+    run_hours: Annotated[int, Field(ge=1, le=8)] | None = None
+
+    @model_validator(mode="after")
+    def shape(self):
+        if self.every is None:
+            try:
+                if not ONCE_AT.fullmatch(self.at):
+                    raise ValueError
+                datetime.strptime(self.at, "%Y-%m-%d %H:%M")
+            except ValueError:
+                raise ValueError("a one-off schedule runs at YYYY-MM-DD HH:MM") from None
+        elif not RECURRING_AT.fullmatch(self.at):
+            raise ValueError("a repeating schedule runs at HH:MM")
+        if self.weekdays is not None and self.every != "week":
+            raise ValueError("weekdays belong to a weekly schedule")
+        if self.day is not None and self.every != "month":
+            raise ValueError("a day of the month belongs to a monthly schedule")
+        return self
+
+    def props(self) -> dict:
+        out: dict = {"ref": self.key, "brief": self.brief, "at": self.at, "tz": self.tz}
+        if self.every:
+            out["every"] = self.every
+        if self.weekdays is not None:
+            out["weekdays"] = ",".join(str(d) for d in sorted(set(self.weekdays)))
+        if self.day is not None:
+            out["day"] = self.day
+        if self.run_hours is not None:
+            out["run_hours"] = self.run_hours
+        return out
+
+
+class ScheduleCancel(Action):
+    action: Literal["schedule_cancel"]
+    key: Key
+    id: Annotated[str, StringConstraints(pattern=r"^sc_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 
 
 class NewTicket(Action):
@@ -1022,6 +1077,8 @@ PrepareBody = Annotated[
     | FollowupCancel
     | FollowupReschedule
     | FollowupUndo
+    | ScheduleAdd
+    | ScheduleCancel
     | Move
     | AcceptCriterion
     | WithdrawAcceptance
@@ -1169,6 +1226,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "follow_up.reschedule", {"id": action.id, "when": action.when}
         case FollowupUndo():
             return "follow_up.undo", {"id": action.id}
+        case ScheduleAdd():
+            return "schedule.add", action.props()
+        case ScheduleCancel():
+            return "schedule.cancel", {"id": action.id}
         case Reopen():
             return "reopen", {"ref": action.key} | ({"message": action.message} if action.message else {})
         case AcceptCriterion():
@@ -1387,6 +1448,10 @@ def expected(action: Action, person: str | None = None):
             return rescheduled
         case FollowupUndo():
             return lambda ev: one(ev, "followup.restored", followup=action.id)
+        case ScheduleAdd():
+            return lambda ev: one(ev, "schedule.set")
+        case ScheduleCancel():
+            return lambda ev: one(ev, "schedule.cancelled", schedule=action.id)
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():
@@ -1525,6 +1590,11 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         rows = gateway.call(ws, "follow_up.list", {"ref": key, "all": True}).get("rows") or []
         if not any(isinstance(r, dict) and r.get("id") == body.id for r in rows):
             raise fail("not_found", "That follow-up is not on this ticket.", exit=2)
+    if isinstance(body, ScheduleCancel):
+        # the signature is for a schedule of THIS ticket; one on another ticket is refused before any request exists
+        rows = gateway.call(ws, "schedule.list", {}).get("rows") or []
+        if not any(isinstance(r, dict) and r.get("id") == body.id and r.get("key") == key for r in rows):
+            raise fail("not_found", "That schedule is not on this ticket.", exit=2)
     labels = list(data["doc"].get("labels", [])) if isinstance(body, AddLabel) and data else None
     if isinstance(body, EditTicket):
         from orch.host import sequence

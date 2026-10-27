@@ -97,6 +97,8 @@ HUMAN_ONLY: frozenset[str] = frozenset(
         "member.role",
         "reopen",
         "request_changes",
+        "schedule.add",
+        "schedule.cancel",
         "verdict",
     }
 )
@@ -123,4 +125,12 @@ EMITS_V4: dict[str, frozenset[str]] = {
     "follow_up.cancel": frozenset({"followup.cancelled"}),
 }
 
-CURRENT = EMITS_V4
+# Manual schedules: two person operations (NEW keys, both in HUMAN_ONLY), so no EMITS_V1 verdict changes. The firing,
+# its outcome and the run's writes are the host's and the derived grant's, never a verb a grant names.
+EMITS_V5: dict[str, frozenset[str]] = {
+    **EMITS_V4,
+    "schedule.add": frozenset({"schedule.set"}),
+    "schedule.cancel": frozenset({"schedule.cancelled"}),
+}
+
+CURRENT = EMITS_V5

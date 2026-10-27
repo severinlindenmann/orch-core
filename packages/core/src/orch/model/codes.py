@@ -88,6 +88,7 @@ class Code(StrEnum):
     SOURCE_UNLINKED = "source.unlinked"
     SOURCE_NOT_NEW = "source.not_new"
     # --- claims, tasks, artifacts, questions
+    SCHEDULE_DENIED = "schedule.denied"
     FOLLOWUP_DENIED = "followup.denied"
     CLAIM_NOT_LIVE = "claim.not_live"
     CLAIM_EXISTS = "claim.exists"

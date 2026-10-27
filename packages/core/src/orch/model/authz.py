@@ -31,6 +31,10 @@ ACTOR_RULES: dict[str, str] = {
     "visibility.changed": "P",
     "people.changed": "P",
     "policy.changed": "P",
+    "schedule.set": "P",
+    "schedule.cancelled": "P",
+    "schedule.fired": "H",
+    "schedule.outcome": "H",
     "followup.set": "G",
     "followup.fired": "H",
     "followup.outcome": "H",
@@ -335,9 +339,14 @@ def authorize_agent(
             return Refusal(Code.GRANT_SCOPE, "follow-up grants belong to one session family")
         from .followups import chain_valid
         from .followups_wire import grant_chain
+        from .schedules_wire import root_valid
 
+        chain = grant_chain(ws, g.id)
+        if chain and not root_valid(core, chain[-1].id, at):
+            return Refusal(Code.GRANT_INVALID, "schedule root is no longer live")
         if not chain_valid(
             grant_chain(ws, g.id),
+            at=at,
             root_person_active=identity.member_role(ws, g.person) in ("owner", "maintainer", "member"),
         ):
             return Refusal(Code.GRANT_INVALID, "the follow-up grant chain is revoked")

@@ -1,0 +1,209 @@
+{
+  "v": "orch.cli/2.0",
+  "ok": true,
+  "data": {
+    "target": "schedule.add",
+    "name": "schedule.add",
+    "cli": "orch schedule add",
+    "summary": "Schedule automatic agent sessions on this ticket for up to 30 days.",
+    "who": "human",
+    "usage": "orch schedule add REF --at AT [--every day|week|month] [--tz TZ] [--weekdays WEEKDAYS] [--day DAY] [--brief BRIEF] [--brief-file PATH] [--until UNTIL] [--run-hours RUN_HOURS] [--dry-run]",
+    "pre": [],
+    "emits": [
+      "schedule.set"
+    ],
+    "input": {
+      "type": "object",
+      "description": "Schedule automatic agent sessions on this ticket for up to 30 days.",
+      "properties": {
+        "ref": {
+          "type": "string",
+          "description": "ticket REF (DEMO-0043, 43); default: your claim",
+          "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
+          "x-metavar": "REF"
+        },
+        "at": {
+          "type": "string",
+          "description": "once: YYYY-MM-DD HH:MM; recurring: HH:MM"
+        },
+        "every": {
+          "type": "string",
+          "description": "day, week or month",
+          "enum": [
+            "day",
+            "week",
+            "month"
+          ]
+        },
+        "tz": {
+          "type": "string",
+          "description": "IANA timezone; default UTC"
+        },
+        "weekdays": {
+          "type": "string",
+          "description": "comma-separated weekdays 0..6, Monday=0"
+        },
+        "day": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 31,
+          "description": "monthly day; clamps to the last day of shorter months"
+        },
+        "brief": {
+          "type": "string",
+          "description": "the brief as text",
+          "maxLength": 4096
+        },
+        "brief_file": {
+          "type": "string",
+          "description": "read the text from PATH, or - for stdin",
+          "x-metavar": "PATH",
+          "x-file": true
+        },
+        "until": {
+          "type": "string",
+          "description": "end instant; defaults to 30 days"
+        },
+        "run_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "description": "maximum hours per run; default 8"
+        }
+      },
+      "x-positional": [
+        "ref"
+      ],
+      "required": [
+        "ref",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "text": "ok {key} schedule.set {id} seq={seq}\nnext: {next}",
+      "json": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "errors": [
+      {
+        "code": "not_found",
+        "exit": 2,
+        "retryable": false,
+        "hint": "orch list",
+        "fix": [
+          "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "addon.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "tell the person; do not work around it",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
+      },
+      {
+        "code": "custody.no_key",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch setup sets up your device key",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.no_prompt",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run this command yourself, in your own terminal",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "custody.wrong_passphrase",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run the command again and type your passphrase",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "human_only",
+        "exit": 3,
+        "retryable": false,
+        "hint": "orch ask or orch wait",
+        "fix": [
+          "orch",
+          "describe",
+          "ask"
+        ]
+      },
+      {
+        "code": "schedule.denied",
+        "exit": 3,
+        "retryable": false,
+        "hint": "read the denial and correct the schedule",
+        "fix": [
+          "orch",
+          "schedule",
+          "list"
+        ]
+      },
+      {
+        "code": "lock.busy",
+        "exit": 4,
+        "retryable": true,
+        "hint": "retry in a moment",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
+      {
+        "code": "parse.text",
+        "exit": 6,
+        "retryable": false,
+        "hint": "orch describe schedule.add",
+        "fix": [
+          "orch",
+          "describe",
+          "schedule.add"
+        ]
+      },
+      {
+        "code": "members.stale",
+        "exit": 9,
+        "retryable": true,
+        "hint": "retry; the person re-signs",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      }
+    ]
+  },
+  "key": null,
+  "seq": 0,
+  "cursor": 0,
+  "hints": []
+}

@@ -491,6 +491,10 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `people.changed` | P | `role`: `owner`, `assignees`, `reviewers` or `watchers`; `add`: [person id]; `remove`: [person id] | For `owner`, `add` has exactly one id and the old owner is removed. On `done`/`closed` refused for roles a gate policy names. |
 | `policy.changed` | P | `gates`: {gate: policy} | In the ticket log: an override, intersected with the workspace policy (§5.7). |
 | `claim.taken` | A | `takeover?`: {`from_session`: session id, `reason`: str} | Agents only. One claim per ticket. Refused on `done`/`closed`. |
+| `schedule.set` | P | `schedule`: sc_ ULID; `rule`: `{every: once, day, week or month; at: HH:MM; tz: IANA zone; weekdays?: [0..6]; day?: 1..31; date?: YYYY-MM-DD}`; `starts`, `ends`: timestamps, at most 30 days apart; `brief`: str, at most 4096 bytes; `run_hours`: 1..8; `label?`: line | Bounded manual calendar rule on this ticket; a person authority root (non-viewer, live device). |
+| `schedule.fired` | H | `schedule`: sc_ ULID; `occurrence`: UTC timestamp; `grant`: grant id; `secret_hash`: hash; `run`: r_ ULID | Derives a fresh one-run grant scoped to this ticket; role, device and claim re-checked; each occurrence at most once. |
+| `schedule.outcome` | H | `schedule`: sc_ ULID; `occurrence`: UTC timestamp; `outcome`: ran, failed or did_not_run; `reason?`: follow-up outcome reason, role_lost, device_lost, ticket_closed, claimed_by_other or missed | Ends the run grant. |
+| `schedule.cancelled` | P | `schedule`: sc_ ULID | Setter or owner/admin cancels atomically and ends all derived grants; Undo is a new set. |
 | `followup.set` | A | `followup`: fu_ ULID; `trigger`: time, orch, addon or webhook; `due?`: timestamp; `deadline?`: timestamp; `brief`: str, at most 4096 bytes; `label?`: line; `on?`: event match `{source, kind, status, ref?, hook?}` (orch and webhook triggers); `hook?`: sha256 hex of the webhook id | Agents only. Creates a follow-up and releases the claim; see orch-v2-followups FU1–FU16. |
 | `followup.fired` | H | `followup`: fu_ ULID; `grant`: grant id; `trigger`: time, orch, addon, webhook or deadline; `fallback?`: no_event, no_ring or addon_silent; `event?`: the waking event `{source, kind, ref, status, at}`; `secret_hash`: hash; `run`: r_ ULID | Derives a one-run grant scoped to this ticket. |
 | `followup.outcome` | H | `followup`: fu_ ULID; `outcome`: ran, failed or did_not_run; `reason?`: follow-up outcome reason; `run?`: r_ ULID | Ends the run grant. |
@@ -1952,6 +1956,7 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `source.unlinked` | §5.7 the repo is not in `links.repos` |
 | `source.not_new` | §5.7 `branch.pushed` repeats the projection, has a wrong `before`, or changes a ref on a done ticket |
 | `followup.denied` | FU1–FU16 follow-up rule refused; detail names the pure rule denial |
+| `schedule.denied` | a manual schedule rule refused (set, fired, outcome or cancelled); detail names the denial |
 | `claim.not_live` | §5.2 no live claim of that session (or takeover of nothing) |
 | `claim.exists` | §5.4.1 the ticket is claimed and no takeover was given |
 | `claim.not_holder` | §5.4.1 an agent acts under another session's claim |

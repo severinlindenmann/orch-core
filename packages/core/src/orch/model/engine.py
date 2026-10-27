@@ -30,6 +30,7 @@ from . import (
     identity,
     lifecycle,
     questions,
+    schedules_wire,
     source,
     tasks,
     visibility,
@@ -188,7 +189,21 @@ def _scratch(core: Core, log: str, e: dict[str, Any]) -> Core:
     is_ws = log == WORKSPACE
     sc = Core(
         ws=copy.deepcopy(core.ws)
-        if (is_ws or unattended or "via" in a or _names_users(e) or typ in ("followup.fired", "followup.outcome"))
+        if (
+            is_ws
+            or unattended
+            or "via" in a
+            or _names_users(e)
+            or typ
+            in (
+                "followup.fired",
+                "followup.outcome",
+                "schedule.set",
+                "schedule.fired",
+                "schedule.outcome",
+                "schedule.cancelled",
+            )
+        )
         else core.ws,
         tickets=dict(core.tickets),
         keys=dict(core.keys) if typ == "ticket.created" else core.keys,
@@ -214,6 +229,10 @@ def _ticket_handler(core: Core, t: TCore, lc: LogCore, e: dict[str, Any]) -> Ref
         "visibility.changed": lambda: visibility.changed(ws, t, e),
         "people.changed": lambda: lifecycle.people_changed(ws, t, e),
         "policy.changed": lambda: lifecycle.policy_changed(ws, t, e),
+        "schedule.set": lambda: schedules_wire.set_event(core, t, e),
+        "schedule.fired": lambda: schedules_wire.fired_event(core, t, e),
+        "schedule.outcome": lambda: schedules_wire.outcome_event(core, t, e),
+        "schedule.cancelled": lambda: schedules_wire.cancelled_event(core, t, e),
         "followup.set": lambda: followups_wire.set_event(core, t, e),
         "followup.fired": lambda: followups_wire.fired_event(core, t, e),
         "followup.outcome": lambda: followups_wire.outcome_event(core, t, e),

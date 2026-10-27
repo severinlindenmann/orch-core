@@ -63,6 +63,8 @@ TECHNICAL_KEYS = frozenset(
 
 #: per event type, the payload keys the plain view shows (in a section, a list or a field row)
 SHOWN: dict[str, frozenset[str]] = {
+    "schedule.set": frozenset({"schedule", "rule", "starts", "ends", "brief", "run_hours", "label"}),
+    "schedule.cancelled": frozenset({"schedule"}),
     "addon.disabled": frozenset({"name"}),
     "addon.purged": frozenset({"name"}),
     "addon.granted": frozenset(
@@ -1205,6 +1207,20 @@ def _event(
     ctx: _Ctx,
 ) -> str:
     """The headline of one event; everything it shows is added to ``out``."""
+    if typ == "schedule.set":
+        from orch.ops.schedule import RISK, describe
+
+        for key in ("schedule", "starts", "ends", "run_hours", "label"):
+            if key in ev:
+                _row(out, key, ev[key])
+        out.setdefault("sections", []).append(
+            {"id": "brief", "title": "Instructions for each run", "text": _s(ev["brief"])}
+        )
+        out.setdefault("notes", []).extend([RISK, "No click or confirmation is required at firing time."])
+        return describe(ev["rule"], ref, ev["ends"])
+    if typ == "schedule.cancelled":
+        _row(out, "schedule", ev["schedule"])
+        return f"Cancel automatic sessions on {ref} and end their run grants"
     if typ == "ticket.created":
         title = _s(ev.get("title"))
         out["ticket"] = {**(out.get("ticket") or {}), "key": _s(ev.get("key")), "title": one(title)}

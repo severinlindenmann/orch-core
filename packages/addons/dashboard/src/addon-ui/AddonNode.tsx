@@ -22,6 +22,8 @@ import { FrameNode } from './FrameNode'
 import { CodeBlock } from './CodeBlock'
 import { INTERNAL_LINK, MAX_DEPTH, parseNode, type ItemAction, type NodeOf } from './nodes'
 import { SafeMarkdown, SafeMarkdownChunk } from './SafeMarkdown'
+import { TreeNode } from './TreeNode'
+import { SearchNode } from './SearchNode'
 import { useAddons, type SlotContext } from './slots'
 import { ErrorAlert } from './ErrorAlert'
 import { roleReason, useRunAddonAction, type ActionError } from './useRunAddonAction'
@@ -145,6 +147,7 @@ export function AddonNode({ node, addon, ctx = {}, compact = false, readOnly = f
 
 function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
   const { addon, glance } = useContext(RuntimeCtx)
+  const workspaceId = useWorkspace().workspace?.id
   const parsed = depth > MAX_DEPTH ? ({ ok: false } as const) : parseNode(raw)
   if (!parsed.ok) return <AddonUnavailable addon={addon} />
   const n = parsed.node
@@ -241,6 +244,17 @@ function NodeView({ node: raw, depth }: { node: unknown; depth: number }) {
       return <FoldView node={n} depth={depth} />
     case 'popover':
       return <PopoverView node={n} depth={depth} />
+    case 'tree':
+      return (
+        <TreeNode
+          node={n}
+          addon={addon}
+          ws={workspaceId}
+          renderOffer={(o) => <NodeView node={{ type: 'button', label: o.label, action: o.action, variant: 'primary' }} depth={depth + 1} />}
+        />
+      )
+    case 'search':
+      return <SearchNode node={n} addon={addon} ws={workspaceId} />
     case 'link':
       if (INTERNAL_LINK.test(n.href)) return <InternalLink href={n.href} label={n.label} />
       if (n.copy) return <CopyableLink href={n.href} label={n.label} />

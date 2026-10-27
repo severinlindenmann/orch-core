@@ -150,6 +150,7 @@ def packages() -> list[dict]:
             "package_sha256": hashlib.sha256(raw).hexdigest(),
             "update": None,
             "contributions": doc["contributions"],
+            "actions": doc["actions"],
         }
     ]
 

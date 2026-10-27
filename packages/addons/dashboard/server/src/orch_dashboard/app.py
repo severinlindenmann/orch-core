@@ -83,13 +83,11 @@ SPA_ROUTES = (
     "worktrees",
     "terminals",
     "explorer",
-    "wiki",
     "addons",
     "shares",
     "activity",
     "usage",
     "schedules",
-    "wiki",
     "focus",
     "focus/$ticket",
     "guide",  # ?page=<x> is a query: not part of the path

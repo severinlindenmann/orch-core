@@ -24,7 +24,8 @@ import { DropErrorLine, DropView, type DropPreviewStart } from '@/app/pages/drop
 import { AGENT, PHONE_SHARE, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
 import { HOST_TABS } from '@/app/pages/settings/tabs'
 import { QuickPage } from '@/app/pages/quick'
-import { WikiPage } from '@/app/pages/wiki'
+import { AddonNode } from '@/addon-ui/AddonNode'
+import { WIKI_PREVIEW_NODE, WIKI_PREVIEW_PAGES } from './wikiPreview'
 import { useWorkspace } from '@/app/workspace'
 import { runsApi, type Run, type RunList } from '@/api/runs'
 import { TerminalsPage } from '@/app/pages/terminals'
@@ -60,6 +61,7 @@ export const LAYOUT_SCENARIOS = [
   'quick-off',
   'wiki-empty',
   'wiki-created',
+  'wiki-many',
   'records-ok',
   'records-hidden-url',
   'records-first',
@@ -895,24 +897,39 @@ function install() {
   set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
 
-/** The Wiki page with a faked server: no wiki folder (`wiki-empty`), or the folder just created (`wiki-created`). */
-function WikiPreview({ created }: { created: boolean }) {
+/**
+ * The Wiki view (the declarative nav page of the wiki add-on) over a faked server: no wiki folder (`wiki-empty`), a few
+ * pages (`wiki-created`, with the first open), or a long list (`wiki-many`). The node is the package's own view.
+ */
+function WikiPreview({ scenario }: { scenario: string }) {
   const [ready] = useState(() => {
-    setFeatures({ features: ['today', 'tickets', 'board', 'ticket', 'wiki'] })
     const real = window.fetch.bind(window)
-    let made = created
     window.fetch = async (input, init) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      if (!url.includes('/wiki')) return real(input, init)
-      if ((init?.method ?? 'GET') === 'POST') made = true
-      const body = made
-        ? { available: true, state: 'ok', message: null, total: 1, cut: false, pages: [{ slug: 'readme', title: 'Wiki', updated: null, by: null, tickets: [], links: 0, too_large: false }] }
-        : { available: true, state: 'no_folder', message: 'No wiki folder in this project yet.', total: 0, cut: false, pages: [] }
-      return new Response(JSON.stringify((init?.method ?? 'GET') === 'POST' ? { created: true, path: 'wiki/readme.md' } : body), { status: 200, headers: { 'content-type': 'application/json' } })
+      const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url, window.location.href)
+      const read = url.pathname.split('/view/')[1]
+      if (!read) return real(input, init)
+      const pages = scenario === 'wiki-many' ? WIKI_PREVIEW_PAGES.concat(Array.from({ length: 140 }, (_, i) => ({ id: `note-${i}`, title: `Meeting notes ${i + 1}`, markdown: `# Meeting notes ${i + 1}\n\nShort note.` }))) : WIKI_PREVIEW_PAGES
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
+      if (read === 'wiki.tree')
+        return scenario === 'wiki-empty'
+          ? json({ state: 'no_folder', message: 'No wiki folder in this project yet.', nodes: [], total: 0, cut: false, offer: { label: 'Create the wiki folder', action: 'create' } })
+          : json({ state: 'ok', message: null, nodes: pages.map((p) => ({ id: p.id, label: p.title, hint: p.id, ...('badge' in p ? { badge: p.badge } : {}) })), total: pages.length, cut: false })
+      if (read === 'wiki.page') {
+        const p = pages.find((x) => x.id === url.searchParams.get('id'))
+        return p ? json({ id: p.id, title: p.title, markdown: p.markdown, updated: '2026-10-20T09:30:00Z', by: 'Mara' }) : json({ error: { code: 'not_found', message: 'x', retryable: false } })
+      }
+      const q = (url.searchParams.get('q') ?? '').toLowerCase()
+      const hits = pages.filter((p) => p.title.toLowerCase().includes(q) || p.markdown.toLowerCase().includes(q))
+      return json({ results: hits.map((p) => ({ id: p.id, label: p.title, snippet: p.markdown.split('\n').find((l) => l.toLowerCase().includes(q) && !l.startsWith('#')) ?? p.title })), total: hits.length, cut: false })
     }
     return true
   })
-  return ready ? <WikiPage /> : null
+  return ready ? (
+    <div className="w-full space-y-4">
+      <h1 className="text-xl font-semibold tracking-tight">Wiki</h1>
+      <AddonNode node={WIKI_PREVIEW_NODE} addon="wiki" />
+    </div>
+  ) : null
 }
 
 export function LayoutPreview({ name }: { name: string }) {
@@ -945,7 +962,10 @@ export function LayoutPreview({ name }: { name: string }) {
     setFeatures({ features: ['today', 'tickets', 'board', 'ticket', 'quick'] })
     return <QuickPage />
   }
-  if (scenario.startsWith('wiki-')) return <WikiPreview created={scenario === 'wiki-created'} />
+  if (scenario.startsWith('wiki-')) {
+    setFeatures({ features: ['today', 'tickets', 'board', 'ticket', 'wiki', 'addons'] })
+    return <WikiPreview scenario={scenario} />
+  }
   if (scenario.startsWith('quick-')) return <QuickPage />
   if (scenario.startsWith('terminals-page')) return <TerminalsPage />
   if (scenario.startsWith('terminal-')) return <TerminalPreview scenario={scenario} />

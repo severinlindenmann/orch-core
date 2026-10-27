@@ -24,10 +24,21 @@
             "label": "Wiki pages",
             "read": "wiki.tree",
             "empty": "The wiki folder has no pages yet. Add .md files to it.",
-            "detail": {"read": "wiki.page", "title": "title", "text": "markdown", "empty": "This page is too large to show here."}
+            "detail": {
+              "read": "wiki.page",
+              "title": "title",
+              "text": "markdown",
+              "empty": "This page is too large to show here."
+            }
           }
         ]
       }
     }
-  ]
+  ],
+  "actions": {
+    "create": {
+      "minRole": "maintainer",
+      "label": "Create the wiki folder"
+    }
+  }
 }

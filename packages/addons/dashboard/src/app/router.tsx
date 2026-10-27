@@ -38,7 +38,6 @@ const ActivityPage = lazyPage(() => import('./pages/activity'), 'ActivityPage')
 const FocusPage = lazyPage(() => import('./pages/focus'), 'FocusPage')
 const SchedulesPage = lazyPage(() => import('./pages/schedules'), 'SchedulesPage')
 const UsagePage = lazyPage(() => import('./pages/usage'), 'UsagePage')
-const WikiPage = lazyPage(() => import('./pages/wiki'), 'WikiPage')
 // Preview component is dev only; the production route remains registered as a redirect to /.
 // The real-host-only pages (quick tasks, records, runner) drawn from fixtures so the layout guard sees them (src/dev).
 // `import.meta.env.DEV` is false in a build, so the import, its chunk and the fixtures are not in the production bundle.
@@ -256,17 +255,6 @@ const schedulesRoute = createRoute({
   loader: pageLoader(() => [], [SchedulesPage.preload]),
   component: SchedulesPage,
 })
-/** Wiki of a real host (add-on): listed only while the add-on is ON for this workspace (the server adds `wiki` then). */
-const wikiRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: 'wiki',
-  beforeLoad: () => {
-    if (!isRealHost()) throw redirect({ to: '/' })
-    serves('wiki')()
-  },
-  loader: pageLoader(() => [], [WikiPage.preload]),
-  component: WikiPage,
-})
 const focusRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'focus',
@@ -372,7 +360,7 @@ const addonRoute = createRoute({
   },
 })
 
-const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, schedulesRoute, wikiRoute, focusRoute, focusTicketRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
+const routeTree = rootRoute.addChildren([todayRoute, boardRoute, ticketsRoute, newTicketRoute, ticketRoute, artifactsRoute, agentsRoute, quickRoute, dropRoute, checklistRoute, feedbackRoute, worktreesRoute, terminalsRoute, explorerRoute, marketRoute, sharesRoute, activityRoute, usageRoute, schedulesRoute, focusRoute, focusTicketRoute, guideRoute, layoutPreviewRoute, settingsRoute, settingsTabRoute, settingsAddonRoute, settingsAddonsAliasRoute, addonRoute])
 
 /**
  * The app's router. Without `initialPath` it owns the address bar (browser history); tests pass an in-app or

@@ -2,12 +2,8 @@
 // nothing: it shows what the host says to check ("Approve on your phone or in the hub"), the 12 characters to compare
 // and one link the HOST built. Nothing here builds a link, holds a hub credential or falls back to a local key.
 import type { HandoffAction } from './handoff'
-import type { Workspace } from './types'
 
 export type SigningMode = 'standalone' | 'selective' | 'full' | 'unknown'
-
-/** The host's signing mode for a workspace; `full` and `unknown` (fail closed) take no local key. */
-export const hubOnly = (w: Pick<Workspace, 'signing'> | undefined | null): boolean => w?.signing === 'full' || w?.signing === 'unknown'
 
 export type HubSignRequest =
   | { kind: 'gate' | 'verdict'; ticket: string; gate: 'requirements' | 'plan' | 'code' | 'verify' }
@@ -76,17 +72,3 @@ export function hubSettingsSplit(a: HandoffAction | null | undefined): { set: Re
 export const isAddonGrant = (a: HandoffAction | null | undefined): a is Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' }> => a?.action === 'addon_grant' || a?.action === 'market_grant'
 
 /** What the host is asked to describe for an action the hub can build (approve, request changes, verdict, answer); null otherwise. */
-export function hubRequestOf(a: HandoffAction | null): HubSignRequest | null {
-  if (!a) return null
-  switch (a.action) {
-    case 'approve':
-    case 'request_changes':
-      return { kind: 'gate', ticket: a.key, gate: a.gate }
-    case 'verdict':
-      return { kind: 'verdict', ticket: a.key, gate: 'verify' }
-    case 'answer':
-      return { kind: 'question', ticket: a.key, question: a.question }
-    default:
-      return null
-  }
-}

@@ -30,15 +30,12 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
-from . import hubsign
 from .errors import HostError
-from .hubsign import BREAK_GLASS
 
 if TYPE_CHECKING:
     from .workspace import Call, WorkspaceService
 
 __all__ = [
-    "BREAK_GLASS",
     "HUB_CAPS",
     "HUB_OPS",
     "NETWORK_OPS",
@@ -403,8 +400,8 @@ def signing_mode(service: WorkspaceService) -> str:
     bricks a workspace that never joined. ``hub.json`` can only make the answer **stricter**: a full join whose
     ``hub.json`` is missing, unreadable, or names another hub, binding or mode is ``unknown``, and a selective join
     whose ``hub.json`` cannot be read, or already says ``full`` (the file is ahead of the log), is ``unknown`` too.
-    ``unknown`` is treated as ``full`` by every caller (:data:`~orch.host.hubsign.HUB_ONLY`). A selective join that has
-    no ``hub.json`` yet (``hub.connect`` not run) stays ``selective``: nothing was handed to the hub.
+    ``unknown`` is treated as ``full`` by every caller (:data:`~orch.host.hubsign.SEALS_TO_HUB`). A selective join
+    that has no ``hub.json`` yet (``hub.connect`` not run) stays ``selective``: nothing was handed to the hub.
 
     Reads the log fresh (``store.refresh()``); safe under the store lock. Never touches the network."""
     store = service.store
@@ -810,8 +807,6 @@ def serve(call: Call) -> dict[str, Any]:
         return {"plan": plan}
     if not model or model.get("status") != "joined":
         raise HostError("hub.not_joined", "sign `orch hub join` first: the log has no hub.joined")
-    if model.get("mode") == "full":
-        hubsign.refuse_full_while_click_on(service)  # V3 C11: a full hub never runs beside click-to-sign
     dev = workspace_dev(service)
     now = int(service.clock() * 1000)
     try:

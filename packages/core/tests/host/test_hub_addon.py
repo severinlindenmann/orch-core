@@ -19,7 +19,7 @@ from tests.host import market_helpers as M
 from tests.host.dispatch_helpers import ok
 from tests.host.human_helpers import err
 from tests.host.market_helpers import add_market, addon_dir, stage
-from tests.host.test_hub_deliver import Env, mint
+from tests.host.test_hub_deliver import ALICE, Env, mint
 from tests.host.test_hub_ops import dev_workspace, stub  # noqa: F401
 
 net = M.net
@@ -224,11 +224,20 @@ def env_unaliased(served, human, stub, net):
     return e
 
 
+def bind_owner_user(env, prepared, user):
+    """What the dashboard does: the hub names the owner's hub user (`rail_get`); `hub.handoff` binds it."""
+    got = env.served.client().req(
+        "hub.handoff", {"kind": "addon", "request": prepared["request"]["id"], "hub_user": user}
+    )
+    ok(got)
+
+
 def test_an_unaliased_hub_admin_turns_an_add_on_on_for_the_local_owner(env_unaliased):
     """Round 4: `addon.requested` was refused `role.denied` (addon.requested is for a workspace owner) because the hub
     user is not a workspace member; the ticket-level question answer needs no member. Fails before the fix."""
     env = env_unaliased
     prepared, ev = prepare_handoff(env)
+    bind_owner_user(env, prepared, ALICE)
     assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is None
     assert [e["type"] for e in env.lines("workspace")][-2:] == ["addon.requested", "addon.granted"]
     assert addon_dir(env.served).exists()
@@ -245,3 +254,19 @@ def test_an_unaliased_hub_user_who_is_not_an_admin_is_refused(served, human, stu
     prepared = ok(res)["data"]
     assert e.deliver(request(e, terms_of(prepared["events"][0], prepared["request"]["id"])), "workspace") is not None
     assert granted(e) == []
+
+
+def test_another_hub_admin_cannot_answer_the_owners_hand_off(env_unaliased):
+    """Security review: the hub user must be THE one the hub named as owner when the hand-off was made."""
+    env = env_unaliased
+    prepared, ev = prepare_handoff(env)
+    bind_owner_user(env, prepared, "ab" * 16)  # the hub names somebody else as the owner
+    assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is None
+    assert granted(env) == [] and not addon_dir(env.served).exists()
+
+
+def test_without_a_hub_named_owner_an_unaliased_hub_user_answers_nothing(env_unaliased):
+    env = env_unaliased
+    prepared, ev = prepare_handoff(env)
+    assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is None
+    assert granted(env) == []

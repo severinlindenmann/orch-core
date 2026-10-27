@@ -127,6 +127,8 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "cancel": {"const": True},
             # kind addon (FB15): the prepared hand-off request (op addon.grant) the hub link is for
             "request": {"type": "string", "pattern": "^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
+            # kind addon: the hub user the hub names as this workspace's owner (`rail_get`), bound to the request
+            "hub_user": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
         },
         "required": ["kind"],
         "additionalProperties": False,

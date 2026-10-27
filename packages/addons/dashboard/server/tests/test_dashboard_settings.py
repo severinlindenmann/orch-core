@@ -692,6 +692,10 @@ def test_a_host_that_prepares_another_event_is_refused_before_anything_is_shown(
     assert res.status_code == 500 and res.json()["error"]["code"] == "internal"
 
 
+BIDI = "\u202e"
+
+
+@pytest.mark.parametrize("hidden", ["\u202e", "\u2066", "\u200b", "\u200f", "\ufeff", "\u2028"])
 def test_hidden_characters_from_the_host_are_not_forwarded(hidden):
     page = {
         "settings": {

@@ -2,8 +2,9 @@
 
 Everything runs against a disposable state: an explicit `ORCH_STATE_DIR`, `HOME` and `XDG_CONFIG_HOME` under `base`
 (with `.orch-dev` markers), never `~/.config/orch`. The person's terminal is a pty: `Pty` answers the passphrase prompt,
-the confirmations of `orch setup` and the "Type KEY and Enter" confirmations, exactly as a person at a keyboard would
+the confirmations of `orch setup` and the one Enter after a signing review, exactly as a person at a keyboard would
 (the passphrase is the one setup generated, kept in <base>/passphrase-<dir>; it protects only a disposable sandbox).
+The dashboard signs by one click only: `Workspace.convenience_on`, `Workspace.click_start` and `click_sign` drive it.
 
 `base` must be SHORT and outside any sticky directory such as /tmp: the host refuses ancestors it does not trust, and a unix
 socket path (`<state>/run/<ws>/host.sock`, `<state>/dashboard/ctl.sock`) holds about 100 bytes. `short_run_root()` gives
@@ -31,6 +32,7 @@ from pathlib import Path
 CORE = Path(__file__).resolve().parents[4] / "core"
 ADDON = Path(__file__).resolve().parents[2]
 SESSION = "s_01M4QWK11VJHV7YX18VRQSZ1CA"
+CLICK_CHILD = Path(__file__).resolve().with_name("click_child.py")
 
 
 def python() -> str:
@@ -109,17 +111,19 @@ class Pty:
         return self
 
 
+def _enter_after_review(m, t) -> str:
+    """Core's one signing prompt: input in the first second after the review is discarded, so a person reads first."""
+    time.sleep(1.2)
+    return ""  # Pty sends the newline: a bare Enter
+
+
 def confirm_rules(passphrase: str | Callable[[], str]) -> list[tuple[str, Callable]]:
     """Answers for a person's terminal. ``passphrase`` is the text or, better, a callable read when the prompt appears
     (the rules are built before `orch setup` has generated the passphrase)."""
     get = passphrase if callable(passphrase) else (lambda: passphrase)
     return [
         (r"[Pp]assphrase: $", lambda m, t: get()),
-        (r"Type (\S+) and Enter[^\n]*: $", lambda m, t: m.group(1)),
-        (
-            r"Type (\S+) to continue[^\n]*: $",
-            lambda m, t: m.group(1),
-        ),  # core's current prompt of `orch sign` and `addon grant`
+        (r"Press Enter to sign, any other key cancels\.\n?$", _enter_after_review),  # core's review_prompt
     ]
 
 
@@ -202,7 +206,7 @@ class Workspace:
         return [python(), "-W", "ignore", "-m", "orch", *args]
 
     def human(self, *args: str, timeout: int = 90, ok: bool = True) -> str:
-        """A person's command at their own terminal: the passphrase and the confirmation word are typed for them."""
+        """A person's command at their own terminal: the passphrase and the Enter after the review are typed for them."""
         run = Pty(self.orch(*args), self.env(), self.root, self.rules(), timeout).run()
         if ok and run.code != 0:
             raise RuntimeError(f"orch {' '.join(args)} exited {run.code}:\n{run.output[-1500:]}")
@@ -228,12 +232,38 @@ class Workspace:
             raise RuntimeError(f"orch {' '.join(args)} exited {done.returncode}:\n{done.stdout}{done.stderr}")
         return done.stdout + done.stderr
 
-    def sign(self, code: str, *extra: str, timeout: int = 90) -> str:
-        """`orch sign CODE` at the person's terminal (H5b): the real signer, in a pty, with the confirmation typed."""
-        run = Pty(self.orch("sign", code, *extra), self.env(), self.root, self.rules(), timeout).run()
+    # -- one click: the dashboard's only way to sign ----------------------------------------------------------------
+    def convenience_on(self, timeout: int = 90) -> None:
+        """The real `orch host convenience on`, in a pty: it moves the device key into the One click key file (the
+        passphrase is typed once on the terminal) and switches the flag on. Needs the host and the workspace."""
+        run = Pty(
+            self.orch("host", "convenience", "on", "--workspace", self.ws_id, "--state", str(self.state)),
+            self.env(), self.root, self.rules(), timeout,
+        ).run()  # fmt: skip
         if run.code != 0:
-            raise RuntimeError(f"orch sign {code} exited {run.code}:\n{run.output[-2000:]}")
-        return run.output
+            raise RuntimeError(f"orch host convenience on exited {run.code}:\n{run.output[-1500:]}")
+
+    def click_start(self, children: list | None = None) -> Callable:
+        """The ``start`` seam of the dashboard's click `Signer`: core's real signer, run by `click_child.py` with the
+        file custody store of this disposable state (never the keychain). Each child is appended to ``children``."""
+
+        def start(env):
+            from orch.click.client import ClickClient
+
+            parent, child = socket.socketpair()
+            n = child.fileno()
+            own = {**env, "HOME": str(self.home), "XDG_CONFIG_HOME": str(self.home / ".config")}
+            own["ORCH_HOST_RUN_DIR"] = str(self.run)
+            proc = subprocess.Popen(
+                [sys.executable, "-I", str(CLICK_CHILD), "signer", "--fd", str(n)],
+                pass_fds=(n,), close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, env=own,
+            )  # fmt: skip
+            child.close()
+            if children is not None:
+                children.append(proc)
+            return ClickClient(parent, proc)
+
+        return start
 
     # -- bring-up ---------------------------------------------------------------------------------------------------
     def host_answers(self) -> bool:
@@ -541,6 +571,23 @@ def sandbox_bring_up(
     ws.start_host()  # the full dev host proves S1 to S5 for the bound workspace
     if on_host:
         on_host(ws)
+
+
+def click_sign(client, base: str, headers: dict, body: dict, *, dwell: float = 1.2) -> tuple[dict, dict]:
+    """One click through the dashboard's routes under ``base`` (``/api/w/<ws>``): prepare, view, wait out the signer's
+    1 s guard, sign. ``headers`` carry the session and the Origin. Returns (prepared, signed); fails on any refusal."""
+
+    def post(step: str, payload: dict) -> dict:
+        res = client.post(f"{base}/click/{step}", json=payload, headers=headers)
+        if res.status_code != 200:
+            raise AssertionError(f"click/{step} -> {res.status_code} {res.text}")
+        return res.json()
+
+    prepared = post("prepare", body)
+    view = post("view", {"request_id": prepared["request_id"]})
+    time.sleep(dwell)
+    signed = post("sign", {"request_id": prepared["request_id"], "view_digest": view["view_digest"]})
+    return prepared, signed
 
 
 def new_session(ws: Workspace, n: int) -> None:

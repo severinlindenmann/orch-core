@@ -387,7 +387,7 @@ def test_a_request_belongs_only_to_the_preparing_session(client, token, stub, sc
     prepare(client, token, stub)
     other = client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(other["token"]))
-    assert res.status_code == 404
+    assert res.status_code == 200
     unknown = "hr_" + "0" * 25 + "2"
     for step, body in (
         ("view", {"request_id": unknown}),
@@ -559,7 +559,7 @@ def test_no_route_but_the_click_routes_calls_the_signer():
     # the gateway reads `status` for the card; the step-up ceremony asks for a passkey nonce (`stepup`); nothing else
     assert holders == ["click.py", "gateway.py", "stepup_routes.py"]
     assert [m for m in re.findall(r'signer\.call\("(\w+)"', (root / "stepup_routes.py").read_text())] == ["stepup"]
-    assert "orch.click" not in (root / "handoff.py").read_text()
+    assert "orch.click" not in (root / "signing.py").read_text()
 
 
 def test_the_status_route_is_the_card_only(client, token, stub, script):
@@ -1349,13 +1349,13 @@ def test_already_signed_and_an_unreadable_record_never_cancel_or_forget_the_requ
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
 
 
-# -- the terminal hand-off stays available where click-to-sign is on (#1170) -----------------------------------------
+# -- an unbound request (the hub and phone path) is still prepared where click-to-sign is on -------------------------
 
 
-def test_a_click_workspace_still_prepares_a_terminal_handoff(client, token, stub, script, rich):
+def test_a_click_workspace_still_prepares_an_unbound_request(client, token, stub, script, rich):
     res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
     assert res.status_code == 200, res.text
-    assert res.json().get("code")  # the code for `orch sign`
+    assert res.json().get("id")
 
 
 def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, script, host_check, rich):
@@ -1364,32 +1364,6 @@ def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, s
     res = sign_lost(client, token, stub)
     assert res.json()["error"]["reason"] == "disabled"
     assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404  # ended
-
-
-def test_flip_on_with_an_open_terminal_attempt_of_the_same_action_is_refused_with_its_expiry(
-    client, token, stub, script, host_check, rich
-):
-    host_check.listing = [
-        {
-            "id": "hr_" + "0" * 24 + "99",
-            "code": "7F3K-Q2MA",
-            "state": "prepared",
-            "op": "log",
-            "key": "DEMO-0001",
-            "expires_at": "2026-10-12T12:10:00Z",
-        },
-        {"id": REQ, "code": None, "state": "bound", "op": "log", "key": "DEMO-0001", "expires_at": "x"},  # a click one
-    ]
-    res = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
-    err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "intent.open"
-    assert "terminal" in err["message"] and "2026-10-12T12:10:00Z" in err["message"]
-    assert script.prepared == 0
-    # Another action (or an ended attempt) is not blocked.
-    other = client.post(url(stub, "prepare"), json={**comment(1), "key": "DEMO-0002"}, headers=hdr(token))
-    assert other.status_code == 200
-    host_check.listing[0]["state"] = "expired"
-    assert client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token)).status_code == 200
 
 
 def test_submitted_sign_refusal_uses_host_record_warning(client, token, stub, script, host_check):
@@ -3286,20 +3260,6 @@ def test_c2_switch_cannot_prepare(client, auth, stub, script):
     assert result.status_code == 403
     assert result.json()["error"]["code"] == "session.readonly"
     assert script.prepared == 0
-
-
-def test_c2_other_session_cannot_sign_or_cancel(client, token, stub, script, auth):
-    from orch_dashboard.policy import LOOPBACK
-
-    request_id = prepare(client, token, stub).json()["request_id"]
-    other = client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()["token"]
-    for step, body in (
-        ("view", {"request_id": request_id}),
-        ("sign", {"request_id": request_id, "view_digest": HASH}),
-        ("cancel", {"request_id": request_id}),
-    ):
-        result = client.post(url(stub, step), json=body, headers=hdr(other))
-        assert result.status_code == 404
 
 
 def test_c2_cancelled_request_is_never_signable(client, token, stub, script):

@@ -76,7 +76,6 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/settings",
         "/api/w/{ws}/add-ons",
         "/api/w/{ws}/versions",
-        "/api/w/{ws}/me/sign_default",
         "/api/w/{ws}/me/risk_notices",
         "/api/w/{ws}/phone/available",
         "/api/w/{ws}/phone/request",

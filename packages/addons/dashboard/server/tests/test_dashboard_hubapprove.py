@@ -309,7 +309,7 @@ def test_a_settings_change_names_only_its_settings(body):
 @pytest.mark.parametrize(
     "bad",
     [
-        {"summary": {"kind": "settings", "set": {"sign_methods": 1}}},
+        {"summary": {"kind": "settings", "set": {"retention_days": 1}}},  # not a setting the grammar knows
         {"summary": {"kind": "settings", "set": {"grant_hours": 999}}},
         {"url": "https://evil.example/x"},
     ],

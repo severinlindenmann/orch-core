@@ -2,7 +2,7 @@
 //   FU_PY=<server venv python> FU_ENV=e2e/followups-real-env.py FU_BASE=<dir under ~/orch-dev> ORCH_CORE_DIR=<checkout> \
 //     playwright test -c e2e/playwright.config.ts followups-real.spec.ts
 // A pending follow-up shows on the ticket strip, the board chip and the Follow-ups list; one that fell due with nobody to run
-// it is a "failed" Today card (Hide for me hides the card only); Cancel is signed by the test human in the terminal.
+// it is a "failed" Today card (Hide for me hides the card only); Cancel is signed by the test human with one click.
 import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import { expect, test } from '@playwright/test'
@@ -58,11 +58,11 @@ test('real host: pending follow-up on the strip, the chip and the list; did not 
   await page.goto(helper('link', BASE, `/ticket/${state.stuck}`))
   await expect(page.getByTestId('followup-banner')).toBeVisible({ timeout: 30_000 })
 
-  // Cancel the waiting one: core's review, the test human signs in the terminal
+  // Cancel the waiting one: the signer's review in the dashboard, the test human signs with one click
   await page.goto(helper('link', BASE, `/ticket/${state.waiting}`))
   await page.getByTestId('ticket-followup').getByRole('button', { name: 'Cancel follow-up' }).click()
-  const code = (await page.getByText(/\b[0-9A-Z]{4}-[0-9A-Z]{4}\b/).first().innerText()).match(/\b[0-9A-Z]{4}-[0-9A-Z]{4}\b/)![0]
-  helper('sign', BASE, code)
+  await expect(page.getByTestId('click-panel')).toBeVisible({ timeout: 60_000 })
+  await page.getByRole('button', { name: 'Sign', exact: true }).click({ timeout: 15_000 }) // enabled after the dwell
   await expect.poll(() => helper('cli', BASE, 'unattended', 'follow-up', 'show', state.waiting_fu, '--json'), { timeout: 60_000 }).toMatch(/"state": ?"cancelled"/)
   await page.screenshot({ path: path.join(SHOTS, 'fu-real-cancelled.png') })
 })

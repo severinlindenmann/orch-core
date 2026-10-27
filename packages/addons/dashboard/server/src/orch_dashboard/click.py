@@ -29,7 +29,6 @@ from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
 from .hubapprove import mode_of, refuse_if_hub_only
-from .intent import intent_idem
 from .reads import workspace
 from .signing import (
     AddonEnable,
@@ -430,11 +429,11 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.settle_all(rid)
             handoffs.disown(rid)
 
-    def mine(ws: str, request_id: str, token: str) -> None:
+    def mine(ws: str, request_id: str) -> None:
         """A request of this PERSON in this workspace (any of their sessions); another's, or none, is `not_found`."""
         gateway.enabled(ws)  # the workspace is pinned and the dashboard addon is enabled in it, like the hand-off
         sweep()
-        if not handoffs.owns(token + ":" + app.state.person_of(ws), ws, request_id):
+        if not handoffs.owns(app.state.person_of(ws), ws, request_id):
             raise fail("not_found", exit=2)
 
     @app.get("/api/w/{ws}/click/status")
@@ -773,11 +772,8 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("click.contract", "Update orch-core: its signing helper cannot sign pictures yet.", exit=9)
         files = planned.files
 
-        def session_idem(idem: str):
-            return intent_idem(token, ws, planned.op, {"intent": idem}, None)
-
         def call(idem: str):
-            sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": session_idem(idem)}
+            sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem}
             if files:
                 sent["files"] = files
             if planned.sequence:
@@ -788,7 +784,7 @@ def register(app: FastAPI, gateway: Gateway):
                 sent["deposit"] = True  # the deposit-only grant mode: the secret goes to the runner, never here
             return signer.call("prepare", sent)
 
-        idem_key = session_idem(planned.idem(ws, 0))
+        idem_key = planned.idem(ws, 0)
         start = max(body.retry, failed_bumps.get(idem_key, 0))
         try:
             got = send_prepare(planned, ws, start, call, lambda: human(ws, "human.pending", {}))
@@ -809,7 +805,7 @@ def register(app: FastAPI, gateway: Gateway):
                     ws,
                     "human.prepare",
                     {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
-                    idem=session_idem(planned.idem(ws, signed_retry)),
+                    idem=planned.idem(ws, signed_retry),
                     files=files,
                 )
             except HostError as exc:
@@ -842,13 +838,13 @@ def register(app: FastAPI, gateway: Gateway):
         clicks.add(ws, rid, planned.op, body, signer.restarts)
         if planned.sequence:  # a display aid for `state` (how far a stopped run got); it decides nothing
             handoffs.note_intent(planned.person, rid, planned.sequence["intent"])
-        handoffs.own(token + ":" + planned.person, ws, rid, TTL)
+        handoffs.own(planned.person, ws, rid, TTL)
         handoffs.commit(token, ws, rid, until=handoffs.clock() + TTL, kind="click")
         return {k: got[k] for k in ("request_id", "expires_at", "op", "confirm") if k in got}
 
     @app.post("/api/w/{ws}/click/view")
-    def view(body: Step, request: Request, ws: str = Depends(workspace)):
-        mine(ws, body.request_id, request.state.token)
+    def view(body: Step, ws: str = Depends(workspace)):
+        mine(ws, body.request_id)
         rid = body.request_id
         _, op, wanted, _ = clicks.get(rid)
         # The hand-off's gate on the host's own record: it must be the action that was asked for (the ticket, the exact
@@ -930,10 +926,10 @@ def register(app: FastAPI, gateway: Gateway):
             raise
 
     @app.post("/api/w/{ws}/click/state")
-    def state(body: Step, request: Request, ws: str = Depends(workspace)):
+    def state(body: Step, ws: str = Depends(workspace)):
         """Where a request stands at the host (read through our own link): the answer to an unknown outcome."""
         rid = body.request_id
-        mine(ws, rid, request.state.token)
+        mine(ws, rid)
         try:
             rows = human(ws, "human.pending", {"request_id": rid})["requests"]
         except HostError:
@@ -972,7 +968,7 @@ def register(app: FastAPI, gateway: Gateway):
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
         step = refuse_step_up(app.state.auth, request, "sign", body, ws)  # where a typed key arrives: fail closed
         step = ready(step)
-        mine(ws, body.request_id, request.state.token)
+        mine(ws, body.request_id)
         rid = body.request_id
         wanted = clicks.get(rid)[2]
         # In flight counts as unsettled from here on, BEFORE the channel is used: nothing here cancels the request or
@@ -1048,8 +1044,8 @@ def register(app: FastAPI, gateway: Gateway):
         return out
 
     @app.post("/api/w/{ws}/click/cancel")
-    def cancel(body: Step, request: Request, ws: str = Depends(workspace)):
-        mine(ws, body.request_id, request.state.token)
+    def cancel(body: Step, ws: str = Depends(workspace)):
+        mine(ws, body.request_id)
         rid = body.request_id
         if handoffs.is_unsettled(rid):
             raise refusal_check("A signature of this is settling; it cannot be cancelled now.")

@@ -1,8 +1,8 @@
-"""The signed actions of #305 (M3): prepare, look at, and cancel a hand-off. A closed allowlist of typed actions.
+"""The signed actions of #305 (M3): prepare, look at, and cancel a request. A closed allowlist of typed actions.
 
-**This server never signs and never holds a factor, and it never calls `human.submit`.** The person signs in a
-trusted place (`orch sign CODE` in a terminal, later the Touch ID helper), which fetches the request itself and submits
-it. The dashboard only asks the host to prepare the request, shows the host's `material`, and follows the outcome.
+**This server never signs and never holds a factor, and it never calls `human.submit`.** The person signs with one
+click: core's signer child (`click.py`, `click_signer.py`) fetches the request itself, shows its own review and submits
+it. Here the host is only asked to prepare the request; its `material` is shown and the outcome followed.
 
 Every route has a typed model that forbids extras; the host op and its arguments are fixed per action. The browser
 never names an op, a path or a raw event.
@@ -587,14 +587,10 @@ class SettingsSet(Action):
     grant_hours: Annotated[int, Field(ge=1, le=168)] | None = None  # core GRANT_MAX_HOURS (cross-checked by a test)
     claim_ttl_min: Annotated[int, Field(ge=15, le=1440)] | None = None
     lease_ttl_min: Annotated[int, Field(ge=5, le=1440)] | None = None
-    #: B6 (owner decision F): the workspace's allowed ways to sign; `terminal` is always present, `touchid` is reserved
+
     @model_validator(mode="after")
     def something(self):
-        if (
-            self.grant_hours is None
-            and self.claim_ttl_min is None
-            and self.lease_ttl_min is None
-        ):
+        if self.grant_hours is None and self.claim_ttl_min is None and self.lease_ttl_min is None:
             raise ValueError("change at least one setting")
         return self
 
@@ -782,10 +778,9 @@ StageId = Annotated[str, StringConstraints(pattern=r"^st_[0-9a-f]{32}$")]
 
 class MarketGrant(Action):
     """`addon.grant {name, staged}`: install or update the package the host staged and the person reviewed (A10).
-    Exactly these two keys (`extra="forbid"`). **One click** where click-to-sign is on (V3-D38, owner 24 Oct: the
-    signer shows the whole review, the marketplace lines "per host, not signed" included), the terminal hand-off where
-    it is off. `publish` is terminal only (`click.prepare` refuses it). It has no agent route (the dashboard session
-    is the person's). The host re-reads the stage and judges it again when the signed request is submitted."""
+    Exactly these two keys (`extra="forbid"`). **One click** (V3-D38, owner 24 Oct: the signer shows the whole review,
+    the marketplace lines "per host, not signed" included). It has no agent route (the dashboard session is the
+    person's). The host re-reads the stage and judges it again when the signed request is submitted."""
 
     action: Literal["market_grant"]
     name: MarketName
@@ -834,8 +829,7 @@ Origin = Annotated[
 
 class PublishSetup(Action):
     """`settings.set {set:{publish:{server, share}}}`: where shared files are sent and where a link opens. Signed; the
-    review says both addresses in words. Only a person changes it (never an agent), and always in the terminal: it
-    decides where files go."""
+    review says both addresses in words. Only a person changes it (never an agent): it decides where files go."""
 
     action: Literal["publish_setup"]
     server: Origin
@@ -882,7 +876,7 @@ class PublishShare(Action):
     """`publish.share {staged_id}` through `human.prepare`: a person's signature over the exact words the host builds
     from the staged copy (ticket, kind, days, server, every file with size and hash). The page then calls
     `POST /shares/send`; the host refuses it without this signature. `key` is the ticket the copy belongs to (the
-    prepared review must be about that ticket). Terminal only: the click signer does not serve this op."""
+    prepared review must be about that ticket). Signed with one click (core #1198 C2)."""
 
     action: Literal["publish_share"]
     key: Key
@@ -929,21 +923,21 @@ class MarkTaskDone(Action):
 
 
 class RunnerGrant(Action):
-    """M7b, the runner grant (D-P2-27): a click request, or a terminal hand-off with runner set by this
-    server, never by the browser. The click path maps to the
+    """M7b, the runner grant (D-P2-27): a click request; `runner` is set by this server, never by the browser.
+    The click path maps to the
     signer's `prepare {op:"grant", args:{hours, scope}, deposit:true}`; the signer itself sets `label:"runner"` and
     `verbs:"agent"` and hands the secret to the runner, so neither the label nor the verbs are the browser's to send."""
 
     action: Literal["runner_grant"]
     hours: Annotated[int, Field(ge=1, le=168)] = 8  # core GRANT_MAX_HOURS; the host holds the workspace cap
     scope: Literal["all", "workable"] = "workable"
-    #: B8 Extend: the runner grant this one replaces (one request, one signature, typed word); the signer revokes it
+    #: B8 Extend: the runner grant this one replaces (one request, one signature); the signer revokes it
     extend: Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")] | None = None
 
 
 class AgentAccess(Action):
     """#1198 C7, agent access for a tool outside the dashboard: a click request whose secret comes back sealed to the
-    page's own key and is shown once there. Click only (never a terminal hand-off); the signer fixes the verbs
+    page's own key and is shown once there. Click only; the signer fixes the verbs
     (`agent`) and refuses a runner label, so neither is the browser's to send. A runner grant is `RunnerGrant`."""
 
     action: Literal["agent_access"]
@@ -967,8 +961,8 @@ MAX_HUB_CARD_BYTES = 16 * 1024
 
 class HubJoin(Action):
     """#1198 C10, join a hub (selective only: a full join needs the key in passphrase custody, so it is the terminal's).
-    Click only: the backup key is typed once in the page, sealed to the signer, and makes the owner proof; never a
-    terminal hand-off. The card is the hub's own file, as text (strict JSON); the host verifies it, not this server."""
+    Click only: the backup key is typed once in the page, sealed to the signer, and makes the owner proof. The card
+    is the hub's own file, as text (strict JSON); the host verifies it, not this server."""
 
     action: Literal["hub_join"]
     hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_HUB_CARD_BYTES)]
@@ -1080,8 +1074,8 @@ def _grant_landed(gateway: Gateway, ws: str, intent: dict, person, since) -> boo
 
 def sequence_progress(gateway: Gateway, ws: str, key, intent: dict, person=None, since=None) -> dict | None:
     """B11: how many steps of a sequence are in the ticket's log now, read from the host (`ticket.get`): the created
-    ticket, then the fields, then each section whose latest hash is the intent's text. A display aid for the terminal
-    path (the signer drives the run in the person's terminal); it decides nothing."""
+    ticket, then the fields, then each section whose latest hash is the intent's text. A display aid for a run the
+    signer drives (how far it got); it decides nothing."""
     from orch import canon
     from orch.host import sequence
 
@@ -1628,7 +1622,7 @@ def send_prepare(plan_: Plan, ws: str, retry: int, call, pending=None):
     The idem is the intent plus `retry`. An attempt that ENDED unsigned (cancelled, expired) can never be signed, so
     pressing again steps to the next retry: a fresh request, never the dead one. An OPEN attempt is returned as it is
     (a double click, a second tab, an agent: one request per person and action); a SIGNED one is returned too and
-    stays "Already done" (never stepped past). The terminal path sees an ended request in the host's answer, the click
+    stays "Already done" (never stepped past). `POST /handoff` sees an ended request in the host's answer, the click
     path as the signer's `the request is <ended>`; both are stepped past.
 
     Retention expiry of a record (`idem.expired`, 24 h) is not stepped past: an earlier one may have been signed, so
@@ -1767,7 +1761,7 @@ class Handoffs:
 
     def __init__(self, clock=time.monotonic):
         #: B11: the intent of a sequence's first request, by request id (a display aid: the progress of a run that the
-        #: signer drives in the person's terminal). Not a guard of anything. Kept per person, so
+        #: signer drives). Not a guard of anything. Kept per person, so
         #: another person's burst of prepares cannot evict mine.
         self.intents: dict[str, dict[str, dict]] = {}
         self.clock = clock
@@ -1948,7 +1942,7 @@ def register(app: FastAPI, gateway: Gateway):
                 del checks[k]  # tokens with no recent check are dropped: the dict stays small
         # The host decides first (it checks the role, then the folder); the local look is not run before it.
         op, args = host_call(body)
-        human(ws, "human.prepare", {"op": op, "args": args}, dry_run=True)
+        human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, dry_run=True)
         return {"ok": True}
 
     @app.post("/api/w/{ws}/handoff")
@@ -1987,8 +1981,8 @@ def register(app: FastAPI, gateway: Gateway):
                     exit=1,
                 )
             op = planned.op
-            # A runner grant signed in the terminal: `orch sign` draws the secret and offers to hand it to the runner,
-            # which needs `runner` so the signer sets label runner (the click path sets it itself).
+            # A runner grant prepared here carries `runner`, so its signer sets the label runner (the click path sets
+            # it itself).
             args = planned.args | ({"runner": True} if isinstance(body, RunnerGrant) else {})
 
             def call(idem: str):
@@ -1998,6 +1992,7 @@ def register(app: FastAPI, gateway: Gateway):
                     {
                         "op": op,
                         "args": args,
+                        "handoff": True,  # the protocol's unbound request (no signer named here)
                         **({"sequence": planned.sequence} if planned.sequence else {}),
                     },
                     idem=idem,
@@ -2048,7 +2043,7 @@ def register(app: FastAPI, gateway: Gateway):
                 gateway, ws, rows[0].get("key"), intent, person=app.state.person_of(ws), since=rows[0].get("created_at")
             )
             if out["progress"] is not None and intent.get("agent") is not None:
-                out["progress"]["last"] = "grant"  # the terminal signs the agent access last (the dialog says so)
+                out["progress"]["last"] = "grant"  # the agent access is signed last (the dialog says so)
         return out
 
     @app.delete("/api/w/{ws}/handoff/{request_id}")

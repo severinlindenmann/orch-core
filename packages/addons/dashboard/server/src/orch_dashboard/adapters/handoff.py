@@ -14,7 +14,6 @@ from datetime import UTC, datetime
 from ..errors import fail
 
 REQUEST_ID = re.compile(r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-CODE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$")
 FINGERPRINT = re.compile(r"^[0-9a-f]{12}$")
 HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 STATES = ("prepared", "bound", "submitted", "cancelled", "expired")
@@ -162,7 +161,6 @@ def request(
         if (
             not isinstance(info, dict)
             or not REQUEST_ID.fullmatch(info["id"])
-            or not (info["code"] is None or CODE.fullmatch(info["code"]))
             or info["state"] not in STATES
             or prepared["workspace_id"] != ws
             or not isinstance(events, list)
@@ -190,7 +188,6 @@ def request(
             content = None  # the UI falls back to the host's material preview, as before
         return {
             "id": info["id"],
-            "code": info["code"],
             "expires_at": info["expires_at"],
             "state": info["state"],
             "op": prepared["op"],

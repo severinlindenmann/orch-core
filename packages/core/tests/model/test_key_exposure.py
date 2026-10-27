@@ -166,3 +166,27 @@ def test_a_failed_verifier_refuses_the_rotation(w):
 
 
 LABELS = [None, "passphrase", "click", "convenience", "secure-enclave-unlocked", "no-such-label"]
+
+
+# --- A1: the exposed-key check stays on hub membership acts, in every mode, and nowhere else ------------------------
+
+
+def test_an_exposed_key_cannot_leave_or_rejoin_a_hub_but_still_signs_everything_else(w):
+    mark(w)  # device A of sev is exposed (One click)
+    assert admit(strict(w), leave(w, "sev"), log="workspace").code == Code.SIGN_KEY_EXPOSED
+    rejoin = w.build_unappended(
+        "workspace", "hub.joined", "sev", roster_v=w.roster_v, hub_id=HUB, hk_root_pub=ROOT, mode="full",
+        binding_seq=2, aliases=[],
+    )  # fmt: skip
+    assert admit(strict(w), rejoin, log="workspace").code == Code.SIGN_KEY_EXPOSED
+    other = w.build_unappended("workspace", "settings.changed", "sev", roster_v=w.roster_v, set={"claim_ttl_min": 30})
+    assert not hasattr(admit(strict(w), other, log="workspace"), "code")  # One click keeps working for the rest
+    assert not hasattr(admit(strict(w), leave(w, w.b), log="workspace"), "code")  # a clean device still leaves
+
+
+def test_the_exposed_key_check_holds_in_selective_mode_too():
+    w = World(validate=False).bootstrap({})
+    w.wev("hub.joined", "sev", hub_id=HUB, hk_root_pub=ROOT, mode="selective", binding_seq=1, aliases=[])
+    mark(w)
+    e = w.build_unappended("workspace", "hub.left", "sev", roster_v=w.roster_v, hub_id=HUB, binding_seq=1)
+    assert admit(strict(w), e, log="workspace").code == Code.SIGN_KEY_EXPOSED

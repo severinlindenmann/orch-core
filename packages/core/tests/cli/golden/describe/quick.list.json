@@ -98,7 +98,19 @@
         "additionalProperties": false
       }
     },
-    "errors": []
+    "errors": [
+      {
+        "code": "addon.off",
+        "exit": 3,
+        "retryable": false,
+        "hint": "tell the person; do not work around it",
+        "fix": [
+          "orch",
+          "addon",
+          "list"
+        ]
+      }
+    ]
   },
   "key": null,
   "seq": 0,

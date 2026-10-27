@@ -1,7 +1,6 @@
 """Schedules gate, time parsing and view-based lookup shared by follow-up operations."""
 
 import re
-from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 
 from orch.ops import views
@@ -9,20 +8,6 @@ from orch.ops.errors import OrchError
 from orch.store import StoreError
 
 ADDON = "schedules"
-MESSAGE = "Schedules is switched off in this workspace; an owner can turn it on in Add-ons"
-
-
-def is_on(addons):
-    addon = (addons or {}).get(ADDON)
-    if addon is None:
-        return False
-    get = addon.get if isinstance(addon, Mapping) else lambda key, default=None: getattr(addon, key, default)
-    return bool(get("enabled", False)) and not get("purged", False)
-
-
-def require_on(addons):
-    if not is_on(addons):
-        raise OrchError("followup.off", MESSAGE)
 
 
 def due(args, now):

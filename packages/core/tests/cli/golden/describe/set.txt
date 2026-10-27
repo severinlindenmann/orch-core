@@ -5,13 +5,13 @@ who: agent · emits: ticket.updated
 pre: ticket_exists ticket_open_for_work base_rev_tracked grant_valid text_clean
 args:
   REF  ticket REF
-  KEY=VALUE  key=value pairs; keys: title priority size labels due links parent blocked_by
+  KEY=VALUE  key=value pairs; keys: title priority size labels due links parent blocked_by; ADDON.FIELD=VALUE sets a field of an add-on that is on (orch describe ADDON.FIELD)
   --dry-run  say what would happen, append nothing
 errors:
   not_found (exit 2): orch list
+  addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
-  quick.off (exit 3): ask an owner to turn Quick tasks on in Settings, Add-ons | fix: orch addon list
   transition.refused (exit 3): orch show REF | fix: orch show
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   parse.text (exit 6): orch describe set

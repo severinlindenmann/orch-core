@@ -36,6 +36,23 @@ def device_live(ws, person, device, now):
     return bool(d and d.person == person and device_valid(d, d.cert, now, False) is None)
 
 
+def run_grant_live(ws, grant_id, now):
+    """A live run grant: one derived by a schedule or follow-up firing (it has a parent) that has not ended."""
+    g = ws.grants.get(grant_id)
+    return g is not None and g.parent is not None and not claims.grant_ended(ws, grant_id, now)
+
+
+def claim_block(core, t, rec, now):
+    """Who holds the ticket's live claim, as a firing sees it: another person (`claimed_by_other`), the setter's
+    session with a live run grant in the ledger (`busy`), or nobody that keeps the firing from releasing it (None)."""
+    c = t.claim
+    if c is None or claims.lapse_reason(core.ws, t, now) is not None:
+        return None
+    if identity.canonical(core.ws, c.for_person) != rec.person:
+        return "claimed_by_other"
+    return "busy" if run_grant_live(core.ws, c.grant, now) else None
+
+
 def blocked(core, t, rec, now):
     if identity.member_role(core.ws, rec.person) not in ("owner", "maintainer", "member"):
         return "role_lost"
@@ -45,13 +62,7 @@ def blocked(core, t, rec, now):
         return "access_lost"
     if t.status == "closed":
         return "ticket_closed"
-    if (
-        t.claim
-        and claims.lapse_reason(core.ws, t, now) is None
-        and identity.canonical(core.ws, t.claim.for_person) != rec.person
-    ):
-        return "claimed_by_other"
-    return None
+    return claim_block(core, t, rec, now)
 
 
 def set_event(core, t, e):
@@ -162,8 +173,9 @@ def fired_event(core, t, e):
         derived.id, rec.person, t.uid, derived.verbs, e["at"], until, parent=rec.set_event
     )
     rec.occurrences[e["occurrence"]] = {"fired_at": e["at"], "grant": derived.id, "run": e["run"]}
-    # The firing replaces the setter's own claim atomically, so the fresh session
-    # can claim the ticket. A different person's live claim was refused above.
+    # The firing replaces the setter's own claim atomically, so the fresh session can claim the ticket. A different
+    # person's live claim, or the setter's session with a live run grant (busy), was refused above; the host decides
+    # a session without a run grant is not running (its runner), the ledger never lets it release a live run.
     if t.claim and identity.canonical(core.ws, t.claim.for_person) == rec.person:
         t.claim = None
         claims.release_leases(t)

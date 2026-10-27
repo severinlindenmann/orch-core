@@ -273,6 +273,165 @@ async def _addon_off_on(monkeypatch, tmp_path):
     assert not core.ws.grants[fresh].ended and root_valid(core, grant_chain(core.ws, fresh)[-1].id, ts(w.at()))
 
 
+def daily_harness(monkeypatch, tmp_path):
+    """A daily schedule by tom on his ticket and a runner whose hub records and appended events are visible."""
+    from datetime import timedelta
+
+    from orch.host import agents
+    from orch.host.followups import FollowupRunner
+    from tests.model.test_schedules_wire import grant_addon
+    from tests.model.world import World, stamp
+
+    w = World().bootstrap({"tom": "member"})  # noqa: F811 - imported fixture
+    grant_addon(w)
+    uid = w.ticket(owner="tom")
+    due = w.clock.replace(second=0) + timedelta(hours=2)
+    event, result = w.try_(
+        uid,
+        "schedule.set",
+        "tom",
+        schedule="sc_" + w.nid(),
+        brief="Daily check",
+        rule={"every": "day", "at": due.strftime("%H:%M"), "tz": "UTC"},
+        starts=w.at(),
+        ends=stamp(due + timedelta(days=2, hours=1)),
+        run_hours=2,
+    )
+    assert not hasattr(result, "code"), result
+    commands, appended = [], []
+
+    class Store:
+        def refresh(self):
+            pass
+
+        def load_all(self):
+            pass
+
+        @property
+        def state(self):
+            return w.state()
+
+        def append(self, payload, log):
+            e, result = w.try_(
+                log, payload["type"], w.HOST, **{k: v for k, v in payload.items() if k not in ("type", "actor")}
+            )
+            assert not hasattr(result, "code"), result
+            appended.append(e)
+            return NS(event=e)
+
+    async def call(fn, *args):
+        return fn(*args)
+
+    async def command(name, payload):
+        commands.append((name, payload))
+
+    async def launch(call, hub, data):
+        hub.store.records[data["run"]] = {"state": "running"}
+
+    hub = NS(connected=True, store=NS(records={}), command=command)
+    service = NS(
+        state_dir=tmp_path,
+        workspace_id=w.workspace_id,
+        host_uid=__import__("os").getuid(),
+        store=Store(),
+        state="ok",
+        closing=False,
+        call=call,
+        sync=lambda: None,
+        runners=hub,
+    )
+    monkeypatch.setattr(FollowupRunner, "_owns", lambda *a: True)
+    monkeypatch.setattr(FollowupRunner, "_plan", lambda self, uid, key, rec, hub: (None, {"run": rec.run}, None))
+    monkeypatch.setattr(agents, "_start", launch)
+    clock = [due]
+    runner = ScheduleRunner(service, clock=lambda: clock[0].timestamp(), mono=lambda: 0)
+
+    def tick(at):
+        clock[0] = w.clock = at
+        return runner.tick_once()
+
+    def occurrences():
+        return w.state()._core.tickets[uid].schedules[event["schedule"]].occurrences
+
+    return NS(w=w, uid=uid, due=due, hub=hub, commands=commands, appended=appended, tick=tick, occurrences=occurrences)
+
+
+def test_dead_own_session_claim_is_released_by_the_firing(monkeypatch, tmp_path):
+    asyncio.run(_dead_own_session(monkeypatch, tmp_path))
+
+
+async def _dead_own_session(monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    from tests.model.world import stamp
+
+    h = daily_harness(monkeypatch, tmp_path)
+    h.w.clock = h.due - timedelta(minutes=5)
+    a = h.w.claim(h.uid, "tom")
+    # The runner knows that session, and it has ended: no live run holds the claim.
+    h.hub.store.records["r_old"] = {"state": "exited", "session": a["session"], "workspace_id": h.w.workspace_id}
+    await h.tick(h.due)
+    assert [e["type"] for e in h.appended] == ["schedule.fired"] and len(h.commands) == 1
+    assert "grant" in h.occurrences()[stamp(h.due)]
+    assert h.w.view(h.uid).claim is None  # released as part of schedule.fired
+
+
+def test_live_run_holding_the_claim_is_busy_and_next_occurrence_fires(monkeypatch, tmp_path):
+    asyncio.run(_live_run_busy(monkeypatch, tmp_path))
+
+
+async def _live_run_busy(monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    from orch.model import claims
+    from orch.model.types import ts
+    from tests.model.world import stamp
+
+    h = daily_harness(monkeypatch, tmp_path)
+    h.w.clock = h.due - timedelta(minutes=5)
+    h.w.settings(grant_hours=48)  # the interactive session's claim outlives the day to the next occurrence
+    a = h.w.claim(h.uid, "tom", gid=h.w.grant("tom", "workable", hours=48))
+    h.hub.store.records["r_live"] = {"state": "running", "session": a["session"], "workspace_id": h.w.workspace_id}
+    await h.tick(h.due)
+    assert not h.commands
+    assert [e["type"] for e in h.appended] == ["schedule.outcome"]
+    row = h.occurrences()[stamp(h.due)]
+    assert (row["outcome"], row["reason"], row.get("grant")) == ("did_not_run", "busy", None)
+    assert h.w.view(h.uid).claim.session == a["session"]  # never released under a live run
+    await h.tick(h.due + timedelta(minutes=1))
+    assert not h.commands and len(h.appended) == 1  # no retry of this occurrence
+
+    # The run ends; the claim is still live (same person's session, activity within the TTL) and the next day fires.
+    h.hub.store.records["r_live"]["state"] = "exited"
+    second = h.due + timedelta(days=1)
+    h.w.clock = second - timedelta(minutes=5)
+    h.w.tev(h.uid, "log.added", a, text="still mine")
+    core = h.w.state()._core
+    assert claims.live(core.ws, core.tickets[h.uid], ts(h.w.at()))
+    await h.tick(second)
+    assert len(h.commands) == 1 and "grant" in h.occurrences()[stamp(second)]
+    assert h.w.view(h.uid).claim is None
+
+
+def test_claim_of_another_person_is_claimed_by_other(monkeypatch, tmp_path):
+    asyncio.run(_other_person(monkeypatch, tmp_path))
+
+
+async def _other_person(monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    from tests.model.world import stamp
+
+    h = daily_harness(monkeypatch, tmp_path)
+    h.w.clock = h.due - timedelta(minutes=5)
+    a = h.w.claim(h.uid, "sev")  # no runner record: whether it runs does not matter for another person
+    await h.tick(h.due)
+    assert not h.commands and [e["type"] for e in h.appended] == ["schedule.outcome"]
+    row = h.occurrences()[stamp(h.due)]
+    assert (row["outcome"], row["reason"]) == ("did_not_run", "claimed_by_other")
+    assert h.w.view(h.uid).claim.session == a["session"]
+
+
 def test_real_store_deposit_and_closed_prompt(env):  # noqa: F811 - imported fixture
     from datetime import UTC, datetime
 

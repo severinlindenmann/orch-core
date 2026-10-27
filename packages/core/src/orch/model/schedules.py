@@ -23,6 +23,7 @@ REASONS = (
     "access_lost",
     "ticket_closed",
     "claimed_by_other",
+    "busy",
     "missed",
     "addon_disabled",
 )

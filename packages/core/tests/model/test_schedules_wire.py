@@ -413,3 +413,52 @@ def test_fire_releases_own_claim_but_refuses_another_person():
     w.claim(uid, "sev")
     w.clock = due
     assert "claimed_by_other" in fire(w, uid, e, due)[1].detail
+
+
+def second_schedule(w, uid, e):
+    payload = {k: e[k] for k in ("brief", "rule", "starts", "ends", "run_hours")}
+    event, result = w.try_(uid, "schedule.set", "tom", schedule="sc_" + w.nid(), **payload)
+    assert not hasattr(result, "code"), result
+    return event
+
+
+def test_fire_refuses_busy_while_setters_run_holds_claim_then_releases_dead_run():
+    from orch.model.schedules_wire import blocked
+
+    w, uid, e, due = setup()
+    other = second_schedule(w, uid, e)
+    w.clock = due
+    first, result = fire(w, uid, e, due)
+    assert not hasattr(result, "code"), result
+    run = w.claim(uid, "tom", gid=first["grant"])
+    # The setter's own earlier run session holds the claim with a live run grant: busy, never released.
+    result = fire(w, uid, other, due)[1]
+    assert result.code == Code.SCHEDULE_DENIED and result.detail == "busy"
+    core = w.state()._core
+    t = core.tickets[uid]
+    assert blocked(core, t, t.schedules[other["schedule"]], ts(w.at())) == "busy"
+    assert w.view(uid).claim.session == run["session"]
+    # Once that run settled its grant ended: the dead session's claim is released by the firing.
+    w.tev(uid, "schedule.outcome", w.HOST, schedule=e["schedule"], occurrence=stamp(due), outcome="ran")
+    again, result = fire(w, uid, other, due)
+    assert not hasattr(result, "code"), result
+    assert w.view(uid).claim is None
+    assert refused(w, uid, "claim.taken", w.agent("tom", again["grant"])) is None
+
+
+def test_busy_is_a_schedule_outcome_reason():
+    from orch.model import schedules
+
+    assert "busy" in schedules.REASONS
+    w, uid, e, due = setup()
+    w.clock = due
+    _, result = w.try_(
+        uid,
+        "schedule.outcome",
+        w.HOST,
+        schedule=e["schedule"],
+        occurrence=stamp(due),
+        outcome="did_not_run",
+        reason="busy",
+    )
+    assert not hasattr(result, "code"), result

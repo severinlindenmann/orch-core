@@ -4,8 +4,8 @@ import contextlib
 from types import SimpleNamespace
 
 from orch.identity import new_grant, new_ulid
+from orch.model import claims, schedules, schedules_wire
 from orch.model import followups as rules
-from orch.model import schedules, schedules_wire
 from orch.model.followups_wire import enabled, stamp
 from orch.model.types import ts
 
@@ -55,7 +55,12 @@ class ScheduleRunner(FollowupRunner):
                         if now > due + rules.FU_LATE_S or now >= ts(rec.ends)
                         else schedules_wire.blocked(core, ticket, rec, now)
                     )
-                    rows.append((ticket.uid, ticket.key, self._run(rec, stamp(due), {}), reason))
+                    run = self._run(rec, stamp(due), {})
+                    if reason is None and claims.live(core.ws, ticket, now):
+                        # The setter's own session holds the claim without a live run grant in the ledger: the
+                        # runner decides whether it still runs (busy) or the firing releases it.
+                        run.claim_session = ticket.claim.session
+                    rows.append((ticket.uid, ticket.key, run, reason))
         return rows, today, schedules_wire.early_s(core.ws)
 
     @staticmethod
@@ -68,6 +73,16 @@ class ScheduleRunner(FollowupRunner):
             run=row.get("run"),
             grant=row.get("grant"),
             cancelled=rec.cancelled,
+            claim_session=None,
+        )
+
+    def _running(self, records, session):
+        """The runner still runs a session of the claim's family in this workspace."""
+        return bool(session) and any(
+            r.get("state") in LIVE
+            and r.get("workspace_id") in (None, self.service.workspace_id)
+            and claims.in_family(r.get("session") or "", session)
+            for r in records.values()
         )
 
     async def _outcome(self, uid, rec, outcome, reason=None):
@@ -84,8 +99,6 @@ class ScheduleRunner(FollowupRunner):
         )
 
     def _wrote(self, uid, rec, session):
-        from orch.model import claims
-
         fired = False
         for event, _ in self.service.store.events_after(uid, 0, 1 << 30):
             if (
@@ -137,6 +150,8 @@ class ScheduleRunner(FollowupRunner):
                             "harness_failed" if failed else "no_writes" if not wrote else None,
                         )
                     continue
+                if not reason and self._running(records, rec.claim_session):
+                    reason = "busy"  # a live run holds the claim: this occurrence does not run, the next one tries
                 if reason:
                     await self._outcome(uid, rec, "did_not_run", reason)
                     continue

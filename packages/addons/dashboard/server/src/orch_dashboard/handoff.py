@@ -575,9 +575,9 @@ class SettingsSet(Action):
     claim_ttl_min: Annotated[int, Field(ge=15, le=1440)] | None = None
     lease_ttl_min: Annotated[int, Field(ge=5, le=1440)] | None = None
     #: B6 (owner decision F): the workspace's allowed ways to sign; `terminal` is always present, `touchid` is reserved
-    sign_methods: Annotated[list[Literal["terminal", "click", "phone"]], Field(min_length=1, max_length=3)] | None = (
-        None
-    )
+    sign_methods: (
+        Annotated[list[Literal["terminal", "click", "phone", "hub"]], Field(min_length=1, max_length=4)] | None
+    ) = None
 
     @model_validator(mode="after")
     def something(self):

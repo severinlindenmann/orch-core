@@ -170,6 +170,14 @@ def test_a_fresh_one_click_setup_does_not_break_the_settings_read(worlds, owner)
     # the person's own default keeps offering only what a person picks (hub is not a personal default)
     got = world.get(f"/api/w/{world.stub.ws}/me/sign_default").json()
     assert got["allowed"] == ["terminal", "click", "phone"]
+    # the owner saves another way of the list (keeping hub, as the page does): hub is still there afterwards
+    ok = handoff(world, {"action": "settings_set", "sign_methods": ["terminal", "click", "hub"]})
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["events"][0]["set"] == {"sign_methods": ["terminal", "click", "hub"]}
+    # changing ANOTHER setting (Settings > General, agent access length) names only that setting: nothing else moves
+    other = handoff(world, {"action": "settings_set", "grant_hours": 24})
+    assert other.status_code == 200, other.text
+    assert other.json()["events"][0]["set"] == {"grant_hours": 24}
 
 
 def test_the_adapter_accepts_every_way_the_host_can_hold():

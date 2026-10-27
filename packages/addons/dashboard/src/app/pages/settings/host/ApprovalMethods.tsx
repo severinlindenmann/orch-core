@@ -19,7 +19,7 @@ export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
   const clickSetUp = workspaces.data?.find(w => w.id === ws)?.click?.custody === 'convenience'
   const setUp = (m: SignMethod) => m === 'terminal' || (m === 'click' ? clickSetUp : phonePaired)
   const qc = useQueryClient()
-  // Approving through the hub is switched on by One click setup (core's settings.set cannot change it): shown, not a box.
+  // Approving through the hub is switched on by One click setup has no box here: saving this list keeps it.
   const hostSettings = useQuery(queries.hostSettings(ws))
   const hubOn = (hostSettings.data?.sign_methods as string[] | null | undefined)?.includes('hub') === true
   const [draft, setDraft] = useState<SignMethod[] | null>(null)
@@ -59,7 +59,7 @@ export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
         {!phonePaired && <p className="text-text-muted">{pairServed(ws) ? 'Phone: no phone is paired yet.' : 'Phone: add the Phone add-on first.'}</p>}
         {readOnly && <p className="text-text-muted">{readOnly}</p>}
         {!owner && <p className="text-text-muted">Only an owner changes allowed methods.</p>}
-        <Button disabled={!owner || !allowed || !draft} onClick={() => ask({ title: 'Change allowed ways to approve', action: { action: 'settings_set', sign_methods: selected }, autoStart: true })}>Save allowed methods</Button>
+        <Button disabled={!owner || !allowed || !draft} onClick={() => ask({ title: 'Change allowed ways to approve', action: { action: 'settings_set', sign_methods: (hubOn ? [...selected.filter(m => (m as string) !== 'hub'), 'hub'] : selected) as SignMethod[] }, autoStart: true })}>Save allowed methods</Button>
       </div>
     </Section>
     <Section title="How I approve">

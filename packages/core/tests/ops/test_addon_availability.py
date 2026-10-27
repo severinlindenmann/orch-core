@@ -47,6 +47,8 @@ def test_the_addon_operations_are_declared(ws):
         "follow_up.list": "schedules",
         "follow_up.show": "schedules",
         "follow_up.cancel": "schedules",
+        "follow_up.reschedule": "schedules",
+        "follow_up.undo": "schedules",
         "webhook.new": "schedules",
     }
     for op in all_ops():

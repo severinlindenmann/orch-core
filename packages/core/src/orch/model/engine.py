@@ -218,6 +218,8 @@ def _ticket_handler(core: Core, t: TCore, lc: LogCore, e: dict[str, Any]) -> Ref
         "followup.fired": lambda: followups_wire.fired_event(core, t, e),
         "followup.outcome": lambda: followups_wire.outcome_event(core, t, e),
         "followup.cancelled": lambda: followups_wire.cancelled_event(core, t, e),
+        "followup.rescheduled": lambda: followups_wire.rescheduled_event(core, t, e),
+        "followup.restored": lambda: followups_wire.restored_event(core, t, e),
         "claim.taken": lambda: claims.taken(ws, t, e),
         "claim.released": lambda: claims.released(ws, t, e),
         "handoff.written": lambda: lifecycle.handoff(ws, t, e),

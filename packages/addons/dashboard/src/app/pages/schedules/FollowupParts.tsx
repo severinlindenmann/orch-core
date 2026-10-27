@@ -1,9 +1,9 @@
 // The pieces every follow-up screen shares (#720): the data hook, the state badge and the three actions.
 // Cancel, Run now as me and Reschedule act on the host's own records. What the host cannot do yet is said in `can` and the
 // button is not drawn (never a button that fails). On the mock the actions run through the Schedules add-on's actions; on
-// a real host Cancel is one signed click (core's review) and Run now is the ordinary Start agent dialog.
+// a real host Cancel, Reschedule and Undo are signed clicks (core's review) and Run now is the ordinary Start agent dialog.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { addonStateKey } from '@/api/queries'
@@ -45,6 +45,36 @@ export function useRefresh(ws: string | undefined) {
   }
 }
 
+type UndoRequest = { ws: string; key: string; id: string }
+const undoListeners = new Set<(request: UndoRequest) => void>()
+function requestUndo(request: UndoRequest) {
+  for (const listener of undoListeners) listener(request)
+}
+
+/** Lives in the shell so Undo still works after the cancelled card unmounts. */
+export function FollowupUndoHost() {
+  const [request, setRequest] = useState<UndoRequest | null>(null)
+  const refresh = useRefresh(request?.ws)
+  useEffect(() => {
+    undoListeners.add(setRequest)
+    return () => { undoListeners.delete(setRequest) }
+  }, [])
+  if (!request) return null
+  return (
+    <SignPopover
+      key={`${request.ws}:${request.id}`}
+      ws={request.ws}
+      title={`Restore the follow-up on ${request.key}`}
+      action={{ action: 'followup_undo', key: request.key, id: request.id }}
+      autoStart
+      autoSign
+      doneToast="Follow-up restored."
+      onSettled={refresh}
+      onClose={() => setRequest(null)}
+    />
+  )
+}
+
 const BADGE: Record<Kind, { text: string; tone: string }> = {
   waiting: { text: 'Waiting', tone: 'border-info/40 bg-info-soft text-info' },
   needs_person: { text: 'Needs a person', tone: 'border-warning/40 bg-warning-soft text-warning' },
@@ -76,7 +106,7 @@ export function StateBadges({ row }: { row: FollowupRow }) {
 
 // ---- actions
 
-/** Cancel the follow-up: one signed click on a real host; on the mock it happens at once and an Undo toast follows. */
+/** Cancel the follow-up: a signed click on a real host; a successful cancel offers Undo where supported. */
 export function CancelButton({ row, ws, canUndo, size = 'sm' }: { row: FollowupRow; ws: string; canUndo: boolean; size?: 'sm' | 'xs' }) {
   const refresh = useRefresh(ws)
   const [signing, setSigning] = useState(false)
@@ -129,8 +159,16 @@ export function CancelButton({ row, ws, canUndo, size = 'sm' }: { row: FollowupR
           autoStart
           autoSign
           confirmLabel={label}
-          doneToast={`Cancelled the follow-up on ${row.ticket}.`}
-          onSettled={done}
+          doneToast=""
+          onSettled={(phase) => {
+            if (phase === 'done') {
+              toast(`Cancelled the follow-up on ${row.ticket}.`, {
+                duration: 15_000,
+                ...(canUndo ? { action: { label: 'Undo', onClick: () => requestUndo({ ws, key: row.ticket!, id: row.id }) } } : {}),
+              })
+            }
+            done()
+          }}
           onClose={() => setSigning(false)}
         />
       )}
@@ -191,10 +229,16 @@ export function RescheduleButton({ row, ws, canMove, size = 'sm' }: { row: Follo
   const refresh = useRefresh(ws)
   const [open, setOpen] = useState(false)
   const [custom, setCustom] = useState(false)
+  const [when, setWhen] = useState<string | null>(null)
   const [value, setValue] = useState(() => localInput(new Date(nowMs() + 24 * 3_600_000)))
   const [busy, setBusy] = useState(false)
-  if (!canMove || !row.ticket) return null
+  if (!canMove || row.can_reschedule === false || !row.ticket) return null
   const move = async (at: Date) => {
+    if (isRealHost()) {
+      setOpen(false)
+      setWhen(at.toISOString())
+      return
+    }
     setBusy(true)
     try {
       await api.runAddonAction(ws, 'schedules', 'fu_reschedule', { id: row.id, at: at.toISOString() })
@@ -210,42 +254,56 @@ export function RescheduleButton({ row, ws, canMove, size = 'sm' }: { row: Follo
   const picked = new Date(value)
   const valid = !Number.isNaN(picked.getTime()) && picked.getTime() >= nowMs() + 3_600_000
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button type="button" size={size} variant="outline" aria-haspopup="dialog">
-          Reschedule
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 space-y-2 p-3" aria-label="Run it again at">
-        <p className="text-[12px] text-text-muted">Run it again at</p>
-        <div className="flex flex-wrap gap-1.5">
-          {quickPicks().map((p) => (
-            <Button key={p.label} type="button" size="sm" variant="outline" disabled={busy} onClick={() => void move(p.at)}>
-              {p.label}
-            </Button>
-          ))}
-          <Button type="button" size="sm" variant="outline" aria-expanded={custom} onClick={() => setCustom((c) => !c)}>
-            Pick a date and time
+    <>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button type="button" size={size} variant="outline" aria-haspopup="dialog">
+            Reschedule
           </Button>
-        </div>
-        {custom && (
-          <div className="space-y-1.5">
-            <input
-              type="datetime-local"
-              aria-label="Date and time"
-              value={value}
-              min={localInput(new Date(nowMs() + 3_600_000))}
-              onChange={(e) => setValue(e.target.value)}
-              className="h-8 w-full rounded-md border border-border bg-bg px-2 text-[13px]"
-            />
-            <Button type="button" size="sm" disabled={busy || !valid} onClick={() => void move(picked)}>
-              Move it
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-72 space-y-2 p-3" aria-label="Run it again at">
+          <p className="text-[12px] text-text-muted">Run it again at</p>
+          <div className="flex flex-wrap gap-1.5">
+            {quickPicks().map((p) => (
+              <Button key={p.label} type="button" size="sm" variant="outline" disabled={busy} onClick={() => void move(p.at)}>
+                {p.label}
+              </Button>
+            ))}
+            <Button type="button" size="sm" variant="outline" aria-expanded={custom} onClick={() => setCustom((c) => !c)}>
+              Pick a date and time
             </Button>
-            {!valid && <p className="text-[12px] text-text-faint">Pick a time at least an hour from now.</p>}
           </div>
-        )}
-        {row.trigger !== 'time' && <p className="text-[12px] text-text-faint">It still wakes earlier when the job finishes.</p>}
-      </PopoverContent>
-    </Popover>
+          {custom && (
+            <div className="space-y-1.5">
+              <input
+                type="datetime-local"
+                aria-label="Date and time"
+                value={value}
+                min={localInput(new Date(nowMs() + 3_600_000))}
+                onChange={(e) => setValue(e.target.value)}
+                className="h-8 w-full rounded-md border border-border bg-bg px-2 text-[13px]"
+              />
+              <Button type="button" size="sm" disabled={busy || !valid} onClick={() => void move(picked)}>
+                Move it
+              </Button>
+              {!valid && <p className="text-[12px] text-text-faint">Pick a time at least an hour from now.</p>}
+            </div>
+          )}
+          {row.trigger !== 'time' && <p className="text-[12px] text-text-faint">It still wakes earlier when the job finishes.</p>}
+        </PopoverContent>
+      </Popover>
+      {when && (
+        <SignPopover
+          ws={ws}
+          title={`Move the follow-up on ${row.ticket} to ${fmtExact(when)}`}
+          action={{ action: 'followup_reschedule', key: row.ticket, id: row.id, when }}
+          autoStart
+          autoSign
+          doneToast={`Moved the follow-up on ${row.ticket} to ${fmtExact(when)}.`}
+          onSettled={refresh}
+          onClose={() => setWhen(null)}
+        />
+      )}
+    </>
   )
 }

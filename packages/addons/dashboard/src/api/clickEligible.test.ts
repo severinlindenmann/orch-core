@@ -35,5 +35,7 @@ it('hub steps are click-eligible (#1198 C10) and carry no word', () => {
   expect(clickEligible({ action: 'hub_leave' })).toBe(true)
 })
 it('Cancel follow-up is click-eligible (run 12, 6.4): one click, no terminal word', () => {
+  expect(clickEligible({ action: 'followup_reschedule', key: 'DEMO-1', id: 'fu_1', when: '2026-10-28T09:00:00.000Z' })).toBe(true)
+  expect(clickEligible({ action: 'followup_undo', key: 'DEMO-1', id: 'fu_1' })).toBe(true)
   expect(clickEligible({ action: 'followup_cancel', key: 'DEMO-1', id: 'fu_1' })).toBe(true)
 })

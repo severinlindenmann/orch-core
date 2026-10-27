@@ -68,7 +68,8 @@ the model. Actor classes: P person (signed), A agent or person, G agent with a g
 | `followup.fired` | H | `{id, grant, trigger, fallback?, secret_hash, run}` | `pending` to `fired`; the engine derives G' with `derive_grant` (FU1) and stores it in `ws.grants`. |
 | `followup.outcome` | H | `{id, outcome, reason?, run?}` | `fired` to `ran`, `failed` or `did_not_run` (a `pending` one may become `did_not_run`, e.g. `no_host`). Ends G'. |
 | `followup.cancelled` | P or A | `{followup, reason}` (`followup` is the follow-up ID; a person signs it: the follow-up's person or a manager, reason `person`) | `pending` or `needs_person` to `cancelled`. A person's Cancel or Run now is signed (Q6). |
-| `followup.rescheduled` | P | `{id, due?, deadline?}` | changes the times of a pending or `needs_person` follow-up within the same caps. |
+| `followup.restored` | P | `{followup}` | Undo a person cancellation by its canceller within 120 seconds and at or before the effective deadline; no other live or newer-set follow-up. Restore the pre-cancel state; derived cancellation still applies. |
+| `followup.rescheduled` | P | `{followup, due?, deadline?}` | Moves pending times within set caps (person or manager); only its own person resumes `needs_person` to pending and resets the chain. Time triggers require due and retain max(old deadline, due) when deadline is omitted; event triggers require deadline and forbid due. |
 | `webhook.created` | G | `{hook_hash, label, expires}` | records a hook; the id is shown once. |
 | `webhook.revoked` | P or A | `{hook_hash}` | ends a hook. |
 

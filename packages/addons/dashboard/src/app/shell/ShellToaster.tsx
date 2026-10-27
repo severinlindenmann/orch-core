@@ -1,6 +1,7 @@
 import { useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
+import { FollowupUndoHost } from '@/app/pages/schedules/FollowupParts'
 import { Toaster } from '@/components/ui/sonner'
 import { useShellState } from './ShellUi'
 
@@ -25,5 +26,5 @@ export function ShellToaster() {
   const { railCollapsed } = useShellState()
   const rail = railCollapsed ? NARROW_RAIL : WIDE_RAIL
 
-  return <Toaster position="bottom-left" visibleToasts={2} duration={6000} offset={{ left: rail + GUTTER, bottom: `calc(var(--dock-bottom, 0px) + ${GUTTER}px)` }} />
+  return <><FollowupUndoHost /><Toaster position="bottom-left" visibleToasts={2} duration={6000} offset={{ left: rail + GUTTER, bottom: `calc(var(--dock-bottom, 0px) + ${GUTTER}px)` }} /></>
 }

@@ -603,6 +603,8 @@ def _host_addon_grant(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return Refusal(Code.GRANT_TERMS, "a host-made add-on grant names an admitted addon.requested")
     if req["used"]:
         return Refusal(Code.GRANT_TERMS, "this request was answered already")
+    if any(o is not req and o["handoff"] == req["handoff"] and o["used"] for o in ws.addon_requests.values()):
+        return Refusal(Code.GRANT_TERMS, "this hand-off was answered already")  # one hand-off, one grant
     holder = ws.members.get(req["person"])
     if holder is None or holder.role != "owner":
         return Refusal(Code.ROLE_DENIED, "the person who asked is not an owner now")

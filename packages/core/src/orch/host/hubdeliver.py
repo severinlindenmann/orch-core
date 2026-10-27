@@ -201,6 +201,10 @@ class StoreLanding:
 
         ws = state._core.ws  # noqa: SLF001 - the model's own state, read under the lock
         req = ws.addon_requests.get(event["id"])
+        if req is not None and any(
+            o is not req and o["handoff"] == req["handoff"] and o["used"] for o in ws.addon_requests.values()
+        ):
+            return None  # this hand-off was answered by an earlier request (the log says so, under this lock)
         if req is None:  # the model admitted the request and recorded it; anything else is a bug: refuse, write nothing
             raise LandRefused(Refusal(Code.GRANT_TERMS, "the add-on request was not recorded"))
         requests = self.service.requests
@@ -378,7 +382,6 @@ def deliver(service: WorkspaceService, state: Any, log: str, event: dict[str, An
         return "internal"
     finally:
         _to_runner(service, landing)
-        _finish_addons(service, landing)
         _finish_addons(service, landing)
 
 

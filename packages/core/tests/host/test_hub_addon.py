@@ -144,3 +144,11 @@ def test_a_changed_stage_is_refused_and_nothing_lands(env):
     code = env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace")
     assert code is not None  # a final refusal: the hub is told, nothing lands
     assert granted(env) == [] and [e["type"] for e in env.lines("workspace")][-1] != "addon.requested"
+
+
+def test_the_same_hand_off_answered_by_two_requests_gives_one_grant(env):
+    prepared, ev = prepare_handoff(env)
+    t = terms_of(ev, prepared["request"]["id"])
+    assert env.deliver(request(env, t), "workspace") is None
+    assert env.deliver(request(env, t), "workspace") is None  # a second, different request event, same hand-off
+    assert len(granted(env)) == 1

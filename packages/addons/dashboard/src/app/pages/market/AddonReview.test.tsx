@@ -13,7 +13,6 @@ vi.mock('../settings/host/useViewerRole', () => ({ useViewerRole: () => 'owner' 
 
 vi.mock('@/components/sign/SignMethods', () => ({ useSignMethods: () => ({ allowed: ['click'], loading: false }) }))
 vi.mock('@/api/click', async importOriginal => ({ ...await importOriginal<object>(), clickReady: () => true }))
-vi.mock('@/api/hubsign', async importOriginal => ({ ...await importOriginal<object>(), hubOnly: () => false }))
 const content = (access: boolean): SignContent => ({ headline: 'Turn on Estimate', summary: { title: 'Turn on Estimate', lines: [access ? 'It says it will use the internet.' : 'It declares no capabilities.', 'Version 0.1.0. Runs on this computer.'], risk: 'An add-on runs its own code on this computer as you; turn it on only if you trust it.' }, fields_changed: [{ field: 'version', before: null, after: '0.1.0' }] })
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 

@@ -63,7 +63,6 @@ __all__ = [
     "readers_error",
     "recheck_readers",
     "refuse_reader_op",
-    "refuse_full_mode_entry",
     "refuse_turn_on",
     "registered_entry",
     "set_enabled",
@@ -305,7 +304,6 @@ def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, per
     try:
         with store.locked():
             store.refresh()
-            _refuse_full_mode(store, state_dir, wid, host_uid)
             mine = _own_device(state_dir, wid)
             found = why(store, state_dir, wid, host_uid, me or "", mine, gated=True)
     finally:
@@ -317,18 +315,6 @@ def refuse_turn_on(state_dir: Path, entry: dict[str, Any], host_uid: int, *, per
     raise HostError(err.code, err.message, hint=TURN_ON_ESCAPE, detail=err.detail)
 
 
-def _refuse_full_mode(store: Any, state_dir: Path, workspace_id: str, host_uid: int) -> None:
-    """V3 C11 (D78/D81): click-to-sign is not switched on in a workspace in full hub mode (or ``unknown``): the click
-    signer is refused at the append there, so the flag would only mislead. Called under the store lock."""
-    from types import SimpleNamespace
-
-    from . import hubops, hubsign
-
-    view = SimpleNamespace(store=store, state_dir=state_dir, workspace_id=workspace_id, host_uid=host_uid)
-    if hubops.signing_mode(view) in hubsign.HUB_ONLY:
-        raise hubsign.hub_only_error()
-
-
 def registered_entry(state_dir: Path, workspace_id: str, host_uid: int) -> dict[str, Any] | None:
     """The host registry entry of a workspace, or None when it is not registered on this host."""
     from .custody import read_json
@@ -338,23 +324,6 @@ def registered_entry(state_dir: Path, workspace_id: str, host_uid: int) -> dict[
         if entry.get("workspace_id") == workspace_id:
             return entry
     return None
-
-
-def refuse_full_mode_entry(state_dir: Path, entry: dict[str, Any], host_uid: int) -> None:
-    """V3 C11: moving the key into convenience custody (``orch keys custody convenience``) is refused in a workspace in
-    full hub mode (or ``unknown``): the key there must stay in passphrase custody. Fail closed on an unreadable log."""
-    from orch.store import Store, StoreError
-
-    try:
-        store = Store.open(entry["root"], expected_workspace_id=entry["workspace_id"], host_state_dir=None, load="lazy")
-    except (StoreError, OSError, KeyError) as exc:
-        raise HostError("host.unavailable", f"the workspace log could not be read ({type(exc).__name__})") from None
-    try:
-        with store.locked():
-            store.refresh()
-            _refuse_full_mode(store, state_dir, entry["workspace_id"], host_uid)
-    finally:
-        store.close()
 
 
 def set_enabled(state_dir: Path, workspace_id: str, on: bool, host_uid: int) -> dict[str, Any]:

@@ -9,11 +9,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { HandoffAction } from '@/api/handoff'
 import { clickReady } from '@/api/click'
 import { handoffMode } from '@/api/features'
-import { hubOnly } from '@/api/hubsign'
 import { queries } from '@/api/queries'
-import { signedNow } from '@/api/signedDrop'
+import { answeredNow, signedNow } from '@/api/signedDrop'
 import type { QuestionStatus } from '@/api/types'
 import { workspaceOfTicket } from '@/api/workspaces'
+import { useMe } from '@/app/useMe'
 import { Button } from '@/components/ui/button'
 import { Loader2 } from 'lucide-react'
 import { ClickProblemBox } from './RefusalDevices'
@@ -56,6 +56,7 @@ export function AnswerSend({
   const workspaces = useQuery(queries.workspaces())
   const here = workspaceOfTicket(ticket, workspaces.data ?? [])
   const ws = here?.id
+  const me = useMe(ws)
   const methods = useSignMethods(ws)
   const note = text?.trim() || undefined
   const action = useMemo<HandoffAction | null>(
@@ -63,7 +64,7 @@ export function AnswerSend({
     [ticket, question.id, option, note],
   )
   // The way this workspace signs, as the dialog works it out (no phone for an answer): inline only for one click.
-  const canClick = clickReady(here) && !hubOnly(here)
+  const canClick = clickReady(here)
   const { allowed, preference } = methods
   const usable = (m: string) => m !== 'click' || canClick
   const preferred = preference?.method
@@ -79,6 +80,9 @@ export function AnswerSend({
   const click = useClickSign(ws, () => {
     // No toast: the answer is shown where it was given (the card turns into "Answered"), one message only.
     signedNow(qc, ws, ticket, question.id, question.hash)
+    // The card says "You answered" at once, without waiting for the next read of the ticket.
+    const by = me.data?.person
+    if (by) void answeredNow(qc, ws, ticket, question.id, { option: option ?? undefined, text: note }, by)
   })
   const clickRef = useRef(click)
   clickRef.current = click

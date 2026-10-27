@@ -395,9 +395,6 @@ def register(app: FastAPI, gateway: Gateway):
         closed = []
         if any(n.get("status") == "closed" for n in data["items"]):
             closed, _ = all_rows(gateway, ws, {"status": ["closed"], "sort": "updated"})
-        from .hubapprove import HUB_ONLY, mode_of
-
-        sign = "hub" if mode_of(gateway, ws) in HUB_ONLY else None  # V3 C11: full hub mode, approved elsewhere
         return adapters.today(
             data,
             rows,
@@ -407,7 +404,6 @@ def register(app: FastAPI, gateway: Gateway):
             role,
             recent_activity(gateway, ws),
             closed,
-            sign,
             waiting_runs(gateway, ws),
         )
 

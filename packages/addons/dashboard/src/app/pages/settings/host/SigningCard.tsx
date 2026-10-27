@@ -18,7 +18,6 @@ import { convenienceOffCommand, convenienceOnCommand, custodyPassphraseCommand }
 import { DEV_HOST_SENTENCE, DEV_REFUSED, devRefusedSentence, signerProblem } from '@/api/refusals'
 import { ApiError, type Workspace } from '@/api/types'
 import { CLICK_RISK } from '@/api/click'
-import { hubOnly } from '@/api/hubsign'
 import { queries } from '@/api/queries'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
@@ -91,7 +90,7 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const on = !!card && card.enabled
   // Full mode (joined to a hub): the host signs nothing locally, so the card says approvals go through the hub, in view.
   const hostSettings = useQuery(queries.hostSettings(workspace.id))
-  const viaHub = hubOnly(workspace) || (hostSettings.data?.sign_methods as string[] | null | undefined)?.includes('hub') === true
+  const viaHub = (hostSettings.data?.sign_methods as string[] | null | undefined)?.includes('hub') === true
   const [mode, setMode] = useState<'idle' | 'on' | 'off' | 'resume'>('idle')
   const [pass, setPass] = useState('')
   const [pass2, setPass2] = useState('')

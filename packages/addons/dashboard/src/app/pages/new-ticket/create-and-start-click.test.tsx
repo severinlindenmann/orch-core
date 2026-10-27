@@ -4,10 +4,11 @@
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentsApi } from '@/api/agents'
-import { api } from '@/api/client'
+import { api, mockStore } from '@/api/client'
 import { ARM_MS, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { routingApi } from '@/api/modelRouting'
 import { ApiError } from '@/api/types'
+import { markOf } from '@/app/pages/ticket/progress'
 import { renderApp } from '@/test/renderApp'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
@@ -15,6 +16,11 @@ vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api
 const T = { timeout: 8000 }
 const REQ = 'hr_' + '0'.repeat(25) + '1'
 const DIGEST = 'sha256:' + 'c'.repeat(64)
+const failedOf = async (key = 'DEMO-0044') => {
+  const ws = mockStore.workspaces[0].id
+  await waitFor(() => expect(markOf(ws, key)?.failed).toBeDefined(), T)
+  return markOf(ws, key)!.failed!
+}
 const view = (): ClickViewAnswer => ({
   view_digest: DIGEST,
   view: {
@@ -68,7 +74,7 @@ async function signed() {
 }
 
 describe('the real click path', () => {
-  it('stopped at the agent access: the ticket exists, no second ticket can be made, nothing starts, Start agent is offered', async () => {
+  it('stopped at the agent access: the ticket exists, no second ticket can be made, nothing starts, the failure is marked', async () => {
     s.sign.mockRejectedValue(new ApiError(409, { code: 'human.click_refused', message: 'the host refused the grant. 4 of 5 signatures landed; the ticket DEMO-0044 stays a draft.', retryable: false, reason: 'stopped' }))
     s.state.mockResolvedValue({ id: REQ, state: 'bound', key: 'DEMO-0044', progress: { done: 4, of: 5, last: 'grant' } })
     const { r } = await signed()
@@ -77,18 +83,18 @@ describe('the real click path', () => {
     const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
     await waitFor(() => expect(s.state).toHaveBeenCalledWith(expect.any(String), REQ), T)
     await r.user.click(within(dialog).getAllByRole('button', { name: /^(Close|Cancel)$/ }).at(-1)!)
-    const info = await screen.findByTestId('agent-no-access', {}, T)
-    expect(info).toHaveTextContent('DEMO-0044 exists. Agent access is not confirmed yet')
+    const failed = await failedOf()
+    expect(failed.reason).toBe('Agent access is not confirmed yet. Start an agent to give access.')
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
     // what was typed is cleared: a second Create would be an empty form, not a second ticket
     expect(Object.keys(localStorage).filter((k) => k.includes('new-ticket.draft'))).toHaveLength(0)
   })
 
-  it.each(['rejected', 'unknown'] as const)('signed but the hand-over to the runner is %s: not "access given", no automatic start, the dialog is offered', async (deposit) => {
+  it.each(['rejected', 'unknown'] as const)('signed but the hand-over to the runner is %s: not "access given", no automatic start, the failure is marked', async (deposit) => {
     s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: 'DEMO-0044', seq: 9, deposit, deposit_id: REQ.slice(3), grant: 'gr_01M4Y46B485AXD4CBEJZ15Z1TV' })
     await signed()
-    expect(await screen.findByTestId('agent-no-access', {}, T)).toHaveTextContent('DEMO-0044 exists')
+    expect((await failedOf()).reason).toBeTruthy()
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
   })
@@ -98,6 +104,7 @@ describe('the real click path', () => {
     s.preview.mockRejectedValue(new ApiError(503, { code: 'host.unavailable', message: 'Host not available', retryable: true }))
     await signed()
     await waitFor(() => expect(s.preview).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ ticket: 'DEMO-0044' })), T)
+    await failedOf()
     expect(s.start).not.toHaveBeenCalled()
   })
 })

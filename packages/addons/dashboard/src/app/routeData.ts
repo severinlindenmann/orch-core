@@ -17,6 +17,7 @@ import { bindsAddonState } from '@/addon-ui/slots'
 import { ticketsServerParams, type TicketsSearch } from './pages/tickets/search'
 import type { UrlState } from './urls'
 import { queries } from '@/api/queries'
+import { runnerQuery } from '@/api/agents'
 
 export interface LoaderContext {
   queryClient?: QueryClient
@@ -111,6 +112,10 @@ export function pageLoader(parts: (s: PageScope) => Ensure[], chunks: (() => Pro
       // The viewer's own entry in the workspace the page shows: a person has a different id in each workspace.
       const person = await me(qc, ws.id).catch(() => undefined)
       const owner = can(roleOf(ws, person?.person), 'settings')
+      // What the New ticket dialog reads, warmed in the background (never awaited) so it opens without any request.
+      void qc.prefetchQuery(runnerQuery(ws.id))
+      void qc.prefetchQuery(queries.hostSettings(ws.id))
+      void qc.prefetchQuery(queries.ticketsAll(ws.id))
       await settle([...shellScoped(qc, ws, pkgs), ...parts({ qc, ws, list, pkgs, person: person?.person, owner, urls: context.urls })])
     }
     await Promise.all([code, atMost(data())])
@@ -132,7 +137,10 @@ async function todayTickets(qc: QueryClient, ws: string, canAct: boolean): Promi
     ...decisions.flatMap((d) => (d.ticket ? [d.ticket] : [])),
     ...agents.flatMap((a) => a.claims.map((c) => c.ticket)),
   ])
-  return settle([...keys].map((k) => qc.ensureQueryData(queries.ticket(ws, k))))
+  // Only the first row is open from the start: wait for that one, read the rest in the background so Today shows at once.
+  const [first, ...rest] = [...keys]
+  for (const k of rest) void qc.prefetchQuery(queries.ticket(ws, k))
+  return settle(first === undefined ? [] : [qc.ensureQueryData(queries.ticket(ws, first))])
 }
 
 export const todayData = ({ qc, ws, pkgs, person, owner }: PageScope): Ensure[] => [

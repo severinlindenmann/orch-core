@@ -1905,8 +1905,6 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `device.scope` | §5.3 the certificate lacks `decide` (or `operate`), or has a `drop:` scope |
 | `device.lockout` | a `device.removed` of an owner's last device that can sign now (not removed or revoked, certificate not expired at the event's `at`, with `decide`, held by a member) |
 | `sign.method` | B6: the person event's `auth` is a way (`convenience` is `click`, `secure-enclave-unlocked` is `phone`) that the workspace's `settings.sign_methods` leaves out, judged by the state at the event's own position; honest labels only |
-| `sign.hub_only` | C8/C11 (D78, D81): a person event that is not `auth: "hub"` at a position where the workspace is joined to a hub in **full** mode, and whose type is not a break-glass event (`hub.left`, signed by an owner without the click or convenience signer); judged by the state at the event's own position, append and replay alike. The break-glass set is `orch.model.breakglass.BREAK_GLASS` |
-| `sign.key_exposed` | #1097: a device key with a signed `device.exposed` mark signs a full-mode `hub.joined` (also with an `auth: "convenience"` label, marked or not; first join, selective to full, the `hub.mode` re-affirmation) or a break-glass event (`hub.left`); judged by the state before the event, append and replay alike. A key with no such evidence is clean. The way out is `device.rotated` (`orch keys custody passphrase --rotate`) |
 | `device.cert` | §5.3 an embedded certificate or revocation is not signed by the person key, or is for another person |
 | `grant.invalid` | §10.1 the grant is unknown, expired, revoked, ended, another person's, or its person may not run agents |
 | `grant.scope` | §10.1 the grant's scope does not cover the ticket, or the person can't see it |
@@ -3229,10 +3227,9 @@ Tasks 4–7 = PR B; tasks 5 and 6 need the Opus security pass (custody, authorit
 `hub.left` at its position also (a) voids the counting decisions signed by any `hub:<hub_id>/*` key in a generation that
 is still open, on every unsettled ticket (`generations.void_hub`; a settled ticket keeps its state and lists them as
 revoked, like a revoked device), and (b) ends every grant whose request was a line of that hub (`Grant.hub_id`, set by
-the C10 host-actor `grant.issued`; state, no new line). The break-glass set is `orch.model.breakglass.BREAK_GLASS`
-(`hub.leave`, `hub.repin` recovery key only, `keys.rotate`). In a joined **full**-mode position every person event that
-is not `auth: "hub"` and not a break-glass event by an owner is refused (`sign.hub_only`); the model's default is ON
-(`Ctx.hub_only`; C10 flipped it from off, L2-C8i-5), model-only tests opt out (`World.hub_only = False`).
+the C10 host-actor `grant.issued`; state, no new line). A local person signature is valid in every hub mode (A1, D83: the workspace roster decides who may
+sign locally; the hub is an additional signer). The earlier full-mode refusal (`sign.hub_only`, `Ctx.hub_only`, the
+break-glass table) is removed.
 
 ### C10 hub-signed grants, devices, policy, settings and the H5 switch (V3, design-c10, hub protocol 8.8)
 

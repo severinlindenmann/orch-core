@@ -106,7 +106,7 @@ it('marketplaces explain each publisher state and hub refusal', async () => {
   ws().market = { markets: (['unsigned', 'new', 'known', 'changed'] as const).map((key, i) => market({ url: `${market().url}${i}`, publisher_key: key })) }
   show('/w/DEMO/addons?tab=marketplaces')
   await screen.findByText('Publisher key matches the one previously saved on this computer', {}, T)
-  for (const name of ['Allowed by', 'Added by', 'Publisher signature', 'Repo', 'Last refreshed']) expect(screen.getByRole('columnheader', { name })).toBeInTheDocument()
+  expect(screen.getAllByRole('button', { name: 'About this marketplace' })).toHaveLength(4)
   for (const text of ['Unsigned', 'First use - key will be remembered', 'Key changed - review required']) expect(screen.getByText(text)).toBeInTheDocument()
   const add = screen.getByRole('button', { name: '+ Add marketplace' })
   expect(add).toBeDisabled()

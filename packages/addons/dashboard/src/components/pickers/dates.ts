@@ -37,3 +37,8 @@ export function parseTime(s: string): number | null {
   return h < 24 && mi < 60 ? h * 60 + mi : null
 }
 export const fmtTime = (mins: number) => { const m = ((mins % 1440) + 1440) % 1440; return `${p2(Math.floor(m / 60))}:${p2(m % 60)}` }
+/** The last step of the day (23:45 for 15 minutes): the stepper never wraps past midnight. */
+export const lastStep = (step: number) => 1440 - step
+/** `mins` rounded up to the next `step`, never past the last step of the day. */
+export const ceilStep = (mins: number, step: number) => Math.min(Math.ceil(mins / step) * step, lastStep(step))
+export const clampTime = (mins: number, lo: number, hi: number) => Math.min(Math.max(mins, lo), hi)

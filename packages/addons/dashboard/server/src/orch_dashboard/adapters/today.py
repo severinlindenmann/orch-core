@@ -54,7 +54,7 @@ def ask(n: dict) -> str:
     return n.get("detail") or ""
 
 
-def item(n: dict, titles: dict[str, str], sign: str | None = None) -> dict:
+def item(n: dict, titles: dict[str, str]) -> dict:
     kind = "verdict" if n["kind"] == "approve" and n.get("ref") == "verify" else KIND[n["kind"]]
     out = {
         "kind": kind,
@@ -67,8 +67,6 @@ def item(n: dict, titles: dict[str, str], sign: str | None = None) -> dict:
         "since": n.get("since") or "",
         "blocking": n["kind"] == "question" and n.get("detail") == "blocking",
     }
-    if sign == "hub":
-        out["sign"] = "hub"  # V3 C11: the row is approved on the phone or in the hub, never by a local key
     if n.get("text_cut"):
         out["cut"] = True  # a Snip: shown as shortened; the ticket page has the full question
     if n.get("status") == "closed":
@@ -138,7 +136,6 @@ def today(
     role: str,
     recent: list[dict] | None = None,
     closed: list[dict] | None = None,
-    sign: str | None = None,
     runs: list[dict] | None = None,
 ) -> dict:
     titles = {r["uid"]: r["title"] for r in [*rows, *(closed or [])]}
@@ -146,7 +143,7 @@ def today(
     for n in needs["items"]:
         if n.get("uid"):
             mine.setdefault(n["uid"], []).append(n)
-    items = [item(n, titles, sign) for n in needs["items"]]
+    items = [item(n, titles) for n in needs["items"]]
     waits = terminal_waits(runs or [], rows, mine)
     counts: dict[str, int] = {}
     for r in rows:

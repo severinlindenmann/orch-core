@@ -53,6 +53,14 @@ def test_publish_is_up_on_any_http_answer_and_reports_no_version(w):
     assert o["relay"]["state"] == "down"  # the relay must answer 200 on /healthz
 
 
+def test_publish_reports_its_version_from_healthz(w):
+    w.api.d.services = _services(
+        {"http://relay.test": (200, {"version": "0.1.0"}), "http://pub.test": (200, {"ok": True, "version": "0.2.0"})}
+    )
+    o = w.call("GET", "/admin/services", token=w.login(w.admin))[1]
+    assert o["publish"]["state"] == "up" and o["publish"]["version"] == "0.2.0"
+
+
 def test_a_service_that_is_not_set_up_says_so(w):
     w.api.d.services = Services(
         relay_url=None, publish_url=None, probe=lambda *a: (_ for _ in ()).throw(AssertionError("no probe"))

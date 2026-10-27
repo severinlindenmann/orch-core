@@ -7,7 +7,7 @@ import { useState } from 'react'
 import { followupsOn, hide, hiddenIds, kindOf, reasonText, todayCards, wakeText, type FollowupRow } from '@/api/followups'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { Pill, RescheduleButton, RunNowButton, StateBadges, CancelButton, useFollowups } from './FollowupParts'
+import { Pill, RescheduleButton, RunNowButton, StateBadges, useFollowups } from './FollowupParts'
 
 export function useTodayFollowups() {
   const f = useFollowups()
@@ -25,7 +25,7 @@ function Card({ row, ws, can, onHide }: { row: FollowupRow; ws: string; can: { c
   return (
     <li className="space-y-2 px-3 py-3" data-testid="followup-card" data-followup={row.id} data-kind={kind}>
       <div className="flex flex-wrap items-center gap-1.5">
-        <Pill tone="border-brand/40 bg-brand-soft text-brand">Schedules</Pill>
+        <Pill tone="border-transparent bg-addon text-on-addon">Schedules</Pill>
         <StateBadges row={row} />
       </div>
       <h3 className="text-[14px] font-semibold">
@@ -49,7 +49,6 @@ function Card({ row, ws, can, onHide }: { row: FollowupRow; ws: string; can: { c
           <>
             <RunNowButton row={row} ws={ws} primary={!stopped} />
             <RescheduleButton row={row} ws={ws} canMove={can.reschedule} />
-            {stopped && <CancelButton row={row} ws={ws} canUndo={can.undo} />}
           </>
         ) : null}
         <Button type="button" size="sm" variant="ghost" className={cn('text-text-muted')} onClick={onHide} title="Hides this card for you. The ticket keeps showing the problem.">

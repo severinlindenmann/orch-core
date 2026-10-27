@@ -226,8 +226,8 @@ function RailContent({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewe
   const { workspace } = useWorkspace()
   return (
     <>
-      <Details ticket={ticket} viewer={viewer} />
       <TicketFollowup ticket={ticket} />
+      <Details ticket={ticket} viewer={viewer} />
       <Code ticket={ticket} prs={!addonActive(workspace, GITHUB)} />
       <TicketEstimate ticket={ticket} />
       <TicketWorktree ticket={ticket} />

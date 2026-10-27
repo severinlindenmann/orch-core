@@ -70,7 +70,7 @@ describe('follow-ups on the mock', () => {
     expect(within(needs).getByText(/DEMO-0041/)).toBeInTheDocument()
     const waiting = screen.getByTestId('followups-waiting')
     expect(within(waiting).getAllByTestId('followup-row')).toHaveLength(2)
-    expect(within(waiting).getByText(/Wakes when backfill 8812 finishes/)).toBeInTheDocument()
+    expect(within(waiting).getByText(/Wakes when the outage calendar import finishes/)).toBeInTheDocument()
     expect(screen.getByTestId('followups-finished')).toHaveTextContent(/Woken by deadline/)
     expect(screen.getAllByRole('button', { name: 'Run now as me' }).length).toBeGreaterThan(0)
     const mine = within(waiting).getAllByTestId('followup-row').find((r) => r.dataset.ticket === 'DEMO-0048')!

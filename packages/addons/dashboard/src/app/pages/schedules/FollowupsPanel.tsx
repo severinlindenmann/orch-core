@@ -3,10 +3,11 @@
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { SafeMarkdown } from '@/addon-ui/SafeMarkdown'
-import { groups, hide, hiddenIds, kindOf, reasonText, wakeLine, inText, type FollowupRow } from '@/api/followups'
+import { groups, hide, hiddenIds, wakeText, kindOf, reasonText, wakeLine, inText, type FollowupRow } from '@/api/followups'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
 import { plural } from '@/lib/time'
 import { CancelButton, RescheduleButton, RunNowButton, StateBadges, usePersonName, useFollowups } from './FollowupParts'
 
@@ -46,6 +47,7 @@ function Row({ row, ws, can, onHide }: { row: FollowupRow; ws: string; can: { ca
   const name = usePersonName()
   const kind = kindOf(row)
   const sentence = reasonText(row)
+  const problem = kind === 'needs_person' || kind === 'failed' || kind === 'did_not_run'
   const wakes = kind === 'waiting' ? wakeLine(row) : ''
   const wait = kind === 'waiting' && (row.due ?? row.deadline) ? inText((row.due ?? row.deadline)!) : ''
   return (
@@ -59,9 +61,15 @@ function Row({ row, ws, can, onHide }: { row: FollowupRow; ws: string; can: { ca
         <span className="min-w-0 truncate text-[13px] font-medium">{row.title ?? 'A ticket you cannot see here'}</span>
         <StateBadges row={row} />
       </div>
+      {problem && sentence && (
+        <p className={cn('rounded-md border-l-2 px-2.5 py-1.5 text-[13px]', kind === 'needs_person' ? 'border-warning bg-warning-soft' : 'border-danger bg-danger-soft')} data-testid="followup-callout">
+          {row.due && kind !== 'needs_person' ? `Due ${wakeText(row.due)}. ` : ''}
+          {sentence}
+        </p>
+      )}
       <p className="text-[13px] text-text-muted">
         {wakes && <span>{wakes}{wait ? ` (${wait})` : ''}. </span>}
-        {sentence && <span>{sentence} </span>}
+        {!problem && sentence && <span>{sentence} </span>}
         <span>
           {row.chain && kind !== 'cancelled' ? `Follow-up ${row.chain.n} of ${row.chain.max}. ` : ''}Set by {name(row.person)}'s agent.
         </span>

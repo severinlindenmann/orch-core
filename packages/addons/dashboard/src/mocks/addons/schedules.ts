@@ -66,7 +66,7 @@ const FU = (n: string) => `fu_01J9ZK4Q7M3R8T2V6X0B5N${n}`
 /** One consistent sample set on the demo tickets (mock clock: Fri 9 Oct 2026, 11:30 UTC). Every state appears once. */
 const seedFollowups = (): Followup[] => [
   // waiting on an event or a web address, latest Tue 13 Oct 16:00 UTC; the second of five in a row
-  { id: FU('1A'), ticket: 'DEMO-0045', state: 'pending', trigger: 'orch', due: null, deadline: '2026-10-13T16:00:00Z', set_at: '2026-10-08T15:40:00Z', fired_at: null, late_by: null, brief: 'Check whether backfill 8812 finished.\n\n- If yes: run the reconcile and mark the task done.\n- If not: ask Mara before trying again.', outcome: null, reason: null, person: 'p_mara', label: 'backfill 8812', chain: { n: 2, max: 5 } },
+  { id: FU('1A'), ticket: 'DEMO-0045', state: 'pending', trigger: 'orch', due: null, deadline: '2026-10-13T16:00:00Z', set_at: '2026-10-08T15:40:00Z', fired_at: null, late_by: null, brief: 'Check whether the outage calendar import finished.\n\n- If yes: rebuild the usage forecast and mark the task done.\n- If not: ask Mara before trying again.', outcome: null, reason: null, person: 'p_mara', label: 'the outage calendar import', chain: { n: 2, max: 5 } },
   // waiting on the clock: tomorrow 14:00 UTC
   { id: FU('1B'), ticket: 'DEMO-0048', state: 'pending', trigger: 'time', due: '2026-10-10T14:00:00Z', deadline: null, set_at: '2026-10-09T09:00:00Z', fired_at: null, late_by: null, brief: 'Look at the freshness alert for the meter feed again and file what is still late.', outcome: null, reason: null, person: 'p_sev', chain: { n: 1, max: 5 } },
   // stopped by orch: the 5th follow-up with no task done

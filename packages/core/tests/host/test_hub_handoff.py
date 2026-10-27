@@ -229,8 +229,13 @@ def test_a_settings_change_gets_one_fragment_link_with_the_terms(served, full):
 
 @pytest.mark.parametrize(
     "bad",
-    [{"kind": "settings"}, {"kind": "settings", "set": {}}, {"kind": "settings", "set": {"sign_methods": ["click"]}},
-     {"kind": "settings", "set": {"grant_hours": 500}}, {"kind": "settings", "set": {"grant_hours": 1}, "ticket": "X"}],
+    [
+        {"kind": "settings"},
+        {"kind": "settings", "set": {}},
+        {"kind": "settings", "set": {"sign_methods": ["click"]}},
+        {"kind": "settings", "set": {"grant_hours": 500}},
+        {"kind": "settings", "set": {"grant_hours": 1}, "ticket": "X"},
+    ],
 )
 def test_a_settings_change_off_the_channel_is_invalid_input(served, full, bad):
     assert err(handoff(served, bad)) == "invalid.input"

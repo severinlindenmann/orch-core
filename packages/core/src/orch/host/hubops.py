@@ -127,7 +127,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "cancel": {"const": True},
             # kind addon (FB15): the prepared hand-off request (op addon.grant) the hub link is for
             "request": {"type": "string", "pattern": "^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$"},
-            # kind settings (27 Oct): the 1-3 workspace settings the hub channel may change (protocol 8.8 settings.changed)
+            # kind settings (27 Oct): the 1-3 settings the hub channel may change (protocol 8.8)
             "set": {
                 "type": "object",
                 "properties": {

@@ -275,14 +275,19 @@ def test_a_settings_change_is_relayed_with_a_closed_shape():
     link = Link({"hub.handoff": SETTINGS})
     res = post(app_for(link), {"kind": "settings", "set": {"grant_hours": 24}})
     assert res.status_code == 200
-    assert res.json() == {"mode": "full", "kind": "settings", "summary": {"kind": "settings", "set": {"grant_hours": 24}},
-                          "short_hash": None, "url": SETTINGS["url"]}  # fmt: skip
+    summary = {"kind": "settings", "set": {"grant_hours": 24}}
+    assert res.json() == {"mode": "full", "kind": "settings", "summary": summary, "short_hash": None,
+                          "url": SETTINGS["url"]}  # fmt: skip
     assert link.calls == [("hub.handoff", {"kind": "settings", "set": {"grant_hours": 24}})]
 
 
 @pytest.mark.parametrize(
     "body",
-    [{"kind": "settings"}, {"kind": "settings", "set": {"grant_hours": 1}, "request": RID}, {"kind": "gate", "set": {"grant_hours": 1}}],
+    [
+        {"kind": "settings"},
+        {"kind": "settings", "set": {"grant_hours": 1}, "request": RID},
+        {"kind": "gate", "set": {"grant_hours": 1}},
+    ],
 )
 def test_a_settings_change_names_only_its_settings(body):
     assert post(app_for(Link({"hub.handoff": SETTINGS})), body).status_code in (400, 422)

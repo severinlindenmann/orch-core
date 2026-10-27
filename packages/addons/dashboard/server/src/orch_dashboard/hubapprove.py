@@ -183,7 +183,11 @@ def register(app: FastAPI, gateway: Gateway):
         if body.kind == "settings":
             if body.set is None or body.request is not None or body.ticket is not None:
                 raise fail("invalid.input", "A settings change names the settings, nothing else.", exit=5)
-        elif body.set is not None or (body.kind == "addon") != (body.request is not None) or (body.kind == "addon") == (body.ticket is not None):
+        elif (
+            body.set is not None
+            or (body.kind == "addon") != (body.request is not None)
+            or (body.kind == "addon") == (body.ticket is not None)
+        ):
             raise fail("invalid.input", "An add-on names its request; a ticket approval names its ticket.", exit=5)
         shown = panel(link.call("hub.handoff", body.model_dump(exclude_none=True)))
         return with_console_origin(shown, link, request) if shown.get("kind") in ("addon", "settings") else shown

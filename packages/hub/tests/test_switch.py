@@ -341,3 +341,17 @@ def test_owner_get_names_the_owner_alias_and_nothing_else(w):
     """FB15: the host asks over its own link who the hub names as owner; no argument, no stored origin."""
     r = ops.owner_get(ctx(w, WS, "owner_get", {}))
     assert r == {"user_id": w.ann}
+
+
+def test_a_loopback_browser_gets_the_loopback_origin_only_when_the_hub_says_it_listens_there(w):
+    """FB10: the hub's own knowledge, never a guess. Nothing declared: the hub's own origin, whatever the browser says;
+    a foreign listener on that port is therefore never handed a ticket."""
+    body = {"origin": DASH, "return_to": "/", "kind": "open"}
+    r = ops.switch_ticket(ctx(w, WS, "switch_ticket", body))
+    assert r["url"].startswith(ORIGIN + "/#t=")
+    w.sw.set_loopback_origin(lambda: "http://127.0.0.1:9001")
+    r = ops.switch_ticket(ctx(w, WS, "switch_ticket", body))
+    assert r["url"].startswith("http://127.0.0.1:9001/#t=")
+    far = ops.switch_ticket(ctx(w, WS, "switch_ticket", {**body, "origin": "http://100.64.0.2:7001"}))
+    assert far["url"].startswith(ORIGIN + "/#t=")  # a browser that is not on loopback keeps the hub's own origin
+    assert ops.rail_get(ctx(w, WS, "rail_get", {"origin": DASH}))["hub"]["origin"] == "http://127.0.0.1:9001"

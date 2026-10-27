@@ -118,7 +118,7 @@ def with_console_origin(info: dict, link, request) -> dict:
     rest = info["url"].split("/#/", 1)[1]
     out = {**info, "url": f"{origin}/#/{rest}"}
     if isinstance(other, str) and other != origin and CONSOLE_ORIGIN.fullmatch(other):
-        out["other_url"] = f"{other}/#/{rest}"  # the same page for another device (this computer got the 127.0.0.1 form)
+        out["other_url"] = f"{other}/#/{rest}"  # the same page for another device
     return out
 
 

@@ -1,0 +1,93 @@
+"""Follow-ups (#720): the read route over the host's `follow_up.list`, and the one signed hand-off (Cancel)."""
+
+import pytest
+from conftest import ORIGIN
+
+from orch_dashboard import followups
+from orch_dashboard.handoff import FollowupCancel, expected, host_call
+
+FU = "fu_" + "0" * 26
+
+
+def headers(token):
+    return {"Authorization": f"Bearer {token}", "Origin": ORIGIN}
+
+
+@pytest.fixture
+def fu_host(gateway, stub, monkeypatch):
+    link = gateway.enabled(stub.ws)
+    link.welcome["ops"]["follow_up.list"] = 1
+    original = link.call
+    script = {"calls": [], "on": True, "rows": []}
+
+    def call(op, args=None, **kwargs):
+        if op == "follow_up.list":
+            script["calls"].append(args)
+            return {"rows": script["rows"], "total": len(script["rows"])}
+        if op == "addon.list":
+            rows = original("addon.list")["addons"]
+            return {"addons": [*rows, {"name": "schedules", "state": "active" if script["on"] else "off"}]}
+        return original(op, args, **kwargs)
+
+    monkeypatch.setattr(link, "call", call)
+    return script
+
+
+def test_rows_are_drawn_and_filtered(client, token, stub, fu_host):
+    key = "DEMO-0001"
+    fu_host["rows"] = [
+        {
+            "id": FU,
+            "key": key,
+            "state": "pending",
+            "trigger": "time",
+            "due": "2026-10-28T09:00:00Z",
+            "brief": "Check it.",
+            "person": stub.person,
+            "set_at": "2026-10-27T09:00:00Z",
+            "fired_at": None,
+            "late_by": None,
+            "reason": None,
+        },
+        {"id": "fu_x", "key": key, "state": "weird"},
+        {
+            "id": FU[:-1] + "1",
+            "key": key,
+            "state": "did_not_run",
+            "outcome": "did_not_run",
+            "reason": "no_host",
+            "brief": "a‮b",
+        },
+    ]
+    got = client.get(f"/api/w/{stub.ws}/followups", headers=headers(token))
+    body = got.json()
+    assert body["available"] is True and body["can"] == {"cancel": True, "reschedule": False, "undo": False}
+    assert [r["state"] for r in body["rows"]] == ["pending", "did_not_run"]
+    first, second = body["rows"]
+    assert first["brief"] == "Check it." and first["mine"] is True and first["can_cancel"] is True
+    assert second["brief"] is None and second["brief_hidden"] is True and second["reason"] == "no_host"
+    assert {"all": True} in fu_host["calls"]
+    assert "schedules" in client.get("/api/session", headers=headers(token)).json()["features"]
+
+
+def test_off_means_nothing(client, token, stub, fu_host):
+    fu_host["on"] = False
+    got = client.get(f"/api/w/{stub.ws}/followups", headers=headers(token))
+    assert got.status_code == 409 and got.json()["error"]["code"] == "addon.disabled"
+    assert fu_host["calls"] == []
+
+
+def test_unreasoned_reason_is_dropped():
+    r = followups.row({"id": FU, "state": "failed", "reason": "<script>", "key": "A-1"}, {}, "p_1", "member")
+    assert r["reason"] is None and r["can_cancel"] is False
+
+
+def test_cancel_is_one_fixed_op():
+    action = FollowupCancel(action="followup_cancel", key="DEMO-0001", id=FU)
+    assert host_call(action) == ("follow_up.cancel", {"id_or_ref": FU})
+    ok = expected(action)
+    event = {"type": "followup.cancelled", "followup": FU, "reason": "person"}
+    assert ok([event])
+    assert not ok([{**event, "followup": FU[:-1] + "1"}])
+    assert not ok([{**event, "reason": "dismissed"}])
+    assert not ok([event, event])

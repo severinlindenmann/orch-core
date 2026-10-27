@@ -119,6 +119,14 @@ class Reopen(Action):
     message: Text | None = None
 
 
+class FollowupCancel(Action):
+    """Cancel a follow-up (Schedules, #720): the follow-up's person or a manager signs `follow_up.cancel`."""
+
+    action: Literal["followup_cancel"]
+    key: Key
+    id: Annotated[str, StringConstraints(pattern=r"^fu_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+
+
 class NewTicket(Action):
     """A person's `new` carries the key, type, title and owner only (stream A, 11 Oct); the rest is `Details`."""
 
@@ -995,6 +1003,7 @@ PrepareBody = Annotated[
     | AddLabel
     | Close
     | Reopen
+    | FollowupCancel
     | Move
     | AcceptCriterion
     | WithdrawAcceptance
@@ -1136,6 +1145,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             args = {"ref": action.key, "resolution": action.resolution}
             args |= {"duplicate_of": action.duplicate_of} if action.duplicate_of else {}
             return "close", args | ({"message": action.message} if action.message else {})
+        case FollowupCancel():
+            return "follow_up.cancel", {"id_or_ref": action.id}
         case Reopen():
             return "reopen", {"ref": action.key} | ({"message": action.message} if action.message else {})
         case AcceptCriterion():
@@ -1334,6 +1345,8 @@ def expected(action: Action, person: str | None = None):
             )
         case MarkTaskDone():
             return lambda ev: one(ev, "task.done", task=action.task) and _acceptance_event_ok(ev[0], person, {"task"})
+        case FollowupCancel():
+            return lambda ev: one(ev, "followup.cancelled", followup=action.id, reason="person")
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():

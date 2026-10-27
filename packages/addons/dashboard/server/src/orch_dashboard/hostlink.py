@@ -59,6 +59,7 @@ OPS = {
         "needs",
         "activity.list",
         "quick.list",
+        "follow_up.list",
         "records.status",
         "ticket.query",
         "ticket.get",

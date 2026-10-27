@@ -360,6 +360,10 @@ class Gateway:
         if link.supports("run.list", "run/1") and self.addon_on(link, "usage"):
             # Usage: the page and the ticket box exist only while the add-on is ON for this workspace.
             features.append("usage")
+        if link.supports("follow_up.list") and self.addon_on(link, "schedules"):
+            features.append(
+                "schedules"
+            )  # Follow-ups (#720)
         if self.addon_on(link, "focus"):
             features.append("focus")
         if self.addon_on(link, "wiki"):

@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import (
     activity_routes,
     adapters,
+    addon_reads,
     addon_routes,
     addon_switches,
     agents,
@@ -305,6 +306,7 @@ def create_app(
     shares.register(app, gateway)
     explorer_routes.register(app, gateway)
     wiki_routes.register(app, gateway)
+    addon_reads.register(app, gateway)
     widget_frame.register(app, gateway)
     terminals.register_socket(app, gateway, auth, tickets, streams)
 

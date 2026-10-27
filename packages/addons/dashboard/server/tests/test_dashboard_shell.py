@@ -81,6 +81,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/worktrees",
         "/api/w/{ws}/worktrees/create",
         "/api/w/{ws}/worktrees/remove",
+        "/api/addons",
+        "/api/w/{ws}/view/{name}",
         "/api/w/{ws}/wiki",
         "/api/w/{ws}/wiki/page",
         "/api/w/{ws}/wiki/create",

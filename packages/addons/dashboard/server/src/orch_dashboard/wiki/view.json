@@ -1,0 +1,33 @@
+{
+  "schema": "orch.addon-views/1",
+  "addon": "wiki",
+  "contributions": [
+    {
+      "slot": "nav",
+      "id": "wiki",
+      "title": "Wiki",
+      "icon": "BookText",
+      "node": {
+        "type": "stack",
+        "children": [
+          {
+            "type": "search",
+            "id": "find",
+            "label": "Search the wiki",
+            "placeholder": "Search the wiki",
+            "read": "wiki.search",
+            "target": "pages"
+          },
+          {
+            "type": "tree",
+            "id": "pages",
+            "label": "Wiki pages",
+            "read": "wiki.tree",
+            "empty": "The wiki folder has no pages yet. Add .md files to it.",
+            "detail": {"read": "wiki.page", "title": "title", "text": "markdown", "empty": "This page is too large to show here."}
+          }
+        ]
+      }
+    }
+  ]
+}

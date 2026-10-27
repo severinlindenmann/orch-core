@@ -986,3 +986,39 @@ def test_orch_setup_calls_the_check_before_it_does_anything(tmp_path, monkeypatc
     out, err = io.StringIO(), io.StringIO()
     rc = flow.main(["--role", "workspace"], env={"HOME": str(tmp_path), "ORCH_STATE_DIR": str(state)}, out=out, err=err)
     assert rc == 3 and "Found an older orch install. Run `orch host prune` first." in err.getvalue()
+
+
+def test_b1_tty_ask_really_reads_the_controlling_terminal():
+    import pty
+    import select
+    import subprocess as sp
+    import sys
+
+    master, slave = pty.openpty()
+    code = "from orch.prune.safe import tty_ask; print('ANSWER=' + tty_ask('Q? '))"
+    proc = sp.Popen([sys.executable, "-c", code], stdin=sp.DEVNULL, stdout=sp.PIPE, stderr=sp.STDOUT,
+                    start_new_session=True, preexec_fn=lambda: None)  # fmt: skip
+    # a child without a controlling terminal gets "" (it cannot open /dev/tty): that is the refusal path
+    out = proc.communicate(timeout=30)[0].decode()
+    assert "ANSWER=\n" in out
+    os.close(master)
+    os.close(slave)
+    del select
+
+
+def test_b1_tty_ask_answer_through_a_pty():
+    import pty
+    import time
+
+    pid, fd = pty.fork()
+    if pid == 0:  # the child has the pty as its controlling terminal
+        from orch.prune.safe import tty_ask
+
+        os.write(1, ("GOT=" + tty_ask("Q? ") + "\n").encode())
+        os._exit(0)
+    time.sleep(1.0)
+    assert b"Q? " in os.read(fd, 4096)
+    os.write(fd, b"y\n")
+    time.sleep(0.5)
+    assert b"GOT=y" in os.read(fd, 4096)
+    os.waitpid(pid, 0)

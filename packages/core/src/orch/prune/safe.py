@@ -128,12 +128,22 @@ def tty_ask(prompt: str) -> str:
         except EOFError:
             return ""
     try:
-        with open("/dev/tty", "r+", encoding="utf-8", errors="replace") as tty:
-            tty.write(prompt)
-            tty.flush()
-            return tty.readline().strip()
+        fd = os.open("/dev/tty", os.O_RDWR)
     except OSError:
         return ""
+    try:
+        os.write(fd, prompt.encode("utf-8", "replace"))
+        line = b""
+        while not line.endswith(b"\n"):
+            chunk = os.read(fd, 1)
+            if not chunk:
+                break
+            line += chunk
+        return line.decode("utf-8", "replace").strip()
+    except OSError:
+        return ""
+    finally:
+        os.close(fd)
 
 
 # ------------------------------------------------------------------------------------------------------- keychain

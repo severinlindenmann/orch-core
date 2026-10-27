@@ -18,17 +18,24 @@ class Scope:
     state: str
 
 
-def open_wiki(gateway, ws: str) -> Scope:
+def authorize(gateway, ws: str, addon: str):
+    """The checks every read of an add-on's view makes on EVERY call: the dashboard and the add-on are ON in the
+    workspace and the caller is a member. Returns ``(link, person, role)``."""
     link = gateway.link(ws)
     addons = link.call("addon.list")["addons"]
     if not any(isinstance(a, dict) and a.get("name") == "dashboard" and a.get("enabled") is True for a in addons):
         raise fail("addon.disabled", exit=3)
-    if not any(isinstance(a, dict) and a.get("name") == "wiki" and a.get("state") == "active" for a in addons):
-        raise fail("addon.disabled", "The Wiki add-on is off.", exit=3)
+    if not any(isinstance(a, dict) and a.get("name") == addon and a.get("state") == "active" for a in addons):
+        raise fail("addon.disabled", f"The {addon.capitalize()} add-on is off.", exit=3)
     person = link.welcome["peer"]["person"]
     member = next((m for m in adapters.members(link.call("member.list")) if m.person == person), None)
     if member is None:
-        raise fail("role.denied", "Only workspace members can read the Wiki.", exit=3)
+        raise fail("role.denied", f"Only workspace members can read the {addon.capitalize()}.", exit=3)
+    return link, person, member.role
+
+
+def open_wiki(gateway, ws: str) -> Scope:
+    link, person, role = authorize(gateway, ws, "wiki")
     project, _store = gateway.workspace_folder(ws)
     folder = os.path.realpath(project)
     root = guard.Root("ws", "Workspace", folder, "workspace")
@@ -37,5 +44,5 @@ def open_wiki(gateway, ws: str) -> Scope:
     except (guard.GuardError, HostError):
         valid = False
     if not valid:
-        return Scope(link, person, member.role, None, "no_repo")
-    return Scope(link, person, member.role, git.Repo(folder, (), ""), "ok")
+        return Scope(link, person, role, None, "no_repo")
+    return Scope(link, person, role, git.Repo(folder, (), ""), "ok")

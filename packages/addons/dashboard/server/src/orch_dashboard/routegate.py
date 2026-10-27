@@ -83,6 +83,8 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/explorer/commit"): (ALLOWED, ""),
     (GET, W + "/explorer/compare"): (ALLOWED, ""),
     (GET, W + "/explorer/ticket/{key}"): (ALLOWED, ""),
+    (GET, W + "/addons"): (ALLOWED, "the add-on packages with declarative views that are on in this workspace"),
+    (GET, W + "/view/{name}"): (ALLOWED, "named reads of declarative add-on views (addon_reads.py)"),
     (GET, W + "/wiki"): (ALLOWED, ""),
     (GET, W + "/wiki/page"): (ALLOWED, ""),
     (POST, W + "/wiki/create"): (ALLOWED, "admin action, plain click"),

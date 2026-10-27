@@ -26,7 +26,6 @@ import {
   PackageOpen,
   FolderGit2,
   FolderTree,
-  BookText,
   Gauge,
   Puzzle,
   Share2,
@@ -484,8 +483,6 @@ const CORE_NAV = [
   { to: '/usage', label: 'Usage', icon: Gauge, feature: 'usage', real: true },
   /** Schedules (add-on): the follow-ups agents set; listed only while the add-on is ON (the server adds `schedules` then). */
   { to: '/schedules', label: 'Schedules', icon: CalendarClock, feature: 'schedules', real: true },
-  /** Wiki (add-on): pages of the project's wiki folder; listed only while the add-on is ON (the server adds `wiki` then). */
-  { to: '/wiki', label: 'Wiki', icon: BookText, feature: 'wiki', real: true },
   /** Activity (#595): who did what; listed where the host serves `activity/1`. */
   { to: '/activity', label: 'Activity', icon: History, feature: 'activity', real: true },
   /** The guide of a real host: fixed pages in the bundle, so any host serves it. */

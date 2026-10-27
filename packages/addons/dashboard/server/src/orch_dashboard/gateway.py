@@ -366,6 +366,7 @@ class Gateway:
             features.append("focus")
         if self.addon_on(link, "wiki"):
             features.append("wiki")
+            features.append("addons")  # declarative add-on pages (the Wiki view) are served
         if "quick" in features and self.addon_on(link, "quick"):
             features.append("quick_on")  # the menu entry and the page's controls; Off: the page says so
         if self.addon_on(link, "estimate"):

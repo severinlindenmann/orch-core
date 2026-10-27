@@ -130,13 +130,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _tty_confirm(text: str) -> bool:
-    try:
-        with open("/dev/tty", "r+") as tty:
-            tty.write(text + "\nType yes to continue: ")
-            tty.flush()
-            return tty.readline().strip() == "yes"
-    except OSError:
-        return False
+    from orch.prune.safe import tty_ask
+
+    return tty_ask(text + "\nContinue? [y/N] ").lower() in ("y", "yes")
 
 
 def _flat(res: dict[str, Any]) -> dict[str, Any]:

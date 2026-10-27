@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -101,6 +102,7 @@ class Svc:
     detail: str = ""
     runner_kind: str | None = None  # for parts: the runner that started it
     version: str = ""  # as `orch install status` shows it: the part's record, else the installed orch-core
+    blocked: bool = False  # macOS turned it off in Login Items & Extensions (not `orch stop`)
 
 
 # ------------------------------------------------------------------------------------------------------ discovery
@@ -178,13 +180,42 @@ def _dist_version(dist: str) -> str:
     return ""
 
 
+BLOCKED_HELP = "Allow orch in System Settings > General > Login Items & Extensions, then run orch start again."
+
+
 def _unit(e: Env, kind: str, key: str, label: str, name: str, path: Path, timer: bool) -> Svc:
     s = Svc(key, label, PERSON, kind, name=name, path=path, timer=timer, version=_dist_version("orch-core"))
     if not os.path.lexists(path):
         s.installed = False
         return s
     s.state = _unit_state(e, s)
+    s.blocked = s.state != "running" and blocked_by_macos(e, s.name)
     return s
+
+
+def blocked_by_macos(e: Env, label: str) -> bool:
+    """macOS only: ``label`` is listed as disabled by ``launchctl print-disabled`` and not because ``orch stop`` did it
+    (System Settings, General, Login Items & Extensions, "Allow in the Background" is off)."""
+    if e.platform != "darwin" or label in stopped_by_orch(e.state):
+        return False
+    from orch.host.enable import label_disabled
+
+    rc, out = e.run(["launchctl", "print-disabled", f"gui/{e.uid}"])
+    return rc == 0 and label_disabled(out, label)
+
+
+def blocked_orch_labels(e: Env) -> list[str]:
+    """Every ``io.orch*`` label macOS has turned off (not by ``orch stop``): what setup says is blocked."""
+    if e.platform != "darwin":
+        return []
+    rc, out = e.run(["launchctl", "print-disabled", f"gui/{e.uid}"])
+    if rc != 0:
+        return []
+    from orch.host.enable import label_disabled
+
+    names = re.findall(r'^\s*"(io\.orch[^"]*)"\s*=>', out, re.M)
+    mine = stopped_by_orch(e.state)
+    return [n for n in dict.fromkeys(names) if n not in mine and label_disabled(out, n)]
 
 
 def _unit_state(e: Env, s: Svc) -> str:
@@ -206,6 +237,9 @@ def _part(e: Env, key: str, label: str, group: str, rec: dict[str, Any]) -> Svc:
     s = Svc(key, label, group, "part", name=key, detail=str(rec.get("url") or ""), runner_kind=kind, version=ver)
     try:
         s.state = "running" if _runner(e, kind).info(key).get("running") else "stopped"
+        label_of = getattr(_runner(e, kind), "label", None)
+        if s.state != "running" and kind == "launchd" and label_of is not None:
+            s.blocked = blocked_by_macos(e, label_of(key))
     except Exception:  # noqa: BLE001 - a broken service manager must not hide the other rows
         s.state = "unknown"
     return s
@@ -315,6 +349,8 @@ def start_svc(e: Env, s: Svc) -> str:
                 break
             e.sleep(1)
         else:
+            if blocked_by_macos(e, s.name):
+                raise LifecycleError(f"{s.label} is blocked by macOS. {BLOCKED_HELP}")
             raise LifecycleError(f"{s.label} did not start: {last[1].strip()[-200:]}")
     else:
         rc, out = e.run(["systemctl", "--user", "enable", "--now", s.name])

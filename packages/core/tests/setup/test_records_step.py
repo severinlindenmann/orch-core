@@ -50,11 +50,11 @@ def test_the_run_sets_up_records_last_and_only_when_consented(tmp):
     assert "records_setup" not in names(ports) and all(x["id"] != "records" for x in rv["flags"])
 
 
-def test_a_records_failure_is_a_retry_item_with_the_command_and_setup_still_finishes(tmp):
+def test_a_records_failure_is_a_retry_item_with_the_command_and_setup_is_not_ready(tmp):
     ports = FakePorts()
     ports.fail_records = True
     f, ports, p, _ = run_ok(tmp, WITH_RECORDS, ports=ports)
-    assert p["done"] is True and p["error"] is None
+    assert p["done"] is False and p["error"]["code"] == "steps.failed" and p["error"]["finishable"] is True
     assert "records" in p["retry"] and "orch records init" in p["reasons"]["records"]
     assert next(s for s in p["steps"] if s["id"] == "records")["status"] == "failed"
 

@@ -129,9 +129,15 @@ class FakePorts:
     def git_init(self, root: Path) -> None:
         self.log.append(("git_init", str(root)))
 
-    def trust_folder(self, root: Path) -> bool:
+    def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool:
         self.log.append(("trust_folder", str(root)))
         return True
+
+    def background_blocked(self) -> list[str]:
+        return list(getattr(self, "blocked", []))
+
+    def trust_why(self, root: Path, *, allow_parent: bool = False) -> str:
+        return "fake why"
 
     def records_setup(self, wid: str, root: Path) -> None:
         self.log.append(("records_setup", wid, str(root)))

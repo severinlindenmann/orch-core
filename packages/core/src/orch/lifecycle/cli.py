@@ -12,7 +12,7 @@ from typing import Any, TextIO
 
 from . import agents as A
 from .plan import Plan, plan_start, plan_stop
-from .units import Env, LifecycleError, Svc, discover, start_svc, stop_svc, stopped_by_orch
+from .units import BLOCKED_HELP, Env, LifecycleError, Svc, discover, start_svc, stop_svc, stopped_by_orch
 
 __all__ = ["main", "known_workspaces", "table"]
 
@@ -97,7 +97,10 @@ def table(e: Env, svcs: list[Svc]) -> None:
             note = s.detail
             if s.state == "stopped" and s.name in stopped_by_orch(e.state):
                 note = (note + "  " if note else "") + "stopped by orch stop, orch start brings it back"
-            e.say(f"{s.label:<22}{STATE_WORDS.get(s.state, s.state):<14}{s.version or '-':<10}{note}")
+            word = "blocked by macOS" if s.blocked else STATE_WORDS.get(s.state, s.state)
+            if s.blocked:
+                note = (note + "  " if note else "") + BLOCKED_HELP
+            e.say(f"{s.label:<22}{word:<{max(14, len(word) + 1)}}{s.version or '-':<10}{note}")
     ws = known_workspaces(e)
     if ws:
         host = next((s for s in svcs if s.key == "host"), None)
@@ -123,7 +126,7 @@ def _svcs_json(svcs: list[Svc]) -> list[dict[str, Any]]:
         {
             "service": s.key,
             "installed": s.installed and s.kind != "unsupported",
-            "state": s.state if s.installed else None,
+            "state": ("blocked" if s.blocked else s.state) if s.installed else None,
             "address": s.detail or None,
             "version": s.version or None,
         }

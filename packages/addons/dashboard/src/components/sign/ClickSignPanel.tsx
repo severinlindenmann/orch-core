@@ -148,10 +148,15 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
       {view.artifacts === 'unseen' && <p data-testid="click-artifacts" role="note" className="text-[13px] text-warning">The files could not be checked before signing.</p>}
       {!view.content && <SignDetails>{technical}</SignDetails>}
       {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
-      {problem && <ClickProblemBox problem={{ ...problem, next: undefined, signedAt: undefined }} ws={ws} />}
+      {problem && <ClickProblemBox problem={{ ...problem, body: problem.body.replace('Press the button again', `Press ${label} again`), next: undefined, signedAt: undefined }} ws={ws} />}
       {extra}
       <SignFooter><div className={STICKY_FOOTER} data-testid="sign-footer">
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {!armed && !signing && (
+            <span data-testid="sign-arming" role="status" className="mr-auto text-[12px] text-text-muted">
+              Ready in a moment
+            </span>
+          )}
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>
             Cancel
           </Button>
@@ -162,7 +167,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
             onPointerDown={activation.begin}
             onKeyDown={activation.begin}
             onClick={go}
-            title={armed ? undefined : 'Sign turns on after the review has been on screen for a moment'}
+            title={armed ? undefined : `${label} turns on after the review has been on screen for a moment`}
           >
             {signing ? (
               <>

@@ -81,6 +81,10 @@ class Item:
 RECORDS_TEXT = "Keep a history of your tickets on this computer, saved automatically (never uploaded)."
 
 
+#: what the review says about Claude Code's folder trust (one entry, this folder only)
+TRUST_TEXT = "Let Claude Code open this folder without asking. It only holds orch's files, no one else's settings."
+
+
 @dataclass
 class Plan:
     items: list[Item]
@@ -264,6 +268,8 @@ def plan(
         )
     if profile.get("records") and facts is None:  # a new workspace only
         flags.append({"id": "records", "text": RECORDS_TEXT})
+    if profile.get("trust_folder") and facts is None:  # a new workspace only
+        flags.append({"id": "trust", "text": TRUST_TEXT})
     wants_exec = profile["agent_grant"] or any(
         info[a].needs_runner or info[a].needs_terminals for a in profile["addons"]
     )
@@ -319,6 +325,7 @@ def _canon_profile(profile: Mapping[str, Any], directory: str) -> dict[str, Any]
     out = {k: profile[k] for k in keys}
     out["git_init"] = bool(profile.get("git_init"))
     out["records"] = bool(profile.get("records"))
+    out["trust_folder"] = bool(profile.get("trust_folder"))
     out["dir"] = directory
     out["custody_conversion"] = profile["method"] == "click"
     return out

@@ -295,6 +295,7 @@ LABELS = {
     "runner_grant_retry": "Agent access for this computer's runner (the earlier hand-over was not confirmed)",
     "custody": "One-click approval on this computer",
     "records": "Records history on this computer",
+    "trust": "Claude Code trusts this folder",
 }
 
 

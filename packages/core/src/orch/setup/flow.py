@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import claude_folder
 from . import facts as facts_mod
 from . import review as review_mod
 from .protocol import AGENT_HOURS, METHODS, SetupError, validate_profile
@@ -207,6 +208,9 @@ class SetupFlow:
             "click_risk": CONVENIENCE_RISK,
             "agent_hours": list(AGENT_HOURS),
             "git": facts.git_state(Path(self.dir)) if self.dir else {"repo": True},
+            "claude": {
+                "available": bool(self.dir) and self.mode == "new" and claude_folder.offered(self.e.env, self.dir)
+            },
             "relay": {"available": bool(relay.get("available")), "enabled": bool(relay.get("enabled"))},
             "missing": missing,
             "missing_words": [facts.label(m, self.addons) for m in missing],
@@ -267,6 +271,11 @@ class SetupFlow:
         if p["git_init"] and (self.mode != "new" or not self.dir or facts_mod.git_state(Path(self.dir))["repo"]):
             raise SetupError("invalid.input", "git init is offered for a new workspace in a folder without git", 400,
                              field="git_init")  # fmt: skip
+        if p["trust_folder"] and (
+            self.mode != "new" or not self.dir or not claude_folder.offered(self.e.env, self.dir)
+        ):
+            raise SetupError("invalid.input", "Claude Code trust is not offered for this folder", 400,
+                             field="trust_folder")  # fmt: skip
         prior = self.profile
         self.profile, self.review = p, None  # a new profile voids every earlier review_id
         if self.mode == "finish":
@@ -361,6 +370,8 @@ class SetupFlow:
             ids += ["custody", "flags"]
         if any(f["id"] == "records" for f in plan.flags):
             ids.append("records")
+        if any(f["id"] == "trust" for f in plan.flags):
+            ids.append("trust")
         return ids
 
     def _work(self, creator: Creator) -> None:

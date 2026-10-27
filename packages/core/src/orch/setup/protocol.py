@@ -37,7 +37,7 @@ _PROFILE_KEYS = frozenset(
     {"name", "workspace_name", "prefix", "addons", "method", "agent_hours", "agent_grant", "relay"}
 )
 #: keys a page may leave out (their value then is the default)
-_OPTIONAL_KEYS = frozenset({"git_init", "records"})
+_OPTIONAL_KEYS = frozenset({"git_init", "records", "trust_folder"})
 
 
 class SetupError(Exception):
@@ -107,6 +107,9 @@ def validate_profile(
     records = body.get("records", False)  # consent to the records repo + local auto-commit; absent means no
     if type(records) is not bool:
         raise SetupError("invalid.input", "records is true or false", field="records")
+    trust_folder = body.get("trust_folder", False)  # consent to Claude Code's folder trust for this folder
+    if type(trust_folder) is not bool:
+        raise SetupError("invalid.input", "trust_folder is true or false", field="trust_folder")
     return {
         "name": name,
         "workspace_name": workspace_name,
@@ -118,4 +121,5 @@ def validate_profile(
         "relay": body["relay"],
         "git_init": git_init,
         "records": records,
+        "trust_folder": trust_folder,
     }

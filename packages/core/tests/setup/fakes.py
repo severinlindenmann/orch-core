@@ -129,6 +129,10 @@ class FakePorts:
     def git_init(self, root: Path) -> None:
         self.log.append(("git_init", str(root)))
 
+    def trust_folder(self, root: Path) -> bool:
+        self.log.append(("trust_folder", str(root)))
+        return True
+
     def records_setup(self, wid: str, root: Path) -> None:
         self.log.append(("records_setup", wid, str(root)))
         if getattr(self, "fail_records", False):

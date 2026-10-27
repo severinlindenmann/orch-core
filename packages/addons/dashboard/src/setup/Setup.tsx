@@ -97,7 +97,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
     } else odd(item.title)
   }
   for (const flag of review.flags) {
-    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records') lines.push(flag.text)
+    if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust') lines.push(flag.text)
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
@@ -150,7 +150,7 @@ const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skip
 export function groupProgress(steps: Progress['steps']): Progress['steps'] {
   const groups = [
     { id: 'key', label: 'Your key', ids: ['keys', 'genesis', 'custody'] },
-    { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records'] },
+    { id: 'workspace', label: 'Your workspace', ids: ['git', 'settings', 'records', 'trust'] },
     { id: 'services', label: 'Background services', ids: ['register', 'runner', 'runner_grant'] },
     { id: 'addons', label: 'Add-ons', ids: [] },
     { id: 'approval', label: 'Approval', ids: ['flags'] },
@@ -600,6 +600,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     }
   }, [api])
   // Worktrees need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
+  const offersTrust = state?.mode === 'new' && state.claude?.available === true
   const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
   const update = (value: Partial<Profile>) => {
     setProfile((p) => ({ ...p, ...value }))
@@ -610,7 +611,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     setStep(5)
   }
   async function approveProfile() {
-    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true, records: state?.mode !== 'finish' && profile.records !== false })
+    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true, records: state?.mode !== 'finish' && profile.records !== false, trust_folder: offersTrust && profile.trust_folder !== false })
     if (state?.mode === 'finish' || confirmed.current) await getReview()
     else {
       const revealed = await api.call<Secrets>('secrets/reveal', {})
@@ -1018,6 +1019,20 @@ export function Setup({ api }: { api: SetupAPI }) {
                     role="switch"
                     checked={profile.records !== false}
                     onChange={(e) => update({ records: e.target.checked })}
+                  />
+                </label>
+              )}
+              {offersTrust && (
+                <label className="toggle">
+                  <span>
+                    Let Claude Code trust this folder
+                    <small>Claude Code will open this folder without asking. It only holds orch’s files.</small>
+                  </span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    checked={profile.trust_folder !== false}
+                    onChange={(e) => update({ trust_folder: e.target.checked })}
                   />
                 </label>
               )}

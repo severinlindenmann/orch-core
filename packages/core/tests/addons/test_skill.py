@@ -96,7 +96,7 @@ def test_the_frontmatter_is_exactly_name_and_description():
 @pytest.mark.parametrize("desc", ["x" * 301, "has a tab\there", "bell\x07"])
 def test_the_description_is_1_to_300_printable_characters(desc):
     text = GOOD.replace(GOOD.splitlines()[2], f"description: {desc}")
-    refused(text, "description|frontmatter|not printable")
+    refused(text, "description|frontmatter|hidden character")
 
 
 def test_the_description_at_300_passes():
@@ -237,7 +237,9 @@ def test_warnings_for_the_conventions():
         "```\ncd x && orch bogus\n```\n",
         "~~~\norch bogus\n~~~\n",
         "Example:\n\n    orch bogus\n",
-        "Then orch task frobnicate runs.\n",
+        "\torch bogus\n",
+        "run `/usr/bin/orch bogus`\n",
+        "run `Orch bogus`\n",
         '`orch set "other.note=v"`\n',
     ],
 )
@@ -251,7 +253,7 @@ def test_a_tilde_fence_and_prose_with_the_word_orch_are_fine():
 
 @pytest.mark.parametrize("ch", ["\u200b", "\u202e", "\u2060", "\ufeff"])
 def test_invisible_characters_anywhere_in_the_text_are_refused(ch):
-    refused(GOOD + f"run `orch{ch} bogus`\n", "not printable")
+    refused(GOOD + f"run `orch{ch} bogus`\n", "hidden character")
 
 
 @pytest.mark.parametrize("bad", ["Tickets/ABC-1", "ORCH-ADDON-OTHER", "See .ORCH/x", "ORCH-TICKETS"])
@@ -265,3 +267,11 @@ def test_an_addon_whose_name_ends_in_a_dash_may_name_its_own_skill():
         + "See orch-addon-foo-.\n"
     )
     skill.check_skill("foo-", text.encode(), {"note": {}})
+
+
+def test_reasonable_text_is_not_refused():
+    check(GOOD + "Follow the orch instructions in AGENTS.orch.md. Then orch task is yours.\n")  # prose is English
+    check(GOOD + "```\n\torch show   # see the orch docs\n```\n")  # a tab in code, a comment
+    check(GOOD + "Install: `pip install orch==1.2` or `orch --json status`.\n")
+    check(GOOD + "Use a\u00a0non-breaking space and an emoji \U0001f44d here.\n")
+    check(GOOD + "```\n/usr/bin/orch show\n```\n")

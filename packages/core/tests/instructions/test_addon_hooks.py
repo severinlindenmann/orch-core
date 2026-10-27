@@ -118,3 +118,63 @@ def test_a_hosted_hook_never_runs_the_sync(hws, me, agent, monkeypatch):
     finally:
         object.__setattr__(mod.OP, "handler", original)
     assert reached and calls == [] and (hws.store_dir / AGENTS_FILE).read_text().count("Add-ons here") == 0
+
+
+def test_the_hook_reads_the_add_on_set_under_the_store_lock(hws, me, agent, monkeypatch):
+    """The set that is compared and written is the fresh one: read inside ``store.locked()``, not before it."""
+    import contextlib
+
+    import orch.instructions as instructions
+    from orch.store.store import Store
+
+    grant_echo(hws, me)
+    depth = [0]
+    seen: list[int] = []
+    real_locked, real_collect = Store.locked, instructions.collect_rows
+
+    @contextlib.contextmanager
+    def locked(self):
+        with real_locked(self):
+            depth[0] += 1
+            try:
+                yield
+            finally:
+                depth[0] -= 1
+
+    def collect(*a, **k):
+        seen.append(depth[0])
+        return real_collect(*a, **k)
+
+    monkeypatch.setattr(Store, "locked", locked)
+    monkeypatch.setattr(instructions, "collect_rows", collect)
+    hook(agent, "session-start")
+    assert seen and seen[-1] >= 1 and seen[0] == 0 and len(seen) >= 2  # once for the line, once fresh under the lock
+
+
+def test_disable_end_to_end_does_not_deadlock_with_the_store_lock_held(hws, me):
+    """The store lock is re-entrant per thread: the refresh after the signed event, and a refresh called while the
+    caller holds the lock, both complete (a deadlock or a dropped outer lock would hang or break the assertion)."""
+    import threading
+
+    from orch.host import addonsync
+
+    grant_echo(hws, me)
+    done = []
+
+    def run():
+        assert me("addon", "disable", "echo").code == 0
+        s = hws.other()
+        try:
+            with s.locked():
+                assert s.lock_held()
+                assert addonsync.refresh(hws.root, s) == []
+                assert s.lock_held()  # the inner release did not drop the outer hold
+        finally:
+            s.close()
+        done.append(1)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(60)
+    assert done == [1], "the refresh blocked on the store lock"
+    assert not (hws.root / ".agents/skills/orch-addon-echo").exists()

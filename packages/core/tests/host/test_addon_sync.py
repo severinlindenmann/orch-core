@@ -125,3 +125,22 @@ def test_a_failing_refresh_never_fails_the_signed_request(served, human, net, mo
     _st, _prepared, res = do_install(served, human)
     assert any(x.startswith("could not refresh the agent instructions") for x in res["lines"])
     assert "standup" in served.service.store.state.workspace.addons
+
+
+def test_the_refresh_is_safe_while_the_worker_holds_the_store_lock(served, human, installed):
+    """Hosted: the refresh runs on the worker thread; the lock is re-entrant and survives the inner use."""
+    from orch.host import addonsync
+
+    store = served.service.store
+
+    def nested():
+        with store.locked():
+            assert store.lock_held()
+            lines = addonsync.refresh(Path(served.service.entry.root), store)
+            assert store.lock_held()
+            return lines
+
+    assert served.service.executor.submit(nested).result(timeout=30) == []
+    prepared = human.prepare("addon.disable", {"name": "standup"})
+    ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
+    assert "Off here: standup (disabled)." in agents_text(served)

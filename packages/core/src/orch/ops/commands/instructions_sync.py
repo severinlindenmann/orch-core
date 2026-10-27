@@ -35,9 +35,17 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
                 worktrees=known_worktrees(ctx.caps),
             )
     except AddonBlockError as e:
-        raise OrchError("invalid.input", f"nothing written: {e}", hint=e.hint) from e
+        raise OrchError(
+            "invalid.input",
+            f"AGENTS.orch.md was not rewritten: {e} (add-on skill folders may already be up to date)",
+            hint=e.hint,
+        ) from e
     except UnsafePath as e:
-        raise OrchError("invalid.input", f"nothing written: {e}", hint="remove the symbolic link, then retry") from e
+        raise OrchError(
+            "invalid.input",
+            f"stopped: {e} (files before this point may have been written)",
+            hint="remove the symbolic link, then retry",
+        ) from e
     verb = "would write" if dry else "wrote"
     lines = [f"{verb} {x}" for x in changed] + kept
     if not lines:

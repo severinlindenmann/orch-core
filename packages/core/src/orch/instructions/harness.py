@@ -433,14 +433,16 @@ def sync_if_changed(
     says, run :func:`sync_addon_part`. A file that is missing, unstamped or
     from another revision is the full ``instructions sync``'s business and is left alone. True if it ran and wrote;
     a problem (a link, an add-on block over budget, a read-only folder) is False, and the stale line says why."""
-    from .addon_skills import problems
+    from .addon_skills import can_move, problems, repairable
 
     try:
         text = safe_read(root, _where(root, store, AGENTS_FILE))
         if text is None or stamp_rev(text) != INSTRUCTIONS_REV:
             return False
         bases = [root, *(Path(w) for w in worktrees if Path(w).is_absolute() and Path(w).is_dir())]
-        if stamp_set(text) == addon_fingerprint(addons) and not any(problems(b, addons) for b in bases):
+        if stamp_set(text) == addon_fingerprint(addons) and not any(
+            repairable(x) for b in bases for x in problems(b, addons, movable=can_move(root, store))
+        ):
             return False
         changed, kept = sync_addon_part(root, addons, store=store, worktrees=worktrees)
     except (OSError, UnicodeDecodeError, ValueError):  # UnsafePath and AddonBlockError are among them

@@ -12,6 +12,7 @@ A skill that names a command that does not exist is the worst failure for a weak
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
@@ -22,7 +23,9 @@ _FORBIDDEN_PATH = re.compile(r"(tickets|\.orch)/", re.I)  # the ticket files and
 _SPAN = re.compile(r"`([^`\n]+)`")
 _FIELD_TOKEN = re.compile(r"([a-z][a-z0-9-]*)\.([A-Za-z_][A-Za-z0-9_]*)=")
 _OTHER_SKILL = re.compile(r"orch-addon-[a-z0-9-]+", re.I)
-_ORCH = re.compile(r"(?<![\w./-])orch(?![\w-])")
+_ORCH = re.compile(r"(?<![\w.-])(?:/[\w./-]*/)?orch(?![\w/-])", re.I)  # also /usr/bin/orch and Orch
+_HIDDEN = frozenset({"Cc", "Cf", "Zl", "Zp", "Cs", "Co", "Cn"})  # controls, formats, separators, unassigned
+_WORD = re.compile(r"[A-Za-z][\w.-]*")
 _SHELL_BREAK = re.compile(r"&&|\|\||[;|&)]")
 _SECTIONS = ("Use when", "Do not use when", "Steps", "If orch refuses")
 
@@ -57,26 +60,23 @@ def _resolve(tokens: list[str], addon: str, fields: Mapping[str, Any], known: li
 
 
 def _tokens_after(segment: str, start: int) -> list[str]:
-    """The words of the command that begins after ``orch`` at ``start``: up to the next shell separator, quotes cut."""
-    part = _SHELL_BREAK.split(segment[start:], 1)[0]
-    return [t for t in (x.strip("\"'") for x in part.split()) if t]
+    """The words of the command that begins after ``orch`` at ``start``: up to the next shell separator or comment,
+    quotes cut, leading global flags (``--json``) skipped."""
+    part = _SHELL_BREAK.split(segment[start:], 1)[0].split("#", 1)[0]
+    tokens = [t for t in (x.strip("\"'") for x in part.split()) if t]
+    while tokens and tokens[0].startswith("-"):
+        tokens.pop(0)
+    return tokens
 
 
 def _lint_code(segment: str, addon: str, fields: Mapping[str, Any], known: list[tuple[str, ...]]) -> None:
-    """Code: every ``orch`` anywhere in it (after ``cd x &&``, ``VAR=1``, ``bash -c "..."``) is a command to resolve."""
+    """Code: every ``orch`` anywhere in it (after ``cd x &&``, ``VAR=1``, ``bash -c "..."``) is a command to resolve.
+    Prose is not linted ("orch refuses", "the orch instructions" are English); a first token that is no word
+    (``pip install orch==1.2``) names no command."""
+    segment = re.sub(r"(^|\s)#.*", "", segment)  # a comment is prose
     for m in _ORCH.finditer(segment):
         tokens = _tokens_after(segment, m.end())
-        if tokens:  # a bare `orch` names the tool, not a command
-            _resolve(tokens, addon, fields, known)
-
-
-def _lint_prose(line: str, addon: str, fields: Mapping[str, Any], known: list[tuple[str, ...]]) -> None:
-    """Prose: "orch refuses" is English, so only a command group that is named with a word that is no command of it
-    ("orch task frobnicate") is an error here; anything strict is in code."""
-    firsts = {c[0] for c in known}
-    for m in _ORCH.finditer(line):
-        tokens = [t.strip(".,:;!?()") for t in _tokens_after(line, m.end())[:3]]
-        if tokens and tokens[0] in firsts:
+        if tokens and _WORD.fullmatch(tokens[0]):
             _resolve(tokens, addon, fields, known)
 
 
@@ -97,12 +97,11 @@ def _lint(addon: str, body: str, fields: Mapping[str, Any]) -> None:
         if marker is not None:
             fence = marker
             continue
-        if line.startswith("    "):  # an indented code block
+        if line.startswith(("    ", "\t")):  # an indented code block
             _lint_code(stripped.removeprefix("$ "), addon, fields, known)
             continue
         for m in _SPAN.finditer(line):
             _lint_code(m[1], addon, fields, known)
-        _lint_prose(_SPAN.sub(" ", line), addon, fields, known)
     if _FORBIDDEN_PATH.search(body):
         raise SkillError("the skill must not name the ticket files or the store folder (agents never touch them)")
     own = skill_name(addon)
@@ -130,8 +129,8 @@ def check_skill(
         raise SkillError("SKILL.md is not UTF-8") from None
     if "\x00" in text or "\r" in text:
         raise SkillError("SKILL.md holds a NUL or a CR")
-    if any(ch != "\n" and not ch.isprintable() for ch in text):  # also zero-width and other format characters
-        raise SkillError("SKILL.md holds a character that is not printable (control, zero-width, direction marks)")
+    if any(ch not in "\n\t" and unicodedata.category(ch) in _HIDDEN for ch in text):
+        raise SkillError("SKILL.md holds a hidden character (control, zero-width, direction mark, line separator)")
     if len(text) > SKILL_MAX_CHARS:
         raise SkillError(f"SKILL.md has {len(text)} characters, the limit is {SKILL_MAX_CHARS}")
     try:

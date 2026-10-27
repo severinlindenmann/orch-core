@@ -420,3 +420,53 @@ def test_after_never_raises_whatever_the_service_looks_like():
     assert addonsync.after(object(), [{"type": "ticket.created"}]) == []
     got = addonsync.after(object(), [{"type": "addon.granted"}])
     assert got and got[0].startswith("could not refresh the agent instructions")
+
+
+# ---- delta review: the legacy layout must be able to clear, unwritable paths are reported once
+
+
+def test_a_hand_edited_folder_kept_for_want_of_a_store_folder_is_no_endless_problem(tmp_path):
+    from orch.instructions import sync_if_changed
+
+    rows = [row()]
+    sync_addon_part(tmp_path, rows, store=None, now=NOW)
+    (tmp_path / CANON / "SKILL.md").write_text("edited\n")
+    off = [row(state="disabled")]
+    _, kept = sync_addon_part(tmp_path, off, store=None, now=NOW)
+    assert any("could not move it" in x for x in kept)
+    mine = [f for f in stale_findings(tmp_path, None, off) if "orch-addon" in f["where"]]
+    assert [f["where"] for f in mine] == [CLAUDE] or mine == []  # the unedited Claude copy was removed: nothing left
+    assert not any(f["where"] == CANON for f in mine)
+    assert sync_if_changed(tmp_path, off, store=None) is False  # nothing to retry at every session start
+
+
+def test_with_a_store_folder_the_same_edited_folder_is_still_a_problem_until_it_is_moved(root):
+    from orch.instructions.addon_skills import problems
+
+    sync(root, [row()])
+    (root / CANON / "SKILL.md").write_text("edited\n")
+    off = [row(state="disabled")]
+    assert problems(root, off, movable=True) == [
+        f"{CANON}: the add-on is not active",
+        f"{CLAUDE}: the add-on is not active",
+    ]
+    assert problems(root, off, movable=False) == [f"{CLAUDE}: the add-on is not active"]  # only what a sync can remove
+    sync(root, off)
+    assert problems(root, off) == []
+
+
+def test_a_linked_skills_folder_is_reported_once_and_not_retried(root, tmp_path_factory):
+    from orch.instructions import sync_if_changed
+
+    rows = [row()]
+    sync(root, rows)
+    # the Claude copy folder becomes a link later (the owner's own setup)
+    import shutil
+
+    shutil.rmtree(root / ".claude/skills")
+    (root / ".claude/skills").symlink_to(tmp_path_factory.mktemp("elsewhere"))
+    found = [f for f in stale_findings(root, root / ".orch", rows) if f["where"].startswith(".claude/skills")]
+    assert len(found) == 1 and found[0]["what"].startswith("unsafe")
+    path = root / ".orch/AGENTS.orch.md"
+    before = path.stat().st_mtime_ns
+    assert sync_if_changed(root, rows, store=root / ".orch") is False and path.stat().st_mtime_ns == before

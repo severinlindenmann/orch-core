@@ -114,6 +114,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         if not ctx.hosted:  # the host syncs after add-on events; a hosted read hook has no side effect
             # only the root and the worktrees the git reader registered: never a path the agent's env names
             with c.store.locked():  # the host and the sync command do not interleave with this
+                rows = collect_rows(c.store.layout.store, c.store.state.workspace.addons)  # fresh, under the lock
+                line = addons_line(rows)
                 sync_if_changed(ws.root, rows, store=ws.store_dir, worktrees=known_worktrees(ctx.caps))
         lines = session_start_lines(
             person=flat(st.data["person"]),

@@ -90,10 +90,10 @@ def stale_findings(
                     }
                 )
     if addons is not None:
-        from .addon_skills import problems
+        from .addon_skills import can_move, problems
 
         for base in [root, *(Path(w) for w in worktrees if Path(w).is_absolute() and Path(w).is_dir())]:
-            for line in problems(base, addons):
+            for line in problems(base, addons, movable=can_move(root, store)):
                 where, _, what = line.partition(": ")
                 out.append({"where": where if base == root else f"{base}/{where}", "what": what})
     return out

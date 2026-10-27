@@ -35,7 +35,16 @@ from .harness import (
 )
 from .skills import SIDECAR_NAME, SKILL_NAME, SkillError, check_sidecar
 
-__all__ = ["IGNORE_LINES", "PREFIX", "problems", "reconcile", "skill_rels", "wanted"]
+__all__ = [
+    "IGNORE_LINES",
+    "PREFIX",
+    "can_move",
+    "problems",
+    "reconcile",
+    "repairable",
+    "skill_rels",
+    "wanted",
+]
 
 PREFIX = "orch-addon-"
 #: the lines of the ``.gitignore`` of the workspace: generated skills are never committed
@@ -71,20 +80,52 @@ def skill_rels(rows: Sequence[AddonRow]) -> list[str]:
     return [f"{base}/{name}/{leaf}" for name in wanted(rows) for base in _ROOTS for leaf in (SKILL_NAME, SIDECAR_NAME)]
 
 
-def problems(base: Path, rows: Sequence[AddonRow]) -> list[str]:
+UNREPAIRABLE = (": unsafe", ": cannot be read")
+
+
+def repairable(line: str) -> bool:
+    """A problem a sync can fix. A path that is a link or cannot be read is reported (stale) but not retried at every
+    session start: it stays as it is until the person fixes it."""
+    return not any(mark in line for mark in UNREPAIRABLE)
+
+
+def can_move(root: Path, store: Path | None) -> bool:
+    """Whether an edited skill folder can be moved out of discovery: the store folder exists (the old layout has none,
+    and one is never made for this)."""
+    return store is not None and store != root and store.is_dir() and not store.is_symlink()
+
+
+def problems(base: Path, rows: Sequence[AddonRow], *, movable: bool = True) -> list[str]:
     """Why the skill folders below ``base`` (the workspace root or a worktree) are not what ``rows`` say, read only: a
     wanted folder that is missing, or core's own and written for another package; a folder core wrote for an add-on
-    that is not active. An edited folder of an active add-on is the owner's and is not a problem."""
+    that is not active. An edited folder of an active add-on is the owner's, and an edited folder of an add-on that is
+    not active is a problem only when it can be moved away (``movable``): reconcile keeps it otherwise, and the check
+    must be able to clear."""
     want = wanted(rows)
     out: list[str] = []
     for root_rel in _ROOTS:
         try:
             names = _listing(base, root_rel)
+        except UnsafePath as e:
+            out.append(f"{root_rel}: unsafe ({str(e).split(': ', 1)[-1]})")
+            continue
         except OSError:
-            return [f"{root_rel}: cannot be read"]
+            out.append(f"{root_rel}: cannot be read")
+            continue
         for name in names:
-            if name not in want and _ours(base, f"{root_rel}/{name}") is not None:
-                out.append(f"{root_rel}/{name}: the add-on is not active")
+            folder = f"{root_rel}/{name}"
+            side = _ours(base, folder) if name not in want else None
+            if side is None:
+                continue
+            if not movable:
+                try:
+                    text = safe_read(base, f"{folder}/{SKILL_NAME}")
+                    extra = set(os.listdir(base / folder)) - {SKILL_NAME, SIDECAR_NAME}
+                except (OSError, UnicodeDecodeError):
+                    continue
+                if text is None or _sha(text) != side["text_sha256"] or extra:
+                    continue  # edited: kept where it is
+            out.append(f"{folder}: the add-on is not active")
         for name, w in want.items():
             folder = f"{root_rel}/{name}"
             if name not in names:

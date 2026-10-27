@@ -170,6 +170,8 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/records/push-initial"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/records/commit"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/records/auto-off"): (ALLOWED, "turning off"),
+    # --- the workspace name and icon (unsigned cosmetic settings, owner only; the host checks the role)
+    (PUT, W + "/workspace/cosmetic"): (ALLOWED, "owner, plain click, no signature (run 13 D6)"),
     # --- add-ons and the marketplace (install is an admin action by plain click; running one needs execution on)
     (GET, W + "/market"): (ALLOWED, ""),
     (GET, W + "/market/installed"): (ALLOWED, ""),

@@ -19,6 +19,54 @@
         },
         "name": {
           "$ref": "https://schemas.orch.dev/v2/common#/$defs/line"
+        },
+        "icon": {
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "The workspace icon shown in menus (dashboard, hub): an icon and a colour from closed lists, nothing else. null clears it (the default comes from the workspace id).",
+              "properties": {
+                "icon": {
+                  "enum": [
+                    "folder",
+                    "rocket",
+                    "briefcase",
+                    "building",
+                    "code",
+                    "cloud",
+                    "compass",
+                    "globe",
+                    "leaf",
+                    "flame",
+                    "zap",
+                    "anchor",
+                    "heart",
+                    "star"
+                  ]
+                },
+                "colour": {
+                  "enum": [
+                    "orange",
+                    "blue",
+                    "green",
+                    "purple",
+                    "pink",
+                    "teal",
+                    "amber",
+                    "slate"
+                  ]
+                }
+              },
+              "required": [
+                "icon",
+                "colour"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
@@ -147,54 +195,6 @@
             "share"
           ],
           "additionalProperties": false
-        },
-        "icon": {
-          "oneOf": [
-            {
-              "type": "object",
-              "description": "The workspace icon shown in menus (dashboard, hub): an icon and a colour from closed lists, nothing else. null clears it (the default comes from the workspace id).",
-              "properties": {
-                "icon": {
-                  "enum": [
-                    "folder",
-                    "rocket",
-                    "briefcase",
-                    "building",
-                    "code",
-                    "cloud",
-                    "compass",
-                    "globe",
-                    "leaf",
-                    "flame",
-                    "zap",
-                    "anchor",
-                    "heart",
-                    "star"
-                  ]
-                },
-                "colour": {
-                  "enum": [
-                    "orange",
-                    "blue",
-                    "green",
-                    "purple",
-                    "pink",
-                    "teal",
-                    "amber",
-                    "slate"
-                  ]
-                }
-              },
-              "required": [
-                "icon",
-                "colour"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "null"
-            }
-          ]
         },
         "addons": {
           "type": "object",

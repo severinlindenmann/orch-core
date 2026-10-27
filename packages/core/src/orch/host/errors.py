@@ -26,6 +26,7 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "workspace.unavailable": (1, False),
     "workspace.degraded": (3, False),
     "host.busy": (4, False),
+    "cosmetic.conflict": (3, False),
     "host.required": (3, False),
     "lock.busy": (9, True),
     "control.rolled_back": (9, True),

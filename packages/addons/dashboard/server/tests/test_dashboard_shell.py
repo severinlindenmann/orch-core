@@ -148,6 +148,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/market/uninstall",
         "/api/w/{ws}/market/refresh",
         "/api/w/{ws}/market/add",
+        "/api/w/{ws}/workspace/cosmetic",
         "/api/w/{ws}/add-ons/{name}/settings",
         "/api/w/{ws}/hub/link",  # run-9 feedback 6: read a connect link
         "/api/w/{ws}/runner",

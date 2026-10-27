@@ -336,54 +336,6 @@
             }
           ]
         },
-        "icon": {
-          "oneOf": [
-            {
-              "type": "object",
-              "description": "The workspace icon shown in menus (dashboard, hub): an icon and a colour from closed lists, nothing else. null clears it (the default comes from the workspace id).",
-              "properties": {
-                "icon": {
-                  "enum": [
-                    "folder",
-                    "rocket",
-                    "briefcase",
-                    "building",
-                    "code",
-                    "cloud",
-                    "compass",
-                    "globe",
-                    "leaf",
-                    "flame",
-                    "zap",
-                    "anchor",
-                    "heart",
-                    "star"
-                  ]
-                },
-                "colour": {
-                  "enum": [
-                    "orange",
-                    "blue",
-                    "green",
-                    "purple",
-                    "pink",
-                    "teal",
-                    "amber",
-                    "slate"
-                  ]
-                }
-              },
-              "required": [
-                "icon",
-                "colour"
-              ],
-              "additionalProperties": false
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "addons": {
           "type": "object",
           "description": "G6: the settings of ONE installed add-on (its manifest's settings schema is checked by the host, the general bounds by every replay). null removes them.",

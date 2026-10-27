@@ -1,43 +1,46 @@
-"""The workspace icon, the server side: the typed `icon_set` action (closed lists) and what a host's value becomes."""
+"""D6, the server side: the cosmetic route is a thin proxy to `workspace.cosmetic.set` (no signature), and only a plain
+pair of the closed lists reaches the page."""
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from test_market_routes import Host, hdr
 
 from orch_dashboard.adapters.shell import workspace_icon
-from orch_dashboard.handoff import PrepareBody, expected, host_call
 
 PAIR = {"icon": "rocket", "colour": "pink"}
+CUR = {"name": "Studio", "icon": None}
 
 
-def parse(body):
-    return TypeAdapter(PrepareBody).validate_python(body)
+@pytest.fixture
+def host(gateway, monkeypatch):
+    fake = Host()
+    monkeypatch.setattr(gateway, "enabled", lambda ws: fake)
+    return fake
 
 
-def test_icon_set_is_one_signed_settings_set_and_null_clears():
-    assert host_call(parse({"action": "icon_set", "icon": PAIR})) == ("settings.set", {"set": {"icon": PAIR}})
-    assert host_call(parse({"action": "icon_set", "icon": None})) == ("settings.set", {"set": {"icon": None}})
+def test_the_route_sends_the_change_and_the_compare_value(client, token, stub, host):
+    r = client.put(
+        f"/api/w/{stub.ws}/workspace/cosmetic",
+        json={"name": "Lab", "icon": PAIR, "if_current": CUR},
+        headers=hdr(token),
+    )
+    assert r.status_code == 200
+    ((op, args, write, idem),) = host.calls
+    assert (op, write) == ("workspace.cosmetic.set", True) and idem.startswith("a_")
+    assert args == {"name": "Lab", "icon": PAIR, "if_current": CUR}
 
 
-@pytest.mark.parametrize(
-    "icon",
-    [
-        {"icon": "nope", "colour": "pink"},
-        {"icon": "rocket", "colour": "#ff0000"},
-        {"icon": "rocket"},
-        {**PAIR, "url": "http://x/y.png"},
-        "rocket",
-    ],
-)
-def test_a_value_outside_the_closed_lists_is_refused_before_the_host_sees_it(icon):
-    with pytest.raises(ValidationError):
-        parse({"action": "icon_set", "icon": icon})
+def test_null_icon_clears_and_an_omitted_icon_is_left_alone(client, token, stub, host):
+    client.put(f"/api/w/{stub.ws}/workspace/cosmetic", json={"icon": None, "if_current": CUR}, headers=hdr(token))
+    client.put(f"/api/w/{stub.ws}/workspace/cosmetic", json={"name": "X", "if_current": CUR}, headers=hdr(token))
+    assert host.calls[0][1] == {"icon": None, "if_current": CUR}
+    assert host.calls[1][1] == {"name": "X", "if_current": CUR}
 
 
-def test_the_prepared_event_must_be_exactly_that_icon():
-    check = expected(parse({"action": "icon_set", "icon": PAIR}))
-    assert check([{"type": "settings.changed", "set": {"icon": PAIR}}])
-    assert not check([{"type": "settings.changed", "set": {"icon": {"icon": "star", "colour": "pink"}}}])
-    assert not check([{"type": "settings.changed", "set": {"icon": PAIR, "grant_hours": 1}}])
+def test_extra_fields_and_a_missing_compare_value_are_refused(client, token, stub, host):
+    url = f"/api/w/{stub.ws}/workspace/cosmetic"
+    assert client.put(url, json={"name": "X"}, headers=hdr(token)).status_code == 400
+    assert client.put(url, json={"name": "X", "if_current": CUR, "x": 1}, headers=hdr(token)).status_code == 400
+    assert host.calls == []
 
 
 def test_only_a_plain_pair_of_the_lists_reaches_the_page():

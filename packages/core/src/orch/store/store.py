@@ -2221,16 +2221,45 @@ class Store:
         g = genesis or self._genesis_event
         if g is None or state.workspace.genesis is None:
             return b""
-        name, run_for = self._name or state.workspace.prefix, ["owner", "maintainer", "member"]
+        name, run_for, icon = self._name or state.workspace.prefix, ["owner", "maintainer", "member"], None
         cur = self._config_json()
         if cur is not None:  # `name` and `agents.run_for` are in no event: whatever the file says (if valid) stays
             with contextlib.suppress(ValueError, KeyError, TypeError, schema.SchemaError):
                 doc = loads(cur)
                 schema.validate("workspace", doc)
                 name, run_for = doc["workspace"]["name"], doc["agents"]["run_for"]
+                icon = doc["workspace"].get("icon")
         return render.render_config(
-            state.workspace, host_id=g["host_id"], wsk_pub=g["wsk_pub"], name=name, run_for=run_for
+            state.workspace, host_id=g["host_id"], wsk_pub=g["wsk_pub"], name=name, run_for=run_for, icon=icon
         )
+
+    def set_cosmetic(
+        self, want: dict[str, Any], current: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        """D6: change the unsigned name and/or icon in ``config.json`` if it still holds ``current`` (``{name, icon}``).
+        Returns ``(old, new)``; ``old`` is ``None`` (and ``new`` the values now) when ``current`` is stale. Compare and
+        write happen under the store lock, the file is replaced atomically and every other field is kept."""
+        with self._locked():
+            raw = self._config_json()
+            if raw is None:
+                raise StoreError("store.config_missing", "config.json is missing")
+            doc = loads(raw)
+            schema.validate("workspace", doc)
+            ws = doc["workspace"]
+            have = {"name": ws["name"], "icon": ws.get("icon")}
+            if have != {"name": current["name"], "icon": current["icon"]}:
+                return None, have
+            if "name" in want:
+                ws["name"] = want["name"]
+            if "icon" in want:
+                if want["icon"] is None:
+                    ws.pop("icon", None)
+                else:
+                    ws["icon"] = {"icon": want["icon"]["icon"], "colour": want["icon"]["colour"]}
+            schema.validate("workspace", doc)
+            self.fs.write_atomic("config.json", render._pretty(doc))  # noqa: SLF001
+            self._known_config = None
+            return have, {"name": ws["name"], "icon": ws.get("icon")}
 
     def _keys_bytes(self, extra: tuple[str, str, str] | None = None) -> bytes:
         """``keys.jsonl`` for every ticket log there is (key and creation time from its first line, a hint that the

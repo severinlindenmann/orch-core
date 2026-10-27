@@ -144,6 +144,6 @@ listed. In host mode the CLI reads the state from the host's `addon.list` (its r
 (`addon.off`); the field, its type and limits and `set_by` are the **grant's**, checked with the rules replay applies
 (`orch.model.addon_rules`); the write is an ordinary `ticket.updated` setting `ticket.addons.<addon>.<field>`, so no
 event type or signed shape is new. VALUE is parsed by the field type: string and text as written, integer as digits,
-boolean as `true` or `false`, enum as one of its values, string_list comma separated; `none` clears. An unknown field is
+boolean as `true` or `false`, enum as one of its values, string_list comma separated; `none` clears the field (so the text `none` cannot be stored; grants have no required fields). Every list item, enum and person value is cleaned as one line; a person must be a member. Availability is checked again under the lock before the append. An unknown field is
 `invalid.input`, a field whose `set_by` excludes the agent is `invalid.input` ("not settable by this actor (set_by)"). `orch describe <addon>.<field>` prints the
 type, limits, `set_by` and gate from the grant.

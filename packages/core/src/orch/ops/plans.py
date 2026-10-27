@@ -269,22 +269,27 @@ def _keys(c: Call, p: Projection, v: str, what: str) -> list[str]:
 def addon_field_value(c: Call, p: Projection, key: str, raw: str) -> Any:
     """The new value of the add-on field ``<addon>.<field>`` from the text after ``=`` (AP D5 step 1b). The add-on must
     be on (``addon.off``); the field, its type, limits and ``set_by`` are the **grant's** (the same rules replay
-    applies, :func:`orch.model.addon_rules.check_field_write`). ``none`` clears. Returns the value; the caller writes it
+    applies, :func:`orch.model.addon_rules.check_field_write`). ``none`` clears the field, so the text ``none``
+    cannot be stored (the grant has no required fields to protect). Returns the value; the caller writes it
     as ``ticket.addons.<addon>.<field>`` in an ordinary ``ticket.updated``."""
     from orch.addons.install import as_addons
     from orch.model import addon_rules
     from orch.ops import addon_gate
 
     name, _, fname = key.partition(".")
+    if not re.fullmatch(r"[a-z][a-z0-9_]*", fname) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", name):
+        raise OrchError("invalid.input", f"{key[:60]!r} is not ADDON.FIELD")
     addons = c.store.state.workspace.addons
     addon_gate.require_on(addons, name)
-    grant = as_addons(addons)[name]
+    grant = as_addons(addons).get(name)
+    if grant is None:
+        raise addon_gate.off_error(name)
     spec = grant.fields.get(fname)
     if spec is None:
         raise OrchError("invalid.input", f"the {name} add-on declares no field {fname}", hint=f"orch describe {name}.*")
     value = _addon_value(c, spec, raw, key)
     actor = p.capture.actor if p.capture is not None else c.actor()
-    if actor["kind"] == "agent":  # a person's write is judged by replay against the roles they hold on the ticket
+    if actor["kind"] != "person":  # a person's write is judged by replay against the roles they hold on the ticket
         refusal = addon_rules.check_field_write(grant, fname, value, actor)
         if refusal is not None:
             raise OrchError("invalid.input", f"{key}: {refusal.detail}")
@@ -308,9 +313,13 @@ def _addon_value(c: Call, spec: dict[str, Any], raw: str, label: str) -> Any:
             raise OrchError("invalid.input", f"{label} is true or false")
         value = raw == "true"
     elif kind == "string_list":
-        value = raw.split(",")
+        value = [c.text(x, one_line=True, what=label) for x in raw.split(",")]
+        if any(not x for x in value):
+            raise OrchError("invalid.input", f"{label}: empty item")
     else:  # enum, person
-        value = raw
+        value = c.text(raw, one_line=True, what=label)
+        if kind == "person" and value not in c.store.state.workspace.members:
+            raise OrchError("invalid.input", f"{label}: not a member of this workspace")
     try:
         validate_value(spec, value)
     except ValueError as e:
@@ -322,7 +331,7 @@ def addon_field_base(p: Projection, path: str) -> str:
     """``base_rev`` of ``ticket.addons.<addon>.<field>``: the hash of the value now (null when unset), the one replay
     compares. Taken from the planned view under the workspace lock, so it cannot go stale between read and append."""
     name, _, fname = path[len("ticket.addons.") :].partition(".")
-    current = thaw(p.last_view.fields["addons"]).get(name, {}).get(fname)
+    current = ((thaw(p.last_view.fields.get("addons")) or {}).get(name) or {}).get(fname)
     if p.capture is not None:  # a person edits what they are shown: the current value, sent as `before`
         p.capture.before[path] = current
     return path_hash(p.last_view, path)

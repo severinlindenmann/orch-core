@@ -171,3 +171,108 @@ def test_describe_an_addon_field(ws, cli):
 def test_the_pair_shape_is_checked_before_anything_runs(ws, cli, arg):
     field_addon(ws, cli)
     assert cli.j("set", "1", arg).code != 0
+
+
+def test_every_addon_op_is_gated_on_every_path_not_only_through_the_cli(ws, cli):
+    """Callers that skip the CLI (the host, human ops, batches) run ``op.handler``: it must be the gated one."""
+    from orch.ops import Context
+    from orch.ops import get as ops_get
+    from orch.ops.errors import OrchError
+
+    claimed(cli)
+    ctx = Context(session="s_01J00000000000000000000000", env=ws.env(), now=lambda: ws.clock[0])
+    for op in all_ops():
+        if op.addon:
+            with pytest.raises(OrchError) as e:
+                ops_get(op.name).handler(ctx, {})
+            assert e.value.code == "addon.off", op.name
+            assert op.addon in (e.value.hint or "")  # the hint names the add-on and who turns it on
+
+
+def test_the_addon_turned_off_during_the_call_is_caught_under_the_lock(ws, cli, monkeypatch):
+    from orch.ops import followup
+
+    grant(ws, "schedules")
+    claimed(cli)
+    real = followup.due
+
+    def due_then_off(args, now):
+        out = real(args, now)
+        turn_off(ws, "schedules")  # between the first check and the append
+        return out
+
+    monkeypatch.setattr(followup, "due", due_then_off)
+    r = cli.j("follow-up", "--in", "2d", "--brief", "x")
+    assert r.err_code == "addon.off", r.out
+    assert not ws.view("1").followups
+
+
+def test_replay_refuses_an_agent_or_another_addon_writing_a_field_directly(ws, cli):
+    from orch import canon
+    from orch.schema import SchemaError
+    from orch.store import StoreError
+
+    field_addon(ws, cli)
+    grant(ws, "other", {"x": {"type": "integer", "set_by": ["agent"]}})
+    uid = ws.view("1").uid
+
+    def write(addon, fname, value, actor):
+        path = f"ticket.addons.{addon}.{fname}"
+        ws.store.refresh()
+        cur = ws.store.ticket(uid).fields["addons"].get(addon, {}).get(fname)
+        return ws.store.append(
+            {"type": "ticket.updated", "actor": actor, "base_rev": {path: canon.value_hash(cur)}, "set": {path: value}},
+            log=uid,
+        )
+
+    assert cli.j("set", "1", "echo.note=x").code == 0
+    agent = ws.events("1")[-1]["actor"]  # the agent actor, as the op signs it
+    assert agent["kind"] == "agent"
+    with pytest.raises(StoreError):
+        write("echo", "mood", "good", agent)  # owner-only field
+    with pytest.raises((StoreError, SchemaError)):
+        write("echo", "note", "x", {"kind": "addon", "id": "other", "grant": "gr_x"})  # another add-on's field
+
+
+def test_a_ticket_view_without_addons_or_with_none_hashes_as_unset():
+    from types import SimpleNamespace
+
+    from orch.ops.runtime import path_hash
+
+    unset = path_hash(SimpleNamespace(fields={"addons": {"echo": {}}}), "ticket.addons.echo.points")
+    assert path_hash(SimpleNamespace(fields={}), "ticket.addons.echo.points") == unset
+    assert path_hash(SimpleNamespace(fields={"addons": {"echo": None}}), "ticket.addons.echo.points") == unset
+    assert path_hash(SimpleNamespace(fields={"addons": None}), "ticket.addons.echo.points") == unset
+
+
+def test_list_enum_and_person_values_are_cleaned(ws, cli):
+    grant(
+        ws,
+        "echo",
+        {
+            "tags": {"type": "string_list", "max_items": 3, "set_by": ["agent"]},
+            "mood": {"type": "enum", "values": ["good", "bad"], "set_by": ["agent"]},
+            "who": {"type": "person", "set_by": ["agent"]},
+        },
+    )
+    claimed(cli)
+    assert cli.j("set", "1", "echo.tags=a,,b").err_code == "invalid.input"  # empty item
+    assert cli.j("set", "1", "echo.tags=a,b").code == 0
+    assert shown(ws, "echo", "tags") == ["a", "b"] or tuple(shown(ws, "echo", "tags")) == ("a", "b")
+    assert cli.j("set", "1", "echo.mood=meh").err_code == "invalid.input"
+    assert cli.j("set", "1", "echo.who=p_" + "0" * 32).err_code == "invalid.input"  # not a member
+    assert cli.j("set", "1", f"echo.who={ws.owner.ref}").code == 0
+
+
+def test_the_field_name_is_checked_in_the_handler_too(ws, cli):
+    from orch.ops import Context
+    from orch.ops.errors import OrchError
+    from orch.ops.plans import addon_field_value
+    from orch.ops.runtime import Call
+
+    field_addon(ws, cli)
+    c = Call.of(Context(session="s_01J00000000000000000000000", env=ws.env(), now=lambda: ws.clock[0]), "set")
+    for key in ("echo.a.b", "echo.Points", "Echo.points"):
+        with pytest.raises(OrchError) as e:
+            addon_field_value(c, None, key, "1")
+        assert e.value.code == "invalid.input"

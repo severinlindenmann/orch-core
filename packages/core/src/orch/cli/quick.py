@@ -133,7 +133,7 @@ def main(
         a.get("name") == core.ADDON and a.get("state") not in ("disabled", "purged", "not_granted")
         for a in doc["data"].get("addons", [])
     ):
-        return fail(OrchError("addon.off", addon_gate.off_message(core.ADDON)))
+        return fail(addon_gate.off_error(core.ADDON))
     key = _earlier(title, run, env, now())
     created = key is None
     if created:

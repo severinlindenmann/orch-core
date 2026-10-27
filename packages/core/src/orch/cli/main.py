@@ -184,9 +184,7 @@ def _addons_on(env: Mapping[str, str], workspace: Any, ctx: Context) -> dict[str
                 n: {k: dict(v) for k, v in a.fields.items()} for n, a in granted.items() if a.enabled and not a.purged
             }
         rows = run_hosted(parser.parse(["addon", "list"]), ctx, target).data["addons"]
-        return {
-            r["name"]: r.get("fields") or {} for r in rows if r["state"] not in ("disabled", "purged", "not_granted")
-        }
+        return {r["name"]: r.get("fields") or {} for r in rows if r["state"] == "active"}
     except Exception:  # noqa: BLE001 - a workspace that cannot be read is no reason for help to fail
         return None
 

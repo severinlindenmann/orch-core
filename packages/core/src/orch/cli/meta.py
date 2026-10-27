@@ -98,7 +98,7 @@ def visible(op: Operation, ctx: Context) -> bool:
 def _off(op: Operation) -> OrchError:
     from orch.ops import addon_gate
 
-    return OrchError("addon.off", addon_gate.off_message(op.addon or ""))
+    return addon_gate.off_error(op.addon or "")
 
 
 def overview(ctx: Context | None = None) -> list[str]:
@@ -123,7 +123,7 @@ def _field_info(ctx: Context, name: str, fname: str) -> Result:
     if name not in on:
         from orch.ops import addon_gate
 
-        raise OrchError("addon.off", addon_gate.off_message(name))
+        raise addon_gate.off_error(name)
     spec = on[name].get(fname)
     if spec is None:
         have = ", ".join(sorted(on[name])) or "none"

@@ -609,7 +609,7 @@ def path_hash(view: Any, path: str) -> str:
     key = path[len("ticket.") :]
     if key.startswith("addons."):  # ``ticket.addons.<addon>.<field>``: null while unset, as replay reads it
         name, _, fname = key[len("addons.") :].partition(".")
-        return canon.value_hash(thaw(view.fields["addons"]).get(name, {}).get(fname))
+        return canon.value_hash(((thaw(view.fields.get("addons")) or {}).get(name) or {}).get(fname))
     return canon.value_hash(thaw(view.fields[key]))
 
 
@@ -742,6 +742,14 @@ class Projection:
         c = self.call
         if c.ctx.dry_run or not self.planned:
             return []
+        import orch.ops as ops
+
+        if (addon := ops.get(c.op).addon) is not None and self.capture is None:
+            # the lock is held: the add-on may have been turned off since the check at the start of the call
+            from orch.ops import addon_gate
+
+            c.store.refresh()
+            addon_gate.require_on(c.store.state.workspace.addons, addon)
         if self.capture is not None:
             from orch.ops.prepare import Captured
 

@@ -10,7 +10,7 @@ from typing import Any
 
 from orch.ops.errors import OrchError
 
-__all__ = ["is_on", "off_message", "require_on"]
+__all__ = ["is_on", "off_error", "off_message", "require_on"]
 
 
 def is_on(addons: Any, name: str) -> bool:
@@ -26,6 +26,15 @@ def off_message(name: str) -> str:
     return f"the {name} add-on is off in this workspace"
 
 
+def off_error(name: str) -> OrchError:
+    """``addon.off`` naming the add-on, and what a person does about it (an agent only tells the person)."""
+    return OrchError(
+        "addon.off",
+        off_message(name),
+        hint=f"tell the person; do not work around it. An owner turns {name} on in Add-ons (orch addon grant {name})",
+    )
+
+
 def require_on(addons: Any, name: str) -> None:
     if not is_on(addons, name):
-        raise OrchError("addon.off", off_message(name))
+        raise off_error(name)

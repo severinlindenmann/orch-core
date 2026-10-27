@@ -48,7 +48,7 @@ from .handoff import (
     send_prepare,
     sequence_progress,
 )
-from .hubapprove import mode_of, refuse_if_hub_only
+from .hubapprove import mode_of
 from .reads import workspace
 from .stepup import refusal_check, refuse_step_up
 
@@ -744,8 +744,6 @@ def register(app: FastAPI, gateway: Gateway):
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
-        if not isinstance(body, HubLeave):  # leaving is the break-glass the host allows by click (e2e-4)
-            refuse_if_hub_only(gateway, ws)  # V3 C11: full hub mode takes no click signature (the host refuses it too)
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
         try:

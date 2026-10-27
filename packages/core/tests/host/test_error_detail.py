@@ -16,7 +16,6 @@ ALLOWED = {
     # H12d-2 (§0.8.6 item 9.9, 9.11): the closed reason and the readers below the level
     "sign.convenience_unavailable": {"reason": "other_member", "devices": ["d_" + "1" * 32]},
     "sign.convenience_readers": {"reason": "reader_too_old", "devices": ["d_" + "2" * 32]},
-    "sign.hub_only": {"reason": "hub"},  # V3 C11
     "hub.proof_invalid": {"reason": "proof_expired"},  # #1198 C9
     "market.env_failed": {"reason": "sdist_only"},  # V3 G4: a fixed word, never the installer's text
     "market.env_changed": {"reason": "abi"},

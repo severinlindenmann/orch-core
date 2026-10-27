@@ -169,6 +169,9 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/records/push-initial"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/records/commit"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/records/auto-off"): (ALLOWED, "turning off"),
+    (POST, W + "/records/auto-on"): (REFUSED, "starts a timer on this computer: local only"),
+    (GET, W + "/claude-trust"): (REFUSED, "what Claude Code may open is decided on this computer"),
+    (POST, W + "/claude-trust"): (REFUSED, "what Claude Code may open is decided on this computer"),
     # --- add-ons and the marketplace (install is an admin action by plain click; running one needs execution on)
     (GET, W + "/market"): (ALLOWED, ""),
     (GET, W + "/market/installed"): (ALLOWED, ""),

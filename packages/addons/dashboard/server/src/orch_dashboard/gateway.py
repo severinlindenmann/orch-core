@@ -1,5 +1,6 @@
 """Host discovery. Only local trusted pins choose sockets; browser input never chooses paths."""
 
+import copy
 import json
 import os
 import re
@@ -11,7 +12,7 @@ from . import adapters
 from .adapters.addons import runner
 from .click_signer import Signer
 from .errors import HostError, fail
-from .hostlink import HostLink
+from .hostlink import REQUEST_MEMO, HostLink
 from .text import hidden
 
 WORKSPACE_ID = re.compile(r"^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$")
@@ -240,10 +241,21 @@ class Gateway:
 
     def enabled(self, ws):
         link = self.link(ws)
-        addons = link.call("addon.list")["addons"]
+        addons = self.addon_rows(link)
         if not any(a["name"] == "dashboard" and a["enabled"] is True for a in addons):
             raise fail("addon.disabled", exit=3)
         return link
+
+    @staticmethod
+    def addon_rows(link):
+        """`addon.list` once per HTTP request (a write clears it): the gates of one request share one read."""
+        memo = REQUEST_MEMO.get()
+        if memo is None or memo.get("closed"):
+            return link.call("addon.list")["addons"]
+        key = ("addon.list", id(link))
+        if key not in memo:
+            memo[key] = link.call("addon.list")["addons"]
+        return copy.deepcopy(memo[key])
 
     #: the last state `addon.list` gave per (link, add-on): a transient error keeps it instead of reading as off
     _addon_seen: dict = {}
@@ -257,7 +269,7 @@ class Gateway:
         ws = (welcome.get("workspace") or {}).get("id") if isinstance(welcome, dict) else None
         key = (ws or id(link), name)
         try:
-            rows = link.call("addon.list")["addons"]
+            rows = cls.addon_rows(link)
         except (HostError, KeyError, TypeError):
             return cls._addon_seen.get(key, False)
         on = any(isinstance(a, dict) and a.get("name") == name and a.get("state") == "active" for a in rows)
@@ -272,7 +284,7 @@ class Gateway:
         ws = (welcome.get("workspace") or {}).get("id") if isinstance(welcome, dict) else None
         key = (ws or id(link), "capability:" + capability)
         try:
-            rows = link.call("addon.list")["addons"]
+            rows = cls.addon_rows(link)
         except (HostError, KeyError, TypeError):
             return cls._addon_seen.get(key, False)
         on = any(

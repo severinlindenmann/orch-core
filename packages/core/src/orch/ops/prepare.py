@@ -115,17 +115,6 @@ def accepting(state: Any) -> Any:
     return dataclasses.replace(state, _ctx=dataclasses.replace(state._ctx, verifier=_AcceptAll(), admit=True))
 
 
-def judging(state: Any, capture: Capture | None) -> Any:
-    """:func:`accepting`, and for a hub hand-off prepare (:attr:`Capture.hub_handoff`, FB15) also without the D78 rule:
-    nothing is signed by that prepare, so the full-mode refusal of a local signature has nothing to judge."""
-    import dataclasses
-
-    state = accepting(state)
-    if capture is not None and capture.hub_handoff:
-        state = dataclasses.replace(state, _ctx=dataclasses.replace(state._ctx, hub_only=False))
-    return state
-
-
 def judge(store: Any, log: str, payload: dict[str, Any], capture: Capture) -> None:
     """Judge one unsigned person event (``payload``: its type and payload keys) as ``Store.append`` will, signature
     aside; raises the store's refusal."""
@@ -135,7 +124,7 @@ def judge(store: Any, log: str, payload: dict[str, Any], capture: Capture) -> No
 
     store.refresh()
     stamp = store.peek_stamp(log)
-    state = judging(store.state, capture)
+    state = accepting(store.state)
     probe = {
         "v": 2,
         "id": new_ulid(),

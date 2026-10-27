@@ -49,7 +49,6 @@ class World:
         self.dev: dict[str, str] = {}
         self.uid_n = 0
         self.workspace_id = hex32("workspace")
-        self.hub_only = False  # model-only tests opt out of the full-mode rule (C8 L2-C8i-5: the default is on)
 
     # ---- plumbing
     def tick(self, seconds: int = 10) -> str:
@@ -127,7 +126,6 @@ class World:
             verifier=self.verifier,
             now=now or self.at(),
             expected_workspace_id=self.workspace_id,
-            hub_only=self.hub_only,
         )
 
     def build_unappended(self, log: str, typ: str, actor, **payload):

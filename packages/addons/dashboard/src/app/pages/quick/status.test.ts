@@ -21,7 +21,7 @@ describe('what a quick task row says and does', () => {
     expect(taskState(row(), { failed: true })).toMatchObject({ word: 'Couldn’t start', action: 'retry', actionLabel: 'Try again' })
   })
   it('a start in progress says so and offers no button', () => {
-    expect(taskState(row(), { starting: true })).toMatchObject({ word: 'Starting agent…', action: null })
+    expect(taskState(row(), { starting: true })).toMatchObject({ word: 'Getting started…', action: null })
   })
   it('done and closed are Finished', () => {
     expect(taskState(row({ status: 'done' })).word).toBe('Finished')

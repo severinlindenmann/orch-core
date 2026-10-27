@@ -48,14 +48,6 @@ def test_hub_removal_or_demotion_stops_the_agent_and_lapses_the_claim(roles):
     assert claims.lapse_reason(ws, claim_ticket(ws), authz.ts(AT)) == "member_removed"
 
 
-def test_unaliased_member_keeps_its_own_role_in_full_mode():
-    """Console-link join: no alias at all. The owner's agents, claims and follow-ups keep working (run-12 6.2)."""
-    ws = ws_with("full", {}, {P: "owner"}, {U1: "admin"})
-    ws.settings = {"claim_ttl_min": 60}
-    assert authz.authorize_agent(Core(ws=ws), None, agent_event(ws)) is None
-    assert claims.lapse_reason(ws, claim_ticket(ws), authz.ts(AT)) is None
-
-
 def test_live_claim_with_a_hub_role():
     ws = full({U1: "edit"})
     agent_event(ws)

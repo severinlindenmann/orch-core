@@ -588,3 +588,16 @@ def test_a_part_is_stopped_by_the_runner_its_record_names(tmp_path):
 
     assert isinstance(install_runner(ctx, Layout(ctx.env), "pidfile"), service.PidfileRunner)
     assert isinstance(install_runner(ctx, Layout(ctx.env), "launchd"), service.LaunchdRunner)
+
+
+def test_the_claude_code_plugin_entries_go_through_claude_itself(m):
+    plug = m.home / ".claude" / "plugins"
+    m.w(
+        plug / "installed_plugins.json",
+        json.dumps({"version": 2, "plugins": {"orch-core@orch-core": [{}], "x@y": [{}]}}),
+    )
+    m.w(plug / "known_marketplaces.json", json.dumps({"orch-core": {}, "other": {}}))
+    assert m.prune("--yes", "--workspaces", "keep") == 0
+    assert ["claude", "plugin", "uninstall", "orch-core@orch-core"] in m.calls
+    assert ["claude", "plugin", "marketplace", "remove", "orch-core"] in m.calls
+    assert (plug / "installed_plugins.json").exists()  # Claude's files are never edited by prune

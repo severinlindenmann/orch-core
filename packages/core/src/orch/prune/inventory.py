@@ -133,6 +133,7 @@ def gather(ctx: Ctx, extra_workspaces: Iterable[str] = ()) -> Inventory:
         inv.workspaces.append(_workspace(ctx, inv, root, wid))
     _remote(ctx, inv, registry)
     _claude_trust(ctx, inv)
+    _claude_plugin(ctx, inv)
     _keychain(ctx, inv)
     _os_accounts(ctx, inv, registry)
     _tool(ctx, inv)
@@ -564,6 +565,24 @@ def _claude_trust(ctx: Ctx, inv: Inventory) -> None:
                 os.fspath(cfg),
                 data={"cfg": os.fspath(cfg), "keys": mine},
             )
+        )
+
+
+def _claude_plugin(ctx: Ctx, inv: Inventory) -> None:
+    """The orch-core plugin in Claude Code (``orch-core@orch-core``), read from Claude's own plugin lists."""
+    base = ctx.env.get("CLAUDE_CONFIG_DIR")
+    plugins = (Path(base) if base and os.path.isabs(base) else ctx.home / ".claude") / "plugins"
+    installed = _read_json(plugins / "installed_plugins.json")
+    names = installed.get("plugins") if isinstance(installed, dict) else None
+    market = _read_json(plugins / "known_marketplaces.json")
+    cmds: list[list[str]] = []
+    if isinstance(names, dict) and any(k.startswith("orch-core@") for k in names):
+        cmds.append(["claude", "plugin", "uninstall", "orch-core@orch-core"])
+    if isinstance(market, dict) and "orch-core" in market:
+        cmds.append(["claude", "plugin", "marketplace", "remove", "orch-core"])
+    if cmds:
+        inv.items.append(
+            Item(G_CLAUDE, "plugin", "the orch-core plugin / marketplace entry in Claude Code", data={"cmds": cmds})
         )
 
 

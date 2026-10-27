@@ -92,7 +92,7 @@ def build_steps(inv: Inventory, delete_folders: set[Path]) -> list[Item]:
             steps.append(Item("workspace", "folder", "the whole workspace folder", str(ws.root), ws.files, ws.size))
         else:
             steps += [i for i in ws.items if i.kind not in ("worktree", "note")]
-    steps += [i for i in inv.items if i.kind in ("claude-trust", "keychain")]
+    steps += [i for i in inv.items if i.kind in ("claude-trust", "plugin", "keychain")]
     steps += [i for i in inv.items if i.kind == "tree"]
     steps += [Item("", "rmdirs", "empty folders orch made")]
     if any(i.kind == "os" for i in inv.items):
@@ -140,6 +140,11 @@ def _do(ctx: Ctx, inv: Inventory, fence: Fence, it: Item, res: Result) -> None:
         _worktree(ctx, fence, it)
     elif k == "claude-trust":
         _claude(fence, it)
+    elif k == "plugin":
+        for cmd in it.data["cmds"]:
+            rc, _ = ctx.run(cmd)
+            if rc != 0:  # claude is not on PATH or refused: the person runs it
+                res.admin.append(" ".join(cmd))
     elif k == "keychain":
         handle = ctx.keychain(it.path) if ctx.keychain else None
         if handle is None:

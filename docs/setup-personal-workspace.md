@@ -361,7 +361,31 @@ state (`host: answers on ...`, `workspace DEMO ... ok`) and ends with the line `
 
 ## 11. Uninstall
 
-In this order, so that nothing is left running:
+One command takes orch off this computer, as if it had never been installed:
+
+```bash
+orch host prune --dry-run      # only show what it found, nothing is removed
+orch host prune                # show it, ask "Remove all of this? [y/N]", then remove it
+```
+
+It first prints everything it found on this computer, grouped, with paths and sizes: running services and login items,
+installed parts (hub, relay, publish, dashboard) and their data, the state folder (`~/.config/orch`: records, device keys
+of the key file store), the host's program copies (`~/.local/share/orch`), keys orch put in a macOS keychain, the
+trust entries it added to Claude Code's `.claude.json`, the orch-core plugin entries in Claude Code, accounts and system
+files made by the administrator setup on Linux (printed as commands when you are not root), and last the `orch` command
+itself (`uv tool uninstall orch-core`; on Windows the command is printed). Nothing is removed before you confirm.
+
+For each workspace it asks separately: "Also delete the folder ...? [y/N]" (default No). If you keep the folder, only
+orch's own files in it go (`.orch/`, `.orch-work/`, orch's skills under `.agents` and `.claude`, orch's lines in
+`AGENTS.md`, `CLAUDE.md` and `.gitignore`, orch's git worktrees); your files and your git history stay. For scripts:
+`--yes` skips the confirm but never includes workspace folders; `--workspaces keep|delete` answers the folder question for
+all workspaces. Prune refuses in the orch dev kit unless you pass `--i-know-dev`, and it is refused to agents.
+
+Prune can not remove what lives elsewhere: a hub membership, paired phones, relay registrations and published shares (it
+offers to run `orch hub leave` for a workspace on a hub when you answer interactively, and lists the rest at the end),
+browser data (saved passkeys, cookies), copies in backups, and the git history in your folders.
+
+The same, by hand, in this order, so that nothing is left running:
 
 ```bash
 orch dashboard stop            # close Mission Control

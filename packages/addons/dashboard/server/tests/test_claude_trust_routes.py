@@ -93,8 +93,16 @@ def test_post_refusal_returns_the_plain_reason(tmp_path, monkeypatch):
 def test_post_body_is_strict(tmp_path, monkeypatch):
     monkeypatch.setattr(claude_folder, "grant_consent", lambda *a, **k: None)
     client = build(tmp_path)
-    assert client.post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": "yes"}).status_code == 422
-    assert client.post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": True, "x": 1}).status_code == 422
+    assert (
+        client.post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": "yes"}).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": True, "x": 1}
+        ).status_code
+        == 422
+    )
 
 
 @pytest.mark.parametrize("auth", [FakeAuth(kind="switch"), FakeAuth(listener="front")])
@@ -104,7 +112,10 @@ def test_a_non_local_session_is_refused(tmp_path, monkeypatch, auth):
     monkeypatch.setattr(claude_trust, "_consented", lambda root: called.append(1))
     client = build(tmp_path, auth)
     assert client.get("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust").status_code >= 400
-    assert client.post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": True}).status_code >= 400
+    assert (
+        client.post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": True}).status_code
+        >= 400
+    )
     assert called == []
 
 

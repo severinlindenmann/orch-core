@@ -46,6 +46,8 @@ def switch(tmp_path, argv, answer):
         tips=Tips(), workspace_id="W", mode="seam", root=tmp_path, state=tmp_path, link=lambda op, a: {}
     )
     return cli._do_auto_switch(run, r), asked, r
+
+
 def test_auto_on_yes_does_not_ask(tmp_path):
     res, asked, r = switch(tmp_path, ["auto", "on", "--yes"], answer=False)
     assert asked == []
@@ -55,6 +57,7 @@ def test_auto_on_yes_does_not_ask(tmp_path):
 
 def test_auto_on_without_yes_still_asks(tmp_path):
     import pytest
+
     from orch.records import RecordsError
 
     with pytest.raises(RecordsError) as err:

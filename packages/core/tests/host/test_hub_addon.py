@@ -293,3 +293,14 @@ def test_hub_user_is_not_an_argument_of_hub_handoff(env_unaliased):
         "hub.handoff", {"kind": "addon", "request": prepared["request"]["id"], "hub_user": ALICE}
     )
     assert err(res) == "invalid.input"
+
+
+def test_schedules_is_turned_on_through_the_hub_like_wiki(env):
+    """Run 12 blocker 6.1: Schedules in Full mode: switch (hand-off) -> hub request -> on."""
+    res = env.human.prepare_res("addon.grant", {"name": "schedules"}, handoff=True)
+    prepared = ok(res)["data"]
+    ev = prepared["events"][0]
+    got = ok(env.served.client().req("hub.handoff", {"kind": "addon", "request": prepared["request"]["id"]}))["data"]
+    assert got["summary"]["name"] == "schedules"
+    assert env.deliver(request(env, terms_of(ev, prepared["request"]["id"])), "workspace") is None
+    assert granted(env)[-1]["name"] == "schedules"

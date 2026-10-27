@@ -5,7 +5,7 @@ additional signer (``auth: "hub"``), never the only one. So there is no break-gl
 local person event any more (the old D78/D81 rule, ``sign.hub_only``, is gone).
 
 What stays here: the two recovery shapes the model must recognise (:func:`is_recovery`, :func:`is_rotation`) and the
-agent gate (:func:`agent_refusal`, I6), which holds in every joined hub mode.
+agent gate (:func:`agent_refusal`, I6), which holds in full mode, as on develop.
 """
 
 from __future__ import annotations
@@ -62,13 +62,15 @@ def human_only_types() -> frozenset[str]:
 
 
 def agent_refusal(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
-    """I6 (A1): in a workspace joined to a hub in ANY mode (or whose hub state is invalid: fail closed) an agent
-    line of a human-only type (a decision, a close, a grant) is refused, however its grant reads. Develop applied
-    this in full mode only. A standalone workspace is judged by its grants alone (the F1 vectors have agent lines
-    of some of these types there), which is why the gate is tied to a hub position and not to the mode."""
+    """I6 (A1), exactly as on develop: in a joined FULL-mode position (``invalid`` counts as full, fail closed) an agent
+    line of a human-only type (a decision, a close, a grant) is refused, however its grant reads. Making this
+    mode-independent needs a separate pass over which types are truly human-only (selective-mode agents may write some
+    of them; the F1 vectors have such lines)."""
     h = ws.hub
-    if not h or not (h.get("invalid") or h.get("status") == "joined"):
+    if not h or not (h.get("invalid") or (h.get("status") == "joined" and h.get("mode") == "full")):
         return None
     if e["type"] in human_only_types():
-        return Refusal(Code.EVENT_BAD_ACTOR, f"{e['type']} is a human act: an agent cannot sign it in a hub workspace")
+        return Refusal(
+            Code.EVENT_BAD_ACTOR, f"{e['type']} is a human act: an agent cannot sign it in a full-mode workspace"
+        )
     return None

@@ -175,12 +175,11 @@ def test_an_ordinary_device_added_in_full_mode_is_admitted_for_the_owner(w):
     assert not hasattr(admit(strict(w), e, log="workspace"), "code")
 
 
-@pytest.mark.parametrize("mode", ["full", "selective"])
-def test_i6_an_agent_cannot_write_a_human_only_event_in_a_joined_hub_workspace(mode):
+def test_i6_an_agent_cannot_write_a_human_only_event_in_a_full_mode_workspace():
     w = World(validate=False).bootstrap({"mara": "maintainer"})
     gid = w.grant("sev")
     u = w.ticket()
-    hub_joined(w, [], mode=mode)
+    hub_joined(w, [])
     assert {"gate.approved", "ticket.closed", "grant.issued", "verdict.given"} <= breakglass.human_only_types()
     ag = w.agent("sev", gid)
     for typ in ("ticket.closed", "gate.approved", "verdict.given"):

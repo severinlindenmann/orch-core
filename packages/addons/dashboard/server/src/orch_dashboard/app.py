@@ -325,7 +325,7 @@ def create_app(
     hubapprove.register(app, gateway)
     hub.register(app, gateway)
     switch.register(app, gateway, auth)
-    trust_routes.register(app, auth)
+    trust_routes.register(app, auth, gateway)
     claude_trust_routes.register(app, gateway, auth)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)

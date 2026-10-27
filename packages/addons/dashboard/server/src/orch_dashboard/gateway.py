@@ -42,7 +42,8 @@ def run_dir(state: Path, env=None) -> Path:
     return run
 
 
-def read_pins(path):
+def read_rows(path):
+    """The registry's rows, from a file this user owns and no one else can read or write."""
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     try:
         s = os.fstat(fd)
@@ -51,20 +52,44 @@ def read_pins(path):
         with os.fdopen(fd, "r", closefd=False) as f:
             data = json.load(f)
         # Provisional container shape, isolated pending stream A's host.list/registry schema.
-        rows = data["workspaces"]
+        rows = data["workspaces"] if isinstance(data, dict) else None
         if not isinstance(rows, list):
             raise ValueError("registry workspaces must be a list")
-        pins = {}
-        for row in rows:
-            wid = row["workspace_id"]
-            peer = row["peers"].get(str(os.getuid()), {})
-            if not WORKSPACE_ID.fullmatch(wid) or row["host_uid"] != os.getuid():
-                raise fail("peer.denied", exit=3)
-            if peer.get("class") == "person" and peer.get("person"):
-                pins[wid] = row
-        return pins
+        return rows
     finally:
         os.close(fd)
+
+
+def read_pins(path):
+    pins = {}
+    for row in read_rows(path):
+        wid = row["workspace_id"]
+        peer = row["peers"].get(str(os.getuid()), {})
+        if not WORKSPACE_ID.fullmatch(wid) or row["host_uid"] != os.getuid():
+            raise fail("peer.denied", exit=3)
+        if peer.get("class") == "person" and peer.get("person"):
+            pins[wid] = row
+    return pins
+
+
+def read_people(path):
+    """``{workspace id: person}`` of this computer's user, like `read_pins` but forgiving: a malformed row (missing or
+    mistyped id, host uid, peers or person) is SKIPPED, never trusted and never an error for the others."""
+    uid = os.getuid()
+    people = {}
+    for row in read_rows(path):
+        if not isinstance(row, dict):
+            continue
+        wid, host_uid, peers = row.get("workspace_id"), row.get("host_uid"), row.get("peers")
+        if not isinstance(wid, str) or not WORKSPACE_ID.fullmatch(wid) or not isinstance(peers, dict):
+            continue
+        if isinstance(host_uid, bool) or host_uid != uid:
+            continue
+        peer = peers.get(str(uid))
+        person = peer.get("person") if isinstance(peer, dict) and peer.get("class") == "person" else None
+        if isinstance(person, str) and person:
+            people[wid] = person
+    return people
 
 
 # The inner ops of the settings hand-offs (M4). `grant` (issuing) is not here: the signer draws the secret.
@@ -174,6 +199,14 @@ class Gateway:
             return read_pins(self.state / "host/workspaces.json")
         except (OSError, ValueError, KeyError):
             raise fail("host.unavailable", "Host registry unavailable") from None
+
+    def people(self):
+        """``{workspace id: person}``: who this computer's user is in each pinned workspace (the registry pins, no host
+        call). Empty when the registry cannot be read; a malformed row is skipped (enrolment must never fail on it)."""
+        try:
+            return read_people(self.state / "host/workspaces.json")
+        except (OSError, ValueError, HostError):
+            return {}
 
     def workspace_folder(self, ws):
         """``(project folder, store folder)`` of workspace ``ws`` from the trusted host registry (the store is the

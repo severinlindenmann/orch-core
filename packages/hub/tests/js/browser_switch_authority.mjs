@@ -61,10 +61,8 @@ try {
 
   // 4. the hub-made session replayed from the trusted browser (loopback, same machine) still changes nothing
   for (const p of [WRITE, `/api/w/${WS}/terminals/open`]) assert(stepUp(await api(switcher, "POST", p, hubMade, {})), `replay: ${p} refused`);
-  const challenge = await api(switcher, "POST", "/api/auth/challenge", hubMade, {});
-  assert(challenge.status === 200, "replay: a challenge may be asked");
-  const bad = await api(switcher, "POST", "/api/auth/upgrade", hubMade, { key_id: keyId, signature: "A".repeat(86) });
-  assert(bad.status === 401, "replay: the trusted key's id without its signature upgrades nothing");
+  // run 13 E4: the upgrade and challenge routes are gone; the only way up is the silent redeem with a key proof
+  for (const gone of ["/api/auth/challenge", "/api/auth/upgrade"]) assert([404, 405].includes((await api(switcher, "POST", gone, hubMade, {})).status), `replay: ${gone} no longer exists`);
 
   // 5. revoke: the session the key upgraded goes back to read-mostly
   assert((await api(switcher, "DELETE", `/api/trusted/${keyId}`, full)).status === 200, "revoked");

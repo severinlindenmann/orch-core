@@ -56,6 +56,7 @@ WORKSPACE_ONLY = {
     "grant.requested",
     "grant.revoked",
     "device.excluded",
+    "addon.requested",
     "addon.granted",
     "addon.disabled",
     "addon.purged",
@@ -477,6 +478,17 @@ _SPEC = {
     "grant.revoked": (PERSON, {"grant": "gr_" + U1, "reason": "done"}, 5),
     "grant.requested": (PERSON, {"scope": "workable", "verbs": ["log", "task.done"], "hours": 8, "label": "runner"}, 5),
     "device.excluded": (PERSON, {"device": "d_" + DID2, "reason": "lost"}, 5),
+    "addon.requested": (
+        PERSON,
+        {
+            "name": "estimate",
+            "version": "1.2.0",
+            "package_sha256": digest("pkg"),
+            "capabilities": ["serve_http"],
+            "handoff": "hr_" + U1,
+        },
+        5,
+    ),
     "addon.granted": (
         PERSON,
         {

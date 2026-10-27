@@ -380,6 +380,41 @@ def build_p4(
     act5("action_device_excluded_by_edit", dx, "edit", {"error": "forbidden_role"})
     act5("action_device_excluded_bad_reason", {**dx, "reason": "stolen"}, "admin", mal)
     act5("action_device_excluded_person_id", {**dx, "device": "p_" + "c" * 32}, "admin", mal)
+    # FB15 (§8.8b): the owner's ask to turn an add-on on (the host answers with a host-actor addon.granted)
+    ar = {
+        "type": "addon.requested", "log": W, "name": "wiki", "version": "1.2.0", "package_sha256": HASH_A,
+        "capabilities": ["network", "serve_http"], "handoff": "hr_01J9ZP0000000000000000HND1",
+    }  # fmt: skip
+    rt = {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3}
+    act5(
+        "action_addon_requested_by_admin",
+        ar,
+        "admin",
+        ok("addon.requested"),
+        "the host answers only when its own prepared hand-off request `handoff` is live and carries these exact terms; "
+        "fields, sections and artifact_kinds are the host's, derived from the package the digest names",
+    )
+    act5("action_addon_requested_with_runtime", {**ar, "runtime": rt}, "admin", ok("addon.requested"))
+    act5("action_addon_requested_empty_capabilities", {**ar, "capabilities": []}, "admin", ok("addon.requested"))
+    act5("action_addon_requested_by_edit", ar, "edit", {"error": "forbidden_role"})
+    act5("action_addon_requested_on_ticket_log", {**ar, "log": TICKET}, "admin", {"error": "not_custodial"})
+    for nm, a, why in (
+        ("no_handoff", {k: v for k, v in ar.items() if k != "handoff"}, "the prepared request it is for"),
+        ("handoff_not_an_id", {**ar, "handoff": "hr_x"}, ""),
+        ("bad_name", {**ar, "name": "Wiki"}, "core add-on name grammar"),
+        ("bad_version", {**ar, "version": "1.2"}, "strict semver"),
+        ("bad_digest", {**ar, "package_sha256": "abc"}, ""),
+        ("capabilities_unsorted", {**ar, "capabilities": ["serve_http", "network"]}, "sorted unique"),
+        ("capability_unknown", {**ar, "capabilities": ["root"]}, "the closed capability list"),
+        ("runtime_extra_key", {**ar, "runtime": {**rt, "cmd": "sh"}}, "exact runtime object"),
+        ("runtime_zero_packages", {**ar, "runtime": {**rt, "packages": 0}}, ""),
+        ("smuggles_fields", {**ar, "fields": {}}, "declarations are the host's, from the digest-bound package"),
+        ("smuggles_sections", {**ar, "sections": []}, "declarations are the host's"),
+        ("smuggles_request", {**ar, "request": "01J9ZP0000000000000000REQ1"}, "only the host writes `request`"),
+    ):
+        act5(f"action_addon_requested_{nm}", a, "admin", mal, why)
+    act5("action_addon_granted_ws_not_custodial", {"type": "addon.granted", "log": W}, "admin",
+         {"error": "not_custodial"}, "the host appends it itself, naming the addon.requested it answers")  # fmt: skip
     pc = {"type": "policy.changed", "log": W, "gates": {"code": pol}}
     act5("action_policy_changed_ws_by_admin", pc, "admin", ok("policy.changed"))
     act5("action_policy_changed_ws_by_edit", pc, "edit", {"error": "forbidden_role"})

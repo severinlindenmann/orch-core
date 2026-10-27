@@ -343,8 +343,7 @@
       "additionalProperties": false
     },
     "handoff": {
-      "type": "string",
-      "pattern": "^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/handoffId",
       "description": "The id of the host's prepared request this ask is for (hub protocol 8.8b): the host answers only that one."
     }
   },

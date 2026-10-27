@@ -587,7 +587,7 @@ def _with_actor(t, kind, base=None):
         e.pop(k, None)
     if kind == "person":
         e.update(sig=ex.SIG, auth="passphrase", roster_v=0 if t == "workspace.created" else 7)
-    if t == "grant.issued" and kind == "host":  # C10: the host answers a grant.requested, and only then
+    if t in ("grant.issued", "addon.granted") and kind == "host":  # the host answers a request, and only then
         e["request"] = ex.EID
     if t == "ticket.created":
         e["owner"] = actor["id"] if kind == "person" else actor.get("for", "p_" + ex.PID)
@@ -625,7 +625,7 @@ def test_person_events_need_signature_auth_and_roster_version():
 
 def test_agent_and_host_never_stand_in_for_a_person():
     for t in ("gate.approved", "verdict.given", "question.answered", "ticket.closed", "restore", "grant.requested",
-              "member.added", "invalid.acknowledged", "addon.granted", "settings.changed"):  # fmt: skip
+              "member.added", "invalid.acknowledged", "settings.changed"):  # fmt: skip  (addon.granted: the host, with request)
         e = ex.EVENTS[t]
         log = log_of(t)
         for kind in ("agent", "unattended", "host"):
@@ -2396,3 +2396,17 @@ def test_branch_components_cannot_start_with_marks(mark, prefix):
     }
     with pytest.raises(SchemaError):
         V("event.ticket.updated", e, log="ticket")
+
+
+def test_addon_granted_host_actor_needs_request_and_a_person_never_has_one():
+    """FB15 (hub protocol 8.8b): the host answers an addon.requested, and only then; a person never writes `request`."""
+    t = "addon.granted"
+    V("event", _with_actor(t, "host"), log="workspace")  # with its request
+    e = _with_actor(t, "host")
+    e.pop("request")
+    with pytest.raises(SchemaError):
+        V("event", e, log="workspace")
+    e = _with_actor(t, "person")
+    e["request"] = ex.EID
+    with pytest.raises(SchemaError):
+        V("event", e, log="workspace")

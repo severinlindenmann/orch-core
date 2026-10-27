@@ -21,6 +21,7 @@ from orch.schema import LOG_TYPES, SchemaError, validate, validate_settings
 
 from . import (
     authz,
+    breakglass,
     claims,
     edits,
     followups_wire,
@@ -310,6 +311,8 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
         if (r := authz.authorize_person(core, log, e, ctx.verifier)) is not None:
             return r
     elif a["kind"] == "agent":
+        if (r := breakglass.agent_refusal(ws, e)) is not None:  # I6: every joined hub mode
+            return r
         if a.get("unattended") is True:
             if (r := authz.authorize_unattended(ws, t, e)) is not None:
                 return r

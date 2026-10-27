@@ -175,13 +175,20 @@ def test_an_ordinary_device_added_in_full_mode_is_admitted_for_the_owner(w):
     assert not hasattr(admit(strict(w), e, log="workspace"), "code")
 
 
-def test_an_agent_cannot_write_a_human_only_event_in_any_mode():
+@pytest.mark.parametrize("mode", ["full", "selective"])
+def test_i6_an_agent_cannot_write_a_human_only_event_in_a_joined_hub_workspace(mode):
     w = World(validate=False).bootstrap({"mara": "maintainer"})
     gid = w.grant("sev")
     u = w.ticket()
-    hub_joined(w, [])
+    hub_joined(w, [], mode=mode)
+    assert {"gate.approved", "ticket.closed", "grant.issued", "verdict.given"} <= breakglass.human_only_types()
     ag = w.agent("sev", gid)
-    e = w.build_unappended(u, "ticket.closed", ag)
-    assert admit(strict(w), e, log=u).code == Code.EVENT_BAD_ACTOR
+    for typ in ("ticket.closed", "gate.approved", "verdict.given"):
+        e = w.build_unappended(u, typ, ag)
+        assert admit(strict(w), e, log=u).code == Code.EVENT_BAD_ACTOR, typ
+    g = w.build_unappended(
+        "workspace", "grant.issued", ag
+    )  # also what a hub-requested grant (C10) would be if an agent wrote it
+    assert admit(strict(w), g, log="workspace").code == Code.EVENT_BAD_ACTOR
     e = w.build_unappended(u, "log.added", ag, text="hello")
-    assert not hasattr(admit(strict(w), e, log=u), "code")
+    assert not hasattr(admit(strict(w), e, log=u), "code")  # agents keep their other writes

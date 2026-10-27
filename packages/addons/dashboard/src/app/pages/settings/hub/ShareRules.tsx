@@ -76,8 +76,11 @@ export function ShareRules({ ws, onBack }: { ws: string; onBack: () => void }) {
         <Action id="hub-share-review" disabled={!change || !current || !!error} onClick={() => setReview(change)}>Review change</Action>
       </Panel>
       {share.data.tickets_complete && share.data.tickets.length > 0 && <Panel title="Stop sharing a single ticket">
-        <p>Ask the hub to delete one shared ticket. Press the i to choose the ticket.</p>
-        <InfoDrawer testId="hub-ticket-details"><div className="space-y-2">{share.data.tickets.map((ticket, i) => <div key={ticket} className="flex flex-wrap items-center gap-2"><Raw>{ticket}</Raw><Action id={'hub-ticket-revoke-' + i} onClick={() => setRevoke(ticket)}>Stop sharing this ticket</Action></div>)}</div></InfoDrawer>
+        <p>Ask the hub to delete one shared ticket. The exact ticket key is behind the i.</p>
+        <ul className="space-y-2" data-testid="hub-ticket-list">{share.data.tickets.map((ticket, i) => <li key={ticket} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
+          <div className="flex min-w-0 items-center gap-1"><p>Shared ticket {i + 1}</p><InfoDrawer testId={'hub-ticket-details-' + i}><Raw>{ticket}</Raw></InfoDrawer></div>
+          <Action id={'hub-ticket-revoke-' + i} onClick={() => setRevoke(ticket)}>Stop sharing this ticket</Action>
+        </li>)}</ul>
       </Panel>}
     </>}
     {review && <Flow title="Review sharing change" onClose={() => setReview(undefined)}><TerminalStep ws={ws} request={review.add ? { kind: 'share_add', rule: review.add } : { kind: 'share_remove', rule: review.remove }}>

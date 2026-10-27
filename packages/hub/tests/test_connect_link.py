@@ -84,3 +84,19 @@ def test_explicit_endpoint(w):
     assert s == 200 and o["link"].endswith(".hub.example.com:8105")
     s, o, _ = w.call("POST", "/admin/connect", {"endpoint": "bad endpoint"}, token=w.login(w.admin))
     assert s == 400
+
+
+def test_minted_link_binds_the_minting_admin_as_owner(w):
+    """Blocker 2 (run 12a): the join from the console link records owner_alias = the admin, so Needs-you lists the questions."""
+    s, o, _ = w.call("POST", "/admin/connect", {}, token=w.login(w.admin))
+    assert s == 200 and o["owner_user"] == w.admin
+    assert w.api.d.invites.owner_user(o["code"]) == w.admin
+
+
+def test_minted_link_owner_can_be_picked_but_must_be_a_hub_user(w):
+    tok = w.login(w.admin)
+    s, o, _ = w.call("POST", "/admin/connect", {"owner_user": w.ann}, token=tok)
+    assert s == 200 and w.api.d.invites.owner_user(o["code"]) == w.ann
+    for bad in ("f" * 32, 7):
+        s, _o, _ = w.call("POST", "/admin/connect", {"owner_user": bad}, token=tok)
+        assert s == 400

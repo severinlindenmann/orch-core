@@ -73,11 +73,14 @@ class FixedInvites:
         self._expires: dict[str, int] = {}  # minted codes only: code -> expiry ms
         self._lock = threading.Lock()
 
-    def mint(self, now_ms: int, ttl_ms: int = 30 * 60_000) -> tuple[str, int]:
-        """A fresh single-use code (admin console "Connect a workspace"); expires after ``ttl_ms``."""
+    def mint(self, now_ms: int, ttl_ms: int = 30 * 60_000, owner_user: str | None = None) -> tuple[str, int]:
+        """A fresh single-use code (admin console "Connect a workspace"); expires after ``ttl_ms``.
+        ``owner_user`` is the hub user the joining workspace's owner is aliased to (V3-D19)."""
         code = secrets.token_urlsafe(12)
         with self._lock:
             self._codes.add(code)
+            if owner_user:
+                self._owner[code] = owner_user
             self._expires[code] = now_ms + ttl_ms
         return code, now_ms + ttl_ms
 

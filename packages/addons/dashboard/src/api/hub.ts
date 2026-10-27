@@ -91,14 +91,14 @@ export const hubQueries = {
   share: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'share'], queryFn: () => api.getHubShare(ws), retry: false }),
 }
 
-/** What the top-bar chip says (A5.1). Violet is a hub, amber needs attention, grey is standalone. */
-export type ChipTone = 'neutral' | 'violet' | 'violet-solid' | 'amber'
+/** What the top-bar chip says (A5.1). Grey is quiet (standalone, or online and connected), amber needs attention. */
+export type ChipTone = 'neutral' | 'amber'
 export interface HubChip {
   tone: ChipTone
   /** Full label; `short` is the two-word phone form. */
   label: string
   short: string
-  icon: 'none' | 'eye-off' | 'eye' | 'alert'
+  icon: 'none' | 'dot' | 'alert'
 }
 
 export function hubChip(s: HubStatus | null | undefined): HubChip | null {
@@ -107,8 +107,8 @@ export function hubChip(s: HubStatus | null | undefined): HubChip | null {
   if (s.mode === 'standalone') return { tone: 'neutral', label: 'Local only', short: 'Local', icon: 'none' }
   if (s.reachable === false) return { tone: 'amber', label: 'Hub offline, working locally', short: 'Hub offline', icon: 'alert' }
   if (s.reseal_needed || s.key_change_pending || s.link === 'joining') return { tone: 'amber', label: 'Hub needs attention', short: 'Hub: attention', icon: 'alert' }
-  if (s.mode === 'selective') return { tone: 'violet', label: 'Hub sees only what you share', short: 'Shares some', icon: 'eye-off' }
-  if (s.mode === 'full') return { tone: 'violet-solid', label: 'Hub can read everything', short: 'Hub reads all', icon: 'eye' }
+  // Run-11 feedback 17: a healthy hub is quiet. The access level lives in Settings -> Hub and in the tooltip, not in the chip.
+  if (s.mode === 'selective' || s.mode === 'full') return { tone: 'neutral', label: 'Online · connected to hub', short: 'Online', icon: 'dot' }
   return { tone: 'amber', label: 'Hub mode not known', short: 'Hub: unknown', icon: 'alert' }
 }
 

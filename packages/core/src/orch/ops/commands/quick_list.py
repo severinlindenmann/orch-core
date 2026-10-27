@@ -119,4 +119,5 @@ OP = operation(
         "additionalProperties": False,
     },
     handler=handle,
+    addon="quick",
 )

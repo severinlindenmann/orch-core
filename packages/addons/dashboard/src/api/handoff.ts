@@ -24,6 +24,8 @@ export type HandoffAction =
   | { action: 'label'; key: string; label: string }
   | { action: 'close'; key: string; resolution?: 'wont_do' | 'duplicate' | 'obsolete' | 'other'; duplicate_of?: string; message?: string }
   | { action: 'reopen'; key: string; message?: string }
+  /** Cancel a follow-up (Schedules, #720): its person or a manager; one click. */
+  | { action: 'followup_cancel'; key: string; id: string }
   /** Return unclaimed work to backlog or open (host `move`, H6b): owners and maintainers. */
   | { action: 'move'; key: string; to: 'backlog' | 'open'; reason?: string }
   /** A person's `new` carries the title and type only. Everything else is a follow-up hand-off (`details`, `section`). */

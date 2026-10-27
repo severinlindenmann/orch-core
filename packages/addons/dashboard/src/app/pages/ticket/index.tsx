@@ -21,6 +21,7 @@ import { hasFeature, isRealHost } from '@/api/features'
 import { diffstat } from '@/api/gates'
 import { GatesStrip } from './Gates'
 import { TicketHeader } from './Header'
+import { FollowupBanner, FollowupLine } from '../schedules/FollowupStrip'
 import { History } from './History'
 import { Overview } from './Overview'
 import { Questions } from './Questions'
@@ -200,6 +201,8 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
   return (
     <TicketEditProvider ticket={ticket} viewer={viewer}><div className="mx-auto min-w-0 max-w-[1280px] space-y-4 pb-12">
       <TicketHeader ticket={ticket} viewer={viewer} sign={setSigning} jump={jump} signing={signPending} />
+      <FollowupBanner ticket={ticket} />
+      {!wide && <FollowupLine ticket={ticket} />}
       <GatesStrip ticket={ticket} viewer={viewer} />
       {!wide && <PropertiesStrip ticket={ticket} viewer={viewer} />}
 

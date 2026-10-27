@@ -31,7 +31,7 @@ WORD = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 REMOTE = re.compile(r"^(?:https://[A-Za-z0-9.-]{1,253}(?::[0-9]{1,5})?/[^\s@?#]{0,1000}|local:[A-Za-z0-9._-]{1,64})$")
 USERINFO = re.compile(r"^(https://)[^/@\s]*@")
 TICKET_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,18}$")
-GRANT_ID = re.compile(r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
+GRANT_ID = re.compile(r"^f?gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 SESSION = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
 #: a grant's label (common.json `label`): `runner` marks the runner grant (H11c-2); anything else is shown as text
 GRANT_LABEL = re.compile(r"^[a-z0-9][a-z0-9._-]{0,31}$")
@@ -332,6 +332,8 @@ class Grant(BaseModel):
     # read_ext/2: absent means unknown (None), not "none". `session_ids` is capped at 100; `sessions` counts all.
     session_ids: list[str] | None = None
     sessions_more: bool | None = None
+    # a follow-up grant (`fgr_`) names the grant it was derived from; None for every other grant
+    parent: str | None = None
 
 
 def revoked(at, detail) -> Revoked | None:
@@ -368,6 +370,9 @@ def grants(data, ext: bool) -> list[Grant]:
                     label=g["label"] if isinstance(g.get("label"), str) and GRANT_LABEL.fullmatch(g["label"]) else None,
                     session_ids=ids[:MAX_SESSION_IDS] if ids is not None else None,
                     sessions_more=bool(g.get("sessions_more")) if ext and "sessions_more" in g else None,
+                    parent=g["parent"]
+                    if isinstance(g.get("parent"), str) and GRANT_ID.fullmatch(g["parent"])
+                    else None,
                 )
             )
         return out

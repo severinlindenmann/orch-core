@@ -2186,6 +2186,7 @@
    "id": "gr_00000000000000000000000003",
    "issued_at": "2026-01-01T09:00:00Z",
    "label": null,
+   "parent": null,
    "person": "p_00000000000000000000000000000001",
    "revoked": null,
    "scope": "workable",

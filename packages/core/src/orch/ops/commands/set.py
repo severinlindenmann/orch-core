@@ -19,7 +19,8 @@ OP = operation(
     props={
         "ref": REF("ticket REF"),
         "pairs": L(
-            "key=value pairs; keys: title priority size labels due links parent blocked_by",
+            "key=value pairs; keys: title priority size labels due links parent blocked_by; "
+            "ADDON.FIELD=VALUE sets a field of an add-on that is on (orch describe ADDON.FIELD)",
             items={"type": "string", "pattern": SET_PATTERN},
             **{"x-metavar": "KEY=VALUE"},
         ),
@@ -30,6 +31,12 @@ OP = operation(
     emits=("ticket.updated",),
     text="ok {key} ticket.updated {fields} seq={seq}\nnext: {next}",
     data=obj({"fields": arr(STR)}),
-    errors=(err("conflict.field"), err("transition.refused"), err("not_found"), err("parse.text"), err("quick.off")),
+    errors=(
+        err("conflict.field"),
+        err("transition.refused"),
+        err("not_found"),
+        err("parse.text"),
+        err("addon.off"),
+    ),
     handler=handle,
 )

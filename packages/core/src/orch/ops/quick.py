@@ -8,7 +8,6 @@ outgrows them, it shows ``over`` and the person can make it an ordinary ticket b
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 __all__ = [
@@ -17,8 +16,6 @@ __all__ = [
     "BUDGET_S",
     "LABEL",
     "ADDON",
-    "is_on",
-    "require_on",
     "TITLE_MAX",
     "counts",
     "lines",
@@ -32,25 +29,7 @@ DEFAULT_MAX_FILES = 3
 #: seconds for the reader calls of all rows of one list together (both modes); later rows have unknown counts
 BUDGET_S = 20.0
 
-
-ADDON = "quick"
-MESSAGE = "Quick tasks is switched off in this workspace; an owner can turn it on in Add-ons"
-
-
-def is_on(addons: Any) -> bool:
-    """Is the built-in ``quick`` add-on granted and enabled? No grant means Off (there is no legacy default)."""
-    a = (addons or {}).get(ADDON)
-    if a is None:
-        return False
-    get = a.get if isinstance(a, Mapping) else (lambda k, d=None: getattr(a, k, d))
-    return bool(get("enabled", False)) and not get("purged", False)
-
-
-def require_on(addons: Any) -> None:
-    from orch.ops.errors import OrchError
-
-    if not is_on(addons):
-        raise OrchError("quick.off", MESSAGE)
+ADDON = "quick"  # availability is the central check of ``operation(addon=...)`` (orch.ops.addon_gate)
 
 
 def counts(diff: dict[str, Any]) -> tuple[int, int]:

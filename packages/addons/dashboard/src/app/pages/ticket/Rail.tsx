@@ -13,6 +13,7 @@ import { TicketWorktree } from '../worktrees/TicketWorktree'
 import { WorkFolder } from './WorkFolder'
 import { TicketShares } from '../shares/TicketShares'
 import { TicketEstimate } from '../estimate/TicketEstimate'
+import { TicketFollowup } from '../schedules/FollowupStrip'
 import { estimateOn, pointsOf, pointsText } from '@/api/estimate'
 import { NeedsValue } from './Needs'
 import { ago, fmtExact, KeyRef, PersonChip, PriorityLabel, Section, useIsVisibleKey, type Viewer } from './shared'
@@ -225,6 +226,7 @@ function RailContent({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewe
   const { workspace } = useWorkspace()
   return (
     <>
+      <TicketFollowup ticket={ticket} />
       <Details ticket={ticket} viewer={viewer} />
       <Code ticket={ticket} prs={!addonActive(workspace, GITHUB)} />
       <TicketEstimate ticket={ticket} />

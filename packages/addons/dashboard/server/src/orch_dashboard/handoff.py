@@ -119,6 +119,14 @@ class Reopen(Action):
     message: Text | None = None
 
 
+class FollowupCancel(Action):
+    """Cancel a follow-up (Schedules, #720): the follow-up's person or a manager signs `follow_up.cancel`."""
+
+    action: Literal["followup_cancel"]
+    key: Key
+    id: Annotated[str, StringConstraints(pattern=r"^fu_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+
+
 class NewTicket(Action):
     """A person's `new` carries the key, type, title and owner only (stream A, 11 Oct); the rest is `Details`."""
 
@@ -547,6 +555,8 @@ class QuickStart(Action):
 
 Person = Annotated[str, StringConstraints(pattern=r"^p_[0-9a-f]{32}$")]
 GrantId = Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+#: only a revoke may name a follow-up grant (`fgr_`); nothing that hands out, extends or relabels a grant takes one
+RevocableGrantId = Annotated[str, StringConstraints(pattern=r"^f?gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
 Role = Literal["owner", "maintainer", "member", "viewer"]
 OneLine = AfterValidator(no_hidden)  # no control, bidi, zero-width or other hidden characters (by Unicode category)
 Token = Literal["owner", "maintainer", "member", "ticket_owner", "assignees", "reviewers", "watchers"]
@@ -877,7 +887,7 @@ class PublishShare(Action):
 
 class GrantRevoke(Action):
     action: Literal["grant_revoke"]
-    grant: GrantId
+    grant: RevocableGrantId
     reason: Annotated[str, StringConstraints(min_length=1, max_length=200), OneLine] | None = None
 
 
@@ -995,6 +1005,7 @@ PrepareBody = Annotated[
     | AddLabel
     | Close
     | Reopen
+    | FollowupCancel
     | Move
     | AcceptCriterion
     | WithdrawAcceptance
@@ -1136,6 +1147,8 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             args = {"ref": action.key, "resolution": action.resolution}
             args |= {"duplicate_of": action.duplicate_of} if action.duplicate_of else {}
             return "close", args | ({"message": action.message} if action.message else {})
+        case FollowupCancel():
+            return "follow_up.cancel", {"id_or_ref": action.id}
         case Reopen():
             return "reopen", {"ref": action.key} | ({"message": action.message} if action.message else {})
         case AcceptCriterion():
@@ -1334,6 +1347,8 @@ def expected(action: Action, person: str | None = None):
             )
         case MarkTaskDone():
             return lambda ev: one(ev, "task.done", task=action.task) and _acceptance_event_ok(ev[0], person, {"task"})
+        case FollowupCancel():
+            return lambda ev: one(ev, "followup.cancelled", followup=action.id, reason="person")
         case Move():
             return lambda ev: one(ev, "ticket.moved", to=action.to) and ev[0].get("reason") == action.reason
         case MemberRole():
@@ -1467,6 +1482,11 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
     link = gateway.link(ws)
     key = getattr(body, "key", None)
     data = gateway.call(ws, "ticket.get", {"ref": key}) if key is not None else None
+    if isinstance(body, FollowupCancel):
+        # the signature is for a follow-up of THIS ticket; one on another ticket is refused before any request exists
+        rows = gateway.call(ws, "follow_up.list", {"ref": key, "all": True}).get("rows") or []
+        if not any(isinstance(r, dict) and r.get("id") == body.id for r in rows):
+            raise fail("not_found", "That follow-up is not on this ticket.", exit=2)
     labels = list(data["doc"].get("labels", [])) if isinstance(body, AddLabel) and data else None
     if isinstance(body, EditTicket):
         from orch.host import sequence

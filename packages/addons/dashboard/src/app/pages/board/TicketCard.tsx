@@ -12,6 +12,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { flip, takeNoted } from '@/lib/motion'
+import { FollowupChip } from '../schedules/FollowupChip'
 import { initials, PriorityMarker, STATUS_LABEL, TypeIcon, type BoardDisplay } from './lib'
 
 export interface BoardPeople {
@@ -175,6 +176,7 @@ function LaneCardBody({ ticket, people, me, task, overlay, showEstimate, showPro
         </div>
         {showEstimate && <CardFields ticket={ticket} />}
       </div>
+      <FollowupChip ticketKey={ticket.key} claimed={!!ticket.claim} />
       {showProgress && <ProgressBar ticket={ticket} />}
     </div>
   )
@@ -220,6 +222,7 @@ export function TicketCardBody({
         <PriorityMarker priority={ticket.priority} />
       </div>
       <div className={cn('text-[13px] leading-snug text-text', compact ? 'line-clamp-1' : 'line-clamp-2')}>{ticket.title}</div>
+      <FollowupChip ticketKey={ticket.key} claimed={!!ticket.claim} />
       {d.progress && <ProgressBar ticket={ticket} />}
       {/* Under 12.5rem (a narrow column, N11) the estimate chips wrap to their own line instead of squeezing the label. */}
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 @[12.5rem]/card:flex-nowrap">

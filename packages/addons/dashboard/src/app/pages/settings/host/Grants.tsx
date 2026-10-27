@@ -22,6 +22,12 @@ import { OwnerNote } from '../OwnerNote'
 import { GrantReveal } from './GrantReveal'
 import { useViewerPerson, useViewerRole } from './useViewerRole'
 
+/** " (given 9 Oct 11:36)" for the access a follow-up grant came from, when that access is listed; nothing when it is not. */
+const parentOf = (lists: HostGrant[], more: HostGrant[], id: string) => {
+  const p = [...lists, ...more].find((x) => x.id === id)
+  return p ? ` (given ${fmtDateTime(p.issued_at)})` : ''
+}
+
 const state = (g: HostGrant, now: number) => (g.revoked ? 'revoked' : Date.parse(g.expires_at) <= now ? 'expired' : 'active')
 
 /** The agents a person can run: both are named wherever their coloured marks appear. */
@@ -168,7 +174,13 @@ export function HostGrants({ workspace }: { workspace: Workspace }) {
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
                   {AGENTS.map((a) => <AgentName key={a} harness={a} />)}
                 </div>
-                <p className="text-[13px]">Can work on tickets they are allowed to.</p>
+                {g.parent ? (
+                  <p className="text-[13px]" data-testid="grant-parent">
+                    A follow-up run: one session on one ticket, with the rights of the access it came from{parentOf(active, past, g.parent)}. It ends when the run ends.
+                  </p>
+                ) : (
+                  <p className="text-[13px]">Can work on tickets they are allowed to.</p>
+                )}
                 <p className="text-[13px] tabular-nums text-text-muted">
                   Agents can work until {fmtDateTime(g.expires_at)}{g.sessions > 0 ? ` · ${plural(g.sessions, 'agent')} running` : ''}
                 </p>

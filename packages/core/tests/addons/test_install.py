@@ -77,7 +77,8 @@ def test_the_owner_grants_a_package_and_the_event_carries_digest_capabilities_an
     assert a.enabled and not a.purged and a.package_sha256 == pkg.digest
     assert hws.provider.shown and "echo" in hws.provider.shown[-1]  # the signing prompt names the grant
     lst = me("addon", "list", "--json").doc["data"]["addons"]
-    assert lst == [
+    assert lst[0]["fields"] == e["fields"]  # the grant's own fields (``orch describe echo.FIELD`` reads them)
+    assert [{k: v for k, v in row.items() if k != "fields"} for row in lst] == [
         {"name": "echo", "version": "1.0.0", "enabled": True, "state": "active", "capabilities": ["serve_http"]}
     ]
 
@@ -311,7 +312,10 @@ def test_list_says_the_state_and_what_to_do_about_a_changed_package(hws, me):
     me("addon", "grant", "echo")
     (d / "addon.py").write_text("# other\n")
     r = me("addon", "list", "--json")
-    assert r.doc["data"]["addons"] == [{"name": "echo", "version": "1.0.0", "enabled": False, "state": "changed"}]
+    (row,) = r.doc["data"]["addons"]
+    assert {k: v for k, v in row.items() if k != "fields"} == {
+        "name": "echo", "version": "1.0.0", "enabled": False, "state": "changed",
+    }  # fmt: skip
     assert "changed since the grant: orch addon grant echo" in me("addon", "list").out
     me("addon", "purge", "echo")
     assert me("addon", "list", "--json").doc["data"]["addons"][0]["state"] == "purged"

@@ -2,7 +2,9 @@ import { fmtSlot, fmtWhen } from '@/lib/time'
 import type { AddonDecision, NewTicketRequest } from '@/api/types'
 import type { StoreFailure } from '../store'
 import type { Rng } from '../busy/rng'
-import { canSeeTicket, registerAddon } from './registry'
+import { atLeast } from '@/api/permissions'
+import type { FollowupRow } from '@/api/followups'
+import { canSeeTicket, registerAddon, type AddonCtx } from './registry'
 
 // schedules (later, preview; v1 docs/schedules.md): agent work that starts without anyone typing.
 //  - Three kinds. `schedule`: a skill on a clock. `listener`: a skill when an orch event happens. `recurring`: no
@@ -55,6 +57,31 @@ interface Run {
   findingState?: 'open' | 'filed' | 'dismissed'
   filed?: string
 }
+
+/** A follow-up as the mock keeps it (the host's record; the view adds the viewer's part). `undo` holds what a person's Cancel replaced. */
+interface Followup extends Omit<FollowupRow, 'title' | 'mine' | 'can_cancel' | 'running'> {
+  undo?: { state: FollowupRow['state']; reason: string | null }
+}
+const FU = (n: string) => `fu_01J9ZK4Q7M3R8T2V6X0B5N${n}`
+/** One consistent sample set on the demo tickets (mock clock: Fri 9 Oct 2026, 11:30 UTC). Every state appears once. */
+const seedFollowups = (): Followup[] => [
+  // waiting on an event or a web address, latest Tue 13 Oct 16:00 UTC; the second of five in a row
+  { id: FU('1A'), ticket: 'DEMO-0045', state: 'pending', trigger: 'orch', due: null, deadline: '2026-10-13T16:00:00Z', set_at: '2026-10-08T15:40:00Z', fired_at: null, late_by: null, brief: 'Check whether the outage calendar import finished.\n\n- If yes: rebuild the usage forecast and mark the task done.\n- If not: ask Mara before trying again.', outcome: null, reason: null, person: 'p_mara', label: 'the outage calendar import', chain: { n: 2, max: 5 } },
+  // waiting on the clock: tomorrow 14:00 UTC
+  { id: FU('1B'), ticket: 'DEMO-0048', state: 'pending', trigger: 'time', due: '2026-10-10T14:00:00Z', deadline: null, set_at: '2026-10-09T09:00:00Z', fired_at: null, late_by: null, brief: 'Look at the freshness alert for the meter feed again and file what is still late.', outcome: null, reason: null, person: 'p_sev', chain: { n: 1, max: 5 } },
+  // stopped by orch: the 5th follow-up with no task done
+  { id: FU('1C'), ticket: 'DEMO-0054', state: 'needs_person', trigger: 'time', due: null, deadline: null, set_at: '2026-10-08T10:00:00Z', fired_at: null, late_by: null, brief: 'Try the seed load again after the CSV export.', outcome: null, reason: 'chain_cap', person: 'p_mara', chain: { n: 5, max: 5 } },
+  // did not run: nobody was running orch
+  { id: FU('1D'), ticket: 'DEMO-0046', state: 'did_not_run', trigger: 'time', due: '2026-10-07T07:00:00Z', deadline: null, set_at: '2026-10-05T16:00:00Z', fired_at: null, late_by: null, brief: 'Continue with the billing run once the tariff versions are in.', outcome: 'did_not_run', reason: 'no_host', person: 'p_mara' },
+  // failed: the session wrote nothing
+  { id: FU('1E'), ticket: 'DEMO-0041', state: 'failed', trigger: 'time', due: '2026-10-09T07:00:00Z', deadline: null, set_at: '2026-10-08T16:30:00Z', fired_at: '2026-10-09T07:00:00Z', late_by: null, brief: 'Review the pipeline plan again.', outcome: 'failed', reason: 'no_writes', person: 'p_sev' },
+  // finished: ran on time, ran late, woken by the deadline, cancelled
+  { id: FU('1F'), ticket: 'DEMO-0042', state: 'ran', trigger: 'time', due: '2026-10-06T07:00:00Z', deadline: null, set_at: '2026-10-05T14:00:00Z', fired_at: '2026-10-06T07:00:00Z', late_by: null, brief: 'Confirm the UTC change in the staging model.', outcome: 'ran', reason: null, person: 'p_sev' },
+  { id: FU('1G'), ticket: 'DEMO-0053', state: 'ran', trigger: 'time', due: '2026-10-05T07:10:00Z', deadline: null, set_at: '2026-10-04T14:00:00Z', fired_at: '2026-10-05T14:10:00Z', late_by: 25200, brief: 'Rerun the reconciliation tests.', outcome: 'ran', reason: null, person: 'p_mara' },
+  { id: FU('1H'), ticket: 'DEMO-0052', state: 'ran', trigger: 'deadline', due: null, deadline: '2026-10-07T16:00:00Z', set_at: '2026-10-06T10:00:00Z', fired_at: '2026-10-07T16:00:00Z', late_by: null, brief: 'Check that the billing run finished.', outcome: 'ran', reason: null, fallback: 'no_event', person: 'p_sev', label: 'billing run' },
+  { id: FU('1I'), ticket: 'DEMO-0047', state: 'cancelled', trigger: 'time', due: '2026-10-08T07:00:00Z', deadline: null, set_at: '2026-10-06T09:00:00Z', fired_at: null, late_by: null, brief: 'Look at the duplicate meter ids again.', outcome: null, reason: 'claimed_by_other', person: 'p_sev' },
+]
+const followupsOf = (state: Record<string, unknown>) => (state.followups ??= seedFollowups()) as Followup[]
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -199,12 +226,32 @@ function seedBase() {
     ] satisfies Run[],
     seq: 4,
     nav: {},
+    followups: seedFollowups(),
   }
+}
+
+/** The follow-up's person or a maintainer may change it (the host decides the same). */
+const mayAct = (ctx: { store: { roleIn(ws: string, p: string): string | undefined }; ws: string; viewer: string }, f: Followup) =>
+  f.person === ctx.viewer || atLeast((ctx.store.roleIn(ctx.ws, ctx.viewer) ?? 'viewer') as Parameters<typeof atLeast>[0], 'maintainer')
+
+function followupsView(state: Record<string, unknown>, c: Omit<AddonCtx, 'body' | 'state'>) {
+  const role = c.store.roleIn(c.ws, c.viewer) ?? 'viewer'
+  const rows: FollowupRow[] = followupsOf(state)
+    .filter((f) => !f.ticket || canSeeTicket(c, f.ticket))
+    .map(({ undo: _undo, ...f }) => ({
+      ...f,
+      title: f.ticket ? (c.store.ticket(f.ticket)?.title ?? null) : null,
+      running: f.state === 'fired',
+      mine: f.person === c.viewer,
+      can_cancel: (f.state === 'pending' || f.state === 'needs_person') && (f.person === c.viewer || atLeast(role, 'maintainer')),
+    }))
+  return { available: true, role, can: { cancel: role !== 'viewer', reschedule: true, undo: true }, rows }
 }
 
 registerAddon({
   name: 'schedules',
   seed: seedBase,
+  stateVersion: 2,
   seedBusy,
 
   view(state, c) {
@@ -267,6 +314,8 @@ registerAddon({
       findingsLine: open ? `${open} finding${open === 1 ? '' : 's'} to file or dismiss.` : 'No findings waiting.',
       // Core draws and signs each open finding in place (decision nodes); Today lists the same decisions.
       findingNodes: { type: 'stack', children: runs.filter((r) => r.findingState === 'open' && r.finding).slice(0, MAX_FINDINGS_SHOWN).map((r) => ({ type: 'decision', id: decisionId(r) })) },
+      followups: followupsView(state, c),
+      followupCount: followupsOf(state).filter((f) => f.state === 'pending' || f.state === 'needs_person' || f.state === 'failed' || f.state === 'did_not_run').length,
       schedules: undefined,
       seq: undefined,
     }
@@ -323,6 +372,53 @@ registerAddon({
       state.runs = runs.filter((r, i) => i < KEEP_RUNS || r.findingState === 'open')
       ;((state.nav ??= {}) as Record<string, { selected?: string }>)[viewer] = { selected: run.id }
       return { ok: true, message: `Ran ${s.name}: ${run.summary}`, changed: true }
+    },
+
+
+    fu_cancel(ctx) {
+      const f = followupsOf(ctx.state).find((x) => x.id === ctx.body.id)
+      if (!f) return fail(404, 'not_found', 'No such follow-up.')
+      if (f.state !== 'pending' && f.state !== 'needs_person') return fail(409, 'followup.not_pending', 'It started a moment ago (or was already handled), so it cannot be changed any more.')
+      if (!mayAct(ctx, f)) return fail(403, 'role.denied', 'Only the follow-up\'s person or a maintainer can cancel it.')
+      f.undo = { state: f.state, reason: f.reason }
+      f.state = 'cancelled'
+      f.reason = 'person'
+      return { ok: true, message: `Cancelled the follow-up on ${f.ticket}.`, changed: true }
+    },
+
+    fu_undo(ctx) {
+      const f = followupsOf(ctx.state).find((x) => x.id === ctx.body.id)
+      if (!f?.undo || f.state !== 'cancelled' || f.reason !== 'person') return fail(409, 'followup.cannot_undo', 'That cancel cannot be undone any more.')
+      if (!mayAct(ctx, f)) return fail(403, 'role.denied', 'Only the follow-up\'s person or a maintainer can restore it.')
+      f.state = f.undo.state
+      f.reason = f.undo.reason
+      delete f.undo
+      return { ok: true, message: `The follow-up on ${f.ticket} is back.`, changed: true }
+    },
+
+    fu_reschedule(ctx) {
+      const f = followupsOf(ctx.state).find((x) => x.id === ctx.body.id)
+      if (!f) return fail(404, 'not_found', 'No such follow-up.')
+      if (f.state !== 'pending' && f.state !== 'needs_person' && f.state !== 'failed' && f.state !== 'did_not_run') return fail(409, 'followup.not_pending', 'It started a moment ago (or was already handled), so it cannot be moved any more.')
+      if (!mayAct(ctx, f)) return fail(403, 'role.denied', 'Only the follow-up\'s person or a maintainer can move it.')
+      const at = typeof ctx.body.at === 'string' ? Date.parse(ctx.body.at) : NaN
+      if (Number.isNaN(at) || at < Date.parse(ctx.store.now()) + 3_600_000) return fail(400, 'followup.too_soon', 'Pick a time at least an hour from now.')
+      const iso = new Date(at).toISOString().replace('.000Z', 'Z')
+      // a follow-up that waits on an event keeps waiting on it: the new time is its latest time
+      Object.assign(f, { state: 'pending', reason: null, outcome: null, fired_at: null, late_by: null, ...(f.trigger === 'time' || !f.deadline ? { trigger: 'time', due: iso, deadline: null } : { deadline: iso }) })
+      f.set_at = ctx.store.now()
+      return { ok: true, message: `Moved the follow-up on ${f.ticket}.`, changed: true }
+    },
+
+    fu_run_now(ctx) {
+      const f = followupsOf(ctx.state).find((x) => x.id === ctx.body.id)
+      if (!f) return fail(404, 'not_found', 'No such follow-up.')
+      if (!atLeast(ctx.store.roleIn(ctx.ws, ctx.viewer) ?? 'viewer', 'member')) return fail(403, 'role.denied', 'Viewers cannot start an agent.')
+      if (f.state === 'pending' || f.state === 'needs_person') {
+        f.state = 'cancelled'
+        f.reason = 'run_now'
+      }
+      return { ok: true, message: `Started the agent on ${f.ticket}. It runs as you.`, changed: true }
     },
 
     open_run({ state, viewer, body }) {

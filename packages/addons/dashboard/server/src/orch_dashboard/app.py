@@ -18,6 +18,7 @@ from . import (
     agents,
     click,
     focus_routes,
+    followups,
     handoff,
     hub,
     hubapprove,
@@ -86,6 +87,7 @@ SPA_ROUTES = (
     "shares",
     "activity",
     "usage",
+    "schedules",
     "wiki",
     "focus",
     "focus/$ticket",
@@ -299,6 +301,7 @@ def create_app(
     focus_routes.register(app, gateway)
     workdirs.register(app, gateway)
     usage.register(app, gateway)
+    followups.register(app, gateway)
     shares.register(app, gateway)
     explorer_routes.register(app, gateway)
     wiki_routes.register(app, gateway)

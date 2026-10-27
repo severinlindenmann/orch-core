@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "addon.off",
+    "message": "the add-on is off in this workspace",
+    "hint": "tell the person; do not work around it",
+    "fix": {
+      "argv": [
+        "orch",
+        "addon",
+        "list"
+      ]
+    },
+    "retryable": false
+  }
+}

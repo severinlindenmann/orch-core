@@ -118,6 +118,7 @@ class OpContext:
     wk_seals: WkSeals | None = None  # the wk_seal store; None: the op is `unavailable`
     views: ViewService | None = None  # D15's log_sync receiver; None: the op is `unavailable`
     shares: Any = None  # orch_hub.shares.ShareService; None = share ops not served (unknown_op)
+    switch: Any = None  # orch_hub.switch.SwitchService; None = switch/rail ops not served (unknown_op)
 
 
 def _require_pin(c: OpContext) -> dict[str, str]:
@@ -436,6 +437,69 @@ def log_sync(c: OpContext) -> dict[str, Any]:
         return c.views.accept(c.workspace_id, unb64u(pin["wsk_pub"], 65), c.body)
 
 
+def _switch(c: OpContext) -> Any:
+    if c.switch is None or c.access is None:
+        raise Refused("unknown_op")
+    return c.switch
+
+
+def _owner_user(c: OpContext) -> str:
+    user = c.registry.owner_alias(c.workspace_id)
+    if not user:
+        raise Refused("no_owner_alias")
+    return user
+
+
+def switch_ticket(c: OpContext) -> dict[str, Any]:
+    """The workspace's owner alias gets a ticket for the hub console; the host never names the user."""
+    from ..switch import SwitchError
+
+    _require_bound(c)  # a link that did not pass the join checks (a dev host against a real hub) has no binding
+    sw = _switch(c)
+    user = _owner_user(c)
+    try:
+        sw.set_origin(c.workspace_id, c.body["origin"])
+        base = sw.hub_origin()
+        if not base:
+            raise Refused("unavailable")
+        t = sw.issue_to_hub(user, c.workspace_id, c.body["return_to"], c.body["kind"])
+    except SwitchError as e:
+        raise Refused(e.code) from None
+    return {"ticket": t, "url": f"{base}/#t={t}"}
+
+
+def switch_redeem(c: OpContext) -> dict[str, Any]:
+    from ..switch import SwitchError
+
+    _require_bound(c)  # a link that did not pass the join checks (a dev host against a real hub) has no binding
+    sw = _switch(c)
+    try:
+        r = sw.redeem(c.body["ticket"], "to_ws", ws=c.workspace_id)
+    except SwitchError as e:
+        raise Refused(e.code) from None
+    if r["user"] != c.registry.owner_alias(c.workspace_id):
+        raise Refused("bad_ticket")  # only the workspace owner's dashboard takes a hub ticket
+    name = next((u["name"] for u in c.access.users() if u["user_id"] == r["user"]), None)
+    return {"user_id": r["user"], "name": name, "return_to": r["rt"], "kind": r["kind"]}
+
+
+def rail_get(c: OpContext) -> dict[str, Any]:
+    from ..switch import SwitchError
+
+    _require_bound(c)  # a link that did not pass the join checks (a dev host against a real hub) has no binding
+    sw = _switch(c)
+    user = _owner_user(c)
+    try:
+        sw.set_origin(c.workspace_id, c.body["origin"])
+    except SwitchError as e:
+        raise Refused(e.code) from None
+    return {
+        "hub": {"name": sw.hub_name, "origin": sw.hub_origin()},
+        "user_id": user,
+        "workspaces": sw.rail_rows(c.registry, c.access, user, current=c.workspace_id),
+    }
+
+
 HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "join": join,
     "card_put": card_put,
@@ -454,6 +518,9 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "log_sync": log_sync,
     "share_put": share_put,
     "share_revoke": share_revoke,
+    "switch_ticket": switch_ticket,
+    "switch_redeem": switch_redeem,
+    "rail_get": rail_get,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

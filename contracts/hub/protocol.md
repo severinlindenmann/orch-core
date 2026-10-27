@@ -1249,6 +1249,9 @@ unknown `op` is `unknown_op`.
 | `space_revoke` | w2h | both | `{"space_id", "item_id"}` | `{"seq"}` |
 | `space_get` | w2h | both | `{"space_id", "since"}` | `{"space", "wraps", "entries", "next"}` |
 | `space_proposals` | w2h | both | `{}` | `{"proposals": [<hub.space_proposal>]}` (p4, §10.4) |
+| `switch_ticket` | w2h | both | `{"origin", "return_to", "kind": "open"\|"signout"}` | `{"ticket", "url"}` (hub one-app, below) |
+| `switch_redeem` | w2h | both | `{"ticket"}` | `{"user_id", "name", "return_to", "kind"}` (hub one-app) |
+| `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
 
 A reply's body is either the reply body above or `{"error": <code>}`; H0 fixes request bodies only (reply bodies are
@@ -1256,6 +1259,16 @@ built in D5/C5 against this table). Phases: `snapshot_get`, `publish_out` and th
 carry needs-you summaries only until C6); `route_*`, `wk_seal`, `audit_ack` in phase 3; `event_deliver`, `log_sync`, `space_proposals` in phase 4.
 `log_sync` carries the workspace's own log **to** the hub; like every other op it asks the hub to sign nothing, and
 nothing in it can become signed bytes: the hub builds custodial events only from an action a channel started (§8.4).
+
+**Hub one-app ops (27 Oct, prototype).** `switch_ticket`, `switch_redeem` and `rail_get` let the workspace dashboard and the
+hub console feel like one app. The hub names the user itself: always the link workspace's owner alias (`no_owner_alias`
+otherwise), so the host can never ask for another person. `origin` is the dashboard origin as the browser sees it
+(`scheme://host[:port]`, nothing else; `malformed` otherwise); the hub keeps the last one per workspace. A ticket is an opaque
+128-bit id the hub stores in memory only: single use, 30 s, bound to a user and a direction. `switch_ticket` returns a
+hub-console ticket (`url` = `<console origin>/#t=<ticket>`, fragment only); `switch_redeem` spends a ticket the hub made for
+THIS link's workspace (`<workspace_id>.<hex>`) and answers `bad_ticket` for anything else (unknown, used, expired, other
+workspace, user no longer the owner alias). `return_to` is a relative path (`/`, no `//`, `\\`, `..`), else `/`. `kind`
+`signout` ends the browser's session at the target instead of opening one. These ops sign nothing.
 
 **Verification by the receiver** (hub for w2h with the binding's `WSK`, host for h2w with the held card's `HK_op`):
 

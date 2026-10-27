@@ -115,6 +115,8 @@ class ListenerPolicy:
             return len(rest) == 1 and bool(_ASSET.fullmatch(rest[0])) and ".." not in rest[0]
         if len(segments) == 1 and segments[0] in ROOT_FILES:
             return True
+        if method == "POST" and head == "auth" and rest == ["switch"]:
+            return True  # H1: the hub switch ticket (one use, 30 s, checked by the hub over the host's link)
         if head == "auth" and len(rest) >= 2 and rest[0] in ("passkey", "enroll"):
             tail = rest[1:]
             return len(tail) <= 2 and all(_SEGMENT.fullmatch(s) for s in tail)
@@ -162,6 +164,6 @@ def remote_policy(name: str) -> ListenerPolicy:
         pre_login_only=True,
         launch_codes=False,
         route_gate=True,
-        session_kinds=frozenset({"remote"}),  # the session kind, not the listener
+        session_kinds=frozenset({"remote", "switch"}),  # the session kind, not the listener
         extra_headers=(HSTS,),
     )

@@ -125,6 +125,7 @@ OPS = {
         "hub.status",
         "hub.handoff",
         "hub.link",  # run-9 feedback 6: reads the connect link (a read; without it call() demanded an idem)
+        "hub.switch",  # H1: one-time switch tickets and the rail list over the hub link (no log line, no idem)
         "share.rules",
         "share.preview",
         # V3 A10 (design-g3 4.2): the Add-ons page. Reads: market.list, market.installed. Person writes (owner role, the

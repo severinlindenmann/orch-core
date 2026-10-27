@@ -64,6 +64,9 @@ W2H_OPS: dict[str, str | None] = {
     "space_put": None,
     "space_revoke": None,
     "space_get": None,
+    "switch_ticket": None,
+    "switch_redeem": None,
+    "rail_get": None,
     "share_put": "selective",
     "share_revoke": "selective",
     "wk_seal": "full",
@@ -80,6 +83,16 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
         and type(b["entries"]) is list
         and type(b["next"]) is int
         and type(b.get("records", [])) is list
+    ),
+    "switch_ticket": lambda b: set(b) == {"ticket", "url"} and type(b["ticket"]) is str and type(b["url"]) is str,
+    "switch_redeem": lambda b: (
+        set(b) == {"user_id", "name", "return_to", "kind"}
+        and type(b["user_id"]) is str
+        and type(b["return_to"]) is str
+        and b["kind"] in ("open", "signout")
+    ),
+    "rail_get": lambda b: (
+        set(b) == {"hub", "user_id", "workspaces"} and type(b["hub"]) is dict and type(b["workspaces"]) is list
     ),
     "log_sync": lambda b: set(b) == {"seq", "head"} and type(b["seq"]) is int and type(b["head"]) is str,
     "route_out": lambda b: set(b) == {"state"} and b["state"] in ("forwarded", "queued"),

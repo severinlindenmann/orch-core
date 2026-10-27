@@ -6,7 +6,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { scheduleAddAction, scheduleKey, scheduleSummary, useSchedules, type ScheduleForm, type ScheduleRepeat, type ScheduleRow } from '@/api/schedules'
 import { SignPopover } from '@/components/sign/SignPopover'
-import { DateChips, Chip, Stepper, TimeChips, WeekdayChips, isoDay } from './pickers'
+import { DatePicker } from '@/components/pickers/DatePicker'
+import { Dropdown } from '@/components/pickers/Dropdown'
+import { TimePicker } from '@/components/pickers/TimePicker'
+import { toDateStr } from '@/components/pickers/dates'
+import { Chip, Stepper, WeekdayChips } from './pickers'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -156,7 +160,8 @@ function NewScheduleDialog({ ws, tickets, onClose }: { ws: string; tickets?: Tic
   const [ticket, setTicket] = useState('')
   const [brief, setBrief] = useState('')
   const [repeat, setRepeat] = useState<ScheduleRepeat>('once')
-  const [date, setDate] = useState(isoDay(new Date()))
+  const today = toDateStr(new Date())
+  const [date, setDate] = useState(today)
   const [time, setTime] = useState('09:00')
   const [weekdays, setWeekdays] = useState([0])
   const [day, setDay] = useState(1)
@@ -169,24 +174,21 @@ function NewScheduleDialog({ ws, tickets, onClose }: { ws: string; tickets?: Tic
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div role="dialog" aria-modal="true" aria-label="New schedule" className="max-h-full w-full max-w-lg space-y-4 overflow-y-auto rounded-lg border border-border bg-surface p-4">
         <h2 className="text-base font-semibold">New schedule</h2>
-        <div role="group" aria-labelledby="sched-ticket" className="space-y-1">
-          <p id="sched-ticket" className={label}>
+        <div className="space-y-1">
+          <label htmlFor="sched-ticket" className={label}>
             Ticket
-          </p>
-          <div className="max-h-40 space-y-1 overflow-y-auto">
-            {options.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                aria-pressed={ticket === t.key}
-                onClick={() => setTicket(t.key)}
-                className={`block w-full rounded border px-2 py-1 text-left text-[13px] ${ticket === t.key ? 'border-brand bg-brand/10' : 'border-border'}`}
-              >
-                <span className="font-mono">{t.key}</span> {t.title}
-              </button>
-            ))}
-            {!options.length && <p className="text-[12px] text-text-faint">No open tickets.</p>}
-          </div>
+          </label>
+          {options.length ? (
+            <Dropdown
+              id="sched-ticket"
+              ariaLabel="Ticket"
+              value={ticket}
+              onChange={setTicket}
+              options={[{ value: '', label: 'Pick a ticket', disabled: true }, ...options.map((t) => ({ value: t.key, label: `${t.key} ${t.title}` }))]}
+            />
+          ) : (
+            <p className="text-[12px] text-text-faint">No open tickets.</p>
+          )}
         </div>
         <label className="block space-y-1">
           <span className={label}>What should the agent do</span>
@@ -204,7 +206,14 @@ function NewScheduleDialog({ ws, tickets, onClose }: { ws: string; tickets?: Tic
             ))}
           </div>
         </div>
-        {repeat === 'once' && <DateChips value={date} onChange={setDate} />}
+        {repeat === 'once' && (
+          <div className="space-y-1">
+            <label htmlFor="sched-date" className={label}>
+              Day
+            </label>
+            <DatePicker id="sched-date" value={date} min={today} onChange={setDate} />
+          </div>
+        )}
         {repeat === 'week' && <WeekdayChips value={weekdays} onChange={setWeekdays} />}
         {repeat === 'month' && (
           <div role="group" aria-label="Day of the month" className="flex items-center gap-2 text-[13px]">
@@ -212,8 +221,13 @@ function NewScheduleDialog({ ws, tickets, onClose }: { ws: string; tickets?: Tic
             <Stepper label="day" value={day} min={1} max={31} onChange={setDay} />
           </div>
         )}
-        <TimeChips value={time} onChange={setTime} />
-        <p className="text-[11px] text-text-faint">Time zone {tz}</p>
+        <div className="space-y-1">
+          <label htmlFor="sched-time" className={label}>
+            Time of day
+          </label>
+          <TimePicker id="sched-time" value={time} onChange={setTime} />
+          <p className="text-[11px] text-text-faint">Time zone {tz}</p>
+        </div>
         <p className="text-[13px] font-medium">{summary}</p>
         <p className="text-[12px] text-text-muted">An agent starts by itself each time, with your rights on this ticket, for up to 8 hours. It stops after 30 days.</p>
         <div className="flex justify-end gap-2">

@@ -282,6 +282,9 @@ def serve(
             api.allow_loopback_origin(f"http://{adv}:{web.address[1]}")
             if adv not in ("127.0.0.1", "::1"):
                 api.allow_origin(f"http://127.0.0.1:{web.address[1]}")
+            if bind_all or adv in ("127.0.0.1", "::1"):  # loopback answers: tell switch tickets (FB10)
+                loop_origin = f"http://127.0.0.1:{web.address[1]}"
+                switch.set_loopback_origin(lambda: loop_origin)
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
     stop = stop or threading.Event()
     server = LinkServer.from_keys(

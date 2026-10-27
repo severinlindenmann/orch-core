@@ -23,6 +23,7 @@ import { useViewerRole } from './useViewerRole'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { ReposSection } from './Repos'
 import { RecordsBlock } from './Records'
+import { TrustedBrowsers } from './TrustedBrowsers'
 import { WorkspaceIconFor } from '@/app/workspaceIcon'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { WorkspaceIconPicker } from '../WorkspaceIconPicker'
@@ -96,6 +97,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
         </>}
       </Section>
       <ReposSection workspace={workspace} data={data} onSettled={() => void settings.refetch()} />
+      <TrustedBrowsers />
       <details className="rounded-lg border border-border bg-surface text-[13px]">
         <summary className="cursor-pointer px-4 py-3 font-medium">Advanced</summary>
         <div className="space-y-5 p-4 pt-0">

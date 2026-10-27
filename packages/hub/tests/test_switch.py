@@ -341,3 +341,48 @@ def test_owner_get_names_the_owner_alias_and_nothing_else(w):
     """FB15: the host asks over its own link who the hub names as owner; no argument, no stored origin."""
     r = ops.owner_get(ctx(w, WS, "owner_get", {}))
     assert r == {"user_id": w.ann}
+
+
+def test_a_loopback_browser_gets_the_loopback_origin_only_when_the_hub_says_it_listens_there(w):
+    """FB10: the hub's own knowledge, never a guess. Nothing declared: the hub's own origin, whatever the browser says;
+    a foreign listener on that port is therefore never handed a ticket."""
+    body = {"origin": DASH, "return_to": "/", "kind": "open"}
+    r = ops.switch_ticket(ctx(w, WS, "switch_ticket", body))
+    assert r["url"].startswith(ORIGIN + "/#t=")
+    w.sw.set_loopback_origin(lambda: "http://127.0.0.1:9001")
+    # a link whose peer is not on this computer may claim a loopback browser: it still gets the hub's own origin
+    r = ops.switch_ticket(ctx(w, WS, "switch_ticket", body))
+    assert r["url"].startswith(ORIGIN + "/#t=")
+    assert ops.rail_get(ctx(w, WS, "rail_get", {"origin": DASH}))["hub"]["origin"] == ORIGIN
+    same = ctx(w, WS, "switch_ticket", body)
+    same.same_computer = True
+    r = ops.switch_ticket(same)
+    assert r["url"].startswith("http://127.0.0.1:9001/#t=")
+    far = ops.switch_ticket(ctx(w, WS, "switch_ticket", {**body, "origin": "http://100.64.0.2:7001"}))
+    assert far["url"].startswith(ORIGIN + "/#t=")  # a browser that is not on loopback keeps the hub's own origin
+    same_rail = ctx(w, WS, "rail_get", {"origin": DASH})
+    same_rail.same_computer = True
+    assert ops.rail_get(same_rail)["hub"]["origin"] == "http://127.0.0.1:9001"
+
+
+def test_same_computer_comes_from_the_socket_not_the_peer():
+    from orch_hub.link.tls import TlsConn
+
+    class S:
+        def __init__(self, peer, mine):
+            self.p, self.m = peer, mine
+
+        def getpeername(self):
+            return (self.p, 5)
+
+        def getsockname(self):
+            return (self.m, 6)
+
+    def same(peer, mine):
+        return TlsConn(None, S(peer, mine)).same_computer()
+
+    assert same("127.0.0.1", "127.0.0.1") and same("::1", "::1")
+    assert same("::ffff:127.0.0.1", "::ffff:127.0.0.1")  # a dual-stack socket reports mapped addresses
+    assert same("::ffff:100.64.0.7", "100.64.0.7")
+    assert same("100.64.0.7", "100.64.0.7")  # this computer dialling its own private address
+    assert not same("100.64.0.9", "100.64.0.7")  # another computer

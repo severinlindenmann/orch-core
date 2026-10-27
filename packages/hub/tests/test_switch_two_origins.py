@@ -70,6 +70,11 @@ class Browser:
 
 @pytest.fixture
 def stack(tmp_path):
+    yield from build_stack(tmp_path)
+
+
+def build_stack(tmp_path, static_dir=None):
+    """The hub and the real dashboard on two ports. ``static_dir``: the built single-page app to serve (default: a stub)."""
     w = Web(tmp_path)
     clock = [1_000_000]
     hub_port, dash_port = free_port(), free_port()
@@ -111,7 +116,7 @@ def stack(tmp_path):
     (state / "assets").mkdir(parents=True)
     (state / "index.html").write_text("<html></html>")
     proc = subprocess.Popen(
-        [str(DASH_PY), str(DRIVER), str(dash_port), f"http://127.0.0.1:{bridge.server_address[1]}", WS, str(state)],
+        [str(DASH_PY), str(DRIVER), str(dash_port), f"http://127.0.0.1:{bridge.server_address[1]}", WS, str(state), *([str(static_dir)] if static_dir else [])],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
     )  # fmt: skip
     line = proc.stdout.readline()
@@ -122,7 +127,7 @@ def stack(tmp_path):
     assert s == 200, o
     dash.bearer = o["token"]
     yield types_ns(w=w, clock=clock, hub=Browser(hub_port), dash=dash, dash_port=dash_port, hub_origin=hub_origin,
-                   dash_origin=dash_origin, state=state)  # fmt: skip
+                   dash_origin=dash_origin, state=state, proc=proc)  # fmt: skip
     proc.stdin.close()
     proc.wait(10)
     hub.close()
@@ -164,7 +169,8 @@ def test_hub_to_workspace_lands_signed_in_once(stack):
     assert s == 200 and got["return_to"] == "/w/DEMO/tickets" and got["workspace_id"] == WS
     fresh.bearer = got["token"]
     assert fresh.call("GET", f"/api/w/{WS}/hub/rail")[0] == 200  # signed in
-    assert fresh.call("GET", "/api/host")[0] == 403  # a switch session reaches only its own workspace's routes
+    s, denied = fresh.call("POST", f"/api/w/{WS}/settings", {})  # a switch session reads; it changes nothing
+    assert s == 403 and denied["error"]["code"] == "step_up_required"
     assert fresh.call("GET", f"/api/w/{'c' * 32}/head")[0] == 403
     assert Browser(st.dash_port).call("POST", "/auth/switch", {"t": t})[0] == 401  # one use
 

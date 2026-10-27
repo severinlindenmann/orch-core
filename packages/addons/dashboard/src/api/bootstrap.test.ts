@@ -11,6 +11,9 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
 const TICKET = 'a'.repeat(32) + '.' + 'b'.repeat(32)
 
+vi.mock('./trustedKey', () => ({ enrolBrowser: vi.fn(async () => {}), upgradeSession: vi.fn(async () => null) }))
+import { upgradeSession } from './trustedKey'
+
 describe('hub switch link (H1)', () => {
   it('strips the ticket at once and signs nobody in until the person confirms', async () => {
     history.replaceState(null, '', `/#t=${TICKET}`)
@@ -40,6 +43,15 @@ describe('hub switch link (H1)', () => {
     expect(sessionStorage.getItem('orch-session')).toBe('demo-not-a-real-token')
     expect(await confirmSwitch(fetcher)).toBeUndefined()
     expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+  it('a browser that signed in here before turns the switch into a full session with no prompt', async () => {
+    history.replaceState(null, '', `/#t=${TICKET}`)
+    await bootstrap(vi.fn())
+    vi.mocked(upgradeSession).mockResolvedValueOnce('full-session-token')
+    const fetcher = vi.fn(async () => Response.json({ token: 'switch-token', expires_at: 'x', return_to: '/w/a', workspace_id: 'w' })) as unknown as typeof fetch
+    expect(await confirmSwitch(fetcher)).toBe('/w/a')
+    expect(upgradeSession).toHaveBeenCalledWith('switch-token', fetcher)
+    expect(sessionStorage.getItem('orch-session')).toBe('full-session-token')
   })
   it('a refused ticket signs nobody in; a sign-out ticket ends this tab\'s session', async () => {
     history.replaceState(null, '', `/#t=${TICKET}`)

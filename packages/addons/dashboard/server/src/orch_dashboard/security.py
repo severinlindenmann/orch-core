@@ -2,7 +2,7 @@ import contextlib
 import urllib.parse
 
 from . import widget_frame
-from .errors import response
+from .errors import response, step_up_response
 from .policy import ListenerPolicy
 from .routegate import ALLOWED, PRE_LOGIN, STEP_UP, TERMINALS, RouteGate
 from .testrun import UPLOAD_LIMIT
@@ -30,7 +30,12 @@ SWITCH_GLOBAL = frozenset(
         ("GET", "/api/me"),
         ("GET", "/api/workspaces"),
         ("GET", "/api/events"),  # only with ?ws=<bound>
+        ("GET", "/api/host"),  # the closed dev facts of the host (Settings › General); read only
         ("POST", "/auth/logout"),
+        # run 12: the way UP. A switch session proves it holds a browser key that a real local sign-in enrolled
+        # (`Auth.upgrade`); nothing else is opened by these two.
+        ("POST", "/api/auth/challenge"),
+        ("POST", "/api/auth/upgrade"),
     }
 )
 
@@ -172,7 +177,7 @@ class Security:
             scope.setdefault("state", {})["token"] = token
             refusal = self.switch_refused(token, path, method, scope)
             if refusal:
-                return await reject("remote.refused", 403)
+                return await step_up_response(policy.name != "loopback")(scope, receive, secure_send)
         if method not in ("GET", "HEAD", "OPTIONS"):
             if origins != [origin]:
                 return await reject("origin.bad", 403)

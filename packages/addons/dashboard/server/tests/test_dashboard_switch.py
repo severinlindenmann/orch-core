@@ -191,7 +191,7 @@ def test_every_route_a_switch_session_may_not_use_is_closed(client, link):
     assert seen > 50
     assert not switch_allows("GET", "/api/w/" + "c" * 32 + "/head", bound)
     assert not switch_allows("GET", "/api/events", bound, {"ws": ["c" * 32]})
-    for closed in ("/api/host", "/api/testrun/x", "/auth/passkey/options", "/api/passkeys"):
+    for closed in ("/api/trusted", "/api/testrun/x", "/auth/passkey/options", "/api/passkeys"):
         assert not switch_allows("GET", closed, bound) and not switch_allows("POST", closed, bound)
 
 

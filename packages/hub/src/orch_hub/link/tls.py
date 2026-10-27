@@ -49,6 +49,19 @@ class TlsConn:
         # link's thread while this link's own thread reads, so each single SSL call (never a wait) holds this lock.
         self._io = threading.Lock()
 
+    def same_computer(self) -> bool:
+        """True when the peer is on this computer, as the socket itself shows: a loopback peer, or one whose address is
+        the very address it dialled (a computer reaching its own private IP). Never from anything the peer sent."""
+        try:
+            import ipaddress
+
+            peer = ipaddress.ip_address(self._s.getpeername()[0].split("%")[0])
+            mine = ipaddress.ip_address(self._s.getsockname()[0].split("%")[0])
+        except OSError, ValueError, IndexError:
+            return False
+        peer, mine = getattr(peer, "ipv4_mapped", None) or peer, getattr(mine, "ipv4_mapped", None) or mine
+        return peer.is_loopback or peer == mine
+
     def _wait(self, write: bool, deadline: float) -> None:
         while True:
             if self._stop is not None and self._stop.is_set():

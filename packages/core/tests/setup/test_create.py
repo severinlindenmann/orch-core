@@ -414,7 +414,9 @@ def test_item5_a_custody_refusal_shows_the_reason_and_the_fix(tmp):
     ports = FakePorts()
 
     def refuse(wid):
-        raise CustodyError("/h/.config/orch/person is writable by others (mode 770); run: chmod 700 /h/.config/orch/person")
+        raise CustodyError(
+            "/h/.config/orch/person is writable by others (mode 770); run: chmod 700 /h/.config/orch/person"
+        )
 
     ports.convenience_on = refuse
     f, ports, p, _ = run_ok(tmp, CLICK, ports=ports)

@@ -796,7 +796,7 @@ def test_a_rerun_after_a_failed_genesis_reuses_the_half_made_workspace(
 
     monkeypatch.setattr(wi, "_signed_genesis", flaky)
     with lab.host():
-        with pytest.raises(Exception):
+        with pytest.raises(Exception):  # noqa: B017
             create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "name": "Severin", "host": True})
         res = create_hosted(ctx_for(root, lab.state), {"prefix": "DEMO", "name": "Severin", "host": True})
         assert calls[0] == calls[1] == res.data["workspace_id"]

@@ -194,7 +194,7 @@ class TimerManager:
             )
         changed = False
         if self.plan.state is not None:
-            # launchd/systemd open the log inside <state>/person before the program runs: if it is missing they create it
+            # launchd opens the log inside <state>/person before the program runs and creates it if missing
             # loose (launchd: 0744), and custody then refuses the whole person directory
             from orch.privdir import make_private_dir
 

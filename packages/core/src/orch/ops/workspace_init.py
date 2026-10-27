@@ -421,7 +421,11 @@ def _pending_load(sd: Path, root: Path) -> tuple[str, bytes] | None:
     try:
         wid = json.loads(_pending_path(sd).read_text()).get(str(root))
         keys = Path(sd) / "hosts" / wid / "keys"
-        if not isinstance(wid, str) or not _WID.fullmatch(wid) or not (Path(sd) / "hosts" / wid / "wsk_create.json").is_file():
+        if (
+            not isinstance(wid, str)
+            or not _WID.fullmatch(wid)
+            or not (Path(sd) / "hosts" / wid / "wsk_create.json").is_file()
+        ):
             return None
         return wid, FileBackend(keys).public_key("wsk")
     except Exception:  # noqa: BLE001 - nothing usable: a fresh key is made

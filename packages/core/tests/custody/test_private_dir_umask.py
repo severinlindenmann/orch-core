@@ -60,8 +60,6 @@ def test_custody_refuses_and_names_the_fix_when_others_can_write(tmp_path):
         secure_dir(root, ("ws",), create=True)
     assert _mode(root) == 0o770  # untouched
 
-    root.chmod(0o702)
-    sub = root
     root.chmod(0o700)
     (root / "ws").mkdir()
     (root / "ws").chmod(0o757)

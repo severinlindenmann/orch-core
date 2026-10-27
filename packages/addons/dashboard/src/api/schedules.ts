@@ -18,6 +18,13 @@ export interface ScheduleRule {
   date?: string
 }
 
+export interface ScheduleOutcome {
+  /** The occurrence it was due, ISO UTC. */
+  at: string
+  outcome: 'ran' | 'failed' | 'did_not_run'
+  reason: string | null
+}
+
 /** A row as the dashboard server sends it (`GET /api/w/{ws}/schedules`, server/schedules.py). */
 export interface ScheduleRow {
   id: string
@@ -26,12 +33,16 @@ export interface ScheduleRow {
   title: string | null
   rule: ScheduleRule
   ends: string | null
-  /** When it runs next, ISO UTC (null for one that is over). */
-  next_run: string | null
+  /** When it runs next, ISO UTC; null for one that is over. Absent only from a host that does not say. */
+  next_run?: string | null
+  /** The latest settled run: when it was due, how it ended, and (for a skipped one) why, from core's closed list. */
+  last_outcome?: ScheduleOutcome | null
   brief: string
   label: string | null
   /** Hours each run may take (1..8); null when the server could not read it. */
   run_hours: number | null
+  /** The longest a run really lasts: `run_hours` capped by the setter's grant_hours. */
+  max_run_hours?: number | null
   state: ScheduleState
   mine: boolean
   /** The setter or an owner (the model's rule). */
@@ -43,7 +54,26 @@ export interface ScheduleList {
   available: boolean
   role: string | null
   can: { add: boolean; cancel: boolean }
+  /** The viewer's own grant_hours cap on a run, when the server knows it (from their schedules); else null. */
+  grant_hours_cap?: number | null
   rows: ScheduleRow[]
+}
+
+/** The line under a row for a run that was skipped, in plain words; null when the last run was not skipped. */
+export function skippedText(last: ScheduleOutcome | null | undefined): string | null {
+  if (last?.outcome !== 'did_not_run') return null
+  const why: Record<string, string> = {
+    busy: 'you had work running on this ticket',
+    claimed_by_other: 'someone else was working on this ticket',
+    access_lost: 'you no longer have access to this ticket',
+    addon_disabled: 'Schedules was turned off',
+    role_lost: 'your role no longer lets you run agents',
+    device_lost: 'your device was no longer trusted',
+    ticket_closed: 'the ticket was closed',
+    missed: 'it could not start in time',
+  }
+  const reason = last.reason ? why[last.reason] : undefined
+  return typeof reason === 'string' ? `Skipped last time: ${reason}.` : 'Skipped last time.'
 }
 
 export const scheduleKey = (ws: string) => ['schedules', ws] as const

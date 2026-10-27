@@ -42,22 +42,24 @@ def first_allowed(ws, rec):
     return max(ts(rec.starts), ts(rec.set_at) + caps_of(ws).min_lead_s)
 
 
-def run_grant_live(ws, grant_id, now):
-    """A live grant behind a claim: any grant (a person's ordinary grant or one derived by a firing) that is neither
-    revoked, ended nor expired."""
-    return grant_id in ws.grants and not claims.grant_ended(ws, grant_id, now)
+def grant_hours_cap(ws, person):
+    """The longest a firing's run grant may last for this setter: a member's workspace ``grant_hours`` (an owner or
+    maintainer has none), never more than the run ceiling FU_RUN_HOURS."""
+    return min(
+        fu.FU_RUN_HOURS, ws.settings["grant_hours"] if identity.member_role(ws, person) == "member" else fu.FU_RUN_HOURS
+    )
 
 
 def claim_block(core, t, rec, now):
-    """Who holds the ticket's live claim, as a firing sees it: another person (`claimed_by_other`), the setter's
-    session under any live grant (`busy`: the ledger cannot tell a running session from an idle one, so it never
-    releases it), or nobody that keeps the firing from releasing a lapsed claim (None)."""
+    """Who holds the ticket's live claim, as a firing sees it: another person (`claimed_by_other`), the setter
+    (`busy`, under any live, non-lapsed claim, with or without a live grant: the ledger cannot tell a running session
+    from an idle one, so it never releases it), or nobody that keeps the firing from releasing a lapsed claim (None)."""
     c = t.claim
     if c is None or claims.lapse_reason(core.ws, t, now) is not None:
         return None
     if identity.canonical(core.ws, c.for_person) != rec.person:
         return "claimed_by_other"
-    return "busy" if run_grant_live(core.ws, c.grant, now) else None
+    return "busy"
 
 
 def blocked(core, t, rec, now):
@@ -164,11 +166,7 @@ def fired_event(core, t, e):
         return denied("concurrent_cap")
     if e["grant"] in core.ws.grants:
         return Refusal(Code.GRANT_EXISTS, e["grant"])
-    hours = min(
-        rec.run_hours,
-        fu.FU_RUN_HOURS,
-        core.ws.settings["grant_hours"] if identity.member_role(core.ws, rec.person) == "member" else fu.FU_RUN_HOURS,
-    )
+    hours = min(rec.run_hours, grant_hours_cap(core.ws, rec.person))
     parent = fu.GrantTerms(rec.set_event, rec.person, t.uid, "agent", now, min(ts(rec.ends), now + hours * 3600), None)
     try:
         derived = fu.derive_grant(

@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ScheduleRow } from '@/api/schedules'
 import MySchedules, { nextRunText } from './MySchedules'
 
-const h = vi.hoisted(() => ({ signed: [] as unknown[], show: vi.fn(), rows: [] as unknown[] }))
+const h = vi.hoisted(() => ({ signed: [] as unknown[], show: vi.fn(), rows: [] as unknown[], cap: undefined as number | null | undefined }))
 
 vi.mock('@/components/sign/SignPopover', () => ({
   SignPopover: (p: { action: unknown; title: string; onSettled?: (phase: string) => void }) => (
@@ -24,14 +24,13 @@ vi.mock('@tanstack/react-router', () => ({ Link: (p: { children: React.ReactNode
 vi.mock('@/api/client', () => ({ api: { listTickets: vi.fn(async () => []) } }))
 vi.mock('@/api/schedules', async (orig) => ({
   ...(await orig<typeof import('@/api/schedules')>()),
-  useSchedules: () => ({ data: { available: true, role: 'member', can: { add: true, cancel: true }, rows: h.rows }, isLoading: false }),
+  useSchedules: () => ({ data: { available: true, role: 'member', can: { add: true, cancel: true }, grant_hours_cap: h.cap, rows: h.rows }, isLoading: false }),
 }))
 
 const row = (over: Partial<ScheduleRow> & Pick<ScheduleRow, 'id' | 'rule'>): ScheduleRow => ({
   ticket: 'DEMO-1',
   title: 'Import',
   ends: '2026-11-29T09:00:00Z',
-  next_run: null,
   brief: 'Check the import.',
   label: null,
   run_hours: 3,
@@ -58,6 +57,7 @@ beforeEach(() => {
   h.signed.length = 0
   h.show.mockClear()
   h.rows = [WEEKLY, ONCE, OTHER, GONE]
+  h.cap = undefined
 })
 
 describe('MySchedules', () => {
@@ -77,6 +77,41 @@ describe('MySchedules', () => {
   it('reads the next run on the rule clock', () => {
     expect(nextRunText(WEEKLY, new Date('2026-10-30T12:00:00Z'))).toBe('Next run Mon 2 Nov, 09:00')
     expect(nextRunText(GONE, new Date('2026-10-30T12:00:00Z'))).toBeNull()
+  })
+
+  it('shows the server next run on the rule clock, and nothing when the server says it is over', () => {
+    h.rows = [
+      row({ id: 's6', next_run: '2026-11-03T14:30:00Z', rule: { every: 'day', at: '09:00', tz: 'Europe/Berlin' } }),
+      row({ id: 's7', next_run: null, rule: { every: 'day', at: '09:00', tz: 'UTC' } }),
+    ]
+    view()
+    expect(screen.getByText('Next run Tue 3 Nov, 15:30')).toBeTruthy()
+    expect(screen.getAllByText(/Next run/)).toHaveLength(1)
+  })
+
+  it('says in plain words why the last run was skipped', () => {
+    const skipped = (id: string, reason: string | null) => row({ id, next_run: null, rule: { every: 'day', at: '08:00', tz: 'UTC' }, last_outcome: { at: '2026-11-02T08:00:00Z', outcome: 'did_not_run', reason } })
+    h.rows = [skipped('a', 'busy'), skipped('b', 'claimed_by_other'), skipped('c', 'access_lost'), skipped('d', 'addon_disabled'), skipped('e', 'something_new'), skipped('f', null)]
+    h.rows.push(row({ id: 'g', next_run: null, rule: { every: 'day', at: '08:00', tz: 'UTC' }, last_outcome: { at: '2026-11-02T08:00:00Z', outcome: 'ran', reason: null } }))
+    view()
+    expect(screen.getByText('Skipped last time: you had work running on this ticket.')).toBeTruthy()
+    expect(screen.getByText('Skipped last time: someone else was working on this ticket.')).toBeTruthy()
+    expect(screen.getByText('Skipped last time: you no longer have access to this ticket.')).toBeTruthy()
+    expect(screen.getByText('Skipped last time: Schedules was turned off.')).toBeTruthy()
+    expect(screen.getAllByText('Skipped last time.')).toHaveLength(2)
+    expect(screen.getAllByText(/Skipped last time/)).toHaveLength(6)
+  })
+
+  it('names the real number of hours in the New schedule dialog', () => {
+    const copy = () => screen.getByText(/An agent starts by itself each time/).textContent
+    const { unmount } = view()
+    fireEvent.click(screen.getByRole('button', { name: 'New schedule' }))
+    expect(copy()).toContain('for up to 8 hours.')
+    unmount()
+    h.cap = 3
+    view()
+    fireEvent.click(screen.getByRole('button', { name: 'New schedule' }))
+    expect(copy()).toContain('for up to 3 hours.')
   })
 
   it('builds the add action for a weekly schedule with two weekdays', async () => {

@@ -656,3 +656,20 @@ def test_a_current_grant_changed_between_hello_and_serving_is_dropped(ready):
     w.h.host.services[w.wid] = service
     w.h.run(_served(hub, w.wid))
     wait_for(lambda: w.runner.grants.report() == [])
+
+
+def test_a_failing_settle_at_bind_never_breaks_serving(ready, caplog, monkeypatch):
+    w = ready
+    host = w.h.host
+
+    def boom(_wid):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(host.runners.grants, "workspace_served", boom)
+
+    async def go():
+        host._settle_grants(w.wid)  # an unavailable workspace is bound too: must not raise
+
+    with caplog.at_level(logging.WARNING):
+        w.h.run(go())
+    assert "runner grant settle failed: RuntimeError" in caplog.text

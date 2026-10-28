@@ -502,6 +502,17 @@ class Host:
             self._serving.discard(wid)
             raise
 
+    def _settle_grants(self, wid: str) -> None:
+        """Settle the runner's reported grants for a workspace just bound; a failure never leaves it half-served."""
+        try:
+            settle = self.runners.grants.workspace_served(wid)
+            if settle is not None:
+                task = asyncio.get_running_loop().create_task(settle)
+                self._bg.add(task)
+                task.add_done_callback(self._bg_done)
+        except Exception as exc:  # noqa: BLE001 - the next runner hello settles it
+            LOG.warning("runner grant settle failed: %s", type(exc).__name__)
+
     def _bg_done(self, task: asyncio.Task[Any]) -> None:
         self._bg.discard(task)
         if not task.cancelled() and task.exception() is not None:
@@ -524,11 +535,7 @@ class Host:
 
             service.dev_ok = await service.call(lambda: dev_gate(service) is not None)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
-        settle = self.runners.grants.workspace_served(entry.workspace_id)  # synchronous: before any await
-        if settle is not None:
-            task = asyncio.get_running_loop().create_task(settle)
-            self._bg.add(task)
-            task.add_done_callback(self._bg_done)
+        self._settle_grants(entry.workspace_id)  # synchronous: before any await
         await asyncio.to_thread(served_marker, entry.root, True, self.state_dir)
         try:
             if self.share_error is not None:

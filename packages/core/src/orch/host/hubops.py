@@ -1114,7 +1114,13 @@ def _stop_peers(service: Any) -> None:
 
 
 def _snapshot_link(
-    service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool, *, send_profile: bool = True,
+    service: Any,
+    state: Any,
+    wsk_pub: bytes,
+    sign: Any,
+    dev: bool,
+    *,
+    send_profile: bool = True,
     timeout: float | None = None,
 ) -> tuple[Any, Any]:
     """``(HubLink, transport)`` for the bound hub of ``state`` (the caller closes the transport)."""

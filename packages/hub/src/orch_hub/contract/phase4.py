@@ -133,6 +133,12 @@ def render_text(s: str) -> str:
     return "".join(c if c == "\n" or _char_ok(c) else f"<U+{ord(c):04X}>" for c in s)
 
 
+def strip_text(s: str) -> str:
+    """Display-only text from another workspace's profile: controls, bidi, zero-width and other refused characters
+    are removed (render_text keeps showing them escaped for approvals; a profile is never signed, so it is cleaned)."""
+    return "".join(c for c in s if c != "\n" and _char_ok(c))
+
+
 def _re(rx: re.Pattern[str]) -> Any:
     return lambda x: type(x) is str and rx.fullmatch(x) is not None
 

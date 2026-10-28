@@ -130,7 +130,14 @@ def norm(res: dict, ref: str) -> str:
 def args_for(op: str, ref: str) -> dict:
     import orch.ops as ops
 
-    if op in {"whoami", "host.status", "hub.status", "share.rules", "share.preview"}:  # share.*: owner-only (C6)
+    if op in {
+        "whoami",
+        "host.status",
+        "hub.status",
+        "hub.directory",
+        "share.rules",
+        "share.preview",
+    }:  # share.*: owner-only (C6)
         return {}
     if op == "hub.link":  # run-9: reads a connect link; nothing to do with tickets (the port refuses at once)
         return {"link": "http://127.0.0.1:1/c#h1." + "a" * 32 + ".x"}

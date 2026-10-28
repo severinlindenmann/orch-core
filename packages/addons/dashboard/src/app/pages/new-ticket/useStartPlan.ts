@@ -4,12 +4,11 @@ import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AGENT_MODES, HARNESSES, agentsApi, runnerQuery, type AgentMode, type Harness } from '@/api/agents'
 import { hasFeature, handoffMode } from '@/api/features'
-import { GRANT_MAX_HOURS, grantDefaultHours, runnerLengths } from '@/api/grants'
+import { GRANT_MAX_HOURS, grantDefaultHours, runnerLengths, reusableAccess } from '@/api/grants'
 import { routingQueries } from '@/api/modelRouting'
 import { queries } from '@/api/queries'
 import type { Workspace } from '@/api/types'
-import { nowMs } from '@/lib/time'
-import { DEFAULT_CHOICE, shownModel, usableGrant, type AgentChoiceValue, type Reviewed } from './startAfterCreate'
+import { DEFAULT_CHOICE, shownModel, type AgentChoiceValue, type Reviewed } from './startAfterCreate'
 
 export const agentPrefKey = (person: string, ws: string) => `orch.dashboard.new-ticket.agent.${person}.${ws}`
 
@@ -79,16 +78,16 @@ export function useStartPlan(workspace: Workspace, person: string) {
     return () => clearInterval(t)
   }, [feature])
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const grant = useMemo(() => usableGrant(info, nowMs()), [info, tick])
-  const grantNow = useCallback(() => usableGrant(info, nowMs()), [info])
+  const grant = useMemo(() => reusableAccess(info), [info, tick])
+  const grantNow = useCallback(() => reusableAccess(info), [info])
   const needsGrant = available && !grant
 
   // Access length: the workspace maximum caps it; 1, 3 or 7 days (a workspace that allows less offers its own maximum).
   const hostCap = settings.data?.grant_hours
   const cap = typeof hostCap === 'number' ? Math.min(GRANT_MAX_HOURS, Math.max(1, Math.floor(hostCap))) : grantDefaultHours(workspace)
   const all = runnerLengths(cap)
-  const lengths = all.filter(([h]) => h >= 24).length ? all.filter(([h]) => h >= 24) : all
-  const [hoursChoice, setHours] = useState(24)
+  const lengths = all
+  const [hoursChoice, setHours] = useState(8)
   const hours = lengths.some(([h]) => h === hoursChoice) ? hoursChoice : (lengths[0]?.[0] ?? 24)
 
   const choice: AgentChoiceValue = { harness: pref.harness, mode: pref.mode, model: pref.model }

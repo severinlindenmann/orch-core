@@ -106,3 +106,9 @@ export function runnerLengths(cap: number, remainingMs = 0): Array<readonly [num
   const offered = within.length > 0 ? within : [[cap, `${cap} ${cap === 1 ? 'hour' : 'hours'}`] as const]
   return offered.filter(([h]) => h * 3_600_000 >= remainingMs)
 }
+
+/** D2: reuse only valid access with at least 15 minutes remaining, by host time. */
+export function reusableAccess(runner: import('./runs').RunnerInfo | null | undefined) {
+  if (!runner?.now || !runner.grant || runner.grant.startable !== true) return null
+  return Date.parse(runner.grant.until) - Date.parse(runner.now) >= 900_000 ? runner.grant : null
+}

@@ -669,3 +669,7 @@ Tests were added for the lead to run; this task does not run Vitest or pytest.
 ## Try the hub pages (V3 A7)
 
 Open `/w/DEMO/settings/hub?hub=selective` (also `standalone`, `full`, `offline`, `nottold`): the chip in the top bar, the three Hub pages, "Choose what to share" with its live preview, the switch to full access (type "full access"), Leave, and the Terminal step with its copy box. Tickets shows the Hub column in selective mode only. Nothing is signed in the page.
+
+### D2 review (2026-10-28)
+
+Create a ticket with “Create and start”. With missing/short access, verify the signer headline, ticket fields, eight-hour grant terms and inline deposit risk; waiting alone must never sign, and the second press must wait one second. With valid access of at least 15 minutes, verify no grant step or access copy outside “i”. Interrupt signing after creation: the draft remains and start is refused. Retry a lost launch response: the same request returns the same run.

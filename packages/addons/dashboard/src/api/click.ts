@@ -81,6 +81,8 @@ export interface ClickView {
    * (`contractViewOk` false) never runs the one-press arm: it keeps the press-after-1-s rule.
    */
   risk_lines?: string[]
+  /** Signer-owned informational lines, shown only behind i. */
+  info_lines?: string[]
   content?: import('./signing').SignContent
   /** The generic convenience-signing note (unchanged, CLICK_RISK). */
   risk: string

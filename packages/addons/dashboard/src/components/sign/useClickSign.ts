@@ -89,6 +89,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const [fresh, setFresh] = useState(false)
   const live = useRef({ phase: 'idle' as ClickPhase, prepared: null as ClickPrepared | null, ws: undefined as string | undefined })
   const attempt = useRef<{ sig: string; retry: number; lost: boolean } | null>(null)
+  const sequenceStart = useRef(false)
   const busy = useRef(false)
   const mounted = useRef(true)
   const settled = useRef(onSettled)
@@ -106,6 +107,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const fail = useCallback(
     (e: unknown, keep: ClickPhase = 'failed') => {
       const p = clickProblem(e, leadNow.current)
+      if (sequenceStart.current && e instanceof ApiError && e.reason === 'resumable') p.next = 'retry'
       setError(e)
       setProblem(p)
       // A refusal to sign that can simply be tried again leaves the View where it is; the request stays open.
@@ -132,6 +134,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
 
   const start = useCallback(
     async (action: ClickAction, retryFloor = 0) => {
+      sequenceStart.current = action.action === 'new_sequence' && !!action.launch
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
       busy.current = true
       setProblem(null)
@@ -327,6 +330,11 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const again = useCallback(
     async (action: ClickAction) => {
       const open = live.current.prepared
+      if (open && error instanceof ApiError && error.reason === 'resumable') {
+        setProblem(null)
+        await review()
+        return
+      }
       if (open && live.current.phase !== 'done' && live.current.phase !== 'settling') {
         await cancel() // the old request must not keep its quota slot
         reset()
@@ -337,7 +345,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       }
       await start(action)
     },
-    [cancel, reset, start],
+    [cancel, reset, start, error, review],
   )
 
   // Leaving the screen with a request open cancels it. Deferred one tick so React StrictMode's simulated unmount does not.

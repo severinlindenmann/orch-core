@@ -567,7 +567,16 @@ def test_run_sub_then_list_with_rev_and_runner_state(w, rstate, tmp_path):
     assert set(sub) == {"sub", "rev"}
     listed = ok(c.call("run.list", {}))["data"]
     assert listed["runs"] == [] and listed["next_page"] is None
-    assert listed["runner"] == {"connected": False, "enabled": False, "terminals": False, "gen": None, "grant": None}
+    from orch.host.runnergrants import _iso
+
+    assert listed["runner"] == {
+        "connected": False,
+        "enabled": False,
+        "terminals": False,
+        "gen": None,
+        "grant": None,
+        "now": _iso(w.lab.ws.clock[0]),
+    }
     enablement.set_enabled(Path(w.lab.state), w.wid, True, UID, terminals=False, text="t")
     r = Runner(w, rstate)
     try:
@@ -583,7 +592,14 @@ def test_run_sub_then_list_with_rev_and_runner_state(w, rstate, tmp_path):
         assert run_item["rev"] == revs[-1] and run_item["exit"] is None and run_item["as_person"] is False
         listed = ok(c.call("run.list", {}))["data"]
         assert [x["run"] for x in listed["runs"]] == [run] and "out_bytes" in listed["runs"][0]
-        assert listed["runner"] == {"connected": True, "enabled": True, "terminals": False, "gen": GEN1, "grant": None}
+        assert listed["runner"] == {
+            "connected": True,
+            "enabled": True,
+            "terminals": False,
+            "gen": GEN1,
+            "grant": None,
+            "now": _iso(w.lab.ws.clock[0]),
+        }
         assert listed["runs"][0]["rev"] >= revs[-1]
         assert ok(c.call("run.list", {"since": listed["runs"][0]["rev"]}))["data"]["runs"] == []
         w.h.run(hub.stop(run, 500))

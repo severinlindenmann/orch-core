@@ -46,7 +46,7 @@ beforeEach(() => {
   vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: REQ, state: 'cancelled' })
   s = {
     preview: vi.spyOn(agentsApi, 'preview').mockRejectedValue(new Error('must not be asked')),
-    start: vi.spyOn(agentsApi, 'start').mockRejectedValue(new Error('must not start')),
+    start: vi.spyOn(agentsApi, 'startAfter').mockRejectedValue(new Error('must not start')),
     sign: vi.spyOn(api, 'signClick'),
     state: vi.spyOn(api, 'stateClick'),
   }
@@ -127,7 +127,8 @@ describe('the real click path', () => {
     const { r } = await signed((dialog) => expect(within(dialog).getByTestId('not-signed-notice')).toBeInTheDocument()) // the review shows the notice in full
     expect(notices).toHaveBeenCalled()
     await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
-    expect(s.start.mock.calls[0][1]).toMatchObject({ ticket: 'DEMO-0044' })
+    expect(s.start.mock.calls[0][1]).toBe(REQ)
+    expect(s.preview).not.toHaveBeenCalled()
     await waitFor(() => expect(ack).toHaveBeenCalledWith(expect.any(String), 'start_agent'), T)
     await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
     const mark = markOf(mockStore.workspaces[0].id, 'DEMO-0044')
@@ -165,12 +166,61 @@ describe('the real click path', () => {
     expect(ack).not.toHaveBeenCalled()
   })
 
-  it('signed and the hand-over confirmed: the start goes on to preview for the ticket\'s own key', async () => {
+  it('signed and the hand-over confirmed: the start names the reviewed request', async () => {
     s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: 'DEMO-0044', seq: 9, deposit: 'confirmed', deposit_id: REQ.slice(3), grant: 'gr_01M4Y46B485AXD4CBEJZ15Z1TV' })
-    s.preview.mockRejectedValue(new ApiError(503, { code: 'host.unavailable', message: 'Host not available', retryable: true }))
+    s.start.mockRejectedValue(new ApiError(503, { code: 'host.unavailable', message: 'Host not available', retryable: true }))
     await signed()
-    await waitFor(() => expect(s.preview).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ ticket: 'DEMO-0044' })), T)
+    await waitFor(() => expect(s.start).toHaveBeenCalledWith(expect.any(String), REQ), T)
     await failedOf()
-    expect(s.start).not.toHaveBeenCalled()
+    expect(s.start).toHaveBeenCalledTimes(1)
   })
+})
+
+it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant needs the second press', async (minutes) => {
+  const { DEPOSIT_RISK } = await import('@/api/click')
+  vi.spyOn(gesture, 'takeTrustedPress').mockReturnValueOnce(true)
+  const shown = view()
+  shown.view.headline = 'Create ticket and start agent'
+  const needsGrant = minutes === null || minutes < 15
+  if (minutes !== null) {
+    const now = Date.now()
+    vi.mocked(agentsApi.runner).mockResolvedValue({ runner: {
+      connected: true, enabled: true, terminals: false, now: new Date(now).toISOString(),
+      grant: { id: 'gr_demo', until: new Date(now + minutes * 60_000).toISOString(), scope: 'workable', startable: true },
+    } })
+  }
+  shown.view.risk_lines = needsGrant ? [DEPOSIT_RISK, 'Agents can run as you for 8 hours'] : []
+  vi.mocked(api.viewClick).mockResolvedValue(shown)
+  s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: 'DEMO-0044', deposit: 'confirmed' })
+  s.start.mockResolvedValue({ run: { run: 'r_test' } as never })
+  const r = renderApp('/board')
+  await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
+  const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
+  await r.user.type(await within(sheet).findByLabelText('Title'), 'Export CSV')
+  await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'A file is exported')
+  await r.user.click(await within(sheet).findByRole('button', { name: 'Create and start' }, T))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  expect(api.prepareClick).toHaveBeenCalledTimes(1)
+  const action = vi.mocked(api.prepareClick).mock.calls[0][1]
+  expect(action).toMatchObject({ action: 'new_sequence', launch: { harness: expect.any(String), mode: expect.any(String) } })
+  if (needsGrant) {
+    expect(action).toHaveProperty('agent.hours', 8)
+    expect(panel).toHaveTextContent('Agents can run as you for 8 hours')
+    const button = screen.getByRole('button', { name: 'Sign and start agent' })
+    expect(button).toBeDisabled()
+    fireEvent.click(button)
+    expect(s.sign).not.toHaveBeenCalled()
+    expect(s.start).not.toHaveBeenCalled()
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    expect(s.sign).not.toHaveBeenCalled()
+    expect(s.start).not.toHaveBeenCalled()
+    fireEvent.pointerDown(button)
+    fireEvent.click(button)
+  } else {
+    expect(action).not.toHaveProperty('agent')
+    expect(panel).not.toHaveTextContent(DEPOSIT_RISK)
+  }
+  await waitFor(() => expect(s.sign).toHaveBeenCalledTimes(1), T)
+  await waitFor(() => expect(s.start).toHaveBeenCalledWith(expect.any(String), REQ), T)
+  expect(api.viewClick).toHaveBeenCalledTimes(1)
 })

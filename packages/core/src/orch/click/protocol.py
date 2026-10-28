@@ -380,7 +380,7 @@ Events = list[Mapping[str, Any]]
 def _hours_line(events: Events) -> list[str]:
     from orch.host.signcontent import span
 
-    hours = events[0].get("hours") if events else None
+    hours = next((e.get("hours") for e in events if e.get("type") == "grant.issued"), None)
     if type(hours) is not int or hours < 1:
         return []
     return [GRANT_LENGTH_LINE.format(span=span(hours))]
@@ -389,7 +389,12 @@ def _hours_line(events: Events) -> list[str]:
 def _grant_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
     # deposit (the runner grant, "agent access" handed to the runner) or reveal (the secret shown once in the page);
     # any other grant never reaches a View (terminal_only), and is still marked here
-    return [DEPOSIT_RISK if deposit else REVEAL_RISK, *_hours_line(events)]
+    lines = [DEPOSIT_RISK if deposit else REVEAL_RISK, *_hours_line(events)]
+    if deposit:
+        hours = next((e.get("hours") for e in events if e.get("type") == "grant.issued"), None)
+        if type(hours) is int and hours > 0:
+            lines.append(f"Agents can run as you for {hours} {'hour' if hours == 1 else 'hours'}")
+    return lines
 
 
 def _addon_grant_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
@@ -526,10 +531,13 @@ def risk_lines(op: str, events: Events | None = None, *, deposit: bool = False, 
     """The View's ``risk_lines`` for ``op`` over its signed ``events``: ``[]`` only for :data:`ONE_PRESS_OPS`; for any
     other op its builder's lines (:data:`RISK_BUILDERS`), or :data:`NOT_DAILY_RISK` when there is no builder or it
     finds nothing (fail closed: never empty)."""
+    good = [e for e in events or [] if isinstance(e, Mapping)]
+    # A composite headed by a daily op never hides authority granted by a later event.
+    if op != "grant" and any(e.get("type") == "grant.issued" for e in good):
+        return _grant_risk(good, deposit, reveal)
     if op in ONE_PRESS_OPS:
         return []
     build = RISK_BUILDERS.get(op)
-    good = [e for e in events or [] if isinstance(e, Mapping)]
     lines = [str(line) for line in build(good, deposit, reveal)] if build is not None else []
     return lines or [NOT_DAILY_RISK]
 

@@ -556,3 +556,16 @@ async def complete(call: Call, checked: dict[str, Any]) -> dict[str, Any]:
         return redactor.obj(ok_result(await grants.deposit(wid, plan, secret)))
     except HostError as exc:
         raise redactor.error(exc) from None
+
+
+def reusable(service: Any, person: str) -> dict[str, Any] | None:
+    """D2 renewal threshold, evaluated with the host clock and current authority."""
+    hub = getattr(service, "runners", None)
+    cur = hub.grants.current(service.workspace_id, person) if hub else None
+    if (
+        cur is None
+        or hub.grants.launch_reason(service, person, cur) is not None
+        or hub.grants.valid(service, person, cur["grant"], left=MIN_LEFT) is not None
+    ):
+        return None
+    return cur

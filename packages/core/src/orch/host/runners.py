@@ -996,6 +996,8 @@ class RunnerHub:
                 rec[extra] = fields[extra]
         if audit.get("spec"):  # an agent start: its idem names exactly this spec (a retry with another is a conflict)
             rec["spec"] = audit["spec"]
+        if audit.get("after_request"):
+            rec["after_request"] = audit["after_request"]
         saved = await self._save(rec)
         if audit:
             self._audit("run.intent", run=run, workspace_id=workspace_id, person=fields.get("person"), **audit)

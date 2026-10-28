@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { queries } from '@/api/queries'
 import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
-import { clickEligible, clickReady } from '@/api/click'
+import { clickEligible, clickReady, DEPOSIT_RISK } from '@/api/click'
 import { scheduleKey, type ScheduleList } from '@/api/schedules'
 import { useWorkspace } from '@/app/workspace'
 import { useMe } from '@/app/useMe'
@@ -111,11 +111,13 @@ export function SignPopover(p: SignPopoverProps) {
   callbacks.current = p
   const router = useRouter({ warn: false })
   const me = useMe(p.ws).data
-  const story = storyOf(p.action, { startsAgent: p.startsAgent, person: me?.person })
+  const sequenceStart = p.action?.action === 'new_sequence' && !!p.action.launch
+  // D2 grant terms come from the signer's conditional sequence, never the proposed browser action.
+  const story = sequenceStart ? { signLabel: 'Sign and start agent', steps: [] } : storyOf(p.action, { startsAgent: p.startsAgent, person: me?.person })
   const canClick = clickReady(here) && (!p.action || clickEligible(p.action))
   const started = useRef(false)
   useLayoutEffect(() => {
-    if (!viaHub && canClick && p.action && !p.children && !p.controls && !p.hint && !started.current && takeTrustedPress()) {
+    if (!viaHub && canClick && p.action && !p.children && (!p.controls || (p.action.action === 'new_sequence' && !!p.action.launch)) && !p.hint && !started.current && takeTrustedPress()) {
       started.current = true
       void click.start(p.action)
     }
@@ -161,8 +163,8 @@ export function SignPopover(p: SignPopoverProps) {
       <div className="flex justify-end gap-2"><Button variant="outline" ref={cancelRef} onClick={p.onClose}>Close</Button></div>
     </SignShell>
   }
-  return <SignShell inline={p.inline} anchor={anchor} open={!folded} onDismiss={() => void close()} title={click.view?.view.content?.title ? <Inline>{click.view.view.content.title}</Inline> : <SignerHeadline view={click.view?.view ?? {}} fallback={<Inline>{p.title}</Inline>} />} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
-    {p.controls}{p.lead}{!click.view && p.summary}
+  return <SignShell inline={p.inline} anchor={anchor} open={!folded} onDismiss={() => void close()} title={!sequenceStart && click.view?.view.content?.title ? <Inline>{click.view.view.content.title}</Inline> : <SignerHeadline view={click.view?.view ?? {}} fallback={<Inline>{p.title}</Inline>} />} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
+    {(!sequenceStart || !click.view || click.view.view.risk_lines?.includes(DEPOSIT_RISK)) && p.controls}{p.lead}{!click.view && p.summary}
     {/* The switch is read before the press; a request already open keeps its review (the signer refuses it if the switch moved). */}
     {!canClick && click.phase === 'idle' ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}<div className="flex justify-end">{dismiss('Close')}</div></> : <>
       {click.phase === 'idle' && <>{p.children}{p.hint && <p>{p.hint}</p>}<div className="flex flex-wrap justify-end gap-2">{dismiss('Cancel')}<Button disabled={!p.action || !!p.hint} onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.start(p.action) }}>{p.confirmLabel ?? story?.signLabel ?? p.title}</Button></div></>}

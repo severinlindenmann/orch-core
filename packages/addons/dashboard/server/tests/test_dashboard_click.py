@@ -9,6 +9,7 @@ import re
 import secrets
 import threading
 import time
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -3374,3 +3375,39 @@ def test_c2_cancelled_request_is_never_signable(client, token, stub, script):
     fresh = prepare(client, token, stub, {**approve(), "retry": 1})
     assert fresh.status_code == 200
     assert fresh.json()["request_id"] != request_id
+
+
+@pytest.mark.parametrize("minutes,expected_grant", [(None, True), (14, True), (15, False), (16, False)])
+def test_d2_host_clock_selects_last_grant(client, token, stub, script, monkeypatch, minutes, expected_grant):
+    from datetime import datetime, timedelta
+
+    from orch_dashboard.gateway import Gateway
+
+    script.features = ["custody", "sequence"]
+    real = Gateway.call
+    now = datetime(2026, 10, 28, 12, tzinfo=UTC)
+
+    def call(self, ws, op, *args, **kwargs):
+        if op == "whoami":
+            return {
+                "runner": {
+                    "now": now.isoformat(),
+                    "grant": (
+                        {"startable": True, "until": (now + timedelta(minutes=minutes)).isoformat()}
+                        if minutes is not None else None
+                    ),
+                }
+            }
+        return real(self, ws, op, *args, **kwargs)
+
+    monkeypatch.setattr(Gateway, "call", call)
+    res = prepare(
+        client, token, stub, {**SEQUENCE, "launch": {"harness": "codex", "mode": "refine"}, "agent": {"hours": 8}}
+    )
+    assert res.status_code == 200, res.text
+    args = next(args for op, args in script.clients[0].calls if op == "prepare")
+    intent = args["sequence"]["intent"]
+    assert intent["launch"] == {"harness": "codex", "mode": "refine"}
+    assert ("agent" in intent) is expected_grant
+    if expected_grant:
+        assert intent["agent"] == {"hours": 8, "scope": "workable"}

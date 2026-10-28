@@ -243,6 +243,29 @@ def build(
     view["risk_lines"] = risk_lines(
         str(prepared["op"]), list(prepared.get("events") or []), deposit=deposit, reveal=reveal is not None
     )
+    meta = (prepared.get("material") or {}).get("sequence")
+    if meta:
+        from orch.host import sequence
+
+        intent = sequence.validate_intent(meta["intent"])
+        person = prepared[sequence._EVENTS][0]["actor"]["id"]
+        view["risk_lines"] = list(
+            dict.fromkeys(
+                line
+                for k, step in enumerate(sequence.steps(intent))
+                for line in risk_lines(
+                    step["op"], [sequence.expected_payload(intent, k, person)], deposit=step["op"] == "grant"
+                )
+            )
+        )
+        if intent.get("launch"):
+            view["headline"] = "Create ticket and start agent"
+            until = prepared["material"].get("agent_access_until")
+            if until and not intent.get("agent"):
+                from datetime import datetime
+
+                clock = datetime.fromisoformat(until.replace("Z", "+00:00")).astimezone().strftime("%H:%M")
+                view["info_lines"] = [f"Uses your current agent access until {clock}"]
     if prepared["op"] == "schedule.add":
         # run 13: the schedule's own risk is a line of the review (FIRST: the review shows `lines` in a short scroll
         # box and the consequence must be read before the rule's details); `risk` stays the convenience notice

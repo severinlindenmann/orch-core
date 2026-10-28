@@ -456,7 +456,10 @@ class ClickSigner:
         (#1198 C10) is read without the signer until the owner proof exists (``proof``): then ``human.get`` checks the
         proof at the bind, and a One-click signer without one is refused there (``hub.proof_invalid``)."""
         body: dict[str, Any] = {"request_id": approval.request_id}
-        if approval.seal is None or proof is not None:
+        launch = ((approval.prepared.get("material") or {}).get("sequence") or {}).get("intent", {}).get("launch")
+        # D2 is bound at prepare. On resume its first request is already submitted and cannot be rebound;
+        # read it as-is, compare the immutable binding, and recheck custody and each remaining step at sign time.
+        if not launch and (approval.seal is None or proof is not None):
             body["signer"] = {"device": device, "auth": "convenience"}
         if proof is not None:
             body["owner_proof"] = dict(proof)
@@ -979,7 +982,9 @@ class ClickSigner:
             live = driver.resumable()
         except sequence.SessionError as exc:
             raise refused("record_unavailable", f"{exc}; nothing was signed") from None
-        if live is not None:
+        if live is not None and not (
+            intent.get("launch") and live["steps"] and live["steps"][0]["request_id"] == approval.request_id
+        ):
             # a run of this very review is half done: a click shows the create review, never a resume; the terminal does
             if intent["kind"] == sequence.ADDON:  # no ticket
                 raise refused(
@@ -994,7 +999,7 @@ class ClickSigner:
                 "or on the ticket page; nothing is signed here.",
             )
         try:
-            out = driver.run(stored)
+            out = driver.run(None if live is not None else stored)
         except sequence.Aborted as exc:
             self._note("sequence_aborted", workspace=wid, request=approval.request_id, landed=exc.landed)
             where = ""
@@ -1010,11 +1015,21 @@ class ClickSigner:
                         f" {exc.landed} of {exc.total} signatures landed; the settings stay and the add-on stays off."
                     )
             if exc.resumable:
+                if intent.get("launch"):
+                    # The sequence's durable per-step claims retain the signed bytes for replay. Unlike a lone
+                    # request, this attempt may resume; Driver refuses missing/changed/unsigned claims.
+                    self._attempted.discard((wid, approval.request_id))
                 unfinished = where.replace(" stays a draft", " is not finished")
                 if intent["kind"] == sequence.ADDON:  # the last answer was lost: whether it is on is not known
                     unfinished = (
                         f" {exc.landed} of {exc.total} signatures landed; whether the add-on is on is not known yet."
                     )
+                if intent.get("launch"):
+                    raise refused(
+                        "resumable",
+                        f"The host did not confirm the last signature.{unfinished} "
+                        "Retry this request to finish the same ticket.",
+                    ) from None
                 page = "" if intent["kind"] == sequence.ADDON else " or on the ticket page"
                 raise refused(
                     "resumable",

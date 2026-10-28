@@ -97,6 +97,8 @@ def set_event(core, t, e):
         t.anchor_schedule != e["schedule"] or t.ticket_type != "chore" or t.fields["title"] != e["title"]
     ):
         return denied("new schedules require their signed anchor")
+    if t.via is not None:  # a schedule's child never carries a schedule of its own (no chaining)
+        return denied("a schedule child cannot be scheduled")
     ws, now, a = core.ws, ts(e["at"]), e["actor"]
     if a["kind"] != "person":
         return denied("only a person may set a schedule")
@@ -331,4 +333,12 @@ def child_run(core, grant):
     """Only a schedule child's own direct run grant can use the agent close exception."""
     child = core.tickets.get(grant.scope) if grant else None
     root = core.ws.grants.get(grant.parent) if grant else None
-    return bool(child and child.via and root and root.root_kind == "schedule")
+    if not (child and child.via and root and root.root_kind == "schedule"):
+        return False
+    # bound to THIS child's own run: the schedule must be a live new-ticket one on the anchor, and the root grant is the
+    # one this very occurrence was fired with (another run's or another schedule's grant never closes it)
+    anchor = core.tickets.get(child.via["anchor"])
+    rec = anchor.schedules.get(child.via["schedule_id"]) if anchor else None
+    if rec is None or rec.target != "new":
+        return False
+    return rec.occurrences.get(child.via["occurrence"], {}).get("grant") == grant.id

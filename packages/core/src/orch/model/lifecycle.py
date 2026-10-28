@@ -6,6 +6,7 @@ events: the status stays unchanged and the event, which the host should not have
 
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
@@ -39,6 +40,8 @@ def created(core: Core, uid: str, e: dict[str, Any]) -> Refusal | None:
     if "via" in e:
         t.via = dict(e["via"])
         t.fields["parent"] = core.tickets[e["via"]["anchor"]].key
+        # a child is exactly as visible as its anchor: a restricted routine never spawns workspace-wide tickets
+        t.fields["visibility"] = copy.deepcopy(core.tickets[e["via"]["anchor"]].fields["visibility"])
     core.tickets[uid] = t
     return None
 

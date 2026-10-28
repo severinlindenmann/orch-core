@@ -892,3 +892,45 @@ def test_reopened_previous_child_blocks_creation_after_fired():
     w.tev(first["child"], "ticket.reopened", "tom")
     assert create_child(w, uid, event, second, key="DEMO-0003")[1].detail == "skipped_open_child"
     assert second["child"] not in w.state()._core.tickets
+
+
+def test_new_restricted_anchor_yields_a_restricted_child():
+    w, uid, event, due = setup_new()
+    w.tev(uid, "visibility.changed", "tom", visibility={"restricted": [w.people["tom"]]})
+    w.clock = due
+    fired, result = fire_new(w, uid, event, due)
+    assert not hasattr(result, "code"), result
+    _, result = create_child(w, uid, event, fired)
+    assert not hasattr(result, "code"), result
+    child = w.state()._core.tickets[fired["child"]]
+    assert child.fields["visibility"] == {"restricted": [w.people["tom"]]}
+    assert child.fields["visibility"] is not w.state()._core.tickets[uid].fields["visibility"]
+
+
+def test_only_the_childs_own_run_may_close_it():
+    from orch.model.schedules_wire import child_run
+
+    w, uid, event, due = setup_new()
+    w.clock = due
+    fired, _ = fire_new(w, uid, event, due)
+    create_child(w, uid, event, fired)
+    agent = w.agent("tom", fired["grant"])
+    core = w.state()._core
+    grant = core.ws.grants[fired["grant"]]
+    assert child_run(core, grant)
+    # another run's grant (this occurrence was fired with a different one) never closes the child
+    child = core.tickets[fired["child"]]
+    row = core.tickets[uid].schedules[event["schedule"]].occurrences[child.via["occurrence"]]
+    row["grant"] = "g_someone_elses"
+    assert not child_run(core, grant)
+    row["grant"] = fired["grant"]
+    # an existing-ticket schedule cannot make a child its anchor, and a child never carries a schedule (no chaining)
+    _, result = w.try_(
+        fired["child"],
+        "schedule.set",
+        "tom",
+        schedule="sc_" + w.nid(),
+        **{k: event[k] for k in ("brief", "rule", "starts", "ends", "run_hours")},
+    )
+    assert result.code == Code.SCHEDULE_DENIED
+    assert refused(w, fired["child"], "ticket.closed", agent, resolution="nothing_to_do") is None

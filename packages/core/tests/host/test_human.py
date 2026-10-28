@@ -118,8 +118,10 @@ def test_a_dry_run_without_signer_or_handoff_persists_nothing(human, served):
     assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []  # no request record
     assert logged(served, key) == before  # no event
     assert ok(human.c.req("human.pending", {}))["data"] == pending_before  # the request store is unchanged
-    # the same call for real still needs a signer, or handoff:true; never both
+    # the same call for real still needs a signer (handoff:true is only the hub's add-on grant); never both
     assert err(human.c.req("human.prepare", body)) == "invalid.input"
+    assert err(human.c.req("human.prepare", {**body, "handoff": True})) == "invalid.input"
+    assert ok(human.c.req("human.prepare", {**body, "handoff": True}, dry_run=True))["data"]["request"] is None
     both = {**body, "signer": human.signer, "handoff": True}
     assert err(human.c.req("human.prepare", both, dry_run=True)) == "invalid.input"
     assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
@@ -134,6 +136,28 @@ def test_only_person_ops_are_prepared(human, served):
     assert err(human.c.req("human.prepare", both)) == "invalid.input"
 
 
+def test_a_hand_off_is_stored_only_for_the_hubs_add_on_grant(human, served):
+    """FB15: ``handoff: true`` (no signer) stores an unbound request for ``addon.grant`` only, marked for the hub;
+    every other op is refused and stores nothing (it is prepared with a signer); a hand-off never takes a signer."""
+    _, key = human.ticket()
+    for op, args in (
+        ("log", {"ref": key, "text": "x"}),
+        ("verdict", {"ref": key, "outcome": "pass"}),
+        ("member.remove", {"person": human.person.ref}),
+        ("settings.set", {"set": {"grant_hours": 4}}),
+        ("grant", {"ref": key}),
+        ("addon.disable", {"name": "wiki"}),
+    ):
+        res = human.prepare_res(op, args, handoff=True)
+        assert err(res) == "invalid.input" and "add-on grant only" in res["error"]["message"], op
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
+    grant = {"op": "addon.grant", "args": {"name": "wiki"}, "handoff": True}
+    assert err(human.c.req("human.prepare", {**grant, "signer": human.signer})) == "invalid.input"
+    handed = human.prepare("addon.grant", {"name": "wiki"}, handoff=True)
+    assert handed["request"]["state"] == "prepared"
+    assert record(served, handed["request"]["id"])["hub_handoff"] is True
+
+
 def test_an_agent_and_a_grant_get_human_only(human, served):
     _, key = human.ticket()
     res = human.c.req("human.prepare", {"op": "log", "args": {"ref": key, "text": "x"}}, grant=served.grant)
@@ -145,10 +169,10 @@ def test_an_agent_and_a_grant_get_human_only(human, served):
 
 def test_every_state_transition_of_the_table(human, served):
     _, key = human.ticket()
-    # prepare with signer -> bound; with handoff -> prepared
+    # prepare with signer -> bound; with handoff (the hub's add-on grant, the one unbound prepare) -> prepared
     bound = human.prepare("log", {"ref": key, "text": "a"})
     assert bound["request"]["state"] == "bound"
-    handed = human.prepare("log", {"ref": key, "text": "b"}, handoff=True)
+    handed = human.prepare("addon.grant", {"name": "wiki"}, handoff=True)
     assert handed["request"]["state"] == "prepared"
     assert handed["events"][0]["actor"]["device"] is None and handed["events"][0]["auth"] is None
     # submit on an unbound request: request_state
@@ -173,12 +197,12 @@ def test_every_state_transition_of_the_table(human, served):
     assert ok(human.c.req("human.cancel", {"request_id": bid}))["data"] == {"state": "cancelled"}
     assert ok(human.get(bid))["data"]["request"]["state"] == "cancelled"
     assert err(human.get(bid, signer=human.signer)) == "human.request_state"
-    p2 = human.prepare("log", {"ref": key, "text": "c"}, handoff=True)
+    p2 = human.prepare_unbound("log", {"ref": key, "text": "c"})
     assert ok(human.c.req("human.cancel", {"request_id": p2["request"]["id"]}))["data"] == {"state": "cancelled"}
     signed_bound = human.sign(bound)
     assert err(human.submit_res(bid, signed_bound.events)) == "human.request_state"
     # prepared and bound -> expired after 10 minutes
-    p3 = human.prepare("log", {"ref": key, "text": "d"}, handoff=True)
+    p3 = human.prepare_unbound("log", {"ref": key, "text": "d"})
     p4 = human.prepare("log", {"ref": key, "text": "e"})
     tick(served, 601)
     for rid in (p3["request"]["id"], p4["request"]["id"]):
@@ -206,7 +230,7 @@ def test_a_request_found_expired_at_append_is_refused_under_the_lock(human, serv
 
 def test_get_returns_every_invariant_byte_and_binding_changes_only_device_and_auth(human, served):
     _, key = human.ticket()
-    p = human.prepare("log", {"ref": key, "text": "hand off"}, handoff=True)
+    p = human.prepare("addon.grant", {"name": "wiki"}, handoff=True)  # the one request prepared unbound
     rid = p["request"]["id"]
     plain = ok(human.get(rid))["data"]
     assert canon.dumps(plain) == canon.dumps(p)  # get without signer: byte identical

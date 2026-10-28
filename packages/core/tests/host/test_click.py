@@ -194,7 +194,7 @@ def test_the_condition_is_checked_again_at_binding_and_at_submit(click, served, 
     click.mono.t += 2
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "sign.convenience_unavailable", "disabled")
     # a hand-off request bound with a convenience signer is refused at human.get too
-    h = human.prepare("log", {"ref": key, "text": "y"}, handoff=True)
+    h = human.prepare_unbound("log", {"ref": key, "text": "y"})
     res = human.get(h["request"]["id"], signer={"device": human.person.device, "auth": "convenience"})
     assert err(res) == "sign.convenience_unavailable"
     assert pending(served, h["request"]["id"])["state"] == "prepared"  # not bound
@@ -222,7 +222,7 @@ def test_member_add_is_refused_with_convenience_events_in_the_history(click, ser
     q = Person()
     args = {"name": "q", "pk": crypto.b64u(q.pk_pub), "cert": "cert.json"}
     files = {"cert": {"b64": __import__("base64").b64encode(json.dumps(q.cert()).encode()).decode()}}
-    res = human.prepare_res("member.add", args, handoff=True, files=files)
+    res = human.prepare_res("member.add", args, files=files)
     assert err(res) == "sign.convenience_readers"
 
 
@@ -233,7 +233,7 @@ def test_member_add_works_after_switching_off_when_there_are_no_convenience_even
     q = Person()
     args = {"name": "q", "pk": crypto.b64u(q.pk_pub), "cert": "cert.json"}
     files = {"cert": {"b64": __import__("base64").b64encode(json.dumps(q.cert()).encode()).decode()}}
-    ok(human.prepare_res("member.add", args, handoff=True, files=files))
+    ok(human.prepare_res("member.add", args, files=files))
 
 
 # --- the click signer -------------------------------------------------------------------------------------------------
@@ -291,7 +291,7 @@ def test_sign_refusals_sign_nothing_and_do_not_cancel(click, served, human):
 
 def test_view_and_sign_refuse_a_request_the_signer_did_not_prepare(click, served, human):
     _, key = human.ticket()
-    h = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)  # a terminal request: it has a code (#1170)
+    h = human.prepare_unbound("log", {"ref": key, "text": "x"})  # not the click signer's: another client's request
     rid = h["request"]["id"]
     refused(lambda: click.view(rid), "human.click_refused", "not_prepared_here")
     refused(lambda: click.sign(rid, "sha256:" + "0" * 64), "human.click_refused", "not_prepared_here")
@@ -529,7 +529,7 @@ def test_a_member_add_prepared_before_convenience_events_is_refused_at_binding(s
     c = Click(served, enable=False)
     try:
         args, files = _member_args()
-        h = human.prepare("member.add", args, handoff=True, files=files)  # flag off, no history: allowed
+        h = human.prepare_unbound("member.add", args, files=files)  # flag off, no history: allowed
         convenience.set_enabled(served.lab.state, served.wid, True, UID)
         _, key = human.ticket()
         _click_sign(c, key)  # a convenience event lands
@@ -940,7 +940,6 @@ def test_the_first_convenience_event_sets_the_mark_and_a_restore_does_not_clear_
     monkeypatch.setattr(readers, "has_convenience_events", lambda store: False)
     convenience.set_enabled(served.lab.state, served.wid, False, UID)
     args, files = _member_args()
-    assert err(human.prepare_res("member.add", args, handoff=True, files=files)) == "sign.convenience_readers"
     assert err(human.prepare_res("member.add", args, files=files)) == "sign.convenience_readers"
 
 
@@ -969,7 +968,7 @@ def test_an_existing_workspace_with_convenience_history_counts_as_seen(click, se
     path.unlink()  # a workspace from before the mark: only the merged history knows
     convenience.set_enabled(served.lab.state, served.wid, False, UID)
     args, files = _member_args()
-    assert err(human.prepare_res("member.add", args, handoff=True, files=files)) == "sign.convenience_readers"
+    assert err(human.prepare_res("member.add", args, files=files)) == "sign.convenience_readers"
     from orch.host.errors import HostError
 
     service = served.service

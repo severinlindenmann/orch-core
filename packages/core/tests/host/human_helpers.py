@@ -63,6 +63,27 @@ class Human:
     def prepare(self, op: str, args: dict[str, Any], **kw: Any) -> dict[str, Any]:
         return ok(self.prepare_res(op, args, **kw))["data"]
 
+    def prepare_unbound(self, op: str, args: dict[str, Any], **kw: Any) -> dict[str, Any]:
+        """A request in state ``prepared`` (no device yet), for tests of the host's binding at ``human.get``.
+
+        ``human.prepare`` stores an unbound request only for a hub hand-off (``addon.grant``); every other op is bound
+        at prepare. So this prepares the request bound to this person's device through the real ``human.prepare``
+        (every prepare-time check runs) and takes the binding off the stored record on the workspace thread: the
+        events' ``actor.device`` and ``auth`` back to ``null``, ``state: prepared``, ``signer: null``, exactly what the
+        binding then fills in. The fingerprint and review digest never cover those fields. Returns ``human.get``'s
+        view of the unbound request. Test-only: production has no way to unbind a request."""
+        rid = self.prepare(op, args, **kw)["request"]["id"]
+        service = self.served.service
+
+        def unbind() -> None:
+            record = service.requests.read(rid)
+            for ev in record["prepared"]["events"]:
+                ev["actor"]["device"], ev["auth"] = None, None
+            service.requests.write({**record, "state": "prepared", "signer": None})
+
+        service.submit(unbind).result()
+        return ok(self.get(rid))["data"]
+
     def check(self, prepared: dict[str, Any], **kw: Any) -> None:
         signer.check(
             prepared,

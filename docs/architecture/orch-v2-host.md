@@ -1474,7 +1474,7 @@ the CLI signer and H9 show it, and each signer recomputes it from what it receiv
 | From | Event | To |
 |---|---|---|
 | — | `human.prepare` with `signer` | `bound` |
-| — | `human.prepare` with `handoff:true` | `prepared` |
+| — | `human.prepare` with `handoff:true` (the hub's `addon.grant` only, FB15) | `prepared` |
 | `prepared` | `human.get` with `signer`: device checked, events completed, `tree.check` re-run (N3) | `bound` |
 | `bound` | `human.get` with the same `signer`: `tree.check` re-run | `bound` |
 | `bound` | `human.submit` committed | `submitted` |
@@ -1519,6 +1519,11 @@ the CLI signer and H9 show it, and each signer recomputes it from what it receiv
   - Without `handoff`, `signer` is required.
   - With `handoff:true`, `signer` is absent and the events carry `actor.device: null` and `auth: null` until
     `human.get` binds them.
+  - **Only the hub hand-off is unbound (FB15).** A non-dry-run `handoff:true` is accepted for `addon.grant` only (the
+    add-on grant the hub answers; core marks the record `hub_handoff: true`). Every other op with `handoff:true`, and
+    `handoff:true` with a `signer` for any op, answers `invalid.input` and stores nothing: it is prepared with a
+    `signer`. A dry run stores nothing either way: it may take neither (the dashboard's folder check) or a hand-off of
+    any op, never both.
   - Binding checks that the device belongs to the mapped person and has a valid certificate with `decide` (and
     `operate` where needed).
 - **The grant secret (F1).** The secret is drawn by the process that signs, never by the one that prepares.
@@ -3924,6 +3929,11 @@ Agent class (UID 502, with a grant):
 
 Dashboard (person class, UID 501, mapped to `p_sev`). A board snapshot, a subscription, then a verdict through the
 hand-off:
+
+> **Superseded (FB15, §0.8.1 "Device binding").** This H5b transcript predates the narrow hand-off: today
+> `human.prepare {op:"verdict", …, handoff:true}` answers `invalid.input` (only the hub's `addon.grant` is prepared
+> unbound), and no code is issued. A verdict is prepared with `signer` (`state: "bound"`); the rest of the exchange is
+> unchanged.
 
 ```
 → {"t":"req","id":"d1","op":"ticket.query","args":{"status":["open","in_progress","testing"],"limit":50}}

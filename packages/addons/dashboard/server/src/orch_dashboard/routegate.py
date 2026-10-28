@@ -133,6 +133,8 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/click/cancel"): (ALLOWED, ""),
     # --- hub
     (POST, W + "/hubsign"): (REFUSED, "remote mode signs nothing for the hub (D81)"),
+    (POST, W + "/hub/approve/prepare"): (REFUSED, "FB15: an add-on hand-off for the hub; on this computer only (D81)"),
+    (GET, W + "/hub/approve/{request_id}"): (REFUSED, "FB15: polls that hand-off; on this computer only (D81)"),
     (GET, W + "/hub"): (ALLOWED, ""),
     (GET, W + "/hub/share"): (ALLOWED, ""),
     (POST, W + "/hub/share/preview"): (ALLOWED, "a read-only preview"),

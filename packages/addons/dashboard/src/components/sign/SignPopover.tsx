@@ -17,8 +17,8 @@ import { ClickProblemBox, RefusalDevices } from './RefusalDevices'
 import { settledAs, useClickSign, type ClickPhase } from './useClickSign'
 import { storyOf } from './story'
 import { takeTrustedPress, trustedPress } from './trustedPress'
-import { HubSettingsPanel } from './HubSignPanel'
-import { hubSettingsSplit } from '@/api/hubsign'
+import { HubAddonPanel, HubSettingsPanel } from './HubSignPanel'
+import { hubSettingsSplit, isAddonGrant } from '@/api/hubsign'
 
 export interface SignPopoverProps {
   /** Core's title: "Approve plan", "Comment", "Close DEMO-0043". */
@@ -73,8 +73,8 @@ export function SignPopover(p: SignPopoverProps) {
   const many = new Set([...workspaces, ...(known.data ?? [])].map(w => w.id)).size > 1
   // A1/D83: local signing is valid in every hub mode, so the review never routes by the workspace's hub mode.
   // The hub is an optional extra path: only when the caller asks for it, and only for what the hub can approve here.
-  // An add-on grant is not routed: the hub answers a prepared terminal hand-off request, which this branch removed.
-  const viaHub = p.forceHub === true && !!hubSettingsSplit(p.action)
+  // An add-on grant goes through the one hub approval route (FB15): the host prepares it for the hub, nothing signs here.
+  const viaHub = p.forceHub === true && (isAddonGrant(p.action) || !!hubSettingsSplit(p.action))
   const click = useClickSign(p.ws, (_phase, state, request) => {
     if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
     p.onSettled?.('done', state, request)
@@ -120,7 +120,7 @@ export function SignPopover(p: SignPopoverProps) {
   const dismiss = (label: 'Cancel' | 'Close') => <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>{label}</Button>
   if (viaHub) {
     return <SignShell inline={p.inline} anchor={anchor} open onDismiss={p.onClose} title={<Inline>{p.title}</Inline>} description={null} showClose onOpenAutoFocus={e => e.preventDefault()}>
-      {hubSettingsSplit(p.action) && p.ws ? <HubSettingsPanel ws={p.ws} action={p.action as Extract<HandoffAction, { action: 'settings_set' }>} onDone={() => p.onSettled?.('done', null, null)} /> : null}
+      {isAddonGrant(p.action) && p.ws ? <HubAddonPanel ws={p.ws} action={p.action} onDone={() => p.onSettled?.('done', null, null)} /> : hubSettingsSplit(p.action) && p.ws ? <HubSettingsPanel ws={p.ws} action={p.action as Extract<HandoffAction, { action: 'settings_set' }>} onDone={() => p.onSettled?.('done', null, null)} /> : null}
       <div className="flex justify-end gap-2"><Button variant="outline" ref={cancelRef} onClick={p.onClose}>Close</Button></div>
     </SignShell>
   }

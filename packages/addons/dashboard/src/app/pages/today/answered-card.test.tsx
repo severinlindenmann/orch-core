@@ -7,6 +7,7 @@ import { api, mockStore } from '@/api/client'
 import { ARM_MS, CLICK_RISK, type ClickCard, type ClickViewAnswer } from '@/api/click'
 import { setFeatures } from '@/api/features'
 import { resetSignedDrops } from '@/api/signedDrop'
+import * as gesture from '@/components/sign/trustedPress'
 import { openInfo } from '@/test/info'
 import { renderApp } from '@/test/renderApp'
 import { ANSWERED_MS } from './index'
@@ -14,6 +15,7 @@ import { ANSWERED_MS } from './index'
 const T = { timeout: 6000 }
 const FEATURES = ['identity', 'today', 'tickets', 'board', 'ticket', 'actions']
 const KEY = 'DEMO-0043'
+const realTrusted = gesture.trustedPress
 
 let signed = 0
 
@@ -74,14 +76,24 @@ function view(): ClickViewAnswer {
   }
 }
 
-/** Picks the first option in `scope`, waits for the strip to arm and presses Send answer. */
+/** A real press: pointer down then click (the strip's Send counts a press only if it began while armed). */
+function press(b: HTMLElement) {
+  fireEvent.pointerDown(b)
+  fireEvent.click(b)
+}
+
+/** C2: picks the first option in `scope` (nothing is prepared yet), presses Send answer (trusted: it prepares and shows
+ *  the strip), waits for the strip to arm and presses Send answer again, which signs. */
 async function answerIn(scope: () => HTMLElement) {
+  vi.spyOn(gesture, 'trustedPress').mockImplementation((e) => realTrusted({ isTrusted: true, repeat: e.repeat }))
   fireEvent.click((await within(scope()).findAllByRole('radio', {}, T))[0])
+  const send = () => within(scope()).getByRole('button', { name: /Send answer|Preparing/ })
+  await waitFor(() => expect(send()).toBeEnabled(), T)
+  expect(api.prepareClick).not.toHaveBeenCalled() // the pick alone prepares nothing
+  press(send())
   await within(scope()).findByTestId('answer-strip', {}, T)
-  const send = () => within(scope()).getByRole('button', { name: 'Send answer' })
   await waitFor(() => expect(send()).toBeEnabled(), { timeout: ARM_MS + 3000 })
-  fireEvent.pointerDown(send())
-  fireEvent.click(send())
+  press(send())
   await waitFor(() => expect(signed).toBe(1), T)
 }
 

@@ -60,9 +60,23 @@ describe('the one-click review offers the hub approval only when joined (run 13)
     fireEvent.click(outcome)
     return screen.findByTestId('click-panel')
   }
-  // Open: "Approve in the hub instead" for an add-on needs a hub hand-off request the host prepares (`human.prepare
-  // {handoff: true}`), and this branch's dashboard server has no route for it any more.
-  it.todo('joined in full mode: "Approve in the hub instead" sits next to the one-click approval')
+  // FB15: the hub approval goes through the one narrow route (`POST /hub/approve/prepare`): the host prepares the grant
+  // for the hub and this page shows the host's link; nothing is signed here.
+  it('joined in full mode: "Approve in the hub instead" sits next to the one-click approval; pressing it shows the hub panel', async () => {
+    const { sign } = clickFlow(true)
+    const id = 'hr_01J9ZP0000000000000000HND1'
+    const expires_at = new Date(Date.now() + 600000).toISOString()
+    const prepare = vi.spyOn(api, 'prepareHubApproval').mockResolvedValue({ ...INFO, id, state: 'prepared', expires_at })
+    vi.spyOn(api, 'getHubApproval').mockResolvedValue({ id, state: 'prepared', expires_at, error: null })
+    expect(await openReview()).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: 'Approve in the hub instead' }))
+    expect(await screen.findByTestId('hub-addon')).toBeInTheDocument()
+    expect(screen.getByTestId('hub-link')).toHaveAttribute('href', INFO.url)
+    expect(prepare).toHaveBeenCalledTimes(1)
+    expect(prepare.mock.calls[0]).toEqual([W, { action: 'addon_grant', name: 'wiki' }])
+    expect(screen.queryByTestId('click-panel')).toBeNull()
+    expect(sign).not.toHaveBeenCalled()
+  })
   it('never joined: no hub approval is offered on the one-click review, and nothing signs by itself', async () => {
     const { sign } = clickFlow(false)
     expect(await openReview()).toBeInTheDocument()

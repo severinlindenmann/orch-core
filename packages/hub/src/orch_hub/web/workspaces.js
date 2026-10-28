@@ -90,6 +90,7 @@ export function workspacesView(data, now = Date.now()) {
       const n = waitingFor.get(w.workspace_id) ?? 0;
       return h("tr", { "data-workspace": w.workspace_id },
         h("td", {}, h("b", { text: nameOf(w) }), h("div", {}, chip(modeName(w), w.mode === "full" ? "full" : "sel")),
+          w.mode === "selective" ? small("Personal: only its owner") : null,
           n ? small(n + (n === 1 ? " hand-off is" : " hand-offs are") + " waiting for this workspace") : null),
         h("td", {}, statusView(w, now)), h("td", {}, versionView(w, data.hub)), h("td", {}, hostView(w)),
         h("td", {}, h("div", { class: "ws-actions" }, button("Details", () => actions.details?.(w)), button("Open", () => actions.open?.(w)))));

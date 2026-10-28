@@ -21,7 +21,7 @@ export interface ScheduleRule {
 export interface ScheduleOutcome {
   /** The occurrence it was due, ISO UTC. */
   at: string
-  outcome: 'ran' | 'failed' | 'did_not_run'
+  outcome: 'ran' | 'ran_nothing' | 'failed' | 'did_not_run'
   reason: string | null
 }
 
@@ -125,8 +125,10 @@ export function startsTooSoon(form: ScheduleForm, now: Date, leadS: number): boo
 
 /** The line under a row for a run that was skipped, in plain words; null when the last run was not skipped. */
 export function skippedText(last: ScheduleOutcome | null | undefined): string | null {
+  if (last?.outcome === 'ran_nothing') return 'Nothing to do'
   if (last?.outcome !== 'did_not_run') return null
   const why: Record<string, string> = {
+    skipped_open_child: 'the last ticket was still open',
     busy: 'you had work running on this ticket',
     claimed_by_other: 'someone else was working on this ticket',
     access_lost: 'you no longer have access to this ticket',

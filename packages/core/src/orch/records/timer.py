@@ -21,6 +21,7 @@ import plistlib
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -147,9 +148,12 @@ def _default_run(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
 class TimerManager:
     """Install, start, stop and remove the timer through the person's own service manager."""
 
-    def __init__(self, unit: TimerPlan, run: Runner | None = None) -> None:
+    def __init__(
+        self, unit: TimerPlan, run: Runner | None = None, *, sleep: Callable[[float], None] = time.sleep
+    ) -> None:
         self.plan = unit
         self.run = run or _default_run
+        self._sleep = sleep
 
     def _target(self) -> str:
         return f"gui/{self.plan.uid}/{LAUNCHD_LABEL}"
@@ -225,10 +229,30 @@ class TimerManager:
                 return
             if loaded:
                 self._do(["launchctl", "bootout", self._target()], check=False)
-            self._do(["launchctl", "bootstrap", f"gui/{self.plan.uid}", str(self.plan.files[0][0])])
+                self._wait_unloaded()
+            self._bootstrap()
             return
         self._do(["systemctl", "--user", "daemon-reload"])
         self._do(["systemctl", "--user", "enable", "--now", SYSTEMD_TIMER])
+
+    def _wait_unloaded(self) -> None:
+        """``bootout`` returns before launchd finished unloading; a bootstrap in that window fails with 5."""
+        for _ in range(10):
+            if self.run(["launchctl", "print", self._target()]).returncode != 0:
+                return
+            self._sleep(0.5)
+
+    def _bootstrap(self) -> None:
+        """``launchctl bootstrap``; exit 5 usually means a stale or half-unloaded job of the same label, so unload it
+        (a job that is not loaded is fine) and try once more before reporting the failure."""
+        argv = ["launchctl", "bootstrap", f"gui/{self.plan.uid}", str(self.plan.files[0][0])]
+        res = self.run(argv)
+        if res.returncode == 5:
+            self._do(["launchctl", "bootout", self._target()], check=False)
+            self._wait_unloaded()
+            res = self.run(argv)
+        if res.returncode != 0:
+            raise RecordsError("records.timer_failed", f"launchctl bootstrap failed ({res.returncode})")
 
     def remove(self) -> str:
         """Stop the timer and delete its files, **only** when the installed unit runs for this state dir (a missing

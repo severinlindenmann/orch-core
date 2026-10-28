@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import select
 import socket
 import sys
 import threading
@@ -13,6 +12,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from orch import fdwait
 from orch.host import frames
 
 from .protocol import FRAME_ID, OPS, ClickError
@@ -30,7 +30,7 @@ def serve(sock: socket.socket, signer: Any) -> None:
     while True:
         if hasattr(signer, "run_holds"):
             signer.run_holds()
-        if not select.select([sock], [], [], 0.1)[0]:
+        if not fdwait.readable(sock, 0.1):
             continue
         data = sock.recv(65536)
         if not data:

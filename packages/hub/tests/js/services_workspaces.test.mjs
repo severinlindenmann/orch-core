@@ -86,7 +86,7 @@ test("hand-offs: names, sent time, Delivered / Waiting; a stranger is 'Another w
 
 test("empty states and times", () => {
   const t = text(workspacesView({ handoffs: [], workspaces: [] }, NOW));
-  assert.match(t, /No workspaces are connected yet/);
+  assert.match(t, /No workspaces yet/);
   assert.match(t, /No tickets have been sent between workspaces yet/);
   assert.equal(when(NOW - 60000, NOW), "Today 11:59");
   assert.equal(ago(NOW - 120000, NOW), "2 min ago");
@@ -155,10 +155,11 @@ test("services refresh every 15 seconds, pause while hidden, and stop after navi
     servicesView: (data) => { rendered = data; return []; },
     workspaces() {}, copyText() {},
     setInterval: (fn, ms) => { assert.equal(ms, 15000); timers.set(++nextTimer, fn); return nextTimer; },
-    clearInterval: (id) => timers.delete(id),
+    clearInterval: (id) => timers.delete(id), loading: () => () => {}, pageLoading() {}, loginView() {}, home() {}, navigate() {},
+    banner() {}, h() {}, say() {}, reauthView() {},
   };
-  runInNewContext(source.match(/let servicesTimer[^\n]+/)[0] + "\n" + source.match(/const show = [^\n]+/)[0] + "\n" +
-    "function shell() { show(); }\n" + source.slice(source.indexOf("async function services()"), source.indexOf("async function home()")), context);
+  runInNewContext(source.match(/let servicesTimer[^\n]+/)[0] + "\n" + "let paintedRoute = null;\n" + source.match(/const show = [^\n]+/)[0] + "\n" +
+    "function shell() { show(); }\n" + source.slice(source.indexOf("async function services("), source.indexOf("async function home()")), context);
   await context.services();
   assert.deepEqual(requests, ["/admin/services", "/me/workspaces"]);
   assert.equal(rendered.workspaces_list[0].name, "Product");

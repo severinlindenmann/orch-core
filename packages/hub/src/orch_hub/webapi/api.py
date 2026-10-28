@@ -713,6 +713,7 @@ class WebApi:
         return rows
 
     def _last_seen(self, workspace_id: str):
+        """Last contact as epoch seconds, or None when unknown."""
         # Older registries do not retain a last-seen time. Never invent one.
         state = self.d.registry.binding_state(workspace_id) or {}
         return state.get("last_seen")

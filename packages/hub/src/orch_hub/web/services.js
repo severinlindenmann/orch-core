@@ -1,3 +1,4 @@
+import { emptyState } from "./feel.js";
 // The Services page (run-11 feedback 12): hub, relay and publish, how they connect, whether they answer, and how to restart
 // them. The hub cannot start or stop other services, so it offers "Check now" and the exact command with a Copy button.
 import { ago, chip, dot, h, text } from "./ui.js";
@@ -72,6 +73,7 @@ function connections(data) {
 
 /** data: GET /admin/services. actions: {check, open, copy}. */
 export function servicesView(data, actions, now = Date.now()) {
+  if (!["hub", "relay", "publish"].some((name) => data[name])) return [h("h1", { text: "Services" }), emptyState("services")];
   const sum = summary(data);
   const rows = ["hub", "relay", "publish", "edge"].map((name) => {
     const svc = data[name] ?? { state: "not_set_up", url: null }, st = stateOf({ ...svc, name });

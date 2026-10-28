@@ -228,15 +228,24 @@ class TimerManager:
             if loaded and not changed:
                 return
             if loaded:
-                self._do(["launchctl", "bootout", self._target()], check=False)
-                self._wait_unloaded()
+                self._unload()
             self._bootstrap()
             return
         self._do(["systemctl", "--user", "daemon-reload"])
         self._do(["systemctl", "--user", "enable", "--now", SYSTEMD_TIMER])
 
+    def _unload(self) -> None:
+        """Unload the job of our label and wait for it, but only when the installed unit runs for this state dir
+        (the rule ``remove()`` keeps): another state dir's timer is never unloaded from here."""
+        have = self._installed()
+        if have is not None and fields(unit_args(self.plan.kind, have[1]))["state"] != str(self.plan.state):
+            return
+        self._do(["launchctl", "bootout", self._target()], check=False)
+        self._wait_unloaded()
+
     def _wait_unloaded(self) -> None:
-        """``bootout`` returns before launchd finished unloading; a bootstrap in that window fails with 5."""
+        """``bootout`` returns before launchd finished unloading; a bootstrap in that window fails with 5. After
+        about five seconds this gives up without a word: the bootstrap that follows then reports the real failure."""
         for _ in range(10):
             if self.run(["launchctl", "print", self._target()]).returncode != 0:
                 return
@@ -248,11 +257,14 @@ class TimerManager:
         argv = ["launchctl", "bootstrap", f"gui/{self.plan.uid}", str(self.plan.files[0][0])]
         res = self.run(argv)
         if res.returncode == 5:
-            self._do(["launchctl", "bootout", self._target()], check=False)
-            self._wait_unloaded()
+            self._unload()
             res = self.run(argv)
         if res.returncode != 0:
-            raise RecordsError("records.timer_failed", f"launchctl bootstrap failed ({res.returncode})")
+            raise RecordsError(
+                "records.timer_failed",
+                f"launchctl bootstrap failed ({res.returncode})",
+                hint="orch records init tries again",
+            )
 
     def remove(self) -> str:
         """Stop the timer and delete its files, **only** when the installed unit runs for this state dir (a missing

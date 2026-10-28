@@ -1346,9 +1346,13 @@ def test_an_owner_less_workspace_never_matches_the_exemption(w):
     ch = w.changes._db.change(cid)
     body = json.loads(ch["body"])
     with pytest.raises(ChangeError) as e:
-        w.changes._check_reach(ch, body, w.newbie, {WS2, WS3})  # a non-admin applier is refused, never exempt
+        w.changes._check_reach(
+            ch, body, w.newbie, {WS2: w.olive, WS3: w.omar}
+        )  # a non-admin applier is refused, never exempt
     assert e.value.code == "owner_unknown"
-    w.changes._check_reach(ch, body, w.admin, {WS2, WS3})  # a hub admin may (it was in the proposal's reach)
+    w.changes._check_reach(
+        ch, body, w.admin, {WS2: w.olive, WS3: w.omar}
+    )  # a hub admin may (it was in the proposal's reach)
 
 
 @pytest.mark.parametrize("how", ["disabled", "demoted"])
@@ -1381,3 +1385,52 @@ def test_the_overlay_leaves_a_disabled_member_out_unless_asked(w):
     acc(w).set_disabled(w.newbie, True)
     assert w.newbie not in acc(w).roles_overlay(WS2, add_member=("owners", w.newbie))
     assert acc(w).roles_overlay(WS2, add_member=("owners", w.newbie), include_disabled=True)[w.newbie] == "admin"
+
+
+def test_an_approval_follows_the_approver_not_the_workspace(w):
+    """olive approves WS2, then WS2 moves to dana: olive's yes does not stand for dana."""
+    _wsa, cid, _tok = _admin_group_change(w, own=False)
+    otok, osig, och = owner_session(w, w.olive)
+    assert approve(w, otok, cid, osig, och)[1]["state"] == "pending"
+    w.reg.ws[WS2]["owner"] = w.dana  # rebound / re-aliased after olive consented
+    mtok, msig, mch = owner_session(w, w.omar)
+    s, o, _ = w.call(
+        "POST",
+        f"/me/changes/{cid}/approve",
+        {"channel_id": mch, "proof": w.proof(msig, prepare(w, mtok, cid)[1]["digest"])},
+        token=mtok,
+    )
+    assert (s, o) == (409, {"error": "stale_change"})
+    assert row(w, cid)["state"] == "rejected" and reach(w, WS2, w.newbie) is None and reach(w, WS3, w.newbie) is None
+
+
+def test_an_owner_less_workspace_proposed_as_such_finishes_end_to_end(w):
+    orphan = "b7" * 16
+    w.reg.add(orphan, "full", owner=None, name="Orphan")  # already owner-less when the hub admin proposes
+    _wsa, cid, _tok = _admin_group_change(w, own=False)
+    assert orphan not in {a["workspace_id"] for a in w.changes._db.approvals(cid)}  # nobody to ask for it
+    s, o, _ = _approve_all(w, cid)
+    assert s == 200 and o["state"] == "applied"  # a hub admin proposed it: it was in the reach as proposed
+    assert reach(w, orphan, w.newbie) == "admin" and reach(w, WS2, w.newbie) == "admin"
+
+
+def test_an_orphans_people_must_be_exactly_as_proposed_on_every_path(w):
+    orphan = "b6" * 16
+    w.reg.add(orphan, "full", owner=None, name="Orphan")
+    _wsa, cid, _tok = _admin_group_change(w, own=False)
+    ch = w.changes._db.change(cid)
+    stored = json.loads(ch["reach"])
+    stored[orphan]["delta"] = [{"user_id": w.dana, "role": "read"}]  # what was shown differs from what would happen now
+    ch = {**ch, "reach": json.dumps(stored)}
+    body = json.loads(ch["body"])
+    for approved in (None, {WS2: w.olive, WS3: w.omar}):  # override and approval both refuse
+        with pytest.raises(ChangeError) as e:
+            w.changes._check_reach(ch, body, w.admin, approved)
+        assert e.value.code == "stale_change"
+
+
+def test_deltas_compare_equal_whatever_their_order():
+    from orch_hub.changes.service import _canon
+
+    a = [{"user_id": "b", "role": "edit"}, {"user_id": "a", "role": "read"}]
+    assert cj(_canon(a)) == cj(_canon(list(reversed(a))))

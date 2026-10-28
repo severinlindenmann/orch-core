@@ -13,7 +13,16 @@ from orch.ops.human import Human
 def handle(ctx, args):
     h = Human(ctx, "schedule.add")
     c = h.call
-    view = c.resolve(args["ref"], live_only=False)
+    from orch.model.schedules import validate_target
+
+    if error := validate_target(args):
+        raise OrchError("schedule.denied", error)
+    if args.get("target", "existing") == "new":
+        if "ref" in args:
+            raise OrchError("schedule.denied", "ref is only allowed for existing-ticket schedules")
+    if args.get("target", "existing") == "existing" and not args.get("ref"):
+        raise OrchError("schedule.denied", "ref is required for existing-ticket schedules")
+    view = c.resolve(args["ref"], live_only=False) if args.get("ref") else None
     now = c.now
     try:
         tz = args.get("tz", "UTC")
@@ -55,6 +64,32 @@ def handle(ctx, args):
         "brief": brief,
         "run_hours": args.get("run_hours", 8),
     }
+    if "target" in args:
+        event["target"] = args["target"]
+    if view is None:
+        from orch.ops.base import Result
+
+        uid, key = new_ulid(), h.store.peek_key()
+        event["title"] = args["title"]
+        created = {
+            "type": "ticket.created",
+            "key": key,
+            "ticket_type": "chore",
+            "title": args["title"],
+            "owner": h.person,
+            "schedule": sid,
+        }
+        action = "\n".join(
+            [
+                schedule.describe(rule, key, event["ends"], "new", args["title"]),
+                schedule.risk("new"),
+                "No click or confirmation is required at firing time.",
+            ]
+        )
+        done = h.run_many([created, event], uid, action)
+        return Result(
+            key=key, seq=done.event["seq"] if done else 0, data={"id": sid}, hints=[f"orch schedule show {sid}"]
+        )
     action = schedule.describe(rule, view.key, event["ends"])
     done = h.run(
         event,
@@ -68,10 +103,12 @@ def handle(ctx, args):
 OP = operation(
     "schedule.add",
     "Lifecycle",
-    "Schedule automatic agent sessions on this ticket for up to 30 days.",
+    "Schedule automatic agent sessions on an existing ticket or a new ticket each run, for up to 30 days.",
     who="human",
     props={
-        "ref": REF(),
+        "ref": {**REF(), "description": "ticket REF; required for target existing"},
+        "target": S("existing or new ticket", enum=["existing", "new"], default="existing"),
+        "title": S("literal title for each new ticket", minLength=1, maxLength=100),
         "at": S("once: YYYY-MM-DD HH:MM; recurring: HH:MM"),
         "every": S("day, week or month", enum=["day", "week", "month"]),
         "tz": S("IANA timezone; default UTC"),
@@ -87,9 +124,9 @@ OP = operation(
         "until": S("end instant; defaults to 30 days"),
         "run_hours": {"type": "integer", "minimum": 1, "maximum": 8, "description": "maximum hours per run; default 8"},
     },
-    required=("ref", "at"),
+    required=("at",),
     positional=("ref",),
-    emits=("schedule.set",),
+    emits=("ticket.created", "schedule.set"),
     text="ok {key} schedule.set {id} seq={seq}\nnext: {next}",
     data=obj({"id": STR}),
     errors=tuple(err(c) for c in ("schedule.denied", "not_found", "parse.text")),

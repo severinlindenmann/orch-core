@@ -78,6 +78,14 @@ describe('scheduleSummary', () => {
 
 describe('scheduleAddAction', () => {
   const base = { ticket: 'ORCH-1', brief: 'Check the build', time: '09:00', weekdays: [], day: 1, tz: 'Europe/Berlin' }
+  it('builds a new-ticket action without the selected ticket', () => {
+    expect(scheduleAddAction({ ...base, repeat: 'day', target: 'new', title: 'Mailbox' })).toEqual({
+      action: 'schedule_add', target: 'new', title: 'Mailbox', brief: 'Check the build', at: '09:00', every: 'day', tz: 'Europe/Berlin',
+    })
+  })
+  it('keeps the existing-ticket action unchanged and omits stale title', () => {
+    expect(scheduleAddAction({ ...base, repeat: 'day', target: 'existing', title: 'Mailbox' })).toEqual(scheduleAddAction({ ...base, repeat: 'day' }))
+  })
   it('builds a once-run with its date and no repeat', () => {
     expect(scheduleAddAction({ ...base, repeat: 'once', date: '2026-11-02' })).toEqual({
       action: 'schedule_add', key: 'ORCH-1', brief: 'Check the build', at: '2026-11-02 09:00', tz: 'Europe/Berlin',

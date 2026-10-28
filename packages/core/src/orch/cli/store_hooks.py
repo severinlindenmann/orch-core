@@ -86,7 +86,18 @@ def _hooks(get_store: Callable[[], Any | None]) -> Hooks:
         view = store.state.workspace.grants.get(ctx.grant.partition(".")[0])
         return "agent" if view is None else view.verbs
 
+    def schedule_close(ctx: Context) -> bool:
+        from orch.model.schedules_wire import child_run
+
+        store = get_store()
+        if store is None or not ctx.grant:
+            return False
+        store.load_all()
+        core = store.state._core
+        return child_run(core, core.ws.grants.get(ctx.grant.partition(".")[0]))
+
     return Hooks(
+        schedule_close=schedule_close,
         head_seq=head_seq,
         normalise_ref=normalise,
         session_ticket=session_ticket,

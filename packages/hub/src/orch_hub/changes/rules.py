@@ -52,7 +52,7 @@ def full_workspaces(registry: Any) -> list[str]:
     return sorted(ws for ws in registry.pins() if is_full(registry, ws))
 
 
-def roles_after(access: Access, ws: str, e: Edit) -> dict[str, str]:
+def roles_after(access: Access, ws: str, e: Edit, *, include_disabled: bool = False) -> dict[str, str]:
     """``{user_id: role}`` in workspace ``ws`` as :meth:`Access.roles` would answer once ``e`` was applied: the access
     model's own computation (:meth:`Access.roles_overlay`), not a second copy of it."""
     return access.roles_overlay(
@@ -63,6 +63,7 @@ def roles_after(access: Access, ws: str, e: Edit) -> dict[str, str]:
         drop_user=e.drop_user,
         drop_member=e.drop_member,
         add_member=e.add_member,
+        include_disabled=include_disabled,
     )
 
 
@@ -95,7 +96,9 @@ def reach_delta(access: Access, registry: Any, kind: str, body: dict[str, Any]) 
     e = _edit_of(kind, body)
     out: dict[str, list[dict[str, str]]] = {}
     for ws in _candidates(access, registry, kind, body):
-        before, after = access.roles(ws), roles_after(access, ws, e)
+        # disabled members count: an owner is shown everyone the change could ever give access to, not only who is active
+        before = access.roles_overlay(ws, include_disabled=True)
+        after = roles_after(access, ws, e, include_disabled=True)
         gained = [
             {"user_id": u, "role": r} for u, r in sorted(after.items()) if role_rank(r) > role_rank(before.get(u))
         ]

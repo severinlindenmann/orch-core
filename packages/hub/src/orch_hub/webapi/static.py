@@ -35,6 +35,7 @@ FILES: dict[str, tuple[str, str]] = {
     "/feel.js": ("feel.js", _JS),
     "/services.js": ("services.js", _JS),
     "/workspaces.js": ("workspaces.js", _JS),
+    "/invite.js": ("invite.js", _JS),
 }
 
 CSP = (

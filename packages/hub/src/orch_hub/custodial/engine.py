@@ -380,6 +380,17 @@ class CustodialEngine:
                 _log.warning("prepare notify hook failed")
         return prepared
 
+    def _void_user(self, user_id: str) -> int:
+        """Drop every OPEN prepared request of this user (a disabling): nothing they prepared can be signed any more.
+        Returns how many were dropped. Underscore on purpose: the engine's public surface is exactly ``prepare`` and
+        ``sign`` (test_no_entry_point_takes_event_bytes); only the web layer's disabling calls this, with a user id.
+        (``sign`` also refuses a disabled user, whose channels are not live.)"""
+        with self._lock:
+            mine = [k for k, q in self._pending.items() if q.user_id == user_id]
+            for k in mine:
+                del self._pending[k]
+        return len(mine)
+
     def _gc(self, now: int) -> None:
         for k in [k for k, p in self._pending.items() if p.prepared.expires_ms <= now]:
             del self._pending[k]

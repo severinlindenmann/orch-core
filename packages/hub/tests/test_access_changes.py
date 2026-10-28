@@ -1255,3 +1255,47 @@ def test_a_switch_ticket_session_is_refused_on_approve_and_prepare(w):
         s, o, _ = w.call("POST", path, {}, token=ticket_session)
         assert (s, o["error"]) == (403, "reauth_required"), path
     assert row(w, cid)["state"] == "pending" and not has_grant(w, WS2, "devs", "edit")
+
+
+def test_an_orphan_full_workspace_bound_after_the_proposal_makes_the_approval_stale(w):
+    from orch_hub.access.store import ADMIN_GROUP
+
+    tok = w.login(w.admin)
+    s, o, _ = w.call("PUT", f"/admin/groups/{ADMIN_GROUP}/members/{w.newbie}", token=tok)
+    assert s == 202
+    cid = o["change_id"]
+    w.reg.add("f7" * 16, "full", owner=None, name="Orphan")  # bound later, no owner alias: nobody can approve for it
+    otok, osig, och = owner_session(w, w.olive)
+    mtok, msig, mch = owner_session(w, w.omar)
+    assert approve(w, otok, cid, osig, och)[1]["state"] == "pending"
+    s, o, _ = w.call(
+        "POST",
+        f"/me/changes/{cid}/approve",
+        {"channel_id": mch, "proof": w.proof(msig, prepare(w, mtok, cid)[1]["digest"])},
+        token=mtok,
+    )
+    assert (s, o) == (409, {"error": "stale_change"})
+    assert (
+        row(w, cid)["state"] == "rejected" and reach(w, WS2, w.newbie) is None and reach(w, "f7" * 16, w.newbie) is None
+    )
+
+
+def test_a_flag_disabled_member_is_named_in_the_reach_and_re_enable_changes_no_roles(w):
+    """A disabled member of the group would regain access if re-enabled: the owner is shown them; and the role map is the
+    same before and after an enabling (enable strips groups; it never restores reach)."""
+    acc(w).add_member("devs", w.newbie)
+    acc(w).set_disabled(w.newbie, True)  # flag only: the stale membership stays
+    tok = w.login(w.admin)
+    cid = propose(w, tok, WS2, "devs", "edit")
+    people = w.call("GET", "/me/changes", token=w.login(w.olive))[1]["pending"][0]["approvals"][0]["people"]
+    assert {p["user_id"] for p in people} == {w.dana, w.newbie}
+    assert reach(w, WS2, w.newbie) is None  # disabled: no role from the hub
+    w.call("POST", f"/admin/changes/{cid}/cancel", {}, token=tok)
+    from orch_hub.invites import Invites
+
+    w.api.d.user_invites = Invites(":memory:", now_ms=w.clock)  # the enable route issues a recovery link
+    before = acc(w).roles(WS2)
+    s, _o, _ = w.call("POST", f"/admin/users/{w.newbie}/enable", token=tok)
+    assert s == 200
+    assert acc(w).roles(WS2) == before and w.newbie not in acc(w).roles(WS2)
+    assert acc(w).groups_of(w.newbie) == []

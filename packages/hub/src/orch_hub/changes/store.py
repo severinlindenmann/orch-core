@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS change (
   state TEXT NOT NULL CHECK (state IN ('pending','applied','rejected','expired','overridden','cancelled')),
   decided_ms INTEGER,
   decided_by TEXT,
-  reason TEXT
+  reason TEXT,
+  reach TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS approval (
   change_id TEXT NOT NULL REFERENCES change(id) ON DELETE CASCADE,
@@ -53,6 +54,7 @@ CHANGE_COLS = (
     "decided_ms",
     "decided_by",
     "reason",
+    "reach",
 )
 APPROVAL_COLS = (
     "change_id",
@@ -84,6 +86,8 @@ class ChangesDB:
                 self._db.execute(
                     "ALTER TABLE approval ADD COLUMN delta TEXT NOT NULL DEFAULT '[]'"
                 )  # before the reach rule
+            if "reach" not in {r[1] for r in self._db.execute("PRAGMA table_info(change)")}:
+                self._db.execute("ALTER TABLE change ADD COLUMN reach TEXT NOT NULL DEFAULT '[]'")
         except PrivateFileError as e:
             raise ChangeError("unavailable", str(e)) from None
         except (sqlite3.Error, OSError) as e:

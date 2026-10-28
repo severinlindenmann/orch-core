@@ -221,20 +221,4 @@ def test_r3_behind_the_edge_needs_trusted_peers(w):
     A.WebApi(dataclasses.replace(w.api.d, behind_edge=True, trusted_peers=frozenset({"10.0.0.1"})))
 
 
-def test_r3_failed_add_user_leaves_no_orphan_uk(w, monkeypatch):
-    import os
-
-    from orch_hub.access import AccessError
-
-    ukdir = w.env.keys.state / "uk"
-    before = set(os.listdir(ukdir)) if ukdir.exists() else set()
-    certs = w.env.keys._gen_dir() / "uk"
-    certs_before = set(os.listdir(certs)) if certs.exists() else set()
-
-    def boom(*a, **k):
-        raise AccessError("store_error", "OperationalError")
-
-    monkeypatch.setattr(w.api.d.access, "add_user", boom)
-    s, _o, _ = w.call("POST", "/admin/users", {"name": "newbie"}, token=w.login(w.admin))
-    assert s == 503 and set(os.listdir(ukdir)) == before
-    assert (set(os.listdir(certs)) if certs.exists() else set()) == certs_before
+# test_r3_failed_add_user_leaves_no_orphan_uk moved to test_invites.py (the person is made by redeeming an invitation)

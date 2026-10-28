@@ -215,8 +215,9 @@ class Changes:
         cid = new_id(now)
         with self._db.tx() as db:
             db.execute(
-                "INSERT INTO change(id, kind, body, proposer, created_ms, expires_ms, state) VALUES (?,?,?,?,?,?,'pending')",
-                (cid, kind, text, actor, now, now + TTL_MS),
+                "INSERT INTO change(id, kind, body, proposer, created_ms, expires_ms, state, reach) "
+                "VALUES (?,?,?,?,?,?,'pending',?)",
+                (cid, kind, text, actor, now, now + TTL_MS, cj(sorted(deltas)).decode()),
             )
             for ws, owner in needs:
                 db.execute(
@@ -499,8 +500,15 @@ class Changes:
                     (ch["id"], a["workspace_id"]),
                 )
                 return reject("stale_change")
-        need = {ws for ws, _ in R.needs_approval(self._access, self._reg, ch["kind"], body, ch["proposer"])}
-        if not need <= {a["workspace_id"] for a in aps}:
+        # every workspace the change reaches NOW was approved by its owner: one that appeared since (a newly bound owner's
+        # workspace, or an orphan one nobody can approve for) makes the approvals stale
+        reached = {
+            ws
+            for ws in R.reach_delta(self._access, self._reg, ch["kind"], body)
+            if R.owner_of(self._reg, ws) != ch["proposer"]  # the proposer's own workspaces never needed an approval
+        }
+        # approved by an owner, or already reached (and unowned: only a hub admin proposes that) when it was proposed
+        if not reached <= {a["workspace_id"] for a in aps} | set(json.loads(ch["reach"])):
             return reject("stale_change")
         if not self._access.has_user(ch["proposer"]) or not self._access.is_hub_admin(ch["proposer"]):
             return reject("proposer_gone")  # the proposal was made by an admin who no longer is one
@@ -522,6 +530,7 @@ class Changes:
         if self._now() >= ch["expires_ms"]:
             raise ChangeError("expired")
         kind = ch["kind"]
+        self._unowned_check(actor, kind, body)  # an orphan full workspace needs a hub admin, at apply time too
         if kind == "grant":
             self._guard_owner(R.Edit(set_grant=(body["group"], body["role"])), [body["workspace_id"]])
             self._access.grant(body["workspace_id"], body["group"], body["role"], actor=actor)
@@ -603,7 +612,7 @@ class Changes:
                     raise ChangeError("not_pending")
                 for ws, delta in reached.items():
                     self._owner_notice_row(db, ch["id"], ws, delta)
-                db.execute("UPDATE approval SET state='overridden' WHERE change_id=?", (ch["id"],))
+                db.execute("UPDATE approval SET state='overridden' WHERE change_id=? AND state='pending'", (ch["id"],))
                 self._apply(ch, body, actor=admin)
 
     def _owner_notice_row(self, db: Any, change_id: str, ws: str, delta: list[dict[str, str]]) -> None:

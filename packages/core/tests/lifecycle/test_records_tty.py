@@ -1,4 +1,5 @@
 """Records uses the common terminal review."""
+
 import pytest
 
 from orch.records import cli as records_cli

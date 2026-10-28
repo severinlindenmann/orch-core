@@ -544,7 +544,7 @@ async function run(send, close) {
               ['real-host-pair-blocked-convenience', 'pair-blocked-convenience', [['the convenience explanation', '[data-testid="pair-blocked-convenience"]']]],
               ['real-host-pair-offer', 'pair-offer', [['the warnings', '[data-testid="pair-warnings"]'], ['the device list', '[data-testid="device-row"]']]],
               ['real-host-pair-pending', 'pair-pending', [['the code entry', '#pair-sas'], ['the label', '[data-testid="pair-label"]']]],
-              ['real-host-pair-cert', 'pair-cert', [['the cert code', '[data-testid="pair-cert-code"]'], ['the primary command', '[data-testid="pair-primary-command"]']]],
+              ['real-host-pair-cert', 'pair-cert', [['the add line', '[data-testid="pair-add-line"]'], ['the primary command', '[data-testid="pair-primary-command"]']]],
               ['real-host-pair-failed', 'pair-failed', [['the remove-the-device line', '[data-testid="pair-needs-remove"]']]],
               ['real-host-pair-devices', 'pair-devices', [['the device list', '[data-testid="device-row"]']]],
               // Core H12d-2: reader levels on Settings → Devices, and every click-to-sign refusal sentence.

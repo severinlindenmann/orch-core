@@ -208,10 +208,14 @@ def test_module_never_names_a_hub_write():
 
     src = Path(hub.__file__).read_text()
     calls = re.findall(r"\.call\(\s*\"([a-z_.]+)\"", src)
-    # connect: C11's one write; addon.list: a read (the join-pause check)
-    allowed = {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link", "addon.list"}
+    # connect: C11's one write; addon.list: a read (the join-pause check); member.list: the owner check of the
+    # one-click share reductions
+    allowed = {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link", "addon.list", "member.list"}
     assert set(calls) <= allowed
-    assert src.count("write=True") == 1
+    # the other write: `reduce`, which sends only the two ops that take sharing away (never an add or a sync)
+    assert src.count("write=True") == 2
+    assert set(re.findall(r"\"(share\.[a-z_]+)\"", src)) == {"share.rules", "share.preview", "share.revoke",
+                                                             "share.rule_remove"}  # fmt: skip
     assert "hubclient" not in src and "import orch" not in src
 
 

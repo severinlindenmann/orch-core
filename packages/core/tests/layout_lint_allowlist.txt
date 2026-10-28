@@ -27,7 +27,7 @@ host/reads_ws.py 1
 host/records.py 4
 host/review.py 1
 host/signcontent.py 3
-host/signer.py 16
+host/signer.py 15
 hostclient.py 2
 importer/plan.py 1
 importer/v1.py 12

@@ -394,6 +394,17 @@ export function clickOn(ws: FakeWs) {
   if (!ws.features.includes('click')) ws.features = [...ws.features, 'click']
 }
 
+/**
+ * From here on, every press stands in for a trusted one (jsdom and userEvent events are untrusted), judged by the
+ * real rule: a key auto-repeat still blocks it. The armed Sign signs only on a trusted press.
+ */
+const realTrusted = gesture.trustedPress // captured before any test spies on it
+export function trustedPresses() {
+  const spy = vi.spyOn(gesture, 'trustedPress').mockImplementation((e) => realTrusted({ isTrusted: true, repeat: e.repeat }))
+  onTestFinished(() => spy.mockRestore())
+  return spy
+}
+
 /** Presses the review's outcome button: the signer prepares and its View shows (no terminal hand-off). */
 export async function prepareByClick(scope: HTMLElement, name: string | RegExp) {
   fireEvent.click(await within(scope).findByRole('button', { name }, { timeout: 5000 }))

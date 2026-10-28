@@ -4,7 +4,7 @@ import { useRef, useState, type ReactNode } from 'react'
 import { MAX_CERT_BYTES, MAX_KEY_FILE_BYTES, MAX_READER_DECL_BYTES, PUBLIC_KEY, canAddRole, canChangeRoles, canRemoveMember, certProblem, declProblem, deviceBelow, deviceLine, isReaderDecl, keyText, rightsOf, type RosterMember } from '@/api/settings'
 import { hasFeature } from '@/api/features'
 import type { Role, Workspace } from '@/api/types'
-import { InfoHint } from '@/components/InfoHint'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Raw, visible } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -173,10 +173,10 @@ function AddMember({ me, onSubmit, onClose }: { me: Role | undefined; onSubmit: 
             id="member-decl"
             label="One click confirmation"
             info={
-              <InfoHint label="About the One click confirmation">
+              <InfoDrawer label="About the One click confirmation">
                 <p>This workspace is signed with One click. Its history holds entries signed by a click instead of a passphrase.</p>
                 <p>Everyone who joins confirms, signed with their own new device key, that their orch app reads such entries. Their orch app makes this file together with the device certificate; the host checks it before anything is signed.</p>
-              </InfoHint>
+              </InfoDrawer>
             }
             help={`${who} needs to confirm they understand One click signatures: the file that came with their certificate.`}
             value={decl}

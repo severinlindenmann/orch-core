@@ -6,6 +6,7 @@ import { api } from '@/api/client'
 import { ARM_MS, BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import * as sealed from '@/api/sealed'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { trustedPresses } from '@/test/hostHarness'
 import { HubStep } from './HubStep'
 
 const WS = '705d40abbb8c1c90354a1acaa94c935c'
@@ -54,6 +55,7 @@ const input = async () => (await screen.findByTestId('hub-backup-input', {}, T))
 const signBtn = () => screen.getByRole('button', { name: 'Sign and join the hub' })
 async function press() {
   await waitFor(() => expect(signBtn()).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
   fireEvent.pointerDown(signBtn())
   fireEvent.click(signBtn())
 }

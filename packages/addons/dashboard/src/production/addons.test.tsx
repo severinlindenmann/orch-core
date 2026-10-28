@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { AddOnRow, AddOnsData } from '@/api/addOnSwitches'
 import { ARM_MS } from '@/api/click'
 import * as gesture from '@/components/sign/trustedPress'
-import { useFakeHost, workspace, show, MARA } from '@/test/hostHarness'
+import { useFakeHost, workspace, show, trustedPresses, MARA } from '@/test/hostHarness'
 
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
@@ -173,6 +173,7 @@ it('run 9: with One click on, the trusted switch press prepares directly; after 
   const sign = await within(accordion).findByRole('button', { name: /^Sign( |$)/ }, T)
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'worktrees' }])
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  trustedPresses() // the armed Sign signs only on a trusted press
   await user.click(sign)
   await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
   expect(screen.queryByRole('dialog')).toBeNull()

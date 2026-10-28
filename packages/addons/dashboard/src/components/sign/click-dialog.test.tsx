@@ -91,6 +91,26 @@ const press = (b: HTMLElement) => {
 }
 
 describe('the action dialog with click-to-sign', () => {
+  it('the armed Sign never signs on a synthetic (untrusted) press or a key auto-repeat; a trusted press signs once', async () => {
+    const { dialog } = await toPanel()
+    const b = await armed(dialog)
+    vi.mocked(gesture.trustedPress).mockRestore() // jsdom's own untrusted events, judged by the real rule
+    press(b)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(c.sign).not.toHaveBeenCalled()
+    const real = gesture.trustedPress
+    vi.spyOn(gesture, 'trustedPress').mockImplementation((e) => real({ isTrusted: true, repeat: e.repeat }))
+    fireEvent.keyDown(b, { key: 'Enter' }) // began armed
+    fireEvent.keyDown(document, { key: 'Enter', repeat: true }) // then held: the click lands during auto-repeat
+    fireEvent.click(b)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(c.sign).not.toHaveBeenCalled()
+    fireEvent.keyUp(document, { key: 'Enter' })
+    press(b)
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(1), T)
+    expect(c.sign.mock.calls[0][2]).toBe(DIGEST)
+  })
+
   it('leaving the screen while the review is open cancels the open click request (no slot left until it expires)', async () => {
     const { unmount } = await toPanel()
     expect(c.cancel).not.toHaveBeenCalled()

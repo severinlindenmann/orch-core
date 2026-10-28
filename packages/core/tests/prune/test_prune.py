@@ -205,6 +205,7 @@ class Machine:
         env = {**ctx.env, **(env_extra or {})}
         ctx.env = env
         from unittest.mock import patch
+
         with patch("orch.ops.human.review_prompt", side_effect=lambda text: self.ask(text) in ("y", "yes")):
             return main(list(args), env=env, out=self.out, err=self.err, ctx=ctx)
 
@@ -361,9 +362,7 @@ def test_interactive_confirm_and_per_workspace_question(m):
     m.answers = ["y", "n", "n"]  # remove all? yes; delete the folder? no; tell the hub? no
     assert m.prune(interactive=True) == 0, m.err.getvalue()
     assert any("Remove all of this?" in a for a in m.asked)
-    assert any(
-        f"Also delete the folder {m.ws} including its git history (" in a for a in m.asked
-    )
+    assert any(f"Also delete the folder {m.ws} including its git history (" in a for a in m.asked)
     assert m.ws.exists() and not (m.ws / ".orch").exists()
 
 

@@ -216,8 +216,10 @@ def test_no_terminal_means_no_change(rig, monkeypatch):
             raise OSError("no controlling terminal")
 
     from orch.ops.errors import OrchError
+
     def missing(text):
         raise OrchError("tty.required", "no controlling terminal")
+
     monkeypatch.setattr("orch.ops.human.review_prompt", missing)
     code, _, err = rig.go("enable", "--name", NAME)
     assert code == 3 and "tty.required" in err and rig.calls == []

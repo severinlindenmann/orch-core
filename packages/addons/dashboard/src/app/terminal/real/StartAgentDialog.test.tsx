@@ -271,11 +271,16 @@ describe('start', () => {
 const noGrant = (reason: 'none' | 'expiring' | 'scope' | 'revoked' = 'none') =>
   preview({ grant: null, blocked: { code: 'launch.no_grant', message: 'no runner grant', detail: { reason } } })
 
+const realTrusted = gesture.trustedPress
+/** From here on every press stands in for a trusted one, judged by the real rule (a key repeat still blocks it). */
+const trustedPresses = () => vi.spyOn(gesture, 'trustedPress').mockImplementation((e) => realTrusted({ isTrusted: true, repeat: e.repeat }))
+
 async function issueAndSign() {
   fireEvent.click(await screen.findByTestId('runner-grant-issue', {}, T))
   const panel = await screen.findByTestId('click-panel', {}, T)
   const sign = within(panel).getByRole('button', { name: /^Sign and allow access$/ })
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
+  trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
   fireEvent.pointerDown(sign)
   fireEvent.click(sign)
   await waitFor(() => expect(s.sign).toHaveBeenCalled(), { timeout: 3000 })

@@ -3,9 +3,10 @@
 Mission Control explains and shows exactly what will change; **the owner signs in the terminal**. So this module has
 read routes that relay the host's own reads through a closed shape, and one route that builds the terminal command for
 a change. It signs nothing, holds no hub credential and opens no connection to a hub. The one hub write it sends the
-host is `hub.connect` after a join by click (see below); `hub.join`, `hub.mode`, `hub.leave`, `hub.unbind` and the
-`share.*` writes are signed by click or run by `orch hub ...` in the owner's Terminal, which refuses agents. It
-imports no hub code (D79).
+host is `hub.connect` after a join by click (see below); the other two are the share writes that only take sharing away
+(`share.revoke`, `share.rule_remove`, one click as the session's person, below). `hub.join`, `hub.mode`, `hub.leave`,
+`hub.unbind` and the share writes that add (`share.rule_add`, a confirming `share.sync`) are signed by click or run by
+`orch hub ...` in the owner's Terminal, which refuses agents. It imports no hub code (D79).
 
 * `GET  /hub`                `hub.status`: the host's view of the hub. Everything in it comes from the host's replayed
                              log and `hub.json`; the group counts come from the pinned snapshot and are "from the hub,
@@ -15,6 +16,12 @@ imports no hub code (D79).
 * `POST /hub/share/preview`  `share.preview {add | remove}`: what the hub would see after ONE rule change.
 * `POST /hub/command`        the exact command to run in the terminal for one change. Closed bodies, every value
                              checked and shell-quoted; a value with a hidden character is refused, never repaired.
+* `POST /hub/share/revoke`   `share.revoke {ref}`: stop sharing one ticket. One click, no signature (it only takes
+                             sharing away, like the cosmetic settings: `cosmetic_routes`): owner only, from a FULL
+                             session, as the session's person; a switch session is `session.readonly` (security.py).
+                             The host rate-limits it and writes the security-log line. Idempotent like the host op.
+* `POST /hub/share/rule-remove` `share.rule_remove {rule, expect}`: stop sharing by a rule, bound to the `plan` of the
+                             preview the owner was shown (as the CLI does). Same rules as the revoke.
 * `POST /hub/connect`        #1198 C11: the second half of a join by click. After the signed `hub.join` is on the log,
                              the host's `hub.connect {invite, hub_card}` tells the hub (the hub checks the invite).
                              The host does the work and the checks; this route only relays, for a dashboard opened on
@@ -26,6 +33,7 @@ Host text is display-only: hidden characters are withheld, never repaired.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shlex
 from typing import Annotated, Literal
@@ -35,8 +43,10 @@ from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from . import reads
 from .adapters.addons import display
+from .cosmetic_routes import full_session, refused
 from .errors import HostError, fail
 from .gateway import Gateway
+from .market_routes import new_idem
 from .stepup import refuse_step_up
 from .terminals import Idem
 from .text import hidden
@@ -47,6 +57,7 @@ HUB_ID = re.compile(r"^[0-9a-f]{8,64}$")
 TICKET_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}$")
 TICKET_LINE = re.compile(r"^ticket ([A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}): ")
 MAX_TICKETS = 100  # share.preview lists at most 100 rows; more means the list is not complete
+log = logging.getLogger("orch_dashboard.security")
 
 #: closed values the pages and the commands use
 Invite = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{3,255}$")]
@@ -136,6 +147,37 @@ class PreviewBody(BaseModel):
         if self.add is not None and self.remove is not None:
             raise ValueError("one rule change at a time")
         return self
+
+
+Ref = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$")]
+Plan = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{43}$")]
+PLAN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+
+
+class RevokeBody(BaseModel):
+    """One shared item to withdraw: a ticket key (or a `logical` id of the preview)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    ref: Ref
+
+
+class RuleRemoveBody(BaseModel):
+    """One rule to remove, and the `plan` of the `share.preview {remove: rule}` the owner was shown."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    rule: Rule
+    expect: Plan
+
+
+def reduce_view(raw) -> dict:
+    """Of a `share.revoke` / `share.rule_remove` answer only the closed fields."""
+    raw = raw if isinstance(raw, dict) else {}
+    pending = raw.get("pending")
+    return {
+        "synced": raw.get("synced") is True,
+        "pending": pending if isinstance(pending, str) and re.fullmatch(r"[a-z_]{1,40}", pending) else None,
+        "revoked": _int(raw.get("revoke")) or 0,
+    }
 
 
 class CommandBody(BaseModel):
@@ -289,6 +331,8 @@ def preview_view(raw) -> dict:
         "more": _int(raw.get("more")) or 0,
         "items": items,
         "rules": [t[:300] for t in (raw.get("rules") or []) if isinstance(t, str) and not hidden(t)][:50],
+        # the digest of exactly this selection: a rule removal sends it back as `expect` (the host refuses another)
+        "plan": raw["plan"] if isinstance(raw.get("plan"), str) and PLAN.fullmatch(raw["plan"]) else None,
     }
 
 
@@ -338,6 +382,35 @@ def register(app: FastAPI, gateway: Gateway):
         if not link.supports("share.preview", "hub/1"):
             raise fail("op.unsupported", "This host cannot preview sharing yet.", exit=1)
         return preview_view(link.call("share.preview", args))
+
+    def owner_link(ws: str, request: Request, what: str):
+        """The cosmetic precedent (`cosmetic_routes`): a full session, and the link's person (the host's `call.viewer`)
+        is the owner. The host checks the role again."""
+        if not full_session(app.state.auth, request.state.token):
+            raise refused(f"Sign in fully to {what}.")
+        link = gateway.enabled(ws)
+        person = link.welcome["peer"]["person"]
+        role = next((m.get("role") for m in link.call("member.list")["members"] if m.get("person") == person), None)
+        if role != "owner":
+            message = "Only the workspace owner changes what is shared."
+            raise HostError({"code": "role.denied", "message": message, "retryable": False}, 3)
+        return link, person
+
+    def reduce(ws: str, request: Request, op: str, args: dict, kind: str) -> dict:
+        link, person = owner_link(ws, request, "stop sharing")
+        got = reduce_view(link.call(op, args, write=True, idem=new_idem()))
+        # the host writes the security-log line (person, op); this is the dashboard's own line of the same click
+        log.warning("sharing taken away from the dashboard: %s (%s) by %s", op, kind, person)
+        return got
+
+    @app.post("/api/w/{ws}/hub/share/revoke")
+    def hub_share_revoke(body: RevokeBody, request: Request, ws: str = Depends(reads.workspace)):
+        return reduce(ws, request, "share.revoke", {"ref": body.ref}, "item")
+
+    @app.post("/api/w/{ws}/hub/share/rule-remove")
+    def hub_share_rule_remove(body: RuleRemoveBody, request: Request, ws: str = Depends(reads.workspace)):
+        args = {"rule": body.rule.host(), "expect": body.expect}
+        return reduce(ws, request, "share.rule_remove", args, body.rule.kind)
 
     @app.post("/api/w/{ws}/hub/link")
     def hub_link(body: LinkBody, ws: str = Depends(reads.workspace)):

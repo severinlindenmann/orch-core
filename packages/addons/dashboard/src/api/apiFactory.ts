@@ -151,6 +151,9 @@ export function createApi(transport: Transport) {
     getHubShare: (ws: string) => call<import('./hub').HubShare>('GET', `/api/w/${ws}/hub/share`),
     getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
       call<import('./hub').HubPreview>('POST', `/api/w/${ws}/hub/share/preview`, body),
+    revokeHubShare: (ws: string, ref: string) => call<import('./hub').HubReduced>('POST', `/api/w/${ws}/hub/share/revoke`, { ref }),
+    removeHubRule: (ws: string, rule: import('./hub').HubRule, expect: string) =>
+      call<import('./hub').HubReduced>('POST', `/api/w/${ws}/hub/share/rule-remove`, { rule, expect }),
     getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>('POST', `/api/w/${ws}/hub/command`, body),
     getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>('POST', `/api/w/${ws}/hub/link`, { link }),
     connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>('POST', `/api/w/${ws}/hub/connect`, body),

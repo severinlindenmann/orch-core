@@ -178,6 +178,7 @@ def _approve(args: argparse.Namespace, out: TextIO, question: str) -> bool:
         return True
     from orch.ops.errors import OrchError
     from orch.ops.human import review_prompt
+
     try:
         return review_prompt(question)
     except OrchError as exc:

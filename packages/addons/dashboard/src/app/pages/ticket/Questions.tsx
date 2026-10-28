@@ -25,12 +25,8 @@ function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus;
     <form
       className="mt-3 space-y-3 border-t border-border pt-3"
       onSubmit={(e) => {
+        // Only a press of Send answer sends (AnswerSend): an Enter in the form prepares nothing and opens nothing (C2).
         e.preventDefault()
-        // Only the plain Send answer button submits. In one-click mode there is no such button: an Enter on a radio
-        // would otherwise open the two-step dialog behind the strip that already holds a prepared request.
-        // `null`: an implicit submission. (A browser without `submitter` says undefined: that still submits.)
-        if ((e.nativeEvent as SubmitEvent).submitter === null) return
-        if (ready) sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })
       }}
     >
       {q.options && q.options.length > 0 && <QuestionOptions q={q} name={`answer-${q.id}`} value={option} onChange={setOption} idPrefix={q.id} disabled={busy} />}
@@ -52,7 +48,6 @@ function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus;
         option={option}
         text={text}
         canSend={ready}
-        type="submit"
         fallback={() => sign({ kind: 'answer', question: q.id, option, text: text.trim() || undefined })}
         onViewQuestion={onViewQuestion}
         onBusy={setBusy}

@@ -3,6 +3,7 @@
 // It reduces accidental activation; it proves neither review nor presence and does not constrain a compromised client.
 import { useEffect, useRef, useState } from 'react'
 import { ARM_MS } from '@/api/click'
+import { trustedPress } from './trustedPress'
 
 export function useArming(key: string, ms = ARM_MS): boolean {
   const [armed, setArmed] = useState(false)
@@ -47,6 +48,7 @@ export function useArming(key: string, ms = ARM_MS): boolean {
 /**
  * The guard for the Sign button: an activation counts only if it BEGAN while armed (pointer down or key down, not an
  * auto-repeat). A click whose press started before the View appeared, or before the button was armed, is ignored.
+ * The click itself must be a trusted, non-repeat press (trustedPress): a synthetic click or a key auto-repeat never signs.
  */
 export function useActivation(armed: boolean) {
   const began = useRef(false)
@@ -58,9 +60,9 @@ export function useActivation(armed: boolean) {
       if (e.type === 'keydown' && (e.repeat || (e.key !== 'Enter' && e.key !== ' '))) return
       began.current = armed
     },
-    /** True once per activation that began armed. */
-    take: () => {
-      const ok = began.current && armed
+    /** True once per trusted activation that began armed. `e` is the click's native event. */
+    take: (e: { isTrusted: boolean; repeat?: boolean }) => {
+      const ok = began.current && armed && trustedPress(e)
       began.current = false
       return ok
     },

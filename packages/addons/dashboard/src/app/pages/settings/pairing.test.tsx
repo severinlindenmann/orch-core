@@ -302,27 +302,34 @@ describe('compare the code', () => {
 })
 
 describe('after the code', () => {
-  it('cert_pending shows the primary step with its copyable command and the cert code, and no orch sign step', async () => {
-    open('pair-cert')
-    expect(await screen.findByTestId('pair-cert-code', {}, T)).toHaveTextContent('H4WZ7P')
+  it('cert_pending: one plain line and the copyable command; the details are behind the i', async () => {
+    const { user } = open('pair-cert')
+    const card = await screen.findByTestId('pair-cert', {}, T)
+    expect(screen.getByTestId('pair-add-line')).toHaveTextContent('On this computer, run this command and type the 6 characters your phone shows.')
     expect(screen.getByTestId('pair-primary-command').textContent).toBe('orch host relay pair --resume --offer ' + '7'.repeat(32))
     expect(screen.getByTestId('pair-primary-command').closest('a')).toBeNull()
-    expect(screen.queryByTestId('pair-sign-command')).toBeNull() // the terminal hand-off is gone
+    // no jargon, no two-step list, no code from the host to copy: the person types what the phone shows
+    expect(card).not.toHaveTextContent(/Two steps|primary|certificate|click-to-sign/)
+    expect(card).not.toHaveTextContent('H4WZ7P')
+    expect(screen.queryByTestId('pair-cert-code')).toBeNull()
     expect(document.body).not.toHaveTextContent('orch sign')
-    expect(screen.getByTestId('pair-cert')).toHaveTextContent('refuses click-to-sign')
-    expect(screen.getByTestId('pair-step-sign')).toHaveTextContent('The phone can be added once the primary has signed (step 1).')
-    expect(screen.queryByRole('button', { name: 'Add the phone' })).toBeNull()
+    // details: hidden by default, there on press
+    expect(screen.queryByTestId('info-drawer-content')).toBeNull()
+    await user.click(screen.getByTestId('pair-add-details'))
+    const details = await screen.findByTestId('info-drawer-content', {}, T)
+    expect(details).toHaveTextContent('recovery code')
+    expect(details).toHaveTextContent('does not accept One click')
   })
 
-  it('with the certificate in, Add the phone opens the review; One click cannot add a phone yet, so nothing is prepared', async () => {
-    const { user } = open('pair-cert', { offers: [{ offer_id: 'of_c', state: 'cert_pending', created_ms: 0, expires_ms: Date.now() + 60_000, scopes: ['look'], cert_ready: true }] })
-    const add = await screen.findByRole('button', { name: 'Add the phone' }, T)
+  it('with the certificate in, adding the phone stays in the terminal: no button, nothing is prepared', async () => {
     const handoff = vi.spyOn(api, 'prepareHandoff')
     const click = vi.spyOn(api, 'prepareClick')
-    await user.click(add)
-    const dialog = await screen.findByRole('dialog', {}, T)
-    expect(dialog).toHaveTextContent('One click is not ready on this computer.')
-    expect(dialog).not.toHaveTextContent('orch sign')
+    const { user } = open('pair-cert', { offers: [{ offer_id: '7'.repeat(32), state: 'cert_pending', created_ms: 0, expires_ms: Date.now() + 60_000, scopes: ['look'], cert_ready: true }] })
+    expect(await screen.findByTestId('pair-primary-command', {}, T)).toHaveTextContent('orch host relay pair --resume --offer ' + '7'.repeat(32))
+    expect(screen.queryByRole('button', { name: 'Add the phone' })).toBeNull()
+    await user.click(screen.getByTestId('pair-add-details'))
+    expect(await screen.findByTestId('info-drawer-content', {}, T)).toHaveTextContent('the command finishes adding it')
+    expect(screen.queryByRole('dialog')).toBeNull()
     expect(handoff).not.toHaveBeenCalled()
     expect(click).not.toHaveBeenCalled()
   })

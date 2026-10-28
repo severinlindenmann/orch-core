@@ -29,7 +29,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from orch import canon
+from orch import canon, fdwait
 from orch.custody import Backend, NoPrompt, get_backend
 from orch.identity import device_ref, new_ulid, sign_person_event
 from orch.ops import views
@@ -146,7 +146,6 @@ def review_prompt(text: str) -> bool:
     """
     if os.name == "nt":  # no POSIX controlling terminal
         raise OrchError("tty.required", "signing requires a controlling terminal")
-    import select
     import termios
     import time
     import tty
@@ -177,7 +176,7 @@ def review_prompt(text: str) -> bool:
         deadline = time.monotonic() + 1.0
         last_input = None
         while (left := deadline - time.monotonic()) > 0:
-            if select.select([fd], [], [], left)[0]:
+            if fdwait.readable(fd, left):
                 if not os.read(fd, 4096):
                     return False
                 last_input = time.monotonic()
@@ -195,7 +194,6 @@ def review_prompt(text: str) -> bool:
                 termios.tcsetattr(fd, termios.TCSANOW, saved)
         finally:
             os.close(fd)
-
 
 
 def source_sha(view: Any) -> list[dict[str, str]]:

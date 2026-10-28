@@ -3,7 +3,9 @@ import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/re
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import * as sealed from '@/api/sealed'
+import * as gesture from '@/components/sign/trustedPress'
 import { setHubScenario, setMockConnectError, setMockOneClick, setMockVault, type HubScenario } from '@/mocks/hub'
+import { trustedPresses } from '@/test/hostHarness'
 import { renderApp } from '@/test/renderApp'
 
 const T = { timeout: 4000 }
@@ -118,6 +120,7 @@ describe('switching to full access (run-9 feedback 6): one click, no backup key'
     const btn = await screen.findByRole('button', { name: 'Sign and let the hub read everything' }, T)
     expect(screen.queryByTestId('hub-backup-input')).toBeNull() // the person key is kept: nothing to type
     await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
+    trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
     fireEvent.pointerDown(btn)
     fireEvent.click(btn)
     await waitFor(() => expect(connectHub).toHaveBeenCalledTimes(1), T)
@@ -143,13 +146,51 @@ describe('leaving (A3.5 / A3.6)', () => {
     expect(within(banner).getByText('Hub offline, working locally')).toBeTruthy()
     await view.user.click(within(banner).getByTestId('hub-leave-down'))
     expect(await screen.findByText('Leave without the hub', {}, T)).toBeTruthy()
-    expect(screen.getByText('One click is not ready for leaving while the hub is unreachable.')).toBeTruthy()
-    expect(screen.queryByTestId('hub-command')).toBeNull() // no terminal hand-off
-    expect(screen.queryByTestId('hub-backup-input')).toBeNull() // the hub cannot be reached: nothing to sign here
     cleanup()
     hubPage('selective', '/w/DEMO')
     await screen.findByTestId('hub-chip', {}, T)
     expect(screen.queryByTestId('hub-offline-banner')).toBeNull()
+  })
+})
+
+describe('stopping sharing one ticket', () => {
+  it('reviews what stops and offers one inline press-again button: no terminal command, no typed word, no backup key', async () => {
+    const view = hubPage('selective')
+    await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
+    await view.user.click(within(await screen.findByTestId('hub-ticket-list', {}, T)).getByTestId('hub-ticket-revoke-0'))
+    const dialog = await screen.findByRole('dialog', { name: 'Stop sharing this ticket' }, T)
+    expect(within(dialog).getByText(/asked to delete its copy/)).toBeTruthy()
+    expect(within(dialog).getByText(/cannot be taken back/)).toBeTruthy()
+    expect(within(dialog).getByTestId('hub-revoke-ticket')).toHaveTextContent('DEMO-0043 · Export report as PDF')
+    expect(within(dialog).getByTestId('hub-review-workspace')).toHaveTextContent(/^Workspace DEMO · [0-9a-z]{1,8}/)
+    expect(await within(dialog).findByTestId('hub-revoke-stop', {}, T)).toHaveTextContent('Stop sharing')
+    expect(within(dialog).queryByTestId('hub-revoke-unavailable')).toBeNull()
+    expect(dialog).not.toHaveTextContent('One click is not ready')
+    expect(within(dialog).queryByTestId('hub-command')).toBeNull()
+    expect(within(dialog).queryByRole('textbox')).toBeNull()
+    expect(within(dialog).queryByTestId('hub-backup-input')).toBeNull()
+    for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('orch hub')
+    await view.user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Stop sharing this ticket' })).toBeNull(), T)
+  })
+
+  it('a second press stops sharing and the ticket leaves the list', async () => {
+    vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+    const revoke = vi.spyOn(api, 'revokeHubShare')
+    const view = hubPage('selective')
+    await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
+    await view.user.click(within(await screen.findByTestId('hub-ticket-list', {}, T)).getByTestId('hub-ticket-revoke-0'))
+    const dialog = await screen.findByRole('dialog', { name: 'Stop sharing this ticket' }, T)
+    const stop = await within(dialog).findByTestId('hub-revoke-stop', {}, T)
+    await waitFor(() => expect(stop).toBeEnabled(), T)
+    fireEvent.click(stop)
+    fireEvent.click(stop)
+    expect(await within(dialog).findByTestId('hub-revoke-stop-done', {}, T)).toBeTruthy()
+    expect(revoke).toHaveBeenCalledTimes(1)
+    expect(revoke.mock.calls[0][1]).toBe('DEMO-0043')
+    // the page behind the open dialog is aria-hidden: count the rows directly
+    await waitFor(() => expect(screen.getByTestId('hub-ticket-list').querySelectorAll('li')).toHaveLength(1), T)
+    vi.restoreAllMocks()
   })
 })
 
@@ -163,7 +204,7 @@ describe('share rules (A3.3)', () => {
     await type(view, 'hub-rule-value', 'team')
     await waitFor(() => expect(screen.getByText(/1 now visible/)).toBeTruthy(), T)
     await view.user.click(screen.getByTestId('hub-share-review'))
-    expect(await screen.findByText('One click is not ready for changing sharing rules.', {}, T)).toBeTruthy()
+    expect(await screen.findByText('Adding a sharing rule is not available in the dashboard yet.', {}, T)).toBeTruthy()
     expect(screen.getByText(/Add this sharing rule\./)).toBeTruthy()
     expect(screen.queryByTestId('hub-command')).toBeNull()
     expect(screen.getAllByText(/cannot be taken back/).length).toBeGreaterThan(0)
@@ -177,7 +218,7 @@ describe('share rules (A3.3)', () => {
     await view.user.click(await screen.findByTestId('hub-share-review', {}, T).then((b) => { return b }))
     await waitFor(() => expect((screen.getByTestId('hub-share-review') as HTMLButtonElement).disabled).toBe(false), T)
     await view.user.click(screen.getByTestId('hub-share-review'))
-    expect(await screen.findByText('One click is not ready for changing sharing rules.', {}, T)).toBeTruthy()
+    expect(await screen.findByText('Adding a sharing rule is not available in the dashboard yet.', {}, T)).toBeTruthy()
     expect(screen.queryByTestId('hub-command')).toBeNull()
     for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('orch hub')
   })
@@ -238,6 +279,7 @@ describe('by click (#1198 C11)', () => {
     fireEvent.change(await screen.findByTestId('hub-backup-input', {}, T), { target: { value: WORDS } })
     const btn = await screen.findByRole('button', { name: label }, T)
     await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
+    trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
     fireEvent.pointerDown(btn)
     fireEvent.click(btn)
   }
@@ -284,6 +326,7 @@ describe('by click (#1198 C11)', () => {
     const btn = await screen.findByRole('button', { name: 'Sign and join the hub' }, T)
     expect(screen.queryByTestId('hub-backup-input')).toBeNull()
     await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
+    trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
     fireEvent.pointerDown(btn)
     fireEvent.click(btn)
     expect(await screen.findByTestId('hub-connected', {}, T)).toHaveTextContent(/read everything/)
@@ -332,6 +375,34 @@ describe('by click (#1198 C11)', () => {
     expect(await screen.findByTestId('hub-step-done', {}, T)).toHaveTextContent(/You left the hub/)
     await view.user.click(within(screen.getByTestId('hub-step')).getByRole('button', { name: 'Close' }))
     expect(await screen.findByText(/Not connected\./, {}, T)).toBeTruthy()
+  })
+
+  it('leaves without the hub (offline banner): the same one click with the backup key, no terminal step', async () => {
+    const prepare = vi.spyOn(api, 'prepareClick')
+    const view = hubPage('offline', '/w/DEMO')
+    await view.user.click(within(await screen.findByTestId('hub-offline-banner', {}, T)).getByTestId('hub-leave-down'))
+    expect(await screen.findByText('Leave without the hub', {}, T)).toBeTruthy()
+    expect(screen.queryByText(/One click is not ready/)).toBeNull()
+    expect(screen.queryByTestId('hub-command')).toBeNull()
+    await sign('Leave hub')
+    expect(await screen.findByTestId('hub-step-done', {}, T)).toHaveTextContent(/You left the hub/)
+    expect(prepare.mock.calls[0][1]).toEqual({ action: 'hub_leave' })
+    expect(seal).toHaveBeenCalledTimes(1)
+    expect(seal.mock.calls[0][1]).toBe(WORDS)
+    expect(seal.mock.calls[0][2]).toMatchObject({ purpose: 'hub.backup_key' })
+  })
+
+  it('switches to full with the backup key when the person key is not kept: one click, sealed, then the hub is told', async () => {
+    const connectHub = vi.spyOn(api, 'connectHub')
+    const view = hubPage('selective')
+    await view.user.click(await screen.findByTestId('hub-full-switch', {}, T))
+    expect(screen.queryByTestId('hub-command')).toBeNull()
+    await sign('Sign and let the hub read everything')
+    await waitFor(() => expect(connectHub).toHaveBeenCalledTimes(1), T)
+    expect(seal).toHaveBeenCalledTimes(1)
+    expect(seal.mock.calls[0][1]).toBe(WORDS)
+    expect(seal.mock.calls[0][2]).toMatchObject({ purpose: 'hub.backup_key' })
+    expect(connectHub.mock.calls[0][1].invite).toBeUndefined()
   })
 
   it('with One click off, leaving links to Settings', async () => {

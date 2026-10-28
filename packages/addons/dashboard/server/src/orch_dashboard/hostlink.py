@@ -131,6 +131,9 @@ OPS = {
         "hub.switch",  # H1: one-time switch tickets and the rail list over the hub link (no log line, no idem)
         "share.rules",
         "share.preview",
+        # the two share writes that only take sharing away: one click as the session's person, owner only (hub.py)
+        "share.revoke",
+        "share.rule_remove",
         # V3 A10 (design-g3 4.2): the Add-ons page. Reads: market.list, market.installed. Person writes (owner role, the
         # host refuses an agent): stage, unstage, uninstall, refresh. Every install is a terminal hand-off.
         *MARKET_OPS,

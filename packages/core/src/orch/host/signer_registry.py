@@ -1,4 +1,5 @@
 """Person-side workspace discovery shared by signing clients."""
+
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,6 @@ def _own_workspaces(state: Path, uid: int, pick: str | None) -> list[dict[str, A
     return out
 
 
-
 def _backend(state: Path, workspace_id: str) -> Any:
     """The device key's custody from the person's selection (H5c, orch-v2-host §0.8.6): the convenience backend when
     selected, else the passphrase key at ``<state>/hosts/<ws>/person/`` (H5b's location). The binding is the signer
@@ -47,5 +47,3 @@ def _backend(state: Path, workspace_id: str) -> Any:
     except CustodyError as exc:
         raise HostError("custody.unavailable", str(exc)[:400]) from None
     return backend
-
-

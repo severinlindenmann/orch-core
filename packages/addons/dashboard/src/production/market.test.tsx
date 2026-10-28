@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ARM_MS } from '@/api/click'
 import * as gesture from '@/components/sign/trustedPress'
-import { READS, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { READS, show, trustedPresses, useFakeHost, workspace } from '@/test/hostHarness'
 import { openInfo } from '@/test/info'
 import { market, stage, installedAddon, updateStage } from '@/test/fixtures/market'
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
@@ -25,10 +25,11 @@ const clickOn = () => {
 }
 /** The press that opened the review was a real one (jsdom events are untrusted): the review prepares as it opens. */
 const trusted = () => vi.spyOn(gesture, 'takeTrustedPress').mockReturnValue(true)
-/** The signer's Sign button, pressed once it is armed (1 s on screen). */
+/** The signer's Sign button, pressed for real (trustedPresses: jsdom events are untrusted) once it is armed (1 s on screen). */
 const sign = async (name: string | RegExp) => {
   const button = await screen.findByRole('button', { name }, T)
   await waitFor(() => expect(button).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  trustedPresses()
   await userEvent.click(button)
 }
 async function openReview(tab = 'browse') {
@@ -208,6 +209,7 @@ it('with One click on, install is the signer review and one Sign press: no Termi
   expect(screen.queryByRole('textbox')).toBeNull() // no word to type
   const sign = await screen.findByRole('button', { name: 'Approve and install' }, T)
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: 5000 })
+  trustedPresses() // the armed Sign signs only on a trusted press
   await userEvent.click(sign)
   await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
 })

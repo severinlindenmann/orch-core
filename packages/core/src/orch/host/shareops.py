@@ -9,6 +9,9 @@ Ops (all column P, owner role; an agent is refused, and no op here is reachable 
   required: the ``plan`` the owner was shown: if the selection is different now, nothing changes (WYSIWYS).
 * ``share.revoke {ref}``: withdraw one item now (a ticket key or a ``logical`` id from ``share.preview``); it stays
   withdrawn while it still matches a rule.
+* ``share.revoke`` and ``share.rule_remove`` only take sharing away (:data:`REDUCE_OPS`): the dashboard sends them with
+  one click as the session's person, like ``workspace.cosmetic.set``; at most 10 a minute, and the security-log line
+  names the person. ``orch hub share rule remove`` still asks its own confirmation at the terminal.
 * ``share.sync {expect?}``: make the hub's copy equal the selection (``share_put`` / ``share_revoke``). With ``expect``
   (the ``share.preview`` plan, checked like a rule change) the current selection is confirmed; without it a sync only
   retries what was already confirmed. Also run after every rule change and revoke.
@@ -43,6 +46,11 @@ SHARE_OPS: dict[str, int] = {
     "share.sync": 1,
 }  # fmt: skip
 NETWORK_OPS = frozenset({"share.rule_add", "share.rule_remove", "share.revoke", "share.sync"})
+#: The two ops that only take sharing away. Like ``workspace.cosmetic.set`` (cosmeticops) they are unsigned owner
+#: actions the dashboard may send with one click as the session's person (column P, owner role, never a relay); they
+#: share one rate limit and each writes a security-log line naming the person.
+REDUCE_OPS = frozenset({"share.revoke", "share.rule_remove"})
+REDUCE_RATE = 10  # per minute and workspace, as for the cosmetic settings
 _MU = threading.Lock()
 _RULE = {
     "type": "object",
@@ -85,7 +93,7 @@ def _dir(service: WorkspaceService) -> Any:
 
 
 def _owner(call: Call) -> None:
-    if call.column.name != "P" or call.viewer is None:
+    if call.column.name != "P" or call.viewer is None or call.relay is not None:
         raise HostError(
             "op.not_allowed", "a person does this at their own terminal; an agent never changes what is shared"
         )
@@ -132,7 +140,19 @@ def serve(call: Call) -> dict[str, Any]:
     _selective(call.service)
     if op in SHARE_READS:
         return _read(call, op, args)
+    if op in REDUCE_OPS:
+        _rate(call.service)
     return {"plan": {"op": op, "args": args}}
+
+
+def _rate(service: Any) -> None:
+    """At most :data:`REDUCE_RATE` revokes and rule removals a minute (the worker runs one call at a time)."""
+    now = service.clock()
+    hits = [t for t in getattr(service, "_share_reduce_hits", []) if now - t < 60]
+    if len(hits) >= REDUCE_RATE:
+        raise HostError("host.busy", "too many sharing changes: wait a minute", retry_after_ms=60_000)
+    hits.append(now)
+    service._share_reduce_hits = hits  # noqa: SLF001
 
 
 async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
@@ -476,7 +496,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             else:
                 _approve(st, [i for i in selected if i.logical not in st.withdrawn], args["expect"])
             got = _sync_locked(service, st, selected)
-        hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item")  # noqa: SLF001
+        more = {"person": call.viewer} if op in REDUCE_OPS else {}
+        hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item", **more)  # noqa: SLF001
         return ok_result({"note": note} | got)
     except HubRefused as exc:
         raise hubops._refused(exc.code) from None  # noqa: SLF001

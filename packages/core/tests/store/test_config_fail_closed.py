@@ -9,6 +9,7 @@ import json
 import pytest
 
 from orch import schema
+from orch.ops.person_ops import SET_SCHEMA
 from orch.store import StoreError
 from tests.store.test_append import replayed
 
@@ -87,6 +88,35 @@ def test_an_old_settings_changed_with_icon_replays_and_changes_nothing(env):
     after = json.loads(_cfg(env).read_text())
     assert "icon" not in after["settings"] and "icon" not in after["workspace"]
     assert after == before
+    s.close()
+
+
+def test_an_old_one_click_genesis_with_sign_methods_replays_and_changes_nothing(env):
+    # every One click workspace since #1442 has `set.sign_methods` in its genesis settings.changed (B6, retired):
+    # accepted so the log replays, ignored (no state, nothing in config.json, no enforcement)
+    s = env.bootstrap()
+    before = json.loads(_cfg(env).read_text())
+    settings_before = dict(replayed(env).workspace.settings)
+    for methods in (["terminal", "click", "phone", "hub"], ["terminal"]):
+        e = env.person_event(env.owner, "workspace", "settings.changed", set={"sign_methods": methods})
+        s.append(e, log="workspace")
+    fresh = replayed(env)
+    assert not fresh.chain_errors and not fresh.workspace.invalid
+    assert dict(fresh.workspace.settings) == settings_before and "sign_methods" not in fresh.workspace.settings
+    assert json.loads(_cfg(env).read_text()) == before
+    s.close()
+    assert "sign_methods" not in SET_SCHEMA["properties"]  # nothing new can sign it
+
+
+def test_an_old_config_with_settings_sign_methods_validates_and_is_rewritten_without_it(env):
+    s = env.bootstrap()
+    doc = json.loads(_cfg(env).read_text())
+    doc["settings"]["sign_methods"] = ["terminal", "click", "phone", "hub"]
+    schema.validate("workspace", doc)  # accepted and ignored
+    _cfg(env).write_text(json.dumps(doc))
+    (ev,) = s.scan()
+    assert ev["type"] == "projection.repaired" and ev["path"] == "config.json"
+    assert "sign_methods" not in json.loads(_cfg(env).read_text())["settings"]
     s.close()
 
 

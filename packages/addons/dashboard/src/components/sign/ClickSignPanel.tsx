@@ -5,7 +5,7 @@ import { SignContent, SignDetails } from './SignContent'
 // review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
 // Every op signs on one plain click after the review; nothing is typed. The risk notice lives in Settings; the custody is a technical fact under Technical details.
 import { Loader2, ShieldAlert } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import { CLICK_RISK, type ClickProblem, type ClickViewAnswer } from '@/api/click'
 import { Button } from '@/components/ui/button'
 import { Raw } from './visible'
@@ -16,6 +16,7 @@ import { AgentAccess, WhatNext } from './SignAside'
 import { alsoSigned } from './alsoSigned'
 import { fmtClock } from '@/lib/time'
 import { SignFooter, STICKY_FOOTER } from './SignShell'
+import { WorkspaceLine } from './WorkspaceLine'
 
 function RiskLine({ text }: { text: string }) {
   return (
@@ -53,12 +54,14 @@ interface Props {
   extra?: ReactNode
   /** False while that field is empty: Sign stays off. */
   ready?: boolean
+  /** The person has more than one workspace: the review names the one it signs in (D6, WorkspaceLine). */
+  manyWorkspaces?: boolean
 }
 
-export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, label, extra, ready = true }: Props) {
+export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, label, extra, ready = true, manyWorkspaces = false }: Props) {
   const { view, view_digest: digest } = answer
   // A new View (a new digest) is a new confirmation: the timer, a half-done hold and any half-begun press start over.
-  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} label={label} extra={extra} ready={ready} />
+  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} label={label} extra={extra} ready={ready} manyWorkspaces={manyWorkspaces} />
 }
 
 /** What the one "Technical details" expander of the review holds besides the content's own ids (action, workspace, fingerprint, device, the signer's lines and checks). */
@@ -117,7 +120,7 @@ export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
   )
 }
 
-function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, label: given, extra, ready = true }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
+function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, label: given, extra, ready = true, manyWorkspaces = false }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
   const armed = useArming(digest)
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -129,8 +132,8 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   const activation = useActivation(armed)
   const picturesOk = usePicturesOk(view.content?.images) // R3 part B: a picture that is not the pasted file switches Sign off
   const can = armed && !signing && !waiting && picturesOk && ready
-  const go = () => {
-    if (!activation.take() || !can) return
+  const go = (e: MouseEvent) => {
+    if (!activation.take(e.nativeEvent) || !can) return // a synthetic click or a key repeat never signs
     onSign()
   }
   const technical = <TechnicalFacts view={view} />
@@ -140,6 +143,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
   const danger = !!story?.danger
   return (
     <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
+      <WorkspaceLine workspace={view.workspace} many={manyWorkspaces} />
       {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
       {/* authority stays in the default view, never folded: the scope, the agent access length, what happens next */}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}

@@ -5,7 +5,7 @@ from orch.host import sequence
 from pydantic import ValidationError
 
 from orch_dashboard.errors import HostError
-from orch_dashboard.handoff import EditTicket
+from orch_dashboard.signing import EditTicket
 
 
 @pytest.fixture

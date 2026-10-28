@@ -42,12 +42,9 @@ export function StrictNeeds({ testId }: { testId?: string }) {
   return <p data-testid={testId}>Strict hub mode needs One click off and your key back under a passphrase. Do that first in <SettingsLink>Settings</SettingsLink>.</p>
 }
 /** Shown instead of a click step when One click is not on: say so plainly and offer the honest way on. */
-export function NoOneClick({ state, what, children }: { state: OneClick; what: string; children?: ReactNode }) {
-  if (state === 'checking') return <p role="status">Checking whether One click is on…</p>
-  return <Panel title={state === 'off' ? 'One click is off' : 'One click is not available'} tone="border-warning/40 bg-warning-soft" >
-    <p data-testid="hub-no-one-click">{state === 'off' ? `${what} here is signed with one click, and One click is off in this workspace.` : 'Could not tell whether One click is on.'} Turn it on in <SettingsLink>Settings</SettingsLink>.</p>
-    {children}
-  </Panel>
+export function NoOneClick({ state }: { state: OneClick; what: string; children?: ReactNode }) {
+  if (state === 'checking') return <p role="status">Checking One click…</p>
+  return <p data-testid="hub-no-one-click">One click is not ready. <SettingsLink>Turn on One click</SettingsLink>.</p>
 }
 export function Panel({ title, children, tone = '' }: { title: string; children: ReactNode; tone?: string }) {
   return <section className={'min-w-0 space-y-3 rounded-lg border border-border bg-surface p-4 text-sm ' + tone}>

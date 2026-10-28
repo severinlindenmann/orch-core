@@ -343,7 +343,7 @@ def main(
         if a.cmd == "connect":
             return _connect(target, env, a, out)
         if not _tty_ok():
-            raise PubError("invalid.input", "no terminal to sign on: run this in a terminal; nothing was signed", 5)
+            raise PubError("tty.required", "no terminal to sign on: run this in a terminal; nothing was signed", 3)
         if a.cmd == "mode":
             out.write(f"{_FULL_WORDS}. Review it, then sign with your own key.\n")
             _sign(target, "hub.mode", {"hub_card": _read_card(a.hub_card), "mode": "full"})
@@ -403,12 +403,6 @@ def _refused_lines(d: Mapping[str, Any]) -> str:
     return "".join(f"\n{x}" for x in out)
 
 
-def _confirm_word(prev: Mapping[str, Any]) -> str:
-    """What the owner types to confirm: 'share', or 'all N' when the list above was cut off (they confirm what they
-    did not see, so they must say how many)."""
-    return f"all {prev['count']}" if prev.get("more") else "share"
-
-
 def _sync_line(d: Mapping[str, Any]) -> str:
     if d.get("synced"):
         text = f"sent to the hub: {d['put']} shared, {d['revoke']} withdrawn, {d['kept']} unchanged"
@@ -435,19 +429,19 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
         args: dict[str, Any] = {}
         prev = _call(target, "share.preview", {}, env)
         if prev["new"]:  # something the owner has not been shown: show it and confirm, then sync exactly that
-            from orch.cli.publish import _confirm
+            from orch.ops.human import review_prompt
 
             lines = "".join(f"  {i['line']}\n" for i in prev["items"]) + (
                 f"  ... and {prev['more']} more\n" if prev["more"] else ""
             )
-            word = _confirm_word(prev)
-            if not _confirm(
-                f"The hub will see {prev['count']} item(s) ({prev['new']} new, {prev['revoked']} withdrawn):\n"
-                f"{lines}{_CANNOT_UNREAD}\nLater changes to these items are sent automatically.\n"
-                f"Type '{word}' to confirm: ",
-                word,
+
+            if not review_prompt(
+                f"Share {prev['count']} items. The hub will see {prev['count']} item(s) "
+                f"({prev['new']} new, {prev['revoked']} withdrawn):\n"
+                f"{lines}{_CANNOT_UNREAD}\nLater changes to these items are sent automatically.\n",
+                verb="continue",  # share rules are unsigned owner settings
             ):
-                raise PubError("invalid.input", "not confirmed; nothing changed", 5)
+                raise PubError("sign.cancelled", "not confirmed; nothing changed", 3)
             args["expect"] = prev["plan"]
         d = _call(target, "share.sync", args, env)
         _emit(out, as_json, d, _sync_line(d))
@@ -456,7 +450,7 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
         d = _call(target, "share.revoke", {"ref": words[1]}, env)
         _emit(out, as_json, d, f"{d['note']}\n{_sync_line(d)}\n{_CANNOT_UNREAD}")
         return 0
-    from orch.cli.publish import _confirm
+    from orch.ops.human import review_prompt
 
     rule, op = _rule_of(a), "share.rule_" + words[1]
     key = "add" if words[1] == "add" else "remove"
@@ -467,15 +461,14 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
         f"  ... and {prev['more']} more\n" if prev["more"] else ""
     )
     verb = "will also share" if key == "add" else "will stop sharing"
-    word = _confirm_word(prev)
-    if not _confirm(
+
+    if not review_prompt(
         f"The hub {verb}: {describe(rule)}.\nAfter this change the hub sees {prev['count']} item(s) "
         f"({prev['new']} new, {prev['revoked']} withdrawn):\n{lines}{_CANNOT_UNREAD}\n"
-        "Later changes to these items are sent automatically.\n"
-        f"Type '{word}' to confirm: ",
-        word,
+        "Later changes to these items are sent automatically.\n",
+        verb="continue",
     ):
-        raise PubError("invalid.input", "not confirmed; nothing changed", 5)
+        raise PubError("sign.cancelled", "not confirmed; nothing changed", 3)
     d = _call(target, op, {"rule": rule, "expect": prev["plan"]}, env)
     _emit(out, as_json, d, f"{d['note']}\n{_sync_line(d)}")
     return 0

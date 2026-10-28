@@ -1,9 +1,10 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
+import * as gesture from '@/components/sign/trustedPress'
 import { READS, TOM, settingsOf, show, useFakeHost, workspace } from '@/test/hostHarness'
 
-// The production app on a fake server: Settings, Add-ons, Model routing (a signed settings change, the typed word).
+// The production app on a fake server: Settings, Add-ons, Model routing (a signed settings change, One click).
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
 vi.mock('@/api/useLiveUpdates', async (original) => ({ ...(await original<typeof import('@/api/useLiveUpdates')>()), useLiveUpdates: vi.fn(() => ({ ready: true, revoked: false })) }))
@@ -22,7 +23,7 @@ const CHOICES = {
   ],
 }
 const addOns = (on: boolean) => ({ available: true, add_ons: [{ id: 'model-routing', title: 'Model routing', desc: 'Choose models.', state: on ? 'on' : 'off', locked: null, blocked: null }] })
-const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'model_routing'], addOns: addOns(true) } as never)])
+const state = useFakeHost(() => [workspace({ id: A, features: [...READS, 'model_routing', 'click'], addOns: addOns(true), click: { custody: 'convenience', enabled: true, available: true } } as never)])
 const route = (models: unknown = null, on = true) => {
   const ws = state.host.workspaces[0]
   ws.addOns = addOns(on) as never
@@ -31,14 +32,17 @@ const route = (models: unknown = null, on = true) => {
 }
 const calls = (p: string) => state.host.calls.filter((c) => c.path.includes(p))
 const posted = () => calls('/handoff').filter((c) => c.method === 'POST')
-
+const prepared = () => state.host.clickPrepares().map((c) => c.body)
+/** The press that opened the review was a real one (jsdom events are untrusted): the review prepares as it opens. */
+const trusted = () => vi.spyOn(gesture, 'takeTrustedPress').mockReturnValue(true)
+afterEach(() => vi.restoreAllMocks())
 
 const setup = (name: 'publish', on = false, setUp: boolean | null = false) => {
   route(null, on)
   state.host.workspaces[0].addOns = { available: true, add_ons: [{ id: name, title: 'Publish', desc: 'Settings for this workspace.', state: on ? 'on' : 'off', locked: null, blocked: null, needs: 'publish', set_up: setUp }] } as never
 }
 
-it.each(['publish'] as const)('off %s opens settings and sends one enable action', async (name) => {
+it.each(['publish'] as const)('off %s opens settings; Turn on prepares one enable action with One click', async (name) => {
   setup(name)
   const user = userEvent.setup()
   show('/w/DEMO/addons')
@@ -46,14 +50,14 @@ it.each(['publish'] as const)('off %s opens settings and sends one enable action
   await user.click(await screen.findByRole('switch', { name: title }, T))
   const form = within(await screen.findByRole('dialog', { name: `Turn on ${title}` }, T))
   expect(form.getByRole('button', { name: 'Turn on' })).toBeDisabled()
-  {
-    expect(form.getByText('Publish is signed in your terminal.')).toBeInTheDocument()
-    await user.type(form.getByLabelText('Files are sent to'), 'https://files.example.test')
-    await user.type(form.getByLabelText('Links open at'), 'https://links.example.test')
-  }
+  expect(screen.getByRole('dialog', { name: `Turn on ${title}` })).not.toHaveTextContent(/terminal/i)
+  await user.type(form.getByLabelText('Files are sent to'), 'https://files.example.test')
+  await user.type(form.getByLabelText('Links open at'), 'https://links.example.test')
+  trusted()
   await user.click(form.getByRole('button', { name: 'Turn on' }))
-  await waitFor(() => expect(posted()).toHaveLength(1), T)
-  expect(posted()[0].body).toEqual({ action: 'addon_enable', name, ...(name === 'publish' ? { publish: { server: 'https://files.example.test', share: 'https://links.example.test' } } : { models: { codex: { work: 'gpt-5.4' } } }) })
+  await screen.findByTestId('click-panel', {}, T)
+  expect(prepared()).toEqual([{ action: 'addon_enable', name, publish: { server: 'https://files.example.test', share: 'https://links.example.test' } }])
+  expect(posted()).toEqual([]) // no hand-off is ever prepared
 })
 
 it.each(['publish'] as const)('on %s without settings signs settings only', async (name) => {
@@ -63,13 +67,13 @@ it.each(['publish'] as const)('on %s without settings signs settings only', asyn
   expect(await screen.findByTestId(`addon-${name}-state`, {}, T)).toHaveTextContent('Needs setup')
   await user.click(screen.getByRole('button', { name: 'Set up' }))
   const form = within(screen.getByRole('dialog'))
-  if (name === 'publish') {
-    await user.type(form.getByLabelText('Files are sent to'), 'https://files.example.test')
-    await user.type(form.getByLabelText('Links open at'), 'https://links.example.test')
-  }
+  await user.type(form.getByLabelText('Files are sent to'), 'https://files.example.test')
+  await user.type(form.getByLabelText('Links open at'), 'https://links.example.test')
+  trusted()
   await user.click(form.getByRole('button', { name: 'Review and sign' }))
-  await waitFor(() => expect(posted()).toHaveLength(1), T)
-  expect(posted()[0].body).toEqual(name === 'publish' ? { action: 'publish_setup', server: 'https://files.example.test', share: 'https://links.example.test' } : { action: 'models_set', models: { codex: { work: 'gpt-5.4' } } })
+  await screen.findByTestId('click-panel', {}, T)
+  expect(prepared()).toEqual([{ action: 'publish_setup', server: 'https://files.example.test', share: 'https://links.example.test' }])
+  expect(posted()).toEqual([])
 })
 
 it('a non-owner cannot open setup', async () => {

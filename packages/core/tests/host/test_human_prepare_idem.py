@@ -18,12 +18,12 @@ def test_a_retry_with_the_same_idem_returns_the_same_request(human, served):
     a = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
     b = human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
     assert a["request"]["id"] == b["request"]["id"]
-    assert a["request"]["code"] == b["request"]["code"]
+    assert "code" not in a["request"] and "code" not in b["request"]
     assert "duplicate" not in b
     hidem = new_idem()
     h1 = human.prepare("log", {"ref": key, "text": "h"}, handoff=True, idem=hidem)
     h2 = human.prepare("log", {"ref": key, "text": "h"}, handoff=True, idem=hidem)
-    assert h1["request"]["code"] and h1["request"] == h2["request"]
+    assert "code" not in h1["request"] and h1["request"] == h2["request"]
 
 
 def test_a_retry_shows_the_current_state(human, served):

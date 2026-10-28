@@ -367,7 +367,10 @@ function MarketWorkspace() {
                   busy={busy}
                   onUpdate={(a) => prepare({ id: a.name, update: true })}
                   onSettings={(a) => setSettingsOf(a.name)}
-                  onRemove={setRemove}
+                  onRemove={a => {
+                    if (a.state === 'active') { setRemove(a); return }
+                    void write(async () => { await api.marketUninstall(ws, a.name); await refresh(); setMessage(`${a.name} removed. Install it again from Browse.`) })
+                  }}
                 />
               )}
             </>
@@ -475,7 +478,6 @@ function MarketWorkspace() {
           ws={ws}
           anchor={null} // the review dialog is folded away while this one is open (Cancel here brings it back)
           action={{ action: 'market_grant', name: handoff.name, staged: handoff.stage }}
-          autoStart
           lead={
             <div data-testid="install-summary" className="rounded border border-border p-3 text-sm">
               <p className="font-medium">

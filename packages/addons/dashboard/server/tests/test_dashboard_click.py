@@ -346,6 +346,36 @@ def test_a_member_add_sends_the_certificate_as_a_file(client, token, stub, scrip
     args = [c for c in script.clients[0].calls if c[0] == "prepare"][0][1]
     assert args["op"] == "member.add" and args["args"]["cert"] == "-"
     assert base64.b64decode(args["files"]["cert"]["b64"]) == cert.encode()
+    assert "reader_decl" not in args["args"] and set(args["files"]) == {"cert"}
+
+
+def test_a_member_add_sends_the_reader_declaration_as_its_own_file(client, token, stub, script):
+    import base64
+    import json
+
+    pk = base64.urlsafe_b64encode(b"\x04" + b"a" * 64).rstrip(b"=").decode()
+    cert, decl = json.dumps({"v": 1}), json.dumps({"o": {"kind": "reader_decl"}, "sig": "x"})
+    body = {"action": "member_add", "name": "Mara", "role": "member", "pk": pk, "cert": cert, "reader_decl": decl}
+    res = prepare(client, token, stub, body)
+    assert res.status_code == 200, res.text
+    args = [c for c in script.clients[0].calls if c[0] == "prepare"][0][1]
+    assert args["args"]["cert"] == "-" and args["args"]["reader_decl"] not in ("-", None)
+    assert base64.b64decode(args["files"]["reader_decl"]["b64"]) == decl.encode()
+    assert base64.b64decode(args["files"]["cert"]["b64"]) == cert.encode()
+
+
+@pytest.mark.parametrize("decl", ["[]", "{", '{"a": 1.5}', '{"a": 1, "a": 2}', '{"o": "' + "x" * 4096 + '"}'])
+def test_a_member_add_with_a_reader_declaration_that_is_no_strict_json_object_is_refused(
+    client, token, stub, script, decl
+):
+    import base64
+    import json
+
+    pk = base64.urlsafe_b64encode(b"\x04" + b"a" * 64).rstrip(b"=").decode()
+    body = {"action": "member_add", "name": "Mara", "role": "member", "pk": pk, "cert": json.dumps({"v": 1})}
+    res = prepare(client, token, stub, {**body, "reader_decl": decl})
+    assert res.status_code == 400, res.text
+    assert [c for cl in script.clients for c in cl.calls if c[0] == "prepare"] == []
 
 
 def test_view_is_the_signers_view_unchanged(client, token, stub, script):
@@ -383,7 +413,7 @@ def test_sign_bodies_are_checked(client, token, stub, script, body):
     assert [c for c in script.clients[0].calls if c[0] == "sign"] == []
 
 
-def test_a_request_belongs_to_the_person_so_any_session_of_theirs_can_use_it(client, token, stub, script, auth):
+def test_a_request_belongs_only_to_the_preparing_session(client, token, stub, script, auth):
     prepare(client, token, stub)
     other = client.post("/auth/session", json={"code": auth.launch(43210)["code"]}, headers={"Origin": ORIGIN}).json()
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(other["token"]))
@@ -559,7 +589,7 @@ def test_no_route_but_the_click_routes_calls_the_signer():
     # the gateway reads `status` for the card; the step-up ceremony asks for a passkey nonce (`stepup`); nothing else
     assert holders == ["click.py", "gateway.py", "stepup_routes.py"]
     assert [m for m in re.findall(r'signer\.call\("(\w+)"', (root / "stepup_routes.py").read_text())] == ["stepup"]
-    assert "orch.click" not in (root / "handoff.py").read_text()
+    assert "orch.click" not in (root / "signing.py").read_text()
 
 
 def test_the_status_route_is_the_card_only(client, token, stub, script):
@@ -589,10 +619,8 @@ def policy_body(n):
 
 def families(stub):
     """(name, prepare url, request-scoped calls: (method, url-for-an-id) per step)."""
-    hand = f"/api/w/{stub.ws}/handoff"
     click = f"/api/w/{stub.ws}/click"
     return {
-        "handoff": {"prepare": hand, "steps": [("get", lambda r: f"{hand}/{r}"), ("delete", lambda r: f"{hand}/{r}")]},
         "click": {
             "prepare": f"{click}/prepare",
             "steps": [("post", lambda r: f"{click}/view"), ("post", lambda r: f"{click}/cancel")],
@@ -600,9 +628,8 @@ def families(stub):
     }
 
 
-@pytest.fixture(params=["handoff", "click"])
+@pytest.fixture(params=["click"])
 def family(request, stub, script, rich):
-    script.enabled = request.param != "handoff"  # the terminal hand-off exists only where click-to-sign is off
     return request.param, families(stub)[request.param]
 
 
@@ -786,7 +813,7 @@ def test_m2_the_view_is_checked_against_the_hosts_own_record(client, token, stub
     kw = host_check.checks[0]
     assert kw["expect_op"] == "approve" and kw["expect_key"] == "DEMO-0001" and kw["expect_events"] is None
     # A settings change carries the exact event it must prepare.
-    from orch_dashboard.handoff import SettingsSet
+    from orch_dashboard.signing import SettingsSet
 
     body = {"action": "settings_set", "grant_hours": 12}
     assert SettingsSet(**body)
@@ -1287,7 +1314,7 @@ def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client,
 
 
 def test_794_the_walk_is_capped(client, token, stub, script, rich):
-    from orch_dashboard.handoff import NEXT_RETRY_HOPS
+    from orch_dashboard.signing import NEXT_RETRY_HOPS
 
     for r in range(NEXT_RETRY_HOPS + 1):
         got = client.post(url(stub, "prepare"), json={**comment(1), "retry": r}, headers=hdr(token))
@@ -1349,13 +1376,27 @@ def test_already_signed_and_an_unreadable_record_never_cancel_or_forget_the_requ
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
 
 
-# -- the terminal hand-off stays available where click-to-sign is on (#1170) -----------------------------------------
+# -- no unbound request is prepared any more: click/prepare is the only prepare route ---------------------------------
 
 
-def test_a_click_workspace_still_prepares_a_terminal_handoff(client, token, stub, script, rich):
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
-    assert res.status_code == 200, res.text
-    assert res.json().get("code")  # the code for `orch sign`
+def test_no_unbound_request_can_be_prepared(client, token, stub, script, host_check, rich):
+    for method in ("post", "get", "delete"):
+        path = f"/api/w/{stub.ws}/handoff" + ("" if method == "post" else "/" + REQ)
+        res = client.request(method, path, json=comment(1) if method == "post" else None, headers=hdr(token))
+        assert res.status_code in (404, 405), (method, res.text)
+    assert host_check.reads == []  # nothing reached the host
+
+
+def test_an_open_unbound_request_of_the_same_intent_is_never_reused(client, token, stub, script, host_check):
+    """A request prepared by the old terminal hand-off (no signer) has another host binding: the click prepare is
+    refused (`intent.open`), never handed that request to sign."""
+    script.refuse["prepare"] = ClickError("idem.conflict", "this idem was used for other arguments")
+    host_check.listing = [
+        {"id": REQ, "op": "log", "key": "DEMO-0001", "state": "prepared", "expires_at": "2026-10-13T15:30:00Z"}
+    ]
+    res = prepare(client, token, stub, comment(1))
+    assert res.json()["error"]["code"] == "intent.open"
+    assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404
 
 
 def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, script, host_check, rich):
@@ -1364,32 +1405,6 @@ def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, s
     res = sign_lost(client, token, stub)
     assert res.json()["error"]["reason"] == "disabled"
     assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404  # ended
-
-
-def test_flip_on_with_an_open_terminal_attempt_of_the_same_action_is_refused_with_its_expiry(
-    client, token, stub, script, host_check, rich
-):
-    host_check.listing = [
-        {
-            "id": "hr_" + "0" * 24 + "99",
-            "code": "7F3K-Q2MA",
-            "state": "prepared",
-            "op": "log",
-            "key": "DEMO-0001",
-            "expires_at": "2026-10-12T12:10:00Z",
-        },
-        {"id": REQ, "code": None, "state": "bound", "op": "log", "key": "DEMO-0001", "expires_at": "x"},  # a click one
-    ]
-    res = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
-    err = res.json()["error"]
-    assert res.status_code == 409 and err["code"] == "intent.open"
-    assert "terminal" in err["message"] and "2026-10-12T12:10:00Z" in err["message"]
-    assert script.prepared == 0
-    # Another action (or an ended attempt) is not blocked.
-    other = client.post(url(stub, "prepare"), json={**comment(1), "key": "DEMO-0002"}, headers=hdr(token))
-    assert other.status_code == 200
-    host_check.listing[0]["state"] = "expired"
-    assert client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token)).status_code == 200
 
 
 def test_submitted_sign_refusal_uses_host_record_warning(client, token, stub, script, host_check):
@@ -1570,7 +1585,7 @@ def test_concurrent_uncertain_sign_remarks_after_definite_failure(client, token,
     ],
 )
 def test_a_definite_sign_failure_clears_the_mark_only_with_nothing_in_flight_or_unknown(steps, marked):
-    from orch_dashboard.handoff import Handoffs
+    from orch_dashboard.signing import Handoffs
 
     handoffs = Handoffs()
     until = handoffs.clock() + 100
@@ -1583,7 +1598,7 @@ def test_a_definite_sign_failure_clears_the_mark_only_with_nothing_in_flight_or_
 
 
 def test_an_unknown_outcome_ends_only_when_the_host_answer_is_known():
-    from orch_dashboard.handoff import Handoffs
+    from orch_dashboard.signing import Handoffs
 
     handoffs = Handoffs()
     until = handoffs.clock() + 100
@@ -1767,7 +1782,7 @@ def test_each_deposit_field_is_checked(client, token, stub, deposits, answer, ou
 
 
 def test_expected_admits_only_the_callers_runner_grant():
-    from orch_dashboard.handoff import RunnerGrant, expected
+    from orch_dashboard.signing import RunnerGrant, expected
 
     me = "p_" + "1" * 32
     good = {
@@ -2127,7 +2142,7 @@ MARKET = {"action": "market_grant", "name": "echo", "staged": "st_" + "0" * 32}
 @pytest.fixture
 def host_serves_grant(monkeypatch):
     """The test host's welcome does not list addon.grant (a real one does); the column check is not what is tested."""
-    from orch_dashboard import handoff
+    from orch_dashboard import signing as handoff
 
     monkeypatch.setattr(handoff, "WORKSPACE_OPS", tuple(o for o in handoff.WORKSPACE_OPS if o != "addon.grant"))
 
@@ -2434,11 +2449,6 @@ def test_agent_access_needs_a_signer_that_can_seal(client, token, stub, reveals)
     assert res.status_code != 200 and sent_of(reveals, "prepare") == []
 
 
-def test_agent_access_is_not_a_terminal_hand_off(client, token, stub, reveals):
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=agent_access(), headers=hdr(token))
-    assert res.status_code == 400
-
-
 @pytest.mark.parametrize(
     "over",
     [
@@ -2545,7 +2555,7 @@ def test_the_server_logs_never_hold_the_envelope_or_the_secret(client, token, st
 
 
 def test_expected_admits_only_the_callers_agent_access():
-    from orch_dashboard.handoff import AgentAccess, expected
+    from orch_dashboard.signing import AgentAccess, expected
 
     me = "p_" + "1" * 32
     good = {
@@ -2564,12 +2574,12 @@ def test_expected_admits_only_the_callers_agent_access():
 
 
 def test_a_new_page_key_is_a_new_request_and_the_same_key_the_same_one():
-    from orch_dashboard.handoff import AgentAccess
+    from orch_dashboard.signing import AgentAccess
 
     other = "E" + "A" * 86
     a = AgentAccess(action="agent_access", reveal_key=PAGE_KEY)
     b = AgentAccess(action="agent_access", reveal_key=other)
-    from orch_dashboard.handoff import intent_idem
+    from orch_dashboard.signing import intent_idem
 
     def idem(body):
         return intent_idem(
@@ -2715,11 +2725,6 @@ def test_a_hub_step_needs_a_signer_that_takes_the_backup_key(client, token, stub
     backup.features = ["custody"]
     res = prepare(client, token, stub, hub_join())
     assert res.status_code != 200 and sent_of(backup, "prepare") == []
-
-
-def test_a_hub_step_is_not_a_terminal_hand_off(client, token, stub, backup):
-    assert client.post(f"/api/w/{stub.ws}/handoff", json=hub_join(), headers=hdr(token)).status_code == 400
-    assert client.post(f"/api/w/{stub.ws}/handoff", json={"action": "hub_leave"}, headers=hdr(token)).status_code == 400
 
 
 @pytest.mark.parametrize(
@@ -3244,7 +3249,7 @@ def test_c16_the_contract_refusal_is_in_plain_words(client, token, stub, script,
 
 def test_hub_steps_get_a_fresh_idem_once_the_hub_state_moved(client, token, stub, backup, monkeypatch):
     """B10/B13: leave, join, mode full, leave is a new request each time; a repeat with no change is not."""
-    from orch_dashboard import handoff
+    from orch_dashboard import signing as handoff
 
     state = {"joined": True, "mode": "selective", "binding_seq": 1, "hub_id": HUB_ID, "binding": "bound"}
     monkeypatch.setattr(handoff, "hub_base", lambda link: {"hub": dict(state)})
@@ -3263,7 +3268,7 @@ def test_hub_steps_get_a_fresh_idem_once_the_hub_state_moved(client, token, stub
 def test_hub_base_is_the_log_head_and_the_hub_state():
     from orch.host.journal import CURSOR_PREFIX
 
-    from orch_dashboard.handoff import hub_base
+    from orch_dashboard.signing import hub_base
 
     body = base64.urlsafe_b64encode(json.dumps({"e": "E", "j": 7, "p": "P", "r": "R9", "w": "W"}).encode())
     cursor = CURSOR_PREFIX + body.decode().rstrip("=") + ".mac"
@@ -3276,3 +3281,24 @@ def test_hub_base_is_the_log_head_and_the_hub_state():
 
     want = {"joined": True, "hub_id": "ab", "mode": "full", "binding_seq": 4, "binding": "bound"}
     assert hub_base(L()) == {"head": {"e": "E", "j": 7, "r": "R9"}, "hub": want}
+
+
+def test_c2_switch_cannot_prepare(client, auth, stub, script):
+    from orch_dashboard.policy import LOOPBACK
+
+    switched = auth.open_switch(LOOPBACK, stub.ws)["token"]
+    result = prepare(client, switched, stub)
+    assert result.status_code == 403
+    assert result.json()["error"]["code"] == "session.readonly"
+    assert script.prepared == 0
+
+
+def test_c2_cancelled_request_is_never_signable(client, token, stub, script):
+    request_id = prepare(client, token, stub).json()["request_id"]
+    cancelled = client.post(url(stub, "cancel"), json={"request_id": request_id}, headers=hdr(token))
+    assert cancelled.status_code == 200
+    late = client.post(url(stub, "sign"), json={"request_id": request_id, "view_digest": HASH}, headers=hdr(token))
+    assert late.status_code == 404
+    fresh = prepare(client, token, stub, {**approve(), "retry": 1})
+    assert fresh.status_code == 200
+    assert fresh.json()["request_id"] != request_id

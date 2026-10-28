@@ -28,7 +28,9 @@ from . import adapters
 from .click_signer import lost_sign
 from .errors import HostError, fail
 from .gateway import Gateway
-from .handoff import (
+from .hubapprove import mode_of
+from .reads import workspace
+from .signing import (
     AddonEnable,
     AgentAccess,
     EditTicket,
@@ -38,6 +40,7 @@ from .handoff import (
     NewTicketSequence,
     PrepareBody,
     QuickStart,
+    RepoSet,
     RequestId,
     RunnerGrant,
     done_error,
@@ -48,8 +51,6 @@ from .handoff import (
     send_prepare,
     sequence_progress,
 )
-from .hubapprove import mode_of
-from .reads import workspace
 from .stepup import refusal_check, refuse_step_up
 
 # The card text, verbatim (owner decision, 12 Oct 2026). A View that carries anything else is not shown.
@@ -743,6 +744,8 @@ def register(app: FastAPI, gateway: Gateway):
     @app.post("/api/w/{ws}/click/prepare")
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
+        if app.state.auth.login_kind(token) == "switch":
+            raise fail("session.readonly", "Open a full session to sign.", exit=3)
         gateway.enabled(ws)  # pinned workspace, dashboard addon enabled in it (the hand-off's `human()` does this)
         with handoffs.lock:
             handoffs.reserve(token)  # check and take a slot in one step (shared with the hand-off)
@@ -763,29 +766,11 @@ def register(app: FastAPI, gateway: Gateway):
             )
         if isinstance(body, HUB_STEPS) and not signer.backup_keys():
             raise fail("click.contract", "Update orch-core: its signing helper cannot take a backup key yet.", exit=9)
+        if isinstance(body, RepoSet):  # the host's path check, before any request exists (plain refusal in the dialog)
+            gateway.check_repo_path(ws, body.path)
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         if planned.sequence and planned.sequence["intent"].get("images") and not signer.images():
             raise fail("click.contract", "Update orch-core: its signing helper cannot sign pictures yet.", exit=9)
-        # A terminal hand-off of this very action, prepared before the flag was switched on, is still open: nothing
-        # is prepared beside it (the host refuses to flip the flag with one pending; this is defence in depth).
-        key = getattr(body, "key", None)
-        for row in human(ws, "human.pending", {}).get("requests", []):
-            if (
-                isinstance(row, dict)
-                and row.get("code")
-                and row.get("state") in ("prepared", "bound")
-                and row.get("op") == planned.op
-                and row.get("key") == key
-            ):
-                raise HostError(
-                    {
-                        "code": "intent.open",
-                        "message": "An attempt from the terminal is still open; it expires at "
-                        + f"{row.get('expires_at')}.",
-                        "retryable": False,
-                    },
-                    exit=5,
-                )
         files = planned.files
 
         def call(idem: str):

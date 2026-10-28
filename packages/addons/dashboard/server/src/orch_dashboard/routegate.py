@@ -105,12 +105,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     ),
     (POST, W + "/repos/check"): (ALLOWED, "a read-only check"),
     (GET, W + "/model-routing"): (ALLOWED, ""),
-    # --- hand-off: prepares the request for the ticket actions (approve, verdict, close, ...); signing is the click
-    # routes below or a Terminal, where the passkey/step-up rules apply
-    (POST, W + "/handoff"): (ALLOWED, "prepares a request; it signs nothing"),
-    (GET, W + "/handoff/{request_id}"): (ALLOWED, ""),
-    (DELETE, W + "/handoff/{request_id}"): (ALLOWED, "cancels a request"),
-    # --- click-to-sign
+    # --- click-to-sign: the only prepare route; the passkey/step-up rules apply at the touch
     (GET, W + "/click/status"): (ALLOWED, ""),
     (POST, W + "/click/custody/seal"): (
         ALLOWED,
@@ -139,12 +134,15 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/click/cancel"): (ALLOWED, ""),
     # --- hub
     (POST, W + "/hubsign"): (REFUSED, "remote mode signs nothing for the hub (D81)"),
+    (POST, W + "/hub/approve/prepare"): (REFUSED, "FB15: an add-on hand-off for the hub; on this computer only (D81)"),
+    (GET, W + "/hub/approve/{request_id}"): (REFUSED, "FB15: polls that hand-off; on this computer only (D81)"),
     (GET, W + "/hub"): (ALLOWED, ""),
     (GET, W + "/hub/share"): (ALLOWED, ""),
     (POST, W + "/hub/share/preview"): (ALLOWED, "a read-only preview"),
+    (POST, W + "/hub/share/revoke"): (ALLOWED, "turning off: owner, plain click, no signature, full session only"),
+    (POST, W + "/hub/share/rule-remove"): (ALLOWED, "turning off: owner, plain click, no signature, full session only"),
     (POST, W + "/hub/link"): (ALLOWED, "reads the link's hub card; nothing is signed or kept"),
     (POST, W + "/hub/connect"): (STEP_UP, "the second half of a hub join"),
-    (POST, W + "/hub/command"): (ALLOWED, "returns text only"),
     # --- the passkey step-up ceremony and the passkey store (R1-6)
     (POST, W + "/stepup/options"): (ALLOWED, "a challenge for this session; the actions are a closed list"),
     (POST, "/api/stepup/options"): (ALLOWED, "a challenge for this session; the actions are a closed list"),
@@ -153,8 +151,6 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, "/api/passkeys/enroll-link"): (STEP_UP, "Add a device"),
     (DELETE, "/api/passkeys/{credential_id}"): (STEP_UP, "remove a passkey"),
     # --- settings and small preferences
-    (GET, W + "/me/sign_default"): (ALLOWED, ""),
-    (PUT, W + "/me/sign_default"): (ALLOWED, ""),
     (GET, W + "/me/risk_notices"): (ALLOWED, ""),
     (POST, W + "/me/risk_notices"): (ALLOWED, ""),
     # --- phone signing

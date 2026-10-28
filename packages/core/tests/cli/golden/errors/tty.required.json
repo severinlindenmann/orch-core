@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "tty.required",
+    "message": "signing requires a controlling terminal",
+    "hint": "run it in your terminal",
+    "fix": {
+      "argv": [
+        "orch",
+        "help"
+      ]
+    },
+    "retryable": false
+  }
+}

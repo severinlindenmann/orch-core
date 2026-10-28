@@ -1,8 +1,9 @@
 import { Link } from '@tanstack/react-router'
 import { useHub } from '../hub/shared'
 // Settings → Devices on a real host: pair a phone and list the paired devices (PROPOSED ops, cap `pair/1`, behind the
-// feature gate; src/api/pairing.ts). The dashboard never signs: adding the phone (`relay.pair_device`) and removing a
-// device (`device.remove`) are hand-offs; the primary's certificate step stays in the terminal.
+// feature gate; src/api/pairing.ts). Adding the phone (the primary's certificate and `relay.pair_device`) stays in the
+// terminal, one `orch host relay pair --resume` (a workspace with a paired phone refuses click-to-sign); removing a
+// device (`device.remove`) is a click.
 //
 // The pairing link is a secret. It lives only in `LinkPanel`'s parent state (`offer`), is never put in a query, a
 // mutation, storage, the URL or a log, and is dropped at the first state past `open`, at expiry, on cancel and on
@@ -10,9 +11,10 @@ import { useHub } from '../hub/shared'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { encode } from 'uqr'
-import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, SIGN_COMMAND, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, PAIR_UNAVAILABLE_CLICK, primaryCommand, type PairBlocked, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
+import { checkSas, convenienceOffCommand, normaliseSas, SAS_ATTEMPTS, pairingApi, pairQueries, pairServed, PAIR_UNAVAILABLE, PAIR_UNAVAILABLE_CLICK, primaryCommand, type PairBlocked, pairedDevices, type PairDevice, type PairOffer, type PairOfferStatus, type PairPreview } from '@/api/pairing'
 import { ApiError, type Workspace } from '@/api/types'
 import { hasFeature } from '@/api/features'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline, Prose } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -487,7 +489,6 @@ function OfferView(p: {
   refresh: () => void
 }) {
   const { workspace, state, status, offer } = p
-  const handoff = useSettingsHandoff(workspace.id, p.refresh)
   if (state === 'open')
     return offer ? (
       <LinkPanel offer={offer} onCancel={p.onCancel} />
@@ -513,47 +514,29 @@ function OfferView(p: {
   if (state === 'cert_pending')
     return (
       <div className={box} data-testid="pair-cert">
-        <p className="font-medium">Two steps in a terminal on this computer finish the pairing.</p>
-        <p className="text-text-muted">
-          They can&apos;t be done in the browser: a workspace with a paired phone refuses click-to-sign.
-        </p>
-        <ol className="list-decimal space-y-3 pl-5">
-          <li className="space-y-1" data-testid="pair-step-primary">
-            <p>Confirm on your computer&apos;s primary. Run:</p>
-            {primaryCommand(status?.offer_id) !== null ? (
-              <CopyText label="Command for the primary" testId="pair-primary-command">
-                {primaryCommand(status?.offer_id)!}
-              </CopyText>
-            ) : (
-              <p role="alert" data-testid="pair-command-unsafe" className="text-warning">The offer id can&apos;t be put in a command safely. Cancel this pairing and start again.</p>
-            )}
-            <p>It shows a code. Confirm only if it is this one:</p>
-            <p data-testid="pair-cert-code" className="select-all font-mono text-2xl tracking-[0.3em] text-text">
-              {status?.cert_code ?? '……'}
-            </p>
-            <p className="text-text-muted">
+        <div className="flex items-start gap-1">
+          <p className="font-medium" data-testid="pair-add-line">
+            On this computer, run this command and type the 6 characters your phone shows.
+          </p>
+          <InfoDrawer label="More about adding the phone" testId="pair-add-details">
+            <p>The command also asks for your recovery code and your workspace passphrase, then adds the phone.</p>
+            <p>This step stays on this computer: a workspace with a paired phone does not accept One click.</p>
+            <p>
               For <DeviceLabel label={status?.label} />.
             </p>
-            {status?.cert_ready && <p className="text-success">Done: the primary signed the certificate.</p>}
-          </li>
-          <li className="space-y-1" data-testid="pair-step-sign">
-            <p>Sign the new device into this workspace. Run, with the code the dashboard gives you:</p>
-            <CopyText label="Command to sign the new device" testId="pair-sign-command">
-              {SIGN_COMMAND}
-            </CopyText>
-            {status?.cert_ready ? (
-              <Button size="sm" onClick={() => handoff.ask({ title: 'Add the phone', action: { action: 'pair_device', offer: status.offer_id }, autoStart: true })}>
-                Get the signing code
-              </Button>
-            ) : (
-              <p className="text-text-muted">The code is ready once the primary has signed (step 1).</p>
-            )}
-          </li>
-        </ol>
+            {status?.cert_ready && <p>Your computer already confirmed the phone; the command finishes adding it.</p>}
+          </InfoDrawer>
+        </div>
+        {primaryCommand(status?.offer_id) !== null ? (
+          <CopyText label="Command to add the phone" testId="pair-primary-command">
+            {primaryCommand(status?.offer_id)!}
+          </CopyText>
+        ) : (
+          <p role="alert" data-testid="pair-command-unsafe" className="text-warning">The offer id can&apos;t be put in a command safely. Cancel this pairing and start again.</p>
+        )}
         <Button size="sm" variant="ghost" onClick={p.onCancel}>
           Cancel pairing
         </Button>
-        {handoff.dialog}
       </div>
     )
   if (state === 'allocated' || state === 'published')
@@ -644,7 +627,7 @@ function DeviceList({ workspace, devices, failed }: { workspace: Workspace; devi
                           handoff.ask({
                             title: 'Remove this device',
                             action: { action: 'device_remove', device: String(d.id) },
-                            autoStart: true,
+
                             confirmLabel: 'Remove device',
                             summary: (
                               <div data-testid="device-remove-summary" className="space-y-1">

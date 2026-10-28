@@ -90,9 +90,9 @@ def person(ws, *argv, passphrase=PASSPHRASE, answer=None):
             if not chunk:
                 break
             shown += chunk
-            if not confirmed and b"and Enter to continue; anything else stops: " in shown:
-                time.sleep(0.3)  # typed after the prompt is up: the prompt discards typeahead
-                os.write(tty, (answer or key_of(argv)).encode() + b"\n")  # read after the review, as a person does
+            if not confirmed and b"Press Enter to sign, any other key cancels." in shown:
+                time.sleep(1.2)  # after the signing dead time
+                os.write(tty, answer.encode() if answer else b"\r")  # read after the review, as a person does
                 confirmed = True
             if not typed and b"Passphrase: " in shown:
                 # a person types after the prompt is up and the terminal no longer echoes (the prompt flushes input
@@ -229,9 +229,9 @@ def test_ctrl_c_at_the_passphrase_prompt_ends_with_one_line_and_no_traceback(ws)
             if not chunk:
                 break
             shown += chunk
-            if not confirmed and b"and Enter to continue; anything else stops: " in shown:
-                time.sleep(0.3)
-                os.write(tty, b"GRANT\n")
+            if not confirmed and b"Press Enter to sign, any other key cancels." in shown:
+                time.sleep(1.2)
+                os.write(tty, b"\r")
                 confirmed = True
             if not sent and b"Passphrase: " in shown:
                 for _ in range(100):

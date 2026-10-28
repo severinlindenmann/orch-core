@@ -3,10 +3,10 @@
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from orch_dashboard import handoff
+from orch_dashboard import signing as handoff
 from orch_dashboard.addon_switches import busy, needs, runner_fix
 from orch_dashboard.errors import HostError
-from orch_dashboard.handoff import AddonDisable, AddonGrant, PrepareBody, expected, host_call
+from orch_dashboard.signing import AddonDisable, AddonGrant, PrepareBody, expected, host_call
 
 
 def parse(body):

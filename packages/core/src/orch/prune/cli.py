@@ -79,8 +79,10 @@ def render(ctx: Ctx, inv: Inventory) -> int:
     return n
 
 
-def _confirm(ctx: Ctx, prompt: str) -> bool:
-    return ctx.ask(prompt).strip().lower() in ("y", "yes")
+def _approve(ctx: Ctx, prompt: str) -> bool:
+    from orch.ops.human import review_prompt
+
+    return review_prompt(prompt.replace(" [y/N] ", ""), verb="continue")  # removes files: nothing is signed
 
 
 def _workspaces(ctx: Ctx, inv: Inventory, yes: bool, mode: str, res_notes: list[str]) -> tuple[set[Path], set[Path]]:
@@ -95,7 +97,7 @@ def _workspaces(ctx: Ctx, inv: Inventory, yes: bool, mode: str, res_notes: list[
                 skip.add(ws.root)
                 res_notes.append(f"{ws.root}: kept untouched (--yes does not cover workspaces; no terminal to ask)")
                 continue
-            if not _confirm(
+            if not _approve(
                 ctx, f"Also remove orch's own files in {ws.root} (its tickets and events cannot be recovered)? [y/N] "
             ):
                 skip.add(ws.root)
@@ -108,7 +110,7 @@ def _workspaces(ctx: Ctx, inv: Inventory, yes: bool, mode: str, res_notes: list[
         if not ctx.interactive:
             res_notes.append(f"{ws.root}: folder kept (deleting a folder needs an answer at a terminal)")
             continue
-        if _confirm(
+        if _approve(
             ctx,
             f"Also delete the folder {ws.root} including its git history "
             f"({ws.files} files, {human_size(ws.size)})? [y/N] ",
@@ -134,7 +136,7 @@ def _tell_hubs(ctx: Ctx, inv: Inventory, folders: set[Path]) -> None:
         if joined is None:
             ctx.say(f"Workspace {ws.root}: could not read its hub status; the hub is not told (see the list below).")
             continue
-        if not _confirm(ctx, f"Workspace {ws.root} is on a hub. Tell the hub it leaves now (orch hub leave)? [y/N] "):
+        if not _approve(ctx, f"Workspace {ws.root} is on a hub. Tell the hub it leaves now (orch hub leave)? [y/N] "):
             continue
         ok, why = ctx.hub_leave(ws.root, ctx.env)
         ctx.say("  the hub was told" if ok else f"  could not tell the hub ({why}); it stays in the list below")
@@ -224,13 +226,13 @@ def main(argv: Sequence[str], *, env: Mapping[str, str], out: TextIO, err: TextI
             err.write("orch host prune: needs a terminal to ask; use --yes to run without asking (or --dry-run)\n")
             return 2
         question = "\nRemove the orch tool too? [y/N] " if only_tool else "\nRemove all of this? [y/N] "
-        if not _confirm(ctx, question):
+        if not _approve(ctx, question):
             ctx.say("Nothing was removed.")
             return 5
     notes: list[str] = []
     for it in [i for i in inv.items if i.data.get("default_config")]:
         if not (
-            ctx.interactive and _confirm(ctx, f"Also remove {it.path}, a separate orch setup with its own keys? [y/N] ")
+            ctx.interactive and _approve(ctx, f"Also remove {it.path}, a separate orch setup with its own keys? [y/N] ")
         ):
             inv.items.remove(it)
             inv.rmdirs[:] = [d for d in inv.rmdirs if os.fspath(d) != it.path]

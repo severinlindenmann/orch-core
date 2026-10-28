@@ -313,8 +313,8 @@ def _check(a: argparse.Namespace, env: Mapping[str, str]) -> dict[str, Any]:
 
 
 def _connect(a: argparse.Namespace, env: Mapping[str, str]) -> Any:
-    """``(conn, backend, device, wid, person, name_prefix)`` for the one workspace of this person (as ``orch sign``)."""
-    from orch.host import handoff
+    """``(conn, backend, device, wid, person, name_prefix)`` for this person's one workspace (CLI signer)."""
+    from orch.host import signer_registry
     from orch.host.client import Connection, Pin
     from orch.identity import device_ref
     from orch.ops import human
@@ -322,21 +322,21 @@ def _connect(a: argparse.Namespace, env: Mapping[str, str]) -> Any:
 
     state = a.state.resolve() if a.state is not None else state_dir(env)
     uid = os.getuid()
-    entries = handoff._own_workspaces(state, uid, a.workspace)  # noqa: SLF001
+    entries = signer_registry._own_workspaces(state, uid, a.workspace)  # noqa: SLF001
     if len(entries) != 1:
         raise _Fail("invalid.input", "name the workspace with --workspace (none or several map you to a person)", 2)
     entry = entries[0]
     wid, person = entry["workspace_id"], entry["peers"][str(uid)]["person"]
-    backend = handoff._backend(state, wid)  # noqa: SLF001
+    backend = signer_registry._backend(state, wid)  # noqa: SLF001
     device = device_ref(backend.public_key(human.KEY_ID))
-    path = handoff._socket(a.run, state, int(entry["host_uid"]), wid)  # noqa: SLF001
+    path = signer_registry._socket(a.run, state, int(entry["host_uid"]), wid)  # noqa: SLF001
     conn = Connection(Pin(int(entry["host_uid"]), wid, path), client="orch addon")
     label = (Path(str(entry.get("root") or wid)).name, str(entry.get("prefix")))
     return conn, backend, device, wid, person, label
 
 
 def _sign(conn: Any, backend: Any, device: str, wid: str, person: str, label: Any, op: str, args: dict) -> Any:
-    from orch.host import handoff, signer
+    from orch.host import signer
     from orch.host.control_client import new_idem
     from orch.ops import human
 
@@ -346,7 +346,7 @@ def _sign(conn: Any, backend: Any, device: str, wid: str, person: str, label: An
     return signer.finish(
         conn.call, prepared, prepared["request"]["id"], backend=backend, key_id=human.KEY_ID, workspace_id=wid,
         person=person, device=device, workspace=lambda w: label if w == wid else None, confirm=human.review_prompt,
-        show_secret=human.show_secret, idem=new_idem(), prefix=f"{handoff.NOTICE}\n\n",
+        show_secret=human.show_secret, idem=new_idem(),
     )  # fmt: skip
 
 

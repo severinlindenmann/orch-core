@@ -151,7 +151,7 @@ def test_a_malformed_or_conflicting_hub_id_is_refused_before_signing(host, card_
 def test_join_without_a_terminal_signs_nothing(host, card_file):
     host.tty = False
     code, out = run(["join", "inv-1", "--hub-card", card_file], {})
-    assert code == 5 and "no terminal" in out and host.signed == [] and host.called == []
+    assert code == 3 and "no terminal" in out and host.signed == [] and host.called == []
 
 
 def test_a_hub_that_is_down_after_the_signature_says_how_to_finish(host, card_file):
@@ -272,9 +272,12 @@ def share_host(monkeypatch):
     }
     monkeypatch.setattr(hub, "_target", lambda env: object())
     monkeypatch.setattr(hub, "_call", lambda t, op, args, env: (log.called.append((op, args)), reply[op])[1])
-    from orch.cli import publish
 
-    monkeypatch.setattr(publish, "_confirm", lambda prompt, word: (log.asked.append((prompt, word)), log.yes)[1])
+    monkeypatch.setattr(
+        __import__("orch.ops.human", fromlist=["review_prompt"]),
+        "review_prompt",
+        lambda prompt, verb="sign": (log.asked.append(prompt), verb == "continue" and log.yes)[1],  # D4: unsigned
+    )
     return log
 
 
@@ -290,8 +293,8 @@ def test_an_agent_cannot_use_share_at_all(share_host, argv):
 def test_rule_add_shows_what_will_be_shared_and_binds_the_plan(share_host):
     code, out = run(["share", "rule", "add", "--tag", "x"], {}, as_json=True)
     assert code == 0
-    ((prompt, word),) = share_host.asked
-    assert word == "share" and "ticket K-1: Public note" in prompt and "cannot be taken back" in prompt
+    (prompt,) = share_host.asked
+    assert "ticket K-1: Public note" in prompt and "cannot be taken back" in prompt
     rule = {"kind": "tag", "tag": "x"}
     assert share_host.called == [
         ("share.preview", {"add": rule}),
@@ -302,7 +305,7 @@ def test_rule_add_shows_what_will_be_shared_and_binds_the_plan(share_host):
 def test_an_unconfirmed_rule_change_sends_nothing(share_host):
     share_host.yes = False
     code, _ = run(["share", "rule", "remove", "--tag", "x"], {}, as_json=True)
-    assert code == 5 and [op for op, _ in share_host.called] == ["share.preview"]
+    assert code == 3 and [op for op, _ in share_host.called] == ["share.preview"]
 
 
 def test_revoke_says_it_cannot_take_back_what_was_read(share_host):
@@ -343,18 +346,11 @@ def test_refused_share_items_show_in_the_normal_output_and_a_stale_one_says_so(s
 
 def test_sync_shows_what_is_new_and_binds_the_plan(share_host):
     code, _ = run(["share", "sync"], {}, as_json=True)
-    assert code == 0 and "ticket K-1: Public note" in share_host.asked[0][0]
+    assert code == 0 and "ticket K-1: Public note" in share_host.asked[0]
     assert share_host.called == [("share.preview", {}), ("share.sync", {"expect": "p" * 43})]
     share_host.called.clear()
     share_host.yes = False
-    assert run(["share", "sync"], {}, as_json=True)[0] == 5 and [op for op, _ in share_host.called] == ["share.preview"]
-
-
-def test_a_cut_off_list_needs_the_typed_count(share_host, monkeypatch):
-    from orch.cli import hub as H
-
-    prev = {"count": 250, "new": 250, "revoked": 0, "more": 150, "plan": "p" * 43, "items": []}
-    assert H._confirm_word(prev) == "all 250" and H._confirm_word({**prev, "more": 0}) == "share"  # noqa: SLF001
+    assert run(["share", "sync"], {}, as_json=True)[0] == 3 and [op for op, _ in share_host.called] == ["share.preview"]
 
 
 # --- C8 goldens: keys rotate and hub history (exact output; both are host ops, so no registry golden file) -----------

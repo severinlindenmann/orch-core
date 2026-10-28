@@ -17,6 +17,7 @@ from orch.custody.base import CustodyError
 from orch.custody.passphrase import KdfParams, PassphraseBackend
 from orch.host import convenience
 from orch.host.control_client import new_idem  # noqa: F401
+from orch.ops.errors import OrchError
 from tests.host import human_helpers
 from tests.host.human_helpers import ok
 from tests.host.lifecycle_helpers import UID
@@ -236,7 +237,7 @@ def old_key_on_disk(served):
 def run_rotate(served, **over):
     kw = dict(
         say=lambda t: None, pk_factory=FakePK(served.lab.ws.owner), open_backend=backend_over,
-        confirm=lambda t, w: True, call=call_for(served),
+        confirm=lambda t: True, call=call_for(served),
     )  # fmt: skip
     kw.update(over)
     return rotate.rotate(served.lab.state, entry_of(served), {}, **kw)
@@ -259,8 +260,8 @@ def test_rotate_lands_device_rotated_then_installs_the_new_key(served, old_key_o
 
 def test_rotate_leaves_the_old_key_in_place_when_the_event_does_not_land(served, old_key_on_disk):
     owner = served.lab.ws.owner
-    with pytest.raises(CustodyError, match="nothing was signed"):
-        run_rotate(served, confirm=lambda t, w: False)
+    with pytest.raises(OrchError, match="nothing was signed"):
+        run_rotate(served, confirm=lambda t: False)
     assert backend_over(old_key_on_disk).public_key("dk") == owner.sig_pub
     assert not device_of(served, owner.device).removed
 

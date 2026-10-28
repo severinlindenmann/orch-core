@@ -118,20 +118,29 @@ def test_the_same_ticket_key_reads_each_workspaces_own_ticket(two):
     assert boards[0][0]["title"] != boards[1][0]["title"]
 
 
-def test_a_handoff_belongs_to_the_workspace_it_was_prepared_in(two):
+def test_a_sign_request_belongs_to_the_workspace_it_was_prepared_in(two):
     client, headers, stubs, down, gateway = two
     a, b = stubs
     write = {**headers, "Origin": ORIGIN}
-    body = {"action": "comment", "key": "DEMO-0001", "message": "hello"}
-    made = client.post(f"/api/w/{a.ws}/handoff", json=body, headers=write)
-    assert made.status_code == 200
-    request_id = made.json()["id"]
-    assert client.get(f"/api/w/{a.ws}/handoff/{request_id}", headers=headers).status_code == 200
+    owner = client.get(f"/api/w/{a.ws}/members", headers=headers).json()[0]
+    signer = {"device": owner["devices"][0]["id"], "auth": "convenience"}
+    # A request bound to the owner's one-click signer, prepared in workspace a and held by this dashboard (as
+    # click/prepare leaves it).
+    made = gateway.link(a.ws).call(
+        "human.prepare",
+        {"op": "log", "args": {"ref": "DEMO-0001", "message": "hello"}, "signer": signer},
+        write=True,
+        idem="a_" + "0" * 25 + "1",
+    )
+    request_id = made["request"]["id"]
+    client.app.state.handoffs.own(owner["person"], a.ws, request_id, 600)
+    step = {"request_id": request_id}
+    assert client.post(f"/api/w/{a.ws}/click/state", json=step, headers=write).json()["state"] == "bound"
     # The same id under the other workspace's address is a request that never existed there.
-    assert client.get(f"/api/w/{b.ws}/handoff/{request_id}", headers=headers).status_code == 404
-    assert client.delete(f"/api/w/{b.ws}/handoff/{request_id}", headers=write).status_code == 404
-    assert a.requests.find(request_id)["state"] == "prepared"
-    assert client.delete(f"/api/w/{a.ws}/handoff/{request_id}", headers=write).json()["state"] == "cancelled"
+    assert client.post(f"/api/w/{b.ws}/click/state", json=step, headers=write).status_code == 404
+    assert client.post(f"/api/w/{b.ws}/click/view", json=step, headers=write).status_code == 404
+    assert client.post(f"/api/w/{b.ws}/click/cancel", json=step, headers=write).status_code == 404
+    assert a.requests.find(request_id)["state"] == "bound"
 
 
 def test_a_host_that_is_not_running_is_marked_and_the_other_keeps_working(two):
@@ -165,7 +174,7 @@ def test_a_workspace_the_registry_does_not_pin_is_not_there(two):
     assert client.get(f"/api/w/{unknown}/settings", headers=headers).status_code == 404
     assert (
         client.post(
-            f"/api/w/{unknown}/handoff",
+            f"/api/w/{unknown}/click/prepare",
             json={"action": "comment", "key": "DEMO-0001", "message": "x"},
             headers={**headers, "Origin": ORIGIN},
         ).status_code
@@ -178,9 +187,21 @@ def test_settings_are_per_workspace_too(two):
     reads = [client.get(f"/api/w/{s.ws}/members", headers=headers).json() for s in stubs]
     assert reads[0][0]["person"] != reads[1][0]["person"]  # each workspace has its own owner
     a, b = stubs
-    body = {"action": "settings_set", "grant_hours": 12}
-    made = client.post(f"/api/w/{a.ws}/handoff", json=body, headers={**headers, "Origin": ORIGIN})
-    assert made.status_code == 200 and made.json()["events"][0]["set"] == {"grant_hours": 12}
+    from pydantic import TypeAdapter
+
+    from orch_dashboard.signing import PrepareBody, plan
+
+    planned = plan(
+        gateway, a.ws, TypeAdapter(PrepareBody).validate_python({"action": "settings_set", "grant_hours": 12})
+    )
+    device = reads[0][0]["devices"][0]["id"]
+    made = client.app.state.human(
+        a.ws,
+        "human.prepare",
+        {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
+        idem=planned.idem(a.ws, 0),
+    )
+    assert made["events"][0]["set"] == {"grant_hours": 12}
     assert len(a.requests.table) == 1 and b.requests.table == {}
 
 

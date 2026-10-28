@@ -130,7 +130,6 @@ export function HandoffSignDialog({
       title={title}
       ws={ws}
       action={request}
-      autoStart={action.kind === 'approve' || action.kind === 'answer'}
       doneToast={doneToastOf(action)}
       confirmLabel={confirmLabel}
       hint={preview ? 'Go back to the verdict to sign' : hint}

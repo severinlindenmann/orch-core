@@ -40,6 +40,15 @@ SWITCH_GLOBAL = frozenset(
 
 #: The only non-GET routes of the bound workspace a switch session may call (a ticket to the hub, not a write).
 SWITCH_POST = frozenset({"hub/switch"})
+#: Writes a switch session is told plainly it cannot make (`session.readonly`, not a step-up offer): there is no way up
+#: from a switch session (E4). The one-click share reductions are owner actions of a full session (hub.py).
+READONLY_REFUSED = (
+    "/click/prepare",
+    "/hub/approve/prepare",
+    "/market/add",
+    "/hub/share/revoke",
+    "/hub/share/rule-remove",
+)
 
 
 def switch_allows(method, path, bound, query=None) -> bool:
@@ -174,6 +183,8 @@ class Security:
                 return await reject("session.required", 401)
             scope.setdefault("state", {})["token"] = token
             refusal = self.switch_refused(token, path, method, scope)
+            if refusal and path.endswith(READONLY_REFUSED):
+                return await response("session.readonly", 403)(scope, receive, secure_send)
             if refusal:
                 return await step_up_response(policy.name != "loopback")(scope, receive, secure_send)
         if method not in ("GET", "HEAD", "OPTIONS"):

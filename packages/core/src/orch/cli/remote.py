@@ -58,23 +58,6 @@ class Refused(Exception):
         self.code, self.exit = code, exit_
 
 
-class _Terminal:
-    """The person's own terminal (``/dev/tty``), never stdin, which an agent may hold. Tests replace it."""
-
-    def ask(self, prompt: str) -> str:
-        from orch.ops.workspace_init import Terminal
-
-        class _Ask(Terminal):
-            def ask(self, prompt: str) -> str:
-                return self._read(prompt, echo=True)
-
-        return _Ask().ask(prompt)
-
-
-# Seams: tests replace these; nothing else in the module touches the network, the clock or other programs.
-TERMINAL: Any = _Terminal()
-
-
 def _resolve(name: str) -> set[str]:
     infos = socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)
     return {str(i[4][0]).split("%", 1)[0] for i in infos}
@@ -187,17 +170,19 @@ def _preconditions(env: Mapping[str, str]) -> None:
         )
 
 
-def _confirm(args: argparse.Namespace, out: TextIO, question: str) -> bool:
+def _approve(args: argparse.Namespace, out: TextIO, question: str) -> bool:
     if args.dry_run:
         out.write("Dry run: nothing was changed.\n")
         return False
     if args.yes:
         return True
+    from orch.ops.errors import OrchError
+    from orch.ops.human import review_prompt
+
     try:
-        answer = TERMINAL.ask(f"{question} [y/N] ")
-    except Exception as exc:  # noqa: BLE001 - no terminal: refuse (never stdin, which an agent may hold)
-        raise Refused("human_only", f"this needs your own terminal ({exc}); nothing was changed") from None
-    return answer.strip().lower() in ("y", "yes")
+        return review_prompt(question, verb="continue")  # sets up the HTTPS front: nothing is signed
+    except OrchError as exc:
+        raise Refused(exc.code, str(exc)) from None
 
 
 def _run_root(flags: list[str], env: Mapping[str, str]) -> int:
@@ -376,7 +361,7 @@ def _enable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: 
         "  print a one-time first sign-in link (works once, for 15 minutes); sudo asks the dashboard for it,\n"
         "  because only the administrator may\n\n"
     )
-    if not _confirm(args, out, "Make these changes?"):
+    if not _approve(args, out, "Make these changes?"):
         return 0 if args.dry_run else 1
     flags = ["--front-enable", "--person", person, "--name", args.name]
     for net in proxies:
@@ -463,7 +448,7 @@ def _disable(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err:
     if not root_plan.ok:
         out.write("\nNothing was changed.\n")
         return 1
-    if not _confirm(args, out, "Take remote access away?"):
+    if not _approve(args, out, "Take remote access away?"):
         return 0 if args.dry_run else 1
     if have_file:
         with contextlib.suppress(FileNotFoundError):
@@ -514,7 +499,7 @@ def _reset(args: argparse.Namespace, env: Mapping[str, str], out: TextIO, err: T
     out.write("  stop the dashboard: every remote session ends and every open sign-in link dies\n")
     out.write("  delete every passkey (everybody has to add a passkey again)\n")
     out.write("  start the dashboard and print one new one-time link\n")
-    if not _confirm(args, out, "Drop every passkey and session?"):
+    if not _approve(args, out, "Drop every passkey and session?"):
         return 0 if args.dry_run else 1
     try:
         _stop_dashboard(env, err, directory)

@@ -28,6 +28,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
+from orch.ops.human import review_prompt
+
 __all__ = ["main"]
 
 _USAGE = (
@@ -96,32 +98,6 @@ def _tty_ok() -> bool:
         return False
     try:
         return os.isatty(fd)
-    finally:
-        os.close(fd)
-
-
-def _confirm(prompt: str, word: str) -> bool:
-    """Ask on the person's own terminal (``/dev/tty``) and go on only if they type ``word``; no terminal is a plain
-    refusal that names ``--yes``. Tests replace this."""
-    from orch.ops.caps import open_tty
-
-    try:
-        fd = open_tty(os.O_RDWR)
-    except OSError:
-        raise PubError("invalid.input", "no terminal to confirm on: run this in a terminal, or add --yes", 5) from None
-    try:
-        if not os.isatty(fd):
-            raise PubError("invalid.input", "no terminal to confirm on: run this in a terminal, or add --yes", 5)
-        os.write(fd, prompt.encode())
-        line = bytearray()
-        while True:
-            c = os.read(fd, 1)
-            if not c or c == b"\n":
-                break
-            line += c
-        return bytes(line).strip().decode("utf-8", "replace") == word
-    except (KeyboardInterrupt, OSError):
-        return False
     finally:
         os.close(fd)
 
@@ -362,9 +338,9 @@ def main(
             if a.cmd == "share":
                 if not _tty_ok():
                     raise PubError(
-                        "invalid.input",
+                        "tty.required",
                         "no terminal to sign on and show the link: run this in a terminal; nothing was signed",
-                        5,
+                        3,
                     )
                 _sign(target, "publish.share", {"staged_id": staged})
                 try:
@@ -374,10 +350,10 @@ def main(
                     raise
             return _send(target, staged, env, out, as_json)
         if a.cmd == "revoke":
-            if not a.yes and not _confirm(
-                f"Revoke share {a.rest[0]}? Its link stops working at once. Type revoke: ", "revoke"
+            if not a.yes and not review_prompt(
+                f"Revoke share {a.rest[0]}? Its link stops working at once.", verb="continue"
             ):
-                raise PubError("invalid.input", "not confirmed: nothing was revoked", 5)
+                raise PubError("sign.cancelled", "not confirmed: nothing was revoked", 3)
             got = _call(target, "publish.revoke", {"share_id": a.rest[0]}, env)
             out.write(f"ok publish revoked {got.get('share_id')}: the link no longer works\n")
             return 0
@@ -423,7 +399,7 @@ def _check_setup(a: argparse.Namespace) -> None:
 
 def _setup(a: argparse.Namespace, target: Any, env: Mapping[str, str], out: TextIO) -> int:
     if not _tty_ok():
-        raise PubError("invalid.input", "no terminal to sign on: run this in a terminal; nothing was signed", 5)
+        raise PubError("tty.required", "no terminal to sign on: run this in a terminal; nothing was signed", 3)
     _sign(target, "settings.set", {"set": {"publish": {"server": a.server, "share": a.share_addr}}})
     out.write("ok publish setup\n")
     return _register(target, env, out)

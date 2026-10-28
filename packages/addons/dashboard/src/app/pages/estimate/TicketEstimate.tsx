@@ -114,7 +114,6 @@ export function TicketEstimate({ ticket }: { ticket: TicketDocument }) {
           }
           ws={ws}
           action={action}
-          autoStart
           onClose={() => setPick(null)}
           onSettled={(phase) => {
             if (phase !== 'done') return

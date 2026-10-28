@@ -9,6 +9,15 @@ Ops (all column P, owner role; an agent is refused, and no op here is reachable 
   required: the ``plan`` the owner was shown: if the selection is different now, nothing changes (WYSIWYS).
 * ``share.revoke {ref}``: withdraw one item now (a ticket key or a ``logical`` id from ``share.preview``); it stays
   withdrawn while it still matches a rule.
+* ``share.revoke`` and ``share.rule_remove`` only take sharing away (:data:`REDUCE_OPS`): the dashboard sends them with
+  one click as the session's person, like ``workspace.cosmetic.set``; at most 10 a minute, and the security-log line
+  names the person. ``orch hub share rule remove`` still asks its own confirmation at the terminal. Neither ever
+  shares something new: a removal that lets another rule match more sends only what was already confirmed and still
+  matches (the rest waits for ``share.sync {expect}``), and removing a rule that is not in the list is ``not_found``.
+  No rule kind excludes (the selection is the union of the rules), so a removal can only narrow; a removal whose rules
+  would select anything the current rules do not is refused all the same. The owner role is checked when the call is
+  served and again under the lock at the write; a switch or other not-full browser session is the dashboard's to
+  refuse (``full_session``, as for ``workspace.cosmetic.set``): the host sees the link's person only.
 * ``share.sync {expect?}``: make the hub's copy equal the selection (``share_put`` / ``share_revoke``). With ``expect``
   (the ``share.preview`` plan, checked like a rule change) the current selection is confirmed; without it a sync only
   retries what was already confirmed. Also run after every rule change and revoke.
@@ -43,6 +52,14 @@ SHARE_OPS: dict[str, int] = {
     "share.sync": 1,
 }  # fmt: skip
 NETWORK_OPS = frozenset({"share.rule_add", "share.rule_remove", "share.revoke", "share.sync"})
+#: The two ops that only take sharing away. Like ``workspace.cosmetic.set`` (cosmeticops) they are unsigned owner
+#: actions the dashboard may send with one click as the session's person (column P, owner role, never a relay); they
+#: share one rate limit and each writes a security-log line naming the person.
+REDUCE_OPS = frozenset({"share.revoke", "share.rule_remove"})
+#: The rule kinds (``orch.hubclient.shares``): each one SELECTS tickets, questions or needs; none excludes. A new kind
+#: must be added here only if it selects (tests/host/test_share_dashboard pins the set).
+SELECTING_KINDS = frozenset({"needs_you", "questions", "type", "ticket", "tag"})
+REDUCE_RATE = 10  # per minute and workspace, as for the cosmetic settings
 _MU = threading.Lock()
 _RULE = {
     "type": "object",
@@ -85,7 +102,11 @@ def _dir(service: WorkspaceService) -> Any:
 
 
 def _owner(call: Call) -> None:
-    if call.column.name != "P" or call.viewer is None:
+    """The caller is a person at a direct link (column P, no relay, no grant) who is an OWNER of the workspace now. The
+    dashboard's link is such a peer (its person is the computer user's person); the dashboard itself refuses a switch
+    or any other not-full browser session before it sends (``full_session``, the cosmetic precedent), as the host
+    cannot see the browser session behind the link."""
+    if call.column.name != "P" or call.viewer is None or call.relay is not None:
         raise HostError(
             "op.not_allowed", "a person does this at their own terminal; an agent never changes what is shared"
         )
@@ -109,8 +130,8 @@ def _check(call: Call) -> tuple[str, dict[str, Any]]:
         raise HostError("workspace.unavailable", f"the workspace cannot be served: {service.cause}")
     if op not in SHARE_READS and service.state == "degraded":
         raise HostError("workspace.degraded", f"the workspace is read-only: {service.cause}")
+    service.store.refresh()  # the role is judged on the log as it is now, not on a state from before a role change
     _owner(call)
-    service.store.refresh()
     return op, args
 
 
@@ -132,7 +153,19 @@ def serve(call: Call) -> dict[str, Any]:
     _selective(call.service)
     if op in SHARE_READS:
         return _read(call, op, args)
+    if op in REDUCE_OPS:
+        _rate(call.service)
     return {"plan": {"op": op, "args": args}}
+
+
+def _rate(service: Any) -> None:
+    """At most :data:`REDUCE_RATE` revokes and rule removals a minute (the worker runs one call at a time)."""
+    now = service.clock()
+    hits = [t for t in getattr(service, "_share_reduce_hits", []) if now - t < 60]
+    if len(hits) >= REDUCE_RATE:
+        raise HostError("host.busy", "too many sharing changes: wait a minute", retry_after_ms=60_000)
+    hits.append(now)
+    service._share_reduce_hits = hits  # noqa: SLF001
 
 
 async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
@@ -348,7 +381,7 @@ def _sync_locked(service: WorkspaceService, st: Any, wanted: list[Any]) -> dict[
         closer.close()
 
 
-def _confirm(st: Any, selection: list[Any], expect: str) -> None:
+def _approve(st: Any, selection: list[Any], expect: str) -> None:
     """The one place a selection is confirmed: against the plan the owner was shown (C6fud-1)."""
     from orch.hubclient.errors import HubRefused
 
@@ -377,7 +410,7 @@ def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str |
             wanted = st.auto_wanted(S.select(st.rules, facts))
         else:
             wanted = _after(st, facts)[2]
-            _confirm(st, wanted, expect)
+            _approve(st, wanted, expect)
         return _sync_locked(service, st, wanted)
 
 
@@ -432,6 +465,13 @@ def _find(st: Any, ref: str, facts: list[Any]) -> str:
     raise HostError("not_found", "nothing is shared under that name: orch hub share rule list")
 
 
+def _widens(before: list[Any], after: list[Any], facts: list[Any]) -> bool:
+    """Would the rules ``after`` select an item the rules ``before`` do not (on the same tickets)?"""
+    from orch.hubclient import shares as S
+
+    return bool({i.logical for i in S.select(after, facts)} - {i.logical for i in S.select(before, facts)})
+
+
 def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from orch.hubclient import shares as S
     from orch.hubclient.errors import HubRefused
@@ -446,6 +486,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             hubops._audit(call, "share.sync", synced=got["synced"], confirmed="expect" in args)  # noqa: SLF001
             return ok_result(got)
         with _MU:
+            service.store.refresh()
+            _owner(call)  # again off the worker, under the lock: a role change since serve() refuses the write
             st = _load(service)
             facts = tickets_for(service, call.viewer)
             if op == "share.revoke":
@@ -456,8 +498,16 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 note = "withdrawn; what the hub already read cannot be taken back"
             else:
                 rule = S.normalize_rule(args["rule"])
+                if op == "share.rule_remove" and rule not in st.rules:
+                    raise HostError("not_found", "share: that rule is not in the list; nothing changed")
                 after, withdrawn, shown = _after(st, facts, add=rule if op == "share.rule_add" else None,
                                                  remove=rule if op == "share.rule_remove" else None)  # fmt: skip
+                if op == "share.rule_remove" and (
+                    rule["kind"] not in SELECTING_KINDS or _widens(st.rules, after, facts)
+                ):
+                    # every rule kind selects (the selection is their union, no kind excludes), so a removal can only
+                    # narrow; should a kind ever exclude, removing it would widen: the reduce path refuses that
+                    raise HostError("invalid.input", "share: removing this rule would share more; nothing changed")
                 changed = after != st.rules
                 if _plan(shown) != args["expect"]:
                     raise HostError(
@@ -468,15 +518,18 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                     _save(service, st)
                 note = "changed" if changed else "unchanged"
             # C6-2: the sync sends exactly the selection that was confirmed above, under the same lock (never a
-            # second selection that a ticket change in between could have altered). Only a rule change confirms
-            # (against the shown plan); a revoke narrows and sends nothing the owner has not confirmed (C6fud-1).
+            # second selection that a ticket change in between could have altered). Only an adding rule change confirms
+            # (against the shown plan). A reducing op (REDUCE_OPS: revoke, rule removal) only narrows: it keeps what was
+            # already confirmed and still matches and sends nothing new, even where a removal lets another rule match
+            # more (C6fud-1; the dashboard sends these unsigned and its review lists only what stops).
             selected = S.select(st.rules, facts)
-            if op == "share.revoke":
+            if op in REDUCE_OPS:
                 selected = st.auto_wanted(selected)
             else:
-                _confirm(st, [i for i in selected if i.logical not in st.withdrawn], args["expect"])
+                _approve(st, [i for i in selected if i.logical not in st.withdrawn], args["expect"])
             got = _sync_locked(service, st, selected)
-        hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item")  # noqa: SLF001
+        more = {"person": call.viewer} if op in REDUCE_OPS else {}
+        hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item", **more)  # noqa: SLF001
         return ok_result({"note": note} | got)
     except HubRefused as exc:
         raise hubops._refused(exc.code) from None  # noqa: SLF001

@@ -1,36 +1,49 @@
-// The hub sign panel (optional extra path, A1/D83): an approval may be signed by the person's channel (phone or hub
-// page) instead of here, when the person asks for it. The panel has NO Sign button and no local-key path. It shows what
-// the HOST says to check: the summary, the 12 characters (compare them with the phone), and one link the host built from
-// its pinned hub address. Agent-written text (the title) is plain text below the fixed copy, never a link.
+// The hub sign panel (optional extra path, A1/D83): a settings change or an add-on turned on may be approved by the person's channel (phone or
+// hub page) instead of here, when the person asks for it. The panel has NO Sign button and no local-key path. It shows
+// what the HOST says to check and one link the host built from its pinned hub address.
 import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, Loader2 } from 'lucide-react'
 import { api } from '@/api/client'
-import { useEffect, useRef } from 'react'
-import { HUB_SETTING_WORDS, groupHash, hubSettingsSplit, safeHubUrl } from '@/api/hubsign'
+import { useEffect, useRef, useState } from 'react'
+import { groupHash, HUB_SETTING_WORDS, hubSettingsSplit, safeHubUrl, type HubApproval } from '@/api/hubsign'
 import { queries } from '@/api/queries'
 import type { HandoffAction } from '@/api/handoff'
-import { useHandoff } from './useHandoff'
 import { Inline } from './visible'
 
+type AddonAction = Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' }>
+export type HubApprovalPhase = 'preparing' | 'waiting' | 'done' | 'ended' | 'error'
+
+/** FB15: prepare the add-on grant for the hub once (`POST /hub/approve/prepare`), then follow the request until the hub
+ *  answers it or it ends (`GET /hub/approve/<id>`). Nothing is signed here. */
+export function useHubApproval(ws: string, action: AddonAction) {
+  const [info, setInfo] = useState<HubApproval | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const started = useRef(false) // prepare once: a StrictMode re-run or a new `action` identity must not make a second request
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    api.prepareHubApproval(ws, action).then(setInfo, (e: unknown) => setError(e instanceof Error && e.message ? e.message : 'The request could not be prepared. Nothing was changed.'))
+  }, [ws, action])
+  const poll = useQuery({ queryKey: ['hub-approval', ws, info?.id], enabled: !!info, queryFn: () => api.getHubApproval(ws, info!.id), refetchInterval: q => (['prepared', 'bound'].includes(q.state.data?.state ?? 'prepared') ? 3000 : false), retry: false })
+  const state = poll.data?.state
+  const phase: HubApprovalPhase = error || poll.isError ? 'error' : !info ? 'preparing' : state === 'submitted' ? (poll.data?.error ? 'ended' : 'done') : state === 'cancelled' || state === 'expired' ? 'ended' : 'waiting'
+  return { info, phase, error }
+}
 
 const CAPS: Record<string, string> = { serve_http: 'run a small web page', spawn_agent: 'start agents', pty: 'open terminals', network: 'use the network', git_push: 'push code', choose_model: 'choose which AI model runs', credential: 'keep a secret key' }
 
-/** FB15: turning an add-on on in a full-mode workspace. The host prepares the grant as a hand-off (nothing is signed here)
- *  and names it; the person approves it in the hub with plain clicks, and this panel follows the hand-off to its end. */
-export function HubAddonPanel({ ws, action, onDone }: { ws: string; action: Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' }>; onDone: () => void }) {
-  const run = useHandoff(ws, (phase) => { if (phase === 'done') onDone() })
-  const { prepare } = run
-  const started = useRef(false) // prepare once: a StrictMode re-run or a new `action` identity must not make a second request
-  useEffect(() => { if (started.current) return; started.current = true; void prepare(action) }, [prepare, action])
-  const rid = run.request?.id
-  const q = useQuery({ queryKey: ['hub-addon', ws, rid], enabled: !!rid && run.phase === 'waiting', queryFn: () => api.hubSign(ws, { kind: 'addon', request: rid! }), retry: false })
+/** FB15: turning an add-on on through the hub, when the person asks for it. The host prepares the grant for the hub
+ *  (nothing is signed here) and names it; the person approves it in the hub with plain clicks, and this panel follows
+ *  the request to its end. */
+export function HubAddonPanel({ ws, action, onDone }: { ws: string; action: AddonAction; onDone: () => void }) {
+  const run = useHubApproval(ws, action)
+  const fired = useRef(false)
+  useEffect(() => { if (run.phase === 'done' && !fired.current) { fired.current = true; onDone() } }, [run.phase, onDone])
   if (run.phase === 'done') return <p role="status" className="text-[13px] text-text">Approved in the hub. The add-on is set up.</p>
-  if (run.error || ['expired', 'cancelled', 'failed', 'error'].includes(run.phase))
-    return <p role="alert" data-testid="hub-addon-stopped" className="text-[13px] text-text-muted">{run.error?.message ?? 'The request ended before it was approved. Close this and try again.'}</p>
-  if (!rid || q.isPending)
-    return <p role="status" className="flex items-center gap-2 text-[13px] text-text-muted"><Loader2 className="size-4 animate-spin" aria-hidden /> Preparing the request…</p>
-  if (q.isError || !q.data) return <p role="alert" className="text-[13px] text-text-muted">The hub link could not be made. Nothing was changed.</p>
-  const info = q.data
+  if (run.phase === 'error' || run.phase === 'ended')
+    return <p role="alert" data-testid="hub-addon-stopped" className="text-[13px] text-text-muted">{run.error ?? 'The request ended before it was approved. Close this and try again.'}</p>
+  if (!run.info) return <p role="status" className="flex items-center gap-2 text-[13px] text-text-muted"><Loader2 className="size-4 animate-spin" aria-hidden /> Preparing the request…</p>
+  const info = run.info
   const url = safeHubUrl(info.url)
   const otherUrl = safeHubUrl(info.other_url)
   const caps = info.summary.capabilities ?? []
@@ -58,7 +71,7 @@ export function HubAddonPanel({ ws, action, onDone }: { ws: string; action: Extr
   )
 }
 
-const OFF_WORDS: Record<string, string> = { sign_methods: 'the allowed ways to approve', repos: 'the code folders', models: 'the AI models', icon: 'the workspace icon' }
+const OFF_WORDS: Record<string, string> = { repos: 'the code folders', models: 'the AI models', icon: 'the workspace icon' }
 
 function hours(v: number, unit: string): string {
   if (unit === 'hours') return v % 24 === 0 ? `${v / 24} day${v === 24 ? '' : 's'}` : `${v} hours`

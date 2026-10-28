@@ -85,7 +85,7 @@ def test_prepare_answers_the_prepared_contract(human, served):
     p = human.prepare("log", {"ref": key, "text": "hello"})
     assert set(p) == {"request", *INVARIANT, "events"}
     assert re.fullmatch(r"hr_[0-7][0-9A-HJKMNP-TV-Z]{25}", p["request"]["id"])
-    assert p["request"]["code"] is None and p["request"]["state"] == "bound"
+    assert "code" not in p["request"] and p["request"]["state"] == "bound"
     assert re.fullmatch(r"[0-9a-f]{12}", p["fingerprint"])
     assert p["review_digest"] == review.review_digest(p["material"])
     assert p["origin"]["uid"] == UID and p["origin"]["pid"] == os.getpid() and p["origin"]["client"] == "test"
@@ -106,6 +106,23 @@ def test_dry_run_stores_nothing_and_has_no_request(human, served):
     assert p["request"] is None and p["events"][0]["text"] == "hello"
     assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
     assert err(human.c.req("human.get", {"request_id": "hr_" + "0" * 26}, dry_run=True)) == "invalid.input"
+
+
+def test_a_dry_run_without_signer_or_handoff_persists_nothing(human, served):
+    _, key = human.ticket()
+    before = list(logged(served, key))
+    pending_before = ok(human.c.req("human.pending", {}))["data"]
+    body = {"op": "log", "args": {"ref": key, "text": "only a look"}}
+    p = ok(human.c.req("human.prepare", body, dry_run=True))["data"]
+    assert p["request"] is None and p["events"][0]["text"] == "only a look"
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []  # no request record
+    assert logged(served, key) == before  # no event
+    assert ok(human.c.req("human.pending", {}))["data"] == pending_before  # the request store is unchanged
+    # the same call for real still needs a signer, or handoff:true; never both
+    assert err(human.c.req("human.prepare", body)) == "invalid.input"
+    both = {**body, "signer": human.signer, "handoff": True}
+    assert err(human.c.req("human.prepare", both, dry_run=True)) == "invalid.input"
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
 
 
 def test_only_person_ops_are_prepared(human, served):
@@ -507,15 +524,14 @@ def test_the_composite_prompt_fields_equal_describe_payload_of_the_signed_bytes(
             person=p.ref,
             device=device,
             workspace=lambda w: ("Acme", "DEMO") if w == s.wid else None,
-            confirm=lambda text, word: shown.append((text, word)) or True,
+            confirm=lambda text: shown.append(text) or True,
             show_secret=lambda t: None,
             idem=new_idem(),
         )
         assert res["key"] == key
-        ((text, word),) = shown
+        (text,) = shown
         assert (
-            word == f"{key}/{s.lab.ws.uid(key)[-8:]}"
-            and "in workspace Acme (DEMO)" in text  # the plain view first ...
+            "in workspace Acme (DEMO)" in text  # the plain view first ...
             and "self-declared" not in text
             and "workspace: Acme (DEMO)" in text.details  # ... the full review behind `d`
             and "self-declared, unverified" in text.details
@@ -536,7 +552,7 @@ def test_the_composite_cancels_and_signs_nothing_when_the_person_does_not_confir
     def call(op, args, files=None, idem=None):
         return ok(human.c.req(op, args, files=files, idem=idem))
 
-    with pytest.raises(signer.SignerRefused, match="not confirmed"):
+    with pytest.raises(__import__("orch.ops.errors", fromlist=["OrchError"]).OrchError, match="nothing was signed"):
         signer.run(
             call,
             "log",
@@ -547,7 +563,7 @@ def test_the_composite_cancels_and_signs_nothing_when_the_person_does_not_confir
             person=human.person.ref,
             device=human.person.device,
             workspace=lambda w: ("Acme", "DEMO"),
-            confirm=lambda text, word: False,
+            confirm=lambda text: False,
             show_secret=lambda t: None,
             idem=new_idem(),
         )
@@ -574,7 +590,7 @@ def test_the_composite_shows_the_grant_secret_only_after_the_commit(human, serve
         person=human.person.ref,
         device=human.person.device,
         workspace=lambda w: ("Acme", "DEMO"),
-        confirm=lambda text, word: word == "GRANT",
+        confirm=lambda text: True,
         show_secret=shown.append,
         idem=new_idem(),
     )

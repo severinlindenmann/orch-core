@@ -1,9 +1,10 @@
 import { useQuery } from '@tanstack/react-query'
 import { UserPlus } from 'lucide-react'
-import { useRef, useState } from 'react'
-import { MAX_CERT_BYTES, MAX_KEY_FILE_BYTES, PUBLIC_KEY, canAddRole, canChangeRoles, canRemoveMember, certProblem, deviceBelow, deviceLine, keyText, rightsOf, type RosterMember } from '@/api/settings'
+import { useRef, useState, type ReactNode } from 'react'
+import { MAX_CERT_BYTES, MAX_KEY_FILE_BYTES, MAX_READER_DECL_BYTES, PUBLIC_KEY, canAddRole, canChangeRoles, canRemoveMember, certProblem, declProblem, deviceBelow, deviceLine, isReaderDecl, keyText, rightsOf, type RosterMember } from '@/api/settings'
 import { hasFeature } from '@/api/features'
 import type { Role, Workspace } from '@/api/types'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Raw, visible } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
@@ -53,27 +54,41 @@ function RoleStrip() {
   )
 }
 
-/** One file the person chooses: read as text here, size-checked before reading, never sent anywhere but the hand-off. */
-function FileField({ id, label, help, value, onChange, limit, rows, error }: { id: string; label: string; help: string; value: string; onChange: (text: string) => void; limit: number; rows: number; error: string | null }) {
+/**
+ * One file the person chooses or drops: read as text here, size-checked before reading, never sent anywhere but the
+ * signature request. `elsewhere` takes a file that belongs to the field beside this one (true: taken), so the person may
+ * choose or drop the certificate and its confirmation together.
+ */
+function FileField({ id, label, info, help, value, onChange, limit, rows, error, elsewhere }: { id: string; label: string; info?: ReactNode; help: string; value: string; onChange: (text: string) => void; limit: number; rows: number; error: string | null; elsewhere?: (text: string) => boolean }) {
   const picker = useRef<HTMLInputElement>(null)
   const [fileError, setFileError] = useState<string | null>(null)
-  const pick = async (file: File | undefined) => {
-    if (!file) return
-    if (file.size > limit) {
-      setFileError(`${file.name} is larger than ${limit} bytes, so it is not what this field takes.`)
-      return
-    }
+  const pick = async (files: File[]) => {
+    if (!files.length) return
     setFileError(null)
-    onChange(await file.text())
+    for (const file of files) {
+      if (file.size > limit) {
+        setFileError(`${file.name} is larger than ${limit} bytes, so it is not what this field takes.`)
+        continue
+      }
+      const text = await file.text()
+      if (!elsewhere?.(text)) onChange(text)
+    }
   }
   const shown = fileError ?? error
   return (
-    <div className="space-y-1.5">
+    <div
+      className="space-y-1.5"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault()
+        void pick([...e.dataTransfer.files])
+      }}
+    >
       <div className="flex items-center gap-2">
-        <Label htmlFor={id} className="flex-1">
-          {label}
-        </Label>
-        <input ref={picker} type="file" aria-label={`${label} file`} className="sr-only" tabIndex={-1} onChange={(e) => void pick(e.target.files?.[0])} />
+        <Label htmlFor={id}>{label}</Label>
+        {info}
+        <span className="flex-1" />
+        <input ref={picker} type="file" multiple={!!elsewhere} aria-label={`${label} file`} className="sr-only" tabIndex={-1} onChange={(e) => void pick([...(e.target.files ?? [])])} />
         <Button type="button" variant="outline" size="xs" onClick={() => picker.current?.click()}>
           Choose file
         </Button>
@@ -91,23 +106,33 @@ function FileField({ id, label, help, value, onChange, limit, rows, error }: { i
   )
 }
 
-/** Adds a member from the invitee's own files (design 14 Q7): their public key and first device certificate. */
-function AddMember({ me, onSubmit, onClose }: { me: Role | undefined; onSubmit: (v: { name: string; role: Role; pk: string; cert: string }) => void; onClose: () => void }) {
+/**
+ * Adds a member from the invitee's own files (design 14 Q7): their public key, first device certificate and the One
+ * click confirmation their orch app made with it (their reader declaration). The dashboard signs by one click only, and
+ * the host admits a new reader to a One click workspace only with that confirmation.
+ */
+function AddMember({ me, onSubmit, onClose }: { me: Role | undefined; onSubmit: (v: { name: string; role: Role; pk: string; cert: string; reader_decl: string }) => void; onClose: () => void }) {
   const roles = (['maintainer', 'member', 'viewer'] as const).filter((r) => canAddRole(me, r))
   const [name, setName] = useState('')
   const [role, setRole] = useState<Role>(roles.includes('member') ? 'member' : roles[0])
   const [pk, setPk] = useState('')
   const [cert, setCert] = useState('')
+  const [decl, setDecl] = useState('')
   const [tried, setTried] = useState(false)
   const key = keyText(pk)
+  const who = name.trim() ? visible(name.trim()) : 'The new person'
   const keyError = !key ? 'Choose or paste their public key.' : !PUBLIC_KEY.test(key) ? 'A public key is 87 characters of base64url (65 bytes).' : null
-  const certError = !cert.trim() ? 'Choose or paste their device certificate.' : certProblem(cert)
+  const certError = !cert.trim() ? 'Choose or paste their device certificate.' : isReaderDecl(cert) ? 'This is their One click confirmation, not the certificate.' : certProblem(cert)
+  const declError = declProblem(decl, who)
   const nameError = !name.trim() ? 'Give them a name.' : name !== name.trim() || /[\u0000-\u001f\u007f\u2028\u2029]/.test(name) || name.length > 64 ? 'A name is one line of at most 64 characters, without spaces at its ends.' : null
   const submit = () => {
     setTried(true)
-    if (keyError || certError || nameError) return
-    onSubmit({ name, role, pk: key, cert })
+    if (keyError || certError || declError || nameError) return
+    onSubmit({ name, role, pk: key, cert, reader_decl: decl })
   }
+  // A confirmation chosen or dropped with the certificate lands in its own field, and a certificate in its own.
+  const toDecl = (text: string) => isReaderDecl(text) && (setDecl(text), true)
+  const toCert = (text: string) => !isReaderDecl(text) && certProblem(text) === null && (setCert(text), true)
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-lg gap-4 border-border bg-surface">
@@ -122,7 +147,7 @@ function AddMember({ me, onSubmit, onClose }: { me: Role | undefined; onSubmit: 
           <DialogHeader>
             <DialogTitle>Add person</DialogTitle>
             <DialogDescription>
-              The person makes their own key and first device; you sign only that they join. Ask them for their public key and device certificate files. Owners are made by promoting a member afterwards.
+              The person makes their own key and first device; you sign only that they join. Ask them for their public key, their device certificate and the One click confirmation that came with it. Owners are made by promoting a member afterwards.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
@@ -143,7 +168,24 @@ function AddMember({ me, onSubmit, onClose }: { me: Role | undefined; onSubmit: 
             </select>
           </div>
           <FileField id="member-pk" label="Public key" help="base64url text, 87 characters." value={pk} onChange={setPk} limit={MAX_KEY_FILE_BYTES} rows={2} error={tried ? keyError : null} />
-          <FileField id="member-cert" label="Device certificate" help="Their first device certificate, a JSON file of at most 16 KiB." value={cert} onChange={setCert} limit={MAX_CERT_BYTES} rows={5} error={tried ? certError : null} />
+          <FileField id="member-cert" label="Device certificate" help="Their first device certificate, a JSON file of at most 16 KiB." value={cert} onChange={setCert} limit={MAX_CERT_BYTES} rows={5} error={tried ? certError : null} elsewhere={toDecl} />
+          <FileField
+            id="member-decl"
+            label="One click confirmation"
+            info={
+              <InfoDrawer label="About the One click confirmation">
+                <p>This workspace is signed with One click. Its history holds entries signed by a click instead of a passphrase.</p>
+                <p>Everyone who joins confirms, signed with their own new device key, that their orch app reads such entries. Their orch app makes this file together with the device certificate; the host checks it before anything is signed.</p>
+              </InfoDrawer>
+            }
+            help={`${who} needs to confirm they understand One click signatures: the file that came with their certificate.`}
+            value={decl}
+            onChange={setDecl}
+            limit={MAX_READER_DECL_BYTES}
+            rows={3}
+            error={tried ? declError : null}
+            elsewhere={toCert}
+          />
           <p className="text-[12px] text-text-muted">The next step shows what the host reads in the certificate: the person id, the device and what it may do. Check with them, outside this dashboard, that the person id is theirs.</p>
           <DialogFooter className="gap-2">
             <Button type="button" variant="ghost" onClick={onClose}>
@@ -220,7 +262,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                   title={lastOwner ? 'You cannot demote the last owner. Make someone else an owner first.' : undefined}
                   onChange={(e) => {
                     const next = e.target.value as Role
-                    ask({ title: `Make ${name} ${next === 'owner' ? 'an owner' : `a ${next}`}`, action: { action: 'member_role', person: m.person, role: next }, autoStart: true })
+                    ask({ title: `Make ${name} ${next === 'owner' ? 'an owner' : `a ${next}`}`, action: { action: 'member_role', person: m.person, role: next },  })
                   }}
                   className="h-8 rounded-full border border-border bg-bg px-3 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
                 >
@@ -235,7 +277,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
                     aria-label={`Remove ${name}`}
                     disabled={mine || lastOwner}
                     title={mine ? 'You cannot remove yourself.' : lastOwner ? 'The last owner cannot be removed.' : undefined}
-                    onClick={() => ask({ title: `Remove ${name}`, action: { action: 'member_remove', person: m.person }, autoStart: true })}
+                    onClick={() => ask({ title: `Remove ${name}`, action: { action: 'member_remove', person: m.person },  })}
                   >
                     Remove
                   </Button>
@@ -266,7 +308,7 @@ export function HostMembers({ workspace }: { workspace: Workspace }) {
           onClose={() => setAdding(false)}
           onSubmit={(v) => {
             setAdding(false)
-            ask({ title: `Add ${visible(v.name)}`, action: { action: 'member_add', ...v }, autoStart: true })
+            ask({ title: `Add ${visible(v.name)}`, action: { action: 'member_add', ...v },  })
           }}
         />
       )}

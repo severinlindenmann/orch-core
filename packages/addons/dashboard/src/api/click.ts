@@ -5,6 +5,7 @@ import type { Workspace } from './types'
 import { ApiError } from './types'
 import type { HandoffAction } from './handoff'
 import { DEV_REFUSED, devRefusedSentence, refusalOf, refusalSentence } from './refusals'
+import { addFirst, missingOf } from './gates'
 import { scheduleDenial } from './scheduleLead'
 
 /** Verbatim risk notice: enable time and Settings, with a tooltip in sign dialogs. */
@@ -229,7 +230,7 @@ export type ClickNext =
   /** Start over with a new request. */
   | 'prepare'
   /** Click cannot work here: the terminal path. */
-  | 'terminal'
+  | 'unavailable'
   /** The outcome is unknown: look at the ticket before anything else. */
   | 'check'
   /** Already done: nothing to sign; "Do it again" is an explicit new attempt. */
@@ -257,19 +258,19 @@ export const PREFIX_PLACEHOLDER = '<prefix>'
 export const withPrefix = (text: string, prefix: string | undefined): string =>
   text.split(PREFIX_PLACEHOLDER).join(prefix || '<your workspace prefix>')
 
-const OFF = ' Fix it, or sign in the terminal: turn convenience off with `orch host convenience off --workspace <prefix>`, then move the key back with `orch keys custody passphrase --workspace <prefix> --in-place`.'
+const OFF = ''
 
 const REFUSED: Record<string, ClickProblem> = {
-  terminal_only: { title: 'Terminal only', body: 'This one cannot be signed with one click.', next: 'terminal' },
+  terminal_only: { title: 'One click is unavailable', body: 'This one cannot be signed with one click.', next: 'unavailable' },
   not_prepared_here: { title: 'Not prepared by this dashboard', body: 'The signing helper does not know this request (it may have restarted). Prepare it again.', next: 'prepare' },
   expired: { title: 'Expired', body: 'The request ran out of time before it was signed. Prepare it again.', next: 'prepare' },
   view_changed: { title: 'The review changed', body: 'What you would sign is no longer what you were shown. Nothing was signed. Read the new review.', next: 'review' },
   too_soon: { title: 'Too soon', body: 'The review was on screen for less than a second. Nothing was signed. Press the button again.', next: 'retry' },
   custody_changed: { title: 'The key moved', body: 'The custody of your device key changed since the review. Nothing was signed. Prepare the request again.', next: 'prepare' },
   busy: { title: 'Busy', body: 'Another signature is in progress. Wait a moment, then press Sign again.', next: 'retry' },
-  check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed.'+OFF, next: 'terminal' },
+  check_failed: { title: 'A check failed', body: 'The signing helper refused what the host sent (it did not match). Nothing was signed.'+OFF, next: 'unavailable' },
   already_signed: { title: 'Already signed from another window', body: 'This request was signed with a different review. Nothing more can be signed on it; this shows where it stands.', next: 'check' },
-  record_unavailable: { title: 'The signing record is unreadable', body: 'The signing helper cannot read its own record of what it signed, so it refuses to sign. Nothing was signed here. Fix it, or turn convenience off from the terminal with `orch host convenience off --workspace <prefix>`; this workspace then signs in the terminal.', next: 'terminal' },
+  record_unavailable: { title: 'The signing record is unreadable', body: 'The signing record is unreadable. Nothing was signed.', next: 'unavailable' },
   uncertain: { title: 'The outcome is not certain yet', body: 'The signature may or may not have reached the host. It settles by itself; do not sign again until this says it is settled.', next: 'check' },
 }
 
@@ -300,20 +301,25 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
       // aborted: what landed stays a draft and starting again would make a NEW ticket; resumable: only the terminal finishes it
       if (e.reason === 'stopped') return { title: 'Signing stopped part way', body: `${e.message} Finish it on its page. Starting again makes a new ticket.`, next: 'open' }
       if (e.reason === 'resumable') return { title: 'Not finished yet', body: e.message, next: 'open' }
-      return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'terminal' }
+      return REFUSED[e.reason ?? ''] ?? { title: 'Refused', body: `The signing helper refused this (${e.reason ?? 'no reason'}). Nothing was signed.`, next: 'unavailable' }
     case 'sign.convenience_unavailable': {
       const r = refusalOf(e)!
       // The switch moved after the page chose its way: nothing is wrong, the next try follows the host's current answer.
-      if (r.reason === 'disabled') return { title: 'Click-to-sign was switched off', body: `${refusalSentence(r)} To sign in the terminal, the key must first move back to a passphrase: "orch keys custody passphrase --workspace <prefix> --in-place". Try again makes a new request for the terminal.`, next: 'retry', stale: true, devices: r.devices }
-      return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'terminal', devices: r.devices }
+      if (r.reason === 'disabled') return { title: 'One click is off', body: `${refusalSentence(r)} Turn on One click in Settings.`, next: 'unavailable', devices: r.devices }
+      return { title: 'Click-to-sign is not available here', body: r.reason === 'dev_host' ? refusalSentence(r) : `${refusalSentence(r)}${OFF}`, next: 'unavailable', devices: r.devices }
     }
     case DEV_REFUSED:
-      return { title: 'Refused by a dev sandbox host', body: devRefusedSentence(e), next: 'terminal' }
+      return { title: 'Refused by a dev sandbox host', body: devRefusedSentence(e), next: 'unavailable' }
     case 'intent.done':
       return { title: 'Already done', body: alreadySigned(e), next: 'again', signedAt: e.signed_at, details: alreadyDetails(e) }
     case 'addon.already':
       // The add-on is already as asked: plain words, nothing to sign, nothing to "do again".
       return { title: 'Already done', body: e.message, next: 'open' }
+    case 'gate.incomplete': {
+      // B11 (#14): what the gate lacks, in words; never the raw code or a CLI pointer (`fix`).
+      const lacking = missingOf(e.message)
+      return { title: 'Not ready to approve', body: lacking?.length ? addFirst(lacking) : e.message, next: 'unavailable' }
+    }
     case 'intent.failed':
       return { title: 'The earlier attempt did not land', body: e.message, next: 'prepare' }
     case 'lock.busy':
@@ -327,21 +333,23 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
       return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
     case 'sign.convenience_readers': {
       const r = refusalOf(e)!
-      // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays.
-      return { title: 'This would add a reader', body: [r.reason ? refusalSentence(r) : e.message, e.hint, typeof e.fix === 'string' ? e.fix : e.fix ? JSON.stringify(e.fix) : null].filter(Boolean).join(' '), next: 'terminal', devices: r.devices }
+      // A known reason is said in plain words; without one (a host before H12d-2) the host's own message stays. The host's
+      // hint and fix name terminal commands: folded under the technical details, never in the sentence.
+      const tech = [e.hint, typeof e.fix === 'string' ? e.fix : e.fix ? JSON.stringify(e.fix) : null].filter(Boolean).join(' ')
+      return { title: 'This would add a reader', body: r.reason ? refusalSentence(r) : e.message, next: 'unavailable', devices: r.devices, ...(tech ? { details: tech } : {}) }
     }
     case 'reader.decl_invalid':
-      return { title: 'The reader declaration did not verify', body: refusalSentence(refusalOf(e)!), next: 'terminal' }
+      return { title: 'The reader declaration did not verify', body: refusalSentence(refusalOf(e)!), next: 'unavailable' }
     case 'rate.limited':
       return { title: 'Too many signatures', body: `The signing helper allows only so many signatures per minute and hour. Try again in ${Math.max(1, Math.ceil((e.retry_after_ms ?? 1000) / 1000))} s.`, next: 'retry', waitMs: e.retry_after_ms ?? 1000 }
     case 'custody.no_key':
-      return { title: 'No key on this computer', body: 'There is no signing key on this computer. Nothing was signed. Turn One click off and on again, or sign in a terminal.'+OFF, next: 'terminal' }
+      return { title: 'No key on this computer', body: 'There is no signing key on this computer. Nothing was signed. Turn on One click in Settings.'+OFF, next: 'unavailable' }
     case 'custody.unavailable':
-      return { title: 'The key store is not available', body: 'The key store is locked or refused access. Unlock it.'+OFF, next: 'terminal' }
+      return { title: 'The key store is not available', body: 'The key store is locked or refused access. Unlock it.'+OFF, next: 'unavailable' }
     case 'host.version_mismatch':
-      return { title: 'Update orch-core', body: 'The signing helper and the host are different versions of orch-core. Update orch-core and restart the dashboard.', next: 'terminal' }
+      return { title: 'Update orch-core', body: 'The signing helper and the host are different versions of orch-core. Update orch-core and restart the dashboard.', next: 'unavailable' }
     case 'click.contract':
-      return { title: 'Update orch-core', body: 'This dashboard and its signing helper do not speak the same version. Update orch-core and restart the dashboard.', next: 'terminal' }
+      return { title: 'Update orch-core', body: 'This dashboard and its signing helper do not speak the same version. Update orch-core and restart the dashboard.', next: 'unavailable' }
     case 'click.unavailable':
       return { title: 'The signing helper is not running', body: 'It stopped, so open sign requests are gone. Start again.', next: 'prepare' }
     case 'human.request_expired':
@@ -355,10 +363,10 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
     case 'schedule.denied': {
       // run 13: the host's raw words ("first occurrence must be after the minimum scheduling lead") stay folded
       const lead = scheduleDenial(e.code, e.message, minLeadS)
-      if (lead) return { title: 'Too soon', body: `${lead} Nothing was signed. Pick a later time.`, next: 'terminal', details: e.message }
-      return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: 'terminal' }
+      if (lead) return { title: 'Too soon', body: `${lead} Nothing was signed. Pick a later time.`, next: 'unavailable', details: e.message }
+      return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: 'unavailable' }
     }
     default:
-      return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: e.retryable ? 'retry' : 'terminal' }
+      return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: e.retryable ? 'retry' : 'unavailable' }
   }
 }

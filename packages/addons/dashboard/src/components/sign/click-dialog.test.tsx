@@ -4,7 +4,8 @@ import { api } from '@/api/client'
 import { ARM_MS, CLICK_RISK, clickProblem, type ClickCard, type ClickViewAnswer } from '@/api/click'
 import { setFeatures } from '@/api/features'
 import { ApiError } from '@/api/types'
-import { fakeRequest, mount, spies, state } from '@/test/handoffHarness'
+import { mount, spies } from '@/test/handoffHarness'
+import * as gesture from './trustedPress'
 
 const T = { timeout: 5000 }
 const PLAN = { kind: 'approve', gate: 'plan' } as const
@@ -49,6 +50,7 @@ function flag(on: boolean | 'unavailable') {
 
 beforeEach(() => {
   s = spies()
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true) // fireEvent is untrusted: stand in for a real press of the outcome button
   c = { prepare: click.prepare(), view: click.view(), sign: click.sign(), cancel: click.cancel() }
   c.prepare.mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'approve', confirm: 'click' })
   c.view.mockResolvedValue(viewAnswer())
@@ -62,13 +64,17 @@ afterEach(async () => {
   setFeatures(null)
 })
 
-async function open(action: Parameters<typeof mount>[0] = PLAN) {
+/** Opening the dialog grants no intent: the trusted press of its outcome button prepares, then the review shows. */
+async function open(action: Parameters<typeof mount>[0] = PLAN, outcome = 'Approve plan') {
   flag(true)
   const m = await mount(action)
   const dialog = await screen.findByRole('dialog', {}, T)
+  const b = await within(dialog).findByRole('button', { name: outcome }, T)
+  await waitFor(() => expect(b).toBeEnabled(), T)
+  expect(c.prepare).not.toHaveBeenCalled()
+  fireEvent.click(b)
   return { ...m, dialog }
 }
-/** The dialog prepares on open (the click that opened it is the intent): it goes straight to the review. */
 async function toPanel() {
   const m = await open()
   await within(m.dialog).findByTestId('click-panel', {}, T)
@@ -85,6 +91,26 @@ const press = (b: HTMLElement) => {
 }
 
 describe('the action dialog with click-to-sign', () => {
+  it('the armed Sign never signs on a synthetic (untrusted) press or a key auto-repeat; a trusted press signs once', async () => {
+    const { dialog } = await toPanel()
+    const b = await armed(dialog)
+    vi.mocked(gesture.trustedPress).mockRestore() // jsdom's own untrusted events, judged by the real rule
+    press(b)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(c.sign).not.toHaveBeenCalled()
+    const real = gesture.trustedPress
+    vi.spyOn(gesture, 'trustedPress').mockImplementation((e) => real({ isTrusted: true, repeat: e.repeat }))
+    fireEvent.keyDown(b, { key: 'Enter' }) // began armed
+    fireEvent.keyDown(document, { key: 'Enter', repeat: true }) // then held: the click lands during auto-repeat
+    fireEvent.click(b)
+    await new Promise((r) => setTimeout(r, 100))
+    expect(c.sign).not.toHaveBeenCalled()
+    fireEvent.keyUp(document, { key: 'Enter' })
+    press(b)
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(1), T)
+    expect(c.sign.mock.calls[0][2]).toBe(DIGEST)
+  })
+
   it('leaving the screen while the review is open cancels the open click request (no slot left until it expires)', async () => {
     const { unmount } = await toPanel()
     expect(c.cancel).not.toHaveBeenCalled()
@@ -97,19 +123,21 @@ describe('the action dialog with click-to-sign', () => {
     const { dialog } = await open()
     await within(dialog).findByTestId('click-panel', {}, T)
     expect(within(dialog).getByText('Approve the plan of DEMO-0044')).toBeInTheDocument()
-    expect(await within(dialog).findByRole('button', { name: /^Sign( |$)/ }, T)).toBeInTheDocument()
-    expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
+    expect(await within(dialog).findByRole('button', { name: /^Sign( |$)/ }, T)).toBeDisabled() // the 1 s arm is the only way on
     expect(within(dialog).queryByRole('button', { name: 'One-click' })).toBeNull() // U5: one line and Sign, no chip
-    expect(c.prepare).toHaveBeenCalledTimes(1)
-    expect(s.prepare).not.toHaveBeenCalled() // one click request, never also a terminal one
+    expect(c.prepare).toHaveBeenCalledTimes(1) // one click request
+    expect(s.postAction).not.toHaveBeenCalled()
+    await armed(dialog)
+    expect(c.sign).not.toHaveBeenCalled() // arming never signs by itself
   })
 
   it('never enables Sign before the content is shown (observed on every DOM change)', async () => {
     const bad: string[] = []
     const look = () => {
       for (const d of document.querySelectorAll('[data-handoff-dialog]')) {
-        const signs = [...d.querySelectorAll('button')].filter((b) => !b.disabled && /^Sign( in a terminal)?$/.test(b.textContent?.trim() ?? ''))
-        if (signs.length && !d.querySelector('[data-testid="click-panel"], [data-testid="handoff-command"]')) bad.push(d.textContent ?? '')
+        // The review's own Sign lives in the footer; the outcome button before it only prepares.
+        const signs = [...d.querySelectorAll('[data-testid="sign-footer"] button')].filter((b) => !(b as HTMLButtonElement).disabled && /^Sign( |$)/.test(b.textContent?.trim() ?? ''))
+        if (signs.length && !d.querySelector('[data-testid="click-panel"]')) bad.push(d.textContent ?? '')
       }
     }
     const obs = new MutationObserver(look)
@@ -121,20 +149,6 @@ describe('the action dialog with click-to-sign', () => {
     expect(bad).toEqual([])
   })
 
-  it('#1161: a sign_methods change goes the click path (core classes it click + word), not the terminal hand-off', async () => {
-    flag(true)
-    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
-    const { SignPopover } = await import('./SignPopover')
-    const { render } = await import('@testing-library/react')
-    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
-    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: false, allowed: ['terminal', 'click', 'phone'] })
-    const ws = (await api.getWorkspaces())[0]!.id
-    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: ['terminal', 'click'] }} autoStart onClose={() => {}} /></QueryClientProvider>)
-    await screen.findByTestId('click-panel', {}, T)
-    expect(c.prepare).toHaveBeenCalledTimes(1)
-    expect(c.prepare.mock.calls[0]?.[1]).toMatchObject({ action: 'settings_set', sign_methods: ['terminal', 'click'] })
-    expect(s.prepare).not.toHaveBeenCalled()
-  })
 
   it.each([
     ['with the unsigned slot on screen beside the review', true],
@@ -144,12 +158,14 @@ describe('the action dialog with click-to-sign', () => {
     const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
     const { SignPopover } = await import('./SignPopover')
     const { render } = await import('@testing-library/react')
-    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
-    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: false, allowed: ['terminal', 'click'] })
     const ws = (await api.getWorkspaces())[0]!.id
     const onSettled = vi.fn()
-    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: ['terminal', 'click'] }} autoStart unsigned={withSlot ? <p>Not part of what you sign</p> : undefined} onSettled={onSettled} onClose={() => {}} /></QueryClientProvider>)
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Change host settings" action={{ action: 'settings_set', grant_hours: 24 }} unsigned={withSlot ? <p>Not part of what you sign</p> : undefined} onSettled={onSettled} onClose={() => {}} /></QueryClientProvider>)
     const dialog = await screen.findByRole('dialog', {}, T)
+    // a render grants no intent: the trusted press of the outcome button prepares, then the review shows and arms
+    const outcome = await within(dialog).findByRole('button', { name: 'Change host settings' }, T)
+    await waitFor(() => expect(outcome).toBeEnabled(), T)
+    fireEvent.click(outcome)
     await within(dialog).findByTestId('click-panel', {}, T)
     press(await armed(dialog))
     await waitFor(() => expect(onSettled).toHaveBeenCalledWith('done', expect.anything(), expect.anything(), { via: 'click', unsignedShown: withSlot }), T)
@@ -160,32 +176,7 @@ describe('the action dialog with click-to-sign', () => {
   })
 })
 
-it('without the signer the terminal request opens and there is no Other ways', async () => {
-  flag('unavailable')
-  s.prepare.mockResolvedValue(fakeRequest())
-  s.get.mockResolvedValue(state(fakeRequest()))
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click', 'phone'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', allowed: ['terminal', 'click', 'phone'], is_default: false })
-  await mount(PLAN)
-  const dialog = await screen.findByRole('dialog')
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  // Nothing usable is left: no click (signer unavailable), no phone (none paired), so no "Other ways" at all.
-  expect(within(dialog).queryByText('Other ways')).toBeNull()
-  expect(within(dialog).queryByRole('button', { name: 'One click' })).toBeNull()
-  expect(within(dialog).queryByRole('button', { name: /Approve on your phone/ })).toBeNull()
-})
 
-it('has no "Other ways": the method follows My settings, with the phone as the only quiet alternative', async () => {
-  vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: ['terminal', 'click'] } as Awaited<ReturnType<typeof api.getHostSettings>>)
-  vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', fallback: 'terminal', allowed: ['terminal', 'click'], is_default: false })
-  s.prepare.mockResolvedValue(fakeRequest())
-  s.get.mockResolvedValue(state(fakeRequest()))
-  const { dialog } = await toPanel()
-  expect(within(dialog).queryByText('Other ways')).toBeNull()
-  expect(within(dialog).queryByRole('button', { name: 'Sign in a terminal' })).toBeNull()
-  expect(within(dialog).queryByRole('button', { name: 'Use my phone instead' })).toBeNull() // no phone paired
-  expect(s.prepare).not.toHaveBeenCalled()
-})
 
 describe('[rev818] adversarial: the switch moving never re-binds or signs an open request', () => {
   it('a stale-method event while the click review is open: the review stays, nothing is signed, cancelled or re-prepared', async () => {
@@ -196,25 +187,18 @@ describe('[rev818] adversarial: the switch moving never re-binds or signs an ope
     expect(within(dialog).getByTestId('click-panel')).toBeInTheDocument()
     expect(c.sign).not.toHaveBeenCalled()
     expect(c.cancel).not.toHaveBeenCalled()
-    expect(s.prepare).not.toHaveBeenCalled()
+    expect(s.postAction).not.toHaveBeenCalled()
     expect(c.prepare).toHaveBeenCalledTimes(1)
   })
 
-  it('switched off between review and Sign: one sign attempt, Try again cancels the click request BEFORE a new terminal request', async () => {
-    s.prepare.mockResolvedValue(fakeRequest())
-    s.get.mockResolvedValue(state(fakeRequest()))
+  it('switched off between review and Sign: one sign attempt, and never a request of another kind', async () => {
     const { dialog } = await toPanel()
     c.sign.mockImplementationOnce(async () => { flag(false); throw new ApiError(409, { code: 'sign.convenience_unavailable', message: 'disabled: off', retryable: false, reason: 'disabled' }, 3) })
     press(await armed(dialog))
-    await within(dialog).findByTestId('click-problem', {}, T)
-    // The text says Try again, so the button is there (the request is still open: a sign refusal keeps it)
-    const again = await within(dialog).findByRole('button', { name: /Try again/ }, T)
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(1), T)
+    await new Promise((r) => setTimeout(r, 300))
     expect(c.sign).toHaveBeenCalledTimes(1)
-    fireEvent.click(again)
-    await within(dialog).findByTestId('handoff-command', {}, T)
-    expect(c.cancel).toHaveBeenCalledTimes(1) // the click request is cancelled before the new terminal request
-    expect(c.sign).toHaveBeenCalledTimes(1) // never signed another way
-    expect(s.prepare).toHaveBeenCalledTimes(1)
+    expect(c.prepare).toHaveBeenCalledTimes(1)
     expect(s.postAction).not.toHaveBeenCalled()
   })
 })
@@ -231,12 +215,12 @@ describe('answering a question in one-click mode', () => {
     ],
   }
 
-  it('opens straight on the compact review, signs with one press and closes itself with a toast, no Close step', async () => {
+  it('the outcome press opens the compact review, signs with one press and closes itself with a toast, no Close step', async () => {
     c.prepare.mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' })
     c.view.mockResolvedValue(viewAnswer({ op: 'answer', content, lines: ['Answer Q2'] } as never))
-    const { dialog, onClose } = await open(ANSWER)
+    const { dialog, onClose } = await open(ANSWER, 'Send answer')
     await within(dialog).findByTestId('click-panel', {}, T)
-    expect(within(dialog).getAllByRole('button', { name: 'Send answer' })).toHaveLength(1) // the review's own button, no first screen before it
+    expect(within(dialog).getAllByRole('button', { name: 'Send answer' })).toHaveLength(1) // the review's own button; the outcome button that prepared is gone
     // what is answered is in view; the question and the other options are under Details, closed
     expect(within(dialog).getByTestId('sign-choice')).toHaveTextContent(/Your answer.*DATE \(local midnight\)/)
     const compact = within(dialog).getByTestId('sign-compact')
@@ -256,7 +240,7 @@ describe('answering a question in one-click mode', () => {
   it('a review without the fields compact expects is shown in full, never compact', async () => {
     c.prepare.mockResolvedValue({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' })
     c.view.mockResolvedValue(viewAnswer({ op: 'answer', content: { headline: 'Answer', sections: [{ id: 'question', title: 'Question', text: 'Which date should the report use?' }], fields_changed: [{ field: 'option b', before: null, after: 'TIMESTAMP' }] }, lines: ['Answer Q2'] } as never))
-    const { dialog } = await open(ANSWER)
+    const { dialog } = await open(ANSWER, 'Send answer')
     await within(dialog).findByTestId('click-panel', {}, T)
     expect(within(dialog).queryByTestId('sign-compact')).toBeNull()
     expect(within(dialog).getByText('Which date should the report use?')).toBeVisible()

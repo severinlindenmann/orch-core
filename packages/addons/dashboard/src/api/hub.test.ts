@@ -63,14 +63,6 @@ describe('the mock hub (what the pages are built against)', () => {
     expect(await api.getHubShare('ws')).toEqual(before)
   })
 
-  it('builds Terminal commands and never a hub write of its own', async () => {
-    const join = await api.getHubCommand('ws', { kind: 'join', invite: 'INV-7QK2-M9XD', card: 'hub card.json', mode: 'selective' })
-    expect(join.command).toBe("orch hub join INV-7QK2-M9XD --hub-card 'hub card.json' --mode selective")
-    expect((await api.getHubCommand('ws', { kind: 'mode_full', card: 'c.json' })).command).toBe('orch hub mode full --hub-card c.json')
-    expect((await api.getHubCommand('ws', { kind: 'leave' })).command).toBe('orch hub leave')
-    expect((await api.getHubCommand('ws', { kind: 'share_remove', rule: { kind: 'ticket', value: 'DEMO-0045' } })).command).toBe('orch hub share rule remove --ticket DEMO-0045')
-  })
-
   it('reads the hub id of a pasted hub card, and nothing else', () => {
     const id = '9f3c1ab277de40c8aa11bb22cc33dd44'
     expect(hubCardId(JSON.stringify({ o: { hub_id: id }, sig: 'x' }))).toEqual({ id, short: '9f3c 1ab2 77de 40c8' })

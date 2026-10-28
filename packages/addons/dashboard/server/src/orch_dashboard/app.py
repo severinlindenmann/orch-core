@@ -22,7 +22,6 @@ from . import (
     cosmetic_routes,
     focus_routes,
     followups,
-    handoff,
     hub,
     hubapprove,
     market_routes,
@@ -33,7 +32,7 @@ from . import (
     schedules,
     settings,
     shares,
-    signprefs,
+    signing,
     stepup_routes,
     switch,
     terminals,
@@ -230,8 +229,7 @@ def create_app(
     @app.post("/auth/logout")
     def logout(request: Request):
         try:
-            app.state.cancel_session(request.state.token)  # an open sign request is cancelled with its session
-            app.state.cancel_clicks(request.state.token)
+            app.state.cancel_clicks(request.state.token)  # an open sign request is cancelled with its session
             tickets.forget(request.state.token)  # its unused browser tickets go with it
         finally:
             auth.logout(request.state.token)  # the session ends even if a cancel failed
@@ -320,7 +318,7 @@ def create_app(
 
     register_setup(app, auth, setup_proxy or SetupProxy(state_dir() / "setup" / "setup.sock"), port)
     reads.register(app, gateway)
-    handoff.register(app, gateway)
+    signing.register(app, gateway)
     click.register(app, gateway)
     stepup_routes.register(app, gateway)
     hubapprove.register(app, gateway)
@@ -330,7 +328,6 @@ def create_app(
     claude_trust_routes.register(app, gateway, auth)
     settings.register(app, gateway)
     addon_switches.register(app, gateway)
-    signprefs.register(app, gateway)
     riskack.register(app, gateway)
     phone.register(app, gateway)
     addon_routes.register(app, gateway)

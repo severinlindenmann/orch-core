@@ -91,7 +91,7 @@ def test_the_composite_never_prompts_for_a_refused_request(human, served):
             person=human.person.ref,
             device=human.person.device,
             workspace=lambda w: ("Acme", "DEMO"),
-            confirm=lambda text, word: confirmed.append(word) or True,
+            confirm=lambda text: confirmed.append(text) or True,
             show_secret=lambda t: None,
             idem="a_" + "0" * 26,
         )
@@ -323,22 +323,6 @@ def test_a_tampered_digest_or_fingerprint_is_refused(human, served):
 
 
 # --- the header and the confirmation word ---------------------------------------------------------------------------
-
-
-def test_the_header_comes_from_the_signers_own_registry_and_the_word_from_the_op(human, served):
-    _, key = human.ticket()
-    p = human.prepare("log", {"ref": key, "text": "x"})
-    with pytest.raises(signer.SignerRefused, match="own registry"):
-        signer.render(p, lambda w: None)
-    head = signer.header(p, lambda w: ("Acme", "DEMO"))
-    assert head[0].startswith("workspace: Acme (DEMO) " + served.wid)
-    assert head[-1] == f"fingerprint: {p['fingerprint']}" and any("unverified" in line for line in head)
-    assert head[1] == f"op: log: log on {key}/{p['log'][-8:]}"
-    assert head[2].startswith(f"ticket: {key} (ticket key per host, not proven) uid {p['log']}")
-    assert signer.confirm_word(p) == f"{key}/{p['log'][-8:]}"
-    g = human.prepare("grant", {"hours": 1})
-    assert signer.confirm_word(g) == "GRANT"
-    assert "secret_hash: drawn by this signer" in signer.render(g, lambda w: ("Acme", "DEMO"))
 
 
 def test_sign_changes_nothing_but_sig_and_a_grants_secret_hash(human, served):

@@ -518,7 +518,7 @@ def test_run_sub_sends_nothing_for_another_persons_grant_change(ready):
 
     async def theirs():  # quinn's runner grant is confirmed and then dropped: nothing for the owner's subscription
         table = hub.grants.table(w.wid)
-        hub.grants._confirm(table, w.quinn.ref, gid, ts(w.lab.ws.clock[0] + 9999), "workable", new_ulid())
+        hub.grants._approve(table, w.quinn.ref, gid, ts(w.lab.ws.clock[0] + 9999), "workable", new_ulid())
         hub.grants._forget_current(table, w.quinn.ref, "test")
 
     w.h.run(theirs())
@@ -545,7 +545,7 @@ def test_a_g_column_subscriber_gets_runner_items_for_its_own_person_only(ready):
 
     async def theirs():  # quinn's grant: confirmed, then dropped
         table = hub.grants.table(w.wid)
-        hub.grants._confirm(table, w.quinn.ref, gid, ts(w.lab.ws.clock[0] + 9999), "workable", new_ulid())
+        hub.grants._approve(table, w.quinn.ref, gid, ts(w.lab.ws.clock[0] + 9999), "workable", new_ulid())
         hub.grants._forget_current(table, w.quinn.ref, "test")
 
     w.h.run(theirs())

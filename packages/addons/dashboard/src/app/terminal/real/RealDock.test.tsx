@@ -1,8 +1,8 @@
-// The real-host dock (M7a): the preview before opening, the idem kept on a retry, Stop with incomplete cleanup, and
+// The real-host dock (M7a): New terminal in one press, the idem kept on Try again, Stop with incomplete cleanup, and
 // "Output no longer kept" without attaching.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setFeatures } from '@/api/features'
 import { runsApi, type Run, type RunList, type TermPreview } from '@/api/runs'
@@ -49,36 +49,44 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); setFeatures(null); dock.ticket = undefined })
 
 describe('the real dock', () => {
-  it('New terminal shows the host preview as untrusted text, then opens with one idem and attaches with the lease', async () => {
-    vi.spyOn(runsApi, 'preview').mockResolvedValue(preview())
+  it('New terminal opens in one press (no confirm dialog), keeps its idem and spec on Try again, and attaches with the lease', async () => {
+    const asked = vi.spyOn(runsApi, 'preview').mockResolvedValue(preview())
     const opened = run('AA')
     const open = vi.spyOn(runsApi, 'open')
-      .mockRejectedValueOnce(new ApiError(503, { code: 'outcome.unknown', message: 'Try again', retryable: true }))
+      .mockRejectedValueOnce(new ApiError(503, { code: 'outcome.unknown', message: 'The host did not say whether it opened.', retryable: true }))
       .mockImplementation(async () => { list = { ...list, runs: [opened] }; return { run: opened } })
     mount()
     await screen.findByText('No terminal is open. Start one with New terminal.')
     fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Shell in the workspace' }))
-    const dialog = await screen.findByRole('dialog')
-    expect(dialog).toHaveTextContent('Dashboard execution: agents and terminals started here run as you.')
-    expect(dialog).toHaveTextContent('$SHELL -l')
-    // B12A N15: the command and the environment sit in a collapsed Details, as in Start agent.
-    const details = within(dialog).getByTestId('term-details') as HTMLDetailsElement
-    expect(details.open).toBe(false)
-    expect(details).toHaveTextContent('$SHELL -l')
-    expect(details).toHaveTextContent('Environment')
-    expect(within(dialog).getByTestId('term-preview-lines').querySelector(':scope > dl')?.textContent ?? '').not.toContain('$SHELL')
-    expect(dialog).toHaveTextContent('acts as you, not as an agent')
-    expect(dialog.textContent).not.toContain('‮') // the bidi override is shown, never applied
-    fireEvent.click(await screen.findByRole('button', { name: 'Open terminal' }))
-    await screen.findByText('Try again')
-    fireEvent.click(screen.getByRole('button', { name: 'Open terminal' }))
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('dialog')).toBeNull() // no "Open a terminal?" confirm
+    expect(open.mock.calls[0][1]).toEqual({})
+    expect(open.mock.calls[0][2]).toBe('f'.repeat(64)) // the spec of the host's preview
+    expect(await screen.findByRole('alert')).toHaveTextContent('The host did not say whether it opened.')
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     await waitFor(() => expect(open).toHaveBeenCalledTimes(2))
     expect(open.mock.calls[0][3]).toMatch(/^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$/)
     expect(open.mock.calls[1][3]).toBe(open.mock.calls[0][3]) // the retry keeps the idem: one run, never two
+    expect(open.mock.calls[1][2]).toBe(open.mock.calls[0][2]) // and the spec it was shown
+    expect(asked).toHaveBeenCalledTimes(1)
     const term = await screen.findByTestId('term')
     expect(term.dataset.run).toBe(opened.run)
     expect(term.dataset.initial).toBe('write') // the shell this tab just opened: its first attach takes control (B12A N5)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('a second New terminal is a new idem: only Try again reuses one', async () => {
+    vi.spyOn(runsApi, 'preview').mockResolvedValue(preview())
+    const open = vi.spyOn(runsApi, 'open').mockImplementation(async () => { const r = run(`A${open.mock.calls.length}`); list = { ...list, runs: [...list.runs, r] }; return { run: r } })
+    mount()
+    await screen.findByText(/No terminal is open/)
+    for (let i = 1; i <= 2; i++) {
+      fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Shell in the workspace' }))
+      await waitFor(() => expect(open).toHaveBeenCalledTimes(i))
+    }
+    expect(open.mock.calls[1][3]).not.toBe(open.mock.calls[0][3])
   })
 
   it('the write attach after Open is one-shot: switching away and back attaches read (review M1)', async () => {
@@ -91,7 +99,6 @@ describe('the real dock', () => {
     await screen.findByTestId('term')
     fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Shell in the workspace' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Open terminal' }))
     await waitFor(() => expect(screen.getByTestId('term').dataset.run).toBe(opened.run))
     expect(screen.getByTestId('term').dataset.initial).toBe('write')
     fireEvent.click(screen.getAllByRole('tab')[1])
@@ -101,14 +108,18 @@ describe('the real dock', () => {
     expect(screen.getByTestId('term').dataset.initial).toBe('read')
   })
 
-  it('a blocked preview cannot be confirmed', async () => {
+  it('a blocked preview opens nothing, says why, and offers no Try again', async () => {
     vi.spyOn(runsApi, 'preview').mockResolvedValue(preview({ blocked: { code: 'runner.unavailable', message: 'The runner is not running.' } }))
+    const open = vi.spyOn(runsApi, 'open')
     mount()
     await screen.findByText(/No terminal is open/)
     fireEvent.pointerDown(screen.getByRole('button', { name: 'New terminal' }), { button: 0, pointerType: 'mouse' })
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Shell in the workspace' }))
-    await screen.findByText(/The runner is not running\./)
-    expect(screen.getByRole('button', { name: 'Open terminal' })).toBeDisabled()
+    expect(await screen.findByRole('alert')).toHaveTextContent('The runner is not running.')
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+    expect(open).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('an existing run attaches read-only; Stop with incomplete cleanup says processes may still run', async () => {

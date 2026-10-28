@@ -1,5 +1,5 @@
 """The View the dashboard shows (orch-v2-host §0.8.6 item 5): built by the signer, after every §0.8.1 check, from the
-host's answer only; ``lines`` is the terminal review of ``orch sign``, line for line (same escaping)."""
+host's answer only; ``lines`` is the terminal review of the CLI signer, line for line (same escaping)."""
 
 from __future__ import annotations
 
@@ -155,7 +155,7 @@ def check_prepared(
     except signer.SignerRefused as exc:
         raise refused("check_failed", str(exc)) from None
     if (prepared.get("op") in SEALED_OPS) != sealed_op:  # a hub step is a click only together with its sealed key
-        raise refused("terminal_only", f"{prepared.get('op')} is signed in the terminal (orch sign CODE)")
+        raise refused("terminal_only", f"{prepared.get('op')} is signed in the terminal")
     if deposit:
         deposit_checks(prepared)
         kind = "click"
@@ -165,7 +165,7 @@ def check_prepared(
     else:
         kind = op_class(str(prepared["op"]), events)
         if kind == "terminal" or any(e.get("type") == "grant.issued" for e in events):
-            raise refused("terminal_only", f"{prepared['op']} is signed in the terminal (orch sign CODE)")
+            raise refused("terminal_only", f"{prepared['op']} is signed in the terminal")
     for c in prepared.get("checks") or []:
         if c.get("clean") is not True or c.get("attested_by") != "worker":
             raise refused("check_failed", "a worker check is not clean")

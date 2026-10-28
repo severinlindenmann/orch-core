@@ -18,8 +18,8 @@ import pytest
 
 pytestmark = [
     pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux only"),
-    # Not run in PR CI: the useradd step hangs 120 s on ~1 run in 3, even alone (root cause open). The nightly workflow
-    # orch-core-root.yml runs `-m linux_root`. The lock below keeps two of them off /etc/passwd under xdist.
+    # CI runs these serially after the parallel run (`-m linux_root -p no:xdist`) and in orch-core-root.yml on develop
+    # pushes. The lock below keeps two of them off /etc/passwd under xdist.
     pytest.mark.linux_root,
 ]
 

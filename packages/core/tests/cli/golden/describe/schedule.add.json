@@ -5,16 +5,17 @@
     "target": "schedule.add",
     "name": "schedule.add",
     "cli": "orch schedule add",
-    "summary": "Schedule automatic agent sessions on this ticket for up to 30 days.",
+    "summary": "Schedule automatic agent sessions on an existing ticket or a new ticket each run, for up to 30 days.",
     "who": "human",
     "usage": "orch schedule add [REF] [--target existing|new] [--title TITLE] --at AT [--every day|week|month] [--tz TZ] [--weekdays WEEKDAYS] [--day DAY] [--brief BRIEF] [--brief-file PATH] [--until UNTIL] [--run-hours RUN_HOURS] [--dry-run]",
     "pre": [],
     "emits": [
+      "ticket.created",
       "schedule.set"
     ],
     "input": {
       "type": "object",
-      "description": "Schedule automatic agent sessions on this ticket for up to 30 days.",
+      "description": "Schedule automatic agent sessions on an existing ticket or a new ticket each run, for up to 30 days.",
       "properties": {
         "ref": {
           "type": "string",

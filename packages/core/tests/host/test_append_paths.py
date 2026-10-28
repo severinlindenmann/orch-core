@@ -41,6 +41,18 @@ PATHS: dict[tuple[str, str], tuple[int, str]] = {
         "host-actor addon.granted that answers an admitted addon.requested (FB15: the model admits it only with that "
         "request, once per hand-off; an add-on grant adds no reader and no convenience event)",
     ),
+    ("host/schedules.py", "ScheduleRunner._create_child"): (
+        1,
+        "exempt: the person-actor ticket.created of a new-ticket schedule's child, written by core after the host's own "
+        "schedule.fired{child} (deterministic uid, recovery never mints twice); the model admits it only against the "
+        "live signed schedule.set (via), re-checks the person's role and device, and it adds no reader and no "
+        "convenience event",
+    ),
+    ("ops/human.py", "Human.run_many"): (
+        1,
+        "exempt: the signed schedule.add of a new-ticket schedule writes the anchor ticket.created and the schedule.set "
+        "in one human action; both are person-signed and the model admits the pair together",
+    ),
     ("host/followups.py", "FollowupRunner._append"): (
         1,
         "exempt: the host-actor followup.fired and followup.outcome lines; they add no reader and no convenience event",

@@ -643,14 +643,6 @@ def test_ticket_people_changes_do_not_remove_the_right_to_act():
     assert refused(w, uid, "log.added", run, text="as a viewer") is not None
 
 
-def test_schedule_new_target_is_refused_until_the_new_ticket_piece_is_merged():
-    w, uid, old, due = setup()
-    payload = {k: old[k] for k in ("brief", "rule", "starts", "ends", "run_hours")}
-    _, result = w.try_(uid, "schedule.set", "tom", schedule="sc_" + w.nid(), target="new", title="Mail", **payload)
-    assert result.code == Code.SCHEDULE_DENIED and "not switched on" in result.detail
-    assert not w.state()._core.tickets[uid].schedules.keys() - set(old and [old["schedule"]])
-
-
 def test_schedule_target_validation_in_model():
     w, uid, old, due = setup()
     w.validate = False  # exercise the model independently of the wire schema
@@ -665,3 +657,238 @@ def test_schedule_target_validation_in_model():
     ):
         _, result = w.try_(uid, "schedule.set", "tom", schedule="sc_" + w.nid(), **payload, **extra)
         assert result.code == Code.SCHEDULE_DENIED
+
+
+def setup_new():
+    w = World().bootstrap({"tom": "member"})
+    grant_addon(w)
+    uid, sid = w.nid(), "sc_" + w.nid()
+    w.tev(
+        uid,
+        "ticket.created",
+        "tom",
+        key="DEMO-0001",
+        ticket_type="chore",
+        title="Mail {literal}",
+        owner=w.people["tom"],
+        schedule=sid,
+    )
+    due = w.clock.replace(second=0) + timedelta(hours=2)
+    event, result = w.try_(
+        uid,
+        "schedule.set",
+        "tom",
+        schedule=sid,
+        target="new",
+        title="Mail {literal}",
+        brief="Agent text must not become a title",
+        rule={"every": "day", "at": due.strftime("%H:%M"), "tz": "UTC"},
+        starts=w.at(),
+        ends=stamp(due + timedelta(days=3)),
+        run_hours=2,
+    )
+    assert not hasattr(result, "code"), result
+    return w, uid, event, due
+
+
+def fire_new(w, uid, event, due):
+    from orch.model.schedules import child_uid
+
+    return w.try_(
+        uid,
+        "schedule.fired",
+        w.HOST,
+        schedule=event["schedule"],
+        occurrence=stamp(due),
+        child=child_uid(event["schedule"], stamp(due)),
+        grant="gr_" + w.nid(),
+        secret_hash=canon.grant_secret_hash(b"s" * 32),
+        run="r_" + w.nid(),
+    )
+
+
+def create_child(w, uid, event, fired, **over):
+    from orch.model import admit
+    from orch.model.schedules import child_title
+    from tests.schema.examples import sig
+
+    rec = w.state()._core.tickets[uid].schedules[event["schedule"]]
+    child = fired["child"]
+    payload = {
+        "key": "DEMO-0002",
+        "ticket_type": "chore",
+        "title": child_title(rec, fired["occurrence"]),
+        "owner": rec.person,
+        "via": {
+            "anchor": uid,
+            "schedule_id": rec.id,
+            "occurrence": fired["occurrence"],
+            "set_sig_hash": rec.set_sig_hash,
+        },
+        **over,
+    }
+    e = w.build_unappended(child, "ticket.created", "tom", **payload)
+    for key in ("sig", "auth", "roster_v"):
+        e.pop(key)
+    result = admit(w.state(), e, log=child)
+    if not hasattr(result, "code"):
+        e["host_sig"] = sig("child")
+        w._append(child, e)
+    return e, result
+
+
+def test_new_child_identity_title_authority_and_replay():
+    from orch.model.schedules import child_uid
+
+    w, uid, event, due = setup_new()
+    w.clock = due
+    fired, result = fire_new(w, uid, event, due)
+    assert not hasattr(result, "code"), result
+    assert fired["child"] == child_uid(event["schedule"], stamp(due))
+    before = w.state()  # crash here, reload the fired intent before creating
+    assert fired["child"] not in before._core.tickets
+    child_event, result = create_child(w, uid, event, fired)
+    assert not hasattr(result, "code"), result
+    assert advance(before, child_event, log=fired["child"])._core == w.state()._core
+    assert hasattr(create_child(w, uid, event, fired)[1], "code")
+    child = w.state()._core.tickets[fired["child"]]
+    assert child.fields["title"] == f"Mail {{literal}} {due:%Y-%m-%d}"
+    assert child.fields["parent"] == "DEMO-0001" and child.ticket_type == "chore" and child.status == "open"
+    assert len(w.state()._core.tickets) == 2
+    agent = w.agent("tom", fired["grant"])
+    assert refused(w, child.uid, "log.added", agent, text="mail contents") is None
+    assert refused(w, uid, "log.added", agent, text="touch anchor") == Code.GRANT_SCOPE
+    assert (
+        refused(
+            w,
+            w.nid(),
+            "ticket.created",
+            agent,
+            key="DEMO-0003",
+            title="Untrusted",
+            ticket_type="chore",
+            owner=w.people["tom"],
+        )
+        == Code.GRANT_SCOPE
+    )
+    assert refused(w, uid, "ticket.closed", agent, resolution="other") == Code.GRANT_SCOPE
+
+
+def test_new_fire_rechecks_role_device_close_and_cancel():
+    for change, reason in (
+        ("role", "role_lost"),
+        ("device", "device_lost"),
+        ("close", "ticket_closed"),
+        ("cancel", "live"),
+    ):
+        w, uid, event, due = setup_new()
+        if change == "role":
+            w.wev("role.changed", "sev", person=w.people["tom"], role="viewer")
+        elif change == "device":
+            w.wev("device.removed", "tom", device=w.dev["tom"])
+        elif change == "close":
+            w.tev(uid, "ticket.closed", "tom", resolution="other")
+        else:
+            w.tev(uid, "schedule.cancelled", "tom", schedule=event["schedule"])
+        w.clock = due
+        _, result = fire_new(w, uid, event, due)
+        assert result.code == Code.SCHEDULE_DENIED and reason in result.detail
+        assert len(w.state()._core.tickets) == 1
+
+
+def test_new_child_creation_rechecks_authority_after_crash():
+    w, uid, event, due = setup_new()
+    w.clock = due
+    fired, _ = fire_new(w, uid, event, due)
+    w.wev("role.changed", "sev", person=w.people["tom"], role="viewer")
+    assert create_child(w, uid, event, fired)[1].detail == "role_lost"
+    assert fired["child"] not in w.state()._core.tickets
+
+
+def test_new_child_nothing_to_do_and_open_limit():
+    w, uid, event, due = setup_new()
+    assert refused(w, uid, "ticket.closed", "tom", resolution="nothing_to_do") == Code.STATUS_TRANSITION
+    w.clock = due
+    fired, _ = fire_new(w, uid, event, due)
+    assert not hasattr(create_child(w, uid, event, fired)[1], "code")
+    agent = w.agent("tom", fired["grant"])
+    _, result = w.try_(
+        uid, "schedule.outcome", w.HOST, schedule=event["schedule"], occurrence=stamp(due), outcome="ran_nothing"
+    )
+    assert hasattr(result, "code")
+    _, result = w.try_(fired["child"], "ticket.closed", agent, resolution="nothing_to_do")
+    assert not hasattr(result, "code"), result
+    w.tev(uid, "schedule.outcome", w.HOST, schedule=event["schedule"], occurrence=stamp(due), outcome="ran_nothing")
+    assert w.state()._core.tickets[fired["child"]].status == "closed"
+    w.clock = due + timedelta(days=1)
+    assert not hasattr(fire_new(w, uid, event, w.clock)[1], "code")
+
+    w, uid, event, due = setup_new()
+    w.clock = due
+    fired, _ = fire_new(w, uid, event, due)
+    create_child(w, uid, event, fired)
+    w.tev(uid, "schedule.outcome", w.HOST, schedule=event["schedule"], occurrence=stamp(due), outcome="ran")
+    w.clock = due + timedelta(days=1)
+    assert fire_new(w, uid, event, w.clock)[1].detail == "skipped_open_child"
+
+
+def test_new_cancel_or_close_keeps_inflight_child_grant():
+    for close in (False, True):
+        w, uid, event, due = setup_new()
+        w.clock = due
+        fired, _ = fire_new(w, uid, event, due)
+        create_child(w, uid, event, fired)
+        if close:
+            w.tev(uid, "ticket.closed", "tom", resolution="other")
+        else:
+            w.tev(uid, "schedule.cancelled", "tom", schedule=event["schedule"])
+        assert refused(w, fired["child"], "log.added", w.agent("tom", fired["grant"]), text="finish child") is None
+
+
+def test_new_child_rejects_tampered_title_and_via():
+    import pytest
+
+    from orch import schema
+
+    w, uid, event, due = setup_new()
+    w.clock = due
+    fired, _ = fire_new(w, uid, event, due)
+    assert hasattr(create_child(w, uid, event, fired, title="Agent text")[1], "code")
+    good, _ = create_child(w, uid, event, fired)
+    for key, value in (
+        ("set_sig_hash", digest("wrong")),
+        ("occurrence", stamp(due + timedelta(days=1))),
+        ("extra", "no"),
+    ):
+        bad = {**good, "via": {**good["via"], key: value}}
+        if key == "extra":
+            with pytest.raises(schema.SchemaError):
+                schema.validate("event.ticket.created", bad, log="ticket")
+        else:
+            from orch.model.schedules_wire import child_creation
+
+            assert child_creation(w.state()._core, fired["child"], bad) is not None
+
+
+def test_new_child_date_is_in_the_signed_rule_timezone():
+    from types import SimpleNamespace
+
+    from orch.model.schedules import child_title
+
+    rec = SimpleNamespace(title="Mail {literal}", rule={"tz": "Pacific/Kiritimati"})
+    assert child_title(rec, "2026-10-09T23:30:00Z") == "Mail {literal} 2026-10-10"
+
+
+def test_reopened_previous_child_blocks_creation_after_fired():
+    w, uid, event, due = setup_new()
+    w.clock = due
+    first, _ = fire_new(w, uid, event, due)
+    create_child(w, uid, event, first)
+    w.tev(first["child"], "ticket.closed", "tom", resolution="other")
+    w.tev(uid, "schedule.outcome", w.HOST, schedule=event["schedule"], occurrence=stamp(due), outcome="ran")
+    w.clock = due + timedelta(days=1)
+    second, result = fire_new(w, uid, event, w.clock)
+    assert not hasattr(result, "code"), result
+    w.tev(first["child"], "ticket.reopened", "tom")
+    assert create_child(w, uid, event, second, key="DEMO-0003")[1].detail == "skipped_open_child"
+    assert second["child"] not in w.state()._core.tickets

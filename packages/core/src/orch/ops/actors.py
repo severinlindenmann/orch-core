@@ -16,7 +16,7 @@ EVENT_ACTORS: dict[str, frozenset[str]] = {
         "ticket.updated": "A",
         "status.changed": "A",
         "ticket.submitted": "A",
-        "ticket.closed": "P",
+        "ticket.closed": "PA",  # agent only under the schedule child's own run grant
         "ticket.reopened": "P",
         "ticket.moved": "P",
         "visibility.changed": "P",

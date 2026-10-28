@@ -1,5 +1,7 @@
 """Schedule ledger admission and replay share these transitions; no I/O or clock."""
 
+from orch import canon
+
 from . import claims, identity, schedules, visibility
 from . import followups as fu
 from .codes import Code, Refusal
@@ -62,7 +64,7 @@ def claim_block(core, t, rec, now):
     return "busy"
 
 
-def blocked(core, t, rec, now):
+def blocked(core, t, rec, now, *, creating=None):
     # The right to act is the one authorize_agent applies to the run's person: a role that may run agents and
     # `can_see`. Ticket people (assignees, reviewers, watchers) never gate writes, so people.changed cannot remove
     # it while the setter still sees the ticket; a viewer role or leaving the restricted list does.
@@ -74,14 +76,27 @@ def blocked(core, t, rec, now):
         return "access_lost"
     if t.status == "closed":
         return "ticket_closed"
+    if rec.target == "new":
+        for occurrence, row in rec.occurrences.items():
+            if occurrence == creating:
+                continue  # this firing reserves its own child before creation
+            child = row.get("child")
+            if child and (
+                (child not in core.tickets and not row.get("outcome"))
+                or (child in core.tickets and core.tickets[child].status != "closed")
+            ):
+                return "skipped_open_child"
+        return None
     return claim_block(core, t, rec, now)
 
 
 def set_event(core, t, e):
     if error := schedules.validate_target(e):
         return denied(error)
-    if e.get("target") == "new":  # until the new-ticket piece (anchor + per-run child) is merged
-        return denied("new-ticket schedules are not switched on yet")
+    if e.get("target") == "new" and (
+        t.anchor_schedule != e["schedule"] or t.ticket_type != "chore" or t.fields["title"] != e["title"]
+    ):
+        return denied("new schedules require their signed anchor")
     ws, now, a = core.ws, ts(e["at"]), e["actor"]
     if a["kind"] != "person":
         return denied("only a person may set a schedule")
@@ -92,6 +107,8 @@ def set_event(core, t, e):
         ws, signer.person, a.get("device", ""), now
     ):
         return denied("a non-viewer with a live device is required")
+    if e.get("target") == "new" and t.owner != signer.person:
+        return denied("the anchor and schedule must have the same signer")
     if not visibility.can_see(ws, t, signer.person):
         return denied("access_lost: the setter may not see this ticket")
     if t.status == "closed":
@@ -127,6 +144,7 @@ def set_event(core, t, e):
         e.get("label"),
         target=e.get("target", "existing"),
         title=e.get("title"),
+        set_sig_hash=canon.value_hash(e.get("sig")),
     )
     t.schedules[rec.id] = rec
     # A bounded root, never a usable runner credential. Chain traversal uses the
@@ -139,8 +157,6 @@ def set_event(core, t, e):
 
 def fired_event(core, t, e):
     rec = t.schedules.get(e["schedule"])
-    if rec is not None and rec.target != "existing":
-        return denied("new-ticket schedules are not switched on yet")
     if e["actor"]["kind"] != "host" or rec is None or rec.cancelled:
         return denied("schedule is not live")
     # At-most-once is keyed on the occurrence string: only its canonical spelling may be recorded.
@@ -174,12 +190,19 @@ def fired_event(core, t, e):
         return denied("concurrent_cap")
     if e["grant"] in core.ws.grants:
         return Refusal(Code.GRANT_EXISTS, e["grant"])
+    target = t.uid
+    if rec.target == "new":
+        target = schedules.child_uid(rec.id, e["occurrence"])
+        if e.get("child") != target or target in core.tickets:
+            return denied("invalid child identity")
+    elif "child" in e:
+        return denied("existing-ticket schedules cannot create children")
     hours = min(rec.run_hours, grant_hours_cap(core.ws, rec.person))
-    parent = fu.GrantTerms(rec.set_event, rec.person, t.uid, "agent", now, min(ts(rec.ends), now + hours * 3600), None)
+    parent = fu.GrantTerms(rec.set_event, rec.person, target, "agent", now, min(ts(rec.ends), now + hours * 3600), None)
     try:
         derived = fu.derive_grant(
             parent,
-            ticket_uid=t.uid,
+            ticket_uid=target,
             grant_id=e["grant"],
             fired_at=now,
             secret_hash=e["secret_hash"].removeprefix("sha256:"),
@@ -189,13 +212,15 @@ def fired_event(core, t, e):
         return denied(str(exc))
     until = stamp(derived.expires_at)
     core.ws.grants[derived.id] = Grant(
-        derived.id, rec.person, t.uid, derived.verbs, e["at"], until, parent=rec.set_event
+        derived.id, rec.person, target, derived.verbs, e["at"], until, parent=rec.set_event
     )
     row = {"fired_at": e["at"], "grant": derived.id, "run": e["run"]}
     # The firing clears the setter's own lapsed claim atomically, so the fresh session can claim the ticket; only
     # then does the row record `released`, the one case claim.taken admits this run without the ordinary rule. A
     # different person's live claim, or the setter's session under a live grant (busy), was refused above.
-    if t.claim and identity.canonical(core.ws, t.claim.for_person) == rec.person:
+    if rec.target == "new":
+        row["child"] = target
+    if rec.target == "existing" and t.claim and identity.canonical(core.ws, t.claim.for_person) == rec.person:
         t.claim = None
         claims.release_leases(t)
         row["released"] = True
@@ -219,11 +244,15 @@ def outcome_event(core, t, e):
     if row.get("outcome") or (not row and e["outcome"] != "did_not_run"):
         return denied("invalid outcome transition")
     if (
-        e["outcome"] not in fu.OUTCOMES
-        or (e["outcome"] == "ran" and "reason" in e)
-        or (e["outcome"] != "ran" and e.get("reason") not in schedules.REASONS)
+        e["outcome"] not in schedules.OUTCOMES
+        or (e["outcome"] in ("ran", "ran_nothing") and "reason" in e)
+        or (e["outcome"] not in ("ran", "ran_nothing") and e.get("reason") not in schedules.REASONS)
     ):
         return denied("invalid outcome or reason")
+    if e["outcome"] == "ran_nothing":
+        child = core.tickets.get(row.get("child"))
+        if child is None or child.status != "closed" or child.close_resolution != "nothing_to_do":
+            return denied("nothing_to_do requires a closed schedule child")
     if not row and ts(e["at"]) < instant - early_s(core.ws):
         return denied("occurrence is not due")
     rec.occurrences[occ] = {**row, "outcome": e["outcome"], "reason": e.get("reason")}
@@ -240,6 +269,8 @@ def cancelled_event(core, t, e):
     if signer.person != rec.person and signer.role != "owner":
         return denied("only the setter or an owner/admin may cancel")
     rec.cancelled = True
+    if rec.target == "new":
+        return None  # cancellation stops future fires, not an in-flight child
     root = core.ws.grants[rec.set_event]
     root.revoked = True
     from .followups_wire import grant_chain
@@ -256,9 +287,48 @@ def root_valid(core, root_id, now):
         for rec in ticket.schedules.values():
             if rec.set_event == root_id:
                 return (
-                    not rec.cancelled
+                    (not rec.cancelled or rec.target == "new")
                     and enabled(core.ws)
                     and ts(rec.starts) <= now < ts(rec.ends)
                     and blocked(core, ticket, rec, now) not in ("role_lost", "device_lost", "access_lost")
                 )
     return True  # ordinary person-issued root
+
+
+def child_creation(core, uid, e):
+    """A host-authenticated creation spends one recorded firing, never a runner grant."""
+    if any(k in e for k in ("auth", "sig", "roster_v", "schedule")):
+        return denied("a schedule child uses only its recorded schedule authority")
+    via = e.get("via")
+    if not isinstance(via, dict) or set(via) != {"anchor", "schedule_id", "occurrence", "set_sig_hash"}:
+        return denied("invalid schedule child reference")
+    anchor = core.tickets.get(via["anchor"])
+    rec = anchor.schedules.get(via["schedule_id"]) if anchor else None
+    if rec is None or rec.target != "new" or rec.cancelled or not enabled(core.ws):
+        return denied("schedule is not live")
+    row = rec.occurrences.get(via["occurrence"], {})
+    if (
+        row.get("child") != uid
+        or row.get("outcome")
+        or uid != schedules.child_uid(rec.id, via["occurrence"])
+        or via["set_sig_hash"] != rec.set_sig_hash
+    ):
+        return denied("child does not match the signed schedule and firing")
+    if (
+        e["actor"] != {"kind": "person", "id": rec.person, "device": rec.device}
+        or e.get("owner") != rec.person
+        or e.get("ticket_type") != "chore"
+        or e.get("title") != schedules.child_title(rec, via["occurrence"])
+    ):
+        return denied("child must match the signed person, type and literal title")
+    reason = blocked(core, anchor, rec, ts(e["at"]), creating=via["occurrence"])
+    if reason:
+        return denied(reason)
+    return None
+
+
+def child_run(core, grant):
+    """Only a schedule child's own direct run grant can use the agent close exception."""
+    child = core.tickets.get(grant.scope) if grant else None
+    root = core.ws.grants.get(grant.parent) if grant else None
+    return bool(child and child.via and root and root.root_kind == "schedule")

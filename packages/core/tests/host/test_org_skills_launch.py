@@ -100,11 +100,17 @@ def test_a_skill_the_runner_would_refuse_is_dropped_with_a_log_line_not_the_laun
     header = rules.COMPANY_HEADER.strip().splitlines()[0]
     good = mk("invoices", "Intro\n## Steps\n1. Do it.")  # headings are fine: inert inside the runner's fence
     bad = mk("faker", "x\n" + header)  # would fake the start of the company section
+    fencey = mk("fencey", "intro\n~~~\nlooks like an end")  # a line of tildes may look like the end of its fence
     bad_digest = {**mk("tampered", "ok"), "digest": "sha256:" + "0" * 64}
-    monkeypatch.setattr(orgstate, "served", lambda service: {"skills": [bad, good, bad_digest], "mcp": []})
+    monkeypatch.setattr(orgstate, "served", lambda service: {"skills": [bad, fencey, good, bad_digest], "mcp": []})
     argv, _, _ = launch_argv("claude-code", "work", None, "ORC-7", LOGIN, workdir=True)
     with caplog.at_level("WARNING"):
         got = run(argv)
     assert [s["name"] for s in got] == ["invoices"]  # the launch goes on with what is acceptable
-    assert "faker" in caplog.text and "tampered" in caplog.text and "invoices" not in caplog.text
+    assert (
+        "faker" in caplog.text
+        and "fencey" in caplog.text
+        and "tampered" in caplog.text
+        and "invoices" not in caplog.text
+    )
     assert rules.company_problem(got) is None  # exactly what the runner will take

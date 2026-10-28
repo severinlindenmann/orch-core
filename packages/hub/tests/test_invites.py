@@ -550,11 +550,11 @@ def test_a_disabled_admin_has_no_admin_standing(w):
     assert w.env.acc.members("hub-admin") == sorted([w.admin, w.ann])  # membership itself is not edited
 
 
-def test_disable_touches_only_the_flag(w):
+def test_disable_touches_only_hub_derived_state(w):
     w.reg.add("cd" * 16, "selective", owner=w.ann)
     w.call("POST", f"/admin/users/{w.ann}/disable", token=w.login(w.admin))
     assert w.reg.owner_alias("cd" * 16) == w.ann  # a workspace's own owner is not rewritten
-    assert w.env.acc.groups_of(w.ann) == ["team"]  # group membership is as it was
+    assert w.env.acc.groups_of(w.ann) == []  # hub groups are stripped (no unseen reach on enable); owner alias is not
 
 
 def test_enable_clears_the_flag_and_issues_a_recovery_link(w):
@@ -564,7 +564,7 @@ def test_enable_clears_the_flag_and_issues_a_recovery_link(w):
     assert w.call("POST", f"/admin/users/{w.ann}/reset", {}, token=atok)[:2] == (409, {"error": "conflict"})
     s, o, _ = w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)
     assert s == 200 and o["kind"] == "recovery" and o["name"] == "ann" and o["expires_ms"] == w.clock() + INVITE_TTL_MS
-    assert w.env.acc.is_active(w.ann) and w.env.acc.role_of(w.ann, WS) == "edit"
+    assert w.env.acc.is_active(w.ann) and w.env.acc.role_of(w.ann, WS) is None  # groups were stripped at disable
     tok = token_of(o["link"])
     p = peek(w, tok)[1]
     assert p["kind"] == "recovery" and p["recovery"] is True and p["needs_proof"] is False
@@ -886,3 +886,12 @@ def test_reauth_refuses_a_disabled_or_unrecovered_person(w):
     with pytest.raises(ChannelError) as e:
         w.env.svc.reauth(w.ann, "correct horse battery", w.env.next_code(w.ann))
     assert e.value.code == "bad_credentials"
+
+
+def test_enabling_does_not_restore_group_reach(w):
+    atok = w.login(w.admin)
+    assert w.env.acc.role_of(w.ann, WS) == "edit" and w.env.acc.groups_of(w.ann)
+    w.call("POST", f"/admin/users/{w.ann}/disable", token=atok)
+    assert w.env.acc.groups_of(w.ann) == []
+    w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)
+    assert w.env.acc.role_of(w.ann, WS) is None and w.env.acc.groups_of(w.ann) == []

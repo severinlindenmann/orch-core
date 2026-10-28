@@ -1397,6 +1397,10 @@ class WebApi:
         self._record(
             "user.disabled", actor_id=c.user_id, subject_user=uid
         )  # first: an interrupted clean-up is still on record
+        # a disabled person leaves every group: enabling never brings group reach back on its own, it is re-granted through
+        # the normal path (where an owner's approval applies), so a re-enabled person cannot return to unseen reach
+        for group in self.d.access.groups_of(uid):
+            self.d.access.remove_member(group, uid)
         self.d.channels.revoke_all(uid)
         self.d.channels.end_sessions(uid)
         self._void_prepared(uid)

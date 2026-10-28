@@ -726,13 +726,15 @@ class ClickSigner:
 
     def _sequence_kind(self, entry: dict[str, Any], intent: Mapping[str, Any]) -> str:
         """The confirmation of a sequence (always ``click``, else ``terminal_only``). Its own rule, not part of any
-        confirmation class: a sequence that ends in a grant to the runner needs dashboard execution on this machine."""
+        confirmation class: agent access must have its own grant View, never a daily op's one-press confirmation."""
         from orch.host import sequence
 
         if sequence.confirm_kind(intent) == "terminal":
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal")
-        if sequence.has_grant(intent) and not self._execution(entry):
-            raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+        if sequence.has_grant(intent):
+            raise refused(
+                "terminal_only", "agent access needs its own grant confirmation; use the terminal for this sequence"
+            )
         return "click"
 
     def _sequence_ok(

@@ -329,7 +329,9 @@ def headline_detail(text: Any) -> str | None:
     :data:`DETAIL_CHARS` characters (cut with ``…``), always in quotes (``“…”``); ``None`` when there is none."""
     if not isinstance(text, str):
         return None
-    flat = " ".join("".join(c if c.isprintable() else " " for c in text).split())  # no control or line break
+    flat = " ".join(
+        "".join(c if c.isprintable() else " " for c in text if c not in '"“”‘’').split()
+    )  # no control or line break
     if not flat:
         return None
     if len(flat) > DETAIL_CHARS:

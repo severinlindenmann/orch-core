@@ -24,6 +24,14 @@ it('C3: announces click contract 4 on the click routes only', async () => {
   expect(fetcher).toHaveBeenLastCalledWith(`/api/w/${'a'.repeat(32)}/click/prepare`, expect.objectContaining({ headers: {
     Authorization: 'Bearer demo-not-a-real-token', 'content-type': 'application/json', 'X-Orch-Click-Contract': '4',
   } }))
+  for (const route of ['status', 'custody/seal', 'rotate/seal', 'rotate', 'github', 'github/seal', 'github/remove', 'custody', 'runner/review', 'runner', 'images', 'view', 'state', 'sign', 'cancel']) {
+    for (const method of ['GET', 'POST'] as const) {
+      await transport.request(method, `/api/w/${'a'.repeat(32)}/click/${route}`, {})
+      expect(fetcher.mock.calls.at(-1)).toEqual([expect.any(String), expect.objectContaining({
+        headers: expect.objectContaining({ 'X-Orch-Click-Contract': '4' }),
+      })])
+    }
+  }
   await transport.request('GET', `/api/w/${'a'.repeat(32)}/settings`)
   expect(fetcher).toHaveBeenLastCalledWith(`/api/w/${'a'.repeat(32)}/settings`, expect.objectContaining({ headers: { Authorization: 'Bearer demo-not-a-real-token' } }))
 })

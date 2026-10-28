@@ -285,3 +285,18 @@ button[aria-busy="true"]::before { content:""; display:inline-block; width:12px;
 .search-result { padding:10px; border-radius:6px; cursor:pointer; overflow-wrap:anywhere; }
 .search-result.selected { background:var(--surface-3); outline:1px solid var(--brand); outline-offset:-1px; }
 @media (prefers-reduced-motion: reduce) { .row-done { opacity:0; } }
+
+/* Current routing permissions: inspection only. */
+.connections-map svg { display:block; width:100%; max-width:800px; margin:auto; }
+.connection-edge { color:#788591; }
+.connection-edge.outgoing, .connection-details .outgoing { color:#159c80; }
+.connection-edge.incoming, .connection-details .incoming { color:#a179db; }
+.connection-edge.dim { opacity:.15; }
+.connection-node { cursor:pointer; }
+.connection-node circle { fill:var(--bg, #18202a); stroke:#159c80; stroke-width:3; }
+.connection-node.offline circle { stroke:#788591; }
+.connection-node text { fill:var(--text, #e8eaed); font-size:13px; }
+.connection-node[aria-pressed="true"] circle, .connection-node:focus circle { stroke:var(--text, #e8eaed); stroke-width:5; }
+.connection-matrix { overflow-x:auto; }
+.connection-matrix th, .connection-matrix td { padding:12px; text-align:left; }
+@media (max-width:639px) { .connections-map { display:none; } }

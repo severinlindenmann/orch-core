@@ -213,6 +213,7 @@ class WebDeps:
     services: Any = None
     #: the route queue (``recent``): hand-offs between workspaces, for the Workspaces page; None = an empty list
     routes: Any = None
+    authz: Any = None  # live routing authorization; None means no allowed edges
     delivery: Any = None  # custodial DeliveryQueue; None = no pending deliveries
 
 
@@ -316,6 +317,7 @@ ROUTES: tuple[Route, ...] = (
         "a_workspace_remove",
         "Remove a workspace that has left (deletes the hub's record)",
     ),
+    _r("GET", "/admin/connections", "admin", "a_connections", "Read current workspace connections"),
     _r("GET", "/admin/workspaces", "admin", "a_workspaces", "List workspaces with mode, binding status and grants"),
     _r(
         "GET",
@@ -1363,6 +1365,30 @@ class WebApi:
                 }
             )
         return 200, {"workspaces": out}
+
+    def _h_a_connections(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        reg = self.d.registry
+        workspaces = []
+        for ws in sorted(reg.pins()):
+            mode = reg.mode(ws)
+            if mode is None:
+                continue
+            name = (reg.card(ws) or {}).get("name")
+            workspaces.append(
+                {
+                    "workspace_id": ws,
+                    "name": P4.render_text(name) if type(name) is str and name else None,
+                    "online": True,
+                    "mode": mode,
+                }
+            )
+        edges = [
+            {"from": a["workspace_id"], "to": b["workspace_id"]}
+            for a in workspaces
+            for b in workspaces
+            if self.d.authz is not None and self.d.authz.may_route(a["workspace_id"], b["workspace_id"])
+        ]
+        return 200, {"workspaces": workspaces, "edges": edges}
 
     def _h_a_services(self, c: Ctx, p: dict, q: dict, b: dict | None):
         if self.d.services is None:

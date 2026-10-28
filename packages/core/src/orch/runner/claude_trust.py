@@ -393,7 +393,16 @@ def _write(
                 and (now.st_ino, now.st_mtime_ns, now.st_size) != (before.st_ino, before.st_mtime_ns, before.st_size)
             ):
                 raise _Changed  # Claude Code wrote it meanwhile: do not overwrite
-            os.replace(tmp, cfg)
+            if before is None:
+                # the file was missing: a truly exclusive create. link() fails if Claude Code made it meanwhile,
+                # even without taking its lock (a replace would overwrite it)
+                try:
+                    os.link(tmp, cfg)
+                except FileExistsError:
+                    raise _Changed from None
+                os.unlink(tmp)
+            else:
+                os.replace(tmp, cfg)
             _fsync_dir(cfg.parent)
         except _Changed:
             with contextlib.suppress(OSError):

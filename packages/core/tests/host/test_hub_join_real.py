@@ -343,7 +343,7 @@ def test_hub_snapshot_status_once_per_service_and_hub(monkeypatch, fail):
     service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
     for _ in range(2):
         assert hubops._snapshot_link(service, state, b"", None, True)[1] is transport
-    assert calls == [("status_put", {"version": orch.__version__, "commit": "", "host": "h" * 80})]
+    assert calls == [("status_put", {"version": orch.__version__, "commit": "", "host": "h" * 80, "name": ""})]
     state.hub_id = "two"
     hubops._snapshot_link(service, state, b"", None, True)
     assert len(calls) == 2
@@ -389,7 +389,8 @@ def test_a_refused_install_is_reported_to_the_bound_hub_with_the_actor(monkeypat
             calls.append((op, body))
 
     monkeypatch.setattr(orch.hubclient, "HubLink", Link)
-    monkeypatch.setattr(hubops, "_transport", lambda *args: object())
+    links = []
+    monkeypatch.setattr(hubops, "_transport", lambda service, hub_id, link=None: links.append(link) or object())
     monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
     monkeypatch.setattr(hubops, "_wsk_sign", lambda service: (b"", None))
     monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
@@ -406,6 +407,9 @@ def test_a_refused_install_is_reported_to_the_bound_hub_with_the_actor(monkeypat
         ("addon_request", {"name": "wiki", "version": "1.2.0", "actor": "agent"}),
         ("addon_request", {"name": "wiki", "version": "", "actor": "person"}),
     ]
+    assert links and all(
+        link["timeout"] == hubops.ADDON_REQUEST_TIMEOUT_S <= 5 for link in links
+    )  # short: the refused install waits
     state.status = "unbound"  # not bound: nothing is sent
     hubops.report_addon_request(service, "wiki")
     assert len([c for c in calls if c[0] == "addon_request"]) == 2

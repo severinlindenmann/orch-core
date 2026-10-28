@@ -708,7 +708,15 @@ class WebApi:
     # --- the hub's own data: what this user may see ------------------------------------------------------------------
 
     def _workspaces(self, user: str) -> list[dict[str, Any]]:
-        return workspace_rows(self.d.registry, self.d.access, user)
+        rows = workspace_rows(self.d.registry, self.d.access, user)
+        for row in rows:
+            row["last_seen"] = self._last_seen(row["workspace_id"])
+        return rows
+
+    def _last_seen(self, workspace_id: str):
+        # Older registries do not retain a last-seen time. Never invent one.
+        state = self.d.registry.binding_state(workspace_id) or {}
+        return state.get("last_seen")
 
     def _mine(self, user: str, ws: str) -> dict[str, Any]:
         for w in self._workspaces(user):
@@ -1015,11 +1023,14 @@ class WebApi:
 
     def _h_rail(self, c: Ctx, p: dict, q: dict, b: dict | None):
         sw = self._switch()
+        rows = sw.rail_rows(self.d.registry, self.d.access, c.user_id)
+        for row in rows:
+            row["last_seen"] = self._last_seen(row["workspace_id"])
         return (
             200,
             {
                 "hub": {"name": sw.hub_name, "origin": sw.hub_origin()},
-                "workspaces": sw.rail_rows(self.d.registry, self.d.access, c.user_id),
+                "workspaces": rows,
             },
             [],
         )

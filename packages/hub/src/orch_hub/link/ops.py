@@ -498,6 +498,13 @@ def switch_redeem(c: OpContext) -> dict[str, Any]:
     return {"user_id": r["user"], "name": name, "return_to": r["rt"], "kind": r["kind"]}
 
 
+def status_put(c: OpContext) -> dict[str, Any]:
+    if c.registry.pin(c.workspace_id) is None:
+        raise Refused("unknown_workspace")
+    c.registry.put_status(c.workspace_id, c.body)
+    return {}
+
+
 def owner_get(c: OpContext) -> dict[str, Any]:
     """FB15: the hub user this hub names as the owner of the calling workspace (V3-D19, #1394). The host binds an
     add-on hand-off to it. No argument, nothing stored."""
@@ -547,6 +554,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "switch_redeem": switch_redeem,
     "rail_get": rail_get,
     "owner_get": owner_get,
+    "status_put": status_put,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

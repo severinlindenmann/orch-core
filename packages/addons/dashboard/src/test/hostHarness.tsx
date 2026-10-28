@@ -1,3 +1,4 @@
+import onePressOps from '../../../../../contracts/core/click_one_press_ops.json'
 // A fake dashboard server for the production app (M4): the fetch the app makes is answered here from plain data, so a
 // test reads exactly what the page asked for and what it posted. The hand-off requests it returns have hashes that
 // recompute, like the real server's (`api/handoff.ts`), so the app accepts them.
@@ -220,13 +221,50 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
   }
 }
 
+/** C3: core's `ONE_PRESS_OPS`, the closed allowlist of daily ops whose View has no risk lines (one press signs). */
+export const ONE_PRESS_OPS: ReadonlySet<string> = new Set(onePressOps)
+
+/**
+ * C3: the fake signer's risk lines (contract 4), after core: none for an op of `ONE_PRESS_OPS` (it signs at the end of
+ * the 1 s arm); every other op has at least one (its specific words, else the fail-closed line), so it needs the
+ * second press.
+ */
+export function riskLinesFor(request: Pick<HandoffRequest, 'op' | 'material'>): string[] {
+  if (ONE_PRESS_OPS.has(request.op)) return []
+  const payload = (request.material as unknown as { review?: { payload?: Record<string, unknown> }[] } | undefined)?.review?.[0]?.payload ?? {}
+  const set = (payload.set ?? {}) as Record<string, unknown>
+  switch (request.op) {
+    case 'addon.grant':
+      return [`FROM-THE-SIGNER risk: the add-on ${String(payload.name)} gets its capabilities`]
+    case 'member.role':
+      return payload.role === 'owner' || payload.role === 'maintainer' ? [`FROM-THE-SIGNER risk: role raised to ${String(payload.role)}`] : ['FROM-THE-SIGNER risk: who can do what changes']
+    case 'member.add':
+      return ['FROM-THE-SIGNER risk: a person is added to this workspace', ...(payload.role === 'owner' || payload.role === 'maintainer' ? [`FROM-THE-SIGNER risk: role raised to ${String(payload.role)}`] : [])]
+    case 'settings.set':
+      return 'publish' in set ? ['FROM-THE-SIGNER risk: files can be published outside this computer'] : ['FROM-THE-SIGNER risk: not a daily action']
+    case 'publish.share':
+      return ['FROM-THE-SIGNER risk: files are shared outside this computer']
+    case 'addon.purge':
+      return ['FROM-THE-SIGNER risk: the add-on data is deleted']
+    case 'grant':
+    case 'hub.join':
+    case 'hub.mode':
+    case 'hub.leave':
+    case 'device.remove':
+    case 'schedule.add':
+      return [`FROM-THE-SIGNER risk: ${request.op}`]
+    default:
+      return ['FROM-THE-SIGNER risk: not a daily action'] // fail closed, like core, for any op outside ONE_PRESS_OPS
+  }
+}
+
 export class FakeHost {
   calls: Call[] = []
   workspaces: FakeWs[]
   requests = new Map<string, HandoffRequest>()
   cancelled: string[] = []
   /** Click-to-sign: what the fake signer was asked, and the Views it shows (by request id). */
-  clickRequests = new Map<string, { op: string; confirm: 'click' }>()
+  clickRequests = new Map<string, { op: string; confirm: 'click'; risk: string[] }>()
   clickCancelled: string[] = []
   clickSigned: Record<string, unknown>[] = []
   clickCount = 0
@@ -314,13 +352,15 @@ export class FakeHost {
       return json(request)
     }
     if (rest === 'click/prepare' && method === 'POST') {
+      if (['quick_start', 'new_sequence'].includes(String(body?.action)) && body?.agent)
+        return json({ ok: false, exit: 3, error: { code: 'human.click_refused', reason: 'terminal_only', message: 'Agent access needs its own grant confirmation. Create without starting first.', retryable: false } }, 409)
       // Core: a One click workspace admits a new reader only with its declaration (H12d, `sign.convenience_readers`).
       if (body?.action === 'member_add' && ws.click?.enabled && typeof body.reader_decl !== 'string')
         return json({ ok: false, exit: 3, error: { code: 'sign.convenience_readers', message: 'd_x would read a workspace with convenience signatures and has not declared that it understands them', retryable: false, hint: 'orch keys reader declare --enrol', fix: 'orch member add --reader-decl PATH', detail: { reason: 'no_declaration', devices: [] } } }, 409)
       const request = prepare(body!)
       const id = 'hr_' + String(++this.clickCount).padStart(26, '0')
       const confirm = 'click'
-      this.clickRequests.set(id, { op: request.op, confirm })
+      this.clickRequests.set(id, { op: request.op, confirm, risk: riskLinesFor(request) })
       return json({ request_id: id, expires_at: request.expires_at, op: request.op, confirm })
     }
     if (rest === 'click/view' && method === 'POST') {
@@ -329,6 +369,8 @@ export class FakeHost {
       return json({
         view_digest: 'sha256:' + '9'.repeat(64),
         view: {
+          headline: `FROM-THE-SIGNER headline ${got.op}`,
+          risk_lines: got.risk,
           risk: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.',
           op: got.op,
           workspace: { id: ws.id, name: ws.name, prefix: ws.prefix },

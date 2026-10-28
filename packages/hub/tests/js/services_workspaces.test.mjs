@@ -14,7 +14,7 @@ class Node_ {
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
 const { servicesView, summary, stateOf } = await import("../../src/orch_hub/web/services.js");
-const { workspacesView, statusOf } = await import("../../src/orch_hub/web/workspaces.js");
+const { workspacesView, workspaceDetailsView, connectWorkspaceView, statusOf } = await import("../../src/orch_hub/web/workspaces.js");
 const { when, ago } = await import("../../src/orch_hub/web/ui.js");
 
 const NOW = new Date(2026, 9, 27, 12, 0).getTime();
@@ -91,6 +91,111 @@ test("empty states and times", () => {
   assert.equal(when(NOW - 60000, NOW), "Today 11:59");
   assert.equal(ago(NOW - 120000, NOW), "2 min ago");
 });
+
+const workspace = (extra = {}) => ({ workspace_id: "a".repeat(32), name: "Product", mode: "full", online: true,
+  version: "0.2.0", commit: "abcdef123456", host: "Office", address: "10.0.0.2", version_state: "newest", ...extra });
+const clickButton = (out, label) => find(out, (n) => n.tag === "button" && n.textContent === label)[0].listeners.click();
+
+test("workspace table shows modes, status, versions, hosts, warnings and hand-offs below it", () => {
+  const out = workspacesView({ workspaces: [workspace(), workspace({ workspace_id: "b", name: "Legal", mode: "selective",
+    online: false, last_seen_ms: NOW - 120000, version_state: "older" }),
+  workspace({ workspace_id: "c", name: "Archive", version_state: "unsupported", host: null, address: null })],
+  handoffs: [], hub: { version: "0.3.0", min_supported: "0.1.0" } }, NOW);
+  const t = text(out);
+  assert.match(t, /2 workspaces run an older orch/);
+  assert.match(t, /Legal, Archive/);
+  assert.match(t, /The hub still works with 0.1.0 and newer\./);
+  assert.match(t, /Everything/);
+  assert.match(t, /Only what I choose/);
+  assert.match(t, /Offline.*since 2 min ago/);
+  assert.match(t, /0.2.0 · abcdef1/);
+  assert.match(t, /newest/);
+  assert.match(t, /update to 0.3.0/);
+  assert.match(t, /not supported any more/);
+  assert.match(t, /Office10.0.0.2/);
+  assert.match(t, /unknownunknown/);
+  assert.ok(t.indexOf("Connected workspaces") < t.indexOf("Hand-offs between workspaces"));
+  assert.equal(find(out, (n) => n.tag === "th" && n.textContent === "Runs on").length, 1);
+});
+
+test("old responses render without hub metadata or admin controls; actions use the selected workspace", () => {
+  const w = workspace({ version_state: "unknown", version: null, commit: null });
+  const called = [];
+  const out = workspacesView({ workspaces: [w], handoffs: [], admin: null,
+    actions: { open: (row) => called.push(["open", row]), details: (row) => called.push(["details", row]) } }, NOW);
+  assert.doesNotMatch(text(out), /Connect a workspace|Show left|newest|update to|older orch/);
+  clickButton(out, "Open"); clickButton(out, "Details");
+  assert.deepEqual(called, [["open", w], ["details", w]]);
+});
+
+test("details show access only when allowed and send mode changes to the workspace", () => {
+  const w = workspace({ mode: "selective" });
+  let opened;
+  const hidden = workspaceDetailsView(w, { roles: null, owner: "Anna" }, NOW);
+  assert.doesNotMatch(text(hidden), /Who has access/);
+  assert.match(text(hidden), /OwnerAnna/);
+  assert.match(text(hidden), /Only what I choose/);
+  assert.match(text(hidden), /To change what this workspace shares, open it and use Settings > Hub. The owner confirms there./);
+  const out = workspaceDetailsView(w, { roles: { owner: "Anna", groups: [{ group: "Design", role: "edit", members: ["Lee", "Sam"] }] },
+    actions: { open: (row) => { opened = row; } } }, NOW);
+  assert.match(text(out), /Who has accessOwner: AnnaDesign · editLee, Sam/);
+  clickButton(out, "Open Product");
+  assert.equal(opened, w);
+  assert.equal(find(out, (n) => n.tag === "button").length, 1);
+});
+
+test("connect link keeps the suggestion out of the copied link and shows expiry", async () => {
+  let copied;
+  const out = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { copy: async (s) => { copied = s; return true; } })];
+  assert.match(text(out), /Works once, for 30 minutes \(until 12:30\)/);
+  assert.match(text(out), /Suggested: Only what I choose\./);
+  const input = find(out, (n) => n.tag === "input")[0];
+  assert.equal(input.getAttribute("readonly"), "");
+  assert.equal(input.getAttribute("value"), "/join#one-time");
+  clickButton(out, "Everything");
+  assert.match(text(out), /Suggested: Everything. The workspace owner confirms the mode with one click in Mission Control./);
+  assert.deepEqual(find(out, (n) => n.getAttribute("aria-pressed") !== null).map((n) => n.getAttribute("aria-pressed")), ["false", "true"]);
+  await clickButton(out, "Copy");
+  assert.equal(copied, "/join#one-time");
+  assert.match(text(out), /Copied/);
+});
+
+test("admin empty state connects; left disclosure includes only unbound rows and removes the selected row", async () => {
+  const left = workspace({ workspace_id: "left", name: "Old", status: "unbound", left_ms: NOW });
+  let removed, connected = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [left, workspace({ status: "bound" })], actions: {
+    connect: async () => { connected++; return { link: "/join#fresh", expires_ms: NOW + 1800000 }; },
+    remove: async (w) => { removed = w; },
+  } }, NOW);
+  assert.match(text(out), /No workspaces yet/);
+  assert.match(text(out), /Show left workspaces \(1\)/);
+  assert.match(text(out), new RegExp("Left " + new Date(NOW).toLocaleDateString().replaceAll("/", "\\/")));
+  assert.doesNotMatch(text(out), /Product/);
+  await clickButton(out, "Connect a workspace");
+  assert.equal(connected, 1);
+  assert.equal(find(out, (n) => n.tag === "input")[0].getAttribute("value"), "/join#fresh");
+  await clickButton(out, "Remove");
+  assert.equal(removed, left);
+});
+
+test("failed admin actions show plain errors and allow retry", async () => {
+  const fail = async () => { throw new Error("unavailable"); };
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [workspace({ status: "unbound" })],
+    actions: { connect: fail, remove: fail } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  await clickButton(out, "Remove");
+  assert.match(text(out), /Could not create a link. Please try again./);
+  assert.match(text(out), /Could not remove this workspace. Please try again./);
+  assert.ok(find(out, (n) => n.tag === "button").every((n) => !n.disabled));
+});
+
+test("workspace and access names stay text even when they contain markup", () => {
+  const name = '<img src=x onerror="bad()">';
+  const out = workspaceDetailsView(workspace({ name }), { roles: { owner: name, groups: [{ group: name, role: "read", members: [name] }] } }, NOW);
+  assert.match(text(out), /<img/);
+  assert.equal(find(out, (n) => n.tag === "img").length, 0);
+});
+
 
 const actions = { check() {}, open() {}, copy: async () => true };
 const diagram = (out) => find(out, (n) => n.attrs["aria-labelledby"] === "connections-title")[0];

@@ -194,7 +194,7 @@ def test_needs_you_reports_offline_and_unavailable(w):
     w.reg.add(WS_SEL, "selective", owner=w.ann, status="unbound")
     w.api.d.view = None
     _, o, _ = w.call("GET", "/me/needs-you", token=w.login(w.ann))
-    assert o == {"items": [], "offline": [WS_SEL], "unavailable": [WS]}
+    assert o == {"items": [], "offline": [WS_SEL], "unavailable": [WS], "queued": []}
 
 
 def test_item_detail_full_selective_and_not_a_member(w):

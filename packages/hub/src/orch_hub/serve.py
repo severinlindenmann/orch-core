@@ -274,6 +274,7 @@ def serve(
                     edge_url=cfg.resolved_api_origin(),
                 ),
                 routes=queue,
+                delivery=deliveries,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )
         )

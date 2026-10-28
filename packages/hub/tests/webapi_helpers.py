@@ -10,6 +10,7 @@ from channels_helpers import Env as ChEnv
 from channels_helpers import new_channel, prove
 from custodial_helpers import WK, WS, StubView, core_seal
 
+from orch_hub.changes import Changes
 from orch_hub.contract import hub as H
 from orch_hub.contract import keystore as KS
 from orch_hub.contract.canon import b64u
@@ -65,7 +66,7 @@ class FakeRegistry:
         return r["mode"] if r and r["status"] == "bound" else None
 
     def owner_alias(self, ws):
-        return self.ws[ws]["owner"]
+        return self.ws.get(ws, {}).get("owner")
 
     def card(self, ws):
         return {"name": self.ws[ws]["name"]} if self.ws[ws]["name"] else {}
@@ -140,6 +141,15 @@ class Web:
             now_ms=self.clock,
             dev_mode=True,
         )
+        self.changes = Changes(  # access changes that wait for a workspace owner (M2-8a)
+            str(tmp_path / "hub" / "changes.db"),
+            access=e.acc,
+            registry=self.reg,
+            snapshots=e.snaps,
+            keys=e.keys,
+            channels=e.svc,
+            now_ms=self.clock,
+        )
         self.api = WebApi(
             WebDeps(
                 keys=e.keys,
@@ -147,6 +157,7 @@ class Web:
                 channels=e.svc,
                 registry=self.reg,
                 audit=e.audit,
+                changes=self.changes,
                 engine=self.engine,
                 shares=self.shares,
                 view=self.view,
@@ -164,6 +175,7 @@ class Web:
         e.acc.grant(WS, "team", "edit")
 
     def close(self) -> None:
+        self.changes.close()
         self.seals.close()
         self.env.close()
 

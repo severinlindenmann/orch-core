@@ -673,3 +673,7 @@ Open `/w/DEMO/settings/hub?hub=selective` (also `standalone`, `full`, `offline`,
 ### D2 review (2026-10-28)
 
 Create a ticket with “Create and start”. With missing/short access, verify the signer headline, ticket fields, eight-hour grant terms and inline deposit risk; waiting alone must never sign, and the second press must wait one second. With valid access of at least 15 minutes, verify no grant step or access copy outside “i”. Interrupt signing after creation: the draft remains and start is refused. Retry a lost launch response: the same request returns the same run.
+
+### D5 check (2026-10-28)
+
+On a real host, post a comment and let the C3 arm finish: the toast says “Sending in N s; closing this page still sends.” Undo within ten seconds cancels without a signature. Navigate away or close/reopen the page to see delivery checked against the signer. Restart the signer during the wait to see “Not sent”; sleep past the deadline by more than 30 seconds has the same outcome. Add-on off and runner off offer Undo that opens a fresh turn-on review. Follow-up cancel keeps its existing signed, authority-checked Undo within 120 seconds.

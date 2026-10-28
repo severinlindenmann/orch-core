@@ -70,6 +70,7 @@ export const CLICK_CONTRACT_HEADER = 'X-Orch-Click-Contract'
 
 /** The signer's View, as it came (the server adds nothing). `lines` are core's terminal review, already escaped. */
 export interface ClickView {
+  hold_allowed?: boolean
   /** Contract 4: one short line the signer built from its own words and the ticket key; the button shows it during the 1 s arm. */
   headline?: string
   /** Contract 4: the free text beside the headline (a ticket's title), capped and already quoted by the signer, or null. Shown small and muted after the headline. */
@@ -112,10 +113,11 @@ export interface ClickViewAnswer {
 }
 
 /** Where a request stands at the host (read by the server through its own link). */
-export type ClickHostState = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired' | 'unknown'
+export type ClickHostState = 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired' | 'unknown' | 'held' | 'not_sent'
 
 /** `click/state`: where the request stands. For a stopped sequence also the ticket that exists and how far the run got. */
 export interface ClickState {
+  deadline_ms?: number
   id: string
   state: ClickHostState
   key?: string
@@ -123,7 +125,8 @@ export interface ClickState {
 }
 
 export interface ClickSigned {
-  state: 'submitted'
+  state: 'submitted' | 'held'
+  deadline_ms?: number
   duplicate: boolean
   key?: string
   seq?: number

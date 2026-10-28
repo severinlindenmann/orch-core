@@ -7,6 +7,7 @@ import { api } from '@/api/client'
 import { CLICK_RISK, clickProblem, contractViewOk, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { type HandoffRequest, type HandoffState } from '@/api/handoff'
+import { trackHold } from './holdToasts'
 import { fmtClock } from '@/lib/time'
 
 export type ClickPhase =
@@ -17,7 +18,9 @@ export type ClickPhase =
   /** The View is on screen: the person may sign (after the arming time) or cancel. */
   | 'ready'
   | 'signing'
-  /** The outcome of a sign is unknown: the host settles it by itself. Nothing is offered but waiting (no cancel, no second sign). */
+  /** Unsigned in the signer; only the global Undo toast can cancel it. */
+  | 'held'
+  /** The outcome of a sign is unknown: wait for settlement, never retry. */
   | 'settling'
   | 'done'
   | 'cancelled'
@@ -193,7 +196,17 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       busy.current = true
       setPhase('signing')
       try {
-        const got = await (sealed ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed) : api.signClick(where, open.request_id, view.view_digest, revealKey))
+        const delay = view.view.hold_allowed ? 10 : undefined // only a held action carries the delay; every other call keeps its old shape
+        const got = await (delay ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed, delay) : sealed ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed) : api.signClick(where, open.request_id, view.view_digest, revealKey))
+        if (got.state === 'held' && got.deadline_ms) {
+          trackHold(where, open.request_id, got.deadline_ms / 1000, () => {
+            refetch()
+            const as = settledAs(open, { state: 'submitted', duplicate: false })
+            settled.current?.('done', as.state, as.request)
+          })
+          if (mounted.current) setPhase('held')
+          return
+        }
         if (!mounted.current) return
         setSigned(got)
         setPhase('done')
@@ -279,7 +292,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
 
   const cancel = useCallback(async () => {
     const { prepared: open, ws: where, phase: last } = live.current
-    if (!open || !where || last === 'done' || last === 'cancelled' || last === 'idle' || last === 'settling') return // never cancel while a signature may be in flight
+    if (!open || !where || last === 'done' || last === 'cancelled' || last === 'idle' || last === 'settling' || last === 'held') return // never cancel while a signature may be in flight
     setPhase('cancelled') // Tombstone immediately, before the cancellation round trip.
     try {
       await api.cancelClick(where, open.request_id)
@@ -301,7 +314,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   useEffect(() => {
     const { prepared: open, ws: where, phase: last } = live.current
     if (!open || !where || where === ws || last === 'done' || last === 'cancelled' || last === 'idle') return
-    if (last === 'settling') {
+    if (last === 'settling' || last === 'held') {
       // Its outcome is unknown: nothing is cancelled and nothing is claimed. The server keeps it unsettled.
       setLeftUnsettled(true)
       return

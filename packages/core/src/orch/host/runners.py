@@ -1028,10 +1028,8 @@ class RunnerHub:
                 # the runner's word is the truth: it holds no grant the host believed current. Forget it, so the
                 # person sees the normal "give agent access" step instead of a dead end
                 person = self.store.records[run].get("person")
-                table = self.grants.table(workspace_id)
-                if person and self.grants._forget_current(table, person, "runner_lacks"):
-                    with contextlib.suppress(HostError):
-                        table.save()
+                if person and payload.get("grant"):
+                    await self.grants.forget_stale(workspace_id, person, payload["grant"])
                 raise HostError(
                     "launch.no_grant",
                     "Agent access on this computer was lost, for example after a restart. Give agent access again, "

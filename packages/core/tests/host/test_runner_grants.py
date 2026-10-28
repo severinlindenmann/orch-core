@@ -630,6 +630,29 @@ def test_a_hello_before_the_workspace_is_served_keeps_the_grant_and_settles_late
     )
     assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(value)]  # not dropped
     services[w.wid] = service
-    w.h.run(hub.grants.workspace_served(w.wid))
+    w.h.run(_served(hub, w.wid))
     assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(value)]
     assert ok(c.call("whoami", {}))["data"]["runner"]["grant"]["id"] == gid_of(value)
+
+
+async def _served(hub, wid):
+    coro = hub.grants.workspace_served(wid)
+    if coro is not None:
+        await coro
+
+
+def test_a_current_grant_changed_between_hello_and_serving_is_dropped(ready):
+    w = ready
+    c = w.conn()
+    value = issue(w)
+    ok(deposit(c, value))
+    hub = w.h.host.runners
+    service = w.h.host.services.pop(w.wid)
+    hub.drop_session(hub.session)
+    wait_for(
+        lambda: hub.grants._hello is not None and w.wid not in hub.grants._hello["served"] and hub.session is not None
+    )
+    hub.grants.table(w.wid).current.clear()  # the persisted current no longer names what the runner reported
+    w.h.host.services[w.wid] = service
+    w.h.run(_served(hub, w.wid))
+    wait_for(lambda: w.runner.grants.report() == [])

@@ -220,6 +220,7 @@ class Host:
         from .runners import runner_identity as default_identity
 
         self.runners = RunnerHub(self)
+        self._bg: set[asyncio.Task[Any]] = set()
         self.runner_identity = runner_identity or default_identity
         #: a caller-supplied identity check (tests, dev tools) is never replaced by the tier B system check in
         #: :meth:`_find_share`; production passes none
@@ -501,6 +502,11 @@ class Host:
             self._serving.discard(wid)
             raise
 
+    def _bg_done(self, task: asyncio.Task[Any]) -> None:
+        self._bg.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            LOG.warning("runner grant settle failed: %s", type(task.exception()).__name__)
+
     async def _serve(self, entry: Entry) -> None:
         service = WorkspaceService(entry, self.state_dir, self.host_uid, clock=self.clock)
         service.hook_base = self.hook_url if self.hooks is not None else None
@@ -518,7 +524,11 @@ class Host:
 
             service.dev_ok = await service.call(lambda: dev_gate(service) is not None)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
-        asyncio.get_running_loop().create_task(self.runners.grants.workspace_served(entry.workspace_id))
+        settle = self.runners.grants.workspace_served(entry.workspace_id)  # synchronous: before any await
+        if settle is not None:
+            task = asyncio.get_running_loop().create_task(settle)
+            self._bg.add(task)
+            task.add_done_callback(self._bg_done)
         await asyncio.to_thread(served_marker, entry.root, True, self.state_dir)
         try:
             if self.share_error is not None:

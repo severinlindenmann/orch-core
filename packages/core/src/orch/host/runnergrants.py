@@ -298,18 +298,31 @@ class RunnerGrants:
         interleaves with a deposit's or a forget's bookkeeping; if an await is ever added before a change, take the
         per-person lock (:meth:`lock`) around it."""
         self._hello = {"reported": list(reported), "served": set(self.hub.host.services)}
-        await self._settle(reported, None)
+        await self._finish(self._settle(reported, None))
 
-    async def workspace_served(self, wid: str) -> None:
-        """A workspace was bound after the runner's hello: settle it by what the runner reported then (a deposit needs
-        a served workspace, so nothing changed at the runner since)."""
+    def workspace_served(self, wid: str) -> Any:
+        """A workspace was just bound after the runner's hello: settle it by what the runner reported then. Synchronous
+        up to the table changes (called right where the service is bound, before any await), so no deposit can
+        interleave; returns the coroutine that sends the drops, or ``None``."""
         hello = self._hello
         if hello is None or wid in hello["served"] or self.hub.host.services.get(wid) is None:
-            return
+            return None
         hello["served"].add(wid)
-        await self._settle([r for r in hello["reported"] if r["workspace_id"] == wid], wid)
+        return self._finish(self._settle([r for r in hello["reported"] if r["workspace_id"] == wid], wid))
 
-    async def _settle(self, reported: list[dict[str, Any]], only: str | None) -> None:
+    async def forget_stale(self, workspace_id: str, person: str, gid: str) -> bool:
+        """The runner refused a launch for want of grant ``gid``: forget it if it is still the person's current one."""
+        async with self.lock(workspace_id, person):
+            table = self.table(workspace_id)
+            cur = table.current.get(person)
+            if cur is None or cur.get("grant") != gid:
+                return False
+            self._forget_current(table, person, "runner_lacks")
+            with contextlib.suppress(HostError):
+                table.save()
+            return True
+
+    def _settle(self, reported: list[dict[str, Any]], only: str | None) -> list[str]:
         held = {(r["workspace_id"], r["person"]): r for r in reported}
         drops: list[str] = []
         for (wid, person), rep in held.items():
@@ -356,6 +369,9 @@ class RunnerGrants:
                     table.forgotten[rep["grant"]] = str(rep.get("until") or "")
                     with contextlib.suppress(HostError):
                         table.save()
+        return drops
+
+    async def _finish(self, drops: list[str]) -> None:
         for gid in drops:
             self._audit("grant.drop", grant=gid, reason="revalidated")
             await self._drop(gid)

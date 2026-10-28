@@ -18,11 +18,9 @@ import pytest
 
 pytestmark = [
     pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux only"),
-    # CI runs these alone and serially (`-m linux_root -p no:xdist`, after the parallel run): next to ~6000 tests on
-    # other workers the runner disk stalls and useradd waited past the product's 120 s step limit. The lock below still
-    # keeps two of them from fighting over /etc/passwd when someone runs them with xdist.
+    # Not run in PR CI: the useradd step hangs 120 s on ~1 run in 3, even alone (root cause open). The nightly workflow
+    # orch-core-root.yml runs `-m linux_root`. The lock below keeps two of them off /etc/passwd under xdist.
     pytest.mark.linux_root,
-    pytest.mark.xdist_group("linux_root"),
 ]
 
 #: Every test here creates and removes the SAME system users, pins and directories (the person's name, orch-agent-<p>,

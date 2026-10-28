@@ -336,6 +336,7 @@ class NewTicketSequence(Action):
     `ticket.created`, one `ticket.updated` for the fields and one per written section (host `sequence`, core
     `orch.host.sequence`); this server only relays the intent, the signer builds and checks every event itself."""
 
+    launch: dict | None = None
     action: Literal["new_sequence"]
     title: Annotated[str, StringConstraints(min_length=1, max_length=200)]
     type: Literal["feature", "bug", "chore", "spike", "epic"] = "feature"
@@ -378,6 +379,8 @@ class NewTicketSequence(Action):
                 "set": sets,
                 "sections": {sid: t for sid, t in sections.items() if t},
             }
+            if self.launch is not None:
+                intent["launch"] = self.launch
             criteria = [normalize_text(t, one_line=True) for t in self.acceptance if t.strip()]
             if criteria:
                 intent["acceptance"] = criteria
@@ -1488,11 +1491,30 @@ def expected(action: Action, person: str | None = None):
         case FollowupUndo():
             return lambda ev: one(ev, "followup.restored", followup=action.id)
         case ScheduleAdd():
-            return lambda ev: (
-                one(ev, "schedule.set")
-                and ev[0].get("target", "existing") == action.target
-                and ev[0].get("title") == action.title
-            )
+
+            def scheduled(ev):
+                if action.target != "new":
+                    return (
+                        one(ev, "schedule.set")
+                        and ev[0].get("target", "existing") == "existing"
+                        and "title" not in ev[0]
+                    )
+                # a new-ticket schedule: exactly the anchor ticket.created, then its schedule.set, in that order
+                if len(ev) != 2 or ev[0].get("type") != "ticket.created" or ev[1].get("type") != "schedule.set":
+                    return False
+                anchor, rule = ev
+                return (
+                    anchor.get("ticket_type") == "chore"
+                    and anchor.get("title") == action.title
+                    and (person is None or anchor.get("owner") == person)
+                    and isinstance(anchor.get("schedule"), str)
+                    and anchor.get("schedule") == rule.get("schedule")
+                    and "via" not in anchor
+                    and rule.get("target") == "new"
+                    and rule.get("title") == action.title
+                )
+
+            return scheduled
         case ScheduleCancel():
             return lambda ev: one(ev, "schedule.cancelled", schedule=action.id)
         case Move():
@@ -1699,6 +1721,23 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         from orch.host import sequence
 
         intent = edit_intent if edit_intent is not None else body.intent()
+        if isinstance(body, NewTicketSequence) and intent.get("launch"):
+            from datetime import datetime
+
+            runner = gateway.call(ws, "whoami").get("runner") or {}
+            grant = runner.get("grant") or {}
+            now = runner.get("now")
+
+            def epoch(value):
+                return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+
+            if (
+                grant.get("startable") is True
+                and now
+                and grant.get("until")
+                and epoch(grant["until"]) - epoch(now) >= 900
+            ):
+                intent.pop("agent", None)
         digest = sequence.digest_of(ws, person, intent)
         meta = {"step": 0, "of": len(sequence.steps(intent)), "digest": digest, "intent": intent}
         base = {"sequence": digest}  # the whole intent is part of the intent's idem

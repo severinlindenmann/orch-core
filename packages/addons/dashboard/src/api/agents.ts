@@ -79,6 +79,7 @@ export const RUNNER_LINE = 'Agents may run commands on this computer as you when
 const w = (ws: string) => `/api/w/${encodeURIComponent(ws)}`
 
 export const agentsApi = {
+  startAfter: (ws: string, requestId: string) => call<{ run: Run }>('POST', `${w(ws)}/agents/start`, { after_request: requestId }),
   preview: (ws: string, args: AgentArgs) => call<AgentPreview>('POST', `${w(ws)}/agents/preview`, args),
   /** Exactly the preview's values plus its `spec`, with the dialog's one idem (a retry returns the same run). */
   start: (ws: string, args: AgentArgs, spec: string, idem: string) => call<{ run: Run }>('POST', `${w(ws)}/agents/start`, { ...args, spec, idem }),

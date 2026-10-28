@@ -312,9 +312,21 @@ def test_schedule_new_shape_passthrough():
     assert action.props()["target"] == "new"
     assert action.props()["title"] == "Mail"
     assert "ref" not in action.props()
-    check = signing.expected(action)
-    assert check([{"type": "schedule.set", "target": "new", "title": "Mail"}])
-    assert not check([{"type": "schedule.set"}])
+    check = signing.expected(action, ME)
+    anchor = {"type": "ticket.created", "ticket_type": "chore", "title": "Mail", "owner": ME, "schedule": SID}
+    rule = {"type": "schedule.set", "schedule": SID, "target": "new", "title": "Mail"}
+    assert check([anchor, rule])
+    # the host must send exactly the anchor, then the schedule: nothing else, another order or other values is refused
+    assert not check([rule])
+    assert not check([rule, anchor])
+    assert not check([anchor, rule, rule])
+    assert not check([{**anchor, "title": "Other"}, rule])
+    assert not check([{**anchor, "owner": OTHER}, rule])
+    assert not check([{**anchor, "ticket_type": "feature"}, rule])
+    assert not check([{**anchor, "schedule": "sc_" + "1" * 26}, rule])
+    assert not check([{**anchor, "via": {"anchor": "x"}}, rule])
+    assert not check([anchor, {**rule, "title": "Other"}])
+    assert not check([anchor, {"type": "schedule.set", "schedule": SID}])
     assert not signing.expected(signing.ScheduleAdd(**add()))([{"type": "schedule.set", "target": "unknown"}])
 
 
@@ -326,7 +338,7 @@ def test_schedule_invalid_target_title(over):
         signing.ScheduleAdd(**add(**over))
 
 
-@pytest.mark.parametrize("target", ["new", "unknown", None])
+@pytest.mark.parametrize("target", ["unknown", None, 5])
 def test_one_unsupported_row_never_breaks_the_page(target):
     other = "sc_" + "1" * 26
     data = schedules.build(FakeGateway(rows=[row(target=target, title="Mail"), row(id=other)]), "w")

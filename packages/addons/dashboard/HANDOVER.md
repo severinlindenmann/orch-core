@@ -1264,6 +1264,12 @@ D3 uses the local signer sequence. The existing single-event hub approval route 
 
 D3 review fix (#1520): enabled updates use `market_update {name, staged, digest, caps}` through the existing signing endpoints, mapped to plain `addon.grant` with those exact args (no enable sequence). The update diff remains visible before signing; capability risk comes from the signer's event-derived risk lines. `market_grant` remains the install-and-enable sequence. Staged grant digest and caps are required; retryable submit refusals retain the stage.
 
+### D2: create, optional access, then start (2026-10-28)
+
+`new_sequence` accepts `launch: {harness, mode, model?}` and proposed `agent: {hours}`. Preparation reads host `whoami.runner.now` and the current valid grant: with at least 15 minutes left, it omits the grant; otherwise the grant is the final signed step. The sequence digest includes launch choices. Contract 4 View risk lines cover every sequence step; informational `info_lines` appear only behind “i”.
+
+`POST /api/w/{ws}/agents/start {after_request}` resolves the ticket and launch choices from the host record. Client ticket/spec/idem values are ignored. Incomplete sequences return `sequence.incomplete`; another principal/person cannot use the request. Launch uses the normal host plan and current grant checks, and a request-derived idem plus a durable `after_request` run binding makes retries replay the first run. No new signed event type is introduced.
+
 ### D5 — unsigned hold (2026-10-28)
 
 The signer's View includes `hold_allowed`, covered by `view_digest`. `POST click/sign` accepts `delay_s: 10` and returns `{state: "held", deadline_ms, duplicate: false}` without signed artifacts. The HTTP server supplies the authenticated preparing session, never a body-supplied session. `click/state` reports held/submitted/not_sent/cancelled/unknown; `click/cancel` returns cancelled or already_signed. Holds survive page closure, not signer restart. A later refusal is terminal and never retried. The signer permits only log, restricted set (labels/priority/size), move, section.set and follow_up.reschedule, excluding sequences. Its per-person cap is 20 and host expiry must leave at least 40 seconds when admitted.

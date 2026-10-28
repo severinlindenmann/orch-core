@@ -471,4 +471,53 @@ def test_a_suspend_never_signs_a_hold(click, human, served):
     served.lab.ws.clock[0] += 3600  # wall only
     click.signer.run_holds()
     assert click.signatures == 0
-    assert pending(served, rid)["state"] != "submitted"
+    held = click.signer.holds[(served.wid, rid)]
+    assert (held["state"], held["reason"]) == ("cancelled", "session")  # the stale lease dropped it
+
+
+def test_a_suspend_with_a_renewal_on_wake_is_not_sent(click, human, served):
+    """The renewer runs again on wake, so the lease is fresh on BOTH clocks; the hold's own wall deadline is an hour
+    off, which makes it late: it is reported not sent and nothing is signed (the ``deadline_wall`` branch)."""
+    rid, digest = hold(click, human)
+    assert sign(click, rid, digest)["state"] == "held"
+    assert click.signer.holds[(served.wid, rid)]["deadline_wall"] > 0  # set when the hold is created
+    advance(click, 10)
+    served.lab.ws.clock[0] += 3600  # wall only: the lid was closed
+    click.signer.session_alive({"session": "session-a"})  # the renewer on wake
+    click.signer.run_holds()
+    assert click.signatures == 0
+    assert click.signer.holds[(served.wid, rid)]["state"] == "not_sent"
+
+
+def test_a_sequence_whose_first_step_is_a_hold_op_is_never_held(click, human, served):
+    """An edit sequence starts with ``section.set`` (a HOLD_OPS op) but is N signatures for one review: it gets
+    ``hold_allowed=False`` and ``delay_s=10`` is refused, so a hold can never sign part of a sequence."""
+    from orch import canon
+    from orch.click.protocol import HOLD_OPS
+    from tests.host.human_helpers import ok
+    from tests.host.test_sequence_click import prepare
+
+    made = prepare(click)[1]
+    v = click.view(made["request_id"])
+    click.mono.t += 2
+    key = click.sign(made["request_id"], v["view_digest"])["result"]["key"]
+    data = ok(served.client().req("ticket.get", {"ref": key}))["data"]
+    intent = {
+        "v": 1,
+        "kind": "edit_ticket",
+        "ticket": {"key": key, "uid": data["doc"]["uid"]},
+        "ticket_type": "feature",
+        "head": data["doc"]["head"]["head"],
+        "sections": {"summary": {"was": canon.section_hash("One line."), "text": "A better line."}},
+        "acceptance": {"was": [], "edit": {}, "add": ["It opens"]},
+    }
+    before = click.signatures
+    _, p = prepare(click, intent)
+    assert click.signer.approvals[(served.wid, p["request_id"])].op in HOLD_OPS
+    view = click.view(p["request_id"])
+    assert view["view"]["hold_allowed"] is False
+    click.mono.t += 2
+    refused(
+        lambda: click.sign(p["request_id"], view["view_digest"], delay_s=10, session="session-a"), "hold.not_allowed"
+    )
+    assert click.signatures == before  # nothing of the edit signed

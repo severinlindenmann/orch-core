@@ -102,9 +102,18 @@ export function SignerHeadline({ view, fallback }: { view: Pick<ClickViewAnswer[
 
 /** C3: the signer's risk lines, under the button, never folded. Each line carries `RISK_LINE` (counted before a press counts). */
 export function RiskLines({ lines, box, testId = 'sign-risk-lines' }: { lines: readonly string[]; box?: (el: HTMLElement | null) => void; testId?: string }) {
+  // Sign only counts once the whole warning is on screen: bring it into view by itself when it appears (run 14: Sign
+  // looked stuck while the line sat below the fold).
+  const ref = useCallback(
+    (el: HTMLElement | null) => {
+      box?.(el)
+      if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest' })
+    },
+    [box],
+  )
   if (lines.length === 0) return null
   return (
-    <ul ref={box} role="note" data-testid={testId} className="space-y-1 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-[13px] font-medium text-text">
+    <ul ref={ref} role="note" data-testid={testId} className="space-y-1 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-[13px] font-medium text-text">
       {lines.map((line, i) => (
         <li key={i} {...{ [RISK_LINE]: '' }} className="flex items-start gap-2">
           <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
@@ -120,6 +129,7 @@ export function TechnicalFacts({ view, action }: { view: ClickViewAnswer['view']
   return (
     <>
       {action}
+      {view.info_lines?.map((line, i) => <p key={i} data-testid="click-info-line"><Inline>{line}</Inline></p>)}
       {riskLinesOf(view).length > 0 && (
         <ul data-testid="click-risk-full" className="space-y-0.5 text-[12px] text-text">
           {riskLinesOf(view).map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}

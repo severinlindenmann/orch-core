@@ -528,7 +528,13 @@ def _validate_new_ticket(intent: Any) -> dict[str, Any]:
 
     base = {"v", "kind", "title", "ticket_type", "set", "sections"}
     # B12D: acceptance and people are optional (left out when empty, so every earlier intent keeps its digest)
-    if not isinstance(intent, Mapping) or not base <= set(intent) <= base | {"acceptance", "people", "agent", "images"}:
+    if not isinstance(intent, Mapping) or not base <= set(intent) <= base | {
+        "acceptance",
+        "people",
+        "agent",
+        "images",
+        "launch",
+    }:
         raise bad("an intent has exactly v, kind, title, ticket_type, set, sections, acceptance, people, images, agent")
     if intent["v"] != VERSION or intent["kind"] != KIND:
         raise bad("this signer does not know that sequence")
@@ -601,6 +607,24 @@ def _validate_new_ticket(intent: Any) -> dict[str, Any]:
         from . import seqquick
 
         result["agent"] = seqquick.validate_agent(intent["agent"], SequenceInvalid)
+    if "launch" in intent:
+        launch = intent["launch"]
+        if (
+            not isinstance(launch, Mapping)
+            or not {"harness", "mode"} <= set(launch)
+            or not set(launch) <= {"harness", "mode", "model"}
+            or launch["harness"] not in ("claude-code", "codex")
+            or launch["mode"] not in ("refine", "work", "fix", "continue", "context")
+            or (
+                "model" in launch
+                and (
+                    not isinstance(launch["model"], str)
+                    or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:\[\]/-]{0,63}", launch["model"]) is None
+                )
+            )
+        ):
+            raise bad("launch is a harness, mode and optional model")
+        result["launch"] = dict(launch)
     if len(steps(result)) > MAX_STEPS:
         raise bad("too many changes for one review")
     return result
@@ -1325,6 +1349,13 @@ def extra_lines(intent: Mapping[str, Any], now: float | None = None) -> list[str
     from . import seqquick
 
     if intent["kind"] == KIND:
+        if "launch" in intent:
+            launch = intent["launch"]
+            return [
+                *([seqquick.grant_line(intent["agent"], now)] if "agent" in intent else []),
+                f"Agent: {launch['harness']}; mode: {launch['mode']}; model: {launch.get('model', 'default')}.",
+                "Then: start an agent on the new ticket.",
+            ]
         if "agent" not in intent:
             return []
         return [

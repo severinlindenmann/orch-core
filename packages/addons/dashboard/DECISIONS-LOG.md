@@ -3,6 +3,12 @@
 Non-trivial product and engineering decisions made during the autonomous run, for the owner's review.
 Format: date, decision, why, how to revert.
 
+## 2026-10-28 — D2 grant sequences retain C3's press guard
+
+- **Decision:** Mark grant-carrying sequence Views as `grant` with `confirm.mode: press`. Enforce nonempty signer risk lines and the closed one-press allowlist at the relay; preserve dashboard execution checks at prepare and sign.
+- **Why:** Creating with missing access needs a second press over the grant's V2 payload. Valid existing access still produces a grant-free, one-press sequence. The grant remains last and launch waits for every step to land.
+- **Revert:** Refuse grant-carrying sequences again; never remove the risk or execution guards.
+
 ## 2026-10-27 — Follow-up Reschedule and Undo on real hosts
 
 - **Decision:** Use person-signed handoffs for Reschedule and Undo, gated by host support. Keep Undo signing in the shell and offer it for 15 seconds after a successful Cancel.
@@ -2085,6 +2091,14 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 **Decision:** Enabled marketplace add-ons use a separate update review and `market_update` grant, including the reviewed digest and capabilities. Fresh installs retain the staged enable sequence. Both core's `enabled` and the older `active` UI state select updates.
 **Why:** The enable sequence deliberately refuses already-enabled add-ons. Updates must retain their widened diff and signer-owned capability risk requiring a second press.
 **Revert:** Revert the separate update action, state mapping and review together; do not route enabled updates through `addon_enable`.
+
+### 2026-10-28 — D2 request-bound create and start
+
+Decision: New-ticket launch choices (harness, mode, optional model) belong to the sequence intent. The host's clock decides whether access needs renewal at the 15-minute boundary; the proposed grant defaults to eight hours and is signed last. Valid access with at least 15 minutes left means one review and one press, with no grant step. Missing or shorter access means the same single review includes ‘Agents can run as you for 8 hours’ and requires C3’s second press after one second; the grant is signed last and start waits for all steps to land. Existing access is mentioned only in the information drawer.
+
+Why: The browser must not select another ticket or launch after a partially landed sequence. `agents/start {after_request}` resolves the committed chain, checks its signer, uses its launch choices, and retains one run per request. Signer and launch retries retain the original request.
+
+Revert: Remove the composite launch option and require separate ticket creation and agent-start review; do not restore browser-authoritative automatic start.
 
 ## 2026-10-28 — D5 unsigned signer holds
 

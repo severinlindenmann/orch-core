@@ -775,6 +775,7 @@ def test_whoami_runner_per_column(ready):
     w = ready
     c = w.conn()
     info = ok(c.call("whoami", {}))["data"]["runner"]
+    assert info.pop("now").endswith("Z")  # D2: the host's clock, for the renewal threshold (never the browser's)
     assert info == {"connected": True, "enabled": True, "terminals": True, "gen": GEN1, "grant": None}
     g = ok(c.call("whoami", {}, grant=w.lab.ws.grant))["data"]
     assert g["runner"]["connected"] is True

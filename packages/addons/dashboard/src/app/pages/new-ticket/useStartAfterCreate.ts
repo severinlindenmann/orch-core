@@ -15,6 +15,7 @@ export type StartOutcome =
 
 export interface StartRequest {
   ws: string
+  requestId?: string
   /** The key of the `new` request THIS form prepared (ownKey): never typed, never read from a list. */
   key: string
   reviewed: Reviewed
@@ -32,6 +33,15 @@ export interface StartRequest {
  * showed, and start only when they are equal and nothing needs reading first. One preview, at most one start, no loop.
  */
 export async function startAfterCreate(r: StartRequest): Promise<StartOutcome> {
+  if (r.requestId) {
+    try {
+      const { run } = await agentsApi.startAfter(r.ws, r.requestId)
+      if (r.noticeRead) await agentsApi.acknowledge(r.ws, 'start_agent').catch(() => {})
+      return { kind: 'started', run }
+    } catch (e) {
+      return { kind: 'ask', reason: notStarted(r.key, message(e)), initial: { ...r.reviewed.choice, note: message(e), afterRequest: r.requestId } }
+    }
+  }
   const { choice } = r.reviewed
   const args: AgentArgs = { ticket: r.key, harness: choice.harness, mode: choice.mode, ...(choice.model ? { model: choice.model } : {}), worktree: true }
   const ask = (reason: string, idem?: string): StartOutcome => ({

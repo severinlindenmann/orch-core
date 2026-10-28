@@ -82,6 +82,8 @@ export interface ClickView {
    * (`contractViewOk` false) never runs the one-press arm: it keeps the press-after-1-s rule.
    */
   risk_lines?: string[]
+  /** Signer-owned informational lines, shown only behind i. */
+  info_lines?: string[]
   content?: import('./signing').SignContent
   /** The generic convenience-signing note (unchanged, CLICK_RISK). */
   risk: string
@@ -90,7 +92,7 @@ export interface ClickView {
   fingerprint: string
   lines: string[]
   checks: { repo: string; clean: boolean; attested_by: string; at: string }[]
-  confirm: { kind: 'click' }
+  confirm: { kind: 'click'; mode?: 'press' }
   expires_at: string
   auth: string
   device: string
@@ -225,7 +227,7 @@ export interface RotateOffer {
     old: string
     new: string
     lines: string[]
-    confirm: { kind: 'click' }
+    confirm: { kind: 'click'; mode?: 'press' }
     rotate_line: string
     seal: { v: 1; alg: string; pk: string; purposes: string[] }
   }

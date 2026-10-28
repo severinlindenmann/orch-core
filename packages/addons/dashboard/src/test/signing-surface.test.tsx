@@ -933,6 +933,35 @@ it('D3: enabled update shows signer risk and never signs on the opening press', 
   expect(sign).not.toHaveBeenCalled()
 })
 
+it('D2 prepares the exact ticket and launch intent, and leaves risk waiting for a second press', async () => {
+  const { CLICK_RISK, DEPOSIT_RISK } = await import('@/api/click')
+  const gesture = await import('@/components/sign/trustedPress')
+  const ws = 'a'.repeat(32)
+  clickWorkspace(ws)
+  const action = { action: 'new_sequence' as const, title: 'Export CSV', type: 'feature' as const,
+    sections: { requirements: 'Preserve every row' }, agent: { hours: 8 }, launch: { harness: 'codex' as const, mode: 'refine' } }
+  const expires = new Date(Date.now() + 600_000).toISOString()
+  const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '2'.repeat(26), expires_at: expires, op: 'new', confirm: 'click' })
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'e'.repeat(64), view: {
+    risk: CLICK_RISK, headline: 'Create ticket and start agent', risk_lines: [DEPOSIT_RISK], op: 'new',
+    workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab',
+    lines: ['Export CSV', 'Preserve every row', 'Agent: codex; mode: refine', 'Grant: 8 hours, workable'],
+    checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null,
+  } })
+  const sign = vi.spyOn(api, 'signClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Create" action={action} inline onClose={() => {}} unsigned={<p>Then: start an agent on the new ticket.</p>} /></QueryClientProvider>)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await userEvent.setup().click(await screen.findByRole('button', { name: 'Sign and start agent' }, T))
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  expect(panel).toHaveTextContent('Preserve every row')
+  expect(panel).toHaveTextContent('Agent: codex; mode: refine')
+  expect(panel).toHaveTextContent('Grant: 8 hours, workable')
+  expect(panel).toHaveTextContent(DEPOSIT_RISK)
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  expect(sign).not.toHaveBeenCalled()
+})
+
 it('new-ticket schedule signing preserves its target and literal title', async () => {
   const { CLICK_RISK } = await import('@/api/click')
   const gesture = await import('@/components/sign/trustedPress')

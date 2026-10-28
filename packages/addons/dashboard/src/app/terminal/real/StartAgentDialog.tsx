@@ -66,6 +66,7 @@ function argsOf(f: { ticket?: string; harness: Harness; mode: AgentMode; model: 
 
 /** What a caller prefilled (the New ticket form after "Create and start agent"): the choice and one plain sentence saying why the person is asked. */
 export interface StartInitial {
+  afterRequest?: string
   harness?: Harness
   mode?: AgentMode
   model?: string
@@ -95,10 +96,26 @@ function rememberHarness(ws: string, h: Harness) {
  */
 export function StartAgentDialog({ ws, ticket, open, onClose, onStarted, initial, choose }: { ws: string; ticket?: string; open: boolean; onClose: () => void; onStarted?: (run: Run) => void; initial?: StartInitial; /** Show the form even when the agent could start right away. */ choose?: boolean }) {
   if (!open) return null
+  if (initial?.afterRequest) return <RetrySequenceStart ws={ws} requestId={initial.afterRequest} note={initial.note} onClose={onClose} onStarted={onStarted} />
   return <StartAgent ws={ws} ticket={ticket} onClose={onClose} onStarted={onStarted} initial={initial} choose={choose} />
 }
 
-type Step = 'form' | 'sign' | 'starting'
+function RetrySequenceStart({ ws, requestId, note, onClose, onStarted }: { ws: string; requestId: string; note?: string; onClose: () => void; onStarted?: (run: Run) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(note)
+  const retry = async () => {
+    setBusy(true)
+    try {
+      const { run } = await agentsApi.startAfter(ws, requestId)
+      onStarted?.(run)
+      onClose()
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not start the agent.') }
+    finally { setBusy(false) }
+  }
+  return <SignShell title="Start agent" open anchor={null} onDismiss={onClose} showClose onOpenAutoFocus={() => {}}><p role="status">{error}</p><Button disabled={busy} onClick={() => void retry()}>Retry start</Button></SignShell>
+}
+
+type Step = 'form'  | 'sign' | 'starting'
 
 function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: string; ticket?: string; onClose: () => void; onStarted?: (run: Run) => void; initial?: StartInitial; choose?: boolean }) {
   const qc = useQueryClient()
@@ -262,8 +279,9 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   const settings = useQuery({ ...queries.hostSettings(ws), retry: false })
   const cap = grantDefaultHours({ grant_hours: settings.data?.grant_hours ?? workspaces.data?.find((w) => w.id === ws)?.grant_hours })
   const lengths = runnerLengths(cap)
-  const [hoursChoice, setHours] = useState(8)
-  const hours = lengths.some(([h]) => h === hoursChoice) ? hoursChoice : (lengths[0]?.[0] ?? 8)
+  const [hoursChoice, setHours] = useState<number | null>(null)
+  const preferred = !settings.isPending && lengths.some(([h]) => h === cap) ? cap : (lengths[0]?.[0] ?? 8)
+  const hours = hoursChoice !== null && lengths.some(([h]) => h === hoursChoice) ? hoursChoice : preferred
   const afterGrant = async (deposit: string | undefined) => {
     setStep('starting')
     // The runner holds the grant once the deposit is confirmed; a terminal signature settles a little later: read again a few times.
@@ -528,8 +546,10 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   const grantFull = ackQ.data?.acknowledged.grant !== true
   const ackGrant = async () => { try { qcRisk.setQueryData(['risk-notices', ws], await agentsApi.acknowledge(ws, 'grant')) } catch { /* shown in full again next time */ } }
   const lengths = runnerLengths(maxHours, extend ? Date.parse(extend.until) - nowMs() : 0)
-  const [selectedHours, setHours] = useState(8)
-  const hours = lengths.some(([h]) => h === selectedHours) ? selectedHours : (lengths[0]?.[0] ?? 0)
+  // preselected: the length chosen at setup (the workspace's access setting) once it is known; the person's pick wins
+  const [selectedHours, setHours] = useState<number | null>(null)
+  const preferred = maxKnown && lengths.some(([h]) => h === maxHours) ? maxHours : (lengths[0]?.[0] ?? 0)
+  const hours = selectedHours !== null && lengths.some(([h]) => h === selectedHours) ? selectedHours : preferred
   const [scope, setScope] = useState<'workable' | 'all'>(extend?.scope ?? 'workable')
   const [step, setStep] = useState<GrantStep>(initial ?? { kind: 'idle' })
   const [forgetting, setForgetting] = useState<'ask' | 'busy' | null>(null)

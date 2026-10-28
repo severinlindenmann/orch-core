@@ -5,7 +5,8 @@ import { api } from '@/api/client'
 import { hubQueries, type HubRule, type HubPreview, type HubShare } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
 import { Badge } from '@/components/ui/badge'
-import { Action, Field, Flow, Panel, caveat } from './shared'
+import { Action, Field, Flow, Panel } from './shared'
+import { AddRuleReview } from './AddRule'
 import { StopRule, StopSharing, type HubWorkspace } from './StopSharing'
 
 type Change = { add: HubRule; remove?: never } | { remove: HubRule; add?: never }
@@ -82,13 +83,9 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
         </li>)}</ul>
       </Panel>}
     </>}
-    {review && <Flow title="Review sharing change" onClose={() => { setReview(undefined); if (review.remove) setRemove(undefined) }}>{review.add ? <div>
-      <p>Add this sharing rule. Matching items, including future matches, would become visible to the hub.</p>
-      <p>Rule: {review.add.kind === 'ticket' ? 'single ticket (exact key behind the i)' : <><Raw>{review.add.kind}</Raw> · <Raw>{review.add.value ?? ''}</Raw></>}</p>
-      {current && <p>{current.count} items after saving · {current.new} now visible · {current.revoked} no longer shared. Preview from the hub, not signed.</p>}
-      <p className="text-danger">{caveat}</p>
-      <p data-testid="hub-rule-add-unavailable">Adding a sharing rule is not available in the dashboard yet.</p>
-    </div> : <StopRule ws={ws} workspace={workspace} rule={review.remove} after={current} />}</Flow>}
+    {review && <Flow title="Review sharing change" onClose={() => { setReview(undefined); if (review.remove) setRemove(undefined) }}>{review.add
+      ? <AddRuleReview ws={ws} workspace={workspace} rule={review.add} after={current} />
+      : <StopRule ws={ws} workspace={workspace} rule={review.remove} after={current} />}</Flow>}
     {revoke && <StopSharing ws={ws} workspace={workspace} ticket={revoke} onClose={() => setRevoke(undefined)} />}
   </div>
 }

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -60,6 +60,17 @@ REDUCE_OPS = frozenset({"share.revoke", "share.rule_remove"})
 #: must be added here only if it selects (tests/host/test_share_dashboard pins the set).
 SELECTING_KINDS = frozenset({"needs_you", "questions", "type", "ticket", "tag"})
 REDUCE_RATE = 10  # per minute and workspace, as for the cosmetic settings
+#: The ops that can make something NEW leave the workspace: a rule added, or a sync that confirms a shown plan. They are
+#: the click-only owner ops of the dashboard (and the terminal's); five a minute and workspace, each with a security-log
+#: line (person, op, hub, plan, count). A sync without ``expect`` only retries what was confirmed: not one of them.
+ADD_RATE = 5
+#: What leaves per kind of item, in the review's words (the page builds none of them; it shows this text).
+LEAVES = {
+    "ticket": "the ticket's title, status, labels and deadline; no description, comments or files",
+    "summary": "the type, a one-line title and the deadline",
+    "question": "the full question (up to 2000 bytes)",
+}
+LATER_EDITS = "Later edits to these tickets are shared too, until you stop sharing them."
 _MU = threading.Lock()
 _RULE = {
     "type": "object",
@@ -115,6 +126,11 @@ def _owner(call: Call) -> None:
         raise HostError("role.denied", "share rules are for workspace owners")
 
 
+def _owner_fresh(call: Call) -> None:
+    call.service.store.refresh()
+    _owner(call)
+
+
 def _check(call: Call) -> tuple[str, dict[str, Any]]:
     op = call.frame["op"]
     args = dict(call.frame["args"])
@@ -155,17 +171,20 @@ def serve(call: Call) -> dict[str, Any]:
         return _read(call, op, args)
     if op in REDUCE_OPS:
         _rate(call.service)
+    elif op == "share.rule_add" or (op == "share.sync" and "expect" in args):
+        _rate(call.service, ADD_RATE, "_share_add_hits")
     return {"plan": {"op": op, "args": args}}
 
 
-def _rate(service: Any) -> None:
-    """At most :data:`REDUCE_RATE` revokes and rule removals a minute (the worker runs one call at a time)."""
+def _rate(service: Any, limit: int = REDUCE_RATE, attr: str = "_share_reduce_hits") -> None:
+    """At most ``limit`` calls of one class a minute and workspace (the worker runs one call at a time):
+    :data:`REDUCE_RATE` revokes and rule removals, :data:`ADD_RATE` adding changes."""
     now = service.clock()
-    hits = [t for t in getattr(service, "_share_reduce_hits", []) if now - t < 60]
-    if len(hits) >= REDUCE_RATE:
+    hits = [t for t in getattr(service, attr, []) if now - t < 60]
+    if len(hits) >= limit:
         raise HostError("host.busy", "too many sharing changes: wait a minute", retry_after_ms=60_000)
     hits.append(now)
-    service._share_reduce_hits = hits  # noqa: SLF001
+    setattr(service, attr, hits)
 
 
 async def execute(call: Call, planned: dict[str, Any]) -> dict[str, Any]:
@@ -272,6 +291,30 @@ def _rows(items: list[Any], limit: int = 100) -> dict[str, Any]:
     return {"count": len(items), "items": rows, "more": max(0, len(items) - limit), "plan": _plan(items)}
 
 
+def _review(service: WorkspaceService, want: list[Any], had: set[str]) -> dict[str, Any]:
+    """The owner's review of an adding change, all from the host (the page adds no words): the hub, who can read there
+    (the pinned group snapshot, "from the hub, not signed"), ONLY the items that would newly leave (not already
+    confirmed and sent), what leaves per kind of item, and that later edits follow."""
+    from orch.hubclient import snapshot
+
+    state = None
+    try:
+        state = _selective(service)
+    except HostError:
+        pass
+    roles = (snapshot.pinned_view(state) or {}).get("roles", {}) if state is not None else {}
+    new = [i for i in want if i.logical not in had]
+    kinds = sorted({i.kind for i in new})
+    return {
+        "hub_id": getattr(state, "hub_id", None),
+        "audience": {r: sum(1 for v in roles.values() if v == r) for r in ("read", "edit", "admin")} if roles else None,
+        "audience_note": "from the hub, not signed",
+        "new": _rows(new),
+        "leaves": [{"kind": k, "text": LEAVES[k]} for k in kinds if k in LEAVES],
+        "later_edits": LATER_EDITS,
+    }
+
+
 def _after(st: Any, facts: list[Any], *, add: Any = None, remove: Any = None) -> tuple[list[Any], list[str], list[Any]]:
     """The rules and withdrawn list after ``add`` / ``remove`` and the items they would share (withdrawn ones left
     out): what ``share.preview`` shows, what ``expect`` is checked against and what the sync sends."""
@@ -313,6 +356,7 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         out["new"] = len(now - had)
         out["revoked"] = len(had - now)
         out["rules"] = [S.describe(r) for r in rules]
+        out["review"] = _review(call.service, want, had)
         return ok_result(out)
     except HubRefused:
         raise HostError("invalid.input", f"{op}: the rule is not valid") from None
@@ -393,7 +437,12 @@ def _approve(st: Any, selection: list[Any], expect: str) -> None:
         ) from None
 
 
-def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str | None = None) -> dict[str, Any]:
+def sync_now(
+    service: WorkspaceService,
+    viewer: str | None = None,
+    expect: str | None = None,
+    recheck: Callable[[], None] | None = None,
+) -> dict[str, Any]:
     """Evaluate and sync (the caller holds no lock). ``{"synced": True, put, revoke, kept}`` or
     ``{"synced": False, "pending": code}``: the rules stay saved and the next sync repeats only what is missing.
     ``refused`` lists items the contract or the hub refused one by one (skipped, the rest was sent).
@@ -404,6 +453,8 @@ def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str |
     from orch.hubclient import shares as S
 
     with _MU:
+        if expect is not None and recheck is not None:
+            recheck()  # a confirming sync widens what leaves: the owner role is judged again under the lock
         st = _load(service)
         facts = tickets_for(service, viewer)
         if expect is None:
@@ -472,6 +523,15 @@ def _widens(before: list[Any], after: list[Any], facts: list[Any]) -> bool:
     return bool({i.logical for i in S.select(after, facts)} - {i.logical for i in S.select(before, facts)})
 
 
+def _add_audit(service: WorkspaceService, call: Call, args: dict[str, Any], count: int | None = None) -> dict[str, Any]:
+    """The security-log fields of an adding change: who, which hub, the plan the owner confirmed, how many items."""
+    hub = dict(service.store.state.workspace.hub)
+    out: dict[str, Any] = {"person": call.viewer, "hub_id": hub.get("hub_id"), "plan": str(args.get("expect", ""))[:16]}
+    if count is not None:
+        out["count"] = count
+    return out
+
+
 def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from orch.hubclient import shares as S
     from orch.hubclient.errors import HubRefused
@@ -482,8 +542,9 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     op, args, service = plan["op"], plan["args"], call.service
     try:
         if op == "share.sync":
-            got = sync_now(service, call.viewer, args.get("expect"))
-            hubops._audit(call, "share.sync", synced=got["synced"], confirmed="expect" in args)  # noqa: SLF001
+            got = sync_now(service, call.viewer, args.get("expect"), lambda: _owner_fresh(call))
+            more = {**_add_audit(service, call, args), "count": got.get("put")} if "expect" in args else {}
+            hubops._audit(call, "share.sync", synced=got["synced"], confirmed="expect" in args, **more)  # noqa: SLF001
             return ok_result(got)
         with _MU:
             service.store.refresh()
@@ -529,6 +590,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 _approve(st, [i for i in selected if i.logical not in st.withdrawn], args["expect"])
             got = _sync_locked(service, st, selected)
         more = {"person": call.viewer} if op in REDUCE_OPS else {}
+        if op == "share.rule_add":
+            more = _add_audit(service, call, args, len(selected))
         hubops._audit(call, op, kind=args["rule"]["kind"] if "rule" in args else "item", **more)  # noqa: SLF001
         return ok_result({"note": note} | got)
     except HubRefused as exc:

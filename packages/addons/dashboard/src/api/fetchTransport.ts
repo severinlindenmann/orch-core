@@ -1,4 +1,5 @@
 import { getToken } from './bootstrap'
+import { CLICK_CONTRACT, CLICK_CONTRACT_HEADER } from './click'
 import { requestStepUp, stepUpOf } from './stepUp'
 import type { Transport } from './transport'
 
@@ -22,6 +23,7 @@ export function createFetchTransport(baseUrl: string, token: () => string | null
       const headers: Record<string, string> = {}
       if (bearer) headers.Authorization = `Bearer ${bearer}`
       if (body !== undefined) headers['content-type'] = 'application/json'
+      if (/^\/api\/w\/[^/]+\/click\//.test(path)) headers[CLICK_CONTRACT_HEADER] = String(CLICK_CONTRACT) // C3: the click contract this page speaks
       const res = await fetch(base + path, {
         method,
         headers,

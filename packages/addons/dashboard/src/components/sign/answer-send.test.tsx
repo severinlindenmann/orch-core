@@ -398,6 +398,82 @@ describe('Send answer in the card, one click (C2: prepare only on a trusted pres
   })
 })
 
+describe('C3: one press with a contract-4 View', () => {
+  const HEADLINE = 'Answer Q2 on DEMO-0043 with DATE'
+  /** The signer's View of contract 4 (a headline and its risk lines) for every prepare from here on. */
+  function contract4(risk: string[] = []) {
+    prepare.mockImplementation(async () => {
+      const id = `req${++n}`.padEnd(32, '0')
+      views[id] = view(`${n}`, { headline: HEADLINE, risk_lines: risk })
+      return { request_id: id, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'answer', confirm: 'click' }
+    })
+  }
+  const toStrip = async () => {
+    await mountHost()
+    fireEvent.click(screen.getByText('pick a'))
+    press(await waitFor(() => { const b = send(); expect(b).toBeEnabled(); return b }, T))
+    return screen.findByTestId('answer-strip', {}, T)
+  }
+
+  it('the press that prepared sends at the end of the 1 s arm, once, with this digest; the workspace and the ticket are named for one workspace', async () => {
+    flag(true, true)
+    trusted()
+    contract4()
+    await toStrip()
+    const armed = screen.getByRole('button', { name: HEADLINE })
+    expect(armed).toBeEnabled()
+    expect(screen.getByTestId('sign-progress')).toBeInTheDocument()
+    expect(screen.getByTestId('strip-workspace')).toHaveTextContent(`Workspace DEMO · ${WS_ID.slice(-8)} · billing`)
+    expect(screen.getByTestId('strip-workspace-target')).toHaveTextContent('DEMO-0043')
+    expect(sign).not.toHaveBeenCalled()
+    await waitFor(() => expect(sign).toHaveBeenCalledTimes(1), { timeout: ARM_MS + 2000 })
+    expect(sign.mock.calls[0][2]).toBe(digestOf('1'))
+    await new Promise((r) => setTimeout(r, 200))
+    expect(sign).toHaveBeenCalledTimes(1)
+    expect(prepare).toHaveBeenCalledTimes(1)
+  })
+
+  it('a second press during the arm cancels: the request is tombstoned and nothing is sent', async () => {
+    flag(true)
+    trusted()
+    contract4()
+    await toStrip()
+    await new Promise((r) => setTimeout(r, ARM_MS / 2))
+    press(screen.getByRole('button', { name: HEADLINE }))
+    await waitFor(() => expect(cancel).toHaveBeenCalledTimes(1), T)
+    expect(cancel.mock.calls[0][1]).toBe('req1'.padEnd(32, '0'))
+    expect(await screen.findByTestId('answer-cancelled', {}, T)).toHaveTextContent('Nothing was signed')
+    await new Promise((r) => setTimeout(r, ARM_MS))
+    expect(sign).not.toHaveBeenCalled()
+  })
+
+  it('a press elsewhere (another option) during the arm cancels it; nothing is sent', async () => {
+    flag(true)
+    trusted()
+    contract4()
+    await toStrip()
+    fireEvent.pointerDown(screen.getByText('pick b'))
+    await waitFor(() => expect(cancel).toHaveBeenCalledTimes(1), T)
+    await new Promise((r) => setTimeout(r, ARM_MS + 200))
+    expect(sign).not.toHaveBeenCalled()
+  })
+
+  it('risk lines: shown under Send answer, nothing is sent without a second press, the second press after 1 s sends once', async () => {
+    flag(true)
+    trusted()
+    contract4(['FROM-THE-SIGNER risk line'])
+    await toStrip()
+    expect(screen.getByTestId('sign-risk-lines')).toHaveTextContent('FROM-THE-SIGNER risk line')
+    expect(screen.queryByTestId('sign-progress')).toBeNull()
+    expect(screen.getByTestId('strip-workspace')).toBeInTheDocument()
+    await armed()
+    await new Promise((r) => setTimeout(r, 300))
+    expect(sign).not.toHaveBeenCalled()
+    press()
+    await waitFor(() => expect(sign).toHaveBeenCalledTimes(1), T)
+  })
+})
+
 describe('D6 workspace line', () => {
   it('the strip names the workspace by prefix and id tail first; the unsigned name never stands alone', async () => {
     flag(true)
@@ -549,12 +625,13 @@ describe('answer follow-ups (fake timers)', () => {
   })
 
   it('the live region maps each phase and starts empty', async () => {
-    expect(liveText('signing', true)).toBe('Sending your answer.')
-    expect(liveText('settling', true)).toBe('Sending your answer.')
-    expect(liveText('done', true)).toBe('Answer sent.')
-    expect(liveText('failed', true)).toBe('')
-    expect(liveText('ready', false)).toMatch(/^Review loaded/)
-    expect(liveText('ready', true)).toBe('Send answer is ready.')
+    expect(liveText('signing', 'ready')).toBe('Sending your answer.')
+    expect(liveText('settling', 'ready')).toBe('Sending your answer.')
+    expect(liveText('done', 'ready')).toBe('Answer sent.')
+    expect(liveText('failed', 'ready')).toBe('')
+    expect(liveText('ready', 'wait')).toMatch(/^Review loaded/)
+    expect(liveText('ready', 'ready')).toBe('Send answer is ready.')
+    expect(liveText('ready', 'arm')).toBe('Sending your answer in a moment. Press again or Esc to stop.')
     flag(true)
     trusted()
     await mountHost()

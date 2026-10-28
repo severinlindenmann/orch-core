@@ -11,6 +11,9 @@ from tests.host.test_human import requests_dir
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 
+#: the hub hand-off's op (a bundled add-on): ``human.prepare {handoff: true}`` stores only an ``addon.grant``
+GRANT = {"name": "wiki"}
+
 
 def test_a_retry_with_the_same_idem_returns_the_same_request(human, served):
     _, key = human.ticket()
@@ -21,18 +24,17 @@ def test_a_retry_with_the_same_idem_returns_the_same_request(human, served):
     assert "code" not in a["request"] and "code" not in b["request"]
     assert "duplicate" not in b
     hidem = new_idem()
-    h1 = human.prepare("log", {"ref": key, "text": "h"}, handoff=True, idem=hidem)
-    h2 = human.prepare("log", {"ref": key, "text": "h"}, handoff=True, idem=hidem)
+    h1 = human.prepare("addon.grant", GRANT, handoff=True, idem=hidem)  # the hub hand-off: the one unbound prepare
+    h2 = human.prepare("addon.grant", GRANT, handoff=True, idem=hidem)
     assert "code" not in h1["request"] and h1["request"] == h2["request"]
 
 
 def test_a_retry_shows_the_current_state(human, served):
-    _, key = human.ticket()
     idem = new_idem()
-    a = human.prepare("log", {"ref": key, "text": "x"}, handoff=True, idem=idem)
+    a = human.prepare("addon.grant", GRANT, handoff=True, idem=idem)
     assert a["request"]["state"] == "prepared"
     ok(human.c.req("human.get", {"request_id": a["request"]["id"], "signer": human.signer}))
-    b = human.prepare("log", {"ref": key, "text": "x"}, handoff=True, idem=idem)
+    b = human.prepare("addon.grant", GRANT, handoff=True, idem=idem)
     assert b["request"]["id"] == a["request"]["id"] and b["request"]["state"] == "bound"
 
 
@@ -41,7 +43,10 @@ def test_other_arguments_are_idem_conflict(human, served):
     idem = new_idem()
     human.prepare("log", {"ref": key, "text": "x"}, idem=idem)
     assert err(human.prepare_res("log", {"ref": key, "text": "y"}, idem=idem)) == "idem.conflict"
-    assert err(human.prepare_res("log", {"ref": key, "text": "x"}, handoff=True, idem=idem)) == "idem.conflict"
+    # the signer or hand-off is part of the binding
+    gidem = new_idem()
+    human.prepare("addon.grant", GRANT, idem=gidem)
+    assert err(human.prepare_res("addon.grant", GRANT, handoff=True, idem=gidem)) == "idem.conflict"
 
 
 def _plant(served, principal, idem, args, namespace_store=None):
@@ -96,12 +101,11 @@ def test_another_workspace_has_its_own_outcome_namespace(human, served, tmp_path
 
 
 def test_a_request_that_is_no_longer_stored_answers_idem_expired(human, served):
-    _, key = human.ticket()
     idem = new_idem()
-    a = human.prepare("log", {"ref": key, "text": "x"}, handoff=True, idem=idem)
+    a = human.prepare("addon.grant", GRANT, handoff=True, idem=idem)
     ok(human.c.req("human.cancel", {"request_id": a["request"]["id"]}))
     (requests_dir(served) / a["request"]["id"]).unlink()
-    assert err(human.prepare_res("log", {"ref": key, "text": "x"}, handoff=True, idem=idem)) == "idem.expired"
+    assert err(human.prepare_res("addon.grant", GRANT, handoff=True, idem=idem)) == "idem.expired"
 
 
 def test_the_person_is_part_of_the_binding(human, served):

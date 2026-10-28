@@ -9,7 +9,7 @@ import { parseRoute } from "./route.js";
 import { homeView, workspaceStatus } from "./home.js";
 import { adminView } from "./admin.js";
 import { servicesView } from "./services.js";
-import { workspacesView } from "./workspaces.js";
+import { workspacesView, workspaceDetailsView } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
 import { Refusal, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
@@ -297,11 +297,34 @@ async function workspaces() {
   const finishLoading = loading();
   pageLoading("workspaces");
   try {
-    if (!(await refresh())) return loginView();
-    state.menu = false;
-    await loadRail();
-    const [ws, ho] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs")]);
-    shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces : [], handoffs: ho.status === 200 ? ho.body.handoffs : [] }));
+      if (!(await refresh())) return loginView();
+      state.menu = false;
+      await loadRail();
+      const [ws, ho, admin] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs"), api("GET", "/admin/workspaces")]);
+      const adminRows = admin.status === 200 ? admin.body.workspaces ?? [] : null;
+      const hub = ws.body?.hub;
+      const actions = {
+        open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
+        copy: copyText,
+        connect: async () => {
+          const r = await api("POST", "/admin/connect", {});
+          if (r.status < 200 || r.status >= 300 || typeof r.body.link !== "string" || !Number.isFinite(r.body.expires_ms)) throw new Error("connect failed");
+          return r.body;
+        },
+        remove: async (w) => {
+          const r = await api("DELETE", "/admin/workspaces/" + encodeURIComponent(w.workspace_id));
+          if (r.status < 200 || r.status >= 300) throw new Error("remove failed");
+          await workspaces();
+        },
+        details: async (w) => {
+          const r = await api("GET", "/workspaces/" + encodeURIComponent(w.workspace_id) + "/roles");
+          dialog(...workspaceDetailsView(w, { hub, actions, roles: r.status === 200 ? r.body : null,
+            owner: adminRows?.find((row) => row.workspace_id === w.workspace_id)?.owner_alias }),
+            h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
+        },
+      };
+      shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces ?? [] : [],
+        handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions }));
   } finally { finishLoading(); }
 }
 

@@ -2,7 +2,7 @@ import { emptyState } from "./feel.js";
 // Connected workspaces and their availability.
 import { ago, chip, h, text } from "./ui.js";
 
-const nameOf = (end) => (end && end.name ? text(end.name) : end && end.workspace_id ? "Workspace " + end.workspace_id.slice(0, 8) : "Another workspace");
+const nameOf = (end) => (end && end.name ? text(end.name) : "Another workspace");
 
 const modeName = (w) => w.mode === "full" ? "Everything" : "Only what I choose";
 const personName = (p) => text(typeof p === "string" ? p : p?.name ?? p?.alias ?? p?.user_id ?? "unknown");

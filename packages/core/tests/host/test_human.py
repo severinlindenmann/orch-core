@@ -121,7 +121,15 @@ def test_a_dry_run_without_signer_or_handoff_persists_nothing(human, served):
     # the same call for real still needs a signer (handoff:true is only the hub's add-on grant); never both
     assert err(human.c.req("human.prepare", body)) == "invalid.input"
     assert err(human.c.req("human.prepare", {**body, "handoff": True})) == "invalid.input"
-    assert ok(human.c.req("human.prepare", {**body, "handoff": True}, dry_run=True))["data"]["request"] is None
+    dry = ok(human.c.req("human.prepare", {**body, "handoff": True}, dry_run=True))["data"]  # handoff:true + dry_run
+    assert dry["request"] is None and dry["events"][0]["actor"]["device"] is None
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
+    assert ok(human.c.req("human.pending", {}))["data"] == pending_before and logged(served, key) == before
+    # the hub's own hand-off op as a dry run: refused (nothing staged to grant, as without handoff), stored nothing
+    grant = {"op": "addon.grant", "args": {"name": "wiki"}, "handoff": True}
+    assert err(human.c.req("human.prepare", grant, dry_run=True)) == "not_found"
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
+    assert ok(human.c.req("human.pending", {}))["data"] == pending_before
     both = {**body, "signer": human.signer, "handoff": True}
     assert err(human.c.req("human.prepare", both, dry_run=True)) == "invalid.input"
     assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
@@ -243,6 +251,35 @@ def test_get_returns_every_invariant_byte_and_binding_changes_only_device_and_au
         strip = lambda e: {**{k: v for k, v in e.items() if k != "auth"}, "actor": {**e["actor"], "device": None}}  # noqa: E731
         assert canon.dumps(strip(after)) == canon.dumps(strip(before))
     assert bound["request"]["state"] == "bound" and p["request"]["state"] == "prepared"
+
+
+def test_another_member_cannot_bind_a_hub_hand_off(human, served):
+    """The bind (human.get) holds the hand-off to the person who prepared it (the hub-named owner): a member who is
+    not that person, with their own valid device, is refused and the record stays unbound."""
+    quinn = served.lab.add_member()
+    rid = human.prepare("addon.grant", {"name": "wiki"}, handoff=True)["request"]["id"]
+    before = record(served, rid)
+    assert before["hub_handoff"] is True and before["state"] == "prepared" and before["signer"] is None
+    assert err(human.get(rid, signer={"device": quinn.device, "auth": "passphrase"})) == "device.unknown"
+    after = record(served, rid)
+    assert after == before and after["prepared"]["events"][0]["actor"]["device"] is None  # nothing bound
+    assert ok(human.get(rid))["data"]["request"]["state"] == "prepared"
+    assert ok(human.get(rid, signer=human.signer))["data"]["request"]["state"] == "bound"  # the owner still binds
+
+
+def test_only_a_hub_hand_off_is_bound_at_get(human, served):
+    """An older stored unbound request (signer null, device null) that is not a hub hand-off is never bound."""
+    _, key = human.ticket()
+    old = human.prepare_unbound("log", {"ref": key, "text": "old"}, hub_handoff=False)
+    rid = old["request"]["id"]
+    before = record(served, rid)
+    assert before["state"] == "prepared" and before["signer"] is None and before["hub_handoff"] is False
+    res = human.get(rid, signer=human.signer)
+    assert err(res) == "invalid.input" and "not prepared here" in res["error"]["message"]
+    assert record(served, rid) == before and ok(human.get(rid))["data"]["request"]["state"] == "prepared"
+    assert err(human.submit_res(rid, [{**old["events"][0], "sig": "x"}])) == "human.request_state"
+    real = human.prepare("addon.grant", {"name": "wiki"}, handoff=True)["request"]["id"]  # a real hand-off binds
+    assert ok(human.get(real, signer=human.signer))["data"]["request"]["state"] == "bound"
 
 
 # --- submit: mismatch, single use, replay precedence ----------------------------------------------------------------

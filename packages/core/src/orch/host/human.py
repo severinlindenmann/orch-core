@@ -836,6 +836,10 @@ class HumanOps:
             raise HostError("human.request_expired", _expired(record))
         if state in ("submitted", "cancelled"):
             raise HostError("human.request_state", f"the request is {state}")
+        if state != "bound" and record.get("hub_handoff") is not True:
+            # the only request stored unbound is the hub's add-on grant hand-off (FB15); every other request is bound
+            # at prepare, so an unbound one that is not a hand-off was not prepared here: never bound (no legacy path)
+            raise HostError("invalid.input", "the request was not prepared here for a hub hand-off; prepare it again")
         call.service.store.refresh()
         convenience.refuse_reader_op(  # §0.8.6: fails early, before binding (H12d-2: the declaration, rechecked)
             call.service,

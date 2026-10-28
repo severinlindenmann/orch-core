@@ -155,6 +155,11 @@ class Router:
         self._kick(live)
         return live
 
+    def is_online(self, ws: str) -> bool:
+        with self._lock:
+            live = self._live.get(ws)
+            return live is not None and not live.dead
+
     def detach(self, ws: str, live: _Live) -> None:
         self._kill(live)
         with self._lock:

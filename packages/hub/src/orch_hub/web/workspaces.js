@@ -40,6 +40,9 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
       h("p", { text: "Owner: " + personName(roles.owner) }),
       roles.groups?.length ? h("ul", {}, roles.groups.map((g) => h("li", {},
         text(g.group) + " · " + text(g.role), small((g.members ?? []).map(personName).join(", "))))) : small("Only the owner.")) : null,
+    roles?.profile ? h("section", {}, h("h3", { text: "Profile (untrusted display data)" }),
+      h("dl", {}, Object.entries(roles.profile).flatMap(([key, value]) => [
+        h("dt", { text: key }), h("dd", { text: JSON.stringify(value) })]))) : null,
     h("h3", { text: "Change mode" }),
     h("p", { text: "To change what this workspace shares, open it and use Settings > Hub. The owner confirms there." }),
     button("Open " + nameOf(w), () => actions.open?.(w), { class: "pri" })].filter(Boolean);

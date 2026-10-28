@@ -298,7 +298,9 @@ class StubHub:
         # connect fetches the first snapshot; the stub answers {}, which the host refuses and audits (the op itself is
         # covered by tests/hub/test_snapshot.py and test_hub_join_real.py), so it is kept apart from what join sends
         # the display-only status report (status_put) is not under test here: kept apart like the snapshot
-        (self.snapshot_gets if m["op"] in ("snapshot_get", "status_put") else self.sent).append(copy.deepcopy(message))
+        (self.snapshot_gets if m["op"] in ("snapshot_get", "status_put", "profile_put") else self.sent).append(
+            copy.deepcopy(message)
+        )
         o = {
             "v": 2, "suite": 2, "kind": "hub.link", "hv": 0, "hub_id": m["hub_id"], "workspace_id": m["workspace_id"],
             "dir": "h2w", "seq": 1, "ts_ms": m["ts_ms"], "op": m["op"], "re": m["seq"], "body": {},
@@ -765,3 +767,20 @@ def test_a_full_join_without_a_relay_is_not_relay_paired_after_a_leave_without_u
     assert (served.lab.state / "hosts" / served.wid / "membership").exists()
     human.run("hub.leave", {})
     assert not convenience._relay_paired(served.lab.state, served.wid)
+
+
+def test_hub_profile_sent_at_connect_and_after_owner_change(human, served, stub):
+    from tests.host.dispatch_helpers import ok
+
+    profile = {**hubops._DEFAULT_PROFILE, "listed": True, "description": "Support"}
+    c = served.client()
+    assert ok(c.req("hub.profile", {"profile": profile}, idem=True))["data"]["profile"] == profile
+    human.run("hub.join", join_args())
+    ok(c.req("hub.connect", connect_args(), idem=True))
+    sent = [m["o"]["body"] for m in stub.snapshot_gets if m["o"]["op"] == "profile_put"]
+    assert sent == [profile]
+    profile = {**profile, "description": "Changed"}
+    ok(c.req("hub.profile", {"profile": profile}, idem=True))
+    sent = [m["o"]["body"] for m in stub.snapshot_gets if m["o"]["op"] == "profile_put"]
+    assert sent[-1] == profile and len(sent) == 2
+    assert ok(c.req("hub.profile", {}, idem=True))["data"]["profile"] == profile

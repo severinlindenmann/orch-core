@@ -1049,6 +1049,37 @@ def owner_user(service: Any, state: Any) -> str | None:
     return user if isinstance(user, str) and re.fullmatch(r"[0-9a-f]{32}", user) else None
 
 
+def report_addon_request(service: Any, name: str, version: str = "", actor: str = "person") -> None:
+    """M3 (#1450): tell the bound hub that installing ``name`` was refused by its policy (``market.addon_not_allowed``),
+    so its admin can allow it. Best effort and display only: no link, no hub or any error means nothing is sent; it
+    never changes the refusal and grants nothing."""
+    import re
+
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", str(name)):
+        return
+    try:
+        state = _load_state(service)
+        if state is None or state.status != "bound":
+            return
+        wsk_pub, sign = _wsk_sign(service)
+        hub_link, transport = _snapshot_link(service, state, wsk_pub, sign, workspace_dev(service), send_profile=False)
+    except Exception:  # noqa: BLE001, S110 - no usable link: nothing to tell
+        return
+    try:
+        hub_link.call(
+            "addon_request",
+            {
+                "name": str(name),
+                "version": version if re.fullmatch(r"[0-9A-Za-z.+-]{0,32}", version) else "",
+                "actor": "agent" if actor == "agent" else "person",
+            },
+        )
+    except Exception:  # noqa: BLE001, S110 - the hub refuses or is away: the install was refused locally anyway
+        pass
+    finally:
+        getattr(transport, "close", lambda: None)()
+
+
 def _switch(service: Any, plan: dict[str, Any], wsk_pub: bytes, sign: Any) -> dict[str, Any]:
     """``hub.switch`` (H1, 27 Oct): the hub decides the person (the owner alias of this workspace), the host relays.
     ``ticket``: a one-time ticket to open (or sign out of) the hub console; ``redeem``: the hub answers for a ticket the

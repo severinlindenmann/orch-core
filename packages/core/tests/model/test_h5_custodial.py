@@ -31,6 +31,8 @@ def w() -> World:
 
 
 def hub(w: World, typ: str, user: str = U2, log: str = "workspace", **payload):
+    if typ == "grant.requested":
+        payload.setdefault("handoff", "01J9ZP00000000000000000001")
     _, r = w.try_(log, typ, hub_actor(user, CHAN), roster_v=w.roster_v, **hub_fields(), **payload)
     return r if isinstance(r, Refusal) else None
 
@@ -317,3 +319,9 @@ def test_device_excluded_lost_can_be_upgraded_to_compromised_like_device_revoked
           issued_at=now, hours=8, expires_at=_plus(now, 8), secret_hash="sha256:" + "e" * 64)  # fmt: skip
     assert hub(w, "device.excluded", U1, device=tom, reason="compromised") is None  # the upgrade is accepted
     assert hub(w, "device.excluded", U1, device=tom, reason="compromised").code == Code.DEVICE_EXISTS
+
+
+def test_maintainer_request_also_cannot_exceed_workspace_duration(w):
+    cap = w.state().workspace.settings["grant_hours"]
+    r = hub(w, "grant.requested", U2, scope="all", verbs="agent", hours=cap + 1)
+    assert r.code == Code.GRANT_TERMS

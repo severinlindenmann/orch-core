@@ -7,7 +7,7 @@ export function parseRoute(hash) {
   if (m) return { kind: "ticket", token: m[1] };
   m = /^#\/(home|approvals|workspaces|services|admin)$/.exec(value);
   if (m) return { kind: m[1] };
-  m = /^#\/w\/([0-9a-f]{32})(?:\/(item|addon|settings)\/([^/]+))?$/.exec(value);
+  m = /^#\/w\/([0-9a-f]{32})(?:\/(item|addon|settings|access)\/([^/]+))?$/.exec(value);
   if (!m) return { kind: "home" };
   try {
     const key = m[3] === undefined ? null : decodeURIComponent(m[3]);

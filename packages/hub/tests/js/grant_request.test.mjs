@@ -47,3 +47,13 @@ test("screen requires membership and edit role and uses the review flow", async 
   assert.match(screen, /Approve agent access/);
   assert.match(src, /d\.type === "grant\.requested" \? "Approve agent access"/);
 });
+
+
+test("grant signed fields omit certificates and retain the grant terms", () => {
+  const review = d(ev({ channel_cert: { o: { channel_id: "channel" } }, uk_cert: { o: { user_id: "user" } } }));
+  assert.equal(review.signable, true);
+  const fields = Object.fromEntries(review.fields);
+  assert.equal(Object.hasOwn(fields, "channel_cert"), false);
+  assert.equal(Object.hasOwn(fields, "uk_cert"), false);
+  for (const [key, value] of Object.entries(TERMS)) assert.equal(fields[key], String(value));
+});

@@ -868,6 +868,8 @@ def build_p4(
     for nm, typ, pl, why in (
         ("grant_requested_without_handoff", "grant.requested", {k: v for k, v in grp.items() if k != "handoff"},
          "the signed request must name the pending grant record"),
+        ("grant_requested_with_addon_handoff", "grant.requested", {**grp, "handoff": "hr_" + grp["handoff"]},
+         "an add-on hand-off id cannot name a pending grant record"),
         ("grant_requested_with_secret_hash", "grant.requested", {**grp, "secret_hash": HASH_A},
          "the grant secret is made by the host after admission, never by the hub"),
         ("grant_requested_with_grant_id", "grant.requested", {**grp, "grant": "gr_01J9ZP0000000000000000GRT1"}, ""),

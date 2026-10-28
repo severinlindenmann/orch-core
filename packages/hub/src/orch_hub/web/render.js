@@ -324,7 +324,7 @@ export function describe(ctx, digest, sent = null, qv = null) {
   const isSettings = type === "settings.changed";
   const known = isGrant ? GRANT_REQUEST : isAddon ? ADDON_REQUEST : isSettings ? ["set"] : Object.hasOwn(DECISIONS, type) ? DECISIONS[type] : Object.hasOwn(MOVES, type) ? MOVES[type] : undefined;
   const fields = Object.keys(ev)
-    .filter((k) => isGrant || (k !== "channel_cert" && k !== "uk_cert"))
+    .filter((k) => k !== "channel_cert" && k !== "uk_cert")
     .sort()
     .map((k) => [renderText(k), typeof ev[k] === "string" ? renderText(ev[k]) : renderText(cj(ev[k]))]);
   const extra = known ? Object.keys(ev).filter((k) => !known.includes(k) && !ENVELOPE.includes(k)) : [];

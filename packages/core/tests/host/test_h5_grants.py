@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from orch.host import hubdeliver, hubops
+from orch.host import grantoff, hubdeliver, hubops
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import ok
 from tests.host.human_helpers import err
@@ -88,15 +88,20 @@ def test_a_request_is_answered_by_a_host_grant_that_names_it_and_the_secret_goes
 def test_hub_grant_with_handoff_gives_the_runner_the_secret_once(env):
     data = ok(handoff(env))["data"]
     assert data["pending"] is True and data["kind"] == "grant"
-    assert env.deliver(request(env), "workspace") is None
+    first = request(env)
+    assert env.deliver(first, "workspace") is None
     (plan, secret), *rest = env.captured
     assert not rest and secret.startswith(plan["grant"] + ".") and plan["until"]
     g = grants(env)[-1]
     assert plan["grant"] == g["grant"] and plan["person"].startswith("p_")
     # used once: a second request of the same terms finds no hand-off
     env.captured.clear()
-    assert env.deliver(request(env), "workspace") is None
+    second = request(env)
+    assert second["id"] != first["id"]
+    assert second["handoff"] == first["handoff"] == data["handoff"]
+    assert env.deliver(second, "workspace") is None
     assert env.captured == [] and len(grants(env)) == 2
+    assert [g["request"] for g in grants(env)] == [first["id"], second["id"]]
 
 
 @pytest.mark.parametrize("over", [{"hours": 7}, {"scope": "all"}])
@@ -136,9 +141,12 @@ def _rebind(service: Any) -> None:
 
 def test_an_old_hand_off_is_gone(env):
     ok(handoff(env))
-    env.served.lab.ws.clock[0] += 601
-    assert env.deliver(request(env), "workspace") is None
+    env.served.lab.ws.clock[0] += grantoff.MAX_AGE + 1
+    e = request(env)
+    assert env.deliver(e, "workspace") is None
     assert env.captured == []
+    assert len(grants(env)) == 1 and grants(env)[0]["request"] == e["id"]
+    assert env.service.submit(grantoff.GrantHandoffs(env.service)._read).result() == []
 
 
 def test_without_a_runner_the_hand_off_stays_and_the_grant_is_inert(env, monkeypatch):
@@ -239,3 +247,28 @@ def test_named_label_must_match_without_consuming_on_mismatch(env):
     assert env.captured == []
     assert env.deliver(request(env, label="My agent"), "workspace") is None
     assert len(env.captured) == 1
+
+
+@pytest.mark.parametrize("record_label,request_label", [(None, "My agent"), ("My agent", None)])
+def test_label_presence_must_match_without_consuming_on_mismatch(env, record_label, request_label):
+    record_terms = {} if record_label is None else {"label": record_label}
+    request_terms = {} if request_label is None else {"label": request_label}
+    ok(handoff(env, **record_terms))
+    assert env.deliver(request(env, **request_terms), "workspace") is None
+    assert env.captured == [] and len(grants(env)) == 1
+    assert env.deliver(request(env, **record_terms), "workspace") is None
+    assert len(env.captured) == 1 and len(grants(env)) == 2
+
+
+def test_a_member_cannot_request_scope_all_through_the_hub(env):
+    env.served.lab.ws.clock[0] = int(env.served.lab.ws.clock[0]) + 1
+    other = env.served.lab.add_member()
+    env.human.run("member.role", {"person": other.ref, "role": "owner"})
+    env.human.run("member.role", {"person": env.human.person.ref, "role": "member"})
+    before = env.lines("workspace")
+    assert env.deliver(request(env, scope="all"), "workspace") == "forbidden_role"
+    assert env.lines("workspace") == before
+    assert grants(env) == [] and env.captured == []
+    # The same aliased person can still request the scope a member is allowed.
+    assert env.deliver(request(env), "workspace") is None
+    assert len(grants(env)) == 1

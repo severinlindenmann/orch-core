@@ -71,6 +71,9 @@ class FakeRegistry:
     def card(self, ws):
         return {"name": self.ws[ws]["name"]} if self.ws[ws]["name"] else {}
 
+    def display_name(self, ws):
+        return self.ws[ws]["name"] or None
+
 
 class FakeShares:
     def __init__(self) -> None:

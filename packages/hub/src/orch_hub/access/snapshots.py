@@ -21,6 +21,8 @@ from ..contract import hub as H
 from ..contract.canon import cj
 from ..contract.hub import Refused
 from ..keys import HubKeys, KeysError
+from .orgmcp import org_mcp
+from .orgskills import org_skills
 from .store import Access, AccessError
 
 
@@ -42,7 +44,7 @@ class AccessSnapshots:
         with a.tx() as db:  # roles, channels, the stored row and the new row are one consistent step
             roles = a.roles(workspace_id)
             revoked = a.revoked_channels()
-            mp = a.market_policy()
+            mp = a.effective_market_policy(workspace_id)  # the hub-wide policy plus this workspace's add-on extras
             fp = hashlib.sha256(
                 cj(
                     {
@@ -80,3 +82,58 @@ class AccessSnapshots:
                 (workspace_id, o["version"], fp, cj(signed).decode()),
             )
             return signed
+
+    def org_skills(self, workspace_id: str, mode: str) -> dict[str, Any]:
+        """The signed ``hub.org_skills`` of ONE workspace (M3 #1430): only the skills offered to it."""
+        store = org_skills(self._a)  # (creates its tables: never inside the transaction below)
+        return self._bundle(
+            workspace_id, "hub.org_skills", "skills", "org_skills_bundle", lambda: store.offered_to(workspace_id)
+        )
+
+    def mcp_servers(self, workspace_id: str, mode: str) -> dict[str, Any]:
+        """The signed ``hub.mcp_servers`` of ONE workspace (M3 #1435): only the remote servers offered to it."""
+        store = org_mcp(self._a)
+        return self._bundle(
+            workspace_id, "hub.mcp_servers", "servers", "org_mcp_bundle", lambda: store.offered_to(workspace_id)
+        )
+
+    def _bundle(
+        self, workspace_id: str, kind: str, field: str, table: str, items: Callable[[], list[dict[str, Any]]]
+    ) -> dict[str, Any]:
+        """A per-workspace bundle versioned like the snapshot: unchanged content returns the stored bytes, changed content
+        (an item added, edited, withdrawn) gets ``version + 1``, so a host never accepts an older bundle. Any failure
+        refuses with ``unavailable``. ``table`` is one of two constants, never input."""
+        try:
+            signer = self._keys.op_signer
+            op_cert_id = self._keys.op_cert()["o"]["cert_id"]
+            with self._a.tx() as db:
+                content = items()
+                fp = hashlib.sha256(cj({field: content, "op": op_cert_id, "dev": dev_of(self._keys)})).hexdigest()
+                row = db.execute(
+                    f"SELECT version, fingerprint, signed FROM {table} WHERE workspace_id=?",
+                    (workspace_id,),
+                ).fetchone()
+                if row is not None and row[1] == fp:
+                    return H.parse(row[2].encode())
+                o = {
+                    "v": 2,
+                    "suite": 2,
+                    "kind": kind,
+                    "hv": H.HV,
+                    "hub_id": self._keys.hub_id,
+                    "op_cert_id": op_cert_id,
+                    "workspace_id": workspace_id,
+                    "version": (row[0] if row else 0) + 1,
+                    "issued_ms": self._now(),
+                    field: content,
+                    "dev": dev_of(self._keys),
+                }
+                signed = signer.sign_object(o)
+                db.execute(
+                    f"INSERT INTO {table} VALUES (?,?,?,?) ON CONFLICT(workspace_id) DO UPDATE SET "
+                    "version=excluded.version, fingerprint=excluded.fingerprint, signed=excluded.signed",
+                    (workspace_id, o["version"], fp, cj(signed).decode()),
+                )
+                return signed
+        except AccessError, KeysError, sqlite3.Error, OSError, ValueError:
+            raise Refused("unavailable") from None

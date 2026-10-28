@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ..access.store import AccessError
 from ..contract import hub as H
 from ..contract.canon import unb64u
 from ..contract.hub import Refused
@@ -334,6 +335,32 @@ def snapshot_get(c: OpContext) -> dict[str, Any]:
     return {"snapshot": c.snapshots.snapshot(c.workspace_id, mode)}
 
 
+def org_skills_get(c: OpContext) -> dict[str, Any]:
+    """M3 (#1430): the signed company-skills bundle of the LINK's workspace (never a caller-named one). Only a bound
+    workspace gets one; what is in it is offered, not enabled: the owner's accept at the host decides."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        mode = c.registry.mode(c.workspace_id)
+    fn = getattr(c.snapshots, "org_skills", None)
+    if fn is None:
+        raise Refused("unavailable")
+    return {"bundle": fn(c.workspace_id, mode)}
+
+
+def mcp_servers_get(c: OpContext) -> dict[str, Any]:
+    """M3 (#1435): the signed remote-MCP-servers bundle of the LINK's workspace (never a caller-named one). Offered, not
+    enabled: the owner's accept at the host decides, and the host reaches a server only through its own proxy."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        mode = c.registry.mode(c.workspace_id)
+    fn = getattr(c.snapshots, "mcp_servers", None)
+    if fn is None:
+        raise Refused("unavailable")
+    return {"bundle": fn(c.workspace_id, mode)}
+
+
 def publish_out(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:
         _require_pin(c)
@@ -527,7 +554,7 @@ def directory_get(c: OpContext) -> dict[str, Any]:
                 continue
             if not authz.may_route(c.workspace_id, ws):
                 continue
-            name = render_text((c.registry.card(ws) or {}).get("name", "") or "")
+            name = render_text(c.registry.display_name(ws) or "")
             haystack = [name, profile["description"], *profile["tags"], *profile["handles"]]
             if query and not any(query in value.casefold() for value in haystack):
                 continue
@@ -548,6 +575,20 @@ def status_put(c: OpContext) -> dict[str, Any]:
     if c.registry.pin(c.workspace_id) is None:
         raise Refused("unknown_workspace")
     c.registry.put_status(c.workspace_id, c.body)
+    return {}
+
+
+def addon_request(c: OpContext) -> dict[str, Any]:
+    """M3 (#1450): the workspace's host says an install was refused by the hub policy. Bounded display data for the hub
+    admin's Add-ons page; it grants nothing and changes no policy."""
+    if c.access is None:
+        raise Refused("unavailable")
+    _require_pin(c)
+    _require_bound(c)
+    try:
+        c.access.add_addon_request(c.workspace_id, c.body["name"], c.body["version"], c.body["actor"])
+    except AccessError:
+        raise Refused("malformed") from None
     return {}
 
 
@@ -600,7 +641,10 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "switch_redeem": switch_redeem,
     "rail_get": rail_get,
     "owner_get": owner_get,
+    "addon_request": addon_request,
     "status_put": status_put,
+    "org_skills_get": org_skills_get,
+    "mcp_servers_get": mcp_servers_get,
     "profile_put": profile_put,
     "directory_get": directory_get,
 }

@@ -37,6 +37,7 @@ W2H_OPS: dict[str, str | None] = {
     "rail_get": None,
     "owner_get": None,
     "status_put": None,
+    "addon_request": None,
     "profile_put": None,
     "directory_get": None,
     "share_put": "selective",

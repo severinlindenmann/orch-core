@@ -88,3 +88,25 @@ def test_schedule_new_target_review_lines(click, served, human):
             expires_at="2030-01-01T00:00:00Z",
             artifacts=None,
         )
+
+
+def test_new_schedule_creates_signed_anchor_in_one_click(click, served, human):
+    human.run("addon.grant", {"name": "schedules"})
+    args = {
+        "target": "new",
+        "title": "Mail {literal}",
+        "brief": "Read the mail",
+        "at": once_at(served, 5400),
+        "tz": "UTC",
+    }
+    p = click.prepare("schedule.add", args)
+    prepared = click.signer.approvals[(served.wid, p["request_id"])].prepared
+    assert [e["type"] for e in prepared["events"]] == ["ticket.created", "schedule.set"]
+    created, schedule = prepared["events"]
+    assert created["schedule"] == schedule["schedule"]
+    assert created["title"] == schedule["title"] == args["title"]
+    v = click.view(p["request_id"])
+    assert "creates a NEW ticket every run" in v["view"]["lines"][0]
+    click.mono.t += 1.5
+    result = click.sign(p["request_id"], v["view_digest"])
+    assert result["result"]

@@ -559,3 +559,138 @@ def test_real_store_deposit_and_closed_prompt(env):  # noqa: F811 - imported fix
     runner = ScheduleRunner(w.service, clock=lambda: w.lab.ws.clock[0], mono=lambda: env.mono[0])
     w.h.run(runner.tick_once())
     assert len(env.hub.commands) == 2
+
+
+def new_schedule(env, *, member=False):  # noqa: F811 - imported fixture
+    from datetime import UTC, datetime
+
+    from orch.identity import new_ulid
+    from tests.store.helpers import ts
+
+    host = env.w
+    person = host.quinn if member else host.lab.ws.owner
+    uid, sid = new_ulid(), "sc_" + new_ulid()
+    key = host.h.run(host.service.call(host.service.store.peek_key))
+    host.person_event(
+        "ticket.created",
+        uid,
+        who=person,
+        key=key,
+        ticket_type="chore",
+        title="Mail {literal}",
+        owner=person.ref,
+        schedule=sid,
+    )
+    due = int(host.lab.ws.clock[0] // 60 * 60 + 7200)
+    local = datetime.fromtimestamp(due, UTC)
+    host.person_event(
+        "schedule.set",
+        uid,
+        who=person,
+        schedule=sid,
+        target="new",
+        title="Mail {literal}",
+        brief="Agent text must never become the title",
+        rule={"every": "day", "at": local.strftime("%H:%M"), "tz": "UTC"},
+        starts=ts(host.lab.ws.clock[0]),
+        ends=ts(due + 3 * 86400),
+        run_hours=2,
+    )
+    host.lab.ws.clock[0] = due
+    runner = ScheduleRunner(host.service, clock=lambda: host.lab.ws.clock[0], mono=lambda: env.mono[0])
+    return host, uid, sid, due, runner
+
+
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_new_child_real_host_scoped_run_and_nothing_to_do(env, exit_code):  # noqa: F811
+    from orch.model.schedules import child_uid
+    from tests.host.dispatch_helpers import SESSION, err, ok
+    from tests.store.helpers import ts
+
+    host, uid, sid, due, runner = new_schedule(env)
+    host.h.run(runner.tick_once())
+    assert [cmd for cmd, _ in env.hub.commands] == ["grant.put_run", "spawn"]
+    put, spawn = [payload for _, payload in env.hub.commands]
+    child = child_uid(sid, ts(due))
+    store = host.service.store
+    view = host.h.run(host.service.call(store.ticket, child))
+    assert view.title == "Mail {literal} " + ts(due)[:10]
+    assert view.fields["parent"] == store.state._core.tickets[uid].key
+    assert store.state._core.ws.grants[put["grant"]].scope == child
+    assert view.key in spawn["argv"][-1]
+    assert host.service.auth.verify(put["secret"], due).state == "verified"
+    conn = host.conn()
+    args = dict(grant=put["secret"], session=SESSION, idem=True)
+    assert (
+        err(conn.call("log", {"ref": store.state._core.tickets[uid].key, "text": "touch anchor"}, **args))
+        == "grant.expired"
+    )
+    assert err(conn.call("new", {"title": "Agent text"}, **args)) == "grant.expired"
+    ok(conn.call("claim", {"ref": view.key}, **args))
+    ok(conn.call("log", {"ref": view.key, "text": "Checked mail"}, **args))
+    ok(conn.call("close", {"ref": view.key, "resolution": "nothing_to_do"}, **args))
+    record = env.hub.store.records[spawn["run"]]
+    record.update(state="exited", session=SESSION, exit={"code": exit_code})
+    host.h.run(runner.tick_once())
+    row = store.state._core.tickets[uid].schedules[sid].occurrences[ts(due)]
+    assert row["outcome"] == "ran_nothing"
+    assert store.state._core.tickets[child].status == "closed"
+    # Reload all logs with real signatures, including the child whose authority references the anchor.
+    from contextlib import closing
+
+    with closing(host.lab.ws.other()) as replayed:
+        replayed.load_all()
+        assert replayed.state._core.tickets[child].via["schedule_id"] == sid
+        assert replayed.state._core.tickets[uid].schedules[sid].occurrences[ts(due)]["outcome"] == "ran_nothing"
+
+
+def test_new_child_recovery_after_fired_before_created(env, monkeypatch):  # noqa: F811
+    from orch.model.schedules import child_uid
+    from tests.store.helpers import ts
+
+    host, uid, sid, due, runner = new_schedule(env)
+    create = runner._create_child
+
+    def crash(*args):
+        raise RuntimeError("crash after fired")
+
+    monkeypatch.setattr(runner, "_create_child", crash)
+    host.h.run(runner.tick_once())
+    child = child_uid(sid, ts(due))
+    assert child not in host.service.store.state._core.tickets
+    assert host.service.store.state._core.tickets[uid].schedules[sid].occurrences[ts(due)]["child"] == child
+    monkeypatch.setattr(runner, "_create_child", create)
+    host.h.run(runner.tick_once())
+    host.h.run(runner.tick_once())
+    assert list(host.service.store.state._core.tickets).count(child) == 1
+    assert not env.hub.commands  # the lost one-run secret is never recreated or launched twice
+    assert host.service.store.state._core.tickets[uid].schedules[sid].occurrences[ts(due)]["reason"] == "host_restarted"
+
+
+def test_new_child_host_open_limit_and_closed_anchor(env):  # noqa: F811
+    from tests.store.helpers import ts
+
+    host, uid, sid, due, runner = new_schedule(env)
+    host.h.run(runner.tick_once())
+    host.lab.ws.clock[0] = due + 86400
+    host.h.run(runner.tick_once())
+    rec = host.service.store.state._core.tickets[uid].schedules[sid]
+    assert rec.occurrences[ts(due + 86400)]["reason"] == "skipped_open_child"
+    assert len(env.hub.commands) == 2
+    host.person_event("ticket.closed", uid, resolution="other")
+    host.lab.ws.clock[0] = due + 2 * 86400
+    host.h.run(runner.tick_once())
+    rec = host.service.store.state._core.tickets[uid].schedules[sid]
+    assert rec.occurrences[ts(due + 2 * 86400)]["reason"] == "ticket_closed"
+    assert len(env.hub.commands) == 2
+
+
+def test_new_child_host_revocation_blocks_without_child(env):  # noqa: F811
+    from tests.store.helpers import ts
+
+    host, uid, sid, due, runner = new_schedule(env, member=True)
+    host.person_event("role.changed", person=host.quinn.ref, role="viewer")
+    host.h.run(runner.tick_once())
+    rec = host.service.store.state._core.tickets[uid].schedules[sid]
+    assert rec.occurrences[ts(due)]["reason"] == "role_lost"
+    assert not env.hub.commands and len(host.service.store.state._core.tickets) == 1

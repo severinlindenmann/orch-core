@@ -94,7 +94,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "settings.changed": frozenset({"set"}),
     "task.done": frozenset({"task", "receipt", "log", "text"}),
     "ticket.closed": frozenset({"resolution", "duplicate_of", "text"}),
-    "ticket.created": frozenset({"key", "ticket_type", "title", "owner"}),
+    "ticket.created": frozenset({"key", "ticket_type", "title", "owner", "schedule", "via"}),
     "ticket.moved": frozenset({"from", "to", "reason"}),
     "ticket.reopened": frozenset({"text"}),
     "ticket.updated": frozenset({"set", "sections"}),
@@ -1194,12 +1194,15 @@ def _event(
         return describe(ev["rule"], ref, ev["ends"], ev.get("target", "existing"), ev.get("title"))
     if typ == "schedule.cancelled":
         _row(out, "schedule", ev["schedule"])
-        return f"Cancel automatic sessions on {ref} and end their run grants"
+        return f"Cancel future automatic sessions on {ref}; existing-ticket run grants also end"
     if typ == "ticket.created":
         title = _s(ev.get("title"))
         out["ticket"] = {**(out.get("ticket") or {}), "key": _s(ev.get("key")), "title": one(title)}
         _row(out, "type", ev.get("ticket_type"))
         _row(out, "owner", ev.get("owner"))
+        for field in ("schedule", "via"):
+            if field in ev:
+                _row(out, field, ev[field])
         tail = (out.get("ticket") or {}).get("uid_tail")
         return f"Create ticket {_s(ev.get('key'))} · {one(title)}" + (
             f" (key per host; signed id …{tail})" if tail else ""

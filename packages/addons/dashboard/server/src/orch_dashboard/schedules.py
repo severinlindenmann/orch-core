@@ -93,8 +93,7 @@ def next_run(row: dict, now: int, prefix: str = "") -> str | None:
 
 def last_outcome(row: dict) -> dict | None:
     """The latest settled occurrence as `{at, outcome, reason}`; the reason only from the model's closed list."""
-    from orch.model.followups import OUTCOMES
-    from orch.model.schedules import REASONS
+    from orch.model.schedules import OUTCOMES, REASONS
 
     for o in reversed(_recorded(row)):
         if o.get("outcome") in OUTCOMES:

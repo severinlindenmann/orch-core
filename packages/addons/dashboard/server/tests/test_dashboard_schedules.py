@@ -334,3 +334,13 @@ def test_one_unsupported_row_never_breaks_the_page(target):
     assert by_id[SID]["supported"] is False and by_id[SID]["note"] == "Needs a newer dashboard"
     assert by_id[SID]["can_cancel"] is False
     assert by_id[other]["ticket"] == KEY and "supported" not in by_id[other]
+
+
+def test_last_outcome_keeps_new_child_results():
+    for outcome, reason in (("ran_nothing", None), ("did_not_run", "skipped_open_child")):
+        recorded = {"occurrence": "2030-01-03T09:00:00Z", "outcome": outcome, "reason": reason}
+        assert schedules.last_outcome({"outcomes": [recorded]}) == {
+            "at": recorded["occurrence"],
+            "outcome": outcome,
+            "reason": reason,
+        }

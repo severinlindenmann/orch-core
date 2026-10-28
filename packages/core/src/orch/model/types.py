@@ -302,6 +302,7 @@ class ScheduleRec:
     cancelled: bool = False
     target: str = "existing"
     title: str | None = None
+    set_sig_hash: str = ""
     # occurrence -> {"fired_at", "grant", "run", "released"?: true when the firing cleared the setter's claim,
     # "outcome"?, "reason"?}
     occurrences: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -314,6 +315,9 @@ class TCore:
     owner: str
     status: str
     fields: dict[str, Any]
+    anchor_schedule: str | None = None
+    via: dict[str, str] | None = None
+    close_resolution: str | None = None
     sections: dict[str, dict[str, Any]] = field(default_factory=dict)  # id -> {"hash", "refs"}
     people: dict[str, set[str]] = field(
         default_factory=lambda: {"assignees": set(), "reviewers": set(), "watchers": set()}

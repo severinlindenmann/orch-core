@@ -58,7 +58,7 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "schedule.cancelled": ("schedule",),
     "followup.cancelled": ("followup", "reason"),
     # ticket log, actor A or AU, signed by a person through human.prepare (H5a: person versions of agent ops)
-    "ticket.created": ("key", "ticket_type", "title", "owner"),
+    "ticket.created": ("key", "ticket_type", "title", "owner", "schedule", "via"),
     "ticket.updated": ("base_rev", "set", "sections"),
     "log.added": ("text",),
     # R3: a person marks a task done without a receipt (task.mark_done); the signer allows only {task}

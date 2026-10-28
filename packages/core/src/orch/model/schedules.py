@@ -26,6 +26,7 @@ REASONS = (
     "busy",
     "missed",
     "addon_disabled",
+    "skipped_open_child",
 )
 
 
@@ -140,3 +141,20 @@ def validate_target(event):
     elif "title" in event:
         return "title is only allowed for new-ticket schedules"
     return None
+
+
+OUTCOMES = ("ran", "ran_nothing", "failed", "did_not_run")
+
+
+def child_uid(schedule_id, occurrence):
+    """Stable 128-bit identity, independent of host clocks, retries and ticket keys."""
+    import hashlib
+
+    value = int.from_bytes(hashlib.sha256((schedule_id + "\0" + occurrence).encode()).digest()[:16], "big")
+    alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+    return "".join(alphabet[(value >> (5 * i)) & 31] for i in reversed(range(26)))
+
+
+def child_title(rec, occurrence):
+    local = datetime.fromisoformat(occurrence.replace("Z", "+00:00")).astimezone(ZoneInfo(rec.rule["tz"]))
+    return f"{rec.title} {local:%Y-%m-%d}"

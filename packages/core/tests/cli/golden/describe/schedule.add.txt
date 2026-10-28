@@ -1,7 +1,7 @@
 ok describe schedule.add
-Schedule automatic agent sessions on this ticket for up to 30 days.
+Schedule automatic agent sessions on an existing ticket or a new ticket each run, for up to 30 days.
 usage: orch schedule add [REF] [--target existing|new] [--title TITLE] --at AT [--every day|week|month] [--tz TZ] [--weekdays WEEKDAYS] [--day DAY] [--brief BRIEF] [--brief-file PATH] [--until UNTIL] [--run-hours RUN_HOURS] [--dry-run]
-who: human · emits: schedule.set
+who: human · emits: ticket.created,schedule.set
 args:
   REF  ticket REF; required for target existing
   --target TARGET  existing or new ticket (existing|new) [default existing]

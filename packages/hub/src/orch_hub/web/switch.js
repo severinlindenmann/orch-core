@@ -40,6 +40,7 @@ export function railRows(body) {
       name: typeof w.name === "string" && w.name ? w.name : w.workspace_id.slice(0, 8),
       role: typeof w.role === "string" ? w.role : null,
       online: w.online === true,
+      ...(w.last_seen == null ? {} : { last_seen: w.last_seen }),
       badge: Number.isInteger(w.badge) && w.badge > 0 ? w.badge : 0,
       canOpen: typeof w.origin === "string" && w.origin !== "",
     }));

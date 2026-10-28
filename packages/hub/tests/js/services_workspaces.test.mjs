@@ -86,7 +86,7 @@ test("hand-offs: names, sent time, Delivered / Waiting; a stranger is 'Another w
 
 test("empty states and times", () => {
   const t = text(workspacesView({ handoffs: [], workspaces: [] }, NOW));
-  assert.match(t, /No workspaces are connected yet/);
+  assert.match(t, /No workspaces yet/);
   assert.match(t, /No tickets have been sent between workspaces yet/);
   assert.equal(when(NOW - 60000, NOW), "Today 11:59");
   assert.equal(ago(NOW - 120000, NOW), "2 min ago");
@@ -167,7 +167,7 @@ test("admin empty state connects; left disclosure includes only unbound rows and
     connect: async () => { connected++; return { link: "/join#fresh", expires_ms: NOW + 1800000 }; },
     remove: async (w) => { removed = w; },
   } }, NOW);
-  assert.match(text(out), /No workspaces are connected yet/);
+  assert.match(text(out), /No workspaces yet/);
   assert.match(text(out), /Show left workspaces \(1\)/);
   assert.match(text(out), new RegExp("Left " + new Date(NOW).toLocaleDateString().replaceAll("/", "\\/")));
   assert.doesNotMatch(text(out), /Product/);

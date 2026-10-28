@@ -1,3 +1,4 @@
+import { emptyState } from "./feel.js";
 // The Workspaces page (run-11 feedback 13): connected workspaces and the tickets sent between them. The hub passes
 // hand-offs on sealed, so it knows who sent, to whom, when, and whether the receiver has taken it, never what it says.
 import { ago, chip, h, text, when } from "./ui.js";
@@ -92,7 +93,7 @@ export function workspacesView(data, now = Date.now()) {
           n ? small(n + (n === 1 ? " hand-off is" : " hand-offs are") + " waiting for this workspace") : null),
         h("td", {}, statusView(w, now)), h("td", {}, versionView(w, data.hub)), h("td", {}, hostView(w)),
         h("td", {}, h("div", { class: "ws-actions" }, button("Details", () => actions.details?.(w)), button("Open", () => actions.open?.(w)))));
-    })))) : h("p", { class: "empty", text: "No workspaces are connected yet." });
+    })))) : emptyState("workspaces");
   const older = data.workspaces.filter((w) => ["older", "unsupported"].includes(w.version_state));
   const left = (data.admin ?? []).filter((w) => w.status === "unbound");
   const leftView = data.admin != null ? h("details", {}, h("summary", { text: "Show left workspaces (" + left.length + ")" }),

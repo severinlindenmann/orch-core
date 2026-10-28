@@ -150,3 +150,20 @@ def test_selective_target_never_routes_or_appears_in_directory(directory):
     assert authz.may_route("caller", "other") is True
     assert authz.may_route("caller", "selective") is False
     assert "selective" not in {row["workspace_id"] for row in directory_get(c)["entries"]}
+
+
+def test_directory_lists_only_what_the_router_would_route_to(directory):
+    """With a router, the directory uses ITS rule (a connection AND access): no connection, no listing."""
+    from orch_hub.connections import ConnectionAuthz, Connections
+    from orch_hub.router.core import AccessAuthz
+
+    c, _allowed = directory
+    store = Connections(":memory:")
+    router = SimpleNamespace(authz=ConnectionAuthz(store, AccessAuthz(c.registry, c.access)), is_online=lambda ws: True)
+    c.router = router
+    assert directory_get(c) == {"entries": []}  # access allows "other", but there is no connection: not listed
+    store.add("caller", "other", approved_by=None, via="override")
+    assert [e["workspace_id"] for e in directory_get(c)["entries"]] == ["other"]
+    store.remove("caller", "other")  # closing it removes the listing at once (no cache)
+    assert directory_get(c) == {"entries": []}
+    store.close()

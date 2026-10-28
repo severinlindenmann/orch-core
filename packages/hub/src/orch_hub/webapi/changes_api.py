@@ -87,3 +87,22 @@ class ChangeHandlers:
     def _h_a_change_cancel(self, c: Any, p: dict, q: dict, b: dict | None):
         self._chg().cancel(p["change_id"], c.user_id)
         return 200, {"ok": True}
+
+    # --- connections between workspaces -------------------------------------------------------------------------------
+
+    def _h_connection_set(self, c: Any, p: dict, q: dict, b: dict | None):
+        """``{from, to, allow}``: allow = ask (202, waits for an approver of the receiving workspace); not allow = close now."""
+        b = _body(b)
+        allow = b.get("allow")
+        if type(allow) is not bool:
+            raise ChangeError("malformed")
+        chg = self._chg()
+        if allow:
+            got = chg.propose_connection(c.user_id, b.get("from"), b.get("to"))
+            if got.get("direct"):  # the owner of the receiving end (and of both, or the only approver): applied at once
+                return 200, {"ok": True, "direct": True}
+            return 202, {"change_id": got["change_id"], "waiting_for": got["waiting_for"]}
+        return 200, {"ok": True, "removed": chg.deny_connection(c.user_id, b.get("from"), b.get("to"))}
+
+    def _h_my_connection_traffic(self, c: Any, p: dict, q: dict, b: dict | None):
+        return 200, {"traffic": self._chg().traffic_for(c.user_id)}

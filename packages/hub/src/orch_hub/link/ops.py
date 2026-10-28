@@ -519,7 +519,8 @@ def directory_get(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:
         _require_pin(c)
         _require_bound(c)
-        authz = AccessAuthz(c.registry, c.access)
+        # the router's own rule (a connection AND access): never list a workspace the caller cannot route to
+        authz = c.router.authz if c.router is not None else AccessAuthz(c.registry, c.access)
         for ws in sorted(c.registry.pins()):
             profile = c.registry.profile(ws)
             if ws == c.workspace_id or c.registry.mode(ws) is None or not profile or not profile["listed"]:

@@ -54,8 +54,6 @@ try {
   await page.locator("#services-ws").waitFor();
   await page.getByRole("button", { name: "See workspaces and hand-offs" }).click();
   await page.getByRole("heading", { name: "Connected workspaces" }).waitFor();
-  await page.getByRole("heading", { name: "Hand-offs between workspaces" }).waitFor();
-  await page.locator("#handoffs-empty").waitFor();
   await shot("workspaces");
   await page.getByRole("button", { name: "Connect a workspace" }).click();
   await page.getByText("30 minutes").first().waitFor();
@@ -65,6 +63,17 @@ try {
   await page.getByRole("button", { name: "Details" }).first().click();
   await page.getByText("To change what this workspace shares").waitFor();
   await shot("workspaces-details");
+  // hand-offs live on their own page now (#1418): the empty state, then the page's own heading
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.locator(".side").getByRole("link", { name: "Hand-offs" }).click();
+  await page.getByRole("heading", { name: "Hand-offs", exact: true }).waitFor();
+  await shot("handoffs");
+  // every page of the M2 batch opens and draws its heading (no script or CSP errors on any of them)
+  for (const [tab, heading] of [["Account", "Account"], ["Phones", "Phones & browsers"], ["Activity", "Activity"], ["Connections", "Connections"], ["Admin", "Admin"]]) {
+    await page.locator(".side").getByRole("link", { name: tab, exact: true }).click();
+    await page.getByRole("heading", { name: heading, exact: true }).first().waitFor();
+    await shot("page-" + tab.toLowerCase());
+  }
   assert(problems.length === 0, "CSP or script problems: " + problems.join("; "));
   console.log("R11 browser: ok");
 } finally {

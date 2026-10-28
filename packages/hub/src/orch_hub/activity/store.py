@@ -31,6 +31,12 @@ ACTIVITY_TYPES = (
     "pairing.issued",
     "pairing.used",
     "change.cancelled",
+    "skill.saved",
+    "skill.removed",
+    "skill.offered",
+    "mcp.saved",
+    "mcp.removed",
+    "mcp.offered",
     "space.mode_set",
     "space.archived",
     "space.unarchived",
@@ -55,6 +61,8 @@ DETAIL_FIELDS = frozenset(
         "reason",  # an admin's written reason for an override (3-200 characters, see changes.service)
         "groups_removed",
         "direct",
+        "skill",
+        "server",
     }
 )
 REASON_MAX_BYTES = 800  # 200 characters of UTF-8

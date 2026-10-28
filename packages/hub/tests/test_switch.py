@@ -342,6 +342,7 @@ def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_close
             "channel_id",
             "prepared_id",
             "change_id",
+            "name",
             "space_id",
         ):
             path = path.replace("{" + name + "}", ws)

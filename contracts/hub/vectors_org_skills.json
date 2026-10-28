@@ -1,0 +1,1883 @@
+{
+ "card": {
+  "o": {
+   "card_seq": 1,
+   "dev": true,
+   "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+   "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+   "hv": 0,
+   "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+   "issued_ms": 1789913600000,
+   "kind": "hub.card",
+   "reader": 1,
+   "relay_url": null,
+   "suite": 2,
+   "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+   "v": 2
+  },
+  "op_cert": {
+   "o": {
+    "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+    "dev": true,
+    "expires_ms": 1821536000000,
+    "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+    "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+    "hv": 0,
+    "issued_ms": 1789913600000,
+    "kind": "hub.op_cert",
+    "op_seq": 1,
+    "suite": 2,
+    "v": 2
+   },
+   "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+  },
+  "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+ },
+ "cases": [
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+        "name": "invoices",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "4JG7BPCVt20CWiADLXCNMj7HS7cM7IxkdqLoXSWA1C0-HHeTcX7B3LGrUkc9tTAceVf3QFeWMp-FksLV4oh2jQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "ok": true
+   },
+   "name": "accepted"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [],
+      "suite": 2,
+      "v": 2,
+      "version": 3,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "oQqV23lLX7W5Q2YOfjcoO8QI-p5fu1iq1KBihAdc_rtKWTjewbge7dg8SbG3cyXj4yqEkIsIffz-M-SHi1resA"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "ok": true
+   },
+   "name": "empty bundle (everything withdrawn) is valid"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+        "name": "invoices",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "4JG7BPCVt20CWiADLXCNMj7HS7cM7IxkdqLoXSWA1C0-HHeTcX7B3LGrUkc9tTAceVf3QFeWMp-FksLV4oh2jQ"
+    },
+    "pinned": {
+     "dev": true,
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "hv": 0,
+     "issued_ms": 1789999940000,
+     "kind": "hub.org_skills",
+     "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+     "skills": [
+      {
+       "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+       "name": "invoices",
+       "text": "Write invoice numbers as INV-2026-0001."
+      }
+     ],
+     "suite": 2,
+     "v": 2,
+     "version": 1,
+     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+    },
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "ok": true
+   },
+   "name": "a higher version replaces the pinned one"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+        "name": "invoices",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "4JG7BPCVt20CWiADLXCNMj7HS7cM7IxkdqLoXSWA1C0-HHeTcX7B3LGrUkc9tTAceVf3QFeWMp-FksLV4oh2jQ"
+    },
+    "pinned": {
+     "dev": true,
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "hv": 0,
+     "issued_ms": 1789999940000,
+     "kind": "hub.org_skills",
+     "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+     "skills": [
+      {
+       "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+       "name": "invoices",
+       "text": "Write invoice numbers as INV-2026-0001."
+      }
+     ],
+     "suite": 2,
+     "v": 2,
+     "version": 2,
+     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+    },
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "ok": true
+   },
+   "name": "the same version and bytes is a no-op"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+        "name": "invoices",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "4JG7BPCVt20CWiADLXCNMj7HS7cM7IxkdqLoXSWA1C0-HHeTcX7B3LGrUkc9tTAceVf3QFeWMp-FksLV4oh2jQ"
+    },
+    "pinned": {
+     "dev": true,
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "hv": 0,
+     "issued_ms": 1789999940000,
+     "kind": "hub.org_skills",
+     "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+     "skills": [
+      {
+       "digest": "sha256:776078dea651b1db72fec2529efb97553f8ab7bc83a4ef9963533eb04e688baf",
+       "name": "support",
+       "text": "Greet people."
+      }
+     ],
+     "suite": 2,
+     "v": 2,
+     "version": 2,
+     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+    },
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "bundle_conflict"
+   },
+   "name": "the same version with other bytes is a conflict"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+        "name": "invoices",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 1,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "9CAsU5g1CDfqe90VmMwOxb_mxGBCmzy14Qa4fGqdbcw_1rSvHVoXgAmpReDrYH9JPYj0ZqgbVoDDwCnz77Sn3w"
+    },
+    "pinned": {
+     "dev": true,
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "hv": 0,
+     "issued_ms": 1789999940000,
+     "kind": "hub.org_skills",
+     "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+     "skills": [
+      {
+       "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+       "name": "invoices",
+       "text": "Write invoice numbers as INV-2026-0001."
+      }
+     ],
+     "suite": 2,
+     "v": 2,
+     "version": 2,
+     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+    },
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "stale_bundle"
+   },
+   "name": "a lower version is a rollback"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+        "name": "invoices",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "f6d7c85d726aa1e390c7280d5ed7d6bb"
+     },
+     "sig": "wgb0AsOeza2OyKJAyZvLPjCW7NZN5zOi0FR-XFb1hHhAWuGdwDqMATeqUOF7SQlf_8OBEO17ph9sjQFLK95z0w"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "other_workspace"
+   },
+   "name": "the bundle of another workspace"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+        "name": "invoices",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "et7MLO0RSzAA9mzfX45aiHGmQep-LWwE0I7QdJjVIkMmj2JHDyrdoBa3FT1Wotpx6TjPpzAnxtU-dSZBEzzWNQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "signed by the wrong key"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "4JG7BPCVt20CWiADLXCNMj7HS7cM7IxkdqLoXSWA1C0-HHeTcX7B3LGrUkc9tTAceVf3QFeWMp-FksLV4oh2jQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "content changed after signing"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:c51865970615d38250b410c7dd467f62b5ad6e40060ad0ff5adb6812f61e45a9",
+        "name": "orch-tickets",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "S9HHMReAXprkYjyq6SdFWYsppsypjNO1ZHJQg9Qq5omADlhI10A9F0Szfoav6qT2Xjmw6iskaK0XWSDPJQtPrA"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "a name starting with orch shadows a builtin skill"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:f43e0367c59588ac2159ea90f76cb466a14a14aa1efaf8164c85d02030a5c1c7",
+        "name": "invoices",
+        "text": "ok\u202e"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "N_zW8AUoaIHO7_YxrB-vHXqBMsLA_TxNHiasSEhL6wR-F_EsdYPHsWB6BvEfpeynsZtQX6Z_RuWh7KF5LXeSRA"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "a bidi control character in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:f43e0367c59588ac2159ea90f76cb466a14a14aa1efaf8164c85d02030a5c1c7",
+        "name": "invoices",
+        "text": "ok\u202e"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "N_zW8AUoaIHO7_YxrB-vHXqBMsLA_TxNHiasSEhL6wR-F_EsdYPHsWB6BvEfpeynsZtQX6Z_RuWh7KF5LXeSRA"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "bidi override in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:f62bb0f848e090c0561c3fcb210259f3e14a5cb8d1ec56ae2b03ba9e8fa30f41",
+        "name": "invoices",
+        "text": "ok\u200b"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "5o1kX9ADsyMWjyQ4-ePjYsZpB3KPR7ZPHECCxNHbqv896vclIyA-m4D0n4UdJ9NqRY7Zl7d6hNDoucNnGR6uVw"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "zero width space in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:1f279a62dddd42d2cdd42a6a0a1b075889201e6ff5bf78ea73a0ec0b29a79d25",
+        "name": "invoices",
+        "text": "ok\ufe0f"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "bRq4VevEV7gPAHZ4ry4BVnDbgzdqPoQ__uKX_6gankNA4M2cHSS8WeeJxMIxwTdDUBveBcwq_U-KytV-gkTrVA"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "variation selector in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:ead71cec914cda7e7e8783d409cb8655bddf2e75e015aacef7097bf663f87e18",
+        "name": "invoices",
+        "text": "ok\udb40\udd00"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "jhAFXHlRvIQWTlAF4u4XnIxSf8c5YRjktOsBDoTpbqb_cvMbtUea4_fRGE5PjKVF4hO13wHwD_piu7uu4_42WQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "variation selector supplement in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:cb5f68189aee571c7a74b3d7f1e416abaa712edecf5ec0669adf23858feab184",
+        "name": "invoices",
+        "text": "ok\udb40\udc41"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "Ew_-dXeVa6LW42tiCdLjk1qfgcrgm2pMyr3g-hRzUV4K3muNoSyM_Tx3nmhRFHb0lwEkpR1HQker2a7g2Uacrw"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "tag character in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:513531299b0a92033b09a5f3d0ef0e61aeb89ef24f0b11c48164ea4294d07e52",
+        "name": "invoices",
+        "text": "ok\u3164"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "07X3gZ-uEtgg4Z70KPUhppuVAYVgiCRY61yliapSlrnijMIAbS11pPpjJ9p4v3Qml-bVtHVe8S3pSeBbrtSIiQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "hangul filler in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:0689dbe033b559857a15b8c80dedc9bce21f520c2aaee29b38a8d0e848c73e02",
+        "name": "invoices",
+        "text": "ok\uffa0"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "JNLLAPwW-BJzx_TDrBRIbS_hhBWblqjITfNySXuS8fZkbieq7kOETlkiSyai5ojdbrWiPiCCiXcAVVex1RE9KQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "halfwidth hangul filler in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:e01adc2370f53f78583e621769ec925ad2f0bc10b5d0379d689816d10d3a3467",
+        "name": "invoices",
+        "text": "ok\u2028"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "ucAItN4rkdufs7H5kJ7CYLXpyWcRTs81_gTzefmZVUy9DKjzRiBb8ezE49hXugm3gMhX2Ww8EHj1ETljOt7FYQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "line separator in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:a70a83ddeefbc55492c8edc21e151630dc439a3f59898541854c1d6e74dd3acd",
+        "name": "invoices",
+        "text": "ok\u2029"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "AGTumT9iyXTIE5Vc4qcdUWl4n9Chc9F20Fa_geM3aBiTpNziMXn4QpAMw1OskXAcm2fdS4IYO7F6z2dTKNW2IA"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "paragraph separator in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:5b2e5602b7457959093dfd928e7ad41942aa2e053f3a1c464e0271193aed4de0",
+        "name": "invoices",
+        "text": "ok\u2800"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "W5dEIFWH3xSG8JV-UTS8oOrX1E_ybCOHjuZQt4drslw5pRrLNxTL1SYncWvaPB-Jh7UH6ZCskdmg3D8FbxDMhQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "braille blank in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:480929abde21c9ddb805de8c5a32463846b9d47871f8886f48ca83535e51f22c",
+        "name": "invoices",
+        "text": "ok\u00ad"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "2cPlyqwfMJrNeELmSnBfBlsaem9cifiba8yBsYBgHvbeFEqQnCrQJ213l7QVVR6i8duIh4gWsnucCxoUXYw9Fg"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "soft hyphen in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:8020aab8d89da92b6a3413dfc94382ebd27805e7605b34b41e8ad4191d556060",
+        "name": "invoices",
+        "text": "ok\ue000"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "jn-O_h-SjzU6jyglB35x9kze0LJf380C7lIneGozOHXBFhgUNVTBOqIpOJ59XonrmzgSV9zcbI6vBiiHctp4Bg"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "private use in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:440d75aa3bfbff323a38ceca02a6bf4eb7c5b8cffc792701c1f15bc173f05067",
+        "name": "invoices",
+        "text": "ok\u001b"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "GsPt-1qWBz5Izi79X8qMQhs8MuY_-AbrQjkowg_-Dpn5zFrJ_emYj3XkAJoztObj0YEE6qeckYZdCY5YYSXQEw"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "control in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:8a931ac748587b0896a2771778eb4dee57be63965aea01c2bb11b1272fe54b57",
+        "name": "invoices",
+        "text": "ok\r"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "B0SAKM4ZW0YINsc13CrfZQZneyxIF0U3edQD0iKO_HnqknSxP-0gb_rUJols73Ksr7L4SYmaRM6WM4Yc7tC74w"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "carriage return in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:4aca86a866aca8be21cb02652c0ba4a28cc3e979a4e15259e8007774e2e4736c",
+        "name": "invoices",
+        "text": "ok\ufeff"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "mmwglb53rcacM9DvVYGOcdqsrHwX95JoM4D9UtAAJF7BgdIiGyinj-p4P0I9-3GUXNIZp9W-acXcGT-MQB2zUw"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "byte order mark in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:010090ff225ae2f65b1e22ac561153ec111e61ac6eafb28c896d4cd57ae353fa",
+        "name": "invoices",
+        "text": "---\nname: x\n---\nbody"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "L1LB9hNvOEh2VDPE061wzVIuS6zmUKSeChx76MOHbV5K89ipopfqYR4u0-9NX-O2rCUDlxa63wY_noggNTvYWQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "front matter"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:337dbf20d811bce0495d639690b561caaf1215e47910c6efbd873e683a769cc7",
+        "name": "invoices",
+        "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "NesznVVpvOpst40CZsuOGWN1b7TbDJwCSCr7g_UlXfqQC5yvGo0EOx5CG1nJYSL2FPM0nEZcivIPsyjnmwFm2Q"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "a text over 2400 characters"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "name": "invoices",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "uYu8BH4Qn_VshzSz4uLPlMQMj9h9w_O6QmEb9gqmHgLFCZNIQUAtOh5VKVmM0mbPq22Ly1aGlCC-Nrq0bhoM-g"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "a digest that does not match the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:6ca584eca9d46032e1aaeff0e344dd85912eebc38f0dc03c69395f5deecf5e97",
+        "name": "support",
+        "text": "Write invoice numbers as INV-2026-0001."
+       },
+       {
+        "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+        "name": "invoices",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "yzdheoqjSJX_pfF7phBhZ9ETvGQ8rjQ2TutNtI6o1589C1a4Ub2Bkh_8kAX-aN1wBuLGK_v01nM2zOvsZIvPLg"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "skills not sorted by name"
+  }
+ ],
+ "doc": "hub.org_skills (M3 #1430): replay each case with verify_org_skills against the card",
+ "mcp_bundle_cases": [
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.mcp_servers",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "servers": [
+       {
+        "auth": "none",
+        "description": "Our CRM",
+        "digest": "sha256:d32fe43275d4dedc6be1913a2c5d33fea6dd91e3109541d98e891d4cc364fc84",
+        "name": "crm",
+        "secret": null,
+        "url": "https://tools.example.com/mcp"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "dowq9ABVsjYknyMOSMDOkPL881e8HAQMC6WEPSS5d6pz17h6LPPcQA1BAOEvxN56LIKAE3Wv2wHXonnnCQ8JXA"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "ok": true
+   },
+   "name": "accepted"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.mcp_servers",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "servers": [
+       {
+        "auth": "none",
+        "description": "Our CRM",
+        "digest": "sha256:d32fe43275d4dedc6be1913a2c5d33fea6dd91e3109541d98e891d4cc364fc84",
+        "name": "crm",
+        "secret": null,
+        "url": "https://tools.example.com/mcp"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 1,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "uoA-Li_OcAiOWSQChcev2yT3PkWr7GUWokyGBE0XpJxSKhydPA-I1jGpxNDor3EFklJy_c38kpra_cXhDo5wNw"
+    },
+    "pinned": {
+     "dev": true,
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "hv": 0,
+     "issued_ms": 1789999940000,
+     "kind": "hub.mcp_servers",
+     "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+     "servers": [
+      {
+       "auth": "none",
+       "description": "Our CRM",
+       "digest": "sha256:d32fe43275d4dedc6be1913a2c5d33fea6dd91e3109541d98e891d4cc364fc84",
+       "name": "crm",
+       "secret": null,
+       "url": "https://tools.example.com/mcp"
+      }
+     ],
+     "suite": 2,
+     "v": 2,
+     "version": 2,
+     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+    },
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "stale_bundle"
+   },
+   "name": "a lower version is a rollback"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.mcp_servers",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "servers": [
+       {
+        "auth": "none",
+        "description": "Our CRM",
+        "digest": "sha256:d32fe43275d4dedc6be1913a2c5d33fea6dd91e3109541d98e891d4cc364fc84",
+        "name": "crm",
+        "secret": null,
+        "url": "https://tools.example.com/mcp"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "f6d7c85d726aa1e390c7280d5ed7d6bb"
+     },
+     "sig": "90h6WmBiXY5XYh_pX_qAB0ZWvyx_T4bqZ6oDmsKNVjNo3okFgNva7NylpqWmMceg0K_lZ4bQL01xo3wwInW9XQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "other_workspace"
+   },
+   "name": "the bundle of another workspace"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.mcp_servers",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "servers": [
+       {
+        "auth": "none",
+        "description": "Our CRM",
+        "digest": "sha256:d32fe43275d4dedc6be1913a2c5d33fea6dd91e3109541d98e891d4cc364fc84",
+        "name": "crm",
+        "secret": null,
+        "url": "https://tools.example.com/mcp"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "OUYjDi4nUpwSZgVj4h5DTVgFJ8eoUsdYOiPOiUW-jEU7spNRh8gtuDoQolt_upcMmSClXH9-MM4w70sD8f_2_Q"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "bad_signature"
+   },
+   "name": "signed by the wrong key"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.mcp_servers",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "servers": [
+       {
+        "auth": "none",
+        "command": "npx",
+        "description": "Our CRM",
+        "digest": "sha256:d32fe43275d4dedc6be1913a2c5d33fea6dd91e3109541d98e891d4cc364fc84",
+        "name": "crm",
+        "secret": null,
+        "url": "https://tools.example.com/mcp"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "AJR66tRI-38FWBGtTYxSWjyaDdLAmFDkVhOfzN8Gq6k3aQYS68gKlEB4svcT_M7SW6gX4vevKI3Re_cv20Wc8g"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "a local command smuggled into an entry"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.mcp_servers",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "servers": [
+       {
+        "auth": "none",
+        "description": "Our CRM",
+        "digest": "sha256:213fd664c9f392a16f288aa2f2d0289cb459b3a32e1cfd5601a02ae2cbda24ff",
+        "name": "crm",
+        "secret": null,
+        "url": "http://x.example.com/"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "NpHqVo-BlEftpgk4-Lnok4GG70Yyk-FhaIWSHvECw56Jy3vit6lzjMqg3uiaYjLbuRBqviTS29MI81m4aEpfnw"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "an http address"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:931b704269ccdfe7e74b813ddd836022b21c414fe079c9f8e052bba18dbc008a",
+        "name": "invoices",
+        "text": "Write invoice numbers as INV-2026-0001."
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "4JG7BPCVt20CWiADLXCNMj7HS7cM7IxkdqLoXSWA1C0-HHeTcX7B3LGrUkc9tTAceVf3QFeWMp-FksLV4oh2jQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "a skills bundle is not a servers bundle"
+  }
+ ],
+ "mcp_cases": [
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.example.com/mcp"
+   },
+   "expect": null,
+   "name": "remote https server"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.example.com:8443/a/b"
+   },
+   "expect": null,
+   "name": "a port and a path"
+  },
+  {
+   "entry": {
+    "auth": "hub_secret",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": "crm-key",
+    "url": "https://tools.example.com/mcp"
+   },
+   "expect": null,
+   "name": "a company secret by name"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "http://tools.example.com/mcp"
+   },
+   "expect": "https_only",
+   "name": "http is refused"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "npx -y some-server"
+   },
+   "expect": "https_only",
+   "name": "a command is not an address"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.example.com/mcp?key=abc"
+   },
+   "expect": "url",
+   "name": "a key in the query"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.example.com/mcp#x"
+   },
+   "expect": "url",
+   "name": "a fragment"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://user:pw@tools.example.com/"
+   },
+   "expect": "url",
+   "name": "credentials in the address"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.example.com/a b"
+   },
+   "expect": "url",
+   "name": "a space"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://localhost/mcp"
+   },
+   "expect": "not_remote",
+   "name": "loopback name"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://127.0.0.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "loopback address"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://[::1]/mcp"
+   },
+   "expect": "not_remote",
+   "name": "loopback v6"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://169.254.169.254/x"
+   },
+   "expect": "not_remote",
+   "name": "cloud metadata address"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://intranet/mcp"
+   },
+   "expect": "not_remote",
+   "name": "a one-word host"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://8.8.8.8/mcp"
+   },
+   "expect": null,
+   "name": "a global address"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://10.0.0.5/mcp"
+   },
+   "expect": "not_remote",
+   "name": "private 10/8"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://192.168.1.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "private 192.168/16"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://172.16.0.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "private 172.16/12"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://100.64.0.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "shared 100.64/10 (VPN)"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://[fd00::1]/mcp"
+   },
+   "expect": "not_remote",
+   "name": "unique-local fd00::/8"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://[::ffff:10.0.0.1]/mcp"
+   },
+   "expect": "not_remote",
+   "name": "mapped private ::ffff:10.0.0.1"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://127.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "short form 127.1"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://0x7f.0.0.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "hex form 0x7f.0.0.1"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://0177.0.0.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "octal form 0177.0.0.1"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://2130706433/mcp"
+   },
+   "expect": "not_remote",
+   "name": "decimal form 2130706433"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://printer.local/mcp"
+   },
+   "expect": "not_remote",
+   "name": "suffix .local"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.internal/mcp"
+   },
+   "expect": "not_remote",
+   "name": "suffix .internal"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://nas.lan/mcp"
+   },
+   "expect": "not_remote",
+   "name": "suffix .lan"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://router.home/mcp"
+   },
+   "expect": "not_remote",
+   "name": "suffix .home"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://crm.corp/mcp"
+   },
+   "expect": "not_remote",
+   "name": "suffix .corp"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "orch-tools",
+    "secret": null,
+    "url": "https://tools.example.com/mcp"
+   },
+   "expect": "reserved_name",
+   "name": "reserved name"
+  },
+  {
+   "entry": {
+    "auth": "hub_secret",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.example.com/mcp"
+   },
+   "expect": "secret",
+   "name": "sign-in needs a secret name"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": "crm-key",
+    "url": "https://tools.example.com/mcp"
+   },
+   "expect": "secret",
+   "name": "a secret name without a sign-in"
+  },
+  {
+   "entry": {
+    "auth": "oauth",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.example.com/mcp"
+   },
+   "expect": "auth",
+   "name": "unknown sign-in"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "ok\udb40\udc41",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.example.com/mcp"
+   },
+   "expect": "description",
+   "name": "hidden character in the description"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "a\nb",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.example.com/mcp"
+   },
+   "expect": "description",
+   "name": "a newline in the description"
+  },
+  {
+   "entry": {
+    "command": "npx",
+    "name": "crm"
+   },
+   "expect": "shape",
+   "name": "no room for a command"
+  }
+ ],
+ "now_ms": 1790000000000,
+ "text_cases": [
+  {
+   "expect": "hidden_characters",
+   "name": "bidi override",
+   "skill_name": "invoices",
+   "text": "ok\u202etext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "zero width space",
+   "skill_name": "invoices",
+   "text": "ok\u200btext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "variation selector",
+   "skill_name": "invoices",
+   "text": "ok\ufe0ftext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "variation selector supplement",
+   "skill_name": "invoices",
+   "text": "ok\udb40\udd00text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "tag character",
+   "skill_name": "invoices",
+   "text": "ok\udb40\udc41text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "hangul filler",
+   "skill_name": "invoices",
+   "text": "ok\u3164text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "halfwidth hangul filler",
+   "skill_name": "invoices",
+   "text": "ok\uffa0text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "line separator",
+   "skill_name": "invoices",
+   "text": "ok\u2028text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "paragraph separator",
+   "skill_name": "invoices",
+   "text": "ok\u2029text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "braille blank",
+   "skill_name": "invoices",
+   "text": "ok\u2800text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "soft hyphen",
+   "skill_name": "invoices",
+   "text": "ok\u00adtext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "private use",
+   "skill_name": "invoices",
+   "text": "ok\ue000text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "control",
+   "skill_name": "invoices",
+   "text": "ok\u001btext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "carriage return",
+   "skill_name": "invoices",
+   "text": "ok\rtext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "byte order mark",
+   "skill_name": "invoices",
+   "text": "ok\ufefftext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "combining mark after a digit",
+   "skill_name": "invoices",
+   "text": "1\u0301"
+  },
+  {
+   "expect": null,
+   "name": "plain text",
+   "skill_name": "invoices",
+   "text": "Write invoice numbers as INV-2026-0001."
+  },
+  {
+   "expect": null,
+   "name": "accents, other scripts, symbols",
+   "skill_name": "invoices",
+   "text": "Rechnung \u00fcber 100 \u20ac \u65e5\u672c\u8a9e \ud83d\ude00"
+  },
+  {
+   "expect": null,
+   "name": "newline and tab",
+   "skill_name": "invoices",
+   "text": "a\tb\nc"
+  },
+  {
+   "expect": "reserved_name",
+   "name": "reserved name",
+   "skill_name": "orch-x",
+   "text": "Write invoice numbers as INV-2026-0001."
+  },
+  {
+   "expect": "name",
+   "name": "bad name",
+   "skill_name": "Invoices",
+   "text": "Write invoice numbers as INV-2026-0001."
+  },
+  {
+   "expect": "empty",
+   "name": "empty",
+   "skill_name": "invoices",
+   "text": " \n"
+  },
+  {
+   "expect": "too_long",
+   "name": "too long",
+   "skill_name": "invoices",
+   "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "expect": "front_matter",
+   "name": "front matter",
+   "skill_name": "invoices",
+   "text": "---\nx"
+  }
+ ]
+}

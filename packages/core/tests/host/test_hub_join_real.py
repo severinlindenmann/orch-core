@@ -389,7 +389,8 @@ def test_a_refused_install_is_reported_to_the_bound_hub_with_the_actor(monkeypat
             calls.append((op, body))
 
     monkeypatch.setattr(orch.hubclient, "HubLink", Link)
-    monkeypatch.setattr(hubops, "_transport", lambda *args: object())
+    links = []
+    monkeypatch.setattr(hubops, "_transport", lambda service, hub_id, link=None: links.append(link) or object())
     monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
     monkeypatch.setattr(hubops, "_wsk_sign", lambda service: (b"", None))
     monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
@@ -406,6 +407,9 @@ def test_a_refused_install_is_reported_to_the_bound_hub_with_the_actor(monkeypat
         ("addon_request", {"name": "wiki", "version": "1.2.0", "actor": "agent"}),
         ("addon_request", {"name": "wiki", "version": "", "actor": "person"}),
     ]
+    assert links and all(
+        link["timeout"] == hubops.ADDON_REQUEST_TIMEOUT_S <= 5 for link in links
+    )  # short: the refused install waits
     state.status = "unbound"  # not bound: nothing is sent
     hubops.report_addon_request(service, "wiki")
     assert len([c for c in calls if c[0] == "addon_request"]) == 2

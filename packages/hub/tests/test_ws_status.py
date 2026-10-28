@@ -9,7 +9,7 @@ from orch_hub.link import LinkError, Registry
 from orch_hub.versions import MIN_SUPPORTED_VERSION, version_state
 from orch_hub.webapi.api import ROUTES, SWITCH_HANDLERS, route_scopes
 
-STATUS = {"version": "2.0.0.dev0", "commit": "aB123", "host": "host\u202e"}
+STATUS = {"version": "2.0.0.dev0", "commit": "aB123", "host": "host\u202e", "name": "Acme\u202e core"}
 
 
 @pytest.mark.parametrize("mode", ["full", "selective"])
@@ -21,7 +21,14 @@ def test_status_stores_rows_and_socket_address(hub, mode):
     with hub.registry.lock, hub.registry._db:
         hub.registry._db.execute("INSERT OR REPLACE INTO owner_alias VALUES (?, ?)", (G.WS_A, G.U_ALICE))
     host = render_text(STATUS["host"]) if mode == "full" else ""
-    assert status == {**STATUS, "host": host, "address": "127.0.0.1", "last_seen_ms": G.NOW}
+    assert {k: v for k, v in status.items() if k != "name"} == {
+        **{k: v for k, v in STATUS.items() if k != "name"},
+        "host": host,
+        "address": "127.0.0.1",
+        "last_seen_ms": G.NOW,
+    }
+    # the name is kept in full mode only (like host); selective keeps it private, never a hash in its place
+    assert hub.registry.display_name(G.WS_A) == (render_text(STATUS["name"]) if mode == "full" else None)
     hub.server._now = lambda: G.NOW + 1
     c.request("owner_get", {})
     assert hub.registry.status(G.WS_A)["last_seen_ms"] == G.NOW + 1
@@ -39,6 +46,9 @@ def test_status_stores_rows_and_socket_address(hub, mode):
         {**STATUS, "commit": "a" * 41},
         {**STATUS, "host": "x" * 81},
         {**STATUS, "host": 1},
+        {**STATUS, "name": "x" * 81},
+        {**STATUS, "name": 1},
+        {k: v for k, v in STATUS.items() if k != "name"},
     ],
 )
 def test_malformed_status_vectors(hub, body):
@@ -180,6 +190,7 @@ def test_selective_mode_change_clears_stored_host(method):
         assert reg.status("ws")["host"] == ""
         reg.put_status("ws", STATUS)
         assert reg.status("ws")["host"] == ""
+        assert reg.display_name("ws") is None
     finally:
         reg.close()
 

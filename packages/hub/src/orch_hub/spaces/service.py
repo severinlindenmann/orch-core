@@ -257,6 +257,7 @@ class SpaceService:
                 return None
             rec = self._new_epoch(space_id, e + 1, members, rest, change=change, workspace_id=ws, actor=actor)
             self.store.drop_accept(space_id, ws)  # only after the audit record and the new epoch are in
+            self.store.drop_mode(space_id, ws)  # and its member mode: a return starts from the default
             return rec
 
     def on_unbind(self, ws: str) -> None:
@@ -313,6 +314,27 @@ class SpaceService:
         if space_id in self._unavailable and not self._reconcile_space(space_id):
             raise Refused("unavailable")
 
+    def set_member_mode(self, space_id: str, ws: str, mode: str, actor: str) -> str:
+        """Admin: ``reads`` (the hub refuses this member's puts and revokes at once) or ``edits``. Same authority as changing
+        the member list; it changes no signed record and no key."""
+        if mode not in ("reads", "edits"):
+            raise SpaceError("malformed", "mode")
+        with self._lock:
+            _e, members = self._current(self._sid(space_id))
+            if ws not in members:
+                raise SpaceError("not_member", ws)
+            self._authorize(actor, members)
+            self.store.set_mode(space_id, ws, mode)
+            return mode
+
+    def set_archived(self, space_id: str, archived: bool, actor: str, now_ms: int) -> bool:
+        """Admin: an archived space refuses new puts and revokes and is hidden from the default list; reads go on."""
+        with self._lock:
+            _e, members = self._current(self._sid(space_id))
+            self._authorize(actor, members)
+            self.store.set_archived(space_id, now_ms if archived else None)
+            return archived
+
     def list_all(self) -> list[dict[str, Any]]:
         out = []
         for sid in self.store.space_ids():
@@ -326,6 +348,8 @@ class SpaceService:
                     "members": members,
                     "items": sum(1 for v in items.values() if not v["revoked"]),
                     "revoked": sum(1 for v in items.values() if v["revoked"]),
+                    "modes": {w: self.store.mode(sid, w) for w in members},
+                    "archived_ms": self.store.archived_ms(sid),
                 }
             )
         return out
@@ -370,9 +394,22 @@ class SpaceService:
         self.store.put_accept(o["space_id"], ws, signed)
         return {}
 
+    def _writable(self, space_id: str, ws: str) -> None:
+        """The admin's policy for writes: an archived space and a ``reads`` member refuse (the signed rules stay as they
+        were; this only restricts). Membership comes first: a workspace that is not in the space is told ``not_member`` and
+        learns nothing about whether the space is archived."""
+        st = self._state(space_id)
+        if st is not None and ws not in st["space"]["members"]:
+            raise Refused("not_member")
+        if self.store.archived_ms(space_id) is not None:
+            raise Refused("archived")
+        if self.store.mode(space_id, ws) == "reads":
+            raise Refused("read_only")
+
     def put(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             self._gate_id(body["space_id"])
+            self._writable(body["space_id"], ws)
             st = self._state(body["space_id"])
             sks = {}
             if st is not None:
@@ -388,6 +425,7 @@ class SpaceService:
     def revoke(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             self._gate_id(body["space_id"])
+            self._writable(body["space_id"], ws)
             st = self._state(body["space_id"])
             new, reply = SP.space_revoke(st, ws, body)
             if st is not None and new["next_seq"] != st["next_seq"]:

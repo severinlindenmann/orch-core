@@ -6,11 +6,19 @@ import { chip, h, text, when } from "./ui.js";
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
 const nameOf = (w) => text(w?.name || (w?.workspace_id ? "Workspace " + w.workspace_id.slice(0, 8) : "A workspace"));
 
-/** Parse "a, b c" into add-on ids: lower-case words with dashes. Returns {ids, bad} so the page can say what it did not understand. */
-export function parseIds(value) {
-  const words = String(value ?? "").split(/[\s,]+/).filter(Boolean);
-  const ids = [...new Set(words.filter((w) => /^[a-z][a-z0-9-]{0,39}$/.test(w)))].sort();
-  return { ids, bad: words.filter((w) => !/^[a-z][a-z0-9-]{0,39}$/.test(w)) };
+/** The add-ons one workspace can be offered: what the common list names (when it is a list), what the workspace already has
+ *  and what it asked for, minus the never-allowed ones. The hub has no catalogue, so with no common list this is only what
+ *  is known from requests; nobody types a name. */
+export function pickable(data, w) {
+  const block = new Set(data.block ?? []);
+  const asked = (data.requests ?? []).filter((r) => r.workspace_id === w.workspace_id).map((r) => r.name);
+  return [...new Set([...(Array.isArray(data.allow) ? data.allow : []), ...(w.allow ?? []), ...asked])].filter((id) => !block.has(id)).sort();
+}
+
+/** True when approving a request would change nothing: no common list and no limit on that workspace. */
+export function alreadyAllowed(data, workspaceId) {
+  const w = (data.workspaces ?? []).find((x) => x.workspace_id === workspaceId);
+  return data.allow == null && (w ? w.allow == null : true);
 }
 
 export function addonsView(data, actions = {}, now = Date.now()) {
@@ -39,17 +47,22 @@ export function addonsView(data, actions = {}, now = Date.now()) {
     h("p", { class: "small muted", text: "A workspace can be limited to fewer add-ons than the common list. It can never be given more." }),
     workspaces.length ? workspaces.map((w) => {
       const limited = Array.isArray(w.allow);
-      const check = h("input", { type: "checkbox", checked: limited, "aria-label": "Limit " + nameOf(w) });
-      const input = h("input", { type: "text", value: (w.allow ?? []).join(", "), "aria-label": "Add-ons " + nameOf(w) + " may install" });
+      const options = pickable(data, w);
+      const check = h("input", { type: "checkbox", "aria-label": "Limit " + nameOf(w) });
+      check.checked = limited;
+      const boxes = options.map((id) => { const box = h("input", { type: "checkbox", "data-addon": id }); box.checked = (w.allow ?? []).includes(id); return { id, box }; });
+      const picker = h("div", { class: "picker" }, options.length
+        ? boxes.map(({ id, box }) => h("label", { class: "list-row row" }, box, h("span", { class: "grow", text: text(id) })))
+        : h("p", { class: "small muted", text: "Nothing to choose yet. Add-ons show up here once the common list names them or this workspace asks for one." }));
+      picker.hidden = !limited;
+      check.addEventListener("change", () => { picker.hidden = !check.checked; });
       const note = h("p", { role: "status", class: "small" });
       const save = h("button", { type: "button", text: "Save", onclick: async () => {
-        const { ids, bad } = parseIds(input.value);
-        if (check.checked && bad.length) { note.textContent = "Not understood: " + bad.map(text).join(", ") + ". Use lower-case names separated by commas."; return; }
         save.disabled = true;
-        try { await actions.save?.(w, check.checked ? ids : null); note.textContent = "Saved"; } catch { note.textContent = "Not saved. Please try again."; } finally { save.disabled = false; }
+        try { await actions.save?.(w, check.checked ? boxes.filter((x) => x.box.checked).map((x) => x.id) : null); note.textContent = "Saved"; } catch { note.textContent = "Not saved. Please try again."; } finally { save.disabled = false; }
       } });
-      return h("div", { class: "list-row" }, h("div", { class: "row" }, h("b", { class: "grow", text: nameOf(w) }), h("label", {}, check, " Limit"), input, save),
-        h("p", { class: "small muted", text: limited ? "Only the add-ons listed (that the common list also allows)." : "No limit of its own: the common list applies." }), note);
+      return h("div", { class: "list-row" }, h("div", { class: "row" }, h("b", { class: "grow", text: nameOf(w) }), h("label", {}, check, " Limit"), save),
+        h("p", { class: "small muted", text: limited ? "Only the ticked add-ons (that the common list also allows)." : "No limit of its own: the common list applies." }), picker, note);
     }) : emptyState("workspaces")));
   return root;
 }
@@ -68,8 +81,9 @@ export async function addonsPage(d) {
     const reload = () => addonsPage(d);
     const save = async (w, ids) => { const x = await d.api("PUT", "/admin/addons/" + encodeURIComponent(w.workspace_id), { allow: ids }); if (x.status !== 200) throw new Error("save"); };
     const decide = async (req, approve) => {
+      const same = approve && alreadyAllowed(r.body, req.workspace_id);
       const x = await d.api("POST", "/admin/addon-requests", { workspace_id: req.workspace_id, name: req.name, approve });
-      d.state.notice = x.status === 200 ? d.banner("ok", approve ? "Allowed" : "Turned down", approve ? "The owner can now choose to install it in the workspace." : null) : d.banner("bad", "Not changed", d.say(x.body.error));
+      d.state.notice = x.status === 200 ? d.banner("ok", same ? "Already allowed" : approve ? "Allowed" : "Turned down", same ? "Nothing needed changing. The owner can choose to install it in the workspace." : approve ? "The owner can now choose to install it in the workspace." : null) : d.banner("bad", "Not changed", d.say(x.body.error));
       await reload();
     };
     d.shell("addons", d.state.notice, addonsView(r.body, { save, decide }));

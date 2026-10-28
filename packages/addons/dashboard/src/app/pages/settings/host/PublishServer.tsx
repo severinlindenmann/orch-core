@@ -1,6 +1,6 @@
 // Settings > Add-ons > Publish (real host): where shared files are sent and where a link opens, and whether the server
-// knows this workspace. Changing the addresses is a signed settings change (terminal only); registering is a plain
-// request. Plain words first; the ids the server's admin needs sit under Technical details.
+// knows this workspace. Changing the addresses is a click-signed settings change (the host checks both addresses again);
+// registering is a plain owner click on this computer. Plain words first; the ids the server's admin needs sit under Technical details.
 import { useQuery } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { Link } from '@tanstack/react-router'
@@ -64,7 +64,7 @@ export function PublishServer({ workspace, owner, embedded = false }: { workspac
     <Wrap embedded={embedded}>
       <div className="space-y-2 text-[13px]" data-testid="publish-server">
         <p className="text-text-muted">
-          When you share files, they are sent to a publish server you choose, and the link opens on a second address. Only a person changes these addresses, and you sign the change in your terminal.
+          When you share files, they are sent to a publish server you choose, and the link opens on a second address. Only a person changes these addresses, with one click here.
         </p>
         {data.configured ? (
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5">

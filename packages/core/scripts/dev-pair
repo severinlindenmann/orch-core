@@ -64,7 +64,7 @@ LOCAL_RELAY = "local"
 DEV_RELAY = "https://relay.dev.severin.io"
 SOCKET_LIMIT = 100  # orch.host.listener.SOCKET_PATH_LIMIT
 KILL_GRACE_S = 10.0
-REVIEW_DELAY_S = 0.5  # the review prompt flushes typed-ahead input (TCIFLUSH) after it paints: answer after that
+REVIEW_DELAY_S = 1.3  # the review prompt discards what is pressed in its first second (orch.ops.human): answer after
 SAS_WAIT_S = 600.0  # how long the SAS prompt waits for a code before it rejects
 RUN_MODE = 0o711  # the host checks its run directory for exactly this (orch.host.listener)
 MAX_PUBLICATION = 4 * 1024 * 1024
@@ -818,16 +818,13 @@ class Ctx:
 
 
 def passphrase_responders(ctx: Ctx) -> list[Responder]:
-    """The terminal prompts of every command after ``orch setup``: the passphrase and the "type KEY" review."""
+    """The terminal prompts of every command after ``orch setup``: the passphrase and the review (Enter alone signs)."""
     return [
         Responder(re.compile(r"Repeat passphrase: "), lambda m: ctx.passphrase),
         Responder(re.compile(r"Passphrase: "), lambda m: ctx.passphrase),
         Responder(
-            re.compile(
-                r"Type (\S+)(?: and Enter)? to continue"
-                r"(?:(?: to the passphrase)?; anything else stops| \(d = details\)): "
-            ),
-            lambda m: (time.sleep(REVIEW_DELAY_S), m.group(1))[1],
+            re.compile(r"Press Enter to (?:sign|continue)(?:, d for details)?, any other key cancels\.\n"),
+            lambda m: (time.sleep(REVIEW_DELAY_S), "")[1],
         ),  # fmt: skip
     ]
 
@@ -856,22 +853,23 @@ def step_setup(ctx: Ctx, prefix: str, name: str) -> None:
 
     def confirm(m: re.Match[str]) -> str:
         shown = re.findall(r"should show these three words:\n\n {4}(.+)\n", seen["text"])
+        time.sleep(REVIEW_DELAY_S)  # the review discards what is pressed in its first second
         if not seen["fp"] or not shown or shown[-1].split() != list(seen["fp"]):
             seen["bad"] = "the terminal's three words differ from the review's"
-            return "no"  # declines: nothing is created
-        return m.group(1)
+            return "no"  # any key but Enter declines: nothing is created
+        return ""  # Enter alone signs
 
-    responders = [Responder(re.compile(r"If they match, type (\S+): "), confirm)]
+    responders = [Responder(re.compile(r"Press Enter to sign, any other key cancels\.\n"), confirm)]
     env = ctx.env()
-    dash = PLUGIN.parent.parent / "addons" / "dashboard" / "server" / ".venv" / "bin"
+    dash = PLUGIN.parent / "addons" / "dashboard" / "server" / ".venv" / "bin"
     if (dash / "orch-dashboard").is_file():  # `orch setup` starts the dashboard add-on to serve its page
         env["PATH"] = f"{env['PATH']}:{dash}"
     box: dict[str, Any] = {}
 
     def work() -> None:
         try:
-            box["rc"], _ = run_pty(ctx.orch("setup", "--no-browser"), env=env, cwd=ctx.ws_dir, responders=responders,
-                                   timeout=300, observe=observe)  # fmt: skip
+            box["rc"], _ = run_pty(ctx.orch("setup", "--no-browser", "--role", "workspace"), env=env, cwd=ctx.ws_dir,
+                                   responders=responders, timeout=300, observe=observe)  # fmt: skip
         except BaseException as exc:  # noqa: BLE001 - reported below, never with the transcript
             box["exc"] = exc
 
@@ -881,7 +879,10 @@ def step_setup(ctx: Ctx, prefix: str, name: str) -> None:
     link = None
     while link is None:
         if time.monotonic() > deadline or not thread.is_alive():
-            raise Refused("orch setup printed no link (is the dashboard add-on installed? uv sync in packages/addons/dashboard/server)")
+            raise Refused(
+                "orch setup printed no link (is the dashboard add-on installed? "
+                "uv sync in packages/addons/dashboard/server)"
+            )
         link = _LINK.search(seen["text"].replace("\n", ""))
         time.sleep(0.2)
     port = int(link.group(1))
@@ -903,8 +904,9 @@ def step_setup(ctx: Ctx, prefix: str, name: str) -> None:
         code = json.loads((ctx.root / "state" / "setup" / "setup.code").read_text())["code"]
         token = route("POST", "/claim", {"code": code, "port": port})["token"]
         api = "/api/setup/"
-        route("POST", api + "profile", {"name": name, "prefix": prefix, "addons": [], "method": "terminal",
-                                        "agent_hours": 8, "agent_grant": False, "relay": False}, token)  # fmt: skip
+        route("POST", api + "profile", {"name": name, "workspace_name": name, "prefix": prefix, "addons": [],
+                                        "method": "terminal", "agent_hours": 8, "agent_grant": False, "relay": False},
+              token)  # fmt: skip
         sec = route("POST", api + "secrets/reveal", {}, token)
         words = {str(p): sec["recovery_words"][p - 1] for p in sec["check_positions"]}
         if not route("POST", api + "secrets/confirm", {"words": words}, token).get("ok"):

@@ -45,6 +45,7 @@ from .. import __version__ as hub_version
 from ..access import Access, AccessError
 from ..access.store import ADMIN_GROUP, check_name
 from ..activity.feed import feed as activity_feed
+from ..changes import ChangeError
 from ..channels import Channels
 from ..channels.service import MIN_PASSWORD, ChannelError
 from ..connect import LinkError, build_link
@@ -53,10 +54,12 @@ from ..contract import market_policy as MP
 from ..contract import phase4 as P4
 from ..contract import suite as S
 from ..contract.canon import CanonError, loads_strict, unb64u
-from ..contract.hub import HV, Refused
+from ..contract.hub import HV, Refused, channel_proof_bytes
+from ..invites import Invite, InviteError, proof_digest
 from ..relay.client import RelayError
 from ..switch import SwitchError, clean_return_to, workspace_rows
 from ..versions import MIN_SUPPORTED_VERSION, workspace_status
+from .changes_api import ChangeHandlers, confirmed
 from .static import StaticSite
 
 MAX_BODY = 64 * 1024
@@ -75,6 +78,9 @@ MAX_PREPARED = 4096
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 _ID = r"[0-9a-f]{32}"
 _GRP = r"[a-z0-9][a-z0-9-]{0,39}"
+#: a change id is a ULID, not 32 hex: the path accepts one alphanumeric segment of that size and the handler holds it to the
+#: exact ULID shape (anything else is ``unknown_change``, as an id that does not exist)
+_PARAM = {"change_id": r"[0-9A-Za-z]{26,32}"}
 
 #: wire code -> HTTP status. Anything not listed is answered as ``internal`` (500), never echoed.
 STATUS = {
@@ -90,6 +96,16 @@ STATUS = {
     "conflict": 409,
     "stale_snapshot": 409,
     "unknown_snapshot": 409,
+    # access changes that wait for a workspace owner (changes/)
+    "owner_protected": 409,
+    "owner_unknown": 409,
+    "last_admin": 409,
+    "stale_change": 409,
+    "not_pending": 409,
+    "proposer_gone": 409,
+    "expired": 410,
+    "unknown_change": 404,
+    "no_channel": 403,
     "no_session": 401,
     "bad_credentials": 401,
     "unauthorized": 403,
@@ -121,6 +137,9 @@ STATUS = {
     "not_bound": 409,
     "bad_ticket": 403,
     "reauth_required": 403,
+    "bad_invite": 403,  # unknown, expired, used or malformed link: one answer for all
+    "proof_required": 403,
+    "self_disable": 409,
     # contract refusals a registration or a prepare/sign can surface (protocol.md §14)
     "bad_signature": 403,
     "cert_invalid": 403,
@@ -217,6 +236,12 @@ class WebDeps:
     routes: Any = None
     delivery: Any = None  # custodial DeliveryQueue; None = no pending deliveries
     activity: Any = None  # hub-local admin history; None = no local events
+    changes: Any = (
+        None  # orch_hub.changes.Changes: access changes that need the owner; None = those routes answer ``unavailable``
+    )
+    user_invites: Any = (
+        None  # orch_hub.invites.Invites (join / reset / recovery links); None = those routes are ``unavailable``
+    )
 
 
 @dataclass(frozen=True)
@@ -229,7 +254,11 @@ class Route:
     rx: re.Pattern[str] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        pat = re.sub(r"\{(\w+)\}", lambda m: f"(?P<{m[1]}>{_ID if m[1].endswith('id') else _GRP})", self.path)
+        pat = re.sub(
+            r"\{(\w+)\}",
+            lambda m: f"(?P<{m[1]}>{_PARAM.get(m[1]) or (_ID if m[1].endswith('id') else _GRP)})",
+            self.path,
+        )
         object.__setattr__(self, "rx", re.compile(pat))
 
 
@@ -273,6 +302,34 @@ ROUTES: tuple[Route, ...] = (
         "GET", "/workspaces/{workspace_id}/items/{item_id}", "session", "item", "One ticket, question or needs-you item"
     ),
     _r("GET", "/me/channels", "session", "my_channels", "My registered channels (phone, browser)"),
+    _r(
+        "GET",
+        "/me/changes",
+        "session",
+        "my_changes",
+        "Access changes waiting for my approval, and overrides on my workspaces (session person only)",
+    ),
+    _r(
+        "POST",
+        "/me/changes/{change_id}/approve/prepare",
+        "session",
+        "change_prepare",
+        "What I would sign to approve an access change: ctx and digest (owner of the workspace only)",
+    ),
+    _r(
+        "POST",
+        "/me/changes/{change_id}/approve",
+        "session",
+        "change_approve",
+        "Approve an access change with my channel key's proof over its digest (single use)",
+    ),
+    _r(
+        "POST",
+        "/me/changes/{change_id}/reject",
+        "session",
+        "change_reject",
+        "Say no to an access change (session and a registered channel)",
+    ),
     # (c) signing
     _r("POST", "/sign/prepare", "session", "prepare", "Hub builds the event; returns ctx, digest and what to show"),
     _r(
@@ -302,8 +359,18 @@ ROUTES: tuple[Route, ...] = (
     ),
     # (d) admin console
     _r("GET", "/admin/users", "admin", "a_users", "List users"),
-    _r("POST", "/admin/users", "admin", "a_user_add", "Create a user (new id and signing key)"),
     _r("DELETE", "/admin/users/{user_id}", "admin", "a_user_remove", "Remove a user"),
+    _r(
+        "POST", "/admin/invites", "admin", "a_invite", "Invite a person: a one-time link, they choose password and code"
+    ),
+    _r("POST", "/admin/users/{user_id}/reset", "admin", "a_user_reset", "Link to reset a person's password and code"),
+    _r(
+        "POST", "/admin/users/{user_id}/disable", "admin", "a_user_disable", "Disable a person (no sign-in, no signing)"
+    ),
+    _r("POST", "/admin/users/{user_id}/enable", "admin", "a_user_enable", "Enable a person; returns a recovery link"),
+    _r("POST", "/invite/peek", "none", "invite_peek", "Look at an invitation link without using it"),
+    _r("POST", "/invite/redeem", "none", "invite_redeem", "Use an invitation link: password, authenticator, account"),
+    _r("POST", "/me/recovery/dismiss", "session", "recovery_dismiss", "Dismiss the 'your account was reset' notice"),
     _r("GET", "/admin/groups", "admin", "a_groups", "List groups with members and grants"),
     _r("POST", "/admin/groups", "admin", "a_group_add", "Create a group"),
     _r("DELETE", "/admin/groups/{group}", "admin", "a_group_remove", "Remove a group"),
@@ -336,6 +403,23 @@ ROUTES: tuple[Route, ...] = (
         "admin",
         "a_market_policy_set",
         "Replace the hub marketplace policy ({base_version, policy}); 409 conflict when base_version is stale",
+    ),
+    _r(
+        "GET", "/admin/changes", "admin", "a_changes", "Access changes waiting for an owner, and recently finished ones"
+    ),
+    _r(
+        "POST",
+        "/admin/changes/{change_id}/override",
+        "admin",
+        "a_change_override",
+        "Apply a waiting access change without its owner ({reason}, 3-200 characters); audited, the owner is told",
+    ),
+    _r(
+        "POST",
+        "/admin/changes/{change_id}/cancel",
+        "admin",
+        "a_change_cancel",
+        "Withdraw a waiting access change (its proposer or a hub admin)",
     ),
     _r("POST", "/admin/connect", "admin", "a_connect", "Mint a workspace invite and return the one connect link"),
     _r("POST", "/switch/ticket", "session", "switch_ticket", "A one-time ticket to open one of my workspaces"),
@@ -528,7 +612,16 @@ def _hex32(x: Any) -> str:
     return x
 
 
-class WebApi:
+def _groups_detail(groups: list[str]) -> dict[str, Any]:
+    """The activity detail for the groups a person was taken out of: at most 32 names and the real ``count``, so recording
+    never raises after the change it describes has committed."""
+    out: dict[str, Any] = {"groups_removed": list(groups[:32])}
+    if len(groups) > 32:
+        out["count"] = len(groups)
+    return out
+
+
+class WebApi(ChangeHandlers):
     def __init__(self, deps: WebDeps) -> None:
         if deps.behind_edge and not deps.trusted_peers:
             raise ValueError("web API behind the edge needs trusted_peers (the edge's addresses)")
@@ -599,7 +692,7 @@ class WebApi:
             return self._handle(method, target, headers, body, self._source(headers, peer))
         except ApiError as e:
             return self._fail(e.code)
-        except (ChannelError, AccessError, Refused) as e:
+        except (ChannelError, AccessError, Refused, ChangeError, InviteError) as e:
             return self._fail(WIRE.get(e.code, e.code))
         except Exception:  # noqa: BLE001 - unexpected: no detail leaves the process
             return self._fail("internal")
@@ -833,7 +926,9 @@ class WebApi:
             except OSError:
                 want = ""
             if not want or not hmac.compare_digest(want.encode(), b["token"].encode()):
-                raise ApiError("bad_credentials")
+                raise ApiError("bad_credentials")  # a wrong token answers as before, whoever is (not) an admin
+            if self.d.access.members(ADMIN_GROUP):
+                raise ApiError("not_allowed")  # first admin only: a leftover token file never makes a second one
             check_name(b["name"])
             if len(b["password"]) < MIN_PASSWORD:
                 raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
@@ -935,9 +1030,21 @@ class WebApi:
                 "name": name,
                 "is_admin": self.d.access.is_hub_admin(c.user_id),
                 "needs_sign_in": c.via_switch,  # admin pages need a password sign-in (a workspace vouched for this one)
+                "recovery": self._recovery_notice(c.user_id),
             },
             [],
         )
+
+    def _recovery_notice(self, uid: str) -> dict[str, Any] | None:
+        """``{by_name, at_ms}`` while the person has not dismissed the note of a recovery of their account."""
+        note = self.d.access.recovery_note(uid)
+        if note is None:
+            return None
+        return {"by_name": self._user_name(note["by"]), "at_ms": note["at_ms"]}
+
+    def _h_recovery_dismiss(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        self.d.access.clear_recovery_note(c.user_id)
+        return 200, {"ok": True}
 
     def _h_sign_out(self, c: Ctx, p: dict, q: dict, b: dict | None):
         self.d.channels.sign_out(c.token)
@@ -1298,21 +1405,267 @@ class WebApi:
     def _h_a_users(self, c: Ctx, p: dict, q: dict, b: dict | None):
         return 200, {"users": self.d.access.users()}
 
-    def _h_a_user_add(self, c: Ctx, p: dict, q: dict, b: dict | None):
+    def _h_a_user_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        with self._chg().reducing("user_remove", confirm=confirmed(b), user_id=p["user_id"]):
+            self.d.channels.remove_user(p["user_id"], actor=c.user_id)  # revokes and purges the user's channels too
+        if self.d.user_invites is not None:  # the links they made and the links made for them die with the account
+            self.d.user_invites.void_created_by(p["user_id"])
+            self.d.user_invites.void_for_user(p["user_id"])
+        return 200, {"ok": True}
+
+    # --- people: invitation links (join, reset, recovery), disable / enable (M2-5) --------------------------------------
+    # There is no route that creates a person AND their credentials for an admin to read out: the admin makes a link, the
+    # person chooses their own password and scans their own code. Tokens travel only in the link's fragment and in POST
+    # bodies of the two /invite routes; this module logs nothing and the activity log takes references, never tokens.
+
+    def _inv(self) -> Any:
+        if self.d.user_invites is None:
+            raise ApiError("unavailable")
+        return self.d.user_invites
+
+    def _record(self, typ: str, **kw: Any) -> None:
+        if self.d.activity is not None:
+            self.d.activity.record(typ, **kw)
+
+    def _invite_link(self, c: Ctx, token: str) -> str:
+        base = self.d.api_origin or c.origin  # as "Connect a workspace" builds its base
+        if base is None:
+            raise ApiError("unavailable")
+        return f"{base.rstrip('/')}/#invite={token}"
+
+    def _h_a_invite(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, name=str)
-        check_name(b["name"])  # before any key is made: a refused name must leave no orphan UK behind
-        uid = self.d.keys.issue_uk(None)["o"]["user_id"]
+        name = check_name(b["name"].strip())  # the sign-in name, validated like every user name
+        inv = self._inv()
+        if (self.d.api_origin or c.origin) is None:
+            raise ApiError("unavailable")
+        token, iid, expires = inv.create("join", created_by=c.user_id, name=name)
+        self._record("invite.created", actor_id=c.user_id, detail={"invite_id": iid})
+        return 200, {"link": self._invite_link(c, token), "expires_ms": expires}
+
+    def _h_a_user_reset(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        recovery = (b or {}).get("recovery", False)
+        if type(recovery) is not bool:
+            raise ApiError("malformed")
+        uid, inv = p["user_id"], self._inv()
+        if not self.d.access.has_user(uid):
+            raise ApiError("unknown_user")
+        if not self.d.access.is_active(uid):
+            raise ApiError("conflict")  # a disabled person is enabled first (that issues a recovery link)
+        if (self.d.api_origin or c.origin) is None:
+            raise ApiError("unavailable")
+        kind = "recovery" if recovery else "reset"
+        token, iid, expires = inv.create(kind, created_by=c.user_id, for_user=uid)
+        self._record("reset.issued", actor_id=c.user_id, subject_user=uid, detail={"invite_id": iid})
+        return 200, {
+            "link": self._invite_link(c, token),
+            "expires_ms": expires,
+            "kind": kind,
+            "name": self._user_name(uid),
+        }
+
+    def _void_prepared(self, uid: str) -> None:
+        with self._plock:
+            for k in [k for k, v in self._prepared.items() if v[0] == uid]:
+                del self._prepared[k]
+        if self.d.engine is not None:
+            self.d.engine._void_user(uid)
+
+    def _h_a_user_disable(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """The flag first (one transaction: no role in any snapshot, no session, no live channel, no signing from that
+        instant), then the clean-up, which is idempotent so an interrupted disabling is finished by repeating it."""
+        uid = p["user_id"]
+        self.d.access.set_disabled(uid, True, actor=c.user_id)  # self_disable / last_admin / unknown_user
+        groups = list(self.d.access.groups_of(uid))
+        # first: an interrupted clean-up is still on record, and so is what is about to be taken away (hub-admin included)
+        self._record("user.disabled", actor_id=c.user_id, subject_user=uid, detail=_groups_detail(groups))
+        # a disabled person leaves every group, the hub-admin group too: enabling never brings group reach (or admin)
+        # back on its own, it is re-granted through the normal path (where an owner's approval applies). A group this
+        # leaves empty stays (with its grants): only the person goes, nothing is deleted or orphaned.
+        for group in groups:
+            self.d.access.remove_member(group, uid)
+        self.d.channels.revoke_all(uid)
+        self.d.channels.end_sessions(uid)
+        self._void_prepared(uid)
+        if self.d.user_invites is not None:
+            self.d.user_invites.void_for_user(uid)
+            self.d.user_invites.void_created_by(uid)  # and the links they made for others
+        return 200, {"ok": True}
+
+    def _h_a_user_enable(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        uid, inv = p["user_id"], self._inv()
+        if (self.d.api_origin or c.origin) is None:
+            raise ApiError("unavailable")
+        prior = self.d.access.has_user(uid) and self.d.access.must_recover(uid)
+        if self.d.access.has_user(uid) and self.d.access.is_active(uid):
+            raise ApiError("conflict")  # not disabled: nothing to enable (and nothing to strip)
+        # no group (hub-admin included) survives an enabling: a flag-only or interrupted disable left them. They go BEFORE
+        # the flag clears, so there is no instant at which an enabled person holds the old reach; it is re-granted through
+        # the normal path
+        groups = list(self.d.access.groups_of(uid))
+        for group in groups:
+            self.d.access.remove_member(group, uid)
+        # clears ``disabled`` AND sets ``must_recover`` in one transaction: from this instant the old password and TOTP
+        # are useless, whatever happens next; only the recovery link below (or none: the person stays locked out) opens it
+        if not self.d.access.set_disabled(uid, False, actor=c.user_id):
+            raise ApiError("conflict")  # not disabled: nothing to enable
         try:
-            self.d.access.add_user(uid, b["name"])
-        except AccessError:  # names are not unique, so only a store error gets here: leave no orphan UK
-            for f in (self.d.keys.state / "uk" / f"{uid}.key", self.d.keys._gen_dir() / "uk" / f"{uid}.json"):
+            # belt: whatever the disabling left behind, no old device, session or prepared approval survives an enabling
+            self.d.channels.revoke_all(uid)
+            self.d.channels.end_sessions(uid)
+            self._void_prepared(uid)
+            token, iid, expires = inv.create("recovery", created_by=c.user_id, for_user=uid)
+            link = self._invite_link(c, token)
+        except BaseException:  # no link, no enabling: back to disabled, ``must_recover`` as it was
+            self.d.access.undo_enable(uid, must_recover=prior)
+            raise
+        self._record("user.enabled", actor_id=c.user_id, subject_user=uid, detail=_groups_detail(groups))
+        self._record("reset.issued", actor_id=c.user_id, subject_user=uid, detail={"invite_id": iid})
+        return 200, {
+            "link": link,
+            "expires_ms": expires,
+            "kind": "recovery",
+            "name": self._user_name(uid),
+        }
+
+    def _live_channels(self, uid: str) -> dict[str, dict[str, Any]]:
+        """``{channel_id: cert}`` of the person's live (registered, unrevoked, unexpired) channels."""
+        out: dict[str, dict[str, Any]] = {}
+        for ch in self.d.channels.channels(uid):
+            if ch["status"] == "active":
+                cert = self.d.channels.active_channel(uid, ch["channel_id"])
+                if cert is not None:
+                    out[ch["channel_id"]] = cert
+        return out
+
+    def _creator_standing(self, row: Invite) -> None:
+        """A link is only as good as its maker: if they are no longer a (live) hub-admin, or are gone, it is dead, with
+        the same ``bad_invite`` as any other dead link. Asked at peek and again at redeem time."""
+        try:
+            ok = self.d.access.is_hub_admin(row.created_by)
+        except AccessError:
+            ok = False
+        if not ok:
+            raise InviteError()
+
+    def _h_invite_peek(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """What the link is for, without using it. Condition 1: a reset for a person who still has a live channel needs a
+        proof from one of those channels, so peek hands out a random challenge (five minutes, bound to this link)."""
+        b = _need(b, token=str)
+        self._limit.hit("invite-peek", c.source, SIGNIN_SOURCE_LIMIT)
+        inv = self._inv()
+        row = inv.peek(b["token"])
+        self._creator_standing(row)
+        if row.kind == "join":
+            return 200, {"kind": "join", "name": row.name, "needs_proof": False}, []
+        uid = row.for_user or ""
+        if not self.d.access.is_active(uid):
+            raise InviteError()  # the person was removed or disabled since: the link is dead, same answer
+        needs = row.kind == "reset" and not self.d.access.must_recover(uid) and bool(self._live_channels(uid))
+        out: dict[str, Any] = {
+            "kind": row.kind,
+            "name": self._user_name(uid),
+            "user_id": uid,
+            "needs_proof": needs,
+            "recovery": not needs,  # recovery: every device of theirs is removed when the link is used
+        }
+        if needs:
+            out["challenge"] = inv.new_challenge(row.token_hash)
+        return 200, out, []
+
+    def _h_invite_redeem(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, token=str, password=str)
+        proof = b.get("proof")
+        if len(b["password"]) > 1024:
+            raise ApiError("malformed")
+        if len(b["password"]) < MIN_PASSWORD:
+            raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
+        inv = self._inv()
+        out = self._guarded_credentials(  # the sign-in caps: per source, concurrency of the hashing, network aggregate
+            c, list, lambda: inv.redeem(b["token"], lambda row: self._apply_invite(row, b["password"], proof))
+        )
+        return 200, out, []
+
+    def _apply_invite(self, row: Invite, password: str, proof: Any) -> dict[str, Any]:
+        """The account change, run by ``Invites.redeem`` inside the claim's transaction: whatever raises here leaves the
+        link unused. Returns what the person's own screen shows once."""
+        self._creator_standing(row)
+        if row.kind == "join":
+            return self._apply_join(row, password)
+        uid = row.for_user or ""
+        if not self.d.access.is_active(uid):
+            raise InviteError()
+        live = self._live_channels(uid)
+        pending = self.d.access.must_recover(uid)  # just enabled: whatever the link's kind, this is a recovery
+        recovery = row.kind == "recovery" or not live or pending  # no approving device left = nothing to prove with
+        if not recovery and not self._proof_ok(row.token_hash, live, proof):
+            raise ApiError("proof_required")
+        now = self.d.now_ms()
+        if recovery:
+            # the admin is the actor: a recovery is the admin's act; written first, so no recovery goes unrecorded
+            self._record("recovery.redeemed", actor_id=row.created_by, subject_user=uid, detail={"invite_id": row.id})
+            self.d.channels.revoke_all(uid)  # ALL their channels: whoever held the old ones is out
+            self.d.access.set_recovery_note(uid, row.created_by, now)
+        else:
+            self._record("invite.redeemed", actor_id=uid, subject_user=uid, detail={"invite_id": row.id})
+        self.d.channels.set_password(uid, password)
+        t = self.d.channels.new_totp(uid)
+        self.d.channels.end_sessions(uid)  # every existing session of this person, whatever the two calls above did
+        self.d.channels.unlock(uid)
+        self.d.access.clear_must_recover(
+            uid
+        )  # last: any earlier failure leaves the person locked out and the link usable
+        return {
+            "kind": row.kind,
+            "recovery": recovery,
+            "user_id": uid,
+            "name": self._user_name(uid),
+            "totp_secret": t["secret"],
+            "totp_uri": t["uri"],
+        }
+
+    def _apply_join(self, row: Invite, password: str) -> dict[str, Any]:
+        keys = self.d.keys
+        uid = keys.issue_uk(None)["o"]["user_id"]  # a new id and signing key, exactly as the old admin add did
+        try:
+            self.d.access.add_user(uid, row.name or "")
+            self.d.channels.set_password(uid, password)
+            t = self.d.channels.new_totp(uid)
+            self._record("invite.redeemed", actor_id=uid, subject_user=uid, detail={"invite_id": row.id})
+        except BaseException:  # leave nothing behind: no user, no orphan UK
+            try:
+                self.d.access.remove_user(uid)
+            except AccessError:
+                pass
+            for f in (keys.state / "uk" / f"{uid}.key", keys._gen_dir() / "uk" / f"{uid}.json"):
                 f.unlink(missing_ok=True)
             raise
-        return 200, {"user_id": uid}
+        return {
+            "kind": "join",
+            "recovery": False,
+            "user_id": uid,
+            "name": row.name,
+            "totp_secret": t["secret"],
+            "totp_uri": t["uri"],
+        }
 
-    def _h_a_user_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        self.d.channels.remove_user(p["user_id"], actor=c.user_id)  # revokes and purges the user's channels too
-        return 200, {"ok": True}
+    def _proof_ok(self, th: str, live: dict[str, dict[str, Any]], proof: Any) -> bool:
+        """A signature of one of the person's LIVE channel keys over :func:`proof_digest` (the challenge peek gave out, this
+        link's hash), made with the ordinary channel-proof primitive. The challenge is used up by the attempt."""
+        if type(proof) is not dict or set(proof) != {"channel_id", "challenge", "sig"}:
+            return False
+        if not self.d.user_invites.take_challenge(th, proof["challenge"]):
+            return False
+        cert = live.get(proof["channel_id"]) if type(proof["channel_id"]) is str else None
+        if cert is None:
+            return False
+        try:
+            digest = proof_digest(proof["challenge"], th)
+            sig = unb64u(proof["sig"], S.SIG_LEN)
+            key = unb64u(cert["o"]["key_pub"], S.PUB_LEN)
+            return bool(S.verify(key, sig, channel_proof_bytes(digest)))
+        except Exception:  # noqa: BLE001 - any malformed part is a refused proof
+            return False
 
     def _h_a_groups(self, c: Ctx, p: dict, q: dict, b: dict | None):
         return 200, {"groups": self.d.access.groups()}
@@ -1322,15 +1675,17 @@ class WebApi:
         return 200, {"ok": True}
 
     def _h_a_group_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        self.d.access.remove_group(p["group"], actor=c.user_id)
+        with self._chg().reducing("group_remove", confirm=confirmed(b), group=p["group"]):
+            self.d.access.remove_group(p["group"], actor=c.user_id)
         return 200, {"ok": True}
 
     def _h_a_member_add(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        self.d.access.add_member(p["group"], p["user_id"], actor=c.user_id)
-        return 200, {"ok": True}
+        # an increase: a pending change (202) when a workspace owner must approve, else applied (changes/rules.py)
+        return self._increase_answer(self._chg().member_add(c.user_id, p["group"], p["user_id"]))
 
     def _h_a_member_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        self.d.access.remove_member(p["group"], p["user_id"], actor=c.user_id)
+        with self._chg().reducing("member_remove", confirm=confirmed(b), group=p["group"], user_id=p["user_id"]):
+            self.d.access.remove_member(p["group"], p["user_id"], actor=c.user_id)
         return 200, {"ok": True}
 
     def _h_a_grants(self, c: Ctx, p: dict, q: dict, b: dict | None):
@@ -1339,12 +1694,14 @@ class WebApi:
 
     def _h_a_grant(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, workspace_id=str, group=str, role=str)
-        self.d.access.grant(b["workspace_id"], b["group"], b["role"], actor=c.user_id)
-        return 200, {"ok": True}
+        return self._increase_answer(
+            self._chg().grant(c.user_id, b["workspace_id"], b["group"], b["role"], confirm=confirmed(b))
+        )
 
     def _h_a_grant_revoke(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, workspace_id=str, group=str)
-        self.d.access.revoke(b["workspace_id"], b["group"], actor=c.user_id)
+        with self._chg().reducing("revoke", confirm=confirmed(b), workspace_id=b["workspace_id"], group=b["group"]):
+            self.d.access.revoke(b["workspace_id"], b["group"], actor=c.user_id)
         return 200, {"ok": True}
 
     def _h_a_workspace_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):

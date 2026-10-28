@@ -24,6 +24,7 @@ from .access import Access, AccessSnapshots
 from .access.cli import ACCESS_FILE
 from .activity import ActivityLog
 from .audit import open_log
+from .changes import Changes
 from .channels import Channels
 from .channels.pushkeys import PushKeyStore
 from .channels.service import CHANNELS_FILE
@@ -31,6 +32,7 @@ from .config import HubConfig
 from .contract.hub import Refused
 from .custodial import CustodialEngine
 from .custodial.deliver import build_delivery
+from .invites import INVITES_FILE, Invites
 from .keys import HubKeys
 from .link import LinkServer, Registry
 from .link.wkseal import WkSeals
@@ -196,6 +198,7 @@ def serve(
     router = Router(registry, queue, AccessAuthz(registry, access))
     audit = open_log(state, keys, dev_mode=cfg.dev)
     activity = ActivityLog(state / "activity.db")
+    user_invites = Invites(state / INVITES_FILE)  # join / reset / recovery links of people (the token is never stored)
     access.observer = audit.access_change  # D4: every grant and membership change is audited
     space_store = SpaceStore(str(state / SPACES_FILE))
     spaces = SpaceService(
@@ -219,6 +222,15 @@ def serve(
     )
     views = build_view_services(state, wk_seals=wk_seals, registry=registry, access=access)
     channels = Channels(keys, access, state / CHANNELS_FILE, audit=audit, dev_mode=cfg.dev)
+    changes = Changes(  # access changes that wait for a workspace owner (M2-8a)
+        str(state / "changes.db"),
+        access=access,
+        registry=registry,
+        snapshots=AccessSnapshots(access, keys),
+        keys=keys,
+        channels=channels,
+        activity=activity,
+    )
     notifier: PushNotifier | None = None
     try:
         client = RelayClient(keys, cfg.relay_url, dev=cfg.dev, transport=relay_transport)
@@ -258,6 +270,8 @@ def serve(
                 registry=registry,
                 audit=audit,
                 activity=activity,
+                changes=changes,
+                user_invites=user_invites,
                 engine=engine,
                 shares=shares,
                 view=views.reader,
@@ -329,6 +343,10 @@ def serve(
                 shares.retry_pending()
                 reconcile_full_only(registry, wk_seals, views.store)
                 reconcile_relay_purge(notifier)  # a CLI revoke (another process) reaches the relay within a tick
+                try:
+                    changes.sweep()  # access changes past their 14 days expire (and say so in the activity)
+                except Exception:  # noqa: BLE001, S110  # the next tick (or the next page load) sweeps again
+                    pass
 
         threading.Thread(target=_retry, name="state-retry", daemon=True).start()
         deliveries.start()
@@ -361,7 +379,9 @@ def serve(
         queue.close()
         space_store.close()
         share_store.close()
+        changes.close()
         activity.close()
+        user_invites.close()
         audit.store.close()
         registry.close()
         wk_seals.close()

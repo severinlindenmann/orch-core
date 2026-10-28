@@ -76,6 +76,12 @@ PURPOSE_SPACE_SK = (
     "space-sk"  # seal_to purpose: SK_e to a member workspace's WXK (an addition to v2 §5.3's closed list)
 )
 
+#: M2-8a: the domain of the digest an owner's channel key signs to approve an access change (``changes/proof.py``). A
+#: hub-local console label like the HKDF ones above: it names no contract object, so it stays out of ``HUB_LABELS`` (the H0
+#: vector file and protocol.md list those); ``tests/test_access_changes.py`` checks it is prefix-free with every label.
+ACCESS_CHANGE_LABEL = "orch/v2/hub-access-change|"
+ACCESS_CHANGE_KIND = "orch.access_change.v1"
+
 #: UK signs only under this family: ``"orch/v2/hub-custodial|" + <event type> + "|"`` (spec §5).
 CUSTODIAL_PREFIX = "orch/v2/hub-custodial|"
 EVENT_TYPE = re.compile(r"[a-z][a-z0-9_]{0,31}(\.[a-z][a-z0-9_]{0,31}){1,3}")

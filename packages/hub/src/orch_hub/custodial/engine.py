@@ -126,6 +126,64 @@ class _Pending:
     event_id: str
 
 
+def verified_channel(
+    channels: ChannelRegistry,
+    user_id: str,
+    channel_id: str,
+    *,
+    held: Mapping[str, Any],
+    now_ms: int,
+    dev_mode: bool,
+    revoked_op_certs: frozenset[str],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The user's CURRENT channel certificate (registered, not revoked, not expired) checked against the held card:
+    ``(signed cert, verified object)``. Shared by the custodial ``prepare`` and the owner's access-change approval, so both
+    read a channel the same way."""
+    ch_cert = channels.active_channel(user_id, channel_id)
+    if ch_cert is None:
+        raise Refused("channel_revoked")
+    ch = H.verify_channel_cert(ch_cert, held, now_ms=now_ms, dev_mode=dev_mode, revoked_op_certs=revoked_op_certs)
+    if ch["user_id"] != user_id or ch["channel_id"] != channel_id:
+        raise Refused("other_user")
+    return ch_cert, ch
+
+
+def check_channel_proof(
+    *,
+    keys: HubKeys,
+    channels: ChannelRegistry,
+    user_id: str,
+    channel_id: str,
+    digest: bytes,
+    proof: str,
+    now_ms: int,
+    min_factor: str = "password+totp",
+) -> bytes:
+    """A channel proof over ``digest`` exactly as ``CustodialEngine.sign`` checks it: the proof is a canonical 64-byte
+    signature (else ``bad_channel_proof``), the channel certificate is the user's current one, its factor reaches
+    ``min_factor`` (``factor_too_weak``; the console's browser keys are ``password+totp``) and the signature verifies
+    over ``"orch/v2/hub-channel-proof|" || digest`` under the certificate's key. Returns the decoded proof."""
+    try:
+        sig = unb64u(proof, S.SIG_LEN)
+    except CanonError, TypeError:
+        raise Refused("bad_channel_proof") from None
+    try:
+        card = keys.card()
+        held = keys.verify_card(card)
+        revoked_ops = keys.revoked_op_certs()
+        dev = bool(card["o"]["dev"])
+    except KeysError:
+        raise Refused("unavailable") from None
+    _, ch = verified_channel(
+        channels, user_id, channel_id, held=held, now_ms=now_ms, dev_mode=dev, revoked_op_certs=revoked_ops
+    )
+    if H.FACTOR_RANK.get(ch["factor"], -1) < H.FACTOR_RANK[min_factor]:
+        raise Refused("factor_too_weak")
+    if not S.verify(unb64u(ch["key_pub"], S.PUB_LEN), sig, H.channel_proof_bytes(digest)):
+        raise Refused("bad_channel_proof")
+    return sig
+
+
 def _ulid(now_ms: int) -> str:
     n = (now_ms << 80) | int.from_bytes(os.urandom(10), "big")
     return "".join(_CROCKFORD[(n >> (5 * i)) & 31] for i in range(25, -1, -1))
@@ -185,12 +243,9 @@ class CustodialEngine:
             raise Refused("other_user") from None
         if uk["user_id"] != user_id:
             raise Refused("other_user")
-        ch_cert = self._channels.active_channel(user_id, channel_id)
-        if ch_cert is None:
-            raise Refused("channel_revoked")
-        ch = H.verify_channel_cert(ch_cert, held, now_ms=now, dev_mode=self._dev, revoked_op_certs=revoked_ops)
-        if ch["user_id"] != user_id or ch["channel_id"] != channel_id:
-            raise Refused("other_user")
+        ch_cert, ch = verified_channel(
+            self._channels, user_id, channel_id, held=held, now_ms=now, dev_mode=self._dev, revoked_op_certs=revoked_ops
+        )
         snap = H.verify_snapshot(
             self._snaps.snapshot(workspace_id, "full"),
             held,
@@ -324,6 +379,17 @@ class CustodialEngine:
             except Exception:  # noqa: BLE001 - a push hint must never fail or slow the signing flow
                 _log.warning("prepare notify hook failed")
         return prepared
+
+    def _void_user(self, user_id: str) -> int:
+        """Drop every OPEN prepared request of this user (a disabling): nothing they prepared can be signed any more.
+        Returns how many were dropped. Underscore on purpose: the engine's public surface is exactly ``prepare`` and
+        ``sign`` (test_no_entry_point_takes_event_bytes); only the web layer's disabling calls this, with a user id.
+        (``sign`` also refuses a disabled user, whose channels are not live.)"""
+        with self._lock:
+            mine = [k for k, q in self._pending.items() if q.user_id == user_id]
+            for k in mine:
+                del self._pending[k]
+        return len(mine)
 
     def _gc(self, now: int) -> None:
         for k in [k for k, p in self._pending.items() if p.prepared.expires_ms <= now]:

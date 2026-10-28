@@ -14,7 +14,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { accountView } = await import("../../src/orch_hub/web/account.js");
+const { accountView, accountFromWorkspaceView } = await import("../../src/orch_hub/web/account.js");
 const text = (nodes) => nodes.map((n) => n.textContent).join("\n");
 const find = (nodes, pred) => nodes.flatMap((n) => n.all()).filter(pred);
 
@@ -190,4 +190,14 @@ test("the Account page wires the three actions to the hub's own routes", () => {
   const body = source.slice(source.indexOf("async function account()"), source.indexOf("async function approvals("));
   for (const route of ["/me/password", "/me/authenticator/begin", "/me/authenticator/confirm", "/me/sessions/end-all"]) assert.ok(body.includes('"' + route + '"'), route);
   assert.match(body, /needsSignIn: !!state\.user\.needs_sign_in/);
+});
+
+test("a session from a workspace gets a plain line and a way in, not an error", () => {
+  let again = 0;
+  const out = accountFromWorkspaceView({ name: "Ann" }, { signInAgain: () => { again++; } });
+  const t = text(out);
+  assert.match(t, /Open the hub directly to manage your account/);
+  assert.doesNotMatch(t, /Cannot read|try again|error/i);
+  const [button] = find(out, n => n.tag === "button");
+  assert.equal(button.textContent, "Open the hub");
 });

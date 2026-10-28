@@ -547,7 +547,8 @@ def test_a_disabled_admin_has_no_admin_standing(w):
     w.login(w.ann)
     w.env.acc.set_disabled(w.ann, True)
     assert not w.env.acc.is_hub_admin(w.ann) and w.env.acc.roles(WS).get(w.ann) is None
-    assert w.env.acc.members("hub-admin") == sorted([w.admin, w.ann])  # membership itself is not edited
+    # the FLAG alone (an operator path) does not edit membership; the admin ROUTE does strip it (next test)
+    assert w.env.acc.members("hub-admin") == sorted([w.admin, w.ann])
 
 
 def test_disable_touches_only_hub_derived_state(w):
@@ -793,7 +794,7 @@ def test_every_invite_event_is_recorded_with_references_only(w):
     dump = json.dumps(events)
     for secret in (tok, rt, rec, got["totp_secret"], NEW_PW):
         assert secret not in dump
-    assert all(set(e["detail"]) <= {"invite_id"} for e in events)
+    assert all(set(e["detail"]) <= {"invite_id", "groups_removed"} for e in events)  # references and group names only
     assert w.api.d.activity.verify()
     created = [e for e in events if e["type"] == "invite.created"]
     assert created and all(e["actor_id"] == w.admin for e in created)
@@ -895,3 +896,52 @@ def test_enabling_does_not_restore_group_reach(w):
     assert w.env.acc.groups_of(w.ann) == []
     w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)
     assert w.env.acc.role_of(w.ann, WS) is None and w.env.acc.groups_of(w.ann) == []
+
+
+def test_disable_strips_hub_admin_too_and_enable_does_not_restore_it(w):
+    w.env.acc.add_member("hub-admin", w.ann)
+    atok = w.login(w.admin)
+    groups = w.env.acc.groups_of(w.ann)
+    assert "hub-admin" in groups and "team" in groups
+    assert w.call("POST", f"/admin/users/{w.ann}/disable", token=atok)[0] == 200
+    assert w.env.acc.groups_of(w.ann) == [] and not w.env.acc.is_hub_admin(w.ann)
+    rec = next(e for e in w.api.d.activity.list(limit=50) if e["type"] == "user.disabled")
+    assert sorted(rec["detail"]["groups_removed"]) == sorted(groups)  # what was taken away is on record
+    assert w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)[0] == 200
+    assert not w.env.acc.is_hub_admin(w.ann) and w.env.acc.groups_of(w.ann) == []  # admin is not silently restored
+
+
+def test_disable_leaves_a_sole_members_group_in_place(w):
+    w.env.acc.add_group("solo")
+    w.env.acc.add_member("solo", w.ann)
+    w.env.acc.grant(WS, "solo", "read")
+    assert w.call("POST", f"/admin/users/{w.ann}/disable", token=w.login(w.admin))[0] == 200
+    assert any(g["name"] == "solo" for g in w.env.acc.groups()) and w.env.acc.members("solo") == []
+    assert {"group": "solo", "role": "read", "workspace_id": WS} in w.env.acc.grants(WS)
+
+
+def test_a_switch_ticket_session_is_not_opened_for_a_disabled_or_unrecovered_person(w):
+    from orch_hub.channels import ChannelError
+
+    w.env.acc.set_disabled(w.ann, True)
+    with pytest.raises(ChannelError) as e:
+        w.env.svc.open_session(w.ann)
+    assert e.value.code == "unknown_user"
+    w.env.acc.set_disabled(w.ann, False)  # enabled, not recovered
+    with pytest.raises(ChannelError) as e:
+        w.env.svc.open_session(w.ann)
+    assert e.value.code == "unknown_user"
+
+
+def test_a_paired_phone_stays_dead_after_a_flag_only_disable_and_enable(w):
+    """Pre-registered phone: a bound channel session, and a pairing session with its auth object ready to bind."""
+    from test_phone_routes import auth_obj, pair, phone
+
+    _signer, cid, ctok = phone(w, w.ann)
+    signer2, cid2, ptok = pair(w, w.ann)
+    auth = auth_obj(w, signer2, cid2, w.ann, ptok)
+    w.env.acc.set_disabled(w.ann, True)
+    w.env.acc.set_disabled(w.ann, False)  # the operator path: must_recover set, nothing revoked, nothing ended
+    assert w.env.svc.active_channel(w.ann, cid) is None and w.env.svc.active_channel(w.ann, cid2) is None
+    assert w.call("GET", "/me/workspaces", token=ctok)[0] == 401  # the channel session does not read anything
+    assert w.call("POST", "/session/channel", {"auth": auth}, token=ptok)[0] in (401, 403)  # nor does the pairing bind

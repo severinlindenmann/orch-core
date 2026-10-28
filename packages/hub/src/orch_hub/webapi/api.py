@@ -1394,12 +1394,13 @@ class WebApi:
         instant), then the clean-up, which is idempotent so an interrupted disabling is finished by repeating it."""
         uid = p["user_id"]
         self.d.access.set_disabled(uid, True, actor=c.user_id)  # self_disable / last_admin / unknown_user
-        self._record(
-            "user.disabled", actor_id=c.user_id, subject_user=uid
-        )  # first: an interrupted clean-up is still on record
-        # a disabled person leaves every group: enabling never brings group reach back on its own, it is re-granted through
-        # the normal path (where an owner's approval applies), so a re-enabled person cannot return to unseen reach
-        for group in self.d.access.groups_of(uid):
+        groups = list(self.d.access.groups_of(uid))
+        # first: an interrupted clean-up is still on record, and so is what is about to be taken away (hub-admin included)
+        self._record("user.disabled", actor_id=c.user_id, subject_user=uid, detail={"groups_removed": groups})
+        # a disabled person leaves every group, the hub-admin group too: enabling never brings group reach (or admin)
+        # back on its own, it is re-granted through the normal path (where an owner's approval applies). A group this
+        # leaves empty stays (with its grants): only the person goes, nothing is deleted or orphaned.
+        for group in groups:
             self.d.access.remove_member(group, uid)
         self.d.channels.revoke_all(uid)
         self.d.channels.end_sessions(uid)

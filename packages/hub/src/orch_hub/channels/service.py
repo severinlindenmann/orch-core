@@ -383,7 +383,9 @@ class Channels:
         person signs in for real (``reauth_required``)."""
         u = self._known_user(user_id)
         try:
-            if self.acc.must_recover(u):  # enabled, not yet recovered: nothing but the recovery link opens a session
+            if not self.acc.is_live(
+                u
+            ):  # disabled, or enabled but not yet recovered: no session for a switch ticket either
                 raise ChannelError("unknown_user")
         except AccessError as e:
             raise ChannelError("store_error", e.code) from None

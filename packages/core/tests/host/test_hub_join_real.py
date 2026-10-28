@@ -312,3 +312,41 @@ def test_an_equal_card_with_other_content_does_not_overwrite_the_disk(human, ser
     with pytest.raises(HubRefused) as e:
         hubops._save_snapshot(service, b)  # noqa: SLF001
     assert e.value.code == "stale_card" and hubops._load_state(service).tls_spki == pin(2)  # noqa: SLF001
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_hub_snapshot_status_once_per_service_and_hub(monkeypatch, fail):
+    from types import SimpleNamespace
+
+    import orch
+    import orch.hubclient
+
+    calls = []
+
+    class Link:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def call(self, op, body):
+            calls.append((op, body))
+            if fail:
+                raise RuntimeError("old transport does not know status_put")
+
+    monkeypatch.setattr(orch.hubclient, "HubLink", Link)
+    transport = object()
+    monkeypatch.setattr(hubops, "_transport", lambda *args: transport)
+    monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
+    import socket
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "h" * 100)
+    state = SimpleNamespace(hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="full", hub_id="one")
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
+    for _ in range(2):
+        assert hubops._snapshot_link(service, state, b"", None, True)[1] is transport
+    assert calls == [("status_put", {"version": orch.__version__, "commit": "", "host": "h" * 80})]
+    state.hub_id = "two"
+    hubops._snapshot_link(service, state, b"", None, True)
+    assert len(calls) == 2
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
+    hubops._snapshot_link(service, state, b"", None, True)
+    assert len(calls) == 3

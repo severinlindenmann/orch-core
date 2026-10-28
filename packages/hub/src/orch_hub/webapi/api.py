@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from .. import __version__ as hub_version
 from ..access import Access, AccessError
 from ..access.store import ADMIN_GROUP, check_name
 from ..channels import Channels
@@ -53,6 +54,7 @@ from ..contract.canon import CanonError, loads_strict, unb64u
 from ..contract.hub import HV, Refused
 from ..relay.client import RelayError
 from ..switch import SwitchError, clean_return_to, workspace_rows
+from ..versions import MIN_SUPPORTED_VERSION, workspace_status
 from .static import StaticSite
 
 MAX_BODY = 64 * 1024
@@ -254,6 +256,7 @@ ROUTES: tuple[Route, ...] = (
         "my_handoffs",
         "Tickets sent between my workspaces: who, when, delivered or waiting",
     ),
+    _r("GET", "/workspaces/{workspace_id}/roles", "session", "workspace_roles", "Workspace owner and group roles"),
     _r("GET", "/me/workspaces", "session", "my_workspaces", "My workspaces with my role and the workspace mode"),
     _r(
         "GET",
@@ -352,6 +355,7 @@ _CHAN = frozenset(
         "whoami",
         "sign_out",
         "my_workspaces",
+        "workspace_roles",
         "needs_you",
         "item",
         "my_channels",
@@ -377,7 +381,17 @@ SCOPE_ROUTES: dict[str, frozenset[str]] = {
 #: call: reading what it sees, the rail, opening another workspace, signing out. Every OTHER route (admin, channels,
 #: signing, credentials) answers ``reauth_required`` until a real sign-in: routes default closed.
 SWITCH_HANDLERS = frozenset(
-    {"whoami", "sign_out", "my_workspaces", "my_handoffs", "needs_you", "item", "switch_ticket", "rail"}
+    {
+        "whoami",
+        "sign_out",
+        "my_workspaces",
+        "workspace_roles",
+        "my_handoffs",
+        "needs_you",
+        "item",
+        "switch_ticket",
+        "rail",
+    }
 )
 #: E4: routes only the console PAGE may call (its cookie session, from its own origin). The console's own session sent
 #: as a bearer is ``not_allowed``; an unknown bearer stays ``no_session`` and an app (pairing/channel) one
@@ -1026,7 +1040,29 @@ class WebApi:
     # --- (b) person home ---------------------------------------------------------------------------------------------
 
     def _h_my_workspaces(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        return 200, {"workspaces": self._workspaces(c.user_id)}
+        return 200, {
+            "workspaces": self._workspaces(c.user_id),
+            "hub": {"version": hub_version, "min_supported": MIN_SUPPORTED_VERSION},
+        }
+
+    def _h_workspace_roles(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        ws = p["workspace_id"]
+        row = next((w for w in self._workspaces(c.user_id) if w["workspace_id"] == ws), None)
+        if row is None or row["role"] not in ("admin", "owner"):
+            raise ApiError("unknown_workspace")
+        names = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
+        owner = names.get(self.d.registry.owner_alias(ws))
+        groups = []
+        if row["mode"] == "full":
+            for grant in self.d.access.grants(ws):
+                groups.append(
+                    {
+                        "group": grant["group"],
+                        "role": grant["role"],
+                        "members": [names[u] for u in self.d.access.members(grant["group"]) if u in names],
+                    }
+                )
+        return 200, {"owner": owner, "groups": groups}
 
     @staticmethod
     def _shared_signable(o: dict[str, Any]) -> bool:
@@ -1292,6 +1328,7 @@ class WebApi:
                     "mode": reg.last_mode(ws),
                     "status": st["status"] if st else None,
                     "left_ms": reg.unbound_ms(ws) if st and st["status"] == "unbound" else None,
+                    **workspace_status(reg, ws),
                     "owner_alias": reg.owner_alias(ws),
                     "grants": self.d.access.grants(ws),
                 }

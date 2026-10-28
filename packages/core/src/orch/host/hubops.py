@@ -989,6 +989,24 @@ def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: boo
         transport, hub_id=state.hub_id, workspace_id=service.workspace_id, hk_op_pub=hk_op, sign=sign,
         mode=state.mode, now_ms=lambda: int(service.clock() * 1000),
     )  # fmt: skip
+    try:
+        import socket
+
+        import orch
+
+        sent = service.__dict__.setdefault("_hub_status_sent", set())
+        if state.hub_id not in sent:
+            sent.add(state.hub_id)  # one attempt, including failures on older hubs/fake transports
+            hub_link.call(
+                "status_put",
+                {
+                    "version": orch.__version__,
+                    "commit": "",
+                    "host": socket.gethostname()[:80],
+                },
+            )
+    except Exception:
+        pass
     return hub_link, transport
 
 

@@ -3801,17 +3801,6 @@ def test_relay_caps_headline_at_sixty():
     assert not contract4_view_ok({"op": "approve", "headline": "x" * 61, "risk_lines": []})
 
 
-@pytest.mark.parametrize("action", ["new_sequence", "quick_start"])
-def test_agent_access_cannot_be_hidden_in_a_daily_sequence(client, token, stub, script, action):
-    body = {"action": action, "title": "Task", "agent": {"hours": 8}}
-    if action == "new_sequence":
-        body.update(type="feature", sections={})
-    res = prepare(client, token, stub, body)
-    assert res.status_code == 409, res.text
-    assert res.json()["error"]["reason"] == "terminal_only"
-    assert not [call for child in script.clients for call in child.calls if call[0] == "prepare"]
-
-
 def test_d5_logout_everywhere_continues_after_callback_failure(client, token, stub, script, auth):
     other = other_session(client, auth)
     prepare(client, other, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})

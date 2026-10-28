@@ -263,3 +263,28 @@ def test_an_agent_cannot_add_or_confirm_sharing(served, selective):
                      ("share.sync", {"expect": "p" * 43})):  # fmt: skip
         assert err(agent(served, op, args)) in ("op.not_allowed", "human_only"), op
     assert selective.ops == before
+
+
+def test_a_confirming_sync_checks_the_owner_again_under_the_lock(served, selective, monkeypatch):
+    labelled(served, "Public note", "public")
+    shown = ok(req(served, "share.preview", {}))["data"]["plan"]
+    real = shareops._owner
+
+    def demoted(call):  # the role changed after serve() let the call in
+        if call.frame["op"] == "share.sync":
+            raise shareops.HostError("role.denied", "share rules are for workspace owners")
+        return real(call)
+
+    seen = []
+    real_serve = shareops.serve
+
+    def serve(call):
+        out = real_serve(call)
+        monkeypatch.setattr(shareops, "_owner", demoted)
+        seen.append(1)
+        return out
+
+    monkeypatch.setattr(shareops, "serve", serve)
+    before = list(selective.ops)
+    assert err(req(served, "share.sync", {"expect": shown})) == "role.denied"
+    assert selective.ops == before and seen

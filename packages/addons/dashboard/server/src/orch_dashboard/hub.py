@@ -38,6 +38,7 @@ Host text is display-only: hidden characters are withheld, never repaired.
 from __future__ import annotations
 
 import collections
+import contextlib
 import json
 import logging
 import re
@@ -436,7 +437,8 @@ def register(app: FastAPI, gateway: Gateway):
     def add(ws: str, request: Request, op: str, args: dict) -> dict:
         link, person = adding_link(ws, request, args["expect"])
         got = add_view(link.call(op, args, write=True, idem=new_idem()))
-        shown[request.state.token].remove((ws, args["expect"]))  # one shown plan, one confirmation
+        with contextlib.suppress(KeyError, ValueError):  # one shown plan, one confirmation
+            shown[request.state.token].remove((ws, args["expect"]))
         log.warning("sharing added from the dashboard: %s by %s (%d sent)", op, person, got["put"])
         return got
 

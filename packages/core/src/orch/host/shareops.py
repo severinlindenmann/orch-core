@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
@@ -124,6 +124,11 @@ def _owner(call: Call) -> None:
     member = call.service.store.state.workspace.members.get(call.viewer)
     if member is None or member.role != "owner":
         raise HostError("role.denied", "share rules are for workspace owners")
+
+
+def _owner_fresh(call: Call) -> None:
+    call.service.store.refresh()
+    _owner(call)
 
 
 def _check(call: Call) -> tuple[str, dict[str, Any]]:
@@ -432,7 +437,12 @@ def _approve(st: Any, selection: list[Any], expect: str) -> None:
         ) from None
 
 
-def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str | None = None) -> dict[str, Any]:
+def sync_now(
+    service: WorkspaceService,
+    viewer: str | None = None,
+    expect: str | None = None,
+    recheck: Callable[[], None] | None = None,
+) -> dict[str, Any]:
     """Evaluate and sync (the caller holds no lock). ``{"synced": True, put, revoke, kept}`` or
     ``{"synced": False, "pending": code}``: the rules stay saved and the next sync repeats only what is missing.
     ``refused`` lists items the contract or the hub refused one by one (skipped, the rest was sent).
@@ -443,6 +453,8 @@ def sync_now(service: WorkspaceService, viewer: str | None = None, expect: str |
     from orch.hubclient import shares as S
 
     with _MU:
+        if expect is not None and recheck is not None:
+            recheck()  # a confirming sync widens what leaves: the owner role is judged again under the lock
         st = _load(service)
         facts = tickets_for(service, viewer)
         if expect is None:
@@ -530,7 +542,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     op, args, service = plan["op"], plan["args"], call.service
     try:
         if op == "share.sync":
-            got = sync_now(service, call.viewer, args.get("expect"))
+            got = sync_now(service, call.viewer, args.get("expect"), lambda: _owner_fresh(call))
             more = {**_add_audit(service, call, args), "count": got.get("put")} if "expect" in args else {}
             hubops._audit(call, "share.sync", synced=got["synced"], confirmed="expect" in args, **more)  # noqa: SLF001
             return ok_result(got)

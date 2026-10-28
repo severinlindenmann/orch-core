@@ -43,7 +43,6 @@ export function AddRuleReview({ ws, workspace, rule, after }: { ws: string; work
     ).finally(() => setBusy(false))
   }
   return <div className="space-y-2" data-testid="hub-add-review">
-    <p>Share more with your hub. This rule also shares future matches.</p>
     <p data-testid="hub-add-rule">Rule: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}</p>
     <WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" />
     <p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>

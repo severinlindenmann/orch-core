@@ -90,8 +90,10 @@ export function useStartPlan(workspace: Workspace, person: string) {
   const cap = typeof hostCap === 'number' ? Math.min(GRANT_MAX_HOURS, Math.max(1, Math.floor(hostCap))) : grantDefaultHours(workspace)
   const all = runnerLengths(cap)
   const lengths = all
-  const [hoursChoice, setHours] = useState(8)
-  const hours = lengths.some(([h]) => h === hoursChoice) ? hoursChoice : (lengths[0]?.[0] ?? 24)
+  // preselected: the workspace's access setting (capped by the workspace) once it is known; the person's pick wins (#1555)
+  const [hoursChoice, setHours] = useState<number | null>(null)
+  const preferred = !settings.isPending && lengths.some(([h]) => h === cap) ? cap : (lengths[0]?.[0] ?? 8)
+  const hours = hoursChoice !== null && lengths.some(([h]) => h === hoursChoice) ? hoursChoice : preferred
 
   const choice: AgentChoiceValue = { harness: pref.harness, mode: pref.mode, model: pref.model }
   const models = choices.data?.harnesses.find((h) => h.id === pref.harness)?.models ?? []

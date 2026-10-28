@@ -163,7 +163,7 @@ describe('what is signed', () => {
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
     const action = await sent()
-    expect(action.agent).toEqual({ hours: 8 })
+    expect(action.agent).toEqual({ hours: 168 })
     expect(action.launch).toEqual({ harness: 'claude-code', mode: 'refine' })
     expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Then: start an agent on the new ticket.')
     expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(230) // one line, not a paragraph
@@ -241,7 +241,7 @@ describe('partial failures', () => {
     setup({ grant: null })
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
-    expect((await sent()).agent).toEqual({ hours: 8 })
+    expect((await sent()).agent).toEqual({ hours: 168 })
     await r.user.click(await screen.findByRole('button', { name: 'access-missing' }))
     await r.user.click(screen.getByRole('button', { name: 'cancelled' }))
     const failed = await failedOf()
@@ -287,7 +287,7 @@ describe('a grant that runs out while the form is open', () => {
     const realNow = nowMs()
     const spy = vi.spyOn(await import('@/lib/time'), 'nowMs').mockReturnValue(realNow + 5 * 60_000) // five minutes later: 11 left
     await r.user.click(await startBtn(sheet))
-    expect((await sent()).agent).toEqual({ hours: 8 })
+    expect((await sent()).agent).toEqual({ hours: 168 })
     spy.mockRestore()
   })
 })

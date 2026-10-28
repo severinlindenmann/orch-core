@@ -219,8 +219,14 @@ def test_a_claude_md_that_is_not_setups_own_is_still_refused(tmp_path):
     assert claude_folder.offered(env, root) is False and "CLAUDE.md" in (claude_folder.refusal(env, root) or "")
 
 
-def test_a_failed_row_is_never_ready_a_macos_block_is_named_and_try_again_works(tmp):
+def test_a_failed_row_is_never_ready_a_macos_block_is_named_and_try_again_works(tmp, monkeypatch):
+    import orch.custody.strength as strength
+    import orch.identity as identity
     from tests.setup.fakes import FakePorts
+
+    # deterministic: random secrets sometimes hold words of this very message ("items", "login", "extensions")
+    monkeypatch.setattr(identity, "generate_recovery_code", lambda: " ".join(["zebra", "yonder"] * 12))
+    monkeypatch.setattr(strength, "generate_passphrase", lambda: "quiet-meadow-lantern")
     from tests.setup.test_create import progress
 
     ports = FakePorts()

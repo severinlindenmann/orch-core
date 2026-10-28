@@ -415,8 +415,14 @@ def test_b3_refresh_restarts_a_runner_of_another_release(tmp_path, monkeypatch):
     assert out == {"runner_restarted": True} and seen["mine"]
 
 
-def test_item5_a_custody_refusal_shows_the_reason_and_the_fix(tmp):
+def test_item5_a_custody_refusal_shows_the_reason_and_the_fix(tmp, monkeypatch):
+    # deterministic: the secrets are random words, and one of them ("person") also names a directory in the message
+    import orch.custody.strength as strength
+    import orch.identity as identity
     from orch.custody.base import CustodyError
+
+    monkeypatch.setattr(identity, "generate_recovery_code", lambda: " ".join(["person"] * 24))
+    monkeypatch.setattr(strength, "generate_passphrase", lambda: "quiet-meadow-lantern")
 
     ports = FakePorts()
 

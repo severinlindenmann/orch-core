@@ -13740,3 +13740,41 @@ CLI sequences prepare directly and use one review before signing their steps. Da
 Phone authority comes from device pairing. Hub join/mode/leave retain their sealed backup-key flow, and the
 six-character phone pairing code remains. Passphrases authenticate keys on `/dev/tty`; click signing never prompts
 for one. Setup retains its three-word channel-binding comparison and uses the same Enter review.
+
+#### `schedule.add`: signed ticket target
+
+`target` is `existing` by default (including when absent); it requires `ref` and forbids `title`.
+`target: new` forbids `ref` and requires a literal `title` of 1–100 clean single-line characters.
+Control and hidden characters are refused using core's clean-text rules. No template expansion is performed.
+The command prepares one action with a signed `ticket.created` followed by a signed `schedule.set` on the
+same new log. The creation names the schedule id; both events bind the literal title. The anchor is an open chore
+shown as a normal ticket. This two-event creation action shares a null `based_on`; only the second-position
+new-target set admits that base, and admission checks its signed anchor. All events are judged before the first
+append. Hosted submission journals the action before appending and rolls it forward after a crash.
+
+An existing-ticket `schedule.set` retains its original shape when `target` is omitted. Both `target` and `title`
+are included in the signed bytes when present. The review says "creates a NEW ticket every run", with the literal
+title, cadence, timezone and end date. Unknown targets are refused. Older consumers must reject the new shape;
+they must never run it as an existing-ticket schedule. The contract vectors cover both shapes and an old
+signature presented with a new target and title.
+
+For each occurrence, core rechecks the setter's role, device and access, the anchor's status and cancellation.
+A previous child that is not closed prevents another: `did_not_run` / `skipped_open_child` ("the last ticket was
+still open"). Core first appends `schedule.fired` on the anchor with a deterministic child uid derived from the
+schedule id and canonical occurrence. It then creates that child with the schedule's person actor and the closed
+`via: {anchor, schedule_id, occurrence, set_sig_hash}` reference. `set_sig_hash` hashes the admitted set's signature.
+The model checks that reference against the signed schedule and the recorded firing, and checks authority again.
+The child is an open chore whose parent is the anchor. Core alone renders its creation title as the literal title
+plus `YYYY-MM-DD` in the rule's timezone. No agent output supplies the title.
+
+A tick repairs a firing whose child is missing using the same uid. It never repeats a creation or regenerates a
+lost run secret: an unlaunched recovered run settles as `did_not_run` / `host_restarted`. A loss of authority before
+recovery blocks creation. The run grant, launch target, claim checks and write detection all belong to the child;
+the agent cannot write the anchor or create tickets. Core writes the outcome on the anchor. Cancelling a new-target
+schedule or closing its anchor stops future fires while leaving existing children and in-flight grants alone.
+Existing-ticket cancellation retains its earlier grant-ending behavior.
+
+Only a schedule child may close with `nothing_to_do`. Its own schedule run may close it, including through the
+`close` command; ordinary agent grants still cannot close tickets. A child closed this way is in Done and its
+run records `ran_nothing` ("Nothing to do"). Other successful runs record `ran`; failed and skipped
+runs retain the existing outcome reasons. The dashboard server preserves the new outcome and skip reason.

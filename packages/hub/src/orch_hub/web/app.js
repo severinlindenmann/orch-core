@@ -9,6 +9,7 @@ import { parseRoute } from "./route.js";
 import { homeView, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { adminView } from "./admin.js";
+import { inviteView } from "./invite.js";
 import { servicesView } from "./services.js";
 import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView } from "./workspaces.js";
@@ -80,6 +81,11 @@ const WORDS = {
   unavailable: "The hub cannot be reached.",
   bad_ticket: "This link expired. Go back and click again.",
   no_origin: "Open that workspace's dashboard once first, then try again.",
+  last_admin: "This is the last administrator. Make someone else an administrator first.",
+  self_disable: "You cannot disable yourself.",
+  conflict: "That is not possible in the person's current state.",
+  bad_invite: "This link does not work. It may have been used already or it has expired.",
+  proof_required: "Open this link in a browser where you already approve, or ask your admin for a recovery link.",
 };
 const say = (code) => WORDS[code] ?? "Refused (" + renderText(code) + ").";
 
@@ -141,6 +147,7 @@ function pageLoading(active, kind = active) {
 }
 
 function shell(active, ...nodes) {
+  nodes = [recoveryBanner(), ...nodes];
   if (active !== "services") { clearInterval(servicesTimer); viewRevision++; } // leave the Services page: stop its refresh
   const sameRoute = paintedRoute === location.hash;
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
@@ -186,6 +193,20 @@ function shell(active, ...nodes) {
   if (menu) menu.hidden = !state.menu;
   const workspace = state.rail.rows.find((w) => w.id === route.workspace);
   frame.querySelector(".breadcrumb").textContent = hubName + (workspace ? " › " + renderText(workspace.name) : "");
+}
+
+// After a recovery link reset the account the person sees who did it, until they dismiss it (GET /session: recovery).
+function recoveryBanner() {
+  const r = state.user?.recovery;
+  if (!r) return null;
+  const on = new Date(r.at_ms).toLocaleDateString();
+  const box = h("div", { class: "banner warn recovery-notice", role: "status" },
+    h("div", { text: renderText("Your account was reset by " + (r.by_name ?? "an administrator") + " on " + on + ". If you did not expect this, tell your IT person.") }),
+    h("button", { type: "button", text: "Dismiss", onclick: async () => {
+      const x = await api("POST", "/me/recovery/dismiss");
+      if (x.status === 200) { state.user.recovery = null; box.remove(); }
+    } }));
+  return box;
 }
 
 // --- the company rail: this hub, then every workspace of mine (GET /rail); one click switches, no second sign-in ----------
@@ -279,17 +300,33 @@ async function activity() {
   if (state.user.needs_sign_in) return reauthView();
   await loadRail();
   const [users, workspaces] = await Promise.all([api("GET", "/admin/users"), api("GET", "/admin/workspaces")]);
-  let rows = [], revision = 0;
-  const load = async (filters = {}, before = null) => {
-    const request = ++revision;
+  let rows = [], revision = 0, applied = {};
+  const query = (filters, before) => {
     const params = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== "" && v != null));
     if (before) params.set("before", before);
-    const r = await api("GET", "/admin/activity?" + params);
+    return "/admin/activity?" + params;
+  };
+  const exportAll = async (filters) => { // every page that matches the filters, not only what is on screen
+    const all = [];
+    let before = null;
+    for (let page = 0; page < 200; page++) {
+      const r = await api("GET", query({ ...applied, ...filters, limit: "200" }, before));
+      if (r.status !== 200) throw new Error("export failed");
+      all.push(...r.body.rows);
+      if (!r.body.before) break;
+      before = r.body.before;
+    }
+    return all;
+  };
+  const load = async (filters = {}, before = null) => {
+    const request = ++revision;
+    if (!before) applied = filters;
+    const r = await api("GET", query(filters, before));
     if (location.hash !== "#/activity" || request !== revision) return;
     if (r.status !== 200) return shell("activity", banner("bad", "Activity could not be loaded", say(r.body.error)));
     rows = before ? [...rows, ...r.body.rows] : r.body.rows;
     shell("activity", activityView({ ...r.body, rows, filters, users: users.body.users ?? [], workspaces: workspaces.body.workspaces ?? [] }, {
-      filter: (next) => load(next), older: (cursor, next) => load(next, cursor),
+      filter: (next) => load(next), older: (cursor) => load(applied, cursor), exportAll: () => exportAll(applied),
     }));
   };
   await load();
@@ -315,7 +352,7 @@ async function admin() {
       await state.adminPage.reload();
       shell("admin", state.adminPage);
     } else {
-      state.adminPage = adminView({ api: adminApi, say, notice, refresh });
+      state.adminPage = adminView({ api: adminApi, say, notice, refresh, self: state.user?.user_id });
       shell("admin", state.adminPage);
     }
   } finally { finishLoading(); }
@@ -976,6 +1013,7 @@ async function renderRoute() {
       const route = parseRoute(location.hash);
       if (route.kind === "ticket") await landFromTicket(route.token);
       else if (route.kind === "setup") setupView(route.token);
+      else if (route.kind === "invite") show(inviteView(route.token, { api, say, signIn: () => loginView(), finished: () => history.replaceState(null, "", location.pathname) }));
       else if (route.kind === "access") await accessView(route.workspace, route.key);
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);

@@ -2010,5 +2010,5 @@ def register(app: FastAPI, gateway: Gateway):
                 del checks[k]  # tokens with no recent check are dropped: the dict stays small
         # The host decides first (it checks the role, then the folder); the local look is not run before it.
         op, args = host_call(body)
-        human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, dry_run=True)
+        human(ws, "human.prepare", {"op": op, "args": args}, dry_run=True)
         return {"ok": True}

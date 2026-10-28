@@ -293,7 +293,8 @@ class HumanOps:
         if types is None or name in NOT_SERVED:
             raise HostError("op.not_allowed", f"{name} is not an op a person runs through human.prepare")
         signer, handoff = args.get("signer"), bool(args.get("handoff", False))
-        if handoff == (signer is not None):
+        # a dry run binds nothing and stores nothing: it may take neither (the dashboard's folder check)
+        if (handoff and signer is not None) or (not handoff and signer is None and not dry_run):
             raise HostError("invalid.input", "human.prepare takes signer, or handoff:true without a signer")
         self.backend._state(service, True)  # the request prepares a write
         intent: Any = None

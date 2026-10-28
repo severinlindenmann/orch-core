@@ -108,6 +108,23 @@ def test_dry_run_stores_nothing_and_has_no_request(human, served):
     assert err(human.c.req("human.get", {"request_id": "hr_" + "0" * 26}, dry_run=True)) == "invalid.input"
 
 
+def test_a_dry_run_without_signer_or_handoff_persists_nothing(human, served):
+    _, key = human.ticket()
+    before = list(logged(served, key))
+    pending_before = ok(human.c.req("human.pending", {}))["data"]
+    body = {"op": "log", "args": {"ref": key, "text": "only a look"}}
+    p = ok(human.c.req("human.prepare", body, dry_run=True))["data"]
+    assert p["request"] is None and p["events"][0]["text"] == "only a look"
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []  # no request record
+    assert logged(served, key) == before  # no event
+    assert ok(human.c.req("human.pending", {}))["data"] == pending_before  # the request store is unchanged
+    # the same call for real still needs a signer, or handoff:true; never both
+    assert err(human.c.req("human.prepare", body)) == "invalid.input"
+    both = {**body, "signer": human.signer, "handoff": True}
+    assert err(human.c.req("human.prepare", both, dry_run=True)) == "invalid.input"
+    assert not requests_dir(served).exists() or os.listdir(requests_dir(served)) == []
+
+
 def test_only_person_ops_are_prepared(human, served):
     _, key = human.ticket()
     for op in ("claim", "task.done", "show", "import.v1", "nonsense"):

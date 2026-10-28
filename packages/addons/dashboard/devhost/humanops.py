@@ -192,11 +192,11 @@ class Requests:
         if type(handoff) is not bool:
             raise invalid("handoff must be true or false")
         signer = args.get("signer")
-        if (signer is None) == (not handoff):
+        dry = opts.get("dry_run") is True
+        if (signer is not None and handoff) or (signer is None and not handoff and not dry):
             raise invalid("name a signer, or ask for a hand-off, not both and not neither")
         if signer is not None:
             self.check_signer(store, signer)
-        dry = opts.get("dry_run") is True
         idem = None if dry else opts.get("idem")
         binding = None
         if idem is not None:

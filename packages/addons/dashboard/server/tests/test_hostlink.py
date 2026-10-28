@@ -180,7 +180,7 @@ def test_human_v13_shapes_and_dry_run_opts():
     t.start()
     link = HostLink(a, os.getuid(), WS)
     try:
-        link.call("human.prepare", {"op": "log", "args": {}, "handoff": True}, dry_run=True, idem="ignored")
+        link.call("human.prepare", {"op": "log", "args": {}}, dry_run=True, idem="ignored")
         link.call("human.pending", {"request_id": "hr_demo"})
         with pytest.raises(ValueError, match="events"):
             link.call("human.submit", {"event": {}}, idem="test")

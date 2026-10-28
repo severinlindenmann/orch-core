@@ -293,7 +293,9 @@ class StoreLanding:
         want = grantoff.terms(req["scope"], req["verbs"], req["hours"], req["label"])
         if runners is not None and _runner_ready(self.service, runners):
             model = dict(ws.hub)
-            if grantoff.GrantHandoffs(self.service).take(model, person=req["person"], hub_id=req["hub_id"], want=want):
+            if grantoff.GrantHandoffs(self.service).take(
+                model, person=req["person"], hub_id=req["hub_id"], handoff=req["handoff"], want=want
+            ):
                 plan = {
                     "deposit_id": new_ulid(),
                     "grant": token.grant_id,

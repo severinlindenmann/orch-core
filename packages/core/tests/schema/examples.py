@@ -503,7 +503,17 @@ _SPEC = {
         5,
     ),
     "grant.revoked": (PERSON, {"grant": "gr_" + U1, "reason": "done"}, 5),
-    "grant.requested": (PERSON, {"scope": "workable", "verbs": ["log", "task.done"], "hours": 8, "label": "runner"}, 5),
+    "grant.requested": (
+        PERSON,
+        {
+            "handoff": "01J9ZP00000000000000000001",
+            "scope": "workable",
+            "verbs": ["log", "task.done"],
+            "hours": 8,
+            "label": "runner",
+        },
+        5,
+    ),
     "device.excluded": (PERSON, {"device": "d_" + DID2, "reason": "lost"}, 5),
     "addon.requested": (
         PERSON,

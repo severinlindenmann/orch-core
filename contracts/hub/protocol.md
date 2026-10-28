@@ -889,7 +889,7 @@ mode (D83); the hub path exists so a person who is away can still issue or revok
 
 | Type | Log | Lowest role | Action fields (exact) | Derived by the hub |
 |---|---|---|---|---|
-| `grant.requested` | workspace | `edit` | `scope` (`all` \| `workable`), `verbs` (`"agent"` or 1–32 sorted unique operation names `[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?`), `hours` (1–168), `label?` (one line ≤ 200 bytes) | nothing |
+| `grant.requested` | workspace | `edit` | `scope` (`all` \| `workable`), `verbs` (`"agent"` or 1–32 sorted unique operation names `[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?`), `hours` (1–168), `label?` (one line ≤ 200 bytes), `handoff` (host-created ULID) | nothing |
 | `grant.revoked` | workspace | `edit` | `grant` (`gr_` + ULID), `reason?` (one line) | nothing |
 | `device.excluded` | workspace | `admin` | `device` (`d_` + 32 hex), `reason` (`lost` \| `retired` \| `compromised`) | nothing |
 | `policy.changed` | workspace | `admin` | `gates`: 1–4 of `requirements`, `plan`, `verify`, `code`, each exactly `{approvers, count, not, applies, independent}` (below) | nothing |
@@ -919,7 +919,12 @@ mode (D83); the hub path exists so a person who is away can still issue or revok
   binding instead). The secret never travels on the link and is never shown or logged.
   **The host gives the secret only to its runner, and only for a pending local hand-off (V3-D29):** a Mission Control
   "Start agent" that a person started **on that host**, recorded host-locally as a hand-off of kind `grant` for the
-  same canonical person and exact terms, at most 10 min old, used once. The record is bound to the workspace id and
+  same canonical person and exact terms, at most 10 min old, used once. The signed `handoff` must equal that
+  grant record’s id; a wrong, expired, used or add-on hand-off id cannot release a secret. `hub.handoff {kind: grant}`
+  returns this id and a pinned-hub `/#/w/<workspace>/access/<b64u(canonical JSON terms)>` link with
+  `{scope, verbs: "agent", hours, label?, handoff}`. The fragment is display and signing input only; the host’s
+  record is authoritative. The console requires workspace role `edit` or higher, and the model re-checks the
+  signer’s capability and workspace duration cap at landing, refusing excess capability without narrowing. The record is bound to the workspace id and
   the current hub binding (`hub_id`, `binding_seq`), is matched and consumed inside the same store-lock hold that
   appends `grant.issued`, and is dropped when the person cancels it, at `hub.left` and at any new `hub.joined`.
   Otherwise the host still appends `grant.issued`

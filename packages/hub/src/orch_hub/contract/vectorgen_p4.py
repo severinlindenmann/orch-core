@@ -336,7 +336,14 @@ def build_p4(
         "applies": "all",
         "independent": True,
     }
-    gr = {"type": "grant.requested", "log": W, "scope": "workable", "verbs": "agent", "hours": 72}
+    gr = {
+        "type": "grant.requested",
+        "log": W,
+        "handoff": "01J9ZP00000000000000000001",
+        "scope": "workable",
+        "verbs": "agent",
+        "hours": 72,
+    }
     mal = {"error": "malformed"}
     act5(
         "action_grant_requested_by_edit",
@@ -349,6 +356,8 @@ def build_p4(
     act5("action_grant_requested_by_read", gr, "read", {"error": "forbidden_role"})
     act5("action_grant_requested_on_ticket_log", {**gr, "log": TICKET}, "edit", {"error": "not_custodial"})
     for nm, a, why in (
+        ("without_handoff", {k: v for k, v in gr.items() if k != "handoff"}, "required local record id"),
+        ("bad_handoff", {**gr, "handoff": "hr_01J9ZP00000000000000000001"}, "grant ids are ULIDs"),
         ("hours_over", {**gr, "hours": 169}, "1-168 h"),
         ("hours_zero", {**gr, "hours": 0}, ""),
         ("verbs_unsorted", {**gr, "verbs": ["task.done", "log"]}, "sorted unique"),
@@ -857,6 +866,8 @@ def build_p4(
          "a ticket override through a channel")  # fmt: skip
     grp = EVENT_PAYLOADS["grant.requested"][1]
     for nm, typ, pl, why in (
+        ("grant_requested_without_handoff", "grant.requested", {k: v for k, v in grp.items() if k != "handoff"},
+         "the signed request must name the pending grant record"),
         ("grant_requested_with_secret_hash", "grant.requested", {**grp, "secret_hash": HASH_A},
          "the grant secret is made by the host after admission, never by the hub"),
         ("grant_requested_with_grant_id", "grant.requested", {**grp, "grant": "gr_01J9ZP0000000000000000GRT1"}, ""),

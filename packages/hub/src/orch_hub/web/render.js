@@ -73,6 +73,23 @@ export const DECISIONS = {
   "gate.changes_requested": ["gate", "hash", "text", "gate_gen", "policy_hash"],
   "verdict.given": ["outcome", "hash", "text", "gate_gen", "policy_hash", "source_sha"],
 };
+// Agent access (protocol 8.8): only these exact terms can be shown for signing.
+export const GRANT_REQUEST = ["scope", "verbs", "hours", "label", "handoff"];
+export function grantTermsOk(t) {
+  if (!isObj(t) || !Object.keys(t).every((k) => GRANT_REQUEST.includes(k))) return false;
+  return ["all", "workable"].includes(t.scope) && t.verbs === "agent" &&
+    Number.isInteger(t.hours) && t.hours >= 1 && t.hours <= 168 &&
+    typeof t.handoff === "string" && t.handoff.length === 26 && /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/.test(t.handoff) &&
+    (!("label" in t) || (typeof t.label === "string" && [...t.label].length <= 200 &&
+      !t.label.includes("\n") && renderText(t.label) === t.label));
+}
+export function grantSentence(t, workspace = "this workspace") {
+  return "Let an agent work for you in " + renderText(workspace) + ": " +
+    (t.scope === "all" ? "all tickets" : "only tickets it can work on") + ", for " + t.hours + " hours";
+}
+export function grantFacts(t) {
+  return "label" in t ? [["Label", renderText(t.label)]] : [];
+}
 // FB15 (protocol 8.8b): the owner's ask to turn an add-on on. The words here are this page's own: the host's text never
 // reaches the sentence. Unknown capability tokens, any other field or any other shape is "cannot render", never a guess.
 export const ADDON_REQUEST = ["name", "version", "package_sha256", "capabilities", "runtime", "handoff"];
@@ -258,6 +275,8 @@ export function facts(type, ev, qv = null) {
         out.push(["Code", ok ? renderText(e.repo) + " " + renderText(e.sha.slice(0, 8)) : r(e)]);
       }
     }
+  } else if (type === "grant.requested") {
+    out.push(...grantFacts(ev));
   } else if (type === "addon.requested") {
     out.push(...addonFacts(ev));
   } else if (type === "settings.changed") {
@@ -273,6 +292,8 @@ const SENTENCE_STRINGS = ["from", "to", "reason", "gate", "outcome", "text", "op
 function sentence(type, log, ev, qv = null) {
   const on = "ticket " + renderText(log);
   switch (type) {
+    case "grant.requested":
+      return grantSentence(ev);
     case "settings.changed":
       return "I change the workspace settings: " + settingsFacts(ev.set).map(([k, v]) => k + " " + v).join(", ") + ".";
     case "addon.requested":
@@ -298,11 +319,12 @@ function sentence(type, log, ev, qv = null) {
 export function describe(ctx, digest, sent = null, qv = null) {
   const ev = ctx.event;
   const type = typeof ev.type === "string" ? ev.type : "";
+  const isGrant = type === "grant.requested";
   const isAddon = type === "addon.requested";
   const isSettings = type === "settings.changed";
-  const known = isAddon ? ADDON_REQUEST : isSettings ? ["set"] : Object.hasOwn(DECISIONS, type) ? DECISIONS[type] : Object.hasOwn(MOVES, type) ? MOVES[type] : undefined;
+  const known = isGrant ? GRANT_REQUEST : isAddon ? ADDON_REQUEST : isSettings ? ["set"] : Object.hasOwn(DECISIONS, type) ? DECISIONS[type] : Object.hasOwn(MOVES, type) ? MOVES[type] : undefined;
   const fields = Object.keys(ev)
-    .filter((k) => k !== "channel_cert" && k !== "uk_cert")
+    .filter((k) => isGrant || (k !== "channel_cert" && k !== "uk_cert"))
     .sort()
     .map((k) => [renderText(k), typeof ev[k] === "string" ? renderText(ev[k]) : renderText(cj(ev[k]))]);
   const extra = known ? Object.keys(ev).filter((k) => !known.includes(k) && !ENVELOPE.includes(k)) : [];
@@ -314,8 +336,9 @@ export function describe(ctx, digest, sent = null, qv = null) {
   // an answer that picks an option is signable only against the verified question that lists it: never a blind label
   const answerOk = type !== "question.answered" || answerFits(ev, qv);
   const addonOk = !isAddon || (ctx.log === "workspace" && addonTermsOk(Object.fromEntries(ADDON_REQUEST.filter((k) => k in ev).map((k) => [k, ev[k]]))));
+  const grantOk = !isGrant || grantTermsOk(Object.fromEntries(GRANT_REQUEST.filter((k) => k in ev).map((k) => [k, ev[k]])));
   const settingsOk = !isSettings || settingsTermsOk(ev.set);
-  const signable = Boolean(known) && answerOk && addonOk && settingsOk && extra.length === 0 && stringsOk && moveOk && typeof ctx.log === "string" && (isAddon || isSettings ? ctx.log === "workspace" : ctx.log !== "workspace");
+  const signable = Boolean(known) && answerOk && addonOk && grantOk && settingsOk && extra.length === 0 && stringsOk && moveOk && typeof ctx.log === "string" && (isGrant || isAddon || isSettings ? ctx.log === "workspace" : ctx.log !== "workspace");
   return {
     type: renderText(type),
     signable,
@@ -345,6 +368,7 @@ export function checkBindings(ctx, me, sent) {
       if (k in sent.action && ev[k] !== sent.action[k]) bad();
     }
     if (ev.type === "addon.requested") for (const k of ["capabilities", "runtime"]) if ((k in ev) !== (k in sent.action) || (k in ev && cj(ev[k]) !== cj(sent.action[k]))) bad();
+    if (ev.type === "grant.requested") for (const k of GRANT_REQUEST) if ((k in ev) !== (k in sent.action) || ev[k] !== sent.action[k]) bad();
     if (ev.type === "settings.changed" && cj(ev.set) !== cj(sent.action.set)) bad();
     // an answer carries exactly the option/text keys that were sent, never one more (an added note or option)
     if (ev.type === "question.answered") for (const k of ["option", "text"]) if ((k in ev) !== (k in sent.action)) bad();

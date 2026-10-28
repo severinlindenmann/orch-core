@@ -48,13 +48,16 @@ def request(env: Env, **over: Any) -> dict[str, Any]:
         "id": f"01J9ZP000000000000000{env.n:05d}",
         "based_on": env.head("workspace"),
         "roster_v": env.roster_v(),
+        "handoff": getattr(env, "handoff_id", "01J9ZP00000000000000000001"),
         **TERMS,
     }
     return mint(env.wid, "workspace", "grant.requested", **{**base, **over})
 
 
 def handoff(env: Env, **args: Any) -> dict[str, Any]:
-    return env.served.client().req("hub.handoff", {"kind": "grant", **{**TERMS, **args}})
+    result = env.served.client().req("hub.handoff", {"kind": "grant", **{**TERMS, **args}})
+    env.handoff_id = ok(result)["data"]["handoff"]
+    return result
 
 
 def grants(env: Env) -> list[dict[str, Any]]:
@@ -180,3 +183,59 @@ def test_a_leave_ends_the_hub_requested_grant_for_the_runner_and_for_the_agent(e
     env.human.run("hub.leave", {})
     assert verify() == ("revoked", "unverified")  # the runner's watcher drops it; the agent's token no longer verifies
     assert parse_grant(secret).grant_id == plan["grant"]
+
+
+def test_wrong_handoff_id_is_inert_and_does_not_consume_the_right_record(env):
+    data = ok(handoff(env))["data"]
+    assert env.deliver(request(env, handoff="01J9ZP00000000000000000000"), "workspace") is None
+    assert env.captured == []
+    assert env.deliver(request(env, handoff=data["handoff"]), "workspace") is None
+    assert len(env.captured) == 1
+
+
+def test_addon_handoff_id_finds_no_grant_record(env):
+    from orch.host.grantoff import GrantHandoffs, terms
+
+    ok(handoff(env))
+
+    def take():
+        with env.service.store.locked():
+            return GrantHandoffs(env.service).take(
+                dict(env.service.store.state.workspace.hub),
+                person=GrantHandoffs(env.service)._read()[0]["person"],
+                hub_id=env.state.hub_id,
+                handoff="hr_01J9ZP00000000000000000001",
+                want=terms("workable", "agent", 8, None),
+            )
+
+    assert env.service.submit(take).result() is False
+    assert env.captured == []
+
+
+def test_grant_link_contains_exact_signed_terms_and_pinned_address(env):
+    import base64
+    import json
+
+    data = ok(handoff(env, label="My agent"))["data"]
+    prefix = f"https://hub.example.test:4443/#/w/{env.wid}/access/"
+    assert data["url"].startswith(prefix)
+    raw = data["url"][len(prefix) :]
+    assert json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))) == {
+        **TERMS,
+        "label": "My agent",
+        "handoff": data["handoff"],
+    }
+
+
+def test_handoff_cannot_exceed_workspace_duration(env):
+    cap = env.service.store.state.workspace.settings["grant_hours"]
+    result = env.served.client().req("hub.handoff", {"kind": "grant", **TERMS, "hours": cap + 1})
+    assert err(result)
+
+
+def test_named_label_must_match_without_consuming_on_mismatch(env):
+    ok(handoff(env, label="My agent"))
+    assert env.deliver(request(env, label="Other agent"), "workspace") is None
+    assert env.captured == []
+    assert env.deliver(request(env, label="My agent"), "workspace") is None
+    assert len(env.captured) == 1

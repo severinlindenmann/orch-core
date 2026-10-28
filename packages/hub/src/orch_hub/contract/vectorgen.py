@@ -309,7 +309,7 @@ EVENT_PAYLOADS: dict[str, tuple[str, dict[str, Any] | None]] = {
                                       "capabilities": ["network", "serve_http"], "handoff": "hr_01J9ZP0000000000000000HND1",
                                       "runtime": {"kind": "python-requirements", "lock": "requirements.txt", "packages": 3}}),
     # phase 5 (§8.8, V3-D29)
-    "grant.requested": ("workspace", {"scope": "workable", "verbs": "agent", "hours": 72, "label": "Tariff import"}),
+    "grant.requested": ("workspace", {"handoff": "01J9ZP00000000000000000001", "scope": "workable", "verbs": "agent", "hours": 72, "label": "Tariff import"}),
     "grant.revoked": ("workspace", {"grant": "gr_01J9ZP0000000000000000GRT1", "reason": "done"}),
     "device.excluded": ("workspace", {"device": "d_" + fake16("device_old_phone"), "reason": "lost"}),
     "policy.changed": ("workspace", {"gates": {"code": {"approvers": ["maintainer", "owner"], "count": 2,

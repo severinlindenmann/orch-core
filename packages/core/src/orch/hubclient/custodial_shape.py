@@ -303,6 +303,7 @@ PAYLOAD: dict[str, tuple[dict[str, Check], dict[str, Check]]] = {
     # phase 5 (8.8, V3-D29): the event carries no grant id, secret hash or times; the host derives them
     "grant.requested": (
         {
+            "handoff": _re(re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")),
             "scope": _enum("all", "workable"),
             "verbs": lambda x: x == "agent" or _sorted_unique(_re(_OPNAME), 1, 32)(x),
             "hours": _int_in(1, 168),

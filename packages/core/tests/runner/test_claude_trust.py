@@ -391,3 +391,22 @@ def test_pretrust_needs_the_isolation_flags_in_the_launch(ws, tmp_path):
     assert not (home / ".claude.json").exists()
     launch(ws, CLAUDE)
     assert set(entries(home)) == {str(work)}
+
+
+def test_a_file_made_meanwhile_is_never_replaced_when_creating(tmp_path, monkeypatch):
+    import json
+    import os
+
+    from orch.runner import claude_trust as ct
+
+    cfg = tmp_path / ".claude.json"
+    real_link = os.link
+
+    def racing_link(src, dst, *a, **k):  # Claude Code writes its own file between our check and our create
+        cfg.write_text('{"theirs": true}')
+        return real_link(src, dst, *a, **k)
+
+    monkeypatch.setattr(os, "link", racing_link)
+    assert ct._write(cfg, [str(tmp_path / "w")]) == []
+    assert json.loads(cfg.read_text()) == {"theirs": True}
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".claude-")] == []

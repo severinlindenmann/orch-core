@@ -7,7 +7,7 @@ export function parseRoute(hash) {
   if (m) return { kind: "invite", token: m[1] };
   m = /^#t=([A-Za-z0-9._-]{8,128})$/.exec(value);
   if (m) return { kind: "ticket", token: m[1] };
-  m = /^#\/(home|approvals|workspaces|services|admin|activity|account|handoffs|connections|phones)$/.exec(value);
+  m = /^#\/(home|approvals|workspaces|services|admin|activity|account|handoffs|connections|phones|spaces|addons)$/.exec(value);
   if (m) return { kind: m[1] };
   m = /^#\/w\/([0-9a-f]{32})(?:\/(item|addon|settings|access)\/([^/]+))?$/.exec(value);
   if (!m) return { kind: "home" };

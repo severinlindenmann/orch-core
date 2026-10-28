@@ -133,4 +133,6 @@ EMITS_V5: dict[str, frozenset[str]] = {
     "schedule.cancel": frozenset({"schedule.cancelled"}),
 }
 
-CURRENT = EMITS_V5
+EMITS_V6 = {**EMITS_V5, "schedule.add": frozenset({"ticket.created", "schedule.set"})}
+
+CURRENT = EMITS_V6

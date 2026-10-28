@@ -366,6 +366,7 @@ def ticket_view(core: Core, t: TCore, now: int) -> TicketView:
                     "label": r.label,
                     "state": "cancelled" if r.cancelled else "expired" if now > ts(r.ends) else "live",
                     "set_at": r.set_at,
+                    **({"target": r.target, "title": r.title} if r.target != "existing" else {}),
                     "occurrences": r.occurrences,
                     # every settled occurrence, oldest first, as a plain list: the last one is the latest outcome
                     "outcomes": [

@@ -36,6 +36,11 @@ def short_error(e: Any) -> str:
 
 def check_input(op: Any, args: dict[str, Any], clean: Callable[[str], str] = lambda t: t[:200]) -> None:
     """``invalid.input`` for the first schema error of ``args`` (``clean`` redacts and cuts the message)."""
+    if op.name == "schedule.add":
+        from orch.model.schedules import validate_target
+
+        if error := validate_target(args):
+            raise OrchError("schedule.denied", error)
     errors = sorted(Draft202012Validator(op.input).iter_errors(args), key=lambda e: (list(map(str, e.path)), e.message))
     if errors:
         msg = clean(f"{op.cli}: {short_error(errors[0])}")

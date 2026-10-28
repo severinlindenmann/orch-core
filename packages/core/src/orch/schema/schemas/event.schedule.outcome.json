@@ -309,7 +309,8 @@
       "enum": [
         "ran",
         "failed",
-        "did_not_run"
+        "did_not_run",
+        "ran_nothing"
       ]
     },
     "reason": {
@@ -331,7 +332,8 @@
         "claimed_by_other",
         "busy",
         "missed",
-        "addon_disabled"
+        "addon_disabled",
+        "skipped_open_child"
       ]
     }
   },

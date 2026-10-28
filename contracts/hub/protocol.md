@@ -1291,6 +1291,7 @@ unknown `op` is `unknown_op`.
 | `switch_ticket` | w2h | both | `{"origin", "return_to", "kind": "open"\|"signout"}` | `{"ticket", "url"}` (hub one-app, below) |
 | `switch_redeem` | w2h | both | `{"ticket"}` | `{"user_id", "name", "return_to", "kind"}` (hub one-app) |
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
+| `status_put` | w2h | both | `{"version", "commit", "host"}` | `{}` |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
 
@@ -1299,6 +1300,12 @@ built in D5/C5 against this table). Phases: `snapshot_get`, `publish_out` and th
 carry needs-you summaries only until C6); `route_*`, `wk_seal`, `audit_ack` in phase 3; `event_deliver`, `log_sync`, `space_proposals` in phase 4.
 `log_sync` carries the workspace's own log **to** the hub; like every other op it asks the hub to sign nothing, and
 nothing in it can become signed bytes: the hub builds custodial events only from an action a channel started (§8.4).
+
+`status_put` reports display-only workspace metadata over its authenticated WSK link, once per host process/hub.
+Its exact body has a version matching `[0-9A-Za-z.+-]+` (at most 32 characters), a hex commit (at most 40,
+possibly empty), and a host string (at most 80); bad shapes are `malformed`, unknown pins `unknown_workspace`.
+The hub sanitizes these fields and records its own last-seen clock and socket peer address. These values never
+influence authorization, routing, signing or mode, and are not written to the workspace log.
 
 **Hub one-app ops (27 Oct, prototype).** `switch_ticket`, `switch_redeem` and `rail_get` let the workspace dashboard and the
 hub console feel like one app. The hub names the user itself: always the link workspace's owner alias (`no_owner_alias`

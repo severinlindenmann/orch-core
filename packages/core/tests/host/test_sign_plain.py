@@ -154,7 +154,8 @@ def test_the_view_of_a_click_carries_the_headline_and_the_content_next_to_the_un
     _, key = human.ticket("Owner CLI test")
     p = human.prepare("log", {"ref": key, "text": "note"})
     v = view.build(p, WS, device=p["events"][0]["actor"]["device"], expires_at="2026-01-01T00:00:00Z", artifacts=None)
-    assert v["headline"].startswith("Add a note to DEMO-0001") and v["content"]["sections"][0]["text"] == "note"
+    assert v["headline"] == "Add a note: DEMO-0001" and v["content"]["sections"][0]["text"] == "note"
+    assert v["headline_detail"] is None  # a note's events do not state the ticket's title: no free text at all
     assert v["lines"] == signer.render(p, WS).rstrip("\n").split("\n")  # the full review is still there, line for line
     assert v["risk"]
 

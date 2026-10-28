@@ -190,13 +190,15 @@ def test_a_market_install_prepares_the_same_op_and_is_a_hub_hand_off(env):
 
 def test_only_an_unsigned_add_on_grant_hand_off_is_marked_for_the_hub_and_never_by_the_caller(env):
     """FB15 narrow path: core sets ``hub_handoff`` for ``addon.grant`` with ``handoff: true`` and no signer only. A
-    hand-off of another op is not marked (the hub link refuses it); the caller can never set the mark itself."""
+    hand-off of another op is refused (it is prepared with a signer, never marked: the hub link refuses it); the caller
+    can never set the mark itself."""
 
     def record(rid):
         return env.service.submit(lambda: env.service.requests.read(rid)).result()
 
     _, key = env.human.ticket()
-    other = ok(env.human.prepare_res("log", {"ref": key, "text": "not for the hub"}, handoff=True))["data"]
+    assert err(env.human.prepare_res("log", {"ref": key, "text": "not for the hub"}, handoff=True)) == "invalid.input"
+    other = ok(env.human.prepare_res("log", {"ref": key, "text": "not for the hub"}))["data"]
     rid = other["request"]["id"]
     assert record(rid)["hub_handoff"] is False
     assert err(env.served.client().req("hub.handoff", {"kind": "addon", "request": rid})) == "not_found"

@@ -73,7 +73,9 @@ def world(tmp_path_factory):
     os.environ["ORCH_HOST_RUN_DIR"] = str(ws.run)
     gateway = Gateway(ws.state, click=Signer(ws.state, start=start))
     auth = Auth()
-    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+    with TestClient(
+        create_app(PORT, gateway, auth, static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+    ) as client:
         launch = client.post("/auth/session", json={"code": auth.launch(PORT)["code"]}, headers={"Origin": ORIGIN})
         token = launch.json()["token"]
         yield type(
@@ -190,7 +192,11 @@ def test_a_policy_op_signs_on_one_click_and_takes_no_word(world, click):
     assert view["view"]["confirm"] == {"kind": "click"}
     time.sleep(1.2)
     typed = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"], "word": "POLICY"})
-    assert typed.status_code == 400 or typed.status_code == 422  # contract 3: there is no word field
+    assert typed.status_code == 400 or typed.status_code == 422  # since contract 3: there is no word field
+    from orch.click.protocol import OP_TITLES, POLICY_RISK
+
+    # contract 4: policy.set is not a daily op, so it is marked (the page asks for the second press); the server signs
+    assert view["view"]["risk_lines"] == [POLICY_RISK] and view["view"]["headline"] == OP_TITLES["policy.set"]
     ok = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"]})
     assert ok.status_code == 200, ok.text
 

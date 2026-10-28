@@ -4,11 +4,12 @@ import { skeleton, loading, enter, toast, watchDialogs, replaceContent, retryDel
 // every string from the workspace goes through renderText first, and nothing here calls a signer except the prompt.
 import { CanonError, parseStrict } from "./cj.js";
 import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, signProof, signRegistration } from "./channel.js";
+import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { parseRoute } from "./route.js";
 import { homeView, workspaceStatus } from "./home.js";
 import { adminView } from "./admin.js";
 import { servicesView } from "./services.js";
-import { workspacesView } from "./workspaces.js";
+import { workspacesView, workspaceDetailsView } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
@@ -143,11 +144,11 @@ function shell(active, ...nodes) {
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", "nv"), tab("workspaces", "Workspaces", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
+    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("workspaces", "Workspaces", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
+      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -296,11 +297,34 @@ async function workspaces() {
   const finishLoading = loading();
   pageLoading("workspaces");
   try {
-    if (!(await refresh())) return loginView();
-    state.menu = false;
-    await loadRail();
-    const [ws, ho] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs")]);
-    shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces : [], handoffs: ho.status === 200 ? ho.body.handoffs : [] }));
+      if (!(await refresh())) return loginView();
+      state.menu = false;
+      await loadRail();
+      const [ws, ho, admin] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs"), api("GET", "/admin/workspaces")]);
+      const adminRows = admin.status === 200 ? admin.body.workspaces ?? [] : null;
+      const hub = ws.body?.hub;
+      const actions = {
+        open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
+        copy: copyText,
+        connect: async () => {
+          const r = await api("POST", "/admin/connect", {});
+          if (r.status < 200 || r.status >= 300 || typeof r.body.link !== "string" || !Number.isFinite(r.body.expires_ms)) throw new Error("connect failed");
+          return r.body;
+        },
+        remove: async (w) => {
+          const r = await api("DELETE", "/admin/workspaces/" + encodeURIComponent(w.workspace_id));
+          if (r.status < 200 || r.status >= 300) throw new Error("remove failed");
+          await workspaces();
+        },
+        details: async (w) => {
+          const r = await api("GET", "/workspaces/" + encodeURIComponent(w.workspace_id) + "/roles");
+          dialog(...workspaceDetailsView(w, { hub, actions, roles: r.status === 200 ? r.body : null,
+            owner: adminRows?.find((row) => row.workspace_id === w.workspace_id)?.owner_alias }),
+            h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
+        },
+      };
+      shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces ?? [] : [],
+        handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions }));
   } finally { finishLoading(); }
 }
 
@@ -322,6 +346,14 @@ async function services() {
     if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
     shell("services", servicesView(r.body, { check: services, open: () => navigate("#/workspaces"), copy: copyText }));
   } finally { finishLoading(); }
+}
+
+async function approvals(filter = {}) {
+  if (!(await refresh())) return loginView();
+  await loadRail();
+  const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
+  if (ws.status !== 200 || needs.status !== 200) return shell("approvals", banner("bad", "Cannot read approvals", "Please try again."));
+  shell("approvals", inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals }));
 }
 
 async function home() {
@@ -435,7 +467,7 @@ async function reviewItem(it) {
   // #1123: the question is hashed HERE from exactly what the hub sent; no Answer button for one we cannot verify or render
   if (r.body.hash !== it.hash) { state.notice = banner("warn", "This question changed", "Reload your list and review it again."); return home(); }
   const qv = await verifyQuestion(it, c);
-  const head = [h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Question") }), h("p", { class: "sentence", text: renderMulti(c.text ?? it.title ?? "") })];
+  const head = [h("p", { class: "sentence", text: reviewMeaning(it, state.rail.rows.find((w) => w.id === it.workspace_id)?.name || "this workspace") }), h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Question") }), h("p", { class: "sentence", text: renderMulti(c.text ?? it.title ?? "") })];
   const back = h("button", { text: "Back", onclick: home });
   if (!qv) return show(...head, h("p", { class: "small muted", text: "This question cannot be shown or checked here. Answer it on your Mac." }), back);
   const spec = qv.spec;
@@ -467,9 +499,9 @@ function reviewDecision(it, c) {
     h("p", { class: "small" }, h("a", { href: "#", text: "\u2190 Back to your list", onclick: (e) => { e.preventDefault(); home(); } })),
     h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Review") }),
     it.key ? h("p", { class: "small muted", text: renderText(it.key) }) : null,
-    h("p", { class: "sentence", text: verdict ? "Give your verdict on this ticket." : "Review the " + renderText(c.gate ?? "") + " gate." }),
+    h("p", { class: "sentence", text: reviewMeaning(it, state.rail.rows.find((w) => w.id === it.workspace_id)?.name || "this workspace", c.gate) }),
     h("p", { class: "small muted", text: "The content itself is not shown here. Check it where it lives; the reference below is what you are deciding on." }),
-    h("details", { open: true }, h("summary", { text: "Review details" }), h("dl", { class: "facts" },
+    h("details", {}, h("summary", { text: "What exactly is signed" }), h("dl", { class: "facts" },
       h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: renderText(shortHash(it.hash) || String(it.hash ?? "")) }),
       h("dt", { text: "Generation" }), h("dd", { text: renderText(String(c.gate_gen ?? "")) }),
       sources.flatMap((e) => [h("dt", { text: "Code to check" }), h("dd", { text: renderText(e.repo) + " " + renderText(e.sha) })]))),
@@ -653,9 +685,9 @@ function promptView(me, p, digest, d) {
   });
   dialog(
     h("h1", { text: d.type === "grant.requested" ? "Approve agent access" : d.type === "addon.requested" ? "Approve an add-on" : d.type === "settings.changed" ? "Approve a settings change" : "Review your answer" }),
-    h("p", { class: "sentence", text: d.sentence }),
-    h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.facts.length ? d.facts.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: k === "Content reference" ? "fp" : "", text: v })]) : d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
-    h("details", {}, h("summary", { text: d.type === "grant.requested" ? "What exactly is signed" : "Signed details" }), factsList(d.fields)),
+    h("p", { class: "sentence", text: signedMeaning(d.sentence, state.rail.rows.find((w) => w.id === p.ctx.workspace_id)?.name || "this workspace") }),
+    h("details", {}, h("summary", { text: "What exactly is signed" }), h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.facts.length ? d.facts.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: k === "Content reference" ? "fp" : "", text: v })]) : d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
+    factsList(d.fields)),
     h("p", { class: "small muted who-signs", text: "You confirm with the key held by this browser. " + "The hub" + " signs this approval for you." }),
     h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign),
   );
@@ -869,7 +901,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, workspaces, services, admin }[route.kind] ?? home)();
+      else await ({ home, approvals, workspaces, services, admin }[route.kind] ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

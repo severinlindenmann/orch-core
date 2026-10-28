@@ -36,6 +36,7 @@ W2H_OPS: dict[str, str | None] = {
     "switch_redeem": None,
     "rail_get": None,
     "owner_get": None,
+    "status_put": None,
     "share_put": "selective",
     "share_revoke": "selective",
     "wk_seal": "full",

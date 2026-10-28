@@ -1366,6 +1366,15 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     ),
     "switch_redeem": ("w2h", None, {"ticket": lambda x: type(x) is str}),
     "rail_get": ("w2h", None, {"origin": lambda x: type(x) is str}),
+    "status_put": (
+        "w2h",
+        None,
+        {
+            "version": lambda x: type(x) is str and len(x) <= 32 and re.fullmatch(r"[0-9A-Za-z.+-]+", x) is not None,
+            "commit": lambda x: type(x) is str and len(x) <= 40 and re.fullmatch(r"[0-9a-fA-F]*", x) is not None,
+            "host": lambda x: type(x) is str and len(x) <= 80,
+        },
+    ),
     "owner_get": ("w2h", None, {}),  # FB15: the hub user the hub names as the workspace owner (no argument)
     # p4 (§10.7): the hub's WK_e-sealed view of one workspace log; full mode only (selective: the hub holds no WK_e)
     "log_sync": (

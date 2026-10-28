@@ -161,6 +161,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_channel_auth` | `orch/v2/hub-channel-auth\|` | channel key | `cj(o)` of `hub.channel_auth` (binds a pairing session to the channel) | 6.4 |
 | `sig_hub_channel_push` | `orch/v2/hub-channel-push\|` | channel key | `cj(o)` of `hub.channel_push` (names the channel's push key) | 6.4 |
 | `sig_hub_channel_relay_req` | `orch/v2/hub-channel-relay-req\|` | channel key | the bytes of a channel → relay request | 10.8.4 |
+| `sig_hub_org_skills` | `orch/v2/hub-org-skills\|` | `HK_op` | `cj(o)` of `hub.org_skills` | 7.3 |
 | `h_hub_session_ref` | `orch/v2/hub-session-ref\|` | hash | names a pairing session inside `hub.channel_auth` | 6.4 |
 | `sig_hub_space_proposal` | `orch/v2/hub-space-proposal\|` | `HK_op` | `cj(o)` of `hub.space_proposal` | 10.4 |
 | `sig_hub_relay_request` | `orch/v2/hub-relay-req\|` | `HK_op` | the bytes of a hub → relay request | 10.8 |
@@ -579,6 +580,28 @@ the aliased owner, spec §8a). `revoked_channels` still applies.
 
 **Phase 3 (V3-D3).** Until custodial signing exists (phase 4), the host uses roles for hub-side reads, routes and
 shared spaces only; human signatures stay local.
+
+### 7.3 Company skills `hub.org_skills` (M3, #1430)
+
+```
+hub.org_skills {v, suite, kind: "hub.org_skills", hv, hub_id, op_cert_id, workspace_id, version: int >= 1, issued_ms,
+                skills: [{name, text, digest}] (0..20, sorted by name, unique), dev}     signed by HK_op, label sig_hub_org_skills
+```
+
+One bundle per workspace, fetched with `org_skills_get` and verified like a snapshot: under the verified card, `hub_id` and
+`op_cert_id` match, `workspace_id` is the host's own (`other_workspace`), `version` never goes down (`stale_bundle`), the same
+version with other bytes is `bundle_conflict`. Each skill: `name` `[a-z][a-z0-9-]{1,39}` and not starting with `orch` (the
+prefix of orch's own skills, so a company skill never shadows a builtin), `text` 1..2400 characters of visible text only: an ALLOWLIST of Unicode categories `L*`, `N*`, `P*`, `S*` and `Zs`, plus newline
+and tab. Everything else is refused, never stripped (marks, format characters such as bidi, zero-width, variation selectors and
+the tag block, `Zl`/`Zp`, control, private use, unassigned) as are the letters and symbols that draw nothing (`U+115F U+1160
+U+17B4 U+17B5 U+2800 U+3164 U+FFA0`); no front matter (it does not start with `---`). The hub applies NFC and `\n` line ends on
+save and nothing else. The host runs the same rule (`orch.hubclient.orgtext`); `text_cases` of the vectors file are replayed by both. `digest` = `"sha256:" + hex(sha256(cj({"name","text"})))`.
+Anything else in a bundle is `malformed`; a save that has a forbidden character is refused (`malformed`).
+
+A skill is offered, never enabled: the host shows the full text to its owner and keeps it Off until the owner accepts that
+exact digest (human-only). Any change of text is a new digest and needs a new accept; withdrawing a skill narrows and applies
+at the next sync. Accepted skills reach agents as labelled company skills below orch's rules and cannot widen permissions or
+override the guard. Unbind or leave removes them at the host. Vectors: `vectors_org_skills.json` (both sides replay them).
 
 ## 8. Custodial events
 
@@ -1270,6 +1293,7 @@ unknown `op` is `unknown_op`.
 | `op` | Request direction | Mode | Request body (exact) | Reply body |
 |---|---|---|---|---|
 | `snapshot_get` | w2h | both | `{}` | `{"snapshot": <hub.snapshot>}` |
+| `org_skills_get` | w2h | both | `{}` | `{"bundle": <hub.org_skills>}`: the company skills offered to the link's workspace (M3 #1430, 7.3) |
 | `event_deliver` | h2w | both | `{"log", "event"}`: a custodial event (§8) | `{}` or `{"error"}` |
 | `route_out` | w2h | both | `{"envelope": b64u}`: a v2 §11 ws→ws envelope, as is | `{}` |
 | `route_in` | h2w | both | `{"envelope": b64u}` | `{}` |
@@ -1316,6 +1340,7 @@ fields except `listed`. Only other bound, explicitly listed workspaces for which
 `Authz.may_route(caller, other)` allows access appear; authorization is evaluated on every request.
 Selective mode does not imply listing or bypass routing authorization.
 
+`org_skills_get` (M3, #1430): the bundle of the LINK's workspace only (never a caller-named one); an unpinned or unbound workspace is refused like `snapshot_get`. See 7.3.
 `addon_request` (M3, #1450): a host says an add-on install was refused by the hub policy (`market.addon_not_allowed`): `name` `[a-z][a-z0-9-]{0,39}`, `version` `[0-9A-Za-z.+-]{0,32}` or empty, `actor` `person` | `agent` (known at the host, shown, never trusted). Display data only: one row per (workspace, add-on) with a counter, at most 50 add-ons per workspace. It grants nothing; an admin's approval is an audited policy change and the owner's local grant is still needed. The per-workspace allow list narrows the hub-wide policy in that workspace's snapshot (intersection; `block` and `ceiling` never change).
 
 `status_put` reports display-only workspace metadata over its authenticated WSK link, once per host process/hub.

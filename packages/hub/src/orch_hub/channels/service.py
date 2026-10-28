@@ -50,6 +50,8 @@ CHANNELS_FILE = "channels.db"
 SESSION_TTL_MS = 15 * 60_000
 CHALLENGE_TTL_MS = 120_000
 PAIRING_TTL_MS = 10 * 60_000
+#: a pairing code made from the console by the person themself (M2-10, condition 19): short, never above 5 minutes
+CONSOLE_PAIRING_TTL_MS = 5 * 60_000
 MAX_CHANNELS = 5
 MAX_FAILURES = 5
 FAIL_WINDOW_MS = 15 * 60_000
@@ -74,6 +76,7 @@ CHANNEL_SESSION_MS = 12 * 3_600_000  # spec §7, protocol §6.4 (the contract's 
 #: the gate the hub checked for each channel kind (browser: live password+TOTP session; phone: operator pairing code)
 GATE_OF = {"browser": "session", "phone": "pairing-code"}
 _HEX32 = re.compile(r"[0-9a-f]{32}")
+_APP_VERSION = re.compile(r"[0-9A-Za-z.+-]{1,32}")
 _SCRYPT = {"n": 2**14, "r": 8, "p": 1, "maxmem": 64 * 1024 * 1024, "dklen": 32}
 _DUMMY_SALT = b"\0" * 16
 
@@ -104,6 +107,12 @@ def registration_object(
         "expires_ms": expires_ms,
         "dev": dev,
     }
+
+
+def clean_app_version(v: object) -> str | None:
+    """The app version a phone reports at registration: untrusted text, DISPLAY ONLY (never a gate). At most 32 characters
+    of ``[0-9A-Za-z.+-]``; anything else is dropped (``None``), never an error."""
+    return v if type(v) is str and _APP_VERSION.fullmatch(v) else None
 
 
 def _sha(x: str) -> str:
@@ -628,9 +637,44 @@ class Channels:
         u = self._known_user(user_id)
         code = "-".join(secrets.token_hex(2) for _ in range(3))
         now = self._now()
-        self._guard(lambda: self.db.w("INSERT INTO pairing VALUES (?,?,?)", (_sha(code), u, now + PAIRING_TTL_MS)))
+        self._guard(
+            lambda: self.db.w(
+                "INSERT INTO pairing(code_hash, user_id, expires_ms, source) VALUES (?,?,?,'cli')",
+                (_sha(code), u, now + PAIRING_TTL_MS),
+            )
+        )
         self._guard(lambda: self._event("pairing_code", u, None, "operator"))
         return {"code": code, "expires_ms": now + PAIRING_TTL_MS}
+
+    def create_console_pairing_code(self, user_id: str) -> dict[str, Any]:
+        """A one-time pairing code made from the console for the person themself (M2-10, condition 19). The CALLER has
+        re-verified password + TOTP (:meth:`reauth`). Bound to ``user_id``, valid for :data:`CONSOLE_PAIRING_TTL_MS`
+        (never over 5 minutes), single use (the registration deletes it), and at most one live console code per user: a
+        new one replaces the old. Operator codes (source ``cli``) are never touched. The code is returned once and is
+        stored only as a hash; the event log names the person, never the code."""
+        u = self._known_user(user_id)
+        now = self._now()
+        ttl = min(CONSOLE_PAIRING_TTL_MS, 300_000)
+        code = "-".join(secrets.token_hex(2) for _ in range(3))
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM pairing WHERE expires_ms <= ?", (now,))
+                db.execute("DELETE FROM pairing WHERE user_id=? AND source='console'", (u,))
+                db.execute(
+                    "INSERT INTO pairing(code_hash, user_id, expires_ms, source) VALUES (?,?,?,'console')",
+                    (_sha(code), u, now + ttl),
+                )
+                db.execute(
+                    "INSERT INTO events(ts_ms, action, user_id, channel_id, actor) VALUES (?,?,?,?,?)",
+                    (now, "pairing_code", u, None, f"u_{u}"),
+                )
+
+        try:
+            self._guard(go)
+        except sqlite3.IntegrityError:  # a hash collision with a live code: astronomically rare, never reuse a code
+            raise ChannelError("internal", "pairing") from None
+        return {"code": code, "expires_ms": now + ttl}
 
     def reauth(self, user_id: str, password: str, totp: str, source: str = "") -> None:
         """Password + TOTP typed again (A8-3), through the same limiter state, hashing and single-use TOTP step as
@@ -660,7 +704,14 @@ class Channels:
         return self._begin(u, "browser", key_pub, _sha(token), label, _sha(token))
 
     def begin_phone_registration(
-        self, user_id: str, pairing_code: str, key_pub: bytes, label: str = "", *, token: str = ""
+        self,
+        user_id: str,
+        pairing_code: str,
+        key_pub: bytes,
+        label: str = "",
+        *,
+        token: str = "",
+        app_version: object = None,
     ) -> dict[str, Any]:
         """A phone needs the operator's pairing code AND a live session of the same user (§6.3, L2P4-D7a): the code
         alone is no bearer credential for ``se-unlocked``."""
@@ -674,13 +725,22 @@ class Channels:
             raise ChannelError("bad_pairing_code")  # the reserved attempt stays counted
         with self._tx() as db:
             self._succeed(db, "pair", u, rid)
-        return self._begin(u, "phone", key_pub, _sha(pairing_code), label, _sha(token))
+        return self._begin(u, "phone", key_pub, _sha(pairing_code), label, _sha(token), clean_app_version(app_version))
 
     def _pairing_valid(self, u: str, code_hash: str) -> bool:
         rows = self._guard(lambda: self.db.q("SELECT user_id, expires_ms FROM pairing WHERE code_hash=?", (code_hash,)))
         return bool(rows) and rows[0][0] == u and rows[0][1] > self._now()
 
-    def _begin(self, u: str, kind: str, key_pub: bytes, binding: str, label: str, session: str) -> dict[str, Any]:
+    def _begin(
+        self,
+        u: str,
+        kind: str,
+        key_pub: bytes,
+        binding: str,
+        label: str,
+        session: str,
+        app_version: str | None = None,
+    ) -> dict[str, Any]:
         if not S.valid_public_key(key_pub):
             raise ChannelError("malformed", "key_pub is not a valid P-256 public key")
         if type(label) is not str or len(label) > 60 or any(ord(c) < 32 or ord(c) == 127 for c in label):
@@ -695,8 +755,9 @@ class Channels:
         def go() -> None:
             self.db.w("DELETE FROM challenges WHERE expires_ms <= ?", (now,))
             self.db.w(
-                "INSERT INTO challenges VALUES (?,?,?,?,?,?,?,?)",
-                (nonce, u, kind, b64u(key_pub), binding, label, now + CHALLENGE_TTL_MS, session),
+                "INSERT INTO challenges(challenge_id, user_id, kind, key_pub, binding, label, expires_ms, session, "
+                "app_version) VALUES (?,?,?,?,?,?,?,?,?)",
+                (nonce, u, kind, b64u(key_pub), binding, label, now + CHALLENGE_TTL_MS, session, app_version),
             )
 
         self._guard(go)
@@ -705,20 +766,34 @@ class Channels:
     def complete_registration(self, challenge_id: str, signed: dict[str, Any]) -> dict[str, Any]:
         """Check the signed ``hub.channel_register`` (§6.3) and issue the certificate. The challenge is single use: any
         attempt, good or bad, consumes it. Returns the signed ``hub.channel_cert``."""
+        return self.complete_registration_ex(challenge_id, signed)[0]
+
+    def complete_registration_ex(
+        self, challenge_id: str, signed: dict[str, Any], app_version: object = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """:meth:`complete_registration` plus what the web layer needs to record: ``{user_id, channel_id, kind,
+        pairing_source}`` (``pairing_source`` is ``console`` / ``cli`` for a phone, else ``None``). ``app_version`` is the
+        phone's optional report at this step; it is sanitised (:func:`clean_app_version`) and replaces the one sent at
+        begin only when it is valid. Display only: nothing here ever refuses on it."""
         if type(challenge_id) is not str or len(challenge_id) > 64:
             raise ChannelError("challenge_invalid")
         now = self._now()
         with self._tx() as db:  # consumed and committed before any check, so a refused attempt cannot be retried
             rows = db.execute(
-                "SELECT user_id, kind, key_pub, binding, label, expires_ms, session FROM challenges WHERE challenge_id=?",
+                "SELECT user_id, kind, key_pub, binding, label, expires_ms, session, app_version FROM challenges "
+                "WHERE challenge_id=?",
                 (challenge_id,),
             ).fetchall()
             db.execute("DELETE FROM challenges WHERE challenge_id=?", (challenge_id,))
         if not rows or rows[0][5] <= now:
             raise ChannelError("challenge_invalid")
-        u, kind, key_b64, binding, label, exp, session = rows[0]
+        u, kind, key_b64, binding, label, exp, session, begun_version = rows[0]
+        version = clean_app_version(app_version) or clean_app_version(begun_version)
+        pairing_source: str | None = None
         with self._tx() as db:
             self._binding_alive(db, u, kind, binding, now)
+            if kind == "phone":
+                pairing_source = db.execute("SELECT source FROM pairing WHERE code_hash=?", (binding,)).fetchone()[0]
             # the challenge is what the hub stored when it opened the registration (§6.3): this user, this key, the gate
             # it checked (session or pairing code) and whether a live session of the user opened it
             live = db.execute(
@@ -761,16 +836,49 @@ class Channels:
             except KeysError as e:
                 raise ChannelError("issue_failed", e.code) from None
             db.execute(
-                "INSERT INTO channels(channel_id, user_id, kind, label, factor, created_ms) VALUES (?,?,?,?,?,?)",
-                (cid, u, kind, label, factor, now),
+                "INSERT INTO channels(channel_id, user_id, kind, label, factor, created_ms, app_version) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (cid, u, kind, label, factor, now, version),
             )
             if kind == "phone":
                 db.execute("DELETE FROM pairing WHERE code_hash=?", (binding,))  # pair once
+                # every new phone is announced on the person's other channels until they dismiss it (condition 19)
+                db.execute(
+                    "INSERT OR REPLACE INTO announcements(channel_id, user_id, ts_ms, seen) VALUES (?,?,?,0)",
+                    (cid, u, now),
+                )
             db.execute(
                 "INSERT INTO events(ts_ms, action, user_id, channel_id, actor) VALUES (?,?,?,?,?)",
                 (now, "register", u, cid, f"u_{u}" if kind == "browser" else "pairing"),
             )
-        return cert
+        return cert, {"user_id": u, "channel_id": cid, "kind": kind, "pairing_source": pairing_source}
+
+    def new_channels(self, user_id: str) -> list[dict[str, Any]]:
+        """Phones added to this person's account that they have not dismissed yet: ``[{channel_id, label, kind,
+        created_ms, seen: False}]``. A removed channel drops out. The caller passes the SESSION user, never a parameter."""
+        u = self._user(user_id)
+        rows = self._guard(
+            lambda: self.db.q(
+                "SELECT c.channel_id, c.label, c.kind, c.created_ms FROM announcements a "
+                "JOIN channels c ON c.channel_id=a.channel_id AND c.user_id=a.user_id "
+                "WHERE a.user_id=? AND a.seen=0 AND c.revoked_ms IS NULL ORDER BY c.created_ms, c.channel_id",
+                (u,),
+            )
+        )
+        try:
+            revoked = self.acc.revoked_channels()
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
+        return [
+            {"channel_id": cid, "label": label, "kind": kind, "created_ms": created, "seen": False}
+            for cid, label, kind, created in rows
+            if cid not in revoked
+        ]
+
+    def dismiss_new_channels(self, user_id: str) -> None:
+        """The person has seen the "a new phone was added" notice: clear it (their own announcements only)."""
+        u = self._user(user_id)
+        self._guard(lambda: self.db.w("UPDATE announcements SET seen=1 WHERE user_id=?", (u,)))
 
     def _audit(self, channel_id: str, user_id: str, change: str, factor: str, actor: str | None) -> None:
         """One ``channel`` event on the audit chain (§10.5). Inside the registration transaction, so a chain that cannot
@@ -803,7 +911,10 @@ class Channels:
     # --- list / revoke ---------------------------------------------------------------------------------------------
 
     def channels(self, user_id: str | None = None) -> list[dict[str, Any]]:
-        sql = "SELECT channel_id, user_id, kind, label, factor, created_ms, revoked_ms, revoked_by FROM channels"
+        sql = (
+            "SELECT channel_id, user_id, kind, label, factor, created_ms, revoked_ms, revoked_by, app_version "
+            "FROM channels"
+        )
         rows = self._guard(
             lambda: self.db.q(
                 sql + (" WHERE user_id=?" if user_id else "") + " ORDER BY created_ms, channel_id",
@@ -811,7 +922,7 @@ class Channels:
             )
         )
         out = []
-        for cid, u, kind, label, factor, created, revoked, by in rows:
+        for cid, u, kind, label, factor, created, revoked, by, app_version in rows:
             cert = self._cert_of(u, cid)
             expires = cert["o"]["expires_ms"] if cert else None
             status = (
@@ -830,6 +941,7 @@ class Channels:
                     "expires_ms": expires,
                     "status": status,
                     "revoked_by": by,
+                    "app_version": clean_app_version(app_version),  # display only; re-checked on the way out
                 }
             )
         return out

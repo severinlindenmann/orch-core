@@ -47,7 +47,9 @@ from ..access.store import ADMIN_GROUP, check_name
 from ..activity.feed import feed as activity_feed
 from ..changes import ChangeError
 from ..channels import Channels
+from ..channels.cli import pair_link
 from ..channels.service import MIN_PASSWORD, ChannelError
+from ..config import dev_of
 from ..connect import LinkError, build_link
 from ..contract import channelapi as CA
 from ..contract import market_policy as MP
@@ -58,7 +60,7 @@ from ..contract.hub import HV, Refused, channel_proof_bytes
 from ..invites import Invite, InviteError, proof_digest
 from ..relay.client import RelayError
 from ..switch import SwitchError, clean_return_to, workspace_rows
-from ..versions import MIN_SUPPORTED_VERSION, workspace_status
+from ..versions import MIN_PHONE_VERSION, MIN_SUPPORTED_VERSION, version_state, workspace_status
 from .changes_api import ChangeHandlers, confirmed
 from .static import StaticSite
 
@@ -351,6 +353,14 @@ ROUTES: tuple[Route, ...] = (
         "Confirm the new authenticator with a code from it; the old one stops, other sessions end",
     ),
     _r("POST", "/me/sessions/end-all", "session", "my_end_all", "Sign me out everywhere, this device too"),
+    _r("POST", "/me/channels/seen", "session", "my_channels_seen", "Dismiss the 'a new phone was added' notice"),
+    _r(
+        "POST",
+        "/me/pairing",
+        "session",
+        "my_pairing",
+        "A one-time code to pair my own phone (needs my password and a fresh code)",
+    ),
     # (c) signing
     _r("POST", "/sign/prepare", "session", "prepare", "Hub builds the event; returns ctx, digest and what to show"),
     _r(
@@ -506,7 +516,7 @@ SWITCH_HANDLERS = frozenset(
 #: E4: routes only the console PAGE may call (its cookie session, from its own origin). The console's own session sent
 #: as a bearer is ``not_allowed``; an unknown bearer stays ``no_session`` and an app (pairing/channel) one
 #: ``forbidden_role``, as on every route.
-BROWSER_ONLY = frozenset({"switch_ticket"})
+BROWSER_ONLY = frozenset({"switch_ticket", "my_pairing", "my_channels_seen"})
 
 
 def route_scopes(rt: Route) -> frozenset[str]:
@@ -1397,15 +1407,67 @@ class WebApi(ChangeHandlers):
             code = b.get("pairing_code")
             if type(code) is not str:
                 raise ApiError("malformed")
-            return 200, self.d.channels.begin_phone_registration(c.user_id, code, key, label, token=c.token)
+            return 200, self.d.channels.begin_phone_registration(
+                c.user_id, code, key, label, token=c.token, app_version=b.get("app_version")
+            )  # app_version: untrusted, display only; a bad one is dropped there, never an error
         raise ApiError("malformed")
 
     def _h_reg_complete(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, challenge_id=str, signed=dict)
-        return 200, {"channel_cert": self.d.channels.complete_registration(b["challenge_id"], b["signed"])}
+        cert, got = self.d.channels.complete_registration_ex(b["challenge_id"], b["signed"], b.get("app_version"))
+        if got["pairing_source"] == "console" and self.d.activity is not None:  # the code itself is never recorded
+            self.d.activity.record(
+                "pairing.used",
+                actor_id=got["user_id"],
+                subject_user=got["user_id"],
+                detail={"channel_id": got["channel_id"]},
+            )
+        return 200, {"channel_cert": cert}
+
+    @staticmethod
+    def _channel_row(row: dict[str, Any]) -> dict[str, Any]:
+        """A channel as the console shows it: ``update_needed`` is display only (a phone that reports a version below
+        :data:`MIN_PHONE_VERSION`); no route refuses a channel for its version."""
+        v = row.get("app_version")
+        old = (
+            row["kind"] == "phone"
+            and v is not None
+            and version_state(v, MIN_PHONE_VERSION, MIN_PHONE_VERSION) == "unsupported"
+        )
+        return {**row, "update_needed": old}
 
     def _h_my_channels(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        return 200, {"channels": self.d.channels.channels(c.user_id)}
+        # the SESSION user only: no query or body field picks another person (condition 18). The notice of a newly added
+        # phone goes to the browser console only, so the new phone's own session cannot read or dismiss it.
+        rows = [self._channel_row(r) for r in self.d.channels.channels(c.user_id)]
+        new = self.d.channels.new_channels(c.user_id) if c.scope == "full" else []
+        return 200, {"channels": rows, "new_channels": new}
+
+    def _h_my_channels_seen(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        self.d.channels.dismiss_new_channels(c.user_id)
+        return 200, {"ok": True}
+
+    def _h_my_pairing(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Condition 19: a person pairs their OWN phone from the console. Browser session only (a switch-ticket session is
+        ``reauth_required``, an app session ``forbidden_role``); the password and the CURRENT code are checked again through
+        the same caps and lockouts as a browser key registration. The code is bound to this session's user."""
+        b = _need(b, password=str, totp=str)
+        pw, totp = b["password"], b["totp"]
+        self._guarded_credentials(c, c.user_id, lambda: self.d.channels.reauth(c.user_id, pw, totp, c.source))
+        got = self.d.channels.create_console_pairing_code(c.user_id)
+        if self.d.activity is not None:  # who and when only: never the code
+            self.d.activity.record("pairing.issued", actor_id=c.user_id, subject_user=c.user_id)
+        out: dict[str, Any] = {"code": got["code"], "expires_ms": got["expires_ms"]}
+        if self.d.api_origin is not None:
+            out["address"] = self.d.api_origin
+            try:
+                out["link"] = pair_link(
+                    self.d.keys.hub_id, c.user_id, got["code"], self.d.api_origin, dev_of(self.d.keys)
+                )
+                out["fingerprint"] = CA.fingerprint(self.d.keys.hub_id)
+            except ChannelError:
+                pass  # no usable link for this origin: the person types the address and the code
+        return 200, out
 
     def _h_revoke(self, c: Ctx, p: dict, q: dict, b: dict | None):
         if c.scope == "channel" and p["channel_id"] != c.channel_id:
@@ -1864,7 +1926,8 @@ class WebApi(ChangeHandlers):
 
     def _h_a_channels(self, c: Ctx, p: dict, q: dict, b: dict | None):
         u = q.get("user_id")
-        return 200, {"channels": self.d.channels.channels(_hex32(u) if u is not None else None)}
+        rows = self.d.channels.channels(_hex32(u) if u is not None else None)
+        return 200, {"channels": [self._channel_row(r) for r in rows]}
 
     def _h_a_market_policy(self, c: Ctx, p: dict, q: dict, b: dict | None):
         return 200, {**self.d.access.market_policy(), "official_url": MP.OFFICIAL_URL}  # display: the one official URL

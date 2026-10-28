@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import type { Workspace } from '@/api/types'
@@ -38,10 +38,42 @@ describe('WorkspaceNote', () => {
     show()
     expect(await screen.findByText(/History off/)).toBeTruthy()
   })
-  it('draws nothing for a non-owner', async () => {
+  it('says when Claude Code asks about each folder, and the i says the same state', async () => {
+    fns.getClaudeTrust.mockResolvedValue({ available: true, on: false, offered: true, why_not: '', parent_config: '' })
+    fns.getRecords.mockResolvedValue(records(false))
+    show()
+    expect(await screen.findByText('Claude Code asks about each folder · History off')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'More about this' }))
+    expect(await screen.findByText(/Setup turns this off for the folders orch makes/)).toBeTruthy()
+    expect(screen.getByText(/not being saved for you/)).toBeTruthy()
+  })
+  it('leaves out the trust part when the host cannot say', async () => {
+    fns.getClaudeTrust.mockResolvedValue({ available: false })
+    show()
+    expect(await screen.findByText('History on')).toBeTruthy()
+  })
+  it('leaves out the history part when records are not configured or have no repo', async () => {
+    fns.getRecords.mockResolvedValue({ ...records(true), configured: false })
+    show()
+    expect(await screen.findByText('Claude Code trusts this folder')).toBeTruthy()
+    cleanup()
+    fns.getRecords.mockResolvedValue({ ...records(true), repo: null })
+    show()
+    expect(await screen.findByText('Claude Code trusts this folder')).toBeTruthy()
+  })
+  it('draws nothing when both parts are absent', async () => {
+    fns.getClaudeTrust.mockResolvedValue({ available: false })
+    fns.getRecords.mockResolvedValue({ available: false })
+    const { container } = show()
+    await waitFor(() => expect(fns.getClaudeTrust).toHaveBeenCalled())
+    await waitFor(() => expect(container.textContent).toBe(''))
+  })
+  it('draws nothing for a non-owner and asks the host nothing', async () => {
     viewer.role = 'member'
     const { container } = show()
     await new Promise((r) => setTimeout(r, 20))
     expect(container.textContent).toBe('')
+    expect(fns.getClaudeTrust).not.toHaveBeenCalled()
+    expect(fns.getRecords).not.toHaveBeenCalled()
   })
 })

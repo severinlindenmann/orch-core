@@ -7,8 +7,10 @@ import type { Workspace } from '@/api/types'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useViewerRole } from './useViewerRole'
 
-const MORE =
-  "Claude Code asks you to trust every folder it works in; orch's agents start in this workspace's ticket folders without that question, only for folders orch makes. The history saves your tickets on this computer every 15 minutes, in the background; it is not sent anywhere."
+const TRUST_ON = "Claude Code asks you to trust every folder it works in. Orch's agents start in this workspace's ticket folders without that question, only in folders orch makes."
+const TRUST_OFF = 'Claude Code asks you to trust each ticket folder before an agent can work in it. Setup turns this off for the folders orch makes.'
+const HISTORY_ON = 'Orch saves your tickets and their history on this computer every 15 minutes, in the background. It is not sent anywhere.'
+const HISTORY_OFF = 'Your tickets and their history are not being saved for you. Setup turns this on.'
 
 /** A line the host cannot speak to is left out; nothing is drawn when it says neither. */
 export function WorkspaceNote({ workspace }: { workspace: Workspace }) {
@@ -19,8 +21,16 @@ export function WorkspaceNote({ workspace }: { workspace: Workspace }) {
   const t = trust.data
   const r = records.data
   const parts: string[] = []
-  if (t?.available) parts.push(t.on ? 'Claude Code trusts this folder' : 'Claude Code asks about each folder')
-  if (mayRecord && r?.available && r.configured !== false && r.repo) parts.push(r.auto?.on === true ? 'History on' : 'History off')
+  const more: string[] = []
+  if (mayRecord && t?.available) {
+    parts.push(t.on ? 'Claude Code trusts this folder' : 'Claude Code asks about each folder')
+    more.push(t.on ? TRUST_ON : TRUST_OFF)
+  }
+  if (mayRecord && r?.available && r.configured !== false && r.repo) {
+    const on = r.auto?.on === true
+    parts.push(on ? 'History on' : 'History off')
+    more.push(on ? HISTORY_ON : HISTORY_OFF)
+  }
   if (parts.length === 0) return null
   return (
     <p className="flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="workspace-note">
@@ -31,7 +41,7 @@ export function WorkspaceNote({ workspace }: { workspace: Workspace }) {
             <Info className="size-3.5" aria-hidden />
           </button>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)] text-[13px]">{MORE}</PopoverContent>
+        <PopoverContent align="start" className="w-80 max-w-[calc(100vw-2rem)] text-[13px]">{more.join(' ')}</PopoverContent>
       </Popover>
     </p>
   )

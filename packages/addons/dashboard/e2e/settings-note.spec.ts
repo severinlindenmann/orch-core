@@ -21,6 +21,6 @@ test('Settings > General has no switches, only one quiet line with an i', async 
   await expect(note).toContainText(/History (on|off)/)
   await expect(page.getByText('Switches', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'More about this' }).click()
-  await expect(page.getByText(/not sent anywhere/)).toBeVisible()
+  await expect(page.getByText(/Claude Code asks you to trust/)).toBeVisible()
   await page.screenshot({ path: path.join(SHOTS, 'settings-note.png') })
 })

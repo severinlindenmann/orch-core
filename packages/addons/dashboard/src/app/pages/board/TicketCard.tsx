@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { flip, takeNoted } from '@/lib/motion'
 import { FollowupChip } from '../schedules/FollowupChip'
+import { ScheduledMark } from './scheduled'
 import { initials, PriorityMarker, STATUS_LABEL, TypeIcon, type BoardDisplay } from './lib'
 
 export interface BoardPeople {
@@ -165,6 +166,7 @@ function LaneCardBody({ ticket, people, me, task, overlay, showEstimate, showPro
       <div className="flex items-center gap-1.5">
         <TypeIcon type={ticket.type} />
         <span className="shrink-0 whitespace-nowrap font-mono text-[11px] text-text-muted">{ticket.key}</span>
+        <ScheduledMark ticketKey={ticket.key} />
         <StateGlyph ticket={ticket} people={people} me={me} task={task} />
         {ticket.restricted && <Lock role="img" aria-label="Restricted" className="size-3 text-text-faint" />}
         <span className="min-w-0 flex-1" />
@@ -216,6 +218,7 @@ export function TicketCardBody({
       <div className="flex items-center gap-1.5">
         <TypeIcon type={ticket.type} />
         <span className="font-mono text-[11px] text-text-muted">{ticket.key}</span>
+        <ScheduledMark ticketKey={ticket.key} />
         <StateGlyph ticket={ticket} people={people} me={me} task={task} />
         {ticket.restricted && <Lock role="img" aria-label="Restricted" className="size-3 text-text-faint" />}
         <span className="flex-1" />

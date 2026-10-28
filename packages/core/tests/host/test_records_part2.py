@@ -626,3 +626,92 @@ def test_status_is_strictly_read_only(r):
     assert status["local"]["repo"] == {"state": "index_differs"} and status["configured"] is True
     assert status["remote"]["current_url"] == url and status["remote"]["current_private"] is False
     assert snapshot() == before
+
+
+class _Launchd:
+    """Fake launchctl: ``listed`` is what ``print`` reports; bootstrap answers come from ``boots`` in turn."""
+
+    def __init__(self, boots, listed=False, stuck=False):
+        self.boots, self.listed, self.stuck, self.ran = list(boots), listed, stuck, []
+
+    def __call__(self, argv):
+        self.ran.append(list(argv))
+        verb, code = argv[1], 0
+        if verb == "print":
+            code = 0 if self.listed else 113
+        elif verb == "bootout":
+            self.listed = self.stuck  # a stuck job never finishes unloading
+        elif verb == "bootstrap":
+            code = self.boots.pop(0)
+            self.listed = code == 0
+        return subprocess.CompletedProcess(list(argv), code, "", "")
+
+    def verbs(self):
+        return [a[1] for a in self.ran]
+
+
+def _manager(tmp_path, fake, **kw):
+    unit = rtimer.plan(
+        {"HOME": str(tmp_path)}, tmp_path, platform="darwin", python=Path("/usr/bin/python3"), dev=True, **kw
+    )
+    naps = []
+    m = rtimer.TimerManager(unit, run=fake, sleep=naps.append)
+    m.install()
+    return m, naps
+
+
+def test_run13_timer_fresh_bootstrap_is_one_call(tmp_path):
+    fake = _Launchd([0])
+    m, naps = _manager(tmp_path, fake)
+    m.start(changed=True)
+    assert fake.verbs().count("bootstrap") == 1 and "bootout" not in fake.verbs() and naps == []
+
+
+def test_run13_timer_stale_job_exit_5_is_unloaded_and_retried(tmp_path):
+    fake = _Launchd([5, 0])  # not listed by print, yet bootstrap says 5: a stale job
+    m, _ = _manager(tmp_path, fake)
+    m.start(changed=True)
+    assert fake.verbs().count("bootstrap") == 2 and "bootout" in fake.verbs() and fake.listed
+
+
+def test_run13_timer_loaded_and_changed_is_unloaded_before_bootstrap(tmp_path):
+    fake = _Launchd([0], listed=True)
+    m, _ = _manager(tmp_path, fake)
+    m.start(changed=True)
+    assert fake.verbs().index("bootout") < fake.verbs().index("bootstrap")
+
+
+def test_run13_timer_a_second_exit_5_is_reported(tmp_path):
+    fake = _Launchd([5, 5])
+    m, _ = _manager(tmp_path, fake)
+    with pytest.raises(RecordsError) as e:
+        m.start(changed=True)
+    assert e.value.code == "records.timer_failed" and "(5)" in e.value.message and fake.verbs().count("bootstrap") == 2
+
+
+def test_run13_timer_another_code_is_not_retried(tmp_path):
+    fake = _Launchd([1])
+    m, _ = _manager(tmp_path, fake)
+    with pytest.raises(RecordsError):
+        m.start(changed=True)
+    assert fake.verbs().count("bootstrap") == 1 and "bootout" not in fake.verbs()
+
+
+def test_run13_timer_unload_that_never_finishes_times_out_and_proceeds(tmp_path):
+    fake = _Launchd([5, 0], stuck=True)
+    m, naps = _manager(tmp_path, fake)
+    m.start(changed=True)
+    assert len(naps) == 10 and fake.verbs().count("bootstrap") == 2  # bounded wait, no real sleep, then the retry ran
+
+
+def test_run13_timer_another_state_dirs_job_is_never_unloaded(tmp_path):
+    fake = _Launchd([5, 5])
+    m, _ = _manager(tmp_path, fake)
+    other = rtimer.plan(
+        {"HOME": str(tmp_path)}, tmp_path / "other", platform="darwin", python=Path("/usr/bin/python3"), dev=True
+    )
+    path = m.plan.files[0][0]
+    path.write_bytes(other.files[0][1])  # the installed plist runs for another state dir
+    with pytest.raises(RecordsError):
+        m.start(changed=True)
+    assert "bootout" not in fake.verbs()

@@ -19,6 +19,7 @@ WORDS = {
     "change.overridden": "applied an access change without the owner",
     "change.expired": "an access change lapsed",
     "change.rejected": "rejected an access change",
+    "change.cancelled": "withdrew an access change",
     "connection.allowed": "allowed a connection",
     "connection.denied": "closed a connection",
     "connection.migrated": "carried over a connection",

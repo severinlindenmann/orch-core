@@ -78,7 +78,11 @@ def test_a_regrant_without_credential_deletes_the_key(served, human, net, v1):
     publish(served, net, "1.1.0", ("network",))
     st = ok(stage(served, update=True))["data"]
     assert stored(served) == "stored"  # staging alone changes nothing
-    sign(human, "addon.grant", {"name": "standup", "staged": st["stage"]})
+    sign(
+        human,
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     assert stored(served) == "missing"
 
 

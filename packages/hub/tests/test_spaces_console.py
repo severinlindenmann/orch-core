@@ -66,6 +66,19 @@ def test_an_archived_space_refuses_new_puts_and_revokes_but_reads_go_on(shub):
         h.svc.set_archived(sid, True, BOB, 3_000)  # only an admin
 
 
+def test_a_non_member_is_told_not_member_before_anything_about_the_archive(shub):
+    from orch_hub.contract.hub import Refused
+
+    h, a, b, sid, ha, hb = setup(shub)
+    h.svc.set_archived(sid, True, ADMIN, 1_000)
+    outsider = G.fake16("outsider")
+    for call, body in (("put", ha.put_body(sid, IT2)), ("revoke", {"space_id": sid, "item_id": IT1})):
+        with pytest.raises(Refused) as e:
+            getattr(h.svc, call)(outsider, body)
+        assert e.value.code == "not_member"  # not "archived": an outsider learns nothing about the space
+    refused(a, "space_put", ha.put_body(sid, IT2), "archived")  # a member still hears why
+
+
 def test_a_removed_member_loses_its_mode_and_a_deleted_space_loses_the_flags(shub):
     h, a, b, sid, ha, hb = setup(shub)
     h.svc.set_member_mode(sid, G.WS_B, "reads", ADMIN)
@@ -97,6 +110,9 @@ def test_the_admin_routes_list_set_the_mode_archive_and_are_admin_only(tmp_path)
         try:
             sid = None
             w.api.d.spaces = sh.svc
+            from orch_hub.activity.store import ActivityLog
+
+            log = w.api.d.activity = ActivityLog(":memory:")
             w.reg = sh.registry
             w.api.d.registry = sh.registry
             sh.join(G.WS_A)
@@ -134,6 +150,9 @@ def test_the_admin_routes_list_set_the_mode_archive_and_are_admin_only(tmp_path)
                 and {m["workspace_id"]: m["mode"] for m in got["members"]}[G.WS_A] == "reads"
             )
             ann = w.login(w.ann)
+            kinds = {e["type"]: e for e in log.list(limit=20)}
+            assert kinds["space.archived"]["detail"] == {"space": sid}  # the space is named, never what is in it
+            assert kinds["space.mode_set"]["detail"] == {"mode": "reads", "space": sid}
             for method, path, body in (
                 ("GET", "/admin/spaces", None),
                 ("PUT", f"/admin/spaces/{sid}/members/{G.WS_A}/mode", {"mode": "reads"}),

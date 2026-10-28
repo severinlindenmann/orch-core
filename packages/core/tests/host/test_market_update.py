@@ -63,7 +63,10 @@ def test_an_update_with_more_capabilities_is_widened_and_shows_what_is_new(serve
     assert st["review"][-1].startswith("widened: yes")
     # the old version keeps running with its old grant until the new grant lands
     assert state(served) == "active" and package.read_package(addon_dir(served)).digest == v1["package_sha256"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     assert prepared["material"]["market"]["replaces"] == v1["package_sha256"]
     assert state(served) == "active" and package.read_package(addon_dir(served)).digest == v1["package_sha256"]
     ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
@@ -82,7 +85,10 @@ def test_an_update_that_only_changes_code_is_not_widened(served, human, net, v1)
 def test_a_declined_review_leaves_the_old_version_active(served, human, net, v1):
     publish(served, net, "1.1.0", ("network", "pty"))
     st = ok(stage(served, update=True))["data"]
-    human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})  # prepared, never signed
+    human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )  # prepared, never signed
     assert state(served) == "active"
     assert package.read_package(addon_dir(served)).digest == v1["package_sha256"]
     assert mfiles(served).installs()["addons"]["standup"]["version"] == "1.0.0"
@@ -137,7 +143,10 @@ def test_an_official_key_rotation_updates_and_moves_the_remembered_key(served, h
     st = ok(stage(served, update=True))["data"]
     assert st["update"]["publisher"] == "first_use" and st["update"]["widened"] is True
     assert any("publisher key changed" in x for x in st["update"]["changes"])
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     assert prepared["material"]["market"]["publisher"]["tofu"] == "new"
     ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
     rec = mfiles(served).installs()
@@ -163,7 +172,10 @@ def test_submit_rechecks_the_rotation_against_the_keys_pinned_now(served, human,
     monkeypatch.setattr(constants, "OFFICIAL_KEYS", (H.KEY_B64, nxt[1]))
     publish(served, net, "1.1.0", key=nxt)
     st = ok(stage(served, update=True))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     signed = human.sign(prepared)
     monkeypatch.setattr(constants, "OFFICIAL_KEYS", (H.KEY_B64,))  # the next key is no longer pinned
     assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.official_unsigned"  # C1
@@ -185,7 +197,10 @@ def test_a_version_revoked_after_staging_cannot_be_granted(served, human, net, v
     """Review F2: the index is read again at submit."""
     publish(served, net, "1.1.0")
     st = ok(stage(served, update=True))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     real = net.doc
     net.doc = lambda **more: real(revoked=["standup@1.1.0"], **more)
     net.version += 1
@@ -198,13 +213,16 @@ def test_a_version_revoked_after_staging_cannot_be_granted(served, human, net, v
 def test_a_stage_whose_class_is_gone_cannot_be_granted(served, human, net, v1):
     publish(served, net, "1.1.0")
     st = ok(stage(served, update=True))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     f = mfiles(served)
     path = f.dir / "staged" / f"{st['stage']}.json"
     doc = f.read_stage(st["stage"])
     path.write_bytes(json.dumps({**doc, "class": "dev"}).encode())
     path.chmod(0o600)
-    assert err(human.submit_res(prepared["request"]["id"], human.sign(prepared).events)) == "market.staged_changed"
+    assert err(human.submit_res(prepared["request"]["id"], human.sign(prepared).events)) == "addon.stage_changed"
 
 
 def test_a_hub_joined_between_stage_and_submit_refuses_the_grant_and_changes_nothing(
@@ -214,7 +232,10 @@ def test_a_hub_joined_between_stage_and_submit_refuses_the_grant_and_changes_not
 
     publish(served, net, "1.1.0")
     st = ok(stage(served, update=True))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     signed = human.sign(prepared)
     before = mfiles(served).installs()
     monkeypatch.setattr(marketops, "hub_joined", lambda s: True)
@@ -226,21 +247,72 @@ def test_a_hub_joined_between_stage_and_submit_refuses_the_grant_and_changes_not
 def test_the_index_must_still_list_the_staged_bytes_at_submit(served, human, net, v1):
     publish(served, net, "1.1.0")
     st = ok(stage(served, update=True))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     signed = human.sign(prepared)
     publish(served, net, "1.2.0")  # the marketplace moved on: 1.1.0 is no longer what it lists
-    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.staged_changed"
+    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "addon.stage_changed"
     assert mfiles(served).installs()["addons"]["standup"]["version"] == "1.0.0"
 
 
 def test_an_older_index_than_the_stage_saw_is_refused_at_submit(served, human, net, v1):
     publish(served, net, "1.1.0")
     st = ok(stage(served, update=True))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     signed = human.sign(prepared)
     f = mfiles(served)
     doc = f.read_stage(st["stage"])
     path = f.dir / "staged" / f"{st['stage']}.json"
     path.write_bytes(json.dumps({**doc, "index_version": 99}).encode())
     path.chmod(0o600)
-    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.staged_changed"
+    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "addon.stage_changed"
+
+
+def _update_view(served, human):
+    """The REAL signer's View of the update's ``addon.grant`` (a plain grant: an update is no install sequence)."""
+    from tests.host.test_click import Click
+
+    st = ok(stage(served, update=True))["data"]
+    c = Click(served)
+    try:
+        p = c.prepare(
+            "addon.grant",
+            {
+                "name": "standup",
+                "staged": st["stage"],
+                "digest": st["package_sha256"],
+                "caps": st["grant"]["capabilities"],
+            },
+        )
+        view = c.view(p["request_id"])["view"]
+        assert c.signatures == 0
+        return st, view
+    finally:
+        c.close()
+
+
+def test_a_widened_update_review_lists_every_signed_capability_as_risk_and_needs_the_second_press(
+    served, human, net, v1
+):
+    """D3 (decision: no new field in the signed event): the signer lists ALL capabilities the grant signs as risk
+    lines, computed from the signed events, so an update is never a one-press View."""
+    from orch.click import protocol
+
+    publish(served, net, "1.1.0", ("network", "pty"))
+    _, view = _update_view(served, human)
+    assert view["op"] == "addon.grant"
+    assert view["risk_lines"], "a risky View: the dashboard starts it in press mode and never arms it"
+    assert "addon.grant" not in protocol.ONE_PRESS_OPS
+    assert len(view["risk_lines"]) >= 2  # network and pty both named, not only what is new
+
+
+def test_a_non_widened_update_review_is_still_a_risk_view(served, human, net, v1):
+    """The conservative control: no new capability, the update is still reviewed with risk lines (second press)."""
+    publish(served, net, "1.0.1")
+    _, view = _update_view(served, human)
+    assert view["risk_lines"] and view["op"] == "addon.grant"

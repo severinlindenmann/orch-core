@@ -327,7 +327,7 @@ const click = {
   /** V3 C11: what the host says to check when the hub's channel signs (a read; nothing is prepared or signed here). */
   hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>(`${w(ws)}/hubsign`, 'POST', body),
   /** FB15: an add-on grant prepared for the hub (nothing is signed here), and where it is now. */
-  prepareHubApproval: (ws: string, action: Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' }>) => call<import('./hubsign').HubApproval>(`${w(ws)}/hub/approve/prepare`, 'POST', action),
+  prepareHubApproval: (ws: string, action: Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' | 'market_update' }>) => call<import('./hubsign').HubApproval>(`${w(ws)}/hub/approve/prepare`, 'POST', action),
   getHubApproval: (ws: string, id: string) => call<import('./hubsign').HubApprovalState>(`${w(ws)}/hub/approve/${encodeURIComponent(id)}`),
   getHubStatus: (ws: string) => call<import('./hub').HubStatus>(`${w(ws)}/hub`),
   getHubShare: (ws: string) => call<import('./hub').HubShare>(`${w(ws)}/hub/share`),

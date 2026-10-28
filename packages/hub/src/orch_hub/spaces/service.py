@@ -396,7 +396,11 @@ class SpaceService:
 
     def _writable(self, space_id: str, ws: str) -> None:
         """The admin's policy for writes: an archived space and a ``reads`` member refuse (the signed rules stay as they
-        were; this only restricts)."""
+        were; this only restricts). Membership comes first: a workspace that is not in the space is told ``not_member`` and
+        learns nothing about whether the space is archived."""
+        st = self._state(space_id)
+        if st is not None and ws not in st["space"]["members"]:
+            raise Refused("not_member")
         if self.store.archived_ms(space_id) is not None:
             raise Refused("archived")
         if self.store.mode(space_id, ws) == "reads":

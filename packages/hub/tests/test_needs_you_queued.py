@@ -1,7 +1,8 @@
 """The approvals inbox exposes only the caller's pending signed events."""
+
 import pytest
+from test_deliver_queue import LOG, Port, ev
 from webapi_helpers import WS, WS_OTHER, Web
-from test_deliver_queue import ev, LOG, Port
 
 from orch_hub.custodial.deliver import DeliveryQueue
 

@@ -7,6 +7,7 @@ import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, sig
 import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { parseRoute } from "./route.js";
 import { homeView, workspaceStatus } from "./home.js";
+import { activityView } from "./activity.js";
 import { adminView } from "./admin.js";
 import { servicesView } from "./services.js";
 import { workspacesView, workspaceDetailsView } from "./workspaces.js";
@@ -146,11 +147,11 @@ function shell(active, ...nodes) {
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
+    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
+      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -267,6 +268,29 @@ async function landFromTicket(t) {
 function reauthView() {
   show(h("div", { class: "plain" }, h("h1", { text: "Sign in again to use admin tools" }), h("p", { class: "muted", text: "You arrived from a workspace. Admin tools need your password and code." }),
     h("button", { class: "pri", text: "Sign in again", onclick: async () => { await api("DELETE", "/session"); clearSession(); loginView(); } })));
+}
+
+async function activity() {
+  pageLoading("activity");
+  if (!(await refresh())) return loginView();
+  if (!state.user.is_admin) return home();
+  if (state.user.needs_sign_in) return reauthView();
+  await loadRail();
+  const [users, workspaces] = await Promise.all([api("GET", "/admin/users"), api("GET", "/admin/workspaces")]);
+  let rows = [], revision = 0;
+  const load = async (filters = {}, before = null) => {
+    const request = ++revision;
+    const params = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== "" && v != null));
+    if (before) params.set("before", before);
+    const r = await api("GET", "/admin/activity?" + params);
+    if (location.hash !== "#/activity" || request !== revision) return;
+    if (r.status !== 200) return shell("activity", banner("bad", "Activity could not be loaded", say(r.body.error)));
+    rows = before ? [...rows, ...r.body.rows] : r.body.rows;
+    shell("activity", activityView({ ...r.body, rows, filters, users: users.body.users ?? [], workspaces: workspaces.body.workspaces ?? [] }, {
+      filter: (next) => load(next), older: (cursor, next) => load(next, cursor),
+    }));
+  };
+  await load();
 }
 
 async function admin() {
@@ -912,7 +936,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin }[route.kind] ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity }[route.kind] ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

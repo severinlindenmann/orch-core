@@ -259,7 +259,8 @@
         "wont_do",
         "duplicate",
         "obsolete",
-        "other"
+        "other",
+        "nothing_to_do"
       ]
     },
     "claimReleaseReason": {

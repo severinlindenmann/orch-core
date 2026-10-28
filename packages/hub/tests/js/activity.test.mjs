@@ -43,27 +43,32 @@ test("workspace, person, type and date filters combine", () => {
   assert.deepEqual(filterRows(rows, { since_ms: 3000 }), []);
 });
 
-test("export receives exactly the rows currently shown; older retains the filters", () => {
-  let exported, older, applied;
+test("export fetches every matching page; older retains the applied filters; the session sits behind the i", async () => {
+  let saved, older, applied, askedFor;
+  const all = [...rows, { ...rows[0], id: "more" }];
   const view = activityView({ rows, before: "1000:e:1" }, {
-    export: (r) => { exported = r; }, older: (...args) => { older = args; }, filter: (f) => { applied = f; },
+    exportAll: async (f) => { askedFor = f; return all; }, save: (r) => { saved = r; },
+    older: (...args) => { older = args; }, filter: (f) => { applied = f; },
   }, 4000);
   const workspace = view.all().find((n) => n.attrs["aria-label"] === "Workspace");
   workspace.value = "w";
   workspace.listeners.change();
   const button = (name) => view.all().find((n) => n.tag === "button" && n.textContent === name);
-  button("Export CSV").listeners.click();
-  assert.deepEqual(exported, [rows[0]]);
-  assert.equal(toCsv(exported).split("\r\n").length, 3);
-  assert.doesNotMatch(toCsv(exported), /proposed a change/);
-  assert.doesNotMatch(view.textContent, /proposed a change/);
+  await button("Export CSV").listeners.click();
+  assert.deepEqual(saved, all); // not only the loaded rows
+  assert.deepEqual(askedFor, { workspace_id: "w" });
   button("Load older").listeners.click();
-  assert.deepEqual(older, ["1000:e:1", { workspace_id: "w" }]);
+  assert.deepEqual(older, ["1000:e:1"]); // the app sends the APPLIED filters with the cursor
   view.all().find((n) => n.tag === "form").listeners.submit({ preventDefault() {} });
   assert.deepEqual(applied, { workspace_id: "w" });
-  workspace.value = "absent";
-  workspace.listeners.change();
-  assert.match(view.textContent, /No activity matches/);
-  button("Export CSV").listeners.click();
-  assert.deepEqual(exported, []);
+  assert.match(view.textContent, /every row that matches the filters/); // the note lives behind the i
+});
+
+test("an agent is shown as An agent, with the session behind the i; the CSV keeps the typed form", () => {
+  const row = { ts_ms: 1000, type: "change.proposed", text: "asked for an access change", actor: { kind: "agent", session: "s-1" }, workspace_name: "W" };
+  const view = activityView({ rows: [row] }, {}, 4000);
+  assert.match(view.textContent, /An agent/);
+  assert.match(view.textContent, /agent:s-1/); // inside the closed details
+  assert.ok(view.all().some((n) => n.tag === "summary" && n.textContent === "i"));
+  assert.match(toCsv([row]), /agent:s-1/);
 });

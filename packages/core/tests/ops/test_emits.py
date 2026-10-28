@@ -55,7 +55,6 @@ def test_v4_adds_followups():
 
 
 def test_v5_adds_manual_schedules_as_person_operations():
-    assert emits.CURRENT is emits.EMITS_V5
     assert digest(emits.EMITS_V5) == "37f2f4c633103e003b613edfe0f4c6aef342b31cd964e872fefa24b641107616"
     assert {k for k in emits.EMITS_V5 if emits.EMITS_V5[k] != emits.EMITS_V4.get(k)} == {
         "schedule.add",
@@ -88,3 +87,10 @@ def test_an_operation_a_person_runs_is_never_covered_by_a_grant():
     for verb, typ in (("import.v1", "ticket.updated"), ("import.v1", "ticket.created"), ("approve", "gate.approved")):
         assert not verb_covers(typ, [verb], table)
     assert verb_covers("log.added", ["import.v1", "log"], table)  # the agent verb next to it still counts
+
+
+def test_v6_adds_signed_anchor_creation_only_to_schedule_add():
+    assert emits.CURRENT is emits.EMITS_V6
+    assert {k for k in emits.EMITS_V6 if emits.EMITS_V6[k] != emits.EMITS_V5.get(k)} == {"schedule.add"}
+    assert emits.EMITS_V6["schedule.add"] == {"ticket.created", "schedule.set"}
+    assert "schedule.add" in emits.HUMAN_ONLY

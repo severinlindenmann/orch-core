@@ -390,7 +390,7 @@ def test_device_checks_at_prepare_and_at_binding(human, served, lab):
     for device, code in cases:
         signer_ = {"device": device, "auth": "passphrase"}
         assert err(human.prepare_res("log", {"ref": key, "text": "x"}, signer=signer_)) == code, device
-        handed = human.prepare("log", {"ref": key, "text": "x"}, handoff=True)
+        handed = human.prepare_unbound("log", {"ref": key, "text": "x"})
         assert err(human.get(handed["request"]["id"], signer=signer_)) == code, device
     no_op = {"device": no_operate, "auth": "passphrase"}
     ok(human.prepare_res("log", {"ref": key, "text": "x"}, signer=no_op))  # decide is enough for a log

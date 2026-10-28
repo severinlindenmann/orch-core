@@ -3,6 +3,8 @@ export function parseRoute(hash) {
   const value = String(hash ?? "");
   let m = /^#setup=([\w-]+)$/.exec(value);
   if (m) return { kind: "setup", token: m[1] };
+  m = /^#invite=([A-Za-z0-9_-]{32,128})$/.exec(value);
+  if (m) return { kind: "invite", token: m[1] };
   m = /^#t=([A-Za-z0-9._-]{8,128})$/.exec(value);
   if (m) return { kind: "ticket", token: m[1] };
   m = /^#\/(home|approvals|workspaces|services|admin|activity)$/.exec(value);

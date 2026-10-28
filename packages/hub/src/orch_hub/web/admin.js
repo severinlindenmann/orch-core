@@ -113,8 +113,69 @@ export function adminView(d) {
   const workspaceName = (id) => txt(data.workspaces.find((w) => w.workspace_id === id)?.name ?? "Workspace");
   const personName = (id) => txt(data.users.find((u) => u.user_id === id)?.name ?? id);
   const groupMembers = (group) => (data.groups.find((g) => g.name === group)?.members ?? []).map(personName).join(", ") || "No members";
+  // Links for people: an invitation, a password-and-code reset, a recovery. The admin only hands the link over; the person
+  // chooses their own password and scans their own code, so nothing secret ever shows here.
+  const linkBox = h("div", { "aria-live": "polite" });
+  const RECOVERY_WARNING = "A recovery link gives whoever opens it this person's account. Hand it over only to them.";
+  async function postLink(button, path, body) {
+    button.disabled = true;
+    try {
+      const r = await d.api("POST", path, body);
+      if (r.status === 200) return r.body;
+      linkBox.replaceChildren(h("div", { class: "banner bad", role: "alert", text: d.say(r.body?.error ?? "unavailable") }));
+    } catch { linkBox.replaceChildren(h("div", { class: "banner bad", role: "alert", text: d.say("unavailable") })); }
+    finally { button.disabled = false; }
+    return null;
+  }
+  function showLink(title, intro, made, extra = []) {
+    const input = h("input", { readonly: true, value: made.link, id: "person-link", "aria-label": "Link for the person", onfocus: (ev) => ev.target.select() });
+    const hint = h("span", { class: "small muted", "aria-live": "polite" });
+    let timer;
+    const copy = h("button", { type: "button", class: "pri", text: "Copy link", onclick: async () => {
+      try {
+        await navigator.clipboard.writeText(made.link);
+        clearTimeout(timer);
+        hint.textContent = "";
+        copy.textContent = "Copied ✓";
+        timer = setTimeout(() => { copy.textContent = "Copy link"; }, 2000);
+      } catch { input.focus(); input.select(); hint.textContent = "Press Ctrl+C / Cmd+C to copy"; }
+    } });
+    linkBox.replaceChildren(h("section", { class: "card", id: "person-link-panel" }, h("h3", { text: title }), p(intro), field("Link", input),
+      h("div", { class: "row" }, copy, hint),
+      p("Valid until " + new Date(made.expires_ms).toLocaleString() + " (7 days). It works once."),
+      ...extra, h("div", { class: "row" }, h("button", { type: "button", text: "Done", onclick: () => linkBox.replaceChildren() }))));
+    input.focus(); input.select();
+  }
+  const deviceCount = (u) => {
+    const n = data.channels.filter((c) => c.user_id === u.user_id && c.status === "active").length;
+    return n === 1 ? "1 device" : n + " devices";
+  };
+  function personControls(u) {
+    const recovery = h("input", { type: "checkbox", id: "recovery-" + u.user_id });
+    const reset = h("button", { type: "button", text: "Reset password and code", onclick: async (ev) => {
+      const made = await postLink(ev.target, "/admin/users/" + enc(u.user_id) + "/reset", { recovery: !!recovery.checked });
+      if (!made) return;
+      showLink((recovery.checked ? "Recovery link for " : "Reset link for ") + txt(u.name),
+        recovery.checked ? "Send this link to " + txt(u.name) + ". They choose a new password and get a new code. All their approving devices are removed."
+          : "Send this link to " + txt(u.name) + ". They open it in a browser where they already approve, choose a new password and get a new code.",
+        made, recovery.checked ? [h("div", { class: "banner warn", role: "alert", text: RECOVERY_WARNING })] : []);
+    } });
+    const enable = h("button", { type: "button", text: "Enable", onclick: async (ev) => {
+      const made = await postLink(ev.target, "/admin/users/" + enc(u.user_id) + "/enable", {});
+      if (!made) return;
+      await load();
+      showLink("Recovery link for " + txt(u.name), txt(u.name) + " can sign in again only after using this link to choose a new password and code.", made,
+        [h("div", { class: "banner warn", role: "alert", text: RECOVERY_WARNING })]);
+    } });
+    return h("div", { class: "person-controls" },
+      u.disabled ? null : h("div", { class: "row" }, reset, h("label", { class: "check" }, recovery, "They lost their devices (recovery)")),
+      u.disabled ? null : p(RECOVERY_WARNING),
+      h("div", { class: "row" }, u.disabled ? enable : u.user_id === d.self ? chip("You") : remove("Disable", "POST", "/admin/users/" + enc(u.user_id) + "/disable"),
+        remove("Remove person", "DELETE", "/admin/users/" + enc(u.user_id))));
+  }
   function people() {
-    const name = h("input", { required: true, maxlength: 120, autocomplete: "off" });
+    const inviteName = h("input", { id: "invite-name", required: true, maxlength: 80, autocomplete: "off" });
+    const inviteBtn = h("button", { class: "pri", type: "submit", id: "invite-person", text: "Invite a person" });
     const groupName = h("input", { required: true, maxlength: 120 });
     const person = select(data.users.map((u) => [u.user_id, u.name]));
     const group = select(data.groups.map((g) => [g.name, g.name]));
@@ -131,14 +192,22 @@ export function adminView(d) {
     person.addEventListener("change", updatePreview); group.addEventListener("change", updatePreview); updatePreview();
     return [h("h2", { text: "People & groups" }),
       h("div", { class: "admin-grid" },
-        h("section", { class: "card" }, h("h3", { text: "Add person" }), form("Add person", [field("Name", name)], "POST", "/admin/users", () => ({ name: name.value.trim() }))),
+        h("section", { class: "card" }, h("h3", { text: "Invite a person" }),
+          h("form", { onsubmit: async (ev) => {
+            ev.preventDefault();
+            const made = await postLink(ev.submitter ?? inviteBtn, "/admin/invites", { name: inviteName.value.trim() });
+            if (!made) return;
+            inviteName.value = "";
+            showLink("Invitation link", "Send this link to the person. They choose their own password and scan their own code; you will not see them.", made,
+              [p("Add them to groups afterwards. A new person has no access to any workspace until you do.")]);
+          } }, h("div", { class: "form-grid" }, field("Their name", inviteName), inviteBtn)), linkBox),
         h("section", { class: "card" }, h("h3", { text: "Add to group" }),
           form("Add to group", [field("Person", person), field("Group", group)], "PUT", () => "/admin/groups/" + enc(group.value) + "/members/" + enc(person.value), () => undefined), preview)),
       h("section", { class: "card" }, h("h3", { text: "People" }), data.users.length ? data.users.map((u) => h("article", { class: "list-row row" },
         h("div", { class: "grow" }, h("b", { text: txt(u.name) }), p(txt(u.user_id)),
-          h("div", { class: "row" }, data.groups.filter((g) => g.members.includes(u.user_id)).map((g) => chip(txt(g.name)))),
-          p(data.channels.filter((c) => c.user_id === u.user_id).map((c) => txt(c.label || c.kind) + " · " + txt(c.status)).join(", ") || "No approval device set up")),
-        remove("Remove person", "DELETE", "/admin/users/" + enc(u.user_id)))) : p("No people yet.")),
+          h("div", { class: "row" }, u.disabled ? chip("Disabled", "warn") : null, data.groups.filter((g) => g.members.includes(u.user_id)).map((g) => chip(txt(g.name)))),
+          p(deviceCount(u) + " · " + (data.channels.filter((c) => c.user_id === u.user_id).map((c) => txt(c.label || c.kind) + " · " + txt(c.status)).join(", ") || "No approval device set up"))),
+        personControls(u))) : p("No people yet.")),
       h("section", { class: "card" }, h("h3", { text: "Groups" }),
         form("Create group", [field("Group name", groupName)], "POST", "/admin/groups", () => ({ name: groupName.value.trim() })),
         data.groups.map((g) => h("article", { class: "list-row" }, h("div", { class: "row" }, h("b", { class: "grow", text: txt(g.name) }),

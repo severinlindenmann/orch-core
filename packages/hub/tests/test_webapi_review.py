@@ -65,7 +65,7 @@ def test_review_bad_user_name_creates_no_signing_key(w):
     admin = w.login(w.admin)
     ukdir = w.env.keys.state / "uk"
     before = set(os.listdir(ukdir)) if ukdir.exists() else set()
-    s, o, _ = w.call("POST", "/admin/users", {"name": "bad\nname"}, token=admin)
+    s, o, _ = w.call("POST", "/admin/invites", {"name": "bad\nname"}, token=admin)
     assert (s, o) == (400, {"error": "malformed"})
     assert set(os.listdir(ukdir)) == before
 

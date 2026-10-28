@@ -38,6 +38,7 @@ class Registry:
             self._db.execute("ALTER TABLE workspace ADD COLUMN binding_obj TEXT")  # registry from before D11
         columns = {r[1] for r in self._db.execute("PRAGMA table_info(workspace)")}
         for name, kind in (
+            ("profile", "TEXT"),
             ("version", "TEXT"),
             ("commit", "TEXT"),
             ("host", "TEXT"),
@@ -160,6 +161,8 @@ class Registry:
                     None if binding_obj is None else cj(dict(binding_obj)).decode(),
                 ),
             )
+            if state.get("status") != "bound":
+                self._db.execute("UPDATE workspace SET profile=NULL WHERE workspace_id=?", (ws,))
             if owner_alias is None:
                 self._db.execute("DELETE FROM owner_alias WHERE workspace_id=?", (ws,))
             else:
@@ -183,6 +186,27 @@ class Registry:
                 "UPDATE workspace SET binding_state=?, binding_obj=COALESCE(?, binding_obj) WHERE workspace_id=?",
                 (cj(dict(state)).decode(), None if binding_obj is None else cj(dict(binding_obj)).decode(), ws),
             )
+            if state.get("status") != "bound":
+                self._db.execute("UPDATE workspace SET profile=NULL WHERE workspace_id=?", (ws,))
+
+    def profile(self, ws: str) -> dict[str, Any] | None:
+        with self.lock:
+            row = self._db.execute("SELECT profile FROM workspace WHERE workspace_id=?", (ws,)).fetchone()
+        return json.loads(row[0]) if row and row[0] is not None else None
+
+    def put_profile(self, ws: str, body: Mapping[str, Any]) -> None:
+        from ..contract.phase4 import strip_text as render_text
+
+        clean = {
+            k: [render_text(v) for v in value]
+            if type(value) is list
+            else render_text(value)
+            if type(value) is str
+            else value
+            for k, value in body.items()
+        }
+        with self.lock, self._db:
+            self._db.execute("UPDATE workspace SET profile=? WHERE workspace_id=?", (cj(clean).decode(), ws))
 
     def binding_objects(self) -> dict[str, dict[str, Any]]:
         """``{workspace_id: the newest accepted signed hub.binding / hub.unbound}``, to re-push after a restart."""

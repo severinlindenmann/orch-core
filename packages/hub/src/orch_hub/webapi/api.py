@@ -1080,7 +1080,7 @@ class WebApi:
                         "members": [names[u] for u in self.d.access.members(grant["group"]) if u in names],
                     }
                 )
-        return 200, {"owner": owner, "groups": groups}
+        return 200, {"owner": owner, "groups": groups, "profile": self.d.registry.profile(ws)}
 
     @staticmethod
     def _shared_signable(o: dict[str, Any]) -> bool:

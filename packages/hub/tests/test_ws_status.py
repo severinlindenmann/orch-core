@@ -106,6 +106,7 @@ def test_roles_and_api_rows(tmp_path):
             200,
             {
                 "owner": "ann",
+                "profile": None,
                 "groups": [{"group": "team", "role": "edit", "members": ["ann"]}],
             },
         )
@@ -116,7 +117,10 @@ def test_roles_and_api_rows(tmp_path):
         stranger = w.env.user("stranger")
         assert w.call("GET", route, token=w.login(stranger))[1] == {"error": "unknown_workspace"}
         w.reg.add(WS_SEL, "selective", owner=w.ann)
-        assert w.call("GET", f"/workspaces/{WS_SEL}/roles", token=ann)[:2] == (200, {"owner": "ann", "groups": []})
+        assert w.call("GET", f"/workspaces/{WS_SEL}/roles", token=ann)[:2] == (
+            200,
+            {"owner": "ann", "groups": [], "profile": None},
+        )
         assert w.call("GET", f"/workspaces/{WS_SEL}/roles", token=admin)[1] == {"error": "unknown_workspace"}
         result = w.call("GET", "/me/workspaces", token=ann)[1]
         assert result["hub"]["min_supported"] == MIN_SUPPORTED_VERSION

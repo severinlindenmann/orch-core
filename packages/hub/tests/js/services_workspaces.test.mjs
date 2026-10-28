@@ -195,3 +195,16 @@ test("workspace and access names stay text even when they contain markup", () =>
   assert.match(text(out), /<img/);
   assert.equal(find(out, (n) => n.tag === "img").length, 0);
 });
+
+test("details Open passes the plain workspace with no pending mode or deep-link value", async () => {
+  const w = workspace({ mode: "selective" });
+  let args;
+  const nodes = workspaceDetailsView(w, { actions: { open: (...value) => { args = value; } } });
+  clickButton(nodes, "Open Product");
+  assert.deepEqual(args, [w]);
+  const { readFile } = await import("node:fs/promises");
+  const app = await readFile(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const open = app.slice(app.indexOf("async function openWorkspace(w)"), app.indexOf("async function openWorkspace(w)") + 230);
+  assert.match(open, /workspace_id: w.id, return_to: "\/", kind: "open"/);
+  assert.doesNotMatch(open, /pending|mode|return_to: "[^" ]*[?#]/);
+});

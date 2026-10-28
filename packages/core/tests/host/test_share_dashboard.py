@@ -51,7 +51,7 @@ def test_the_owner_revokes_and_removes_a_rule_as_their_person_with_a_log_line(se
     assert [e for e, _ in reduce_lines] == ["share.revoke", "share.revoke", "share.rule_remove"]
     assert all(f["person"] == person for _, f in reduce_lines)
     add = [f for e, f in log if e == "share.rule_add"]
-    assert add and "person" not in add[0]  # nothing else changes: an adding op's line is as it was
+    assert add and add[0]["person"] == person and add[0]["count"] == 1 and len(add[0]["plan"]) == 16
 
 
 def test_a_rule_removal_that_would_match_more_shares_nothing_new(served, selective):
@@ -233,3 +233,33 @@ def test_a_member_who_is_not_the_owner_is_refused(tmp_path):
     finally:
         wd.close()
         wd.lab.close()
+
+
+def test_the_review_of_an_adding_change_comes_from_the_host_and_lists_only_new_items(served, selective):
+    labelled(served, "Public note", "public")
+    first = ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))  # confirmed and sent
+    assert first
+    labelled(served, "Second public", "public")
+    got = ok(req(served, "share.preview", {"add": {"kind": "tag", "tag": "public"}}))["data"]
+    review = got["review"]
+    assert review["new"]["count"] == 1 and review["new"]["items"][0]["line"].endswith(": Second public")
+    assert review["leaves"] == [{"kind": "ticket", "text": shareops.LEAVES["ticket"]}]
+    assert review["later_edits"] == shareops.LATER_EDITS and "hub_id" in review and "audience_note" in review
+
+
+def test_five_adding_changes_a_minute_and_each_leaves_a_log_line(served, selective, log):
+    labelled(served, "Public note", "public")
+    for _n in range(5):
+        ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
+    assert err(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"})) == "host.busy"
+    assert len([e for e, _ in log if e == "share.rule_add"]) == 5
+    assert ok(req(served, "share.rules", {}))  # reads are not limited
+
+
+def test_an_agent_cannot_add_or_confirm_sharing(served, selective):
+    labelled(served, "Public note", "public")
+    before = list(selective.ops)
+    for op, args in (("share.rule_add", {"rule": {"kind": "tag", "tag": "public"}, "expect": "p" * 43}),
+                     ("share.sync", {"expect": "p" * 43})):  # fmt: skip
+        assert err(agent(served, op, args)) in ("op.not_allowed", "human_only"), op
+    assert selective.ops == before

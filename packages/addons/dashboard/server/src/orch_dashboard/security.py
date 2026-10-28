@@ -48,6 +48,8 @@ READONLY_REFUSED = (
     "/market/add",
     "/hub/share/revoke",
     "/hub/share/rule-remove",
+    "/hub/share/rule-add",
+    "/hub/share/sync",
 )
 
 

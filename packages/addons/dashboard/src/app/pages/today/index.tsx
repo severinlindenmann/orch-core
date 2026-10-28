@@ -37,6 +37,10 @@ function dateLine(now: string) {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
+/** How long a row answered from Today stays, collapsed to the answer, after it left the host's list. */
+export const ANSWERED_MS = 8_000
+const sameItem = (a: NeedsYouItem, b: NeedsYouItem) => a.kind === b.kind && a.ticket === b.ticket && a.ref === b.ref
+
 function readSeen(key: string): Set<string> | null {
   try {
     const value = localStorage.getItem(key)
@@ -175,7 +179,21 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
   const sessions = useMemo(() => agentsQ.data ?? [], [agentsQ.data])
   const dir: Directory = { workspace, agents: sessions }
 
-  const entries = useMemo(() => toEntries(items, decisions), [items, decisions])
+  // An answer sent from its row leaves the host's list at once; the row stays, collapsed to "You answered: …", for
+  // ANSWERED_MS (it keeps its place: no "Nothing needs you" under the person's pointer the moment they answer).
+  const [answered, setAnswered] = useState<{ item: NeedsYouItem; at: number }[]>([])
+  const listed = useMemo(() => {
+    const kept = answered.filter((a) => !items.some((i) => sameItem(i, a.item))).map((a) => a.item)
+    return kept.length ? [...items, ...kept] : items
+  }, [items, answered])
+  useEffect(() => {
+    if (!answered.length) return
+    const first = Math.min(...answered.map((a) => a.at))
+    const t = setTimeout(() => setAnswered((l) => l.filter((a) => Date.now() - a.at < ANSWERED_MS)), Math.max(0, first + ANSWERED_MS - Date.now()))
+    return () => clearTimeout(t)
+  }, [answered])
+  const keepAnswered = (item: NeedsYouItem) => setAnswered((l) => [...l.filter((a) => !sameItem(a.item, item)), { item, at: Date.now() }])
+  const entries = useMemo(() => toEntries(listed, decisions), [listed, decisions])
   // The order on screen changes only on load and on "Show new": arrivals wait in `fresh`, nothing moves under the pointer.
   // "New" means new since the person's last look: ids not in the list they last saw here (kept per workspace and
   // person in the browser; a first visit, a dataset switch or Reset marks nothing new). New items lead their group.
@@ -272,7 +290,10 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
     }
     const askedBy = e.item.kind === 'question' ? byKey[e.item.ticket]?.questions_state.find((q) => q.id === e.item.ref)?.asked_by : undefined
     const props = { item: e.item, ticket: byKey[e.item.ticket], askedBy: askedBy ? displayName(dir, askedBy) : undefined, now, expanded: expanded === row.id, onToggle: () => toggle(row.id), sign, decider: readOnly ? deciderOf(e) : undefined, locked }
-    if (e.item.kind === 'question') return <QuestionRow key={row.id} {...props} />
+    if (e.item.kind === 'question') {
+      const item = e.item
+      return <QuestionRow key={row.id} {...props} viewer={viewer} onAnswered={() => keepAnswered(item)} />
+    }
     if (e.item.kind === 'approval') return <ApprovalRow key={row.id} {...props} />
     if (e.item.kind === 'verdict') return <VerdictRow key={row.id} {...props} />
     if (e.item.kind === 'terminal_wait') return <TerminalWaitRow key={row.id} item={e.item} now={now} />

@@ -187,3 +187,20 @@ test("last_admin is a plain warning and only a confirm sends the change again; o
   assert.equal(b.message.textContent, "say:owner_protected");
   assert.equal(button([b.message], "Do it anyway").length, 0);
 });
+
+test("the Access tab shows access by workspace or by group, one click apart", async () => {
+  const a = admin((m, p, b, s) => ({ status: 200, body: { ok: true } }));
+  await settle();
+  const panelText = () => a.panel().textContent;
+  const toggle = (label) => button([a.panel()], label)[0];
+  assert.equal(toggle("By workspace").attrs["aria-pressed"], "true");
+  assert.match(panelText(), /Workspace permissions/);
+  assert.doesNotMatch(panelText(), /What this group can open/);
+  toggle("By group").listeners.click();
+  assert.equal(toggle("By group").attrs["aria-pressed"], "true");
+  assert.match(panelText(), /What this group can open|Cannot open any workspace yet/);
+  assert.doesNotMatch(panelText(), /Workspace permissions/);
+  assert.ok(a.panel().all().some((n) => n.attrs["data-group"] === "devs"));
+  toggle("By workspace").listeners.click();
+  assert.match(panelText(), /Workspace permissions/);
+});

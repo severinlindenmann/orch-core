@@ -4,6 +4,7 @@ import { renderText } from "./render.js";
 import { sentence } from "./changes.js";
 
 let showLeft = false;
+let accessBy = "workspace"; // the Access tab's second view: by workspace (who can open it) or by group (what it can open)
 
 function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
@@ -272,11 +273,29 @@ export function adminView(d) {
         form("Grant access", [field("Workspace", workspace), field("Group", group), field("Permission", role)], "PUT", "/admin/grants",
           () => ({ workspace_id: workspace.value, group: group.value, role: role.value }))),
       waitingChanges(),
-      ...data.workspaces.map((w) => h("section", { class: "workspace-detail" }, h("h3", { text: workspaceName(w.workspace_id) }),
+      h("div", { class: "ws-segment", role: "group", "aria-label": "Show access" }, ["workspace", "group"].map((by) => h("button", {
+        type: "button", id: "access-by-" + by, text: by === "workspace" ? "By workspace" : "By group", "aria-pressed": String(accessBy === by),
+        onclick: () => { accessBy = by; draw(); },
+      }))),
+      ...(accessBy === "group" ? byGroup() : byWorkspace())];
+  }
+  function byWorkspace() {
+    return data.workspaces.map((w) => h("section", { class: "workspace-detail" }, h("h3", { text: workspaceName(w.workspace_id) }),
         w.mode === "selective" ? p("Personal · owner only") : table(["Group", "Permission", "Members", "Action"],
           [...data.groups.filter((g) => g.name === "hub-admin").map((g) => [txt(g.name), "Admin", groupMembers(g.name), "Built in"]),
             ...data.grants.filter((g) => g.workspace_id === w.workspace_id).map((g) => [txt(g.group), roleName(g.role), groupMembers(g.group),
-              remove("Revoke", "POST", "/admin/grants/revoke", { workspace_id: w.workspace_id, group: g.group })])], "Workspace permissions")))];
+              remove("Revoke", "POST", "/admin/grants/revoke", { workspace_id: w.workspace_id, group: g.group })])], "Workspace permissions")));
+  }
+  function byGroup() {
+    const full = data.workspaces.filter((w) => w.mode === "full");
+    return data.groups.map((g) => h("section", { class: "group-detail", "data-group": g.name }, h("h3", { text: txt(g.name) }),
+      p(g.members.length ? "Members: " + groupMembers(g.name) : "No members yet"),
+      g.name === "hub-admin"
+        ? table(["Workspace", "Permission", "Action"], full.map((w) => [workspaceName(w.workspace_id), "Admin", "Built in"]), "What this group can open")
+        : data.grants.some((x) => x.group === g.name)
+          ? table(["Workspace", "Permission", "Action"], data.grants.filter((x) => x.group === g.name).map((x) => [workspaceName(x.workspace_id), roleName(x.role),
+            remove("Revoke", "POST", "/admin/grants/revoke", { workspace_id: x.workspace_id, group: g.name })]), "What this group can open")
+          : p("Cannot open any workspace yet")));
   }
   // "Connect a workspace": one click mints a single-use invite and shows ONE link (docs/connect-link.md).
   const connectBox = h("div", { "aria-live": "polite" });

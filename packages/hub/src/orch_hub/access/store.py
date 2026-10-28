@@ -204,6 +204,11 @@ class Access:
         """The user exists and is not disabled. Sessions, sign-in, channels and custodial signing all ask this one."""
         return bool(self._q("SELECT 1 FROM users WHERE user_id=? AND disabled_ms IS NULL", (_hex(user_id, "user_id"),)))
 
+    def is_live(self, user_id: str) -> bool:
+        """Active AND not waiting for a recovery link: what channels, channel sessions and pairing ask. An enabled person
+        who has not redeemed the recovery link has NO live channel, so old devices never come back on enable."""
+        return self.is_active(user_id) and not self.must_recover(user_id)
+
     def set_disabled(self, user_id: str, disabled: bool, *, actor: str | None = None) -> bool:
         """Set or clear the disabled flag in ONE transaction. A disabled person has no role in any workspace (``roles``
         and ``role_of`` skip them, so the next ``hub.snapshot`` fingerprint changes and its version moves up, exactly as

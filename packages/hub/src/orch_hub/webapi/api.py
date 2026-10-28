@@ -1394,13 +1394,15 @@ class WebApi:
         instant), then the clean-up, which is idempotent so an interrupted disabling is finished by repeating it."""
         uid = p["user_id"]
         self.d.access.set_disabled(uid, True, actor=c.user_id)  # self_disable / last_admin / unknown_user
+        self._record(
+            "user.disabled", actor_id=c.user_id, subject_user=uid
+        )  # first: an interrupted clean-up is still on record
         self.d.channels.revoke_all(uid)
         self.d.channels.end_sessions(uid)
         self._void_prepared(uid)
         if self.d.user_invites is not None:
             self.d.user_invites.void_for_user(uid)
             self.d.user_invites.void_created_by(uid)  # and the links they made for others
-        self._record("user.disabled", actor_id=c.user_id, subject_user=uid)
         return 200, {"ok": True}
 
     def _h_a_user_enable(self, c: Ctx, p: dict, q: dict, b: dict | None):
@@ -1413,6 +1415,10 @@ class WebApi:
         if not self.d.access.set_disabled(uid, False, actor=c.user_id):
             raise ApiError("conflict")  # not disabled: nothing to enable
         try:
+            # belt: whatever the disabling left behind, no old device, session or prepared approval survives an enabling
+            self.d.channels.revoke_all(uid)
+            self.d.channels.end_sessions(uid)
+            self._void_prepared(uid)
             token, iid, expires = inv.create("recovery", created_by=c.user_id, for_user=uid)
             link = self._invite_link(c, token)
         except BaseException:  # no link, no enabling: back to disabled, ``must_recover`` as it was

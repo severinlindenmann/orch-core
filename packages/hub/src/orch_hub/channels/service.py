@@ -481,7 +481,7 @@ class Channels:
                 raise ChannelError("no_session")
             user = row[0]
             try:
-                if not self.acc.is_active(user):
+                if not self.acc.is_live(user):
                     raise ChannelError("no_session")
             except AccessError:
                 raise ChannelError("no_session") from None
@@ -703,7 +703,7 @@ class Channels:
         if not r or r[0][0] <= now:
             raise ChannelError("no_session" if kind == "browser" else "bad_pairing_code")
         try:
-            if not self.acc.is_active(u):
+            if not self.acc.is_live(u):
                 raise ChannelError("unknown_user")
         except AccessError:
             raise ChannelError("unknown_user") from None
@@ -860,7 +860,7 @@ class Channels:
                 return None
             if not (_HEX32.fullmatch(user_id) and _HEX32.fullmatch(channel_id)):
                 return None
-            if not self.acc.is_active(user_id) or channel_id in self.acc.revoked_channels():
+            if not self.acc.is_live(user_id) or channel_id in self.acc.revoked_channels():
                 return None  # a disabled person has no live channel, even one that was never revoked (stale)
             reg = self.db.q("SELECT revoked_ms FROM channels WHERE channel_id=? AND user_id=?", (channel_id, user_id))
             if not reg or reg[0][0] is not None:

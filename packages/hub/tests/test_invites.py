@@ -834,3 +834,42 @@ def test_the_access_log_never_sees_a_request_body(w, capfd, caplog):
         srv.close()
     out, err = capfd.readouterr()
     assert tok not in out + err + caplog.text and "invite" not in out + err
+
+
+def test_enabling_never_brings_an_old_device_back(w):
+    """Flag-only disable (an interrupted clean-up), then enable: the old channel stays dead, at the store and over HTTP."""
+    atok, tok = w.login(w.admin), w.login(w.ann)
+    signer, cid = with_channel(w, w.ann)
+    s, prep, _ = w.call(
+        "POST", "/sign/prepare", {"workspace_id": WS, "channel_id": cid, "action": dict(ACTION)}, token=tok
+    )
+    assert s == 200
+    acc = w.env.acc
+    acc.set_disabled(w.ann, True)  # the flag alone: nothing revoked, nothing ended
+    acc.set_disabled(w.ann, False)  # an operator path enables: must_recover is set, no recovery link redeemed yet
+    assert acc.is_active(w.ann) and acc.must_recover(w.ann) and not acc.is_live(w.ann)
+    assert w.env.svc.active_channel(w.ann, cid) is None  # the old device is not live
+    s, _o, _ = w.call(
+        "POST",
+        "/sign/sign",
+        {"prepared_id": prep["prepared_id"], "channel_id": cid, "channel_proof": w.proof(signer, prep["digest"])},
+        token=tok,
+    )
+    assert s == 401 and w.delivered == []
+    # and through the admin route: flag-only disable, then Enable revokes every old device and session first
+    acc.set_disabled(w.ann, True)
+    s, o, _ = w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)
+    assert s == 200 and o["kind"] == "recovery"
+    assert all(c["status"] != "active" for c in w.env.svc.channels(w.ann))
+    assert w.env.svc.active_channel(w.ann, cid) is None
+
+
+def test_disable_is_on_record_before_the_clean_up(w, monkeypatch):
+    atok = w.login(w.admin)
+
+    def boom(_uid):
+        raise RuntimeError("relay purge failed")
+
+    monkeypatch.setattr(w.env.svc, "revoke_all", boom)
+    assert w.call("POST", f"/admin/users/{w.ann}/disable", token=atok)[0] >= 500  # the clean-up failed half way
+    assert "user.disabled" in [e["type"] for e in w.api.d.activity.list(limit=50)]

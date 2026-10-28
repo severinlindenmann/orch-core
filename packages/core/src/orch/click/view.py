@@ -197,6 +197,12 @@ def build(
     Contract 4: every View has ``headline`` (the op's title and the ticket key: signer words only), ``headline_detail``
     (the ticket's title, capped and quoted, or ``None``) and ``risk_lines`` (``[]`` only for
     :data:`~orch.click.protocol.ONE_PRESS_OPS`, never empty otherwise); ``view_digest`` covers all three."""
+    if prepared["op"] == "schedule.add":
+        from orch.model.schedules import validate_target
+
+        for event in prepared.get("events", []):
+            if event.get("type") == "schedule.set" and (error := validate_target(event)):
+                raise refused("check_failed", error)
     known = workspace(prepared["workspace_id"])
     if known is None:
         raise refused("check_failed", "this workspace is not in your own registry")

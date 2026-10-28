@@ -150,7 +150,9 @@ class ScheduleAdd(Action):
     "YYYY-MM-DD HH:MM" for a one-off one (no `every`); both are in `tz`."""
 
     action: Literal["schedule_add"]
-    key: Key
+    key: Key | None = None
+    target: Literal["existing", "new"] = "existing"
+    title: Annotated[str, StringConstraints(min_length=1, max_length=100)] | None = None
     brief: Text
     at: Annotated[str, StringConstraints(min_length=5, max_length=16)]
     every: Literal["day", "week", "month"] | None = None
@@ -161,6 +163,16 @@ class ScheduleAdd(Action):
 
     @model_validator(mode="after")
     def shape(self):
+        from orch.model.schedules import validate_target
+
+        if error := validate_target(
+            {"target": self.target, **({"title": self.title} if self.title is not None else {})}
+        ):
+            raise ValueError(error)
+        if self.target == "existing" and self.key is None:
+            raise ValueError("an existing-ticket schedule needs a key")
+        if self.target == "new" and self.key is not None:
+            raise ValueError("a new-ticket schedule cannot have a key")
         if self.every is None:
             try:
                 if not ONCE_AT.fullmatch(self.at):
@@ -177,7 +189,11 @@ class ScheduleAdd(Action):
         return self
 
     def props(self) -> dict:
-        out: dict = {"ref": self.key, "brief": self.brief, "at": self.at, "tz": self.tz}
+        out: dict = {"brief": self.brief, "at": self.at, "tz": self.tz}
+        if self.target == "new":
+            out.update(target="new", title=self.title)
+        else:
+            out["ref"] = self.key
         if self.every:
             out["every"] = self.every
         if self.weekdays is not None:
@@ -1431,7 +1447,11 @@ def expected(action: Action, person: str | None = None):
         case FollowupUndo():
             return lambda ev: one(ev, "followup.restored", followup=action.id)
         case ScheduleAdd():
-            return lambda ev: one(ev, "schedule.set")
+            return lambda ev: (
+                one(ev, "schedule.set")
+                and ev[0].get("target", "existing") == action.target
+                and ev[0].get("title") == action.title
+            )
         case ScheduleCancel():
             return lambda ev: one(ev, "schedule.cancelled", schedule=action.id)
         case Move():

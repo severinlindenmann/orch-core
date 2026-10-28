@@ -63,7 +63,7 @@ TECHNICAL_KEYS = frozenset(
 
 #: per event type, the payload keys the plain view shows (in a section, a list or a field row)
 SHOWN: dict[str, frozenset[str]] = {
-    "schedule.set": frozenset({"schedule", "rule", "starts", "ends", "brief", "run_hours", "label"}),
+    "schedule.set": frozenset({"schedule", "rule", "starts", "ends", "brief", "run_hours", "label", "target", "title"}),
     "schedule.cancelled": frozenset({"schedule"}),
     "addon.disabled": frozenset({"name"}),
     "addon.purged": frozenset({"name"}),
@@ -1176,16 +1176,22 @@ def _event(
 ) -> str:
     """The headline of one event; everything it shows is added to ``out``."""
     if typ == "schedule.set":
-        from orch.ops.schedule import RISK, describe
+        from orch.model.schedules import validate_target
+        from orch.ops.schedule import describe, risk
 
-        for key in ("schedule", "starts", "ends", "run_hours", "label"):
+        if error := validate_target(ev):
+            raise PlainUnavailable(error)
+
+        for key in ("schedule", "starts", "ends", "run_hours", "label", "target", "title"):
             if key in ev:
                 _row(out, key, ev[key])
         out.setdefault("sections", []).append(
             {"id": "brief", "title": "Instructions for each run", "text": _s(ev["brief"])}
         )
-        out.setdefault("notes", []).extend([RISK, "No click or confirmation is required at firing time."])
-        return describe(ev["rule"], ref, ev["ends"])
+        out.setdefault("notes", []).extend(
+            [risk(ev.get("target", "existing")), "No click or confirmation is required at firing time."]
+        )
+        return describe(ev["rule"], ref, ev["ends"], ev.get("target", "existing"), ev.get("title"))
     if typ == "schedule.cancelled":
         _row(out, "schedule", ev["schedule"])
         return f"Cancel automatic sessions on {ref} and end their run grants"

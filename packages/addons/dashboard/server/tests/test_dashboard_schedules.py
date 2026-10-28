@@ -303,3 +303,31 @@ def test_plan_cancel_needs_the_schedule_on_that_ticket():
 def test_plan_add_has_no_base():
     planned = signing.plan(FakeGateway(), "w", signing.ScheduleAdd(**add()))
     assert planned.op == "schedule.add" and planned.base is None
+
+
+def test_schedule_new_shape_passthrough():
+    body = add(target="new", title="Mail")
+    body.pop("key")
+    action = signing.ScheduleAdd(**body)
+    assert action.props()["target"] == "new"
+    assert action.props()["title"] == "Mail"
+    assert "ref" not in action.props()
+    check = signing.expected(action)
+    assert check([{"type": "schedule.set", "target": "new", "title": "Mail"}])
+    assert not check([{"type": "schedule.set"}])
+    assert not signing.expected(signing.ScheduleAdd(**add()))([{"type": "schedule.set", "target": "unknown"}])
+
+
+@pytest.mark.parametrize(
+    "over", [{"target": "unknown"}, {"title": "Mail"}, {"target": "new"}, {"target": "new", "title": "a\u200bb"}]
+)
+def test_schedule_invalid_target_title(over):
+    with pytest.raises(ValueError):
+        signing.ScheduleAdd(**add(**over))
+
+
+@pytest.mark.parametrize("target", ["new", "unknown", None])
+def test_schedule_read_refuses_unsupported_target(target):
+    with pytest.raises(HostError) as exc:
+        schedules.build(FakeGateway(rows=[row(target=target, title="Mail")]), "w")
+    assert exc.value.error["code"] == "schedule.denied"

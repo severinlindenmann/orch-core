@@ -13,6 +13,16 @@ from orch.ops.human import Human
 def handle(ctx, args):
     h = Human(ctx, "schedule.add")
     c = h.call
+    from orch.model.schedules import validate_target
+
+    if error := validate_target(args):
+        raise OrchError("schedule.denied", error)
+    if args.get("target", "existing") == "new":
+        if "ref" in args:
+            raise OrchError("schedule.denied", "ref is only allowed for existing-ticket schedules")
+        raise OrchError("schedule.denied", "new-ticket schedules are not switched on yet")
+    if not args.get("ref"):
+        raise OrchError("schedule.denied", "ref is required for existing-ticket schedules")
     view = c.resolve(args["ref"], live_only=False)
     now = c.now
     try:
@@ -71,7 +81,9 @@ OP = operation(
     "Schedule automatic agent sessions on this ticket for up to 30 days.",
     who="human",
     props={
-        "ref": REF(),
+        "ref": {**REF(), "description": "ticket REF; required for target existing"},
+        "target": S("existing or new ticket", enum=["existing", "new"], default="existing"),
+        "title": S("literal title for each new ticket", minLength=1, maxLength=100),
         "at": S("once: YYYY-MM-DD HH:MM; recurring: HH:MM"),
         "every": S("day, week or month", enum=["day", "week", "month"]),
         "tz": S("IANA timezone; default UTC"),
@@ -87,7 +99,7 @@ OP = operation(
         "until": S("end instant; defaults to 30 days"),
         "run_hours": {"type": "integer", "minimum": 1, "maximum": 8, "description": "maximum hours per run; default 8"},
     },
-    required=("ref", "at"),
+    required=("at",),
     positional=("ref",),
     emits=("schedule.set",),
     text="ok {key} schedule.set {id} seq={seq}\nnext: {next}",

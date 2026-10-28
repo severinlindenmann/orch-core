@@ -1,9 +1,11 @@
 ok describe schedule.add
 Schedule automatic agent sessions on this ticket for up to 30 days.
-usage: orch schedule add REF --at AT [--every day|week|month] [--tz TZ] [--weekdays WEEKDAYS] [--day DAY] [--brief BRIEF] [--brief-file PATH] [--until UNTIL] [--run-hours RUN_HOURS] [--dry-run]
+usage: orch schedule add [REF] [--target existing|new] [--title TITLE] --at AT [--every day|week|month] [--tz TZ] [--weekdays WEEKDAYS] [--day DAY] [--brief BRIEF] [--brief-file PATH] [--until UNTIL] [--run-hours RUN_HOURS] [--dry-run]
 who: human · emits: schedule.set
 args:
-  REF  ticket REF (DEMO-0043, 43); default: your claim
+  REF  ticket REF; required for target existing
+  --target TARGET  existing or new ticket (existing|new) [default existing]
+  --title TITLE  literal title for each new ticket
   --at AT  once: YYYY-MM-DD HH:MM; recurring: HH:MM (required)
   --every EVERY  day, week or month (day|week|month)
   --tz TZ  IANA timezone; default UTC
@@ -15,6 +17,7 @@ args:
   --run-hours RUN_HOURS  maximum hours per run; default 8
   --dry-run  say what would happen, append nothing
 errors:
+  ambiguous_ref (exit 2): name the ticket REF, for example DEMO-0043 | fix: orch status
   not_found (exit 2): orch list
   addon.off (exit 3): tell the person; do not work around it | fix: orch addon list
   custody.no_key (exit 3): orch setup sets up your device key | fix: orch help

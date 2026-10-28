@@ -49,7 +49,13 @@ def _arg_lines(op: Operation) -> list[str]:
 
 def op_help(op: Operation) -> str:
     """``orch <cmd> --help``: the summary, the usage line and the arguments."""
-    return "\n".join([op.summary, f"usage: {usage(op)}", *_arg_lines(op), "more: orch describe " + op.name])
+    lines = _arg_lines(op)
+    if op.name == "schedule.add":
+        # Keep related choices together within the short help's line budget.
+        for flag in ("--title ", "--day "):
+            index = next(i for i, line in enumerate(lines) if line.lstrip().startswith(flag))
+            lines[index - 1] += "; " + lines.pop(index).strip()
+    return "\n".join([op.summary, f"usage: {usage(op)}", *lines, "more: orch describe " + op.name])
 
 
 def _error_rows(op: Operation) -> list[dict[str, Any]]:

@@ -164,6 +164,10 @@ def build(gateway: Gateway, ws: str, now: int | None = None) -> dict:
     for row in listed[:MAX_ROWS]:
         if not isinstance(row, dict):
             continue
+        if row.get("target", "existing") != "existing":
+            from .errors import fail
+
+            raise fail("schedule.denied", "This schedule target is not supported yet")
         key = row.get("key")
         mine = row.get("person") == me
         if mine and cap is None:

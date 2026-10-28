@@ -11,7 +11,10 @@ def handle(ctx, args):
     return Result(
         data=schedule.thaw(rec),
         key=view.key,
-        lines=[schedule.describe(rec["rule"], view.key, rec["ends"]), *views.fence(rec["brief"], "schedule brief")],
+        lines=[
+            schedule.describe(rec["rule"], view.key, rec["ends"], rec.get("target", "existing"), rec.get("title")),
+            *views.fence(rec["brief"], "schedule brief"),
+        ],
     )
 
 

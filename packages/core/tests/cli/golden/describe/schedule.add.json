@@ -7,7 +7,7 @@
     "cli": "orch schedule add",
     "summary": "Schedule automatic agent sessions on this ticket for up to 30 days.",
     "who": "human",
-    "usage": "orch schedule add REF --at AT [--every day|week|month] [--tz TZ] [--weekdays WEEKDAYS] [--day DAY] [--brief BRIEF] [--brief-file PATH] [--until UNTIL] [--run-hours RUN_HOURS] [--dry-run]",
+    "usage": "orch schedule add [REF] [--target existing|new] [--title TITLE] --at AT [--every day|week|month] [--tz TZ] [--weekdays WEEKDAYS] [--day DAY] [--brief BRIEF] [--brief-file PATH] [--until UNTIL] [--run-hours RUN_HOURS] [--dry-run]",
     "pre": [],
     "emits": [
       "schedule.set"
@@ -18,9 +18,24 @@
       "properties": {
         "ref": {
           "type": "string",
-          "description": "ticket REF (DEMO-0043, 43); default: your claim",
+          "description": "ticket REF; required for target existing",
           "pattern": "^(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]+(?:/T[1-9][0-9]*)?|T[1-9][0-9]*)$",
           "x-metavar": "REF"
+        },
+        "target": {
+          "type": "string",
+          "description": "existing or new ticket",
+          "enum": [
+            "existing",
+            "new"
+          ],
+          "default": "existing"
+        },
+        "title": {
+          "type": "string",
+          "description": "literal title for each new ticket",
+          "minLength": 1,
+          "maxLength": 100
         },
         "at": {
           "type": "string",
@@ -75,7 +90,6 @@
         "ref"
       ],
       "required": [
-        "ref",
         "at"
       ],
       "additionalProperties": false
@@ -96,6 +110,16 @@
       }
     },
     "errors": [
+      {
+        "code": "ambiguous_ref",
+        "exit": 2,
+        "retryable": false,
+        "hint": "name the ticket REF, for example DEMO-0043",
+        "fix": [
+          "orch",
+          "status"
+        ]
+      },
       {
         "code": "not_found",
         "exit": 2,

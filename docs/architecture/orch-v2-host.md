@@ -13740,3 +13740,19 @@ CLI sequences prepare directly and use one review before signing their steps. Da
 Phone authority comes from device pairing. Hub join/mode/leave retain their sealed backup-key flow, and the
 six-character phone pairing code remains. Passphrases authenticate keys on `/dev/tty`; click signing never prompts
 for one. Setup retains its three-word channel-binding comparison and uses the same Enter review.
+
+#### `schedule.add`: signed ticket target
+
+`target` is `existing` by default (including when absent); it requires `ref` and forbids `title`.
+`target: new` forbids `ref` and requires a literal `title` of 1–100 clean single-line characters.
+Control and hidden characters are refused using core's clean-text rules. No template expansion is performed.
+For now authoring refuses this shape with `schedule.denied`: "new-ticket schedules are not switched on yet".
+Anchor creation and per-run child creation are a subsequent change.
+
+An existing-ticket `schedule.set` retains its original shape, without `target` or `title`.
+Both fields are included in the signed bytes when present. The new-target signing review says
+"creates a NEW ticket every run", with the literal title, cadence, timezone and end date.
+Unknown targets are refused. Consumers without new-target support must reject or explicitly mark it;
+they must never run it as an existing-ticket schedule. Core retains the new shape on replay but refuses
+firing it until child creation is implemented. Contract vectors in `contracts/core/schedule_set_vectors.json`
+cover both shapes and an old signature presented with a new target and title.

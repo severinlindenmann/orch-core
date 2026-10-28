@@ -30,6 +30,7 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import json
+import logging
 import re
 import threading
 import time
@@ -1313,7 +1314,10 @@ class WebApi:
 
     def _note(self, kind: str, c: Ctx, **detail: Any) -> None:
         if self.d.activity is not None:  # references only, never a secret
-            self.d.activity.record(kind, actor_id=c.user_id, subject_user=c.user_id, detail=detail or None)
+            try:  # the credential change has happened: a failed record is logged, never turned into an error
+                self.d.activity.record(kind, actor_id=c.user_id, subject_user=c.user_id, detail=detail or None)
+            except Exception:
+                logging.getLogger("orch_hub.webapi").exception("%s was not recorded", kind)
 
     def _reauth_me(self, c: Ctx, b: dict, password_key: str) -> None:
         """Current password + a current code, through the same caps and limiter state as browser key registration."""

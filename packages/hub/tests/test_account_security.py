@@ -381,3 +381,14 @@ def test_forged_requests_are_refused(w):
         s, o, _ = w.call("POST", "/me/sessions/end-all", {}, token=tok, **kw)
         assert (s, o) == (403, {"error": "not_allowed"})
     assert alive(w, tok)
+
+
+def test_a_failed_activity_record_does_not_undo_or_fail_a_credential_change(w, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(w.api.d.activity, "record", boom)
+    tok = w.login(w.ann)
+    status, body, _ = w.call("POST", "/me/sessions/end-all", {}, token=tok)
+    assert status == 200, body  # the sessions ended; only the record was lost (and logged)
+    assert w.call("GET", "/session", token=tok)[0] == 401

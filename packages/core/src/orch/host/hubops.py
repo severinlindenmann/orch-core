@@ -8,6 +8,7 @@ The owner's signed record is a person op (``hub.join`` -> ``hub.joined``, ``hub.
 * ``hub.unbind {}``: after ``hub.left`` is on the log, sign ``hub.unbound`` with ``WSK`` and offer it to the hub; the
   hub being down is not an error (it stays queued in ``hub.json`` and is offered again).
 * ``hub.profile {profile?}``: owner-only get / replace of local ``hub/profile.json`` (0600); best-effort push.
+  Put returns pushed=False when not yet updated on the hub.
 * ``hub.directory {query?}``: read live routing-authorized profiles as untrusted display data.
 * ``hub.status {}``: the model's hub and the host's link state.
 * ``hub.handoff {kind, ticket, ...}``: a read for Mission Control's "approve in the hub" panel (:mod:`.hubhandoff`).
@@ -799,7 +800,7 @@ def serve(call: Call) -> dict[str, Any]:
             return ok_result({"profile": _load_profile(service)})
         _save_profile(service, args["profile"])
         if state is None or state.status != "bound":
-            return ok_result({"profile": args["profile"]})
+            return ok_result({"profile": args["profile"], "pushed": False})
         return {"plan": {"op": op, "args": args, "state": state, "dev": workspace_dev(service)}}
     if op == "hub.directory":
         if state is None or state.status != "bound":
@@ -954,7 +955,12 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             getattr(transport, "close", lambda: None)()
         except Exception:
             pass
-        return ok_result({"profile": plan["args"]["profile"]})
+        return ok_result(
+            {
+                "profile": plan["args"]["profile"],
+                "pushed": plan["state"].hub_id in service.__dict__.get("_hub_profile_sent", set()),
+            }
+        )
     wsk_pub, sign = _wsk_sign(service)
     if plan["op"] == "hub.directory":
         try:
@@ -1094,7 +1100,7 @@ def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: boo
                 {
                     "version": orch.__version__,
                     "commit": "",
-                    "host": socket.gethostname()[:80] if state.mode == "full" else "",  # selective keeps its host name
+                    "host": socket.gethostname()[:80] if state.mode == "full" else "",
                 },
             )
     except Exception:
@@ -1102,8 +1108,8 @@ def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: boo
     try:
         sent = service.__dict__.setdefault("_hub_profile_sent", set())
         if state.hub_id not in sent:
-            sent.add(state.hub_id)
             hub_link.call("profile_put", _load_profile(service))
+            sent.add(state.hub_id)
     except Exception:
         pass
     return hub_link, transport

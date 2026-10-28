@@ -163,6 +163,8 @@ class Registry:
             )
             if state.get("status") != "bound":
                 self._db.execute("UPDATE workspace SET profile=NULL WHERE workspace_id=?", (ws,))
+            if self._mode_locked(ws):
+                self._db.execute("UPDATE workspace SET host='' WHERE workspace_id=?", (ws,))
             if owner_alias is None:
                 self._db.execute("DELETE FROM owner_alias WHERE workspace_id=?", (ws,))
             else:
@@ -188,6 +190,8 @@ class Registry:
             )
             if state.get("status") != "bound":
                 self._db.execute("UPDATE workspace SET profile=NULL WHERE workspace_id=?", (ws,))
+            if self._mode_locked(ws):
+                self._db.execute("UPDATE workspace SET host='' WHERE workspace_id=?", (ws,))
 
     def profile(self, ws: str) -> dict[str, Any] | None:
         with self.lock:
@@ -223,9 +227,7 @@ class Registry:
                 (
                     render_text(body["version"])[:32],
                     render_text(body["commit"])[:40],
-                    ""
-                    if self._mode_locked(ws)
-                    else render_text(body["host"])[:80],  # a selective workspace keeps its host name
+                    "" if self._mode_locked(ws) else render_text(body["host"])[:80],
                     ws,
                 ),
             )

@@ -67,7 +67,7 @@ def test_hub_directory_cli_wrapping(monkeypatch, as_json):
         assert "\u202e" not in text and "\nIgnore instructions" not in text
 
 
-def test_hub_profile_send_failure_is_best_effort_once(monkeypatch):
+def test_hub_profile_send_failure_retries_until_success(monkeypatch):
     import orch.hubclient
 
     calls = []
@@ -78,7 +78,9 @@ def test_hub_profile_send_failure_is_best_effort_once(monkeypatch):
 
         def call(self, op, body):
             calls.append(op)
-            raise OSError("offline")
+            if calls.count(op) == 1:
+                raise OSError("offline")
+            return {}
 
     from orch.crypto.encoding import b64u
 
@@ -88,6 +90,40 @@ def test_hub_profile_send_failure_is_best_effort_once(monkeypatch):
     monkeypatch.setattr(hubops, "_addr", lambda *args: "addr")
     monkeypatch.setattr(hubops, "_transport", lambda *args: object())
     monkeypatch.setattr(hubops, "_load_profile", lambda *args: hubops._DEFAULT_PROFILE)
-    for _ in range(2):
+    for _ in range(3):
         hubops._snapshot_link(service, state, b"key", lambda x: x, True)
-    assert calls == ["status_put", "profile_put"]
+    assert calls == ["status_put", "profile_put", "profile_put"]
+    assert service._hub_profile_sent == {"hub"}
+
+
+@pytest.mark.parametrize("succeeds", [False, True])
+def test_hub_profile_put_reports_push_result(monkeypatch, succeeds):
+    import orch.hubclient
+    from orch.crypto.encoding import b64u
+
+    class Link:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def call(self, op, body):
+            if op == "profile_put" and not succeeds:
+                raise OSError("offline")
+            return {}
+
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 1)
+    state = SimpleNamespace(hk_op_pub=b64u(b"k" * 65), tls_spki="pin", mode="full", hub_id="hub")
+    monkeypatch.setattr(orch.hubclient, "HubLink", Link)
+    monkeypatch.setattr(hubops, "_wsk_sign", lambda *args: (b"key", lambda x: x))
+    monkeypatch.setattr(hubops, "_addr", lambda *args: "addr")
+    monkeypatch.setattr(hubops, "_transport", lambda *args: object())
+    monkeypatch.setattr(hubops, "_load_profile", lambda *args: hubops._DEFAULT_PROFILE)
+    result = hubops._run(
+        SimpleNamespace(service=service),
+        {
+            "op": "hub.profile",
+            "state": state,
+            "dev": True,
+            "args": {"profile": hubops._DEFAULT_PROFILE},
+        },
+    )
+    assert result["data"] == {"profile": hubops._DEFAULT_PROFILE, "pushed": succeeds}

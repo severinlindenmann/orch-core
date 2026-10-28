@@ -355,7 +355,6 @@ _CHAN = frozenset(
         "whoami",
         "sign_out",
         "my_workspaces",
-        "workspace_roles",
         "needs_you",
         "item",
         "my_channels",
@@ -385,7 +384,6 @@ SWITCH_HANDLERS = frozenset(
         "whoami",
         "sign_out",
         "my_workspaces",
-        "workspace_roles",
         "my_handoffs",
         "needs_you",
         "item",
@@ -1055,8 +1053,8 @@ class WebApi:
         rows = []
         for w in self._workspaces(c.user_id):
             st = workspace_status(self.d.registry, w["workspace_id"])
-            # host name, address and last seen only for the workspace owner and hub admins, never to a phone session
-            if not (w["role"] in ("admin", "owner") and c.scope != "channel"):
+            # Private telemetry is only for hub admins, never for phone sessions.
+            if not (self.d.access.is_hub_admin(c.user_id) and c.scope != "channel"):
                 st = {k: v for k, v in st.items() if k not in ("host", "address", "last_seen_ms")}
             rows.append({**w, **st})
         return 200, {

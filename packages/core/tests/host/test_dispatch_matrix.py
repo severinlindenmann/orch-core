@@ -537,3 +537,30 @@ def test_the_session_start_hook_runs_for_an_agent_with_a_verified_grant_and_for_
     assert refusal(resolve("agent", "absent", False), kind[0]) == "op.not_allowed"
     assert refusal(resolve("agent", "unverified", False), kind[0]) == "op.not_allowed"
     assert refusal(resolve("agent", "verified", False), op_kind("instructions.sync")[0]) == "op.not_allowed"
+
+
+@pytest.mark.parametrize("role", ["member", "owner"])
+def test_hub_profile_dispatch_get_and_put(lab, role):
+    from orch.host.hubops import _DEFAULT_PROFILE
+
+    person = lab.add_member() if role == "member" else lab.ws.owner
+    s = Served.__new__(Served)
+    s.lab = lab
+    s.h = lab.host(clock=lambda: lab.ws.clock[0])
+    s.h.__enter__()
+    s.control = s.h.client()
+    s.wid = ok(lab.register(s.control, peers=lab.peers(person.ref)))["data"]["workspace_id"]
+    s.service = s.h.host.services[s.wid]
+    s.clients = []
+    try:
+        c = s.client()
+        profile = {**_DEFAULT_PROFILE, "description": "local"}
+        for args in ({}, {"profile": profile}):
+            response = c.req("hub.profile", args)
+            if role == "member":
+                assert err(response) == "role.denied"
+            else:
+                data = ok(response)["data"]
+                assert data == ({"profile": profile, "pushed": False} if args else {"profile": _DEFAULT_PROFILE})
+    finally:
+        s.close()

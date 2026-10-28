@@ -195,7 +195,8 @@ def serve(
     queue_path = state / ROUTE_QUEUE_FILE
     queue = RouteQueue(str(queue_path))
     wk_seals = WkSeals(str(state / WK_SEAL_FILE), hub_id=keys.hub_id, hxk_pub=keys.hxk_pub, exchange=keys.hxk_exchange)
-    router = Router(registry, queue, AccessAuthz(registry, access))
+    authz = AccessAuthz(registry, access)
+    router = Router(registry, queue, authz)
     audit = open_log(state, keys, dev_mode=cfg.dev)
     activity = ActivityLog(state / "activity.db")
     user_invites = Invites(state / INVITES_FILE)  # join / reset / recovery links of people (the token is never stored)
@@ -291,6 +292,7 @@ def serve(
                     edge_url=cfg.resolved_api_origin(),
                 ),
                 routes=queue,
+                authz=authz,
                 delivery=deliveries,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )

@@ -4,7 +4,7 @@ import { VerdictEvidence } from '../ticket/EvidenceView'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, FileSearch, HelpCircle, Hourglass, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react'
+import { CheckCircle2, ChevronDown, FileSearch, HelpCircle, Hourglass, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { diffstat } from '@/api/gates'
@@ -22,6 +22,7 @@ import { toastApiError } from '@/app/toast'
 import { useWorkspace } from '@/app/workspace'
 import { visible } from '@/components/sign/visible'
 import { AnswerSend } from '@/components/sign/AnswerSend'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { QuestionOptions } from '../ticket/QuestionOptions'
 import { type HumanAction } from '../ticket/shared'
 import { ago } from './shared'
@@ -131,6 +132,32 @@ function TicketLine({ ticket, title }: { ticket: string; title?: string }) {
   )
 }
 
+/**
+ * A question card names its ticket in plain words (owner rule, run-13: no ids): the title opens the ticket; the key is
+ * only behind the small "i", and only where the row has buttons at all (a read-only row has none).
+ */
+function TicketTitle({ ticket, title, info }: { ticket: string; title?: string; info: boolean }) {
+  const words = title?.trim()
+  return (
+    <>
+      <Link
+        to="/ticket/$key"
+        params={{ key: ticket }}
+        className={cn('rounded text-text-muted outline-none hover:text-text hover:underline focus-visible:ring-2 focus-visible:ring-ring', !words && 'font-mono')}
+      >
+        {words || ticket}
+      </Link>
+      {words && info && (
+        <InfoDrawer className="ml-0.5 size-5 align-middle">
+          <p>
+            Ticket <span className="font-mono">{ticket}</span>
+          </p>
+        </InfoDrawer>
+      )}
+    </>
+  )
+}
+
 const Decides = ({ who }: { who: string }) => <span className="text-xs text-text-muted">{who} decides</span>
 
 interface CoreRowProps {
@@ -153,13 +180,40 @@ const Locked = () => <span className="text-xs text-text-muted">Answer in your te
 
 // ------------------------------------------------------------------ question
 
-export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider, locked }: CoreRowProps) {
+export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, askedBy, decider, locked, viewer, onAnswered }: CoreRowProps & {
+  /** The person looking: their own answer reads "You answered". */
+  viewer?: string
+  /** The answer was sent from the row itself: Today keeps the row, answered, for a moment (it leaves the host's list). */
+  onAnswered?: () => void
+}) {
   const q = ticket?.questions_state.find((x) => x.id === item.ref)
   const [choice, setChoice] = useState<string | null>(null)
   const [viewText, setViewText] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const id = `question:${item.ticket}:${item.ref}`
   const readOnly = decider !== undefined
+  // Answered (here a moment ago, or elsewhere while the list still had it): the row collapses to the answer.
+  const answer = q?.state === 'answered' ? q.answer : undefined
+  if (answer) {
+    const chosen = q?.options?.find((o) => o.key === answer.option)
+    return (
+      <RowShell
+        testId={`card-${id}`}
+        icon={<CheckCircle2 className="size-4 text-success" aria-label="answered" />}
+        ask={item.text}
+        sub={
+          <>
+            <span role="status" data-testid="answered-line" className="text-text">
+              {viewer && answer.by === viewer ? 'You answered' : 'Answered'}: {chosen ? chosen.label : answer.text}
+            </span>
+            <span className="text-text-faint"> · </span>
+            <TicketTitle ticket={item.ticket} title={item.title} info={!readOnly} />
+          </>
+        }
+        action={null}
+      />
+    )
+  }
   return (
     <RowShell
       testId={`card-${id}`}
@@ -167,7 +221,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
       ask={viewText ?? item.text}
       sub={
         <>
-          <TicketLine ticket={item.ticket} title={item.title} />
+          <TicketTitle ticket={item.ticket} title={item.title} info={!readOnly} />
           {askedBy && <span className="text-text-faint"> · Asked by {askedBy}</span>}
           <Flags item={item} />
         </>
@@ -202,6 +256,7 @@ export function QuestionRow({ item, ticket, now, expanded, onToggle, sign, asked
             fallback={() => choice && sign(item.ticket, { kind: 'answer', question: item.ref!, option: choice })}
             onViewQuestion={setViewText}
             onBusy={setBusy}
+            onSent={onAnswered}
           />
         </div>
       ) : (

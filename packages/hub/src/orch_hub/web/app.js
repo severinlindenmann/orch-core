@@ -7,6 +7,7 @@ import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, sig
 import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { parseRoute } from "./route.js";
 import { homeView, workspaceStatus } from "./home.js";
+import { accountView } from "./account.js";
 import { adminView } from "./admin.js";
 import { servicesView } from "./services.js";
 import { workspacesView, workspaceDetailsView } from "./workspaces.js";
@@ -146,11 +147,11 @@ function shell(active, ...nodes) {
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
+    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), tab("account", "Account", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
+      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), tab("account", "Account", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -359,6 +360,20 @@ async function services(silent = false) {
   } finally { finishLoading(); }
 }
 
+async function account() {
+  const finishLoading = loading();
+  pageLoading("account");
+  try {
+    if (!(await refresh())) return loginView();
+    state.menu = false;
+    await loadRail();
+    const r = await api("GET", "/me/channels");
+    if (r.status !== 200) return shell("account", h("h1", { text: "Account" }), banner("bad", "Cannot read your phones and browsers", "Please try again."));
+    shell("account", state.notice, accountView({ user: state.user, channels: r.body.channels, thisBrowserId: state.me?.channelId }, { remove: removeChannel }));
+    state.notice = null;
+  } finally { finishLoading(); }
+}
+
 async function approvals(filter = {}) {
   if (!(await refresh())) return loginView();
   await loadRail();
@@ -409,7 +424,7 @@ async function removeChannel(id) {
   const r = await api("POST", "/channels/" + encodeURIComponent(id) + "/revoke", {});
   if (r.status === 200 && state.me?.channelId === id) await deleteChannel().catch(() => {}); // revoke first, then delete (A8-5)
   state.notice = r.status === 200 ? banner("ok", "Removed", null) : banner("bad", "Not removed", say(r.body.error));
-  await home();
+  await (parseRoute(location.hash).kind === "account" ? account() : home());
 }
 
 function clearSession() {
@@ -912,7 +927,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin }[route.kind] ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, account }[route.kind] ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

@@ -13,6 +13,7 @@ export function emptyWords(kind) {
   return ({
     home: ["Nothing needs you", "All approvals are done. New ones show up here by themselves."],
     workspaces: ["No workspaces yet", "Connect the first one with a one-time link. Ask your hub admin for a link, then open it in the workspace’s Mission Control (Settings › Hub › Connect)."],
+    account: ["No phones or browsers yet", "To add a phone, open the phone app and choose Pair a phone."],
     services: ["No services yet", "Ask your IT person to set up services on this hub, then check again."],
     search: ["Nothing found", "Try another name or a shorter search."],
   })[kind] ?? ["Nothing here yet", "Check again later."];

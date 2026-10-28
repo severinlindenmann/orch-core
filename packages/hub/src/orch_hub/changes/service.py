@@ -278,6 +278,14 @@ class Changes:
         if self._conns.allowed(a, b):
             raise ChangeError("conflict")
         eligible = self.eligible_approvers(b, exclude=actor)
+        # the normal single-owner case: the proposer owns the receiving workspace and nobody else could approve for it (or
+        # they own both ends): they are the approver, so it applies at once as "the owner acting directly" (checked live,
+        # right here at apply), audited, with no pending change
+        if R.owner_of(self._reg, b) == actor and (R.owner_of(self._reg, a) == actor or not eligible):
+            self._conns.add(a, b, approved_by=actor, via="approved")
+            if self._activity is not None:
+                self._activity.record("connection.allowed", actor_id=actor, workspace_id=b, detail={"direct": True})
+            return {"direct": True}
         if not eligible:
             raise ChangeError("no_approver")  # nobody can approve: only a hub admin's override can allow it
         self.sweep()

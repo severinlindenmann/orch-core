@@ -102,6 +102,11 @@ class Router:
         self._lock = threading.Lock()
         self._live: dict[str, _Live] = {}
 
+    @property
+    def authz(self) -> Authz:
+        """The routing rule in force: the directory lists only what THIS says the caller may reach."""
+        return self._authz
+
     # --- w2h route_out ------------------------------------------------------------------------------------------
 
     def route_out(self, sender_ws: str, raw: bytes) -> str:

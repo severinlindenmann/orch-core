@@ -99,6 +99,8 @@ class ChangeHandlers:
         chg = self._chg()
         if allow:
             got = chg.propose_connection(c.user_id, b.get("from"), b.get("to"))
+            if got.get("direct"):  # the owner of the receiving end (and of both, or the only approver): applied at once
+                return 200, {"ok": True, "direct": True}
             return 202, {"change_id": got["change_id"], "waiting_for": got["waiting_for"]}
         return 200, {"ok": True, "removed": chg.deny_connection(c.user_id, b.get("from"), b.get("to"))}
 

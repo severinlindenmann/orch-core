@@ -284,3 +284,37 @@ def test_removing_a_workspace_removes_its_connections_and_counts(w):
     assert w.call("DELETE", f"/admin/workspaces/{WS}", token=w.login(w.admin))[0] == 200
     assert [(e["from"], e["to"]) for e in w.connections.edges()] == [(WS2, WS3)]
     assert w.connections.traffic() == []
+
+
+# --- the owner of both ends: no dead end ---------------------------------------------------------------------------------
+
+
+def test_the_owner_of_both_ends_connects_directly_and_it_is_audited(w):
+    w.reg.ws[WS3]["owner"] = w.olive  # olive now owns both WS2 and WS3
+    s, o, _ = w.call("POST", "/me/connections", {"from": WS2, "to": WS3, "allow": True}, token=w.login(w.olive))
+    assert (s, o) == (200, {"ok": True, "direct": True})
+    assert allowed(w, WS2, WS3) and w.changes._db.changes() == []  # no pending change
+    rec = activity(w, "connection.allowed")
+    assert [(r["actor_id"], r["detail"]) for r in rec] == [(w.olive, {"direct": True})]
+    assert not allowed(w, WS3, WS2)  # still directional
+
+
+def test_the_only_eligible_approver_being_the_proposer_who_owns_the_receiver_connects_directly(w):
+    wsa = "a9" * 16
+    w.reg.add(
+        wsa, "full", owner=w.admin, name="Mine"
+    )  # the hub admin owns the receiver; no admin grant on it for anyone else
+    s, o, _ = w.call("POST", "/me/connections", {"from": WS2, "to": wsa, "allow": True}, token=w.login(w.admin))
+    assert (s, o) == (200, {"ok": True, "direct": True}) and allowed(w, WS2, wsa)
+
+
+def test_direct_needs_ownership_of_the_receiver_and_nobody_else_to_ask(w):
+    # a hub admin who owns neither end still waits for the receiving owner (the normal case)
+    assert w.call("POST", "/me/connections", {"from": WS2, "to": WS3, "allow": True}, token=w.login(w.admin))[0] == 202
+    # an owner of the SENDER only (olive -> WS3 owned by omar) waits too
+    assert w.call("POST", "/me/connections", {"from": WS3, "to": WS2, "allow": True}, token=w.login(w.omar))[0] == 202
+    # owning the receiver but with another eligible approver (a workspace-admin group) is not direct either
+    w.env.acc.add_group("wsadmins")
+    w.env.acc.add_member("wsadmins", w.dana)
+    w.env.acc.grant(WS3, "wsadmins", "admin")
+    assert allowed(w, WS2, WS3) is False and allowed(w, WS3, WS2) is False

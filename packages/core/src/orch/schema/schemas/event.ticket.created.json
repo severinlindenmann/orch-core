@@ -311,6 +311,33 @@
     },
     "channel_proof": {
       "$ref": "https://schemas.orch.dev/v2/common#/$defs/sig"
+    },
+    "via": {
+      "type": "object",
+      "properties": {
+        "anchor": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/ulid"
+        },
+        "schedule_id": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/scheduleId"
+        },
+        "occurrence": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/timestamp"
+        },
+        "set_sig_hash": {
+          "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+        }
+      },
+      "required": [
+        "anchor",
+        "schedule_id",
+        "occurrence",
+        "set_sig_hash"
+      ],
+      "additionalProperties": false
+    },
+    "schedule": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/scheduleId"
     }
   },
   "required": [
@@ -347,7 +374,12 @@
         },
         "required": [
           "actor"
-        ]
+        ],
+        "not": {
+          "required": [
+            "via"
+          ]
+        }
       },
       "then": {
         "required": [
@@ -493,6 +525,27 @@
               ]
             }
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "via"
+        ]
+      },
+      "then": {
+        "properties": {
+          "actor": {
+            "properties": {
+              "kind": {
+                "const": "person"
+              }
+            }
+          },
+          "sig": false,
+          "auth": false,
+          "roster_v": false
         }
       }
     }

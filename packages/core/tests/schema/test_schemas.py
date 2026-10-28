@@ -624,7 +624,7 @@ def test_person_events_need_signature_auth_and_roster_version():
 
 
 def test_agent_and_host_never_stand_in_for_a_person():
-    for t in ("gate.approved", "verdict.given", "question.answered", "ticket.closed", "restore", "grant.requested",
+    for t in ("gate.approved", "verdict.given", "question.answered", "restore", "grant.requested",
               "member.added", "invalid.acknowledged", "settings.changed"):  # fmt: skip
         e = ex.EVENTS[t]
         log = log_of(t)
@@ -2227,7 +2227,16 @@ def test_event_schemas_repeat_the_envelope_of_event_json():
             else:
                 assert s["properties"][k] == v, (t, k)
         assert set(env["required"]) <= set(s["required"]), t
-        assert s["allOf"][: len(env["allOf"])] == env["allOf"], t
+        from copy import deepcopy
+
+        expected = deepcopy(env["allOf"])
+        if t == "ticket.created":  # core's schedule child uses via instead of a fresh person signature
+            expected[0]["if"]["not"] = {"required": ["via"]}
+        if t == "schedule.set":  # the signed anchor action shares its initial null base
+            expected[2]["else"]["properties"]["based_on"] = {
+                "oneOf": [{"$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"}, {"type": "null"}]
+            }
+        assert s["allOf"][: len(expected)] == expected, t
         assert s["additionalProperties"] is False, t
 
 

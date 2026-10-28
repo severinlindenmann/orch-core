@@ -16,8 +16,6 @@ import { HostGates } from '@/app/pages/settings/host/Gates'
 import { HostGrants } from '@/app/pages/settings/host/Grants'
 import { HostMembers } from '@/app/pages/settings/host/Members'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
-import { createPairFixture, installPairFixture, type PairFixture, type PairFixtureOptions } from './pairFixture'
-import type { MemberDevice, PairMember, PairOfferStatus } from '@/api/pairing'
 import { DropError, dropError } from '@/api/drop'
 import { DropErrorLine, DropView, type DropPreviewStart } from '@/app/pages/drop'
 import { AGENT, PHONE_SHARE, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
@@ -93,15 +91,6 @@ export const LAYOUT_SCENARIOS = [
   'agent-pill-stopped',
   'agent-pill-off',
   'setup-words',
-  // Pair a phone (proposed pair/1): Settings → Devices with the fixture pairing api.
-  'pair-unavailable',
-  'pair-unavailable-click',
-  'pair-blocked-convenience',
-  'pair-offer',
-  'pair-pending',
-  'pair-cert',
-  'pair-failed',
-  'pair-devices',
   // Core H12d-2: Settings → Devices with reader levels, and every click-to-sign refusal sentence.
   'readers-devices',
   'readers-solo',
@@ -349,49 +338,8 @@ function fixtureConnect(_ticket: string, h: TermHandlers): TermConnection {
   return { sendInput() {}, resize() {}, close: () => clearTimeout(timer) }
 }
 
-const LONG_LABEL = `Severin’s iPhone 17 Pro Max ${LONG_WORD}`.slice(0, 80)
-const pairOffer = (state: PairOfferStatus['state'], over: Partial<PairOfferStatus> = {}): PairOfferStatus => ({
-  offer_id: '7'.repeat(32), state, created_ms: Date.now() - 60_000, expires_ms: Date.now() + 240_000, scopes: ['look', 'decide'], label: LONG_LABEL, ...over,
-})
-// `member.list` as core serves it (v1.9 read_ext/3, H12d-2): every device has every field; `paired_at` and
-// `cert_expires_at` are RFC 3339 times, `reader` the counted level or null (no verified record).
-const pairDevice = (i: number, over: Partial<MemberDevice> = {}): MemberDevice => ({
-  id: 'd_' + String(i).repeat(32).slice(0, 32), auth: null, scopes: ['look', 'decide'], valid: true, label: `Phone ${i}`,
-  paired_at: new Date(Date.parse('2026-10-12T09:00:00Z') - i * 86_400_000).toISOString().replace(/\.\d+Z$/, 'Z'), relay: true,
-  cert_expires_at: '2027-10-12T09:00:00Z', reader: 1, ...over,
-})
-export const MAC_DEVICE: MemberDevice = { id: 'd_' + 'f'.repeat(32), auth: 'passphrase', scopes: ['look', 'decide', 'operate', 'type'], valid: true, label: null, paired_at: null, relay: false, cert_expires_at: null, reader: 1 }
-const pairOptions = (scenario: LayoutScenario): PairFixtureOptions => {
-  const member = (devices: MemberDevice[]): PairMember[] => [
-    // The Mac's own device was not paired through the relay (`relay: false`): it is not listed as a paired device.
-    { person: 'p_' + 'a'.repeat(32), name: 'Severin', role: 'owner', devices: [MAC_DEVICE, ...devices] },
-  ]
-  const members = member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { reader: null, label: 'Work phone\nsecond line' }), pairDevice(9, { label: '' })])
-  switch (scenario) {
-    case 'pair-unavailable':
-    case 'pair-unavailable-click':
-      return { served: false }
-    case 'pair-blocked-convenience':
-      return {
-        preview: { blocked: { code: 'sign.convenience_readers', message: `click-to-sign is on for this workspace; a phone cannot be added while it is on (${LONG_WORD})`, cause: 'flag' } },
-        members: member([]),
-      }
-    case 'pair-pending':
-      return { offers: [pairOffer('pending', { sas: 'K7Q2MA' })], members }
-    case 'pair-cert':
-      return { offers: [pairOffer('cert_pending', { cert_code: 'H4WZ7P' })], members }
-    case 'pair-failed':
-      // A failed offer is not live: the scenario follows it as the page would right after the failure.
-      return { offers: [pairOffer('failed', { reason: `the certificate did not verify: ${LONG_URL}` })], preview: { live_offer: '7'.repeat(32) }, members }
-    case 'pair-devices':
-      return { members: member([pairDevice(1, { label: LONG_LABEL }), pairDevice(2, { reader: null, label: 'Work phone\nsecond line' }), ...Array.from({ length: 8 }, (_, i) => pairDevice(i + 3, { label: i % 3 === 0 ? `${LONG_WORD} ${i}` : `Phone ${i + 3}` }))]) }
-    default:
-      return { members }
-  }
-}
-/** The roster a scenario reads: the pair fixture's members for `pair-*`, else the readers fixture. */
+/** The roster a scenario reads: the readers fixture. */
 function rosterFor(scenario: LayoutScenario): RosterMember[] {
-  if (scenario.startsWith('pair-')) return ({ ...pairOptions(scenario), ...pairOverride }.members ?? []) as RosterMember[]
   if (scenario === 'settings-approvals-stuck') return readersRoster().slice(0, 1)
   return readersRoster()
 }
@@ -492,15 +440,6 @@ export const dropPreviewForTests = {
   fixture: () => dropFixture,
 }
 
-let undoPair: (() => void) | null = null
-let pairOverride: PairFixtureOptions | null = null
-let pairFixture: PairFixture | null = null
-/** Tests: options merged into the next pair scenario, and the fixture it installed (to drive `pair` items). */
-export const pairPreviewForTests = {
-  set: (o: PairFixtureOptions | null) => void (pairOverride = o),
-  fixture: () => pairFixture,
-}
-
 let current: LayoutScenario = 'quick-normal'
 let installed = false
 const originals = new Map<string, unknown>()
@@ -519,10 +458,6 @@ export function resetLayoutPreview() {
     else a[name] = fn
   }
   originals.clear()
-  undoPair?.()
-  undoPair = null
-  pairOverride = null
-  pairFixture = null
   undoDrop?.()
   undoDrop = null
   dropOverride = null
@@ -703,18 +638,13 @@ export function LayoutPreview({ name }: { name: string }) {
     if (!(LAYOUT_SCENARIOS as readonly string[]).includes(name)) return null
     install()
     current = name as LayoutScenario
-    if (current.startsWith('pair-')) {
-      undoPair?.()
-      pairFixture = createPairFixture({ ...pairOptions(current), ...pairOverride })
-      undoPair = installPairFixture(pairFixture)
-    }
     if (current.startsWith('drop-')) {
       undoDrop?.()
       dropFixture = createDropFixture({ ...dropOptions(current), ...dropOverride })
       undoDrop = installDropFixture(dropFixture)
     }
     // Nothing of an earlier scenario stays in the cache.
-    for (const key of ['quick', 'records', 'identity', 'runs', 'pair', 'runner', 'drop', 'members', 'readers', 'click-status', 'add-ons']) qc.removeQueries({ queryKey: [key] })
+    for (const key of ['quick', 'records', 'identity', 'runs', 'runner', 'drop', 'members', 'readers', 'click-status', 'add-ons']) qc.removeQueries({ queryKey: [key] })
     // The topbar is already mounted and watches this one: it is refetched, not removed.
     void qc.invalidateQueries({ queryKey: ['host-info'] })
     return current
@@ -787,10 +717,10 @@ export function LayoutPreview({ name }: { name: string }) {
         </div>
       </section>
     )
-  if (scenario.startsWith('pair-') || scenario === 'readers-devices' || scenario === 'readers-solo')
+  if (scenario === 'readers-devices' || scenario === 'readers-solo')
     return (
       <SettingsFrame current="devices" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
-        <HostDevices workspace={scenario === 'pair-unavailable-click' ? { ...workspace, click: { custody: 'convenience', enabled: true, available: true } } : workspace} />
+        <HostDevices workspace={workspace} />
       </SettingsFrame>
     )
   if (scenario === 'settings-general') return <SettingsFrame current="general" addon={undefined} ws={workspace.id} tabs={HOST_TABS}><HostGeneral workspace={{ ...workspace, click: signingCard('signing-off'), icon_known: true }} /></SettingsFrame>

@@ -161,7 +161,7 @@ export const SCENARIOS: TourScenario[] = [
     { title: 'Addon settings', detail: 'Addons → Settings on a row expands its form beneath the row; Save closes it.', go: { path: '/settings/addons' } },
     { title: 'Members', detail: 'The combobox; an unknown email is refused inline.', go: { path: '/settings/members' } },
     { title: 'Gates', detail: 'Policy and "Affects N open tickets".', go: { path: '/settings/gates' } },
-    { title: 'Relay & devices', detail: 'Pair a device (simulated QR and code).', go: { path: '/settings/relay' } },
+    { title: 'Relay & devices', detail: 'The relay link, devices and the sync queue (simulated).', go: { path: '/settings/relay' } },
     { title: 'Skills', detail: 'Grant credentials to a skill (signed).', go: { path: '/settings/skills' } },
     { title: 'Connections', detail: 'Run check, Run doctor, the secrets file (names only).', go: { path: '/settings/connections' } },
   ]),

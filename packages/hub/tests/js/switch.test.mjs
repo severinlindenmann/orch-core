@@ -11,12 +11,14 @@ test("ticketFromHash takes only a well formed #t= fragment", () => {
 test("safeReturn allows only the hub's own paths", () => {
   assert.equal(safeReturn("/"), "/");
   assert.equal(safeReturn("/c"), "/c");
+  assert.equal(safeReturn("/phones"), "/phones");
   for (const bad of ["//evil.example", "https://evil.example", "/\\evil", "/../x", "/admin", "", null, 5, "/a\nb"]) assert.equal(safeReturn(bad), null, String(bad));
 });
 
 test("landing: home, path, signout, expired", () => {
   assert.deepEqual(landing(200, { user_id: "u", return_to: "/", kind: "open" }), { kind: "home" });
   assert.deepEqual(landing(200, { user_id: "u", return_to: "/c", kind: "open" }), { kind: "path", path: "/c" });
+  assert.deepEqual(landing(200, { user_id: "u", return_to: "/phones", kind: "open" }), { kind: "path", path: "/#/phones" });
   assert.deepEqual(landing(200, { user_id: "u", return_to: "//evil", kind: "open" }), { kind: "home" });
   assert.deepEqual(landing(200, { user_id: null, return_to: "/", kind: "signout" }), { kind: "signout" });
   assert.deepEqual(landing(400, { error: "bad_ticket" }), { kind: "expired" });

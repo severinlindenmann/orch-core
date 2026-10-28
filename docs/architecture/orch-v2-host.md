@@ -8210,6 +8210,8 @@ uid**, both with the 900 s freshness window. Three conflicts were settled:
 
 ### 11A.15 R6: pairing, membership, cards, WK custody (security contract)
 
+> **Parked (owner, 22 Oct 2026):** R6 direct phone pairing (the offer, the 6-character code, the certificate and `relay.pair_device` described below) is not built and not served by core; phones pair with the hub instead (hub Phones page, console pairing code). The dashboard no longer offers direct pairing: Settings > Devices opens the hub's Phones page, or says phones connect through the hub. This section stays as the design record if direct pairing is ever resumed.
+
 Status: **revision 1 of 15 Oct 2026 (orch-29), docs only; orch-52 decides; Q1 is DECIDED B (owner, 15 Oct 2026, through orch-d6).**
 The first draft (15 Oct 2026, `c00b4991`) was reviewed by Opus (SOUND WITH CHANGES), challenged by Codex (flawed as
 written: durable authorization state, rotation/seal synchronisation, dev-script cleanup), reviewed by orch-52 (CHANGES,

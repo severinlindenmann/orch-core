@@ -81,8 +81,6 @@ export type HandoffAction =
   | { action: 'publish_share'; key: string; staged_id: string }
   /** The runner grant, deposited by the signer. */
   | { action: 'runner_grant'; hours: number; scope: 'workable' | 'all'; extend?: string }
-  /** pair/1 (contract v1.9): sign `relay.pair_device` (F1 `device.added`) for an offer whose certificate is in. */
-  | { action: 'pair_device'; offer: string }
 
 /** The hand-offs that follow a signed `new` for what it cannot carry. */
 export type FollowUpAction = Extract<HandoffAction, { action: 'details' | 'section' }>

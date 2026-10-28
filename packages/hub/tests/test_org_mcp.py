@@ -69,7 +69,10 @@ def entry(**kw):
     [
         ({}, None),
         ({"url": "https://tools.example.com:8443/a/b"}, None),
-        ({"url": "https://203.0.113.9/mcp"}, None),
+        ({"url": "https://8.8.8.8/mcp"}, None),  # a global address
+        ({"url": "https://[2001:4860:4860::8888]/mcp"}, None),
+        ({"url": "https://tools.example.com.cn/mcp"}, None),
+        ({"url": "https://xn--bcher-kva.example/mcp"}, None),
         ({"url": "http://tools.example.com/mcp"}, "https_only"),
         ({"url": "stdio://npx some-server"}, "https_only"),
         ({"url": "npx -y some-server"}, "https_only"),
@@ -87,6 +90,31 @@ def entry(**kw):
         ({"url": "https://0.0.0.0/mcp"}, "not_remote"),
         ({"url": "https://169.254.169.254/latest"}, "not_remote"),  # the cloud metadata address
         ({"url": "https://intranet/mcp"}, "not_remote"),
+        # private and shared ranges: only a global address is remote
+        ({"url": "https://10.0.0.5/mcp"}, "not_remote"),
+        ({"url": "https://192.168.1.1/mcp"}, "not_remote"),
+        ({"url": "https://172.16.0.1/mcp"}, "not_remote"),
+        ({"url": "https://172.31.255.254/mcp"}, "not_remote"),
+        ({"url": "https://100.64.0.1/mcp"}, "not_remote"),  # the VPN / carrier-grade NAT range
+        ({"url": "https://203.0.113.9/mcp"}, "not_remote"),  # documentation range
+        ({"url": "https://[fd00::1]/mcp"}, "not_remote"),
+        ({"url": "https://[fe80::1]/mcp"}, "not_remote"),
+        ({"url": "https://[::ffff:10.0.0.1]/mcp"}, "not_remote"),
+        ({"url": "https://[::ffff:127.0.0.1]/mcp"}, "not_remote"),
+        # numbers spelled so a resolver reads them as an address
+        ({"url": "https://127.1/mcp"}, "not_remote"),
+        ({"url": "https://0x7f.0.0.1/mcp"}, "not_remote"),
+        ({"url": "https://0177.0.0.1/mcp"}, "not_remote"),
+        ({"url": "https://2130706433/mcp"}, "not_remote"),
+        ({"url": "https://1.2.3.4.5/mcp"}, "not_remote"),
+        ({"url": "https://example.123/mcp"}, "not_remote"),
+        ({"url": "https://example.0x1/mcp"}, "not_remote"),
+        # names that only mean something inside one network
+        ({"url": "https://printer.local/mcp"}, "not_remote"),
+        ({"url": "https://tools.internal/mcp"}, "not_remote"),
+        ({"url": "https://nas.lan/mcp"}, "not_remote"),
+        ({"url": "https://router.home/mcp"}, "not_remote"),
+        ({"url": "https://crm.corp/mcp"}, "not_remote"),
         ({"name": "orch-tools"}, "reserved_name"),
         ({"name": "CRM"}, "name"),
         ({"auth": "oauth"}, "auth"),

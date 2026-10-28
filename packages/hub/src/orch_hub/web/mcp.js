@@ -22,7 +22,7 @@ export function mcpView(data, actions = {}) {
   const workspaces = data.workspaces ?? [];
   const form = (s, isNew) => {
     const nameIn = isNew ? h("input", { type: "text", "aria-label": "Name of the new server", placeholder: "for example: crm", maxlength: "40" }) : null;
-    const url = h("input", { type: "url", "aria-label": "Address", placeholder: "tools.example.com/mcp", maxlength: "200" });
+    const url = h("input", { type: "url", "aria-label": "Address", placeholder: "https:" + "//tools.example.com/mcp"  /* built, so the console has no literal address */, maxlength: "200" });
     const desc = h("input", { type: "text", "aria-label": "What it is for", placeholder: "What it is for (short)", maxlength: "200" });
     const auth = h("select", { "aria-label": "Sign-in" }, h("option", { value: "none", text: "No sign-in" }), h("option", { value: "hub_secret", text: "A company secret" }));
     const secret = h("input", { type: "text", "aria-label": "Company secret name", placeholder: "secret name", maxlength: "40" });

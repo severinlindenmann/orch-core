@@ -616,8 +616,7 @@ Verified exactly like 7.3 (`verify_org_mcp`: `other_workspace`, `stale_bundle`, 
 bundle: another kind, another label). **Remote only in v1:** an entry has no field for a command, arguments, an environment or
 headers, and any other member makes the bundle `malformed`. `name` as a skill name (`[a-z][a-z0-9-]{1,39}`, not `orch*`); `url` an
 `https` address of at most 200 printable ASCII characters with no space, no user or password, no query, no fragment, a valid port,
-and not this computer (`localhost`, `*.localhost`, loopback, unspecified, link-local such as the cloud metadata address, multicast,
-reserved, or a one-word host); `auth` `none` | `hub_secret`; `secret` the NAME of a company secret (`[a-z][a-z0-9-]{0,39}`)
+and remote: an address literal must be globally routable (`is_global`: so not 10/8, 172.16/12, 192.168/16, 100.64/10 (VPN), documentation, loopback, link-local such as the cloud metadata address, `fd00::/8`, or `::ffff:` mapped private addresses), a name needs a dot and its last label must start with a letter (so `127.1`, `0x7f.0.0.1`, `0177.0.0.1` and `2130706433` are refused), and `localhost`, `*.localhost`, `*.local`, `*.internal`, `*.lan`, `*.home`, `*.corp` are refused. This is a check of what is written: the host proxy MUST resolve the name at connect time, check that every address is global, pin the one it connects to, and refuse redirects (an Opus condition of the proxy PR); `auth` `none` | `hub_secret`; `secret` the NAME of a company secret (`[a-z][a-z0-9-]{0,39}`)
 exactly when `auth` is `hub_secret`, else `null` (a value is never in a bundle); `description` at most 200 characters of the visible-text
 allowlist of 7.3 and no newline; `digest` = `"sha256:" + hex(sha256(cj({name,url,auth,secret,description})))`. Per-person sign-in
 (`auth.person`) and tool lists are not in v1: the server's own tool list is untrusted and the host starts every tool Off.

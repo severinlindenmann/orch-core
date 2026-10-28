@@ -55,6 +55,14 @@ MCP_MAX = 20
 URL_MAX = 200
 DESCRIPTION_MAX = 200
 AUTHS = ("none", "hub_secret")
+_LOCAL_SUFFIXES = (
+    ".localhost",
+    ".local",
+    ".internal",
+    ".lan",
+    ".home",
+    ".corp",
+)  # names that are only meaningful inside one network
 SECRET_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
 
 
@@ -86,15 +94,20 @@ def url_problem(url: Any) -> str | None:
         return "url"
     if port is not None and not 1 <= port <= 65535:
         return "url"
-    if host == "localhost" or host.endswith((".localhost", ".")):
+    if host == "localhost" or host.endswith(_LOCAL_SUFFIXES) or host.endswith("."):
         return "not_remote"
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        return None if "." in host else "not_remote"  # a one-word host is this network's own box, not a service
-    if ip.is_loopback or ip.is_unspecified or ip.is_link_local or ip.is_multicast or ip.is_reserved:
-        return "not_remote"
-    return None
+        # a name: it needs a dot and a last label that starts with a letter, so no spelling of a number
+        # (127.1, 0x7f.0.0.1, 0177.0.0.1) passes for a name
+        last = host.rsplit(".", 1)[-1]
+        return None if "." in host and re.fullmatch(r"[a-z][a-z0-9-]*", last) else "not_remote"
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped  # ::ffff:10.0.0.1 is the private address 10.0.0.1
+    return (
+        None if ip.is_global else "not_remote"
+    )  # private, shared (VPN 100.64/10), unique-local, loopback, link-local, reserved...
 
 
 def mcp_problem(s: Any) -> str | None:

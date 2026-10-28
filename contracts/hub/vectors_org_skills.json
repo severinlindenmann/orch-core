@@ -1486,6 +1486,182 @@
    "entry": {
     "auth": "none",
     "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://8.8.8.8/mcp"
+   },
+   "expect": null,
+   "name": "a global address"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://10.0.0.5/mcp"
+   },
+   "expect": "not_remote",
+   "name": "private 10/8"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://192.168.1.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "private 192.168/16"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://172.16.0.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "private 172.16/12"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://100.64.0.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "shared 100.64/10 (VPN)"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://[fd00::1]/mcp"
+   },
+   "expect": "not_remote",
+   "name": "unique-local fd00::/8"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://[::ffff:10.0.0.1]/mcp"
+   },
+   "expect": "not_remote",
+   "name": "mapped private ::ffff:10.0.0.1"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://127.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "short form 127.1"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://0x7f.0.0.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "hex form 0x7f.0.0.1"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://0177.0.0.1/mcp"
+   },
+   "expect": "not_remote",
+   "name": "octal form 0177.0.0.1"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://2130706433/mcp"
+   },
+   "expect": "not_remote",
+   "name": "decimal form 2130706433"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://printer.local/mcp"
+   },
+   "expect": "not_remote",
+   "name": "suffix .local"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://tools.internal/mcp"
+   },
+   "expect": "not_remote",
+   "name": "suffix .internal"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://nas.lan/mcp"
+   },
+   "expect": "not_remote",
+   "name": "suffix .lan"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://router.home/mcp"
+   },
+   "expect": "not_remote",
+   "name": "suffix .home"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
+    "name": "crm",
+    "secret": null,
+    "url": "https://crm.corp/mcp"
+   },
+   "expect": "not_remote",
+   "name": "suffix .corp"
+  },
+  {
+   "entry": {
+    "auth": "none",
+    "description": "Our CRM",
     "name": "orch-tools",
     "secret": null,
     "url": "https://tools.example.com/mcp"

@@ -56,6 +56,8 @@ W2H_OPS: dict[str, str | None] = {
     "card_put": None,
     "binding_put": None,
     "snapshot_get": None,
+    "org_skills_get": None,
+    "mcp_servers_get": None,
     "publish_out": None,
     "route_out": None,
     "audit_ack": None,
@@ -96,6 +98,8 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
         set(b) == {"hub", "user_id", "workspaces"} and type(b["hub"]) is dict and type(b["workspaces"]) is list
     ),
     "owner_get": lambda b: set(b) == {"user_id"} and type(b["user_id"]) is str,
+    "org_skills_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
+    "mcp_servers_get": lambda b: set(b) == {"bundle"} and type(b["bundle"]) is dict,
     "log_sync": lambda b: set(b) == {"seq", "head"} and type(b["seq"]) is int and type(b["head"]) is str,
     "route_out": lambda b: set(b) == {"state"} and b["state"] in ("forwarded", "queued"),
     "snapshot_get": lambda b: set(b) == {"snapshot"} and type(b["snapshot"]) is dict,

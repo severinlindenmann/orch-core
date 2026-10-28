@@ -371,6 +371,10 @@ def main(
         from orch.cli.space import main as space_main
 
         return space_main(args[1:], env=env, out=out, err=err, now=now)
+    if args[:1] == ["org"]:  # company skills and MCP servers offered by the hub (M3 host): a host client
+        from orch.cli.org import main as org_main
+
+        return org_main(args[1:], env=env, out=out, err=err, now=now)
     if args[:1] == ["peer"]:  # ws->ws through the hub (V3 C12): a host client, not a registry op
         from orch.cli.peer import main as peer_main
 

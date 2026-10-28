@@ -24,6 +24,8 @@ W2H_OPS: dict[str, str | None] = {
     "card_put": None,
     "binding_put": None,
     "snapshot_get": None,
+    "org_skills_get": None,
+    "mcp_servers_get": None,
     "publish_out": None,
     "route_out": None,
     "audit_ack": None,

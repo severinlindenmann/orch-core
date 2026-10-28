@@ -29,6 +29,7 @@ from orch.host.errors import HostError, disposition
 from orch.host.hubops import HUB_OPS
 from orch.host.human import HUMAN_OPS
 from orch.host.marketops import MARKET_OPS, MARKET_READS
+from orch.host.orgops import ORG_OPS, ORG_READS
 from orch.host.peerops import PEER_OPS, PEER_READS
 from orch.host.publishing import PUBLISH_OPS
 from orch.host.reads import READ_OPS
@@ -100,6 +101,7 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
     host |= set(HUB_OPS)  # V3 C2a
     host |= set(PEER_OPS)  # V3 C12
     host |= set(SPACE_OPS)  # V3 C13
+    host |= set(ORG_OPS)  # M3 H-2
     host |= set(MARKET_OPS)  # V3 G2
     host |= set(SHARE_OPS)  # V3 C6
     host |= set(COSMETIC_OPS)  # run 13 D6
@@ -253,6 +255,13 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             assert kind == (("person_read", "read") if op in SHARE_READS else ("person_write", "write"))
         elif op in MARKET_OPS:  # V3 G2: P and G; the op refuses an agent's add and --commit itself
             assert kind == (("pg_read", "read") if op in MARKET_READS else ("pg_write", "write"))
+        elif op in ORG_OPS:  # M3 H-2: offers P and G, sync P and G, show P only, accept and decline P only (owner)
+            assert kind == {
+                "org.offers": ("pg_read", "read"),
+                "org.sync": ("pg_write", "write"),
+                "org.show": ("person_read", "read"),
+            }.get(op, ("person_write", "write"))
+            assert op in ORG_READS or kind[1] == "write" or op == "org.show"
         elif op in SPACE_OPS:  # V3 C13: list and get for P and G, the rest P only (owner role)
             assert kind == (("pg_read", "read") if op in SPACE_READS else ("person_write", "write"))
         elif op in PEER_OPS:  # V3 C12: reads for P and G, writes P only (owner role)

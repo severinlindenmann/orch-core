@@ -291,3 +291,12 @@ def test_two_distinct_code_words_anywhere_are_hidden_in_any_order():
     assert redact_reason("see /a/absorb and then /b/mandate", held) == HIDDEN_REASON
     assert redact_reason("mandate ... far apart ... absorb", held) == HIDDEN_REASON
     assert redact_reason("only /a/absorb here", held) == "only /a/absorb here"
+
+
+def test_short_ordinary_code_words_do_not_hide_a_real_message():
+    from orch.setup.steps import held_words
+
+    msg = "Open System Settings, General, Login Items & Extensions and allow orch, then try again"
+    held = held_words("item login extend orch allow again quiet")  # 4-5 letter words, whole tokens of the message
+    assert redact_reason(msg, held) == msg
+    assert redact_reason(msg, held_words("items extensions banana")) == HIDDEN_REASON  # a 6+ letter word still hides

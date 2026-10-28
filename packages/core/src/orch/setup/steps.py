@@ -295,7 +295,9 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
                 if len(w) >= _MIN_SECRET and any(w in tk for tk in toks):
                     return True
         if isinstance(sec, _Code):  # two different words of the code anywhere, in any order, are a leak
-            distinct = {w for w in words if len(w) >= 4}
+            # whole tokens (set membership, never a substring) of 6+ letters: the same length the single-word rule
+            # uses. Shorter words ("item", "login") are ordinary English: two of them hid real macOS messages.
+            distinct = {w for w in words if len(w) >= _MIN_SECRET}
             if sum(1 for w in distinct if any(w in tk for tk in toks)) >= 2:
                 return True
         for i in range(len(words)):  # every run of 2+ consecutive words, joined

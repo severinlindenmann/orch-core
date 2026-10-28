@@ -152,7 +152,7 @@ def test_fresh_run_applies_everything_in_order_with_fixed_binaries() -> None:
     assert len(useradds) == 9
     assert useradds[0] == [
         "/usr/sbin/useradd", "--system", "--user-group", "--home-dir", "/var/lib/orch/agents/orch-agent-sev/home",
-        "--create-home", "--shell", "/bin/bash", "orch-agent-sev",
+        "--create-home", "--skel", "/dev/null", "--shell", "/bin/bash", "orch-agent-sev",
     ]  # fmt: skip
     assert useradds[1][-3:] == ["--shell", "/usr/sbin/nologin", "orch-addon-1"]
     assert [BIN["usermod"], "--lock", "orch-agent-sev"] in ex.commands

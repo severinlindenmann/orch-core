@@ -269,6 +269,7 @@ def serve(
                 switch=switch,
                 services=Services(relay_url=cfg.relay_url, publish_url=publish_url),
                 routes=queue,
+                delivery=deliveries,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )
         )

@@ -322,16 +322,16 @@ def test_the_grant_is_only_ever_the_last_step():
     assert kinds.index("grant") == len(kinds) - 1 and kinds.count("grant") == 1  # the grant is only ever last
 
 
-def test_a_grant_is_one_click_and_goes_to_the_runner_last(click, served, human):  # noqa: F811
+def test_a_quick_task_cannot_hide_a_grant_in_its_daily_confirmation(click, served, human):  # noqa: F811
+    from tests.host.test_click import refused
+
     click.signer._execution = lambda entry: True
-    p = click_prepare(click, quick(agent={"hours": 8, "scope": "workable"}))
-    v = click.view(p["request_id"])
-    assert v["view"]["confirm"] == {"kind": "click"}
-    assert "Agents may work on any ticket they are allowed to work on" in "\n".join(v["view"]["lines"])
-    click.mono.t += 2
-    out = click.sign(p["request_id"], v["view_digest"])
-    assert click.signatures == 9
-    assert out["deposit"] in ("confirmed", "rejected", "unknown") and out["grant"].startswith("gr_")
+    refused(
+        lambda: click_prepare(click, quick(agent={"hours": 8, "scope": "workable"})),
+        "human.click_refused",
+        "terminal_only",
+    )
+    assert click.signatures == 0
 
 
 def test_without_dashboard_execution_a_grant_sequence_is_the_terminals(click, served, human):  # noqa: F811

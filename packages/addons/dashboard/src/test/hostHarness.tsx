@@ -1,3 +1,4 @@
+import onePressOps from '../../../../../contracts/core/click_one_press_ops.json'
 // A fake dashboard server for the production app (M4): the fetch the app makes is answered here from plain data, so a
 // test reads exactly what the page asked for and what it posted. The hand-off requests it returns have hashes that
 // recompute, like the real server's (`api/handoff.ts`), so the app accepts them.
@@ -224,13 +225,7 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
 }
 
 /** C3: core's `ONE_PRESS_OPS`, the closed allowlist of daily ops whose View has no risk lines (one press signs). */
-export const ONE_PRESS_OPS: ReadonlySet<string> = new Set([
-  'approve', 'request_changes', 'verdict', 'answer', 'close', 'reopen', 'new', 'set', 'section.set',
-  'ac.add', 'ac.edit', 'ac.accept', 'ac.unaccept',
-  'task.add', 'task.edit', 'task.block', 'task.done', 'task.reopen', 'task.skip', 'task.start', 'task.mark_done',
-  'log', 'ask', 'claim', 'release', 'handoff', 'submit', 'move', 'artifact.add', 'artifact.replace', 'apply',
-  'follow_up.reschedule', 'follow_up.undo', 'follow_up.cancel', 'schedule.cancel', 'grant.revoke', 'addon.disable',
-])
+export const ONE_PRESS_OPS: ReadonlySet<string> = new Set(onePressOps)
 
 /**
  * C3: the fake signer's risk lines (contract 4), after core: none for an op of `ONE_PRESS_OPS` (it signs at the end of
@@ -362,13 +357,15 @@ export class FakeHost {
       return json(request)
     }
     if (rest === 'click/prepare' && method === 'POST') {
+      if (['quick_start', 'new_sequence'].includes(String(body?.action)) && body?.agent)
+        return json({ ok: false, exit: 3, error: { code: 'human.click_refused', reason: 'terminal_only', message: 'Agent access needs its own grant confirmation. Create without starting first.', retryable: false } }, 409)
       // Core: a One click workspace admits a new reader only with its declaration (H12d, `sign.convenience_readers`).
       if (body?.action === 'member_add' && ws.click?.enabled && typeof body.reader_decl !== 'string')
         return json({ ok: false, exit: 3, error: { code: 'sign.convenience_readers', message: 'd_x would read a workspace with convenience signatures and has not declared that it understands them', retryable: false, hint: 'orch keys reader declare --enrol', fix: 'orch member add --reader-decl PATH', detail: { reason: 'no_declaration', devices: [] } } }, 409)
       const request = prepare(body!)
       const id = 'hr_' + String(++this.clickCount).padStart(26, '0')
       const confirm = 'click'
-      this.clickRequests.set(id, { op: request.op, confirm, risk: riskLinesFor(request, body!) })
+      this.clickRequests.set(id, { op: request.op, confirm, risk: riskLinesFor(request) })
       return json({ request_id: id, expires_at: request.expires_at, op: request.op, confirm })
     }
     if (rest === 'click/view' && method === 'POST') {

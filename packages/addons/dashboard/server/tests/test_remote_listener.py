@@ -173,7 +173,7 @@ def test_turning_things_off_stays_a_plain_click_on_a_remote_session(front, remot
 
 def test_no_ticket_is_minted_on_a_listener_with_terminals_off(gateway, auth, tmp_path, stub, remote):
     app = terminals_app(gateway, auth, tmp_path, on=False)
-    front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
+    front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE, "X-Orch-Click-Contract": "4"})
     res = front.post(f"/api/w/{stub.ws}/runs/{RUN}/attach", json={}, headers=bearer(remote, HTTPS))
     assert res.status_code == 403 and "ticket" not in res.text  # the route gate: terminals are off here
     assert app.state.term_tickets.items == {}
@@ -183,8 +183,8 @@ def test_a_ticket_redeems_only_on_the_listener_it_was_minted_for(gateway, auth, 
     from starlette.websockets import WebSocketDisconnect
 
     app = terminals_app(gateway, auth, tmp_path, on=True)
-    loop = TestClient(app, base_url=ORIGIN)
-    front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
+    loop = TestClient(app, base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"})
+    front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE, "X-Orch-Click-Contract": "4"})
     minted = loop.post(f"/api/w/{stub.ws}/runs/{RUN}/attach", json={}, headers=bearer(local, ORIGIN))
     assert minted.status_code == 200
     ticket = minted.json()["ticket"]
@@ -208,7 +208,7 @@ def test_a_ticket_whose_session_moved_listener_is_refused(gateway, auth, tmp_pat
     from starlette.websockets import WebSocketDisconnect
 
     app = terminals_app(gateway, auth, tmp_path, on=True)
-    loop = TestClient(app, base_url=ORIGIN)
+    loop = TestClient(app, base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"})
     ticket = loop.post(f"/api/w/{stub.ws}/runs/{RUN}/attach", json={}, headers=bearer(local, ORIGIN)).json()["ticket"]
     auth.listeners[local] = "remote"  # defence in depth: the session no longer belongs to the socket's listener
     with loop.websocket_connect("/term", headers={"host": f"127.0.0.1:{PORT}", "origin": ORIGIN}) as ws:
@@ -220,7 +220,7 @@ def test_a_ticket_whose_session_moved_listener_is_refused(gateway, auth, tmp_pat
 
 def test_terminals_open_is_refused_on_a_listener_with_terminals_off(gateway, auth, tmp_path, stub, remote):
     app = terminals_app(gateway, auth, tmp_path, on=False)
-    front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE})
+    front = TestClient(Front(app), base_url=HTTPS, headers={"X-Orch-Client": SOURCE, "X-Orch-Click-Contract": "4"})
     res = front.post(
         f"/api/w/{stub.ws}/terminals/open",
         json={"spec": "a" * 64, "idem": "a_" + "0" * 26},

@@ -2085,3 +2085,11 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 **Decision:** Enabled marketplace add-ons use a separate update review and `market_update` grant, including the reviewed digest and capabilities. Fresh installs retain the staged enable sequence. Both core's `enabled` and the older `active` UI state select updates.
 **Why:** The enable sequence deliberately refuses already-enabled add-ons. Updates must retain their widened diff and signer-owned capability risk requiring a second press.
 **Revert:** Revert the separate update action, state mapping and review together; do not route enabled updates through `addon_enable`.
+
+### 2026-10-28 — C3 review hardening
+
+Decision: Require click contract 4 on every click route; validate the relay's risk allowlist against core. Generate the fake hosts' one-press allowlist from core. Refuse combined click sequences that include agent access until the UI can request a separate grant confirmation (terminal sequences still work). Gate risky confirmations on viewport intersection when supported, expire blocked arms, and prefer signer headlines.
+
+Why: Stale pages must not sign without the risk review; fixtures must reflect the real signer's operation classes. Risk lines must stay on screen throughout the dwell.
+
+Revert: Restore the prior gate only together with a coordinated click contract change in core, server, and client.

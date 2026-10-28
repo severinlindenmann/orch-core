@@ -75,6 +75,7 @@ class ScheduleRunner(FollowupRunner):
             run=row.get("run"),
             grant=row.get("grant"),
             cancelled=rec.cancelled,
+            child=row.get("child") or (schedules.child_uid(rec.id, occurrence) if rec.target == "new" else None),
         )
 
     async def _outcome(self, uid, rec, outcome, reason=None):
@@ -91,8 +92,8 @@ class ScheduleRunner(FollowupRunner):
         )
 
     def _wrote(self, uid, rec, session):
-        fired = False
-        for event, _ in self.service.store.events_after(uid, 0, 1 << 30):
+        fired = bool(rec.child)
+        for event, _ in self.service.store.events_after(rec.child or uid, 0, 1 << 30):
             if (
                 event["type"] == "schedule.fired"
                 and event.get("schedule") == rec.id
@@ -126,6 +127,11 @@ class ScheduleRunner(FollowupRunner):
                 # row records nothing now and is judged again from the ledger on the next tick; the rest proceed.
                 try:
                     if rec.grant:
+                        if rec.child:
+                            problem, _ = await self.service.call(self._create_child, uid, rec)
+                            if problem:
+                                await self._outcome(uid, rec, "did_not_run", problem)
+                                continue
                         await self._settle(uid, rec, records, hub)
                         continue
                     if reason:
@@ -159,12 +165,62 @@ class ScheduleRunner(FollowupRunner):
                 or info.get("reason") in ("spawn_failed", "lost", "runner_restarted")
             )
             wrote = await self.service.call(self._wrote, uid, rec, run.get("session"))
+            nothing = await self.service.call(self._nothing_to_do, rec)
+            if nothing and wrote:
+                await self._outcome(uid, rec, "ran_nothing")
+                return
             await self._outcome(
                 uid,
                 rec,
                 "failed" if failed or not wrote else "ran",
                 "harness_failed" if failed else "no_writes" if not wrote else None,
             )
+
+    def _nothing_to_do(self, rec):
+        child = self.service.store.state._core.tickets.get(rec.child)
+        return child is not None and child.status == "closed" and child.close_resolution == "nothing_to_do"
+
+    def _create_child(self, uid, run):
+        store = self.service.store
+        with store.locked():
+            store.refresh()
+            store.load_all()
+            core = store.state._core
+            child = core.tickets.get(run.child)
+            if child is not None:
+                return None, child.key
+            anchor = core.tickets[uid]
+            rec = anchor.schedules[run.id]
+            reason = (
+                "grant_revoked"
+                if rec.cancelled
+                else "addon_disabled"
+                if not enabled(core.ws)
+                else schedules_wire.blocked(core, anchor, rec, int(self.clock()), creating=run.occurrence)
+            )
+            if reason:
+                return reason, None
+            event = store.append(
+                {
+                    "type": "ticket.created",
+                    "id": new_ulid(),
+                    "based_on": None,
+                    "actor": {"kind": "person", "id": rec.person, "device": rec.device},
+                    "key": store.peek_key(),
+                    "ticket_type": "chore",
+                    "owner": rec.person,
+                    "title": schedules.child_title(rec, run.occurrence),
+                    "via": {
+                        "anchor": uid,
+                        "schedule_id": rec.id,
+                        "occurrence": run.occurrence,
+                        "set_sig_hash": rec.set_sig_hash,
+                    },
+                },
+                log=run.child,
+            ).event
+            self.service.sync()
+            return None, event["key"]
 
     async def fire(self, uid, key, rec, hub):
         token, secret, secret_hash = new_grant()
@@ -181,10 +237,18 @@ class ScheduleRunner(FollowupRunner):
                 "grant": rec.grant,
                 "secret_hash": secret_hash,
                 "run": rec.run,
+                **({"child": rec.child} if rec.child else {}),
             },
         )
+        target = uid
+        if rec.child:
+            problem, key = await self.service.call(self._create_child, uid, rec)
+            if problem:
+                await self._outcome(uid, rec, "did_not_run", problem)
+                return False
+            target = rec.child
         try:
-            await self._deposit_start(uid, key, rec, hub, secret)
+            await self._deposit_start(target, key, rec, hub, secret)
             return True
         except Exception as exc:  # noqa: BLE001 - a persisted firing must settle, never retry
             if getattr(exc, "code", None) == "outcome.unknown" or rec.run in hub.store.records:

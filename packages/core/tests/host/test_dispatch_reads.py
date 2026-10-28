@@ -139,6 +139,8 @@ def args_for(op: str, ref: str) -> dict:
         "share.preview",
     }:  # share.*: owner-only (C6)
         return {}
+    if op == "org.show":  # M3 H-2: owner-only; names an offered item, never a ticket (standalone here: hub.not_joined)
+        return {"kind": "skill", "name": "invoices"}
     if op == "hub.link":  # run-9: reads a connect link; nothing to do with tickets (the port refuses at once)
         return {"link": "http://127.0.0.1:1/c#h1." + "a" * 32 + ".x"}
     if op == "hub.switch":  # H1: standalone here: hub.not_joined

@@ -48,6 +48,7 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         "/route.js",
         "/admin.js",
         "/changes.js",
+        "/connections.js",
         "/activity.js",
         "/switch.js",
         "/ui.js",

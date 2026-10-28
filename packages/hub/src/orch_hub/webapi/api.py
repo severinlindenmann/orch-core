@@ -234,6 +234,7 @@ class WebDeps:
     services: Any = None
     #: the route queue (``recent``): hand-offs between workspaces, for the Workspaces page; None = an empty list
     routes: Any = None
+    authz: Any = None  # live routing authorization; None means no allowed edges
     delivery: Any = None  # custodial DeliveryQueue; None = no pending deliveries
     activity: Any = None  # hub-local admin history; None = no local events
     changes: Any = (
@@ -386,6 +387,7 @@ ROUTES: tuple[Route, ...] = (
         "a_workspace_remove",
         "Remove a workspace that has left (deletes the hub's record)",
     ),
+    _r("GET", "/admin/connections", "admin", "a_connections", "Read current workspace connections"),
     _r("GET", "/admin/workspaces", "admin", "a_workspaces", "List workspaces with mode, binding status and grants"),
     _r(
         "GET",
@@ -1734,6 +1736,29 @@ class WebApi(ChangeHandlers):
                 }
             )
         return 200, {"workspaces": out}
+
+    def _h_a_connections(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        if self.d.authz is None:
+            raise ApiError("unavailable")  # an empty map would say "nobody can reach anyone": say nothing instead
+        reg = self.d.registry
+        workspaces = []
+        for ws in sorted(reg.pins()):
+            if reg.mode(ws) is None:
+                continue
+            name = (reg.card(ws) or {}).get("name")
+            workspaces.append(
+                {
+                    "workspace_id": ws,
+                    "name": P4.render_text(name) if type(name) is str and name else None,
+                }
+            )
+        edges = [
+            {"from": a["workspace_id"], "to": other["workspace_id"]}
+            for a in workspaces
+            for other in workspaces
+            if self.d.authz.may_route(a["workspace_id"], other["workspace_id"])
+        ]
+        return 200, {"workspaces": workspaces, "edges": edges}
 
     def _h_a_services(self, c: Ctx, p: dict, q: dict, b: dict | None):
         if self.d.services is None:

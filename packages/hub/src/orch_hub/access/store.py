@@ -486,7 +486,11 @@ class Access:
                 }
                 if drop_member is not None and drop_member[0] == group:
                     out.discard(drop_member[1])
-                if add_member is not None and add_member[0] == group:
+                if (
+                    add_member is not None
+                    and add_member[0] == group
+                    and (include_disabled or self.is_active(add_member[1]))
+                ):
                     out.add(add_member[1])
                 if drop_user is not None:
                     out.discard(drop_user)

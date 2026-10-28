@@ -26,13 +26,14 @@ it('the Settings link is offered when the host serves it, with only the reduced 
   expect(screen.queryByText('Relay & devices')).not.toBeInTheDocument()
 })
 
-it('Devices have one home, Settings > Devices (the Phone block moved from Add-ons): pairing is not available yet, and no pairing request is made', async () => {
+it('Devices have one home, Settings > Devices: phones connect through the hub, no direct pairing and no pairing request', async () => {
   show('/w/DEMO/settings/devices')
   expect(await screen.findByTestId('addon-phone', {}, T)).toHaveTextContent('Phone')
-  expect(await screen.findByTestId('pair-unavailable', {}, T)).toHaveTextContent('Pairing a phone comes later. For now you approve on this computer, in the terminal.')
+  expect(await screen.findByTestId('devices-needs-hub', {}, T)).toHaveTextContent('Phones connect through your company hub')
   expect(state.host.calls.filter((c) => /pair|device/.test(c.path))).toEqual([])
   expect(state.host.posts()).toEqual([])
   expect(screen.queryByRole('button', { name: 'Create pairing link' })).toBeNull()
+  expect(screen.queryByTestId('add-phone')).toBeNull()
 })
 
 it('the old /settings/addons URL goes to the Add-ons page', async () => {

@@ -13,7 +13,7 @@ export function ticketFromHash(hash) {
 /** A relative path the hub console serves, else null (the caller shows Home). Mirrors the server's return_to rule. */
 export function safeReturn(path) {
   if (typeof path !== "string" || !RETURN.test(path) || path.startsWith("//") || path.includes("\\") || path.includes("..")) return null;
-  return path === "/" || path === "/c" || path.startsWith("/c?") ? path : null;
+  return path === "/" || path === "/phones" || path === "/c" || path.startsWith("/c?") ? path : null;
 }
 
 /** Up to two letters for a rail icon. */
@@ -65,6 +65,7 @@ export function landing(status, body) {
   const ws = openTarget(body.return_to);
   if (ws) return { kind: "forward", workspace_id: ws };
   const p = safeReturn(body.return_to);
+  if (p === "/phones") return { kind: "path", path: "/#/phones" }; // the console's Phones page (its code for a phone)
   return p && p !== "/" ? { kind: "path", path: p } : { kind: "home" };
 }
 

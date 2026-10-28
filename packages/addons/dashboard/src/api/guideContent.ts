@@ -180,7 +180,7 @@ Open **Settings** at the bottom of the sidebar.
 - **Gates**: which steps need a person, and the allowed ways to approve (see Approving things).
 - **Grants**: the access that agents currently have, and when it ends.
 - **Records**: where the history of your tickets is kept, when your host offers it.
-- **Devices**: pairing a phone. Phones come later, with the relay.
+- **Devices**: phones connect through your company hub. With a hub, **Add a phone** opens the hub's Phones page; without one, there is nothing to set up here.
 
 Changing a setting is a change like any other: you review it and approve it.
 `,

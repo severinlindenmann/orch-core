@@ -64,7 +64,24 @@ export interface HubPreview {
   rules: string[]
   /** The digest of exactly this selection; a rule removal sends it back (`expect`) and the host refuses any other. */
   plan?: string | null
+  /** The host's own review of an adding change (hub, who can read there, only the new items, what leaves). */
+  review?: HubShareReview | null
 }
+
+/** From the host's `share.preview`: every word of the review of an adding change; the page adds none. */
+export interface HubShareReview {
+  hub_id: string | null
+  audience: { read: number; edit: number; admin: number } | null
+  audience_note: string | null
+  new_count: number
+  new_more: number
+  new_items: string[]
+  leaves: string[]
+  later_edits: string | null
+}
+
+/** `POST /hub/share/rule-add` and `/hub/share/sync`: sharing more. `synced: false`: saved, sent when the hub is back. */
+export interface HubAdded { synced: boolean; pending: string | null; put: number }
 
 /**
  * `POST /hub/share/revoke` and `POST /hub/share/rule-remove`: the two share changes that only take sharing away. One

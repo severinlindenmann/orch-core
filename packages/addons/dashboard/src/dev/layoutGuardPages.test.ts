@@ -6,20 +6,10 @@ import { LAYOUT_SCENARIOS } from './layoutPreview'
 
 const guard = readFileSync(resolve(process.cwd(), 'scripts/layout-guard.mjs'), 'utf8')
 
-it('--only pair selects the pairing pages (the real-host block is entered)', () => {
-  expect(selectsRealHost(/pair/)).toBe(true)
-  expect(REAL_HOST_PAGES.filter((n) => /pair/.test(n)).length).toBeGreaterThanOrEqual(7)
+it('--only terminal selects the terminal pages (the real-host block is entered)', () => {
   expect(selectsRealHost(/terminal/)).toBe(true)
   expect(selectsRealHost(/^board$/)).toBe(false)
   expect(guard).toContain('if (selectsRealHost(ONLY)) {')
-})
-
-it('every pair layout scenario has a real-host-pair-* guard page, listed and checked', () => {
-  for (const s of LAYOUT_SCENARIOS.filter((x) => x.startsWith('pair-'))) {
-    expect(REAL_HOST_PAGES).toContain(`real-host-${s}`)
-    expect(guard).toContain(`['real-host-${s}', '${s}',`)
-  }
-  for (const n of REAL_HOST_PAGES) expect(guard, `${n} is named in the guard`).toContain(`'${n}'`)
 })
 
 it('every drop layout scenario has a real-host-drop-* guard page, listed and checked', () => {

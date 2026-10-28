@@ -273,10 +273,15 @@ def test_enabled_update_is_a_separate_grant_with_required_digest_and_caps():
 
 @pytest.mark.parametrize("state", ["active", "disabled", "not_granted", "purged", "broken"])
 def test_market_update_requires_enabled_addon_at_prepare(state):
-    body = parse({
-        "action": "market_update", "name": "echo", "staged": STAGE,
-        "digest": "sha256:" + "a" * 64, "caps": ["network"],
-    })
+    body = parse(
+        {
+            "action": "market_update",
+            "name": "echo",
+            "staged": STAGE,
+            "digest": "sha256:" + "a" * 64,
+            "caps": ["network"],
+        }
+    )
     calls = []
 
     def call(op):

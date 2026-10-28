@@ -8,7 +8,7 @@ import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { parseRoute } from "./route.js";
 import { homeView, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
-import { accountView } from "./account.js";
+import { accountFromWorkspaceView, accountView } from "./account.js";
 import { skillsPage } from "./skills.js";
 import { mcpPage } from "./mcp.js";
 import { spacesPage } from "./spaces.js";
@@ -499,7 +499,11 @@ async function account() {
     if (!(await refresh())) return loginView();
     state.menu = false;
     await loadRail();
+    const fromWorkspace = { signInAgain: async () => { await api("DELETE", "/session"); clearSession(); loginView(); } };
+    // a session that came from a workspace may not read or change the account: a plain line, not an error
+    if (state.user.needs_sign_in) return shell("account", accountFromWorkspaceView(state.user, fromWorkspace));
     const r = await api("GET", "/me/channels");
+    if (r.status === 403 && r.body?.error === "reauth_required") return shell("account", accountFromWorkspaceView(state.user, fromWorkspace));
     if (r.status !== 200) return shell("account", h("h1", { text: "Account" }), banner("bad", "Cannot read your phones and browsers", "Please try again."));
     const security = { // M2-6: the person's own password, authenticator and sessions (the hub refuses a switch session)
       password: (body) => api("POST", "/me/password", body),

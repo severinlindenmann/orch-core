@@ -206,6 +206,14 @@ def handle_settings(ctx: Context, args: dict[str, Any]) -> Result:
     refusal = settings_needs.clear_refusal(changes, h.store.state.workspace.addons)  # AE4: never on without settings
     if refusal is not None:
         raise OrchError("invalid.input", refusal)
+    if isinstance(changes.get("publish"), dict):  # where files go: the host's own origin check, whoever asked
+        from orch.wsproto import wire
+
+        for key in ("server", "share"):
+            try:
+                wire.check_origin(changes["publish"][key])
+            except wire.WireError:
+                raise OrchError("invalid.input", f"publish {key} is not a valid address") from None
     for name, spec in (changes.get("repos") or {}).items():  # the host's own look at a path, before anything is signed
         if spec is not None:
             try:

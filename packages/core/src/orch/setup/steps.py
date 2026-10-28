@@ -174,7 +174,7 @@ class Secrets:
             if self.dead:
                 return []
             code = bytes(self._code).decode("ascii")
-            return [bytes(self._pass).decode("ascii"), code, *code.split()]
+            return [bytes(self._pass).decode("ascii"), code, *map(Word, code.split())]
 
     def _wipe(self) -> None:
         _wipe(self._pass)
@@ -234,6 +234,22 @@ def _b64_forms(b: bytes) -> list[str]:
     return out
 
 
+#: A filesystem path in error text ("/home/x/.config/orch/person", "~/.orch/key"): two or more segments after a leading
+#: "/" or "~/". Directory and file names are ordinary words that a 24-word recovery code (or a passphrase word) matches
+#: by chance, about once in fifty setups, so they must not make an error unreadable.
+_PATH = re.compile(r"(?<![\w/])(?:~|\.{0,2})/(?:[\w.@+%~-]*/)+[\w.@+%~-]*")
+
+
+def _without_paths(text: str) -> str:
+    return _PATH.sub(" ", text)
+
+
+class Word(str):
+    """One word of the recovery code: matched like the secret it is, but not inside a filesystem path."""
+
+    __slots__ = ()
+
+
 def contains_secret(text: str, secrets: Iterable[str]) -> bool:
     """True when ``text`` holds a secret. For each secret (the passphrase, the recovery code, each recovery word):
 
@@ -246,13 +262,21 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
     Fails closed on odd input: a non-str secret is ignored, never raised on."""
     texts = {text, urllib.parse.unquote(text), urllib.parse.unquote_plus(text)}
     forms = [_forms(t) for t in texts]
-    toks = [set(_tokens(t)) for t in texts]
+    # single words and word pairs are ignored inside a filesystem path; the whole secret and
+    # every encoding are still checked against the complete text above
+    plain = [_without_paths(t) for t in texts]
+    toks = [set(_tokens(t)) for t in plain]
+    plain_an = [_forms(t)[1] for t in plain]
     raw_nows = ["".join(t.split()) for t in texts]
+    plain_forms = [_forms(t) for t in plain]
+    plain_nows = ["".join(t.split()) for t in plain]
     for sec in secrets:
         if not isinstance(sec, str) or not sec.strip():
             continue
         s_ws, s_an = _forms(sec)
-        for t_ws, t_an in forms:
+        # one recovery word (a Word) is, like the single-word rule below, not looked for inside a path
+        forms_, raw_nows_ = (plain_forms, plain_nows) if isinstance(sec, Word) else (forms, raw_nows)
+        for t_ws, t_an in forms_:
             if len(s_ws) >= _MIN_SECRET and s_ws in t_ws:
                 return True
             if len(s_an) >= _MIN_SECRET and s_an in t_an:
@@ -263,19 +287,19 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
                 return True
         for w1, w2 in zip(words, words[1:], strict=False):
             pair = w1 + w2
-            if len(pair) >= _MIN_SECRET and any(pair in t_an for _, t_an in forms):
+            if len(pair) >= _MIN_SECRET and any(pair in t_an for t_an in plain_an):
                 return True
         raw = sec.encode("utf-8", "replace")
         hexed = {raw.hex(), "".join(sec.split()).encode("utf-8", "replace").hex()}
-        if any(h in t_ws for h in hexed for t_ws, _ in forms):
+        if any(h in t_ws for h in hexed for t_ws, _ in forms_):
             return True
         for variant in (sec, " ".join(sec.split()), "".join(sec.split())):
             vb = variant.encode("utf-8", "replace")
             for e in _b64_forms(vb):
-                if any(e in r for r in raw_nows):
+                if any(e in r for r in raw_nows_):
                     return True
             for q in (urllib.parse.quote(variant), urllib.parse.quote_plus(variant)):
-                if len(q) >= _MIN_SECRET and any(q.lower() in t_ws for t_ws, _ in forms):
+                if len(q) >= _MIN_SECRET and any(q.lower() in t_ws for t_ws, _ in forms_):
                     return True
     return False
 

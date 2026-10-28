@@ -213,7 +213,7 @@ def test_i5_the_review_says_the_start_is_not_signed_and_names_the_grant(human, t
     notes = sequence.build_content(first, verified=True)["notes"]
     joined = "\n".join(notes)
     assert "Not signed: the agent start" in joined
-    assert "Agents may work on any ticket they are allowed to work on" in joined and "GRANT" in joined
+    assert "Agents may work on any ticket they are allowed to work on" in joined and "Typed word" not in joined and "GRANT" not in joined
     assert "Nothing here approves the requirements or the plan" in joined
     assert any("5 steps" in n for n in notes)
     assert "Create DEMO-" in content["headline"]

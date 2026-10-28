@@ -53,6 +53,14 @@ try {
   await page.getByRole("heading", { name: "Hand-offs between workspaces" }).waitFor();
   await page.locator("#handoffs-empty").waitFor();
   await shot("workspaces");
+  await page.getByRole("button", { name: "Connect a workspace" }).click();
+  await page.getByText("30 minutes").first().waitFor();
+  await page.getByRole("button", { name: "Everything" }).first().click();
+  await page.getByText("Suggested: Everything").waitFor();
+  await shot("workspaces-connect");
+  await page.getByRole("button", { name: "Details" }).first().click();
+  await page.getByText("To change what this workspace shares").waitFor();
+  await shot("workspaces-details");
   assert(problems.length === 0, "CSP or script problems: " + problems.join("; "));
   console.log("R11 browser: ok");
 } finally {

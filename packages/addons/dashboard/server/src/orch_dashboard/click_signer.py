@@ -35,6 +35,7 @@ TIMEOUT = {
     "sign": 60.0,
     "cancel": 30.0,
     "cancel_holds": 8.0,
+    "session_alive": 2.0,
     "stash": 30.0,
     "custody_on": 60.0,
     "custody_off": 60.0,
@@ -282,6 +283,16 @@ class Signer:
             self._drop()
 
     # -- calls -----------------------------------------------------------------------------------------------------
+    def session_alive(self, session: str, live: Callable[[], bool]) -> None:
+        """Never queue a renewal behind IPC; recheck session liveness after taking the channel."""
+        if not self.chan.acquire(blocking=False):
+            return
+        try:
+            if live():
+                self._call("session_alive", {"session": session})
+        finally:
+            self.chan.release()
+
     def call(self, op: str, args: dict, lost: "HostError | None" = None) -> dict:
         """One request on the channel (one at a time). See `_call`."""
         with self.chan:

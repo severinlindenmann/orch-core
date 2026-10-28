@@ -3700,3 +3700,66 @@ def test_agent_access_cannot_be_hidden_in_a_daily_sequence(client, token, stub, 
     assert res.status_code == 409, res.text
     assert res.json()["error"]["reason"] == "terminal_only"
     assert not [call for child in script.clients for call in child.calls if call[0] == "prepare"]
+
+
+def test_d5_logout_everywhere_continues_after_callback_failure(client, token, stub, script, auth):
+    other = other_session(client, auth)
+    prepare(client, other, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    pending = set()
+
+    def delayed(op, args):
+        if op == "sign":
+            pending.add(args["session"])
+            return {"state": "held", "deadline_ms": 10000}
+        if op == "cancel_holds":
+            pending.discard(args["session"])
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(other)
+    )
+    assert result.status_code == 200
+    cleanup = auth.on_session_end
+    seen = []
+
+    def end(value):
+        seen.append(value)
+        if value == token:
+            raise RuntimeError("first cleanup failed")
+        cleanup(value)
+
+    auth.on_session_end = end
+    auth.logout_everywhere(kind=auth.login_kind(token))
+    assert seen == [token, other]
+    assert not pending
+    assert not auth.ending
+
+
+def test_d5_background_renews_only_live_holds(client, token, stub, script, auth):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    renewed = threading.Event()
+    finished = threading.Event()
+
+    def delayed(op, args):
+        if op == "sign" or (op == "status" and args.get("request_id")):
+            return {"state": "submitted" if finished.is_set() else "held", "deadline_ms": 10000}
+        if op == "session_alive":
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            renewed.set()
+            return {"state": "alive"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code == 200
+    assert renewed.wait(3)
+    finished.set()
+    renewed.clear()
+    assert not renewed.wait(2.5)
+    auth.logout(token)

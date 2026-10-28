@@ -114,6 +114,7 @@ OPS = (
     "sign",
     "cancel",
     "cancel_holds",
+    "session_alive",
     "status",
     "custody_on",
     "custody_off",

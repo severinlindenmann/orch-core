@@ -226,6 +226,7 @@ class ClickSigner:
         self._token_offers: dict[tuple[str, str], tuple[sealed.Recipient, str, float]] = {}
         self.lock = threading.RLock()
         self.holds: dict[tuple[str, str], dict[str, Any]] = {}
+        self.leases: dict[str, float] = {}
         self.busy = False
         #: page keys reserved at prepare, each for one approval (workspace, request): one key, one request, one seal
         #: (sealed-field contract §3)
@@ -834,7 +835,11 @@ class ClickSigner:
             return {"state": state}
         if args.get("session") != hold["session"]:
             raise ClickError("hold.session", "only the preparing session may use this hold")
-        return {"state": hold["state"], "deadline_ms": int(hold["deadline"] * 1000)}
+        return {
+            "state": hold["state"],
+            "deadline_ms": int(hold["deadline_wall"] * 1000),
+            **({"reason": hold["reason"]} if "reason" in hold else {}),
+        }
 
     def run_holds(self) -> None:
         """Called by the channel loop even with no browser connected. One FIFO per workspace.
@@ -847,12 +852,18 @@ class ClickSigner:
             for key, hold in list(self.holds.items()):
                 if hold["state"] != "held" or key[0] in blocked:
                     continue
-                if self.wall() < hold["deadline"]:
+                if self.mono() < hold["deadline"]:
                     blocked.add(key[0])
+                    continue
+                if not self.lease_fresh(hold["session"]):
+                    hold.update(state="cancelled", reason="session", finished_at=self.wall())
+                    approval = self.approvals.get(key)
+                    if approval:
+                        self._drop(approval)
                     continue
                 self.busy = True
                 try:
-                    if self.wall() - hold["deadline"] > 30:
+                    if self.mono() - hold["deadline"] > 30:
                         raise ClickError("hold.late", "not sent: deadline missed")
                     self._sign(hold["args"])
                     hold["state"] = "submitted"
@@ -944,11 +955,13 @@ class ClickSigner:
                 raise ClickError("hold.full", "at most 20 held intents per person")
             self.holds[(approval.workspace_id, rid)] = {
                 "state": "held",
-                "deadline": self.wall() + 10,
+                "deadline": self.mono() + 10,
+                "deadline_wall": self.wall() + 10,
                 "person": person,
                 "session": approval.session,
                 "args": dict(args),
             }
+            self.session_alive({"session": approval.session})
             return self.hold_status(args)
         self._key_ready(entry, backend)  # before every claim, on every sign path (single, sequence, deposit, reveal)
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
@@ -1476,12 +1489,26 @@ class ClickSigner:
         self._note("uncertain", workspace=approval.workspace_id, request=approval.request_id, code=exc.code)
         raise refused("uncertain", f"{exc.code}; the request is {state}") from None
 
+    def session_alive(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Renew the dashboard session lease; registration also renews it."""
+        session = args.get("session")
+        if not isinstance(session, str) or not session:
+            raise ClickError("invalid.input", "session is required")
+        with self.lock:
+            self.leases = {s: until for s, until in self.leases.items() if until > self.mono()}
+            self.leases[session] = self.mono() + 3
+        return {"state": "alive"}
+
+    def lease_fresh(self, session: str) -> bool:
+        return self.mono() < self.leases.get(session, float("-inf"))
+
     def cancel_holds(self, args: Mapping[str, Any]) -> dict[str, Any]:
         """Forget every unsigned hold of a session, without waiting on the host."""
         session = args.get("session")
         if not isinstance(session, str) or not session:
             raise ClickError("invalid.input", "session is required")
         with self.lock:
+            self.leases.pop(session, None)
             for key, hold in list(self.holds.items()):
                 if hold["session"] != session or hold["state"] != "held":
                     continue
@@ -2344,6 +2371,7 @@ class ClickSigner:
             "sign": self.sign,
             "cancel": self.cancel,
             "cancel_holds": self.cancel_holds,
+            "session_alive": self.session_alive,
             "custody_on": self.custody_on,
             "custody_off": self.custody_off,
             "rotate": self.rotate,

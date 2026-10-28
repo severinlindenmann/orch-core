@@ -2107,3 +2107,11 @@ Decision: Require click contract 4 on every click route; validate the relay's ri
 Why: Stale pages must not sign without the risk review; fixtures must reflect the real signer's operation classes. Risk lines must stay on screen throughout the dwell.
 
 Revert: Restore the prior gate only together with a coordinated click contract change in core, server, and client.
+
+## 2026-10-28 — D5 third review: signer-enforced session leases
+
+**Decision:** Holds use monotonic deadlines and require a fresh three-second session lease in the signer. Registration renews it; the dashboard renews every two seconds while that session has live holds. Logout stops renewal and sends best-effort cancellation without waiting for the admission gate. Restart on cancellation failure is a backstop. Cleanup failures are isolated per token.
+
+**Why:** A blocked or lost cancellation must not be the mechanism that prevents a disconnected session's holds from signing. Queued input is drained before deadlines; stale leases cancel unsigned holds locally.
+
+**Revert:** Revert the lease protocol and renewal loop together only when replacing them with another signer-enforced liveness boundary.

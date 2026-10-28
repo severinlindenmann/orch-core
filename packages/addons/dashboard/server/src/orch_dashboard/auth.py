@@ -148,6 +148,8 @@ class Auth:
             for token in ended:
                 try:
                     self.on_session_end(token)
+                except Exception:  # one failed cleanup must not prevent other sessions ending
+                    continue
                 finally:
                     with self.lock:
                         self.ending.discard(token)

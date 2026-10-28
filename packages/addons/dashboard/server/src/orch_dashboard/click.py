@@ -434,12 +434,63 @@ def register(app: FastAPI, gateway: Gateway):
 
     clicks = app.state.clicks = Clicks()
     failed_bumps: dict[str, int] = {}
-    hold_gate = threading.Lock()  # serialize hold admission with session cancellation, never under auth.lock
+    hold_gate = threading.Lock()  # serialize admission only; logout never waits for it
     held: dict[str, tuple[str, str]] = {}  # request -> (workspace, preparing session); no signed bytes
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
     signer = gateway.click
     signer.unsettled = handoffs.any_unsettled  # a hung signer is not replaced while a signature may be mid-submit
     STATES = ("prepared", "bound", "submitted", "cancelled", "expired")
+
+    lease_workers: set[str] = set()
+
+    def renew_session(token: str) -> None:
+        auth = app.state.auth
+
+        def live() -> bool:
+            with auth.lock:
+                return (
+                    token in auth.sessions
+                    and token not in auth.ending
+                    and any(owner == token for _, owner in list(held.values()))
+                )
+
+        try:
+            while not threading.Event().wait(2):
+                if not auth.valid(token, touch=False):
+                    return
+                with auth.lock:
+                    if token in auth.ending:
+                        return
+                    pending = [(rid, ws) for rid, (ws, owner) in list(held.items()) if owner == token]
+                if not pending:
+                    return
+                try:
+                    for rid, ws in pending:
+                        state = signer.call(
+                            "status",
+                            {
+                                "workspace_id": ws,
+                                "request_id": rid,
+                                "session": hashlib.sha256(token.encode()).hexdigest(),
+                            },
+                        )
+                        if state.get("state") != "held":
+                            held.pop(rid, None)
+                    if not live():
+                        return
+                    signer.session_alive(hashlib.sha256(token.encode()).hexdigest(), live)
+                except Exception:  # no renewal on channel failure: the signer lease expires
+                    return
+        finally:
+            with auth.lock:
+                lease_workers.discard(token)
+
+    def start_renewing(token: str) -> None:
+        with app.state.auth.lock:
+            if token in lease_workers:
+                return
+            lease_workers.add(token)
+            threading.Thread(target=renew_session, args=(token,), daemon=True).start()
 
     def ready(step: dict) -> dict:
         """A remote session's call goes to a signer that checks the passkey itself (`remote`, `stepup`), or to none: an
@@ -1067,7 +1118,7 @@ def register(app: FastAPI, gateway: Gateway):
             elif body.sealed is not None:
                 raise fail("invalid.input", "only a hub step takes a sealed value", exit=1)
             if body.delay_s:
-                # Logout marks ending before it waits for this gate; IPC never holds auth.lock.
+                # Logout marks ending independently of this gate; IPC never holds auth.lock.
                 auth = app.state.auth
                 if not auth.valid(request.state.token, touch=False):
                     raise fail("session.ended", exit=2)
@@ -1076,6 +1127,7 @@ def register(app: FastAPI, gateway: Gateway):
                         if request.state.token in auth.ending or request.state.token not in auth.sessions:
                             raise fail("session.ended", exit=2)
                         held[rid] = (ws, request.state.token)
+                    start_renewing(request.state.token)
                     got = signer.call("sign", sent, lost=lost_sign())
                     if got.get("state") != "held":
                         held.pop(rid, None)
@@ -1176,15 +1228,18 @@ def register(app: FastAPI, gateway: Gateway):
     def cancel_session(token: str):
         """Logout: the click requests this session left open are cancelled (best effort, each on its own), except one
         whose signature is unknown and one another session of the person holds too."""
-        with hold_gate:
+        # Stop renewal before any potentially blocked IPC. The signer's lease is the safety boundary.
+        for rid, (_, owner) in list(held.items()):
+            if owner == token:
+                held.pop(rid, None)
+                clicks.forget(rid)
+        try:
+            signer.call("cancel_holds", {"session": hashlib.sha256(token.encode()).hexdigest()})
+        except Exception:  # restart is only a backstop; safety does not depend on success
             try:
-                signer.call("cancel_holds", {"session": hashlib.sha256(token.encode()).hexdigest()})
-            except Exception:  # noqa: BLE001 - an unacknowledged cancel must destroy the unsigned queue
                 signer.restart()
-            for rid, (_, owner) in list(held.items()):
-                if owner == token:
-                    held.pop(rid, None)
-                    clicks.forget(rid)
+            except Exception:
+                pass
         for rid, ws in handoffs.held(token, "click"):
             if handoffs.is_unsettled(rid):
                 continue  # logout never cancels a signature whose outcome is unknown

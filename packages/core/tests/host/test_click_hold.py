@@ -1,4 +1,4 @@
-"""D5: unsigned signer holds, wall clock, FIFO, cancellation and deadline checks."""
+"""D5: unsigned signer holds, monotonic clock, FIFO, cancellation and deadline checks."""
 
 import threading
 
@@ -59,6 +59,7 @@ def test_cancel_at_99_and_session_binding(click, human, served):
     refused(lambda: cancel(click, rid, "other-session"), "hold.session")
     assert cancel(click, rid)["state"] == "cancelled"
     advance(click, 1)
+    click.signer.session_alive({"session": "session-a"})
     click.signer.run_holds()
     assert click.signatures == 0
     assert pending(served, rid)["state"] == "cancelled"
@@ -68,7 +69,9 @@ def test_browser_absent_deadline_signs_once(click, human, served):
     rid, digest = hold(click, human)
     sign(click, rid, digest)
     advance(click, 10)
+    click.signer.session_alive({"session": "session-a"})
     click.signer.run_holds()  # no browser call drives signing
+    click.signer.session_alive({"session": "session-a"})
     click.signer.run_holds()
     assert click.signatures == 1
     assert pending(served, rid)["state"] == "submitted"
@@ -84,6 +87,7 @@ def test_cancel_deadline_race(click, human, served):
 
     def deadline():
         gate.wait()
+        click.signer.session_alive({"session": "session-a"})
         click.signer.run_holds()
 
     thread = threading.Thread(target=deadline)
@@ -100,6 +104,7 @@ def test_sleep_drops_and_restart_has_no_signature(click, human, served):
     rid, digest = hold(click, human)
     sign(click, rid, digest)
     advance(click, 40.1)
+    click.signer.session_alive({"session": "session-a"})
     click.signer.run_holds()
     assert click.signatures == 0
     args = {"workspace_id": served.wid, "request_id": rid, "session": "session-a"}
@@ -120,6 +125,7 @@ def test_deadline_rechecks_custody(click, human):
     sign(click, rid, digest)
     click.gen += 1
     advance(click, 10)
+    click.signer.session_alive({"session": "session-a"})
     click.signer.run_holds()
     assert click.signatures == 0
     assert next(iter(click.signer.holds.values()))["state"] == "not_sent"
@@ -135,9 +141,11 @@ def test_fifo_even_if_later_deadline_is_earlier(click, human, monkeypatch):
     seen = []
     monkeypatch.setattr(click.signer, "_sign", lambda args: seen.append(args["request_id"]))
     advance(click, 6)
+    click.signer.session_alive({"session": "session-a"})
     click.signer.run_holds()
     assert seen == []
     advance(click, 4)
+    click.signer.session_alive({"session": "session-a"})
     click.signer.run_holds()
     assert seen == [first, second]
 
@@ -206,8 +214,10 @@ def test_deadline_checks_host_state_and_does_not_retry(click, human, monkeypatch
 
     monkeypatch.setattr(click.signer, "_fetch", changed)
     advance(click, 10)
+    click.signer.session_alive({"session": "session-a"})
     click.signer.run_holds()
     monkeypatch.setattr(click.signer, "_fetch", original)
+    click.signer.session_alive({"session": "session-a"})
     click.signer.run_holds()
     assert calls == [1]
     assert click.signatures == 0
@@ -236,12 +246,13 @@ def test_signer_process_deadline_without_browser_and_kill(tmp_path, kill):
         from orch.click.signer import ClickSigner
         from orch.click.server import serve
         signer = ClickSigner(Path(sys.argv[2]))
-        start = time.time()
+        start = time.monotonic()
         signer.holds[('a' * 32, 'hr_' + '0' * 26)] = {
-            'state': 'held', 'deadline': start + 10, 'session': 's', 'person': 'p', 'args': {},
+            'state': 'held', 'deadline': start + 10, 'deadline_wall': time.time() + 10,
+            'session': 's', 'person': 'p', 'args': {},
         }
         def sign(args):
-            Path(sys.argv[3]).write_text(str(time.time() - start))
+            Path(sys.argv[3]).write_text(str(time.monotonic() - start))
         signer._sign = sign
         print('ready', flush=True)
         serve(socket.socket(fileno=int(sys.argv[1])), signer)
@@ -261,7 +272,10 @@ def test_signer_process_deadline_without_browser_and_kill(tmp_path, kill):
             proc.wait(timeout=5)
             assert not marker.exists()
         else:
-            time.sleep(10.3)  # no request, poll or browser drives the deadline
+            for _ in range(5):
+                client.call("session_alive", {"session": "s"})
+                time.sleep(2)
+            time.sleep(0.3)
             state = client.call("status", {"workspace_id": "a" * 32, "request_id": "hr_" + "0" * 26, "session": "s"})
             assert state["state"] == "submitted"
             assert 10 <= float(marker.read_text()) < 11
@@ -276,6 +290,7 @@ def test_restart_after_delivery_reports_submitted(click, human, served):
     rid, digest = hold(click, human)
     sign(click, rid, digest)
     advance(click, 10)
+    click.signer.session_alive({"session": "session-a"})
     click.signer.run_holds()
     assert click.signatures == 1
     click.close()
@@ -305,15 +320,18 @@ def test_finished_holds_are_swept_without_blocking_new_work(click, human, monkey
 
                 monkeypatch.setattr(click.signer, "_sign", lost)
             advance(click, 41 if outcome == "not_sent" else 10)
+            click.signer.session_alive({"session": "session-a"})
             click.signer.run_holds()
             if outcome == "unknown":
                 monkeypatch.undo()
                 monkeypatch.setattr("orch.click.signer.MAX_APPROVALS", 1)
         assert click.signer.holds[key]["state"] == outcome
         advance(click, 59)
+        click.signer.session_alive({"session": "session-a"})
         click.signer.run_holds()
         assert key in click.signer.holds
         advance(click, 1)
+        click.signer.session_alive({"session": "session-a"})
         click.signer.run_holds()
         assert not click.signer.holds
     rid, digest = hold(click, human)
@@ -340,6 +358,7 @@ def test_cancel_all_unsigned_holds_by_session(click, human):
     click.signer.holds[(click.served.wid, second)]["session"] = "other"
     assert click.signer.handle("cancel_holds", {"session": "session-a"}) == {"state": "cancelled"}
     advance(click, 10)
+    click.signer.session_alive({"session": "other"})
     click.signer.run_holds()
     assert click.signatures == 1
     assert click.signer.holds[(click.served.wid, first)]["state"] == "cancelled"
@@ -358,3 +377,85 @@ def test_risk_lines_disable_hold(click, human, monkeypatch):
     rid, digest = hold(click, human)
     refused(lambda: sign(click, rid, digest), "hold.not_allowed")
     assert click.signatures == 0
+
+
+@pytest.mark.parametrize("wall_jump", [-3600, 3600])
+def test_stale_session_drops_at_monotonic_deadline_before_cancel(click, human, wall_jump):
+    rid, digest = hold(click, human)
+    sign(click, rid, digest)
+    click.served.lab.ws.clock[0] += wall_jump
+    click.mono.t += 10
+    # Cancellation has not reached the signer. No channel delivery or restart is needed.
+    click.signer.run_holds()
+    assert click.signatures == 0
+    status = click.signer.hold_status(
+        {
+            "workspace_id": click.served.wid,
+            "request_id": rid,
+            "session": "session-a",
+        }
+    )
+    assert status["state"] == "cancelled"
+    assert status["reason"] == "session"
+    click.signer.session_alive({"session": "session-a"})
+    click.signer.run_holds()
+    assert click.signatures == 0
+
+
+def test_channel_drains_cancel_queued_during_dispatch_before_deadline(monkeypatch):
+    import socket
+
+    from orch.click.server import serve
+    from orch.host import frames
+
+    parent, child = socket.socketpair()
+    dispatched = []
+    checked = threading.Event()
+
+    class Signer:
+        def handle(self, op, args):
+            dispatched.append(op)
+            if op == "status":
+                # Arrives during dispatch, so it was not in the first recv's decoded batch.
+                parent.sendall(frames.encode({"t": "req", "id": "2", "op": "cancel_holds", "args": {"session": "a"}}))
+            return {}
+
+        def run_holds(self):
+            assert dispatched == ["status", "cancel_holds"]
+            checked.set()
+
+    parent.sendall(frames.encode({"t": "req", "id": "1", "op": "status", "args": {}}))
+    thread = threading.Thread(target=serve, args=(child, Signer()))
+    thread.start()
+    try:
+        assert checked.wait(2)
+    finally:
+        parent.shutdown(socket.SHUT_WR)
+        thread.join(2)
+        parent.close()
+        child.close()
+    assert not thread.is_alive()
+
+
+def test_blocked_cancel_cannot_keep_session_hold_alive(click, human):
+    rid, digest = hold(click, human)
+    sign(click, rid, digest)
+    release = threading.Event()
+    queued = threading.Event()
+
+    def blocked_cancel():
+        queued.set()
+        assert release.wait(2)
+        click.signer.cancel_holds({"session": "session-a"})
+
+    thread = threading.Thread(target=blocked_cancel)
+    thread.start()
+    try:
+        assert queued.wait(1)
+        advance(click, 10)
+        click.signer.run_holds()
+        assert click.signatures == 0
+        assert click.signer.holds[(click.served.wid, rid)]["reason"] == "session"
+    finally:
+        release.set()
+        thread.join(2)

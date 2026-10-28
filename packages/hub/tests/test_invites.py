@@ -110,7 +110,8 @@ def db_bytes(path) -> bytes:
     for suffix in ("", "-wal", "-journal"):
         p = str(path) + suffix
         if os.path.exists(p):
-            out += open(p, "rb").read()
+            with open(p, "rb") as fh:
+                out += fh.read()
     return out
 
 
@@ -265,7 +266,7 @@ def test_join_makes_a_usable_account_and_the_admin_never_sees_a_secret(w):
     uid = got["user_id"]
     assert got["totp_secret"] and got["totp_uri"].startswith("otpauth://")
     # sign in by name with the password the person chose and the code from their own secret
-    s, o, h = sign_in_as(w, "dora", NEW_PW, got["totp_secret"])
+    s, o, _h = sign_in_as(w, "dora", NEW_PW, got["totp_secret"])
     assert s == 200 and o["user_id"] == uid
     # condition 4: no group, no role anywhere, not an admin
     (me,) = [u for u in w.env.acc.users() if u["user_id"] == uid]
@@ -349,7 +350,7 @@ def test_reset_with_a_live_channel_needs_a_proof_from_that_channel(w):
 
 
 def test_a_challenge_is_bound_to_its_link_and_expires_in_five_minutes(w):
-    signer, cid = with_channel(w, w.ann)
+    signer, _cid = with_channel(w, w.ann)
     tok = issue(w, w.ann)
     ch = peek(w, tok)[1]["challenge"]
     w.clock.advance(5 * 60_000 + 1)
@@ -366,8 +367,8 @@ def test_a_challenge_is_bound_to_its_link_and_expires_in_five_minutes(w):
 
 
 def test_recovery_link_revokes_every_channel_and_leaves_a_note_and_a_record(w):
-    s1, c1 = with_channel(w, w.ann)
-    s2, c2 = with_channel(w, w.ann)
+    _s1, c1 = with_channel(w, w.ann)
+    _s2, c2 = with_channel(w, w.ann)
     old = w.login(w.ann)
     tok = issue(w, w.ann, recovery=True)
     s, p, _ = peek(w, tok)
@@ -386,7 +387,7 @@ def test_recovery_link_revokes_every_channel_and_leaves_a_note_and_a_record(w):
     revokes = [e for _s, _r, e in w.env.audit.store.after(0, 1000) if e.get("change") == "revoke"]
     assert {e["channel_id"] for e in revokes} == {c1, c2}
     # the person's first screen after signing in carries the notice, and dismissing clears it
-    s, o, h = sign_in_as(w, w.ann, NEW_PW, got["totp_secret"])
+    s, _o, h = sign_in_as(w, w.ann, NEW_PW, got["totp_secret"])
     assert s == 200
     tok2 = h["Set-Cookie"].split(";")[0].split("=", 1)[1]
     w.browser_tokens.add(tok2)
@@ -407,7 +408,7 @@ def test_a_reset_for_a_person_with_no_live_channel_is_a_recovery(w):
 
 
 def test_a_channel_revoked_or_added_after_the_link_changes_the_rule_at_redeem_time(w):
-    signer, cid = with_channel(w, w.ann)
+    _signer, cid = with_channel(w, w.ann)
     tok = issue(w, w.ann)
     assert peek(w, tok)[1]["needs_proof"] is True
     w.call("POST", f"/channels/{cid}/revoke", token=w.login(w.ann))  # her last device is removed meanwhile
@@ -445,8 +446,8 @@ def _count_hashing(monkeypatch):
 
 def test_disable_takes_effect_everywhere_at_once(w, monkeypatch):
     tok = w.login(w.ann)
-    signer, cid = with_channel(w, w.ann)
-    s, prep, _ = w.call(
+    _signer, cid = with_channel(w, w.ann)
+    s, _prep, _ = w.call(
         "POST", "/sign/prepare", {"workspace_id": WS, "channel_id": cid, "action": dict(ACTION)}, token=tok
     )
     assert s == 200 and w.api._prepared and w.engine._pending
@@ -488,7 +489,7 @@ def test_disable_takes_effect_everywhere_at_once(w, monkeypatch):
     assert right[:2] == wrong[:2] == (401, {"error": "bad_credentials"})
     assert n_wrong >= 1 and len(calls) == 2 * n_wrong
     # listed as disabled
-    row = [u for u in w.call("GET", "/admin/users", token=atok)[1]["users"] if u["user_id"] == w.ann][0]
+    row = next(u for u in w.call("GET", "/admin/users", token=atok)[1]["users"] if u["user_id"] == w.ann)
     assert row["disabled"] is True
     # activity
     ev = [e for e in w.api.d.activity.list(limit=200) if e["type"] == "user.disabled"]
@@ -504,7 +505,7 @@ def test_a_disabled_user_cannot_prepare_or_sign_even_with_a_stale_channel(w):
     assert s == 200
     w.env.acc.set_disabled(w.ann, True)  # the flag alone: no channel revoked, no session ended, nothing voided
     assert w.env.svc.active_channel(w.ann, cid) is None  # the stale channel is not live
-    s, o, _ = w.call(
+    s, _o, _ = w.call(
         "POST",
         "/sign/sign",
         {"prepared_id": prep["prepared_id"], "channel_id": cid, "channel_proof": w.proof(signer, prep["digest"])},
@@ -582,7 +583,7 @@ def test_every_invite_event_is_recorded_with_references_only(w):
     atok = w.login(w.admin)
     tok = invite_join(w, "frank")
     got = redeem(w, tok)[1]
-    signer, cid = with_channel(w, w.ann)
+    signer, _cid = with_channel(w, w.ann)
     rt = issue(w, w.ann)
     ch = peek(w, rt)[1]["challenge"]
     assert redeem(w, rt, proof=make_proof(signer, ch, rt))[0] == 200

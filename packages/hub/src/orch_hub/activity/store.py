@@ -42,6 +42,7 @@ DETAIL_FIELDS = frozenset(
         "requested_by_agent_session",
         "approved_by",
         "count",
+        "groups_removed",
     }
 )
 FIELDS = [
@@ -116,7 +117,12 @@ class ActivityLog:
         if not isinstance(detail, dict) or detail.keys() - DETAIL_FIELDS:
             raise ValueError("activity detail accepts references only")
         for key, value in detail.items():
-            if key == "count":
+            if key == "groups_removed":  # the names of the hub groups a disabled person was taken out of
+                if not isinstance(value, list) or len(value) > 32:
+                    raise ValueError("invalid group list")
+                for name in value:
+                    bounded(name)
+            elif key == "count":
                 if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value < 2**63:
                     raise ValueError("invalid count")
             else:

@@ -55,6 +55,11 @@ def clean_reason(x: object) -> str:
     return s
 
 
+def _canon(delta: list[dict[str, str]]) -> list[dict[str, str]]:
+    """A delta in ONE order (person, then role), so two equal deltas compare equal whatever order they were built in."""
+    return sorted(delta, key=lambda d: (d["user_id"], d["role"]))
+
+
 class Changes:
     def __init__(
         self,
@@ -224,9 +229,7 @@ class Changes:
                     actor,
                     now,
                     now + TTL_MS,
-                    cj(
-                        {ws: {"delta": d, "version": versions.get(ws) or self._version(ws)} for ws, d in deltas.items()}
-                    ).decode(),
+                    cj({ws: {"delta": _canon(d)} for ws, d in deltas.items()}).decode(),
                 ),
             )
             for ws, owner in needs:
@@ -367,7 +370,7 @@ class Changes:
     def _delta_same(self, ch: dict[str, Any], ap: dict[str, Any]) -> bool:
         """The people the owner was shown are exactly who the change would add or raise NOW (recomputed, not remembered)."""
         now = R.reach_delta(self._access, self._reg, ch["kind"], json.loads(ch["body"])).get(ap["workspace_id"], [])
-        return cj(now) == cj(json.loads(ap["delta"]))
+        return cj(_canon(now)) == cj(_canon(json.loads(ap["delta"])))
 
     def _check_fresh(self, ch: dict[str, Any], ap: dict[str, Any]) -> None:
         if self._version(ap["workspace_id"]) != ap["base_snapshot_version"] or not self._delta_same(ch, ap):
@@ -519,7 +522,7 @@ class Changes:
             or not self._access.is_hub_admin(proposer)
         ):
             return reject("proposer_gone")
-        approved = {a["workspace_id"] for a in aps if a["state"] == "approved"}
+        approved = {a["workspace_id"]: a["approver_user"] for a in aps if a["state"] == "approved"}
         try:
             self._apply(ch, body, actor=proposer, approved=approved)
         except ChangeError as e:
@@ -532,7 +535,9 @@ class Changes:
         )
         return None
 
-    def _check_reach(self, ch: dict[str, Any], body: dict[str, Any], actor: str, approved: set[str] | None) -> None:
+    def _check_reach(
+        self, ch: dict[str, Any], body: dict[str, Any], actor: str, approved: dict[str, str] | None
+    ) -> None:
         """The change reaches exactly what was proposed, judged against ownership NOW (never against what it was): every
         workspace it reaches must be in the proposal's recorded reach with the SAME people (else ``stale_change``), an
         owner-less one only ever for a hub admin (``owner_unknown``), and (``approved`` given: an owner approval, not an
@@ -542,17 +547,18 @@ class Changes:
         override = approved is None  # an override reaches the owners it finds NOW (and tells them), but never an orphan
         for ws, delta in R.reach_delta(self._access, self._reg, ch["kind"], body).items():
             owner = R.owner_of(self._reg, ws)
-            known = ws in stored and cj(stored[ws]["delta"]) == cj(delta)
-            if owner is None:  # never matches the proposer exemption: hub-admin only, and only if it was proposed so
-                if ws not in stored or (not override and not known):
+            known = ws in stored and cj(_canon(stored[ws]["delta"])) == cj(_canon(delta))  # the same people as proposed
+            if owner is None:  # never matches the proposer exemption: hub-admin only, and only exactly as proposed
+                if not known:
                     raise ChangeError("stale_change")
                 if not self._access.is_hub_admin(actor):
                     raise ChangeError("owner_unknown")
             elif not override:
-                if not known or (owner != ch["proposer"] and ws not in approved):
+                # who approved must be who owns it NOW (an approval follows the person, not the workspace)
+                if not known or (owner != ch["proposer"] and approved.get(ws) != owner):
                     raise ChangeError("stale_change")
 
-    def _apply(self, ch: dict[str, Any], body: dict[str, Any], *, actor: str, approved: set[str] | None) -> None:
+    def _apply(self, ch: dict[str, Any], body: dict[str, Any], *, actor: str, approved: dict[str, str] | None) -> None:
         """Make the change. Never after its expiry, and always with the owner protection checked against the state NOW (an
         approved or overridden grant is applied as a role to SET, which could be lower than what the group holds by then)."""
         if self._now() >= ch["expires_ms"]:
@@ -638,7 +644,9 @@ class Changes:
                     != 1
                 ):
                     raise ChangeError("not_pending")
-                for ws, delta in reached.items():
+                # the notice is computed from the reach NOW, inside this transaction and right before the apply (all under
+                # Access.lock), so what the owners are told is exactly what is applied
+                for ws, delta in R.reach_delta(self._access, self._reg, ch["kind"], body).items():
                     self._owner_notice_row(db, ch["id"], ws, delta)
                 db.execute("UPDATE approval SET state='overridden' WHERE change_id=? AND state='pending'", (ch["id"],))
                 self._apply(ch, body, actor=admin, approved=None)

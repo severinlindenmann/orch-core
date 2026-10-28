@@ -9,7 +9,7 @@ import { methodLabel, type SignContent } from '@/api/signing'
 // material, the fingerprint, the code and the exact terminal command, and follows the outcome (design 4).
 import { Loader2 } from 'lucide-react'
 import { Link, useRouter } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
@@ -21,6 +21,8 @@ import { useWorkspace } from '@/app/workspace'
 import { useMe } from '@/app/useMe'
 import { alreadyDetails, alreadySigned, clickEligible, clickReady } from '@/api/click'
 import { refusalOf, refusalSentence } from '@/api/refusals'
+import { scheduleDenial } from '@/api/scheduleLead'
+import { scheduleKey, type ScheduleList } from '@/api/schedules'
 import { addFirst, missingOf } from '@/api/gates'
 import { ClickProblemBox, RefusalDevices, TechnicalDetails } from './RefusalDevices'
 import { ClickSignPanel } from './ClickSignPanel'
@@ -118,6 +120,15 @@ export interface SignPopoverProps {
   /** The press that opened this review was the deliberate gesture (a switch with One click on): sign as soon as the View is on screen, without the arming wait. Click-to-sign only; the terminal path is unchanged. */
   autoSign?: boolean
   initialFocus?: () => HTMLElement | null
+  /** The host's minimum scheduling lead in seconds, for a "too soon" refusal. Default: the schedules list's
+   * `min_lead_s` when the page has read it, else an hour. */
+  minLeadS?: number | null
+}
+
+/** The lead in seconds when known (the prop, else the schedules list already read); undefined: the default hour. */
+function knownLead(own: number | null | undefined, list: ScheduleList | undefined): number | undefined {
+  for (const v of [own, list?.min_lead_s]) if (typeof v === 'number' && v >= 0) return v
+  return undefined
 }
 
 export function SignPopover(p: SignPopoverProps) {
@@ -127,6 +138,9 @@ export function SignPopover(p: SignPopoverProps) {
     p.onSettled?.(phase, state, request)
   })
   const { phase } = run
+  // run 13: a schedule refused as too soon says the host's own lead (the server's min_lead_s), not always "1 hour"
+  const qc = useQueryClient()
+  const leadS = knownLead(p.minLeadS, p.ws ? qc.getQueryData<ScheduleList>(scheduleKey(p.ws)) : undefined)
   const { workspaces } = useWorkspace()
   // The workspace's card (the signer's flag) comes from the provider, or from the list when none wraps this dialog.
   const known = useQuery(queries.workspaces())
@@ -140,7 +154,7 @@ export function SignPopover(p: SignPopoverProps) {
   const click = useClickSign(p.ws, (_phase, state, request) => {
     if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
     p.onSettled?.('done', state, request)
-  })
+  }, leadS)
   const methods = useSignMethods(p.ws)
   const me = useMe(p.ws).data
   const router = useRouter({ warn: false }) as ReturnType<typeof useRouter> | null | undefined
@@ -276,7 +290,8 @@ export function SignPopover(p: SignPopoverProps) {
   const refusal = refusalOf(run.error)
   // B11 (#14): an incomplete gate is said in words ("Add Context and Out of scope first."), never as the raw code
   const lacking = run.error?.code === 'gate.incomplete' ? missingOf(run.error.message) : null
-  const errorText = lacking?.length ? addFirst(lacking) : run.error?.message ?? null
+  // run 13: a schedule inside the host's minimum lead is said in words, never as "schedule.denied: first occurrence ..."
+  const errorText = lacking?.length ? addFirst(lacking) : scheduleDenial(run.error?.code, run.error?.message, leadS) ?? run.error?.message ?? null
   const end = words(phase, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : errorText, run.error?.code, (run.request?.material.sequence?.intent as { kind?: unknown } | undefined)?.kind === 'new_ticket')
   // a CLI pointer ("orch describe approve") means nothing on this page
   const cliOnly = (v: unknown) => run.error?.code === 'gate.incomplete' && typeof v === 'string' && /\borch describe\b/.test(v)

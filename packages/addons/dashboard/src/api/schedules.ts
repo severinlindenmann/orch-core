@@ -56,7 +56,67 @@ export interface ScheduleList {
   can: { add: boolean; cancel: boolean }
   /** The viewer's own grant_hours cap on a run, when the server knows it (from their schedules); else null. */
   grant_hours_cap?: number | null
+  /** The host's minimum scheduling lead in seconds (core's caps of this workspace); absent from an older server. */
+  min_lead_s?: number | null
   rows: ScheduleRow[]
+}
+
+export { DEFAULT_MIN_LEAD_S, leadSentence, leadText, scheduleDenial } from './scheduleLead'
+
+/** The wall clock of a time zone at an instant: "YYYY-MM-DD" and "HH:MM" (the browser's zone if the name is unknown). */
+export function wallClock(tz: string, at: Date): { date: string; time: string } {
+  const opts: Intl.DateTimeFormatOptions = { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }
+  let parts: Intl.DateTimeFormatPart[]
+  try {
+    parts = new Intl.DateTimeFormat('en-CA', { ...opts, timeZone: tz }).formatToParts(at)
+  } catch {
+    parts = new Intl.DateTimeFormat('en-CA', opts).formatToParts(at)
+  }
+  const p = (type: string) => parts.find((x) => x.type === type)?.value ?? ''
+  return { date: `${p('year')}-${p('month')}-${p('day')}`, time: `${p('hour')}:${p('minute')}` }
+}
+
+/** The earliest start the host accepts, on the zone's wall clock: now plus the lead, rounded up to the next minute. */
+export function earliestStart(tz: string, now: Date, leadS: number): { date: string; time: string } {
+  return wallClock(tz, new Date(Math.ceil((now.getTime() + leadS * 1000) / 60_000) * 60_000))
+}
+
+/** The first time the form offers: now plus the lead, rounded up to the time picker's step (15 minutes). */
+export function firstSlot(tz: string, now: Date, leadS: number, stepMin = 15): { date: string; time: string } {
+  const step = stepMin * 60_000
+  return wallClock(tz, new Date(Math.ceil((now.getTime() + leadS * 1000) / step) * step))
+}
+
+/** The first run of the form's rule after now, as "YYYY-MM-DD HH:MM" on its zone's wall clock; null when there is none
+ * (a once-run in the past). Weekdays: Monday = 0; a monthly day past the month's end is its last day (core's rule). */
+export function firstRun(form: ScheduleForm, now: Date): string | null {
+  const t = wallClock(form.tz || 'UTC', now)
+  const current = `${t.date} ${t.time}`
+  if (form.repeat === 'once') {
+    const at = `${form.date ?? ''} ${form.time}`
+    return at > current ? at : null
+  }
+  const [y, m, d] = t.date.split('-').map(Number)
+  for (let i = 0; i < 400; i++) {
+    const day = new Date(Date.UTC(y, m - 1, d + i))
+    const dow = (day.getUTCDay() + 6) % 7
+    const dom = day.getUTCDate()
+    const last = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth() + 1, 0)).getUTCDate()
+    const hit =
+      form.repeat === 'day' ||
+      (form.repeat === 'week' && form.weekdays.includes(dow)) ||
+      (form.repeat === 'month' && (form.day === dom || (dom === last && form.day > last)))
+    const at = `${day.toISOString().slice(0, 10)} ${form.time}`
+    if (hit && at > current) return at
+  }
+  return null
+}
+
+/** The host would refuse this form: its first run is before now plus the minimum lead (or there is none). */
+export function startsTooSoon(form: ScheduleForm, now: Date, leadS: number): boolean {
+  const first = firstRun(form, now)
+  const e = earliestStart(form.tz || 'UTC', now, leadS)
+  return first === null || first < `${e.date} ${e.time}`
 }
 
 /** The line under a row for a run that was skipped, in plain words; null when the last run was not skipped. */

@@ -30,6 +30,7 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import json
+import logging
 import re
 import threading
 import time
@@ -1320,12 +1321,15 @@ class WebApi:
             raise ApiError("other_user")  # a channel session revokes its own channel only
         self.d.channels.revoke_as(c.token, p["channel_id"])  # the channel's owner, or a hub-admin (checked there)
         if self.d.activity is not None:
-            owner = next(
-                (row["user_id"] for row in self.d.channels.channels() if row["channel_id"] == p["channel_id"]), None
-            )
-            self.d.activity.record(
-                "channel.revoked", actor_id=c.user_id, subject_user=owner, detail={"channel_id": p["channel_id"]}
-            )
+            try:  # the revoke has taken effect: a failed record is logged, never turned into an error for the admin
+                owner = next(
+                    (row["user_id"] for row in self.d.channels.channels() if row["channel_id"] == p["channel_id"]), None
+                )
+                self.d.activity.record(
+                    "channel.revoked", actor_id=c.user_id, subject_user=owner, detail={"channel_id": p["channel_id"]}
+                )
+            except Exception:
+                logging.getLogger("orch_hub.webapi").exception("channel.revoked was not recorded")
         return 200, {"ok": True}
 
     # --- (d) admin console (route auth = hub-admin, checked in the pipeline) -----------------------------------------

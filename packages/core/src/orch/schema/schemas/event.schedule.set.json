@@ -429,6 +429,17 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 8
+    },
+    "target": {
+      "enum": [
+        "existing",
+        "new"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
     }
   },
   "required": [
@@ -539,7 +550,14 @@
             "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
           },
           "based_on": {
-            "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+            "oneOf": [
+              {
+                "$ref": "https://schemas.orch.dev/v2/common#/$defs/hash"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       }
@@ -607,6 +625,61 @@
             }
           }
         }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "const": "new"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "title"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "title"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "based_on": {
+            "type": "null"
+          },
+          "seq": {
+            "not": {
+              "const": 1
+            }
+          }
+        },
+        "required": [
+          "based_on",
+          "seq"
+        ]
+      },
+      "then": {
+        "properties": {
+          "target": {
+            "const": "new"
+          },
+          "seq": {
+            "const": 2
+          }
+        },
+        "required": [
+          "target"
+        ]
       }
     }
   ]

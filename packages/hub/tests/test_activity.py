@@ -160,3 +160,30 @@ def test_revoke_producer(w, admin_route):
     assert row["detail"] == {"channel_id": channel_id}
     assert owner_token not in str(row) and token not in str(row)
     assert w.api.d.activity.verify()
+
+
+def test_every_activity_type_renders_in_plain_words(w):
+    from orch_hub.activity.feed import AUDIT_WORDS, VERB_WORDS, WORDS
+    from orch_hub.activity.store import ACTIVITY_TYPES
+
+    token = w.login(w.admin)
+    for typ in ACTIVITY_TYPES:
+        w.api.d.activity.record(typ, actor_id=w.admin, subject_user=w.ann)
+    body = w.call("GET", "/admin/activity?limit=200", token=token)[1]
+    texts = {r["type"]: r["text"] for r in body["rows"] if r["id"].startswith("e:")}
+    assert set(texts) == set(ACTIVITY_TYPES)
+    assert all(texts[t] == WORDS[t] and "." not in texts[t] for t in ACTIVITY_TYPES)
+    assert set(WORDS) == set(ACTIVITY_TYPES)  # an explicit table: a new type cannot be mislabelled
+    assert body["type_words"]["custodial"] == AUDIT_WORDS["custodial"] and body["type_words"]["user.disabled"]
+    assert all("." not in v for v in VERB_WORDS.values())
+
+
+def test_a_failed_revoke_record_does_not_turn_the_revoke_into_an_error(w, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(w.api.d.activity, "record", boom)
+    owner_token = w.login(w.ann)
+    _, channel_id = w.register_channel(owner_token)
+    assert w.call("POST", f"/admin/channels/{channel_id}/revoke", {}, token=w.login(w.admin))[0] == 200
+    assert w.env.svc.channel_state(w.ann, channel_id) == "revoked"

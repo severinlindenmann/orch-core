@@ -21,16 +21,20 @@ export interface ScheduleRule {
 export interface ScheduleOutcome {
   /** The occurrence it was due, ISO UTC. */
   at: string
-  outcome: 'ran' | 'failed' | 'did_not_run'
+  outcome: 'ran' | 'ran_nothing' | 'failed' | 'did_not_run'
   reason: string | null
 }
 
 /** A row as the dashboard server sends it (`GET /api/w/{ws}/schedules`, server/schedules.py). */
 export interface ScheduleRow {
+  /** false: a row this dashboard cannot read (a newer kind of schedule); only `note` is shown. */
+  supported?: boolean
+  note?: string
   id: string
   /** The ticket key. */
   ticket: string
-  title: string | null
+  target?: 'existing' | 'new'
+  title?: string | null
   rule: ScheduleRule
   ends: string | null
   /** When it runs next, ISO UTC; null for one that is over. Absent only from a host that does not say. */
@@ -121,8 +125,10 @@ export function startsTooSoon(form: ScheduleForm, now: Date, leadS: number): boo
 
 /** The line under a row for a run that was skipped, in plain words; null when the last run was not skipped. */
 export function skippedText(last: ScheduleOutcome | null | undefined): string | null {
+  if (last?.outcome === 'ran_nothing') return 'Nothing to do'
   if (last?.outcome !== 'did_not_run') return null
   const why: Record<string, string> = {
+    skipped_open_child: 'the last ticket was still open',
     busy: 'you had work running on this ticket',
     claimed_by_other: 'someone else was working on this ticket',
     access_lost: 'you no longer have access to this ticket',
@@ -139,8 +145,9 @@ export function skippedText(last: ScheduleOutcome | null | undefined): string | 
 export const scheduleKey = (ws: string) => ['schedules', ws] as const
 
 /** The person's schedules in one workspace (`schedule.list`). */
-export function useSchedules(ws: string) {
+export function useSchedules(ws: string, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: scheduleKey(ws),
     queryFn: () => call<ScheduleList>('GET', `/api/w/${encodeURIComponent(ws)}/schedules`),
   })
@@ -179,6 +186,8 @@ export type ScheduleRepeat = 'once' | 'day' | 'week' | 'month'
 
 /** What the "Schedule a run" form holds. `date` is YYYY-MM-DD (once only), `time` is HH:MM, weekdays are Monday = 0. */
 export interface ScheduleForm {
+  target?: 'existing' | 'new'
+  title?: string
   ticket: string
   brief: string
   repeat: ScheduleRepeat
@@ -197,7 +206,7 @@ export type ScheduleAddAction = Extract<HandoffAction, { action: 'schedule_add' 
 export function scheduleAddAction(form: ScheduleForm): ScheduleAddAction {
   const action: ScheduleAddAction = {
     action: 'schedule_add',
-    key: form.ticket,
+    ...(form.target === 'new' ? { target: 'new' as const, title: form.title ?? '' } : { key: form.ticket }),
     brief: form.brief,
     at: form.repeat === 'once' ? `${form.date ?? ''} ${form.time}` : form.time,
     tz: form.tz || 'UTC',

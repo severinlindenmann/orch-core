@@ -217,6 +217,7 @@ VALUES = {
     "expires_at": "2026-10-16T17:00:00Z", "reason": "marker-reason", "question": "q1", "option": "a", "qid": "q9",
     "duplicate_of": "DEMO-0007", "resolution": "duplicate", "key": "DEMO-0002", "ticket_type": "chore", "title": "Marker Title",
     "owner": "p_" + "4" * 32, "add": ["p_" + "7" * 32], "remove": ["p_" + "8" * 32], "from": "open", "to": "backlog", "gate": "plan",
+    "schedule": "sc_marker", "via": {"anchor": "marker-anchor"},
     "gates": {"plan": POLICY}, "set": {"grant_hours": 5},
     "runtime": {"kind": "python-requirements", "lock": "marker-lock.txt", "packages": 3},
     "old": "d_" + "5" * 32, "rotation": {"o": {"kind": "device_rotation", "marker": "rot"}, "sig": "s"},

@@ -32,7 +32,7 @@ SITES: dict[tuple[str, str], tuple[int, str]] = {
         3,
         "unreachable; fail closed: a subscription of any column but P, G or N ends at once (person.removed)",
     ),
-    ("columns.py", "refusal"): (5, "R: only its closed op list under its matrix row; human ops op.not_allowed"),
+    ("columns.py", "refusal"): (7, "R: only its closed op list under its matrix row; human ops op.not_allowed"),
     ("diff.py", "prepare"): (2, "R pins no base (only a P call may write the base pin): reads stay side-effect free"),
     ("dispatch.py", "RegistryBackend._context"): (2, "R carries no grant: the context's grant is None"),
     ("dispatch.py", "RegistryBackend._register"): (3, "unreachable (sub.open is not an R op)"),

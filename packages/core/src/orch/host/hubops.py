@@ -1039,9 +1039,9 @@ def owner_user(service: Any, state: Any) -> str | None:
 
 
 def report_addon_request(service: Any, name: str, version: str = "", actor: str = "person") -> None:
-    """M3 (#1450): tell the bound hub that installing ``name`` was refused by its policy (``market.addon_not_allowed``), so
-    its admin can allow it for this workspace. Best effort and display only: no link, no hub or any error means nothing is
-    sent; it never changes the refusal and grants nothing."""
+    """M3 (#1450): tell the bound hub that installing ``name`` was refused by its policy (``market.addon_not_allowed``),
+    so its admin can allow it. Best effort and display only: no link, no hub or any error means nothing is sent; it
+    never changes the refusal and grants nothing."""
     import re
 
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", str(name)):

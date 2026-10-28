@@ -1,4 +1,4 @@
-import { skeleton, loading, enter, toast, watchDialogs, replaceContent } from "./feel.js";
+import { skeleton, loading, enter, toast, watchDialogs, replaceContent, retryDelay, searchEntries, filterSearch, shortcut, focusIndex, busyButton, reconcileRows, shouldPoll } from "./feel.js";
 // The hub console, minimum for the browser sign flow (design-a8): sign in, register this browser, see what needs me,
 // review one decision and sign it. The DOM is built with createElement and textContent only (lint: tests/web_lint),
 // every string from the workspace goes through renderText first, and nothing here calls a signer except the prompt.
@@ -25,11 +25,13 @@ function h(tag, props = {}, ...kids) {
   for (const [k, v] of Object.entries(props)) {
     if (k === "class") e.className = v;
     else if (k === "text") e.textContent = v;
+    else if (k === "onclick" && props["data-sign"] !== undefined) e.addEventListener("click", (event) => busyButton(e, () => v(event)));
     else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
     else if (v === true) e.setAttribute(k, "");
     else if (v !== false && v != null) e.setAttribute(k, String(v));
   }
   for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  if (props["data-sign"] !== undefined) { e.arm = () => arm(e); e.arm(); }
   return e;
 }
 let frame = null;
@@ -47,10 +49,12 @@ async function api(method, path, body) {
   try {
     res = await fetch("/api/v1" + path, { method, headers, credentials: "same-origin", cache: "no-store", body: body === undefined ? undefined : JSON.stringify(body) });
   } catch {
+    connectionFailed();
     return { status: 0, body: { error: "unavailable" } };
   }
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(await res.arrayBuffer());
+    if (res.status >= 500) connectionFailed();
     return { status: res.status, body: parseStrict(text) };
   } catch {
     return { status: res.status, body: { error: "malformed" } };
@@ -117,7 +121,8 @@ function setupView(token, err) {
 
 async function refresh() {
   const [who, chans] = await Promise.all([api("GET", "/session"), api("GET", "/me/channels")]);
-  if (who.status !== 200) return false;
+  if (who.status !== 200) { clearSession(); return false; }
+  if (state.user?.user_id !== who.body.user_id) clearSession();
   state.user = who.body;
   state.channels = chans.status === 200 ? chans.body.channels : [];
   state.me = await loadChannel();
@@ -143,7 +148,7 @@ function shell(active, ...nodes) {
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
       h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("workspaces", "Workspaces", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
-      h("span", { class: "grow" }), h("span", { class: "small muted", text: name }), signOutMenu());
+      h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
     frame = root.querySelector(".app");
@@ -179,9 +184,9 @@ function shell(active, ...nodes) {
 
 // --- the company rail: this hub, then every workspace of mine (GET /rail); one click switches, no second sign-in ----------
 function railView() {
-  const hub = h("button", { class: "ra hub on", "data-workspace": "", title: renderText(state.rail.hubName), "aria-label": "Hub " + renderText(state.rail.hubName), "aria-current": "page", text: initials(state.rail.hubName), onclick: () => navigate("#/home") });
+  const hub = h("button", { class: "ra hub" + (parseRoute(location.hash).workspace ? "" : " on"), "data-workspace": "", "data-live-key": "hub", title: renderText(state.rail.hubName), "aria-label": "Hub " + renderText(state.rail.hubName), "aria-current": parseRoute(location.hash).workspace ? null : "page", text: initials(state.rail.hubName), onclick: () => navigate("#/home") });
   const items = state.rail.rows.map((w) => {
-    const b = h("button", { "data-workspace": w.id, class: "ra " + colour(w.id) + (w.online ? "" : " offline") + (parseRoute(location.hash).workspace === w.id ? " on" : ""), "aria-label": "Open " + renderText(w.name) + (w.online ? "" : " (offline)"),
+    const b = h("button", { "data-workspace": w.id, "data-live-key": w.id, class: "ra " + colour(w.id) + (w.online ? "" : " offline") + (parseRoute(location.hash).workspace === w.id ? " on" : ""), "aria-label": "Open " + renderText(w.name) + (w.online ? "" : " (offline)"),
       title: renderText(w.name), onclick: () => navigate("#/w/" + w.id) },
       initials(w.name, w.id), w.badge ? h("span", { class: "bd", text: String(w.badge) }) : null);
     return b;
@@ -190,8 +195,10 @@ function railView() {
 }
 
 async function loadRail() {
+  const user = state.user;
   let r = await api("GET", "/rail");
   if (r.status !== 200) r = await api("GET", "/me/workspaces"); // older hub without the rail: the plain list, nothing openable
+  if (!user || state.user !== user) return;
   state.rail.rows = r.status === 200 ? railRows(r.body) : [];
   const n = r.status === 200 ? r.body.hub?.name : null;
   state.rail.hubName = typeof n === "string" && n ? n : "Hub";
@@ -256,7 +263,7 @@ async function landFromTicket(t) {
 // A session that came from a workspace ticket cannot use admin tools until a real password sign-in.
 function reauthView() {
   show(h("div", { class: "plain" }, h("h1", { text: "Sign in again to use admin tools" }), h("p", { class: "muted", text: "You arrived from a workspace. Admin tools need your password and code." }),
-    h("button", { class: "pri", text: "Sign in again", onclick: async () => { await api("DELETE", "/session"); state.user = null; loginView(); } })));
+    h("button", { class: "pri", text: "Sign in again", onclick: async () => { await api("DELETE", "/session"); clearSession(); loginView(); } })));
 }
 
 async function admin() {
@@ -324,11 +331,14 @@ async function home() {
     if (!(await refresh())) return loginView();
     state.menu = false;
     await loadRail();
+    const user = state.user;
     const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
+    if (!user || state.user !== user) return;
     const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
     const workspaces = ws.status === 200 ? ws.body.workspaces : [];
     const dead = !mine && (state.me || state.channels.some((c) => c.status === "active" && c.kind === "browser"));
-    const view = homeView({
+    homeData = {
+      user_id: user.user_id,
       user: state.user,
       items: needs.status === 200 ? needs.body.items : [],
       offline: needs.status === 200 ? needs.body.offline : [],
@@ -337,8 +347,9 @@ async function home() {
       thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
       actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), register: () => registerView(), removeChannel, forgetLocal },
-    });
-    shell("home", view, advancedForm(workspaces));
+    };
+    liveItems = { user_id: user.user_id, items: homeData.items };
+    shell("home", homeView(homeData), advancedForm(workspaces));
     state.notice = null;
   } finally { finishLoading(); }
 }
@@ -359,6 +370,8 @@ async function removeChannel(id) {
 }
 
 function clearSession() {
+  homeData = null;
+  liveItems = { user_id: null, items: [] };
   state.user = null;
   state.rail = { hubName: "Hub", rows: [] };
   state.me = null;
@@ -381,13 +394,15 @@ function registerView(err) {
   const form = h("form", {
     onsubmit: async (ev) => {
       ev.preventDefault();
-      const out = await registerBrowser(label.value.trim() || "This browser", pw.value, code.value.trim());
+      const button = form.querySelector("[type=submit]");
+      if (offline || button.disabled) return;
+      const out = await busyButton(button, () => registerBrowser(label.value.trim() || "This browser", pw.value, code.value.trim()));
       pw.value = code.value = "";
       if (out) return registerView(out);
       state.notice = banner("ok", "This browser is ready", "It holds a signing key for you. You can remove it any time.");
       await home();
     },
-  }, h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: home }), h("button", { class: "pri", type: "submit", text: "Register this browser" })));
+  }, h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: home }), h("button", { class: "pri", type: "submit", "data-sign": "", text: "Register this browser" })));
   show(h("h1", { text: "Register this browser" }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
 }
 
@@ -434,7 +449,7 @@ async function reviewItem(it) {
       o.text ? h("div", { class: "small", text: renderText(o.text) }) : null,
       (o.facts ?? []).map(([l, v]) => h("div", { class: "small muted", text: renderText(l) + ": " + renderText(v) })),
       o.cost ? h("div", { class: "small muted", text: "Cost: " + renderText(o.cost) }) : null),
-    h("button", { text: "Answer", onclick: () => startSign(it.workspace_id, { type: "question.answered", log: it.log, question: c.question, hash: it.hash, option: o.key }, qv) })));
+    h("button", { "data-sign": "", text: "Answer", onclick: () => startSign(it.workspace_id, { type: "question.answered", log: it.log, question: c.question, hash: it.hash, option: o.key }, qv) })));
   show(...head, ...more, qv.options.map(card),
     spec.allow_other ? h("p", { class: "small muted", text: "To answer with something else, use your Mac." }) : null,
     back);
@@ -462,8 +477,8 @@ function reviewDecision(it, c) {
     note,
     h("p", { class: "small muted", text: verdict ? "Needed only if you choose Fail." : "Needed only if you ask for changes." }),
     verdict
-      ? h("div", { class: "row" }, h("button", { class: "pri", text: "Pass", onclick: () => act({ type: "verdict.given", outcome: "pass" }) }), h("button", { text: "Fail", onclick: () => withText({ type: "verdict.given", outcome: "fail" }) }))
-      : h("div", { class: "row" }, h("button", { class: "pri", text: "Approve", onclick: () => act({ type: "gate.approved", gate: c.gate }) }), h("button", { text: "Ask for changes", onclick: () => withText({ type: "gate.changes_requested", gate: c.gate }) })),
+      ? h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Pass", onclick: () => act({ type: "verdict.given", outcome: "pass" }) }), h("button", { "data-sign": "", text: "Fail", onclick: () => withText({ type: "verdict.given", outcome: "fail" }) }))
+      : h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Approve", onclick: () => act({ type: "gate.approved", gate: c.gate }) }), h("button", { "data-sign": "", text: "Ask for changes", onclick: () => withText({ type: "gate.changes_requested", gate: c.gate }) })),
   );
 }
 
@@ -490,7 +505,7 @@ async function addonView(wsId, raw) {
     h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? wsId.slice(0, 8)) + " asks to install and turn on " + renderText(terms.name) + "." }),
     h("dl", { class: "facts" }, addonFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("p", { class: "small muted", text: "Approving here lets the workspace's computer install exactly this package. You can check the fingerprint against the one shown in the workspace." }),
-    h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
+    h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
 
 // A settings change (protocol 8.8): the link a workspace's Mission Control builds, #/w/<workspace>/settings/<b64u(JSON set)>.
@@ -516,17 +531,17 @@ async function settingsView(wsId, raw) {
     h("h1", { text: "Change workspace settings" }),
     h("p", { class: "sentence", text: "This link asks to change how long things are held in " + renderText(mine.name ?? wsId.slice(0, 8)) + ". Check the change below; nothing happens until you approve." }),
     h("dl", { class: "facts" }, settingsFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
-    h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
+    h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
 
 function advancedForm(workspaces) {
   const ws = h("select", {}, workspaces.filter((w) => w.can_start).map((w) => h("option", { value: w.workspace_id, text: renderText(w.name ?? w.workspace_id.slice(0, 8)) })));
   const type = h("select", {}, Object.keys(DECISIONS).filter((t) => t !== "question.answered").map((t) => h("option", { value: t, text: t })));
   const inputs = Object.fromEntries(["log", "question", "gate", "outcome", "hash", "option", "text"].map((k) => [k, h("input", { id: "f-" + k })]));
-  const go = h("button", { class: "pri", text: "Review", onclick: () => {
+  const go = h("button", { class: "pri", "data-sign": "", text: "Review", onclick: () => {
     const action = { type: type.value, log: inputs.log.value.trim() };
     for (const k of DECISIONS[type.value].filter((k) => k in inputs)) if (inputs[k].value.trim()) action[k] = inputs[k].value.trim();
-    startSign(ws.value, action);
+    return startSign(ws.value, action);
   } });
   return h("details", {}, h("summary", { text: "Start a decision by hand" }), field("Workspace", ws), field("Decision", type), ...Object.entries(inputs).map(([k, el]) => field(k === "log" ? "Ticket (id)" : k, el)), h("div", { class: "row top" }, go));
 }
@@ -593,15 +608,16 @@ function factsList(rows) {
 }
 
 function promptView(me, p, digest, d) {
-  const sign = h("button", { class: "pri", id: "sign", disabled: true, text: "Please review…" });
-  const arm = () => { sign.disabled = true; sign.textContent = "Please review…"; setTimeout(() => { if (document.visibilityState === "visible") { sign.disabled = false; sign.textContent = "Sign and send"; } }, 1000); };
-  const onVis = () => arm();
+  const sign = h("button", { class: "pri", id: "sign", "data-sign": "", disabled: true, text: "Please review…" });
+  sign.arm = () => arm(sign, "Sign and send");
+  const onVis = () => sign.arm();
   document.addEventListener("visibilitychange", onVis);
   window.addEventListener("focus", onVis);
   const done = () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); closeDialog(); };
   sign.addEventListener("click", async (ev) => {
-    if (!ev.isTrusted || sign.disabled) return; // a script's .click() never signs
+    if (!ev.isTrusted || sign.disabled || offline || sign.getAttribute("aria-busy") === "true") return; // a script's .click() never signs
     sign.disabled = true;
+    sign.setAttribute("aria-busy", "true");
     try {
       const proof = await signProof(me.pair.privateKey, digest);
       const r = await api("POST", "/sign/sign", { prepared_id: p.prepared_id, channel_id: me.channelId, channel_proof: proof });
@@ -623,8 +639,169 @@ function promptView(me, p, digest, d) {
     h("p", { class: "small muted who-signs", text: "You confirm with the key held by this browser. " + "The hub" + " signs this approval for you." }),
     h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign),
   );
-  arm();
+  sign.arm();
 }
+
+// Presentation-only live state; never refresh the page or a signing prompt on a timer.
+let homeData = null, liveItems = { user_id: null, items: [] }, offline = false, failures = 0, nextPoll = Date.now() + 15000, polling = false;
+const offlineText = h("span");
+const retry = h("button", { text: "Try now", onclick: () => pollLive() });
+const offbar = h("div", { id: "offbar", class: "offbar", role: "status", hidden: true }, offlineText, retry);
+document.body.prepend(offbar);
+function connectionFailed() {
+  if (!offline) { offline = true; nextPoll = Date.now() + retryDelay(0); }
+  updateOffline();
+}
+function updateOffline() {
+  offbar.hidden = !offline;
+  document.body.classList.toggle("hub-offline", offline);
+  offlineText.textContent = "No connection to the hub. What you see may be out of date; approving is paused. Trying again in " + Math.max(0, Math.ceil((nextPoll - Date.now()) / 1000)) + " s";
+  retry.disabled = polling;
+  syncSignButtons();
+}
+function arm(button, label = button.textContent) {
+  clearTimeout(button.armTimer);
+  button.disabled = true;
+  button.armTimer = setTimeout(() => {
+    if (document.visibilityState === "visible" && button.getAttribute("aria-busy") !== "true" && !offline) {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }, 1000);
+}
+function syncSignButtons() {
+  for (const button of document.querySelectorAll("[data-sign]")) {
+    if (offline) { button.dataset.offlineDisabled = "true"; button.disabled = true; }
+    else if (button.dataset.offlineDisabled) { delete button.dataset.offlineDisabled; button.arm?.(); }
+  }
+}
+new MutationObserver(() => { if (offline) syncSignButtons(); }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled"] });
+document.addEventListener("click", (event) => {
+  if (offline && event.target.closest("[data-sign]")) { event.preventDefault(); event.stopImmediatePropagation(); }
+}, true);
+async function pollLive() {
+  if (polling || document.visibilityState !== "visible") return;
+  polling = true;
+  updateOffline();
+  const user = state.user, retrying = offline;
+  try {
+    const [needs, rail] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail")]);
+    if (user !== state.user) return;
+    if ([needs.status, rail.status].some((s) => s === 401 || s === 403)) {
+      offline = false; failures = 0; nextPoll = Date.now() + 15000;
+      return loginView();
+    }
+    if (needs.status !== 200 || rail.status !== 200 || !Array.isArray(needs.body.items) || !Array.isArray(rail.body.workspaces)) {
+      if ([needs.status, rail.status].some((s) => s === 0 || s >= 500)) {
+        offline = true;
+        failures = retrying ? failures + 1 : 0;
+        nextPoll = Date.now() + retryDelay(failures);
+      } else { offline = false; failures = 0; nextPoll = Date.now() + 15000; }
+      return;
+    }
+    offline = false; failures = 0; nextPoll = Date.now() + 15000;
+    if (!user || user !== state.user) return;
+    liveItems = { user_id: user.user_id, items: needs.body.items ?? [] };
+    state.rail.rows = railRows(rail.body);
+    state.rail.hubName = rail.body.hub?.name || "Hub";
+    if (frame?.isConnected) {
+      reconcileRows(frame.querySelector(".rail"), railView());
+      railSnapshot = JSON.stringify(state.rail);
+    }
+    const current = frame?.isConnected && parseRoute(location.hash).kind === "home" ? frame.querySelector(".needs-you") : null;
+    if (current && homeData?.user_id === user.user_id) {
+      homeData.items = liveItems.items;
+      homeData.offline = needs.body.offline ?? [];
+      homeData.workspaces = state.rail.rows.map((w) => ({ ...homeData.workspaces.find((old) => old.workspace_id === w.id), ...w, workspace_id: w.id }));
+      const fresh = h("div", {}, homeView(homeData));
+      const anchor = [...current.querySelectorAll("article")].find((el) => el.getBoundingClientRect().top >= 0);
+      const top = anchor?.getBoundingClientRect().top;
+      reconcileRows(current, fresh.querySelector(".needs-you"));
+      reconcileRows(frame.querySelector(".health-strip"), fresh.querySelector(".health-strip"));
+      const summary = frame.querySelector(".company-summary");
+      if (summary) summary.textContent = fresh.querySelector(".company-summary").textContent;
+      if (anchor?.isConnected) window.scrollBy(0, anchor.getBoundingClientRect().top - top);
+    }
+  } finally { polling = false; updateOffline(); }
+}
+setInterval(() => {
+  if (offline) updateOffline();
+  if (shouldPoll({ now: Date.now(), due: nextPoll, visible: document.visibilityState === "visible", active: !!state.user || offline, busy: polling })) void pollLive();
+}, 1000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && (state.user || offline)) void pollLive();
+});
+
+function openShortcuts() {
+  dialog(h("h1", { text: "Keyboard shortcuts" }), factsList([
+    ["g h", "Home"], ["g w", "Workspaces"], ...(state.user?.is_admin ? [["g s", "Services"], ["g a", "Admin"]] : []),
+    ["/ or ⌘K / Ctrl+K", "Search"], ["↑ / ↓, Enter", "Choose a search result"], ["Esc", "Close dialog"], ["?", "Keyboard shortcuts"],
+  ]), h("button", { text: "Close", onclick: closeDialog }));
+}
+async function openSearch() {
+  if (!state.user || document.querySelector('[role="dialog"]')) return;
+  const user = state.user;
+  let people = [], index = 0, matches = [];
+  const results = h("div", { id: "search-results", role: "listbox", "aria-label": "Search results" });
+  const input = h("input", { type: "search", placeholder: "Search pages, workspaces, tickets…", "aria-label": "Search everything", role: "combobox", "aria-controls": "search-results", "aria-expanded": "true", "aria-autocomplete": "list" });
+  const choose = () => {
+    if (state.user !== user) return;
+    const entry = matches[index];
+    if (!entry) return;
+    closeDialog();
+    if (entry.action === "connect") pendingConnect = true;
+    navigate(entry.hash);
+  };
+  const draw = () => {
+    if (state.user !== user) { results.replaceChildren(); return; }
+    matches = filterSearch(searchEntries({ admin: user.is_admin, workspaces: state.rail.rows, items: liveItems.user_id === user.user_id ? liveItems.items : [], people }), input.value);
+    index = Math.max(0, Math.min(index, matches.length - 1));
+    results.replaceChildren();
+    let group;
+    matches.forEach((entry, i) => {
+      if (entry.group !== group) { group = entry.group; results.append(h("div", { class: "search-group", role: "presentation", text: group })); }
+      results.append(h("div", { id: "search-result-" + i, role: "option", "aria-selected": String(i === index), class: "search-result" + (i === index ? " selected" : ""), text: renderText(entry.label), onclick: () => { index = i; choose(); } }));
+    });
+    if (!matches.length) results.append(h("p", { text: "Nothing found. Try another name or a shorter search." }));
+    if (matches.length) input.setAttribute("aria-activedescendant", "search-result-" + index);
+    else input.removeAttribute("aria-activedescendant");
+  };
+  input.addEventListener("input", () => { index = 0; draw(); });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault(); index = focusIndex(index, matches.length, event.key === "ArrowUp"); draw();
+      results.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter") { event.preventDefault(); choose(); }
+  });
+  const layer = dialog(h("h1", { text: "Search everything" }), input, results, h("button", { text: "Close", onclick: closeDialog }));
+  layer.classList.add("search-layer");
+  draw(); input.focus();
+  const [needs, rail, users] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail"), user.is_admin ? api("GET", "/admin/users") : Promise.resolve(null)]);
+  if (!layer.isConnected || state.user !== user) return;
+  liveItems = { user_id: user.user_id, items: needs.status === 200 ? needs.body.items ?? [] : [] };
+  if (rail.status === 200) state.rail.rows = railRows(rail.body);
+  if (users?.status === 200) people = users.body.users ?? [];
+  draw();
+}
+let prefixUntil = 0, pendingConnect = false;
+document.addEventListener("keydown", (event) => {
+  if (!state.user || event.defaultPrevented || event.isComposing || document.querySelector('[role="dialog"]')) return;
+  const typing = !!event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+  const action = shortcut(event.key, { typing, meta: event.metaKey, ctrl: event.ctrlKey, alt: event.altKey, prefix: Date.now() < prefixUntil, admin: state.user.is_admin });
+  prefixUntil = 0;
+  if (!action) return;
+  event.preventDefault();
+  if (action === "prefix") prefixUntil = Date.now() + 1000;
+  else if (action === "search") void openSearch();
+  else if (action === "shortcuts") openShortcuts();
+  else navigate("#/" + action);
+});
+// The action opens the existing Connect UI; it does not mint an invite automatically.
+new MutationObserver(() => {
+  if (!pendingConnect) return;
+  const button = document.getElementById("connect-workspace");
+  if (button) { pendingConnect = false; document.getElementById("admin-tab-2")?.click(); button.focus(); }
+}).observe(root, { childList: true, subtree: true });
 
 // --- fragment navigation ----------------------------------------------------------------------------------------------
 function navigate(hash) {

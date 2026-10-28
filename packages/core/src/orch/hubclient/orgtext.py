@@ -86,7 +86,7 @@ def url_problem(url: Any) -> str | None:
         return "url"
     if port is not None and not 1 <= port <= 65535:
         return "url"
-    if host == "localhost" or host.endswith(".localhost") or host.endswith("."):
+    if host == "localhost" or host.endswith((".localhost", ".")):
         return "not_remote"
     try:
         ip = ipaddress.ip_address(host)

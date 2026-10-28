@@ -31,6 +31,9 @@ ACTIVITY_TYPES = (
     "pairing.issued",
     "pairing.used",
     "change.cancelled",
+    "skill.saved",
+    "skill.removed",
+    "skill.offered",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(
@@ -46,6 +49,7 @@ DETAIL_FIELDS = frozenset(
         "reason",  # an admin's written reason for an override (3-200 characters, see changes.service)
         "groups_removed",
         "direct",
+        "skill",
     }
 )
 REASON_MAX_BYTES = 800  # 200 characters of UTF-8

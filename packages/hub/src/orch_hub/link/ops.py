@@ -334,6 +334,19 @@ def snapshot_get(c: OpContext) -> dict[str, Any]:
     return {"snapshot": c.snapshots.snapshot(c.workspace_id, mode)}
 
 
+def org_skills_get(c: OpContext) -> dict[str, Any]:
+    """M3 (#1430): the signed company-skills bundle of the LINK's workspace (never a caller-named one). Only a bound
+    workspace gets one; what is in it is offered, not enabled: the owner's accept at the host decides."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        mode = c.registry.mode(c.workspace_id)
+    fn = getattr(c.snapshots, "org_skills", None)
+    if fn is None:
+        raise Refused("unavailable")
+    return {"bundle": fn(c.workspace_id, mode)}
+
+
 def publish_out(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:
         _require_pin(c)
@@ -601,6 +614,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "rail_get": rail_get,
     "owner_get": owner_get,
     "status_put": status_put,
+    "org_skills_get": org_skills_get,
     "profile_put": profile_put,
     "directory_get": directory_get,
 }

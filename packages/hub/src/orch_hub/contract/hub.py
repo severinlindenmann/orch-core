@@ -18,6 +18,7 @@ from . import suite as S
 from .canon import CanonError, b64u, cj, loads_strict, unb64u, unhex
 from .labels import EVENT_TYPE, L, custodial_label
 from .market_policy import valid_policy
+from .org_bundles import valid_org_skills
 
 HV = 0  # hub contract version (H0)
 CONTRACT_NAME = "orch.hub/0"
@@ -192,6 +193,15 @@ FIELDS: dict[str, dict[str, Check]] = {
         "market_policy": valid_policy,  # D14: required, never null (protocol.md §7.1)
         "dev": _bool,
     },
+    "hub.org_skills": {  # M3 (#1430): the company skills offered to one workspace; Off until its owner accepts
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "version": _int_min(1),
+        "issued_ms": _int_min(0),
+        "skills": valid_org_skills,
+        "dev": _bool,
+    },
     "hub.binding": {
         "workspace_id": _hex16,
         "wsk_pub": _pub,
@@ -358,6 +368,7 @@ LABEL_OF_KIND = {
     "hub.uk_cert": "sig_hub_uk_cert",
     "hub.channel_cert": "sig_hub_channel_cert",
     "hub.snapshot": "sig_hub_snapshot",
+    "hub.org_skills": "sig_hub_org_skills",
     "hub.binding": "sig_hub_binding",
     "hub.unbound": "sig_hub_unbound",
     "hub.publish_approval": "sig_hub_publish_approval",
@@ -605,6 +616,30 @@ def verify_snapshot(
         if o["version"] == pinned["version"]:
             if cj(o) != cj(pinned):
                 raise Refused("snapshot_conflict")
+            return dict(pinned)
+    return o
+
+
+def verify_org_skills(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    dev_mode: bool,
+    pinned: Mapping[str, Any] | None,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """M3 condition 1: a bundle names this hub and this workspace, is signed by HK_op under the verified card, and its
+    ``version`` never goes down (``pinned`` is the bundle the host holds). Same version, different bytes is a conflict."""
+    o = _under_card(signed, "hub.org_skills", held, dev_mode, revoked_op_certs)
+    if o["workspace_id"] != workspace_id:
+        raise Refused("other_workspace")
+    if pinned is not None:
+        if o["version"] < pinned["version"]:
+            raise Refused("stale_bundle")
+        if o["version"] == pinned["version"]:
+            if cj(o) != cj(pinned):
+                raise Refused("bundle_conflict")
             return dict(pinned)
     return o
 
@@ -1324,6 +1359,7 @@ PROFILE_FIELDS: dict[str, Check] = {
 LINK_OPTIONAL: dict[str, frozenset[str]] = {"join": frozenset({"alias_users"}), "directory_get": frozenset({"query"})}
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "snapshot_get": ("w2h", None, {}),
+    "org_skills_get": ("w2h", None, {}),  # M3 (#1430): the signed hub.org_skills of the link's workspace
     "event_deliver": ("h2w", None, {"log": lambda x: type(x) is str, "event": lambda x: type(x) is dict}),
     "route_out": ("w2h", None, {"envelope": _b64u_any}),
     "route_in": ("h2w", None, {"envelope": _b64u_any}),

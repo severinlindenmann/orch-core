@@ -430,7 +430,7 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
     return TlsTransport(
         addr=link["addr"], tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
         hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
-        now_ms=lambda: int(service.clock() * 1000),
+        now_ms=lambda: int(service.clock() * 1000), timeout=float(link.get("timeout", 10.0)),
     )  # fmt: skip
 
 
@@ -1038,6 +1038,10 @@ def owner_user(service: Any, state: Any) -> str | None:
     return user if isinstance(user, str) and re.fullmatch(r"[0-9a-f]{32}", user) else None
 
 
+#: The install that was refused waits for this call, so it is short: a hub that is away must not hold the answer up.
+ADDON_REQUEST_TIMEOUT_S = 3.0
+
+
 def report_addon_request(service: Any, name: str, version: str = "", actor: str = "person") -> None:
     """M3 (#1450): tell the bound hub that installing ``name`` was refused by its policy (``market.addon_not_allowed``),
     so its admin can allow it. Best effort and display only: no link, no hub or any error means nothing is sent; it
@@ -1051,7 +1055,9 @@ def report_addon_request(service: Any, name: str, version: str = "", actor: str 
         if state is None or state.status != "bound":
             return
         wsk_pub, sign = _wsk_sign(service)
-        hub_link, transport = _snapshot_link(service, state, wsk_pub, sign, workspace_dev(service), send_profile=False)
+        hub_link, transport = _snapshot_link(
+            service, state, wsk_pub, sign, workspace_dev(service), send_profile=False, timeout=ADDON_REQUEST_TIMEOUT_S
+        )
     except Exception:  # noqa: BLE001, S110 - no usable link: nothing to tell
         return
     try:
@@ -1108,7 +1114,14 @@ def _stop_peers(service: Any) -> None:
 
 
 def _snapshot_link(
-    service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool, *, send_profile: bool = True
+    service: Any,
+    state: Any,
+    wsk_pub: bytes,
+    sign: Any,
+    dev: bool,
+    *,
+    send_profile: bool = True,
+    timeout: float | None = None,
 ) -> tuple[Any, Any]:
     """``(HubLink, transport)`` for the bound hub of ``state`` (the caller closes the transport)."""
     from orch.crypto.encoding import unb64u
@@ -1117,6 +1130,8 @@ def _snapshot_link(
     hk_op = unb64u(state.hk_op_pub, 65)
     link = {"addr": _addr({}, state, dev), "spki": state.tls_spki, "hk_op": hk_op, "wsk_pub": wsk_pub, "sign": sign,
             "mode": state.mode}  # fmt: skip
+    if timeout is not None:
+        link["timeout"] = timeout  # seconds per socket step (the TLS link's own default is 10)
     transport = _transport(service, state.hub_id, link)
     hub_link = HubLink(
         transport, hub_id=state.hub_id, workspace_id=service.workspace_id, hk_op_pub=hk_op, sign=sign,

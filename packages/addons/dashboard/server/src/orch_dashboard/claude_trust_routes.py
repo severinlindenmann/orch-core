@@ -70,8 +70,8 @@ def register(app, gateway, auth):
         reason = claude_folder.grant_consent(os.environ, project, allow_parent=body.allow_parent)
         if reason:
             raise fail("invalid.input", reason, exit=1)
-        if claude_folder.config_state(os.environ) == "missing" and not claude_folder.trust_folder(
-            os.environ, project, allow_parent=body.allow_parent
-        ):
+        # the same trust whether or not the file existed (setup's own step)
+        done = claude_folder.trust_folder(os.environ, project, allow_parent=body.allow_parent)
+        if not done and claude_folder.config_state(os.environ) == "missing":
             raise fail("invalid.input", "Claude Code is not set up yet: start it once, then try again.", exit=1)
         return {"on": True}

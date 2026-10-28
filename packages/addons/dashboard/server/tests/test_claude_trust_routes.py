@@ -93,6 +93,20 @@ def test_consent_without_claudes_settings_file_is_not_on(tmp_path, monkeypatch):
     assert body["on"] is False and body["config"] == "missing"
 
 
+def test_post_trusts_the_folder_also_when_the_file_exists(tmp_path, monkeypatch):
+    made = []
+    monkeypatch.setattr(claude_folder, "grant_consent", lambda env, project, allow_parent: None)
+    monkeypatch.setattr(claude_folder, "config_state", lambda *a, **k: "ready")
+    monkeypatch.setattr(claude_folder, "trust_folder", lambda env, project, allow_parent: made.append(1) or True)
+    assert (
+        build(tmp_path)
+        .post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": False})
+        .status_code
+        == 200
+    )
+    assert made == [1]
+
+
 def test_post_creates_the_file_when_claude_has_not_run_yet(tmp_path, monkeypatch):
     made = []
     monkeypatch.setattr(claude_folder, "grant_consent", lambda env, project, allow_parent: None)
@@ -105,6 +119,7 @@ def test_post_creates_the_file_when_claude_has_not_run_yet(tmp_path, monkeypatch
 def test_post_grants(tmp_path, monkeypatch):
     seen = []
     monkeypatch.setattr(claude_folder, "config_state", lambda *a, **k: "ready")
+    monkeypatch.setattr(claude_folder, "trust_folder", lambda env, project, allow_parent: True)
     monkeypatch.setattr(claude_folder, "grant_consent", lambda env, project, allow_parent: seen.append(allow_parent))
     res = build(tmp_path).post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": True})
     assert res.status_code == 200, res.text

@@ -129,18 +129,18 @@ class ActivityLog:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 head = self._db.execute("SELECT seq, ts_ms, hash FROM event ORDER BY seq DESC LIMIT 1").fetchone()
-                row = dict(
-                    seq=head[0] + 1 if head else 1,
-                    ts_ms=max(self._now(), head[1] if head else 0),
-                    prev=head[2] if head else "0" * 64,
-                    type=type,
-                    actor_kind=actor_kind,
-                    actor_id=actor_id,
-                    actor_session=actor_session,
-                    subject_user=subject_user,
-                    workspace_id=workspace_id,
-                    detail=json.loads(encoded),
-                )
+                row = {
+                    "seq": head[0] + 1 if head else 1,
+                    "ts_ms": max(self._now(), head[1] if head else 0),
+                    "prev": head[2] if head else "0" * 64,
+                    "type": type,
+                    "actor_kind": actor_kind,
+                    "actor_id": actor_id,
+                    "actor_session": actor_session,
+                    "subject_user": subject_user,
+                    "workspace_id": workspace_id,
+                    "detail": json.loads(encoded),
+                }
                 row["hash"] = digest(row)
                 self._db.execute(
                     "INSERT INTO event VALUES (?,?,?,?,?,?,?,?,?,?,?)",

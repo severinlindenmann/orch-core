@@ -110,9 +110,7 @@ _HEADRX = re.compile(r"sha256:[0-9a-f]{64}")
 
 
 def _waiting_ok(x: Any) -> bool:
-    return (
-        type(x) is list and all(type(g) is str and g in sharefmt.F1_GATES for g in x) and x == sorted(set(x))
-    )
+    return type(x) is list and all(type(g) is str and g in sharefmt.F1_GATES for g in x) and x == sorted(set(x))
 
 
 def check_proj(proj: Any) -> None:

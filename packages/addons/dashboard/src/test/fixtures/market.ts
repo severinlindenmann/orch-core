@@ -30,7 +30,8 @@ export const market = (over: Partial<Market> = {}): Market => ({
 })
 export const stage = (over: Partial<MarketStage> = {}): MarketStage => ({
   stage: 'demo-stage',
-  expires_at: '2099-01-01T00:00:00Z',
+  grant: { name: 'calendar', version: '1.2.0', package_sha256: 'demo-package-digest', capabilities: ['network'], fields: {}, sections: [], artifact_kinds: [], staged: 'demo-stage' },
+  expires_at: Date.parse('2099-01-01T00:00:00Z') / 1000,
   name: 'calendar',
   version: '1.2.0',
   package_sha256: 'demo-package-digest',

@@ -2080,6 +2080,18 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 - **Why:** owner 27 Oct "take the recommended routes"; Opus API and Codex agreed on the quiet card and on hide-only; they disagreed on Run now (confirm vs undo countdown), so the simpler plain click was taken (mockups/followups-ui/README.md "Decisions (27 Oct)").
 - **Revert:** remove `src/app/pages/schedules`, the `followups` node, the chip, the Today cards, the rail card and banner, `server/.../followups.py` and the `followup_cancel` action.
 
+### 2026-10-28 — D3 staged install and turn on
+
+**Decision:** One inline review signs required non-secret settings, then the stage-bound grant last. Defaults are editable; capabilities retain C3's second press. Already-on add-ons are refused by the host.
+**Why:** A settings-only prefix cannot install code or change running code; the installer consumes the bytes verified under the store lock.
+**Revert:** Revert D3 together with its core event schema, signer sequence and shared signature vectors.
+
+### 2026-10-28 — D3 review fixes (#1520)
+
+**Decision:** Enabled marketplace add-ons use a separate update review and `market_update` grant, including the reviewed digest and capabilities. Fresh installs retain the staged enable sequence. Both core's `enabled` and the older `active` UI state select updates.
+**Why:** The enable sequence deliberately refuses already-enabled add-ons. Updates must retain their widened diff and signer-owned capability risk requiring a second press.
+**Revert:** Revert the separate update action, state mapping and review together; do not route enabled updates through `addon_enable`.
+
 ### 2026-10-28 — D2 request-bound create and start
 
 Decision: New-ticket launch choices (harness, mode, optional model) belong to the sequence intent. The host's clock decides whether access needs renewal at the 15-minute boundary; the proposed grant defaults to eight hours and is signed last. Valid access with at least 15 minutes left means one review and one press, with no grant step. Missing or shorter access means the same single review includes ‘Agents can run as you for 8 hours’ and requires C3’s second press after one second; the grant is signed last and start waits for all steps to land. Existing access is mentioned only in the information drawer.

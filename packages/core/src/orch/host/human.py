@@ -29,6 +29,7 @@ run stores nothing either way). No terminal code is issued.
 from __future__ import annotations
 
 import base64
+import contextlib
 import copy
 import logging
 import os
@@ -444,6 +445,25 @@ class HumanOps:
             self._check_pasted_image(inner, files)
         meta = self._sequence(call, name, inner, args, person, store, dry_run)
         capture.sequence = meta
+        if meta and meta.get("intent", {}).get("staged") and name == "settings.set":
+            from . import marketops
+
+            doc = capture.market_files.read_stage(meta["intent"]["staged"])
+            capture.market = {
+                "url": doc.get("origin") or "local folder",
+                "class": doc["class"],
+                "commit": doc["commit"],
+                "source_note": marketinstall.SOURCE_NOTE,
+                "publisher": {
+                    "fingerprint": marketops.fingerprint(doc["publisher_key"]) if doc["publisher_key"] else None,
+                    "tofu": doc["tofu"],
+                },
+                "index_version": doc.get("index_version", 0),
+                "stale": bool(doc.get("stale")),
+                "summary": doc.get("summary"),
+                "replaces": doc.get("prev_digest"),
+            }
+            capture.deps = doc.get("deps")
         if name == "publish.share":  # P5: the staged copy's own words (the args name only the staged id)
             from . import publishing
 
@@ -585,7 +605,9 @@ class HumanOps:
         elif op == "settings.set":
             if (why := settings_needs.clear_refusal(events[0].get("set") or {}, ws.addons)) is not None:
                 raise HostError("invalid.input", why)
-            if ADDONS_KEY in (events[0].get("set") or {}):  # G6: the granted schema, again on the re-read state
+            if ADDONS_KEY in (events[0].get("set") or {}) and not (
+                (record.get("sequence") or {}).get("intent", {}).get("staged")
+            ):  # G6: the granted schema, again on the re-read state
                 from orch.addons import settings_value
 
                 if (why := settings_value.check_granted(store, events[0]["set"][ADDONS_KEY])) is not None:
@@ -625,7 +647,12 @@ class HumanOps:
             from . import seqaddon
 
             seqaddon.host_check_first(
-                store, person, checked["intent"], dry_run=dry_run, err=lambda code, why: HostError(code, why)
+                store,
+                person,
+                checked["intent"],
+                dry_run=dry_run,
+                err=lambda code, why: HostError(code, why),
+                service=call.service,
             )
         if checked["step"] > 0 and checked.get("log") == "workspace":
             # the add-on sequence's grant: the next step on the workspace log, only on the tail its settings left (AE6)
@@ -819,9 +846,9 @@ class HumanOps:
             }
         if capture.removed_device is not None and "device.removed" in types:
             material["removed_device"] = dict(capture.removed_device)  # #1198 C15: whose device, per host, not signed
-        if capture.market is not None and "addon.granted" in types:
+        if capture.market is not None:
             material["market"] = copy.deepcopy(capture.market)  # V3 G3: the host's word on the source, not signed
-        if capture.deps is not None and "addon.granted" in types:
+        if capture.deps is not None:
             material["deps"] = copy.deepcopy(capture.deps)  # V3 G4: the package list, from the checked lockfile
         if getattr(capture, "agent_access_until", None):
             material["agent_access_until"] = capture.agent_access_until
@@ -964,6 +991,7 @@ class HumanOps:
         if record["state"] in PENDING:
             record = {**record, "state": "cancelled", "done_at": call.service.clock()}
             requests.write(record)
+            marketinstall.discard_request_stage(call.service, record)
         # an expired request can never be submitted either: it answers cancelled (§0.8.1 lists two answers)
         return {"state": "submitted" if record["state"] == "submitted" else "cancelled"}
 
@@ -996,7 +1024,11 @@ class HumanOps:
             # before anything landed, which refuse() stores only when it is not retryable
             outcomes.fail(begun, stored.error)
             raise stored.error from None
-        except HostError as exc:  # a refusal before any append: the request stays as it was (bound), until it expires
+        except HostError as exc:  # keep the reviewed bytes available for a retryable refusal
+            if not exc.retryable:
+                with contextlib.suppress(HostError):
+                    record = self._requests(service).load(args["request_id"], call.principal)
+                    marketinstall.discard_request_stage(service, record)
             outcomes.refuse(begun, redactor.error(exc))
             self._note_refusal(call, args["request_id"], exc.code)
             raise redactor.error(exc) from None
@@ -1081,6 +1113,12 @@ class HumanOps:
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
                 if log not in ("workspace", view.uid) or (log == "workspace" and record["op"] != "grant"):
                     raise HostError("human.request_mismatch", "the ticket changed while signing, review again")
+            if meta is not None and meta["step"] == 0 and meta["intent"]["kind"] == sequence.ADDON:
+                from . import seqaddon
+
+                seqaddon.host_check_first(
+                    store, record["person"], meta["intent"], dry_run=False, err=HostError, service=service
+                )
             self._recheck_needs(store, record, events)
             marketinstall.recheck(
                 service, record, events

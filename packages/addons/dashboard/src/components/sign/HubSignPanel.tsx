@@ -10,7 +10,7 @@ import { queries } from '@/api/queries'
 import type { HandoffAction } from '@/api/handoff'
 import { Inline } from './visible'
 
-type AddonAction = Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' }>
+type AddonAction = Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' | 'market_update' }>
 export type HubApprovalPhase = 'preparing' | 'waiting' | 'done' | 'ended' | 'error'
 
 /** FB15: prepare the add-on grant for the hub once (`POST /hub/approve/prepare`), then follow the request until the hub

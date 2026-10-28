@@ -390,7 +390,12 @@ def _signed(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json:
                 person,
                 label,
                 "addon.grant",
-                {"name": stage["name"], "staged": stage["stage"]},
+                {
+                    "name": stage["name"],
+                    "staged": stage["stage"],
+                    "digest": stage["package_sha256"],
+                    "caps": stage["grant"]["capabilities"],
+                },
             )
             return {"stage": stage, "installed": False}
         args: dict[str, Any] = {"id": a.rest[0]}
@@ -404,7 +409,19 @@ def _signed(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json:
         if not as_json:
             out.write("\n".join(_lines(stage)) + "\n")
         _sign(
-            conn, backend, device, wid, person, label, "addon.grant", {"name": stage["name"], "staged": stage["stage"]}
+            conn,
+            backend,
+            device,
+            wid,
+            person,
+            label,
+            "addon.grant",
+            {
+                "name": stage["name"],
+                "staged": stage["stage"],
+                "digest": stage["package_sha256"],
+                "caps": stage["grant"]["capabilities"],
+            },
         )
         result: dict[str, Any] = {"stage": stage, "installed": True}
         if stage["grant"].get("runtime") is not None:  # the dependencies the signature promised, now that it exists

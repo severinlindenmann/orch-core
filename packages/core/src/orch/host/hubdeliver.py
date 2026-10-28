@@ -224,7 +224,17 @@ class StoreLanding:
         ):
             return None  # no live local hand-off for these terms: the request is inert
         ev = hubhandoff.prepared_event(record)
-        keys = ("name", "version", "package_sha256", "capabilities", "fields", "sections", "artifact_kinds", "runtime")
+        keys = (
+            "name",
+            "version",
+            "package_sha256",
+            "capabilities",
+            "fields",
+            "sections",
+            "artifact_kinds",
+            "runtime",
+            "staged",
+        )
         body = {k: ev[k] for k in keys if k in ev}
         terms = ("name", "version", "package_sha256", "capabilities", "runtime")
         if ev.get("type") != "addon.granted" or any(body.get(k) != req[k] for k in terms):

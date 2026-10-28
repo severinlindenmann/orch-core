@@ -120,12 +120,28 @@ def test_the_owner_prepares_an_add_on_grant_for_the_hub_and_gets_the_one_link(cl
     assert polled.status_code == 200 and polled.json()["state"] == "prepared"
 
 
-def test_a_marketplace_grant_names_its_stage(client, token, stub, use):
+def test_a_staged_install_sequence_is_not_sent_to_the_single_event_hub_path(client, token, stub, use):
     link = use(Link(stub.ws))
-    body = {"action": "market_grant", "name": "wiki", "staged": "st_" + "b" * 32}
-    assert client.post(path(stub), json=body, headers=hdr(token)).status_code == 200
-    ((_, args, _, _),) = prepares(link)
-    assert args["args"] == {"name": "wiki", "staged": "st_" + "b" * 32} and args["handoff"] is True
+    stage = "st_" + "b" * 32
+    body = {
+        "action": "market_grant",
+        "name": "wiki",
+        "staged": stage,
+        "grant": {
+            "name": "wiki",
+            "version": "1.0.0",
+            "staged": stage,
+            "package_sha256": "sha256:" + "a" * 64,
+            "capabilities": [],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+        },
+    }
+    result = client.post(path(stub), json=body, headers=hdr(token))
+    assert result.status_code == 501
+    assert result.json()["error"]["code"] == "op.unsupported"
+    assert prepares(link) == []
 
 
 @pytest.mark.parametrize(

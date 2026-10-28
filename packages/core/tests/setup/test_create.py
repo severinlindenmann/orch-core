@@ -422,7 +422,7 @@ def test_item5_a_custody_refusal_shows_the_reason_and_the_fix(tmp, monkeypatch):
     from orch.custody.base import CustodyError
 
     monkeypatch.setattr(identity, "generate_recovery_code", lambda: " ".join(["person"] * 24))
-    monkeypatch.setattr(strength, "generate_passphrase", lambda: "person-config-person")
+    monkeypatch.setattr(strength, "generate_passphrase", lambda: "quiet-meadow-lantern")
 
     ports = FakePorts()
 

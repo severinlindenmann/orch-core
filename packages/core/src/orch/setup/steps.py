@@ -174,7 +174,7 @@ class Secrets:
             if self.dead:
                 return []
             code = bytes(self._code).decode("ascii")
-            return [*held_words(bytes(self._pass).decode("ascii")), *held_words(code)]
+            return [bytes(self._pass).decode("ascii"), *held_words(code)]
 
     def _wipe(self) -> None:
         _wipe(self._pass)
@@ -245,15 +245,16 @@ def _without_paths(text: str) -> str:
     return _PATH.sub(" ", text)
 
 
-class Code(str):
+class _Code(str):
     """The whole recovery code as held by a session: its single words are checked separately, as :class:`Word`."""
 
     __slots__ = ()
 
 
-def held_words(secret: str) -> list[str]:
-    """A held secret as the redaction gate wants it: the whole (Code) and each of its words (Word)."""
-    return [Code(secret), *(Word(w) for w in _tokens(secret))]
+def held_words(code: str) -> list[str]:
+    """The recovery code as the redaction gate wants it: the whole (_Code) and each of its words (Word), always both.
+    Only recovery-code words are path-exempt; a passphrase is passed as a plain str (strict)."""
+    return [_Code(code), *(Word(w) for w in _tokens(code))]
 
 
 class Word(str):
@@ -289,10 +290,14 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
             if len(s_an) >= _MIN_SECRET and s_an in t_an:
                 return True
         words = _tokens(sec)
-        if not isinstance(sec, Code | Word):  # a held code's single words are checked as Word secrets (path-exempt)
+        if not isinstance(sec, _Code | Word):  # a held code's single words are checked as Word secrets (path-exempt)
             for w in words:
                 if len(w) >= _MIN_SECRET and any(w in tk for tk in toks):
                     return True
+        if isinstance(sec, _Code):  # two different words of the code anywhere, in any order, are a leak
+            distinct = {w for w in words if len(w) >= 4}
+            if sum(1 for w in distinct if any(w in tk for tk in toks)) >= 2:
+                return True
         for i in range(len(words)):  # every run of 2+ consecutive words, joined
             run = words[i]
             for w2 in words[i + 1 :]:
@@ -540,7 +545,7 @@ class Creator:
         self._genesis_started = False  # ports.genesis was called: its outcome may be unknown, the key may land
 
     def _held_secrets(self) -> list[str]:
-        out: list[str] = held_words(self._passphrase) if self._passphrase else []
+        out: list[str] = [self._passphrase] if self._passphrase else []  # plain: strict, every word on the full text
         if self.secrets is not None:
             out += self.secrets.held()
         return out

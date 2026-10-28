@@ -7,13 +7,17 @@ import { useEffect, useId, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { agentsApi, RUNNER_LINE, type RunnerReview } from '@/api/agents'
 import { ApiError } from '@/api/types'
+import { requestReverse } from '@/components/sign/ReverseUndoHost'
+import { useActivation, useArming } from '@/components/sign/useArming'
 import { Prose } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
 
 const said = (e: unknown) => (e instanceof ApiError ? e.message : 'The dashboard server did not answer.')
 
-export function RunnerSwitch({ ws, on, terminals: withTerminals = true, initialTerminals = false, label, testId = 'runner-switch', variant = 'default' }: {
+export function RunnerSwitch({ ws, on, initiallyOpen = false, onClosed, terminals: withTerminals = true, initialTerminals = false, label, testId = 'runner-switch', variant = 'default' }: {
   ws: string
+  initiallyOpen?: boolean
+  onClosed?: () => void
   /** What the button does: turn dashboard execution on (true) or off (false). */
   on: boolean
   /** On only: offer the choice to keep terminals off (it is the CLI's `--no-terminals`). */
@@ -31,6 +35,8 @@ export function RunnerSwitch({ ws, on, terminals: withTerminals = true, initialT
   const [review, setReview] = useState<RunnerReview | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const armed = useArming(review?.view_digest ?? 'no-review')
+  const activation = useActivation(armed && !!review && !busy)
   const errorId = useId()
   const seq = useRef(0)
 
@@ -50,14 +56,16 @@ export function RunnerSwitch({ ws, on, terminals: withTerminals = true, initialT
   useEffect(() => () => { seq.current++ }, [])
 
   const start = () => { setOpen(true); setTerminals(initialTerminals); void read(initialTerminals) }
-  const close = () => { seq.current++; setOpen(false); setReview(null); setError(null) }
+  const close = () => { seq.current++; setOpen(false); setReview(null); setError(null); onClosed?.() }
+  useEffect(() => { if (initiallyOpen) start() }, []) // a fresh review for Undo
+
   const confirm = async () => {
     if (!review || busy) return
     setBusy(true)
     setError(null)
     try {
       await agentsApi.runnerSwitch(ws, { on, terminals, view_digest: review.view_digest })
-      toast.success(on ? 'Dashboard execution is on' : 'Dashboard execution is off')
+      toast.success(on ? 'Dashboard execution is on' : 'Dashboard execution is off', on ? {} : { action: { label: 'Undo', onClick: () => requestReverse({ ws, runner: true }) } })
       close()
       await qc.invalidateQueries()
     } catch (e) {
@@ -84,7 +92,7 @@ export function RunnerSwitch({ ws, on, terminals: withTerminals = true, initialT
       {error && <p role="alert" id={errorId} data-testid={`${testId}-error`} className="text-warning">{error}</p>}
       <div className="flex flex-wrap justify-end gap-2">
         <Button size="sm" variant="ghost" onClick={close} disabled={busy}>Cancel</Button>
-        <Button size="sm" data-testid={`${testId}-confirm`} disabled={!review || busy} onClick={() => void confirm()} aria-describedby={error ? errorId : undefined}>
+        <Button size="sm" data-testid={`${testId}-confirm`} disabled={!review || busy || !armed} onPointerDown={e => activation.begin(e.nativeEvent)} onKeyDown={e => activation.begin(e.nativeEvent)} onClick={e => { if (activation.take(e.nativeEvent)) void confirm() }} aria-describedby={error ? errorId : undefined}>
           {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null} {on ? 'Turn on' : 'Turn off'}
         </Button>
       </div>

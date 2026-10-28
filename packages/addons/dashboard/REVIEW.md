@@ -669,3 +669,7 @@ Tests were added for the lead to run; this task does not run Vitest or pytest.
 ## Try the hub pages (V3 A7)
 
 Open `/w/DEMO/settings/hub?hub=selective` (also `standalone`, `full`, `offline`, `nottold`): the chip in the top bar, the three Hub pages, "Choose what to share" with its live preview, the switch to full access (type "full access"), Leave, and the Terminal step with its copy box. Tickets shows the Hub column in selective mode only. Nothing is signed in the page.
+
+### D5 check (2026-10-28)
+
+On a real host, post a comment and let the C3 arm finish: the toast says “Sending in N s; closing this page still sends.” Undo within ten seconds cancels without a signature. Navigate away or close/reopen the page to see delivery checked against the signer. Restart the signer during the wait to see “Not sent”; sleep past the deadline by more than 30 seconds has the same outcome. Add-on off and runner off offer Undo that opens a fresh turn-on review. Follow-up cancel keeps its existing signed, authority-checked Undo within 120 seconds.

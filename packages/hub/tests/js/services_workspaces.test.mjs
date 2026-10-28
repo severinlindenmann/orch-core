@@ -86,7 +86,7 @@ test("hand-offs: names, sent time, Delivered / Waiting; a stranger is 'Another w
 
 test("empty states and times", () => {
   const t = text(workspacesView({ handoffs: [], workspaces: [] }, NOW));
-  assert.match(t, /No workspaces are connected yet/);
+  assert.match(t, /No workspaces yet/);
   assert.match(t, /No tickets have been sent between workspaces yet/);
   assert.equal(when(NOW - 60000, NOW), "Today 11:59");
   assert.equal(ago(NOW - 120000, NOW), "2 min ago");

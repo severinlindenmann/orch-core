@@ -1,0 +1,98 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
+import { enter, replaceContent } from "../../src/orch_hub/web/feel.js";
+import { parseRoute } from "../../src/orch_hub/web/route.js";
+
+class Element {
+  constructor(tag) { this.tag = tag; this.nodeType = 1; this.childNodes = []; this.attrs = {}; this.className = ""; this.listeners = {}; }
+  append(...nodes) { for (const n of nodes) { n.parent = this; this.childNodes.push(n); } }
+  replaceChildren(...nodes) { this.childNodes = []; this.append(...nodes); }
+  replaceWith(node) { const p = this.parent; p.childNodes[p.childNodes.indexOf(this)] = node; node.parent = p; }
+  setAttribute(k, v) { this.attrs[k] = v; }
+  getAttribute(k) { return this.attrs[k] ?? null; }
+  removeAttribute(k) { delete this.attrs[k]; }
+  addEventListener(k, fn) { this.listeners[k] = fn; }
+  get classList() { return { add: (c) => this.classList.toggle(c, true), remove: (c) => this.classList.toggle(c, false), toggle: (c, on) => { const classes = new Set(this.className.split(" ")); on ? classes.add(c) : classes.delete(c); this.className = [...classes].join(" "); } }; }
+  all() { return [this, ...this.childNodes.flatMap((c) => c.all())]; }
+  querySelectorAll(selector) { return this.all().slice(1).filter((n) => selector.startsWith(".") ? n.className.split(" ").includes(selector.slice(1)) : n.getAttribute(selector.slice(1, -1)) !== null); }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+}
+const source = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+test("switching sections preserves rail, buttons, top bar and updates selected tab", () => {
+  const root = new Element("main");
+  const state = { user: { name: "Ann", is_admin: true }, rail: { hubName: "Company", rows: [{ id: "ab".repeat(16), name: "Legal", online: false }] }, menu: false };
+  const location = { hash: "#/home" };
+  const context = vm.createContext({ root, state, location, parseRoute, enter, replaceContent: (el, nodes) => el.replaceChildren(...nodes), renderText: String, initials: (s) => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: (t) => new Element(t), createTextNode: (text) => Object.assign(new Element("#text"), { textContent: text }) } });
+  vm.runInContext(source.slice(source.indexOf("function h("), source.indexOf("const field =")) + source.slice(source.indexOf("function shell("), source.indexOf("async function loadRail(")), context);
+  context.shell("home", new Element("h1"));
+  const rail = root.querySelector(".rail"), top = root.querySelector(".topbar"), button = rail.childNodes[0];
+  for (const page of ["workspaces", "services", "admin", "home"]) {
+    location.hash = "#/" + page;
+    context.shell(page, new Element("h1"));
+    assert.equal(root.querySelector(".rail"), rail);
+    assert.equal(root.querySelector(".topbar"), top);
+    assert.equal(rail.childNodes[0], button);
+    assert.equal(top.querySelectorAll("[data-tab]").find((n) => n.attrs["aria-current"] === "page").attrs["data-tab"], page);
+  }
+  location.hash = "#/w/" + state.rail.rows[0].id;
+  context.shell("workspaces", new Element("h1"));
+  assert.equal(top.querySelector(".breadcrumb").textContent, "Company › Legal");
+  assert.match(rail.querySelectorAll("[data-workspace]")[1].className, /offline.*on/);
+});
+
+test("hash changes and sign-in continuation dispatch the wanted view", async () => {
+  const visits = [], handlers = {};
+  const location = { hash: "#/admin" };
+  const context = vm.createContext({ location, parseRoute, window: { addEventListener: (event, fn) => { handlers[event] = fn; } },
+    home: async () => visits.push("home"), workspaces: async () => visits.push("workspaces"), services: async () => visits.push("services"), admin: async () => visits.push("admin"),
+    loginView: () => visits.push("login"), addonView: async (w, k) => visits.push("addon:" + k), settingsView: async (w, k) => visits.push("settings:" + k), setupView: () => visits.push("setup"), landFromTicket: async () => visits.push("ticket") });
+  vm.runInContext(source.slice(source.indexOf("// Serialize renders")), context);
+  await context.renderRoute();
+  assert.equal(visits.at(-1), "admin");
+  for (const page of ["home", "services", "home"]) { location.hash = "#/" + page; await handlers.hashchange(); assert.equal(visits.at(-1), page); }
+  location.hash = "#/w/" + "ab".repeat(16) + "/addon/terms";
+  vm.runInContext(source.slice(source.indexOf("async function afterLogin()"), source.indexOf("// FB15")), context);
+  await context.afterLogin();
+  assert.equal(visits.at(-1), "addon:terms");
+});
+
+test("offline workspace stays inside the shell and never requests a switch ticket", async () => {
+  const ws = "ab".repeat(16), calls = [];
+  let output;
+  const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, skeleton: () => ({}), show() {}, state: { rail: { rows: [{ id: ws, name: "Legal", online: false, badge: 3 }] } },
+    refresh: async () => true, loadRail: async () => {}, renderText: String,
+    workspaceStatus: () => "offline since yesterday", h: (tag, props) => ({ tag, ...props }),
+    shell: (active, ...nodes) => { output = { active, nodes }; },
+    api: async (method, path) => { calls.push(path); return { status: 200, body: { items: [] } }; } });
+  vm.runInContext(source.slice(source.indexOf("async function workspacePage("), source.indexOf("// Serialize renders")), context);
+  await context.workspacePage({ kind: "workspace", workspace: ws });
+  assert.equal(output.active, "workspaces");
+  assert.equal(output.nodes[0].text, "Legal is offline since yesterday");
+  assert.match(output.nodes[2].text, /3 things need you/);
+  assert.deepEqual(calls, ["/me/needs-you"]);
+});
+
+test("sign out clears all person data before the login screen", async () => {
+  const state = { user: { name: "Ann" }, rail: { hubName: "Private", rows: [1] }, me: {}, channels: [1], adminPage: [1], notice: {}, menu: true };
+  const context = vm.createContext({ state, api: async () => ({}), loginView() { assert.equal(state.user, null); assert.equal(state.rail.hubName, "Hub"); assert.equal(state.rail.rows.length, 0); } });
+  vm.runInContext(source.slice(source.indexOf("function clearSession()"), source.indexOf("function registerView(")), context);
+  await context.signOut();
+  assert.equal(state.me, null);
+  assert.equal(state.adminPage, null);
+  assert.equal(state.channels.length, 0);
+  assert.equal(state.notice, null);
+  assert.equal(state.menu, false);
+});
+test("only first paint and route changes show skeletons", () => {
+  const calls = [];
+  const context = vm.createContext({ frame: null, paintedRoute: null, location: { hash: "#/home" }, state: { user: {} }, skeleton: k => k, shell: (...args) => calls.push(args), show() {} });
+  vm.runInContext(source.slice(source.indexOf("function pageLoading("), source.indexOf("function shell(")), context);
+  context.pageLoading("home");
+  context.frame = {}; context.paintedRoute = "#/home";
+  context.pageLoading("home");
+  context.location.hash = "#/services";
+  context.pageLoading("services");
+  assert.deepEqual(calls, [["home", "home"], ["services", "services"]]);
+});

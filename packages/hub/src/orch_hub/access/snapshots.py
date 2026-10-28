@@ -43,7 +43,7 @@ class AccessSnapshots:
         with a.tx() as db:  # roles, channels, the stored row and the new row are one consistent step
             roles = a.roles(workspace_id)
             revoked = a.revoked_channels()
-            mp = a.market_policy()
+            mp = a.effective_market_policy(workspace_id)  # the hub-wide policy plus this workspace's add-on extras
             fp = hashlib.sha256(
                 cj(
                     {

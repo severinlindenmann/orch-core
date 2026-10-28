@@ -49,6 +49,7 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         "/account.js",
         "/admin.js",
         "/skills.js",
+        "/addons.js",
         "/connections.js",
         "/changes.js",
         "/admin_reach.js",

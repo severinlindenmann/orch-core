@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ..access.store import AccessError
 from ..contract import hub as H
 from ..contract.canon import unb64u
 from ..contract.hub import Refused
@@ -564,6 +565,20 @@ def status_put(c: OpContext) -> dict[str, Any]:
     return {}
 
 
+def addon_request(c: OpContext) -> dict[str, Any]:
+    """M3 (#1450): the workspace's host says an install was refused by the hub policy. Bounded display data for the hub
+    admin's Add-ons page; it grants nothing and changes no policy."""
+    if c.access is None:
+        raise Refused("unavailable")
+    _require_pin(c)
+    _require_bound(c)
+    try:
+        c.access.add_addon_request(c.workspace_id, c.body["name"], c.body["version"], c.body["actor"])
+    except AccessError:
+        raise Refused("malformed") from None
+    return {}
+
+
 def owner_get(c: OpContext) -> dict[str, Any]:
     """FB15: the hub user this hub names as the owner of the calling workspace (V3-D19, #1394). The host binds an
     add-on hand-off to it. No argument, nothing stored."""
@@ -613,6 +628,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "switch_redeem": switch_redeem,
     "rail_get": rail_get,
     "owner_get": owner_get,
+    "addon_request": addon_request,
     "status_put": status_put,
     "org_skills_get": org_skills_get,
     "profile_put": profile_put,

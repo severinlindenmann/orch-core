@@ -1318,6 +1318,7 @@ unknown `op` is `unknown_op`.
 | `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
 | `directory_get` | w2h | both | `{query?: string}` | `{entries: [...]}` (at most 50) |
 | `status_put` | w2h | both | `{"version", "commit", "host"}` | `{}` |
+| `addon_request` | w2h | both | `{"name", "version", "actor"}` | `{}` (M3 #1450) |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
 
@@ -1340,6 +1341,7 @@ fields except `listed`. Only other bound, explicitly listed workspaces for which
 Selective mode does not imply listing or bypass routing authorization.
 
 `org_skills_get` (M3, #1430): the bundle of the LINK's workspace only (never a caller-named one); an unpinned or unbound workspace is refused like `snapshot_get`. See 7.3.
+`addon_request` (M3, #1450): a host says an add-on install was refused by the hub policy (`market.addon_not_allowed`): `name` `[a-z][a-z0-9-]{0,39}`, `version` `[0-9A-Za-z.+-]{0,32}` or empty, `actor` `person` | `agent` (known at the host, shown, never trusted). Display data only: one row per (workspace, add-on) with a counter, at most 50 add-ons per workspace. It grants nothing; an admin's approval is an audited policy change and the owner's local grant is still needed. The per-workspace allow list narrows the hub-wide policy in that workspace's snapshot (intersection; `block` and `ceiling` never change).
 
 `status_put` reports display-only workspace metadata over its authenticated WSK link, once per host process/hub.
 Its exact body has a version matching `[0-9A-Za-z.+-]+` (at most 32 characters), a hex commit (at most 40,

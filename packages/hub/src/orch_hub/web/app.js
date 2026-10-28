@@ -26,7 +26,8 @@ function h(tag, props = {}, ...kids) {
   for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c)));
   return e;
 }
-const show = (...nodes) => { root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
+let servicesTimer, viewRevision = 0;
+const show = (...nodes) => { clearInterval(servicesTimer); viewRevision++; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
 const field = (label, input) => h("div", {}, h("label", { text: label }), input);
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
@@ -237,15 +238,23 @@ async function copyText(t) {
 }
 
 async function services() {
+  const revision = viewRevision;
   if (!(await refresh())) return loginView();
   state.menu = false;
   await loadRail();
   if (!state.user.is_admin) return home();
   if (state.user.needs_sign_in) return reauthView();
-  const r = await api("GET", "/admin/services");
+  const [r, ws] = await Promise.all([api("GET", "/admin/services"), api("GET", "/me/workspaces")]);
+  if (revision !== viewRevision) return;
   if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
-  if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
-  shell("services", servicesView(r.body, { check: services, open: workspaces, copy: copyText }));
+  if (r.status !== 200) shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
+  else shell("services", servicesView({ ...r.body, workspaces_list: ws.status === 200 ? ws.body.workspaces : undefined }, { check: services, open: workspaces, copy: copyText }));
+  let checking = false;
+  servicesTimer = setInterval(async () => {
+    if (document.hidden || checking) return;
+    checking = true;
+    try { await services(); } finally { checking = false; }
+  }, 15000);
 }
 
 async function home() {

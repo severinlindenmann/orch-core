@@ -205,3 +205,18 @@ main#app.shelled { max-width:none; padding:0; margin:0; }
 .tbl tr:last-child td { border-bottom:0; }
 .pair { display:inline-flex; flex-wrap:wrap; align-items:center; gap:8px; font-weight:550; } .pair .ar { color:var(--text-faint); }
 @media (max-width:760px) { .work-grid { grid-template-columns:minmax(0,1fr); } .svc-row { grid-template-columns:minmax(0,1fr); } .svc-side { flex-direction:row; align-items:center; flex-wrap:wrap; } }
+
+/* How workspaces and services connect. Status is also written in every node. */
+.svc-connections .flow { display:flex; align-items:center; gap:10px; padding:16px 0; }
+.svc-connections .flow-column { display:grid; gap:8px; list-style:none; margin:0; padding:0; min-width:0; flex:1; }
+.svc-connections .node { border:1px solid var(--border-strong); border-radius:10px; padding:10px 12px; background:var(--bg); overflow-wrap:anywhere; }
+.svc-connections .node b { display:block; }
+.svc-connections .node.ok { border-color:var(--success); }
+.svc-connections .node.warn { border-color:var(--warning); }
+.svc-connections .arrow { color:var(--text-muted); font-size:12px; text-align:center; }
+.svc-connections .flow-direction { display:block; }
+.svc-connections .flow-direction::after { content:"──▶"; }
+@media (max-width:639px) {
+  .svc-connections .flow { flex-direction:column; align-items:stretch; }
+  .svc-connections .flow-direction::after { content:"▼"; }
+}

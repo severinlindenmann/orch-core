@@ -45,6 +45,7 @@ try {
   await page.getByRole("button", { name: "Copied" }).or(page.getByRole("button", { name: "Select and copy" })).waitFor();
   await page.locator("#svc-relay").getByRole("button", { name: "Check now" }).click();
   await page.locator("#services-summary").waitFor();
+  await page.getByRole("heading", { name: "How it connects" }).waitFor();
   await shot("services");
 
   await page.locator("#services-ws").waitFor();

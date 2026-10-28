@@ -46,11 +46,14 @@ class Services:
         *,
         relay_url: str | None,
         publish_url: str | None,
+        behind_edge: bool = False,
+        edge_url: str | None = None,
         now_ms: Callable[[], int] | None = None,
         probe: Probe = http_probe,
         timeout_s: float = 2.0,
     ) -> None:
         self._urls = {"relay": relay_url, "publish": publish_url}
+        self._edge = {"state": "up" if behind_edge else "not_set_up", "url": edge_url if behind_edge else None}
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._probe, self._timeout = probe, timeout_s
         self._started = self._now()
@@ -79,7 +82,7 @@ class Services:
         return {**out, "state": state, "checked_ms": now}
 
     def snapshot(self) -> dict[str, Any]:
-        """``{hub, relay, publish}``; the two probes run at the same time."""
+        """``{hub, relay, publish, edge}``; the two probes run at the same time."""
         res: dict[str, dict[str, Any]] = {}
 
         def run(name: str, path: str) -> None:
@@ -103,4 +106,5 @@ class Services:
             "hub": {"version": __version__, "started_ms": self._started, "state": "up"},
             "relay": res["relay"],
             "publish": res["publish"],
+            "edge": dict(self._edge),
         }

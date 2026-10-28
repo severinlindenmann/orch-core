@@ -16,12 +16,12 @@ const SINKS = [
 ];
 
 test("the console's own files contain no HTML, script or storage sink", () => {
-  const files = readdirSync(DIR).filter((f) => /\.(js|html|css)$/.test(f));
-  assert.ok(files.includes("app.js") && files.includes("channel.js"));
+  const files = [...readdirSync(DIR).filter((f) => /\.(js|html|css)$/.test(f)), ...readdirSync(new URL("pages/", DIR)).map((f) => "pages/" + f)];
+  assert.ok(files.includes("app.js") && files.includes("channel.js") && files.includes("pages/spaces.js"));
   for (const f of files) {
     const source = readFileSync(new URL(f, DIR), "utf8");
     // SVG namespace is an identifier, never a network request.
-    const text = f === "connections.js" ? source.replaceAll('"http://www.w3.org/2000/svg"', '"svg-namespace"') : source;
+    const text = f === "pages/connections.js" ? source.replaceAll('"http://www.w3.org/2000/svg"', '"svg-namespace"') : source;
     for (const [rx, name] of SINKS) assert.ok(!rx.test(text), `${f}: ${name}`);
     if (f.endsWith(".html")) {
       assert.ok(!/<script(?![^>]*\bsrc=)/i.test(text), `${f}: inline script`);

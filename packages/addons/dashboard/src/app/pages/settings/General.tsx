@@ -143,7 +143,7 @@ export function General({ workspace, canEdit }: { workspace: Workspace; canEdit:
       <Section title="Relay">
         <div className="flex items-center gap-3 text-[13px]">
           <p className="flex-1 text-text-muted">
-            {workspace.relay === 'on' ? 'On (simulated)' : 'Not connected yet'} · devices, pairing and the sync queue are in Relay &amp; devices (Preview, simulated)
+            {workspace.relay === 'on' ? 'On (simulated)' : 'Not connected yet'} · the relay link, devices and the sync queue are in Relay &amp; devices (Preview, simulated)
           </p>
           <Button variant="outline" size="sm" asChild>
             <Link to="/settings/$tab" params={{ tab: 'relay' }}>

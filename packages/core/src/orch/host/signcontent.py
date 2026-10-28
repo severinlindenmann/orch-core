@@ -485,7 +485,21 @@ def _publish_rows(out: dict[str, Any], value: Any, before: Any, ctx: Any) -> boo
     out.setdefault("notes", []).append(
         "Files you share go to this server, signed by this workspace. Only a person can change it."
     )
+    out["notes"].append(f"Files are sent to: {_reach(value['server'])}. Links open at: {_reach(value['share'])}.")
     return True
+
+
+def _reach(origin: str) -> str:
+    """Where an address points, in the plain tags of the review: this computer, the office network, a public address."""
+    host = origin.split("://", 1)[-1].split(":", 1)[0]
+    if host in ("localhost", "127.0.0.1"):
+        return "this computer"
+    parts = host.split(".")
+    if len(parts) == 4 and all(p.isdigit() for p in parts):
+        a, b = int(parts[0]), int(parts[1])
+        if a == 10 or (a == 172 and 16 <= b <= 31) or (a == 192 and b == 168) or (a == 100 and 64 <= b <= 127):
+            return "office network"
+    return "public address"
 
 
 def _leaf_word(v: Any) -> str:

@@ -405,6 +405,17 @@ def local_card(service: WorkspaceService) -> dict[str, Any]:
         return card
 
 
+def _workspace_name(service: WorkspaceService) -> str:
+    """The workspace's display name from ``config.json`` (what Mission Control shows), at most 80 characters; empty when
+    there is none (the hub then shows a friendly fallback, never an id)."""
+    from .reads_ws import config_name
+
+    try:
+        return config_name(service.store)[:80]
+    except Exception:  # noqa: BLE001 - display only: never fails the status report
+        return ""
+
+
 def wscard_part(service: WorkspaceService) -> dict[str, Any]:
     from orch.identity.epochs import default_part
 
@@ -1154,6 +1165,7 @@ def _snapshot_link(
                     "version": orch.__version__,
                     "commit": "",
                     "host": socket.gethostname()[:80] if state.mode == "full" else "",
+                    "name": _workspace_name(service) if state.mode == "full" else "",  # selective keeps it private
                 },
             )
     except Exception:

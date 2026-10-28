@@ -88,7 +88,13 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
     removed = 1
   }
   items = items.filter((i) => !withdrawn.has(i.line.replace(/^ticket ([^:]+):.*$/, '$1')))
-  return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10) }
+  const fresh = items.slice(base.length + 1).map((i) => i.line)
+  const review = {
+    hub_id: 'ab12cd34ef56ab12', audience: { read: 3, edit: 1, admin: 1 }, audience_note: 'from the hub, not signed',
+    new_count: added, new_more: 0, new_items: fresh, leaves: added ? ["the ticket's title, status, labels and deadline; no description, comments or files"] : [],
+    later_edits: 'Later edits to these tickets are shared too, until you stop sharing them.',
+  }
+  return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10), review }
 }
 
 export function registerHubRoutes(r: MockRouter) {
@@ -107,6 +113,15 @@ export function registerHubRoutes(r: MockRouter) {
     const b = c.body as { rule?: HubRule; expect?: unknown } | null
     if (!b?.rule || typeof b.expect !== 'string' || b.expect.length !== 43) return fail(400, 'invalid.input', 'Body must be {rule, expect}')
     return ok({ synced: true, pending: null, revoked: mockPreview({ remove: b.rule }).revoked })
+  })
+  r.add('POST', '/api/w/:ws/hub/share/rule-add', (_s, c) => {
+    const b = c.body as { rule?: HubRule; expect?: unknown } | null
+    if (!b?.rule || typeof b.expect !== 'string' || b.expect.length !== 43) return fail(400, 'invalid.input', 'Body must be {rule, expect}')
+    return ok({ synced: true, pending: null, put: mockPreview({ add: b.rule }).new })
+  })
+  r.add('POST', '/api/w/:ws/hub/share/sync', (_s, c) => {
+    if (typeof (c.body as { expect?: unknown } | null)?.expect !== 'string') return fail(400, 'invalid.input', 'Body must be {expect}')
+    return ok({ synced: true, pending: null, put: 0 })
   })
   registerHubClickRoutes(r)
 }

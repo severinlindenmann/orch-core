@@ -147,3 +147,15 @@ export function accountView(data, actions) {
       rows.length ? h("p", { class: "small muted", text: "To add a phone, open the phone app and choose Pair a phone." }) : null),
     ...(actions.security ? securityCards(data, actions.security) : [])];
 }
+
+// A session that came from a workspace (rail switch) may look but not manage the account: say so plainly, no error.
+// `signInAgain` ends that session and opens the hub's own sign-in.
+export function accountFromWorkspaceView(user, { signInAgain }) {
+  return [
+    h("h1", { text: "Account" }),
+    h("div", { class: "card" },
+      h("p", { text: "Open the hub directly to manage your account." }),
+      h("p", { class: "small muted", text: "You came here from your workspace. Your phones, browsers and password are managed after signing in to the hub itself." }),
+      h("button", { class: "pri", text: "Open the hub", onclick: signInAgain })),
+  ];
+}

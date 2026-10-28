@@ -8,14 +8,17 @@ export function accountView(data, actions) {
     const status = ({ active: "Active", revoked: "Removed", expired: "Expired" })[c.status] ?? "Unavailable";
     const dates = [["Added", c.created_ms], ["Last used", c.last_used_ms]]
       .filter(([, ms]) => Number.isFinite(ms)).map(([label, ms]) => label + " " + when(ms)).join(" · ");
+    const mine = Boolean(data.thisBrowserId) && c.kind === "browser" && c.channel_id === data.thisBrowserId;
+    const details = [dates, c.status === "active" ? "After removal it can no longer approve for you." : "",
+      c.status === "active" && mine ? "This is the browser you are using: removing it signs you out here." : ""].filter(Boolean);
     const remove = c.status === "active" ? h("button", { text: "Remove", "aria-label": "Remove " + text(c.label || kind),
       onclick: () => busyButton(remove, () => actions.remove(c.channel_id)) }) : null;
     return h("div", { class: "list-row row" },
       h("div", { class: "grow" }, h("b", { text: text(c.label || kind) }),
         h("div", { class: "small muted", text: kind + " · " + status }),
-        dates ? h("div", { class: "small muted", text: dates }) : null,
-        c.status === "active" ? h("div", { class: "small", text: "After removal: It can no longer approve for you." }) : null),
-      c.kind === "browser" && c.channel_id === data.thisBrowserId ? chip("This browser") : null, remove);
+        details.length ? h("details", { class: "info" }, h("summary", { "aria-label": "More about " + text(c.label || kind), text: "i" }),
+          details.map((line) => h("p", { class: "small muted", text: line }))) : null),
+      data.thisBrowserId && c.kind === "browser" && c.channel_id === data.thisBrowserId ? chip("This browser") : null, remove);
   });
   return [h("h1", { text: "Account" }),
     h("p", { text: "Signed in as " + text(data.user?.name ?? "") }),

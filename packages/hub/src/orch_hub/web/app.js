@@ -422,8 +422,10 @@ async function forgetLocal() {
 
 async function removeChannel(id) {
   const r = await api("POST", "/channels/" + encodeURIComponent(id) + "/revoke", {});
-  if (r.status === 200 && state.me?.channelId === id) await deleteChannel().catch(() => {}); // revoke first, then delete (A8-5)
-  state.notice = r.status === 200 ? banner("ok", "Removed", null) : banner("bad", "Not removed", say(r.body.error));
+  const wasThisBrowser = r.status === 200 && state.me?.channelId === id;
+  if (wasThisBrowser) await deleteChannel().catch(() => {}); // revoke first, then delete (A8-5)
+  // removing this browser's own key ends the session view: no notice may be left over for the next sign-in
+  state.notice = wasThisBrowser ? null : r.status === 200 ? banner("ok", "Removed", null) : banner("bad", "Not removed", say(r.body.error));
   await (parseRoute(location.hash).kind === "account" ? account() : home());
 }
 

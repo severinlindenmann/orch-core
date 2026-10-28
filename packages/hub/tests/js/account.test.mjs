@@ -26,7 +26,7 @@ test("Account lists phones and browsers, status, dates and this browser", () => 
     { channel_id: "e", kind: "phone", label: "Spare", status: "expired" },
   ] }, { remove() {} });
   const t = text(out);
-  for (const words of ["Signed in as Ann <Admin>", "My phones and browsers", "My phone", "Phone · Active", "Browser · Active", "Removed", "Expired", "Added", "Last used", "This browser", "It can no longer approve for you", "Pair a phone"]) assert.ok(t.includes(words), words);
+  for (const words of ["Signed in as Ann <Admin>", "My phones and browsers", "My phone", "Phone · Active", "Browser · Active", "Removed", "Expired", "Added", "Last used", "This browser", "can no longer approve for you", "Pair a phone"]) assert.ok(t.includes(words), words);
   assert.equal(find(out, n => n.tag === "button").length, 2);
   assert.equal(find(out, n => n.textContent === "This browser").length, 1);
 });

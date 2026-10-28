@@ -127,15 +127,29 @@ def test_roles_and_api_rows(tmp_path):
         for row in result["workspaces"] + w.call("GET", "/admin/workspaces", token=admin)[1]["workspaces"]:
             assert {"version", "commit", "version_state"} <= row.keys()
             assert row["version_state"] == "unknown"
-        # Private telemetry requires hub-admin membership, even for workspace owners/admins.
+        # Private telemetry is visible for each owned workspace, including aliases with a lesser role.
         private = {"host", "address", "last_seen_ms"}
-        assert all(private.isdisjoint(r) for r in result["workspaces"])
+        assert all(private <= r.keys() for r in result["workspaces"])
         assert any(r["role"] == "read" for r in result["workspaces"])
         assert any(r["role"] == "owner" for r in result["workspaces"])
         w.env.acc.grant(WS, "team", "admin")
         rows = w.call("GET", "/me/workspaces", token=ann)[1]["workspaces"]
         assert any(r["role"] == "admin" for r in rows)
-        assert all(private.isdisjoint(r) for r in rows)
+        assert all(private <= r.keys() for r in rows)
+        # A group admin grant alone does not grant private telemetry.
+        w.reg.ws[WS]["owner"] = w.admin
+        for role in ("read", "edit", "admin"):
+            w.env.acc.grant(WS, "team", role)
+            rows = w.call("GET", "/me/workspaces", token=ann)[1]["workspaces"]
+            assert private.isdisjoint(next(r for r in rows if r["workspace_id"] == WS))
+            assert private <= next(r for r in rows if r["workspace_id"] == WS_SEL).keys()
+        # Phone/channel sessions hide private telemetry even for owners and hub admins.
+        from orch_hub.webapi.api import Ctx
+
+        for user in (w.ann, w.admin):
+            _, data = w.api._h_my_workspaces(Ctx(user_id=user, scope="channel"), {}, {}, None)
+            assert data["workspaces"]
+            assert all(private.isdisjoint(r) for r in data["workspaces"])
         assert all(private <= r.keys() for r in w.call("GET", "/admin/workspaces", token=admin)[1]["workspaces"])
         assert all(private <= r.keys() for r in w.call("GET", "/me/workspaces", token=admin)[1]["workspaces"])
     finally:
@@ -168,3 +182,17 @@ def test_selective_mode_change_clears_stored_host(method):
         assert reg.status("ws")["host"] == ""
     finally:
         reg.close()
+
+
+@pytest.mark.parametrize("op", ["join", "binding_put"])
+def test_selective_link_binding_paths_clear_stored_host(hub, op):
+    c = hub.open(first=True)
+    c.request("join", hub.join_body(mode="full"))
+    c.request("status_put", STATUS)
+    assert hub.registry.status(G.WS_A)["host"]
+    if op == "join":
+        c.request("join", hub.join_body(invite="inv2", seq=2, mode="selective"))
+    else:
+        c.request("binding_put", {"object": G.binding(seq=2, mode="selective")})
+    assert hub.registry.mode(G.WS_A) == "selective"
+    assert hub.registry.status(G.WS_A)["host"] == ""

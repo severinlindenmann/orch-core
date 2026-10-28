@@ -1053,8 +1053,13 @@ class WebApi:
         rows = []
         for w in self._workspaces(c.user_id):
             st = workspace_status(self.d.registry, w["workspace_id"])
-            # Private telemetry is only for hub admins, never for phone sessions.
-            if not (self.d.access.is_hub_admin(c.user_id) and c.scope != "channel"):
+            # Private telemetry belongs to hub admins and this workspace's owner, never phone sessions.
+            private = c.scope != "channel" and (
+                self.d.access.is_hub_admin(c.user_id)
+                or w["role"] == "owner"
+                or self.d.registry.owner_alias(w["workspace_id"]) == c.user_id
+            )
+            if not private:
                 st = {k: v for k, v in st.items() if k not in ("host", "address", "last_seen_ms")}
             rows.append({**w, **st})
         return 200, {

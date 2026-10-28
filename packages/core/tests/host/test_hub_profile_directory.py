@@ -1,5 +1,6 @@
 """Owner-local profiles and quoted directory display."""
 
+import hashlib
 import io
 import json
 import os
@@ -93,7 +94,8 @@ def test_hub_profile_send_failure_retries_until_success(monkeypatch):
     for _ in range(3):
         hubops._snapshot_link(service, state, b"key", lambda x: x, True)
     assert calls == ["status_put", "profile_put", "profile_put"]
-    assert service._hub_profile_sent == {"hub"}
+    canonical = json.dumps(hubops._DEFAULT_PROFILE, sort_keys=True, separators=(",", ":")).encode()
+    assert service._hub_profile_sent == {"hub": hashlib.sha256(canonical).hexdigest()}
 
 
 @pytest.mark.parametrize("succeeds", [False, True])
@@ -110,7 +112,7 @@ def test_hub_profile_put_reports_push_result(monkeypatch, succeeds):
                 raise OSError("offline")
             return {}
 
-    service = SimpleNamespace(workspace_id="ws", clock=lambda: 1)
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 1, _hub_profile_sent={"hub": "old"})
     state = SimpleNamespace(hk_op_pub=b64u(b"k" * 65), tls_spki="pin", mode="full", hub_id="hub")
     monkeypatch.setattr(orch.hubclient, "HubLink", Link)
     monkeypatch.setattr(hubops, "_wsk_sign", lambda *args: (b"key", lambda x: x))
@@ -127,3 +129,70 @@ def test_hub_profile_put_reports_push_result(monkeypatch, succeeds):
         },
     )
     assert result["data"] == {"profile": hubops._DEFAULT_PROFILE, "pushed": succeeds}
+
+
+@pytest.mark.parametrize("owner_succeeds", [False, True])
+def test_hub_profile_old_inflight_push_cannot_skip_new_profile(tmp_path, monkeypatch, owner_succeeds):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    import orch.hubclient
+    from orch.crypto.encoding import b64u
+
+    started, release = threading.Event(), threading.Event()
+    received = []
+    old = {**hubops._DEFAULT_PROFILE, "description": "old"}
+    new = {**old, "description": "new"}
+    fail_new = not owner_succeeds
+
+    class Link:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def call(self, op, body):
+            nonlocal fail_new
+            if op == "profile_put":
+                if body == old:
+                    started.set()
+                    assert release.wait(5)
+                elif fail_new:
+                    fail_new = False
+                    raise OSError("offline")
+                received.append(body)
+            return {}
+
+    service = SimpleNamespace(state_dir=tmp_path, workspace_id="ws", host_uid=os.getuid(), clock=lambda: 1)
+    (tmp_path / "hosts").mkdir(mode=0o700)
+    state = SimpleNamespace(hk_op_pub=b64u(b"k" * 65), tls_spki="pin", mode="full", hub_id="hub")
+    monkeypatch.setattr(orch.hubclient, "HubLink", Link)
+    monkeypatch.setattr(hubops, "_wsk_sign", lambda *args: (b"key", lambda x: x))
+    monkeypatch.setattr(hubops, "_addr", lambda *args: "addr")
+    monkeypatch.setattr(hubops, "_transport", lambda *args: object())
+    hubops._save_profile(service, old)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pending = pool.submit(hubops._snapshot_link, service, state, b"key", lambda x: x, True)
+        try:
+            assert started.wait(5)
+            hubops._save_profile(service, new)
+        finally:
+            release.set()
+        pending.result(timeout=5)
+    # The completed push records the old body, even though the saved body changed.
+    old_hash = hashlib.sha256(json.dumps(old, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    assert service._hub_profile_sent == {"hub": old_hash}
+    result = hubops._run(
+        SimpleNamespace(service=service),
+        {"op": "hub.profile", "state": state, "dev": True, "args": {"profile": new}},
+    )
+    assert result["data"]["pushed"] is owner_succeeds
+    if owner_succeeds:
+        assert received[-1] == new
+    hubops._snapshot_link(service, state, b"key", lambda x: x, True)
+    assert received[-1] == new
+    new_hash = hashlib.sha256(json.dumps(new, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    assert service._hub_profile_sent == {"hub": new_hash}
+    # Canonical key order does not cause another send.
+    monkeypatch.setattr(hubops, "_load_profile", lambda _: dict(reversed(list(new.items()))))
+    count = len(received)
+    hubops._snapshot_link(service, state, b"key", lambda x: x, True)
+    assert len(received) == count

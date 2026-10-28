@@ -24,6 +24,8 @@ other workspace refuses a dev hub (hub contract 2.4). The real TLS link is C5: :
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import threading
 from collections.abc import Callable
@@ -949,18 +951,18 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         except HubRefused as exc:
             raise _refused(exc.code) from None
     if plan["op"] == "hub.profile":
+        pushed = False
         try:
             wsk_pub, sign = _wsk_sign(service)
-            _, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"])
-            getattr(transport, "close", lambda: None)()
+            link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"], send_profile=False)
+            try:
+                link.call("profile_put", plan["args"]["profile"])
+                pushed = True
+            finally:
+                getattr(transport, "close", lambda: None)()
         except Exception:
             pass
-        return ok_result(
-            {
-                "profile": plan["args"]["profile"],
-                "pushed": plan["state"].hub_id in service.__dict__.get("_hub_profile_sent", set()),
-            }
-        )
+        return ok_result({"profile": plan["args"]["profile"], "pushed": pushed})
     wsk_pub, sign = _wsk_sign(service)
     if plan["op"] == "hub.directory":
         try:
@@ -1074,7 +1076,9 @@ def _stop_peers(service: Any) -> None:
     logsyncops.start(service)  # V3 C14: eligible (full, bound, sealed) -> a pass now; else the sender ends
 
 
-def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool) -> tuple[Any, Any]:
+def _snapshot_link(
+    service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool, *, send_profile: bool = True
+) -> tuple[Any, Any]:
     """``(HubLink, transport)`` for the bound hub of ``state`` (the caller closes the transport)."""
     from orch.crypto.encoding import unb64u
     from orch.hubclient import HubLink
@@ -1106,10 +1110,13 @@ def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: boo
     except Exception:
         pass
     try:
-        sent = service.__dict__.setdefault("_hub_profile_sent", set())
-        if state.hub_id not in sent:
-            hub_link.call("profile_put", _load_profile(service))
-            sent.add(state.hub_id)
+        if send_profile:
+            profile = _load_profile(service)
+            digest = hashlib.sha256(json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            sent = service.__dict__.setdefault("_hub_profile_sent", {})
+            if sent.get(state.hub_id) != digest:
+                hub_link.call("profile_put", profile)
+                service.__dict__.setdefault("_hub_profile_sent", {})[state.hub_id] = digest
     except Exception:
         pass
     return hub_link, transport

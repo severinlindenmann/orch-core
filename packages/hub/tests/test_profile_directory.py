@@ -137,3 +137,16 @@ def test_directory_limit(directory):
         c.registry.put_profile(ws, PROFILE)
         allowed.add(ws)
     assert len(directory_get(c)["entries"]) == 50
+
+
+def test_selective_target_never_routes_or_appears_in_directory(directory):
+    from orch_hub.router.core import AccessAuthz
+
+    c, _ = directory
+    authz = AccessAuthz(c.registry, c.access)
+    assert c.registry.owner_alias("caller") == "alice"
+    assert c.access.role_of("alice", "selective") == "edit"
+    assert c.registry.profile("selective")["listed"] is True
+    assert authz.may_route("caller", "other") is True
+    assert authz.may_route("caller", "selective") is False
+    assert "selective" not in {row["workspace_id"] for row in directory_get(c)["entries"]}

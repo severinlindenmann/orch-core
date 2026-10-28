@@ -7,7 +7,7 @@ import re
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from orch.canon.text import is_clean_text
+from orch.canon.text import TextError, check_plain, is_clean_text
 
 from .followups import FU_BRIEF_MAX_BYTES, FU_RUN_HOURS
 from .followups import REASONS as FU_REASONS
@@ -123,4 +123,20 @@ def validate_set(rule, starts, ends, now, brief, run_hours, label=None):
         or not is_clean_text(label, one_line=True)
     ):
         return "label must be one line of clean text of at most 200 characters"
+    return None
+
+
+def validate_target(event):
+    """Absent target is the original shape; titles are literal clean single-line text."""
+    target = event.get("target", "existing")
+    if target not in ("existing", "new"):
+        return "target must be existing or new"
+    if target == "new":
+        title = event.get("title")
+        try:
+            check_plain(title, one_line=True, limit=100, what="title")
+        except TextError:
+            return "title must be 1..100 characters of clean text on one line"
+    elif "title" in event:
+        return "title is only allowed for new-ticket schedules"
     return None

@@ -12,7 +12,11 @@ def handle(ctx, args):
     rows = [{**schedule.thaw(r), "key": v.key} for v in tickets for r in v.schedules]
     return Result(
         data={"rows": rows, "total": len(rows)},
-        lines=[f"{r['id']} {r['state']}: " + schedule.describe(r["rule"], r["key"], r["ends"]) for r in rows],
+        lines=[
+            f"{r['id']} {r['state']}: "
+            + schedule.describe(r["rule"], r["key"], r["ends"], r.get("target", "existing"), r.get("title"))
+            for r in rows
+        ],
     )
 
 

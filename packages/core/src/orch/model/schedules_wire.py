@@ -78,6 +78,8 @@ def blocked(core, t, rec, now):
 
 
 def set_event(core, t, e):
+    if error := schedules.validate_target(e):
+        return denied(error)
     ws, now, a = core.ws, ts(e["at"]), e["actor"]
     if a["kind"] != "person":
         return denied("only a person may set a schedule")
@@ -121,6 +123,8 @@ def set_event(core, t, e):
         e["run_hours"],
         e["at"],
         e.get("label"),
+        target=e.get("target", "existing"),
+        title=e.get("title"),
     )
     t.schedules[rec.id] = rec
     # A bounded root, never a usable runner credential. Chain traversal uses the
@@ -133,6 +137,8 @@ def set_event(core, t, e):
 
 def fired_event(core, t, e):
     rec = t.schedules.get(e["schedule"])
+    if rec is not None and rec.target != "existing":
+        return denied("new-ticket schedules are not switched on yet")
     if e["actor"]["kind"] != "host" or rec is None or rec.cancelled:
         return denied("schedule is not live")
     # At-most-once is keyed on the occurrence string: only its canonical spelling may be recorded.

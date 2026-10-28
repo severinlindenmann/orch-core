@@ -429,6 +429,17 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 8
+    },
+    "target": {
+      "enum": [
+        "existing",
+        "new"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
     }
   },
   "required": [
@@ -606,6 +617,30 @@
               ]
             }
           }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "const": "new"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "title"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "title"
+          ]
         }
       }
     }

@@ -305,34 +305,29 @@ def test_plan_add_has_no_base():
     assert planned.op == "schedule.add" and planned.base is None
 
 
-@pytest.mark.parametrize("target", [None, "existing"])
-def test_schedule_add_existing_target(target):
-    body = signing.ScheduleAdd(**add(target=target))
-    _, args = signing.host_call(body)
-    assert args["ref"] == KEY
-    assert "title" not in args
-    if target is None:
-        assert "target" not in args
-    else:
-        assert args["target"] == target
+def test_schedule_new_shape_passthrough():
+    body = add(target="new", title="Mail")
+    body.pop("key")
+    action = signing.ScheduleAdd(**body)
+    assert action.props()["target"] == "new"
+    assert action.props()["title"] == "Mail"
+    assert "ref" not in action.props()
+    check = signing.expected(action)
+    assert check([{"type": "schedule.set", "target": "new", "title": "Mail"}])
+    assert not check([{"type": "schedule.set"}])
+    assert not signing.expected(signing.ScheduleAdd(**add()))([{"type": "schedule.set", "target": "unknown"}])
 
 
-def test_schedule_add_new_target():
-    data = add(target="new", title="Check the shared mailbox")
-    del data["key"]
-    body = signing.ScheduleAdd(**data)
-    _, args = signing.host_call(body)
-    assert args["target"] == "new"
-    assert args["title"] == data["title"]
-    assert "ref" not in args
-
-
-@pytest.mark.parametrize("over", [
-    {"target": "unknown"}, {"key": None}, {"target": "existing", "key": None},
-    {"target": "new", "title": "Mailbox"},
-    {"target": "new", "key": None},
-    *({"target": "new", "key": None, "title": title} for title in ["", "   ", "x" * 101, "mail\u200bbox"]),
-])
-def test_schedule_add_target_refusals(over):
-    with pytest.raises(ValidationError):
+@pytest.mark.parametrize(
+    "over", [{"target": "unknown"}, {"title": "Mail"}, {"target": "new"}, {"target": "new", "title": "a\u200bb"}]
+)
+def test_schedule_invalid_target_title(over):
+    with pytest.raises(ValueError):
         signing.ScheduleAdd(**add(**over))
+
+
+@pytest.mark.parametrize("target", ["new", "unknown", None])
+def test_schedule_read_refuses_unsupported_target(target):
+    with pytest.raises(HostError) as exc:
+        schedules.build(FakeGateway(rows=[row(target=target, title="Mail")]), "w")
+    assert exc.value.error["code"] == "schedule.denied"

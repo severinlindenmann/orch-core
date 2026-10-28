@@ -641,3 +641,30 @@ def test_ticket_people_changes_do_not_remove_the_right_to_act():
     t = core.tickets[uid]
     assert blocked(core, t, t.schedules[e["schedule"]], ts(w.at())) == "role_lost"
     assert refused(w, uid, "log.added", run, text="as a viewer") is not None
+
+
+def test_schedule_new_shape_admitted_but_cannot_fire_as_existing():
+    w, uid, old, due = setup()
+    payload = {k: old[k] for k in ("brief", "rule", "starts", "ends", "run_hours")}
+    e, result = w.try_(uid, "schedule.set", "tom", schedule="sc_" + w.nid(), target="new", title="Mail", **payload)
+    assert not hasattr(result, "code"), result
+    rec = w.state()._core.tickets[uid].schedules[e["schedule"]]
+    assert (rec.target, rec.title) == ("new", "Mail")
+    w.clock = due
+    assert fire(w, uid, e, due)[1].code == Code.SCHEDULE_DENIED
+
+
+def test_schedule_target_validation_in_model():
+    w, uid, old, due = setup()
+    w.validate = False  # exercise the model independently of the wire schema
+    payload = {k: old[k] for k in ("brief", "rule", "starts", "ends", "run_hours")}
+    for extra in (
+        {"target": "other"},
+        {"target": None},
+        {"title": "Mail"},
+        {"target": "new"},
+        {"target": "new", "title": "a\u200bb"},
+        {"target": "new", "title": "x" * 101},
+    ):
+        _, result = w.try_(uid, "schedule.set", "tom", schedule="sc_" + w.nid(), **payload, **extra)
+        assert result.code == Code.SCHEDULE_DENIED

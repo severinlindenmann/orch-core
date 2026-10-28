@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS approval (
   workspace_id TEXT NOT NULL,
   approver_user TEXT NOT NULL,
   base_snapshot_version INTEGER NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('pending','approved','rejected','stale')),
+  state TEXT NOT NULL CHECK (state IN ('pending','approved','rejected','stale','overridden')),
   decided_ms INTEGER,
   proof_digest TEXT UNIQUE,
   delta TEXT NOT NULL DEFAULT '[]',

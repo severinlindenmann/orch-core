@@ -122,6 +122,14 @@ class Changes:
     def _ws_of(self, change_id: str) -> list[str | None]:
         return [a["workspace_id"] for a in self._db.approvals(change_id)]
 
+    def _unowned_check(self, actor: str, kind: str, body: dict[str, Any]) -> None:
+        """Fail closed for a FULL workspace the change reaches that has NO owner alias (a legacy or half-bound one): nobody
+        can approve for it, so only a hub admin may change who reaches it (``owner_unknown`` for anyone else). It never
+        becomes "applies at once" for whoever happens to ask."""
+        for ws in R.reach_delta(self._access, self._reg, kind, body):
+            if R.owner_of(self._reg, ws) is None and not self._access.is_hub_admin(actor):
+                raise ChangeError("owner_unknown")
+
     # --- the one rule: a new grant or a new member ------------------------------------------------------------------
 
     def _validate_grant(self, ws: object, group: object, role: object) -> tuple[str, str, str]:
@@ -141,6 +149,7 @@ class Changes:
         ws, group, role = self._validate_grant(workspace_id, group, role)
         body = {"group": group, "role": role, "workspace_id": ws}
         with self._access.lock:
+            self._unowned_check(actor, "grant", body)
             needs = R.needs_approval(self._access, self._reg, "grant", body, actor)
             if needs:
                 return self._propose("grant", body, actor, needs)
@@ -159,6 +168,7 @@ class Changes:
                 raise AccessError("unknown_group")
             if not self._access.has_user(user_id):
                 raise AccessError("unknown_user")
+            self._unowned_check(actor, "member_add", body)
             needs = R.needs_approval(self._access, self._reg, "member_add", body, actor)
             if needs:
                 return self._propose("member_add", body, actor, needs)
@@ -570,14 +580,16 @@ class Changes:
             elif not self._access.has_user(body["user_id"]):
                 raise AccessError("unknown_user")
             # what the change does to access NOW, not what it did when it was proposed: workspaces bound or granted since
-            # then are reached too, and every owner it reaches is told (condition 9)
+            # then are reached too, and every owner it reaches is told (condition 9). Everything below happens under
+            # Access.lock, after the audit record (an extra record is possible, a missing one never), inside ONE
+            # transaction with the compare-and-swap: a lost race leaves no notice behind.
             reached = R.reach_delta(self._access, self._reg, ch["kind"], body)
-            for ws in reached:
-                if R.owner_of(self._reg, ws) is None:
-                    continue
-                self._owner_notice_row(ch["id"], ws, reached[ws])
             self._log(
-                "change.overridden", ch, sorted(set(self._ws_of(ch["id"])) | set(reached)), actor=admin, reason=reason
+                "change.overridden",
+                ch,
+                sorted(set(self._ws_of(ch["id"])) | set(reached)),
+                actor=admin,
+                reason=reason,
             )
             with self._db.tx() as db:
                 if (
@@ -589,22 +601,28 @@ class Changes:
                     != 1
                 ):
                     raise ChangeError("not_pending")
+                for ws, delta in reached.items():
+                    self._owner_notice_row(db, ch["id"], ws, delta)
+                db.execute("UPDATE approval SET state='overridden' WHERE change_id=?", (ch["id"],))
                 self._apply(ch, body, actor=admin)
 
-    def _owner_notice_row(self, change_id: str, ws: str, delta: list[dict[str, str]]) -> None:
+    def _owner_notice_row(self, db: Any, change_id: str, ws: str, delta: list[dict[str, str]]) -> None:
         """Make sure the owner of ``ws`` has an approval row on this change that carries the people who REALLY gain access
-        (the notice reads these rows): a new row for a workspace the proposal did not name, the delta refreshed on the rest."""
+        (the notice reads these rows): a new row for a workspace the proposal did not name, the delta refreshed on the
+        rest. Inside the caller's transaction; the rows end as ``overridden``, never ``pending``, so no approve button can
+        appear on a change that is already applied."""
         owner = R.owner_of(self._reg, ws)
+        if owner is None:
+            return  # nobody to tell (the activity record names the workspace)
         text = cj(delta).decode()
-        with self._db.tx() as db:
-            if db.execute("SELECT 1 FROM approval WHERE change_id=? AND workspace_id=?", (change_id, ws)).fetchone():
-                db.execute("UPDATE approval SET delta=? WHERE change_id=? AND workspace_id=?", (text, change_id, ws))
-            else:
-                db.execute(
-                    "INSERT INTO approval(change_id, workspace_id, approver_user, base_snapshot_version, state, delta) "
-                    "VALUES (?,?,?,?,'pending',?)",
-                    (change_id, ws, owner, self._version(ws), text),
-                )
+        if db.execute("SELECT 1 FROM approval WHERE change_id=? AND workspace_id=?", (change_id, ws)).fetchone():
+            db.execute("UPDATE approval SET delta=? WHERE change_id=? AND workspace_id=?", (text, change_id, ws))
+        else:
+            db.execute(
+                "INSERT INTO approval(change_id, workspace_id, approver_user, base_snapshot_version, state, delta) "
+                "VALUES (?,?,?,?,'overridden',?)",
+                (change_id, ws, owner, self._version(ws), text),
+            )
 
     def cancel(self, change_id: object, actor: str) -> None:
         """The proposer, or a hub admin, withdraws a pending change."""

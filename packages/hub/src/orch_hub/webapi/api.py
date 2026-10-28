@@ -96,6 +96,7 @@ STATUS = {
     "unknown_snapshot": 409,
     # access changes that wait for a workspace owner (changes/)
     "owner_protected": 409,
+    "owner_unknown": 409,
     "last_admin": 409,
     "stale_change": 409,
     "not_pending": 409,
@@ -891,6 +892,8 @@ class WebApi(ChangeHandlers):
     def _h_setup(self, c: Ctx, p: dict, q: dict, b: dict | None):
         """Prototype: the installer's token file is the proof; a right token makes one hub-admin and is deleted."""
         b = _need(b, token=str, name=str, password=str)
+        if self.d.access.members(ADMIN_GROUP):
+            raise ApiError("not_allowed")  # first admin only: a leftover token file never makes a second one
         f = self.d.setup_token_file
         with self._plock:
             try:

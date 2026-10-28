@@ -1179,10 +1179,13 @@ def test_override_reaches_a_workspace_bound_after_the_proposal(w):
 
 
 def test_only_changes_writes_membership_and_grants():
-    """AST guard (like the owner_alias one): outside orch_hub/changes, nothing calls ``add_member`` / ``grant`` on the
-    access model except the operator CLI at the hub terminal (state-dir owner) and the one-time first-admin setup."""
+    """AST guard (like the owner_alias one): outside orch_hub/changes, ANY attribute call named ``add_member`` / ``grant`` /
+    ``set_role`` is a write to the access model, whatever the receiver is called. The only ones allowed are the operator CLI
+    at the hub terminal (state-dir owner), the one-time first-admin setup, and the store itself; and those sites must really
+    be there (so the guard cannot go blind)."""
     root = Path(orch_hub.__file__).parent
-    allowed = {("access/cli.py", None), ("webapi/api.py", "_h_setup")}
+    watched = {"add_member", "grant", "set_role"}
+    allowed = {("webapi/api.py", "_h_setup", "self.d.access"), ("webapi/api.py", "_h_a_grant", "self._chg()")}
     found = set()
     for path in sorted(root.rglob("*.py")):
         rel = path.relative_to(root).as_posix()
@@ -1191,20 +1194,36 @@ def test_only_changes_writes_membership_and_grants():
         tree = ast.parse(path.read_text())
         parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
         for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr in ("add_member", "grant")
-            ):
-                receiver = ast.unparse(node.func.value)
-                if not (receiver.endswith("access") or receiver in ("acc", "self.acc", "self._access")):
-                    continue
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in watched:
                 fn = node
                 while fn in parents and not isinstance(fn, ast.FunctionDef):
                     fn = parents[fn]
-                found.add((rel, fn.name if isinstance(fn, ast.FunctionDef) else None))
-    unexpected = {f for f in found if f not in allowed and f[0] != "access/cli.py"}
+                found.add((rel, fn.name if isinstance(fn, ast.FunctionDef) else None, ast.unparse(node.func.value)))
+    cli_sites = {f for f in found if f[0] == "access/cli.py"}
+    unexpected = {f for f in found if f not in allowed and f not in cli_sites}
     assert not unexpected, f"access is written outside Changes: {sorted(unexpected)}"
+    assert allowed <= found and cli_sites, f"the guard no longer sees its allowlisted sites: {found}"
+
+
+def test_setup_refuses_once_an_admin_exists(w, tmp_path):
+    token_file = tmp_path / "setup-token"
+    token_file.write_text("tok-123\n")
+    w.api.d.setup_token_file = token_file  # a leftover token file with an admin already present
+    s, o, _ = w.call("POST", "/setup", {"token": "tok-123", "name": "mallory", "password": "x" * 14})
+    assert (s, o) == (403, {"error": "not_allowed"})
+    assert not any(u["name"] == "mallory" for u in acc(w).users())
+
+
+def test_a_full_workspace_without_an_owner_alias_fails_closed(w):
+    """No alias row: nobody can approve for the workspace, so only a hub admin changes who reaches it."""
+    ws6 = "e6" * 16
+    w.reg.add(ws6, "full", owner=None, name="Orphan")
+    with pytest.raises(ChangeError) as e:
+        w.changes.grant(w.newbie, ws6, "devs", "edit")  # a non-admin actor: refused, never "applies at once"
+    assert e.value.code == "owner_unknown"
+    assert not has_grant(w, ws6, "devs", "edit")
+    # a hub admin may still manage it (hub admins manage every workspace)
+    assert w.changes.grant(w.admin, ws6, "devs", "edit") is None and has_grant(w, ws6, "devs", "edit")
 
 
 def test_approval_routes_have_the_same_freshness_gate_as_signing():
@@ -1224,3 +1243,15 @@ def test_a_real_registry_without_an_alias_says_none_not_an_owner():
     reg = Registry(":memory:")
     assert reg.owner_alias("e5" * 16) is None and R.owner_of(reg, "e5" * 16) is None
     assert R.is_full(reg, "e5" * 16) is False  # an unknown workspace never needs, and never skips, an approval
+
+
+def test_a_switch_ticket_session_is_refused_on_approve_and_prepare(w):
+    tok = w.login(w.admin)
+    cid = propose(w, tok, WS2, "devs", "edit")
+    ticket_session = w.env.svc.open_session(w.olive)["token"]  # a workspace vouched for it: no password sign-in
+    w.browser_tokens.add(ticket_session)  # the console carries it as its cookie, like a real switch redeem
+    assert w.call("GET", "/session", token=ticket_session)[1]["needs_sign_in"] is True
+    for path in (f"/me/changes/{cid}/approve/prepare", f"/me/changes/{cid}/approve", f"/me/changes/{cid}/reject"):
+        s, o, _ = w.call("POST", path, {}, token=ticket_session)
+        assert (s, o["error"]) == (403, "reauth_required"), path
+    assert row(w, cid)["state"] == "pending" and not has_grant(w, WS2, "devs", "edit")

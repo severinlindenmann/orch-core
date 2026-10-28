@@ -393,7 +393,15 @@ async function account() {
     await loadRail();
     const r = await api("GET", "/me/channels");
     if (r.status !== 200) return shell("account", h("h1", { text: "Account" }), banner("bad", "Cannot read your phones and browsers", "Please try again."));
-    shell("account", state.notice, accountView({ user: state.user, channels: r.body.channels, thisBrowserId: state.me?.channelId }, { remove: removeChannel }));
+    const security = { // M2-6: the person's own password, authenticator and sessions (the hub refuses a switch session)
+      password: (body) => api("POST", "/me/password", body),
+      begin: (body) => api("POST", "/me/authenticator/begin", body),
+      confirm: (code) => api("POST", "/me/authenticator/confirm", { code }),
+      endAll: async () => { const e = await api("POST", "/me/sessions/end-all", {}); if (e.status === 200) loginView("You were signed out everywhere. Sign in again."); return e; },
+      copy: copyText,
+      signInAgain: async () => { await api("DELETE", "/session"); clearSession(); loginView(); },
+    };
+    shell("account", state.notice, accountView({ user: state.user, channels: r.body.channels, thisBrowserId: state.me?.channelId, needsSignIn: !!state.user.needs_sign_in }, { remove: removeChannel, security }));
     state.notice = null;
   } finally { finishLoading(); }
 }

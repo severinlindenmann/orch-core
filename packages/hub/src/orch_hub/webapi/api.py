@@ -80,6 +80,10 @@ STATUS = {
     "malformed": 400,
     "bad_pairing_code": 400,
     "weak_password": 400,
+    "same_password": 400,
+    "bad_code": 400,
+    "no_pending": 409,
+    "pending_expired": 410,
     "reserved_group": 400,
     "wrong_mode": 409,
     "event_changed": 409,
@@ -272,6 +276,22 @@ ROUTES: tuple[Route, ...] = (
         "GET", "/workspaces/{workspace_id}/items/{item_id}", "session", "item", "One ticket, question or needs-you item"
     ),
     _r("GET", "/me/channels", "session", "my_channels", "My registered channels (phone, browser)"),
+    _r("POST", "/me/password", "session", "my_password", "Change my password (needs current password and code)"),
+    _r(
+        "POST",
+        "/me/authenticator/begin",
+        "session",
+        "my_auth_begin",
+        "Start a new authenticator (current password and code); the old one works until confirmed",
+    ),
+    _r(
+        "POST",
+        "/me/authenticator/confirm",
+        "session",
+        "my_auth_confirm",
+        "Confirm the new authenticator with a code from it; the old one stops, other sessions end",
+    ),
+    _r("POST", "/me/sessions/end-all", "session", "my_end_all", "Sign me out everywhere, this device too"),
     # (c) signing
     _r("POST", "/sign/prepare", "session", "prepare", "Hub builds the event; returns ctx, digest and what to show"),
     _r(
@@ -1288,6 +1308,45 @@ class WebApi:
                 "channel.revoked", actor_id=c.user_id, subject_user=owner, detail={"channel_id": p["channel_id"]}
             )
         return 200, {"ok": True}
+
+    # --- (f) my own account security: own act only; a switch session never reaches these (SWITCH_HANDLERS) ------------
+
+    def _note(self, kind: str, c: Ctx, **detail: Any) -> None:
+        if self.d.activity is not None:  # references only, never a secret
+            self.d.activity.record(kind, actor_id=c.user_id, subject_user=c.user_id, detail=detail or None)
+
+    def _reauth_me(self, c: Ctx, b: dict, password_key: str) -> None:
+        """Current password + a current code, through the same caps and limiter state as browser key registration."""
+        pw, totp = b[password_key], b["totp"]
+        self._guarded_credentials(c, c.user_id, lambda: self.d.channels.reauth(c.user_id, pw, totp, c.source))
+
+    def _h_my_password(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, current_password=str, totp=str, new_password=str)
+        if len(b["new_password"]) < MIN_PASSWORD:
+            raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
+        if b["new_password"] == b["current_password"]:
+            raise ChannelError("same_password")
+        self._reauth_me(c, b, "current_password")
+        self.d.channels.change_password(c.user_id, b["new_password"], c.token)
+        self._note("password.changed", c)
+        return 200, {"ok": True}
+
+    def _h_my_auth_begin(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, password=str, totp=str)
+        self._reauth_me(c, b, "password")
+        return 200, self.d.channels.begin_totp(c.user_id)  # shown once on the person's screen; never logged
+
+    def _h_my_auth_confirm(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, code=str)
+        self.d.channels.confirm_totp(c.user_id, b["code"], c.token)
+        self._note("authenticator.rotated", c)
+        return 200, {"ok": True}
+
+    def _h_my_end_all(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        n = self.d.channels.end_all_sessions(c.user_id)
+        self._note("sessions.ended", c, count=n)
+        clear = f"{self._cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
+        return 200, {"ok": True}, [("Set-Cookie", clear + ("; Secure" if self.d.secure_cookies else ""))]
 
     # --- (d) admin console (route auth = hub-admin, checked in the pipeline) -----------------------------------------
 

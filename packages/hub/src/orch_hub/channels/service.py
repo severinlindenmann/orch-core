@@ -69,6 +69,7 @@ PW_BACKOFF_CAP_MS = 60_000
 PW_USER_FREE = 10
 KNOWN_SOURCE_MS = 30 * 86_400_000
 MIN_PASSWORD = 10
+PENDING_TOTP_MS = 10 * 60_000  # a new authenticator secret must be confirmed within this
 CHANNEL_SESSION_MS = 12 * 3_600_000  # spec §7, protocol §6.4 (the contract's constant is the same)
 #: the gate the hub checked for each channel kind (browser: live password+TOTP session; phone: operator pairing code)
 GATE_OF = {"browser": "session", "phone": "pairing-code"}
@@ -218,8 +219,13 @@ class Channels:
                 (u, secret, now),
             )
             self.db.w("DELETE FROM sessions WHERE user_id=?", (u,))
+            self.db.w("DELETE FROM pending_totp WHERE user_id=?", (u,))  # an operator reset supersedes a pending change
 
         self._guard(go)
+        return self._totp_offer(u, secret)
+
+    @staticmethod
+    def _totp_offer(u: str, secret: bytes) -> dict[str, str]:
         b32 = base64.b32encode(secret).decode().rstrip("=")
         return {"secret": b32, "uri": f"otpauth://totp/orch-hub:{u}?secret={b32}&issuer=orch-hub"}
 
@@ -520,6 +526,90 @@ class Channels:
 
     def sign_out(self, token: str) -> None:
         self._guard(lambda: self.db.w("DELETE FROM sessions WHERE token_hash=?", (_sha(str(token)),)))
+
+    # --- the person's own account security (M2-6). The caller (web API) has already re-verified the current password
+    # and a current TOTP code through :meth:`reauth` for change_password / begin_totp ------------------------------------
+
+    def change_password(self, user_id: str, new_password: str, keep_token: str) -> None:
+        """New password; every OTHER session of the user ends, the one making the call (``keep_token``) lives. Channel
+        keys are not touched (the ``channels`` table is not written)."""
+        u = self._known_user(user_id)
+        if type(new_password) is not str or len(new_password) < MIN_PASSWORD or len(new_password) > 1024:
+            raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
+        salt = os.urandom(16)
+        h = _pw_hash(new_password, salt)
+        now = self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute(
+                    "UPDATE credentials SET pw_salt=?, pw_hash=?, updated_ms=? WHERE user_id=?", (salt, h, now, u)
+                )
+                db.execute("DELETE FROM sessions WHERE user_id=? AND token_hash<>?", (u, _sha(str(keep_token))))
+
+        self._guard(go)
+
+    def begin_totp(self, user_id: str) -> dict[str, str]:
+        """A PENDING authenticator secret (one per user: a new begin replaces it; it lives PENDING_TOTP_MS). The current
+        secret keeps working until :meth:`confirm_totp`. Returned once, never logged."""
+        u = self._known_user(user_id)
+        secret, now = os.urandom(20), self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM pending_totp WHERE expires_ms <= ?", (now,))
+                db.execute(
+                    "INSERT OR REPLACE INTO pending_totp(user_id, secret, expires_ms) VALUES (?,?,?)",
+                    (u, secret, now + PENDING_TOTP_MS),
+                )
+
+        self._guard(go)
+        return self._totp_offer(u, secret)
+
+    def confirm_totp(self, user_id: str, code: str, keep_token: str) -> None:
+        """Only a valid code FROM THE PENDING secret activates it; at that moment the old secret is gone and every other
+        session ends. Wrong codes are counted (``rate_limited`` after MAX_FAILURES) and leave the old secret active."""
+        u = self._known_user(user_id)
+        rid = self._guard(lambda: self._reserve("totp-confirm", u))
+        now = self._now()
+        outcome: list[str] = []
+
+        def go() -> None:
+            with self._tx() as db:
+                row = db.execute("SELECT secret, expires_ms FROM pending_totp WHERE user_id=?", (u,)).fetchone()
+                if row is None:
+                    outcome.append("no_pending")
+                    return
+                if row[1] <= now:
+                    db.execute("DELETE FROM pending_totp WHERE user_id=?", (u,))
+                    outcome.append("pending_expired")
+                    return
+                match = 0
+                if type(code) is str and code.isascii() and code.isdigit() and len(code) == 6:
+                    for c in (now // 30_000 - 1, now // 30_000, now // 30_000 + 1):
+                        if hmac.compare_digest(totp_code(row[0], c), code):
+                            match = c
+                if not match:
+                    outcome.append("bad_code")
+                    return
+                # the matched step is spent for the new secret too (no replay at sign-in)
+                db.execute(
+                    "UPDATE credentials SET totp_secret=?, totp_last=?, updated_ms=? WHERE user_id=?",
+                    (row[0], match, now, u),
+                )
+                db.execute("DELETE FROM pending_totp WHERE user_id=?", (u,))
+                db.execute("DELETE FROM sessions WHERE user_id=? AND token_hash<>?", (u, _sha(str(keep_token))))
+                self._succeed(db, "totp-confirm", u, rid)
+                outcome.append("ok")
+
+        self._guard(go)
+        if outcome[0] != "ok":
+            raise ChannelError(outcome[0])  # the reserved attempt stays counted
+
+    def end_all_sessions(self, user_id: str) -> int:
+        """Every session of the user, the caller's too. Channel keys stay. Returns how many ended."""
+        u = self._known_user(user_id)
+        return self._guard(lambda: self.db.w("DELETE FROM sessions WHERE user_id=?", (u,)))
 
     # --- registration ----------------------------------------------------------------------------------------------
 

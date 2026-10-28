@@ -68,3 +68,126 @@ test("removal uses the existing endpoint and deletes only this browser's local k
     assert.equal(calls.at(-1), "account");
   }
 });
+
+// --- M2-6: password, authenticator, sign out everywhere ------------------------------------------------------------------
+const byId = (out, id) => find(out, n => n.attrs.id === id)[0];
+const submit = (form) => form.listeners.submit({ preventDefault() {} });
+const ok = (body = { ok: true }) => ({ status: 200, body });
+const refused = (error, status = 401) => ({ status, body: { error } });
+function secure(security, data = {}) {
+  const out = accountView({ user: { name: "Ann" }, channels: [], ...data }, { security });
+  const form = (id) => find(out, n => n.tag === "form" && n.all().some(x => x.attrs.id === id))[0];
+  return { out, form, t: () => text(out) };
+}
+function fill(out, values) { for (const [id, v] of Object.entries(values)) byId(out, id).value = v; }
+
+test("three plain-word cards for the signed-in person, only when the page is given the actions", () => {
+  const { t, out } = secure({});
+  for (const words of ["Change your password", "Use a new authenticator app", "Sign out everywhere", "Current password", "New password (10 or more characters)"]) assert.ok(t().includes(words), words);
+  assert.equal(find(out, n => n.tag === "section" && /^sec-/.test(n.attrs.id ?? "")).length, 3);
+  for (const id of ["sec-pw-now", "sec-pw-new", "sec-pw-again", "sec-auth-pw"]) assert.equal(byId(out, id).attrs.type, "password", id);
+  assert.equal(find(accountView({ channels: [] }, {}), n => /^sec-/.test(n.attrs.id ?? "")).length, 0);
+});
+
+test("change password: checks locally, sends the three fields, clears them and says what happened", async () => {
+  const calls = [];
+  const { out, form, t } = secure({ password: async (b) => { calls.push(b); return ok(); } });
+  fill(out, { "sec-pw-now": "old pass phrase", "sec-pw-code": " 123456 ", "sec-pw-new": "short", "sec-pw-again": "short" });
+  await submit(form("sec-pw-now"));
+  assert.equal(calls.length, 0); assert.match(t(), /at least 10 characters/);
+  fill(out, { "sec-pw-new": "a long new phrase", "sec-pw-again": "a different one!!" });
+  await submit(form("sec-pw-now"));
+  assert.equal(calls.length, 0); assert.match(t(), /two new passwords are not the same/);
+  fill(out, { "sec-pw-again": "a long new phrase" });
+  await submit(form("sec-pw-now"));
+  assert.deepEqual(calls, [{ current_password: "old pass phrase", totp: "123456", new_password: "a long new phrase" }]);
+  assert.match(t(), /Password changed\. Other devices were signed out\./);
+  for (const id of ["sec-pw-now", "sec-pw-code", "sec-pw-new", "sec-pw-again"]) assert.equal(byId(out, id).value, "", id);
+});
+
+test("change password: a refusal is said in plain words and the code is cleared", async () => {
+  for (const [error, words] of [["bad_credentials", /password or the code was not right/], ["rate_limited", /Too many tries/], ["same_password", /must be different/], ["reauth_required", /Sign in again/], ["weird_code", /did not work/]]) {
+    const { out, form, t } = secure({ password: async () => refused(error) });
+    fill(out, { "sec-pw-now": "x".repeat(12), "sec-pw-code": "111111", "sec-pw-new": "y".repeat(12), "sec-pw-again": "y".repeat(12) });
+    await submit(form("sec-pw-now"));
+    assert.match(t(), words, error);
+    assert.doesNotMatch(t(), /Password changed/);
+    assert.equal(byId(out, "sec-pw-code").value, "");
+  }
+});
+
+test("new authenticator: the secret is shown once with Copy, then turned on with a code from it", async () => {
+  const calls = [], copied = [];
+  const { out, form, t } = secure({
+    begin: async (b) => { calls.push(["begin", b]); return ok({ secret: "JBSWY3DPEHPK3PXP", uri: "otpauth://x" }); },
+    confirm: async (c) => { calls.push(["confirm", c]); return ok(); },
+    copy: (s) => copied.push(s),
+  });
+  assert.equal(byId(out, "sec-auth-secret"), undefined);
+  fill(out, { "sec-auth-pw": "my password", "sec-auth-code": "123456" });
+  await submit(form("sec-auth-pw"));
+  assert.deepEqual(calls, [["begin", { password: "my password", totp: "123456" }]]);
+  assert.equal(byId(out, "sec-auth-pw"), undefined);  // the first step gives way to the second
+  assert.equal(byId(out, "sec-auth-secret").textContent, "JBSWY3DPEHPK3PXP");
+  assert.match(t(), /shown only now/); assert.match(t(), /old authenticator keeps working/);
+  find(out, n => n.tag === "button" && n.textContent === "Copy")[0].listeners.click();
+  assert.deepEqual(copied, ["JBSWY3DPEHPK3PXP"]);
+  assert.doesNotMatch(t(), /otpauth/);
+  byId(out, "sec-auth-new").value = " 654321 ";
+  await submit(form("sec-auth-new"));
+  assert.deepEqual(calls[1], ["confirm", "654321"]);
+  assert.match(t(), /new authenticator is on\. The old one no longer works\. Other devices were signed out\./);
+  assert.equal(byId(out, "sec-auth-secret"), undefined);  // the secret leaves the screen
+  assert.ok(byId(out, "sec-auth-pw"));                      // and the first step is back
+});
+
+test("new authenticator: a failed begin shows no secret; a wrong code keeps the secret on screen; an expired one starts over", async () => {
+  let begun = 0, answer = refused("bad_code", 400);
+  const { out, form, t } = secure({
+    begin: async () => { begun++; return begun === 1 ? refused("bad_credentials") : ok({ secret: "ABCDEFGH" }); },
+    confirm: async () => answer,
+  });
+  fill(out, { "sec-auth-pw": "pw", "sec-auth-code": "000000" });
+  await submit(form("sec-auth-pw"));
+  assert.equal(byId(out, "sec-auth-secret"), undefined); assert.match(t(), /password or the code was not right/);
+  await submit(form("sec-auth-pw"));
+  assert.equal(byId(out, "sec-auth-secret").textContent, "ABCDEFGH");
+  byId(out, "sec-auth-new").value = "111111";
+  await submit(form("sec-auth-new"));
+  assert.match(t(), /did not match the new authenticator/);
+  assert.equal(byId(out, "sec-auth-secret").textContent, "ABCDEFGH");
+  assert.equal(byId(out, "sec-auth-new").value, "");
+  answer = refused("pending_expired", 410);
+  await submit(form("sec-auth-new"));
+  assert.match(t(), /ran out of time/);
+  assert.equal(byId(out, "sec-auth-secret"), undefined); assert.ok(byId(out, "sec-auth-pw"));
+  assert.doesNotMatch(t(), /is on\./);
+});
+
+test("sign out everywhere: one click, once; a refusal is said in words", async () => {
+  let calls = 0, answer = ok();
+  const { out, t } = secure({ endAll: async () => { calls++; return answer; } });
+  const button = find(out, n => n.tag === "button" && n.textContent === "Sign out everywhere")[0];
+  await button.listeners.click();
+  assert.equal(calls, 1);
+  answer = refused("unavailable", 503);
+  await button.listeners.click();
+  assert.equal(calls, 2); assert.match(t(), /did not work/);
+  assert.match(t(), /Your phones and browsers stay registered/);
+});
+
+test("a session that came from a workspace sees only a sign-in prompt instead of the three cards", async () => {
+  let again = 0;
+  const { out, t } = secure({ signInAgain: () => again++ }, { needsSignIn: true });
+  assert.match(t(), /sign in again with your password and code/);
+  assert.equal(find(out, n => n.tag === "form").length, 0);
+  assert.equal(byId(out, "sec-pw-now"), undefined);
+  find(out, n => n.tag === "button" && n.textContent === "Sign in again")[0].listeners.click();
+  assert.equal(again, 1);
+});
+
+test("the Account page wires the three actions to the hub's own routes", () => {
+  const body = source.slice(source.indexOf("async function account()"), source.indexOf("async function approvals("));
+  for (const route of ["/me/password", "/me/authenticator/begin", "/me/authenticator/confirm", "/me/sessions/end-all"]) assert.ok(body.includes('"' + route + '"'), route);
+  assert.match(body, /needsSignIn: !!state\.user\.needs_sign_in/);
+});

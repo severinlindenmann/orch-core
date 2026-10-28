@@ -945,8 +945,11 @@ def test_child_creation_is_an_allowlist_and_no_other_ingress_can_carry_it():
     w, uid, event, due = setup_new()
     w.clock = due
     fired, _ = fire_new(w, uid, event, due)
+    before = w.state()
+    core_before = before._core  # PRE-creation: the only thing wrong with a variant below is the variant itself
+    assert fired["child"] not in core_before.tickets
     good, _ = create_child(w, uid, event, fired)
-    core = w.state()._core
+    assert child_creation(core_before, fired["child"], good) is None  # positive control
     for extra in (
         {"sig": "x"},
         {"auth": "device"},
@@ -955,12 +958,14 @@ def test_child_creation_is_an_allowlist_and_no_other_ingress_can_carry_it():
         {"labels": ["x"]},
         {"priority": "p0"},
     ):
-        assert child_creation(core, fired["child"], {**good, **extra}) is not None, extra
+        denied = child_creation(core_before, fired["child"], {**good, **extra})
+        assert denied is not None and "recorded schedule authority" in denied.detail, extra
     # a hub-signed ticket.created (actor.via, auth hub) is refused: the actor must be exactly the person
     hub_actor = {**good["actor"], "via": "ch_x"}
-    assert child_creation(core, fired["child"], {**good, "actor": hub_actor, "auth": "hub"}) is not None
-    assert child_creation(core, fired["child"], {**good, "actor": hub_actor}) is not None
-    # structural guard: only the runner, the model and the schema know the via shape
+    assert child_creation(core_before, fired["child"], {**good, "actor": hub_actor, "auth": "hub"}) is not None
+    denied = child_creation(core_before, fired["child"], {**good, "actor": hub_actor})
+    assert denied is not None and "signed person" in denied.detail
+    # tripwire: only the runner, the model and the schema know the via shape
     src = pathlib.Path(authz.__file__).parents[1]
     users = {
         p.relative_to(src).as_posix()
@@ -985,3 +990,26 @@ def test_child_creation_replay_needs_a_verified_host_sig():
     assert not advance(before, child_event, log=fired["child"])._core.logs[fired["child"]].broken
     unsigned = {k: v for k, v in child_event.items() if k != "host_sig"}
     assert advance(before, unsigned, log=fired["child"])._core.logs[fired["child"]].broken_code == "chain.broken"
+
+
+def test_child_creation_replay_verifies_the_host_sig_not_just_its_presence():
+    w, uid, event, due = setup_new()
+    w.clock = due
+    fired, _ = fire_new(w, uid, event, due)
+    before = w.state()
+    child_event, result = create_child(w, uid, event, fired)
+    assert not hasattr(result, "code"), result
+    w.verifier.bad_host.add(child_event["id"])  # present, but it does not verify (other key / mutated field)
+    replayed = advance(before, child_event, log=fired["child"])
+    assert replayed._core.logs[fired["child"]].broken_code == "chain.broken"
+    assert ("host", child_event["id"]) in w.verifier.calls  # the child's sig really went through verify_host
+
+
+def test_child_envelope_is_exactly_what_the_store_stamps_on_a_child():
+    from orch.model.schedules_wire import CHILD_ENVELOPE, CHILD_FIELDS
+
+    w, uid, event, due = setup_new()
+    w.clock = due
+    fired, _ = fire_new(w, uid, event, due)
+    child_event, _ = create_child(w, uid, event, fired)
+    assert set(child_event) == CHILD_ENVELOPE | CHILD_FIELDS

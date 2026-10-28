@@ -16,6 +16,7 @@ export function emptyWords(kind) {
     account: ["No phones or browsers yet", "To add a phone, open the phone app and choose Pair a phone."],
     services: ["No services yet", "Ask your IT person to set up services on this hub, then check again."],
     handoffs: ["No hand-offs yet", "Send a hand-off from a workspace to see its progress here."],
+    spaces: ["No shared spaces yet", "A shared space is created from the command line for now: orch-hub spaces create."],
     search: ["Nothing found", "Try another name or a shorter search."],
   })[kind] ?? ["Nothing here yet", "Check again later."];
 }

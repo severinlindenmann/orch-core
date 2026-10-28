@@ -2341,6 +2341,7 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `not_bound` | link reply | any op after `hub.unbound` except `join` and `binding_put` (§10.2 reply rules); the same code as the publish refusal of §11.2 |
 | `not_allowed`, `queue_full`, `too_large` | `route_out` reply | §10.3; `too_large` is the v2 code, reused |
 | `audit_gap`, `audit_fork`, `audit_mismatch` | audit chain | §10.5 |
+| `read_only`, `archived` | `space_put`, `space_revoke` reply | §10.4 (M3): the admin set this member to Reads only, or archived the space. Hub-side policy, not part of any signed record; reading goes on; a change applies at once (no epoch, no key change) |
 | `not_member`, `not_accepted`, `unknown_item`, `space_conflict`, `bad_wrap`, `commit_mismatch` | shared spaces | §10.4. `not_member` is also the answer for a space that does not exist. Reused there: `stale_epoch`, `replay`, `too_large`, `other_workspace`, `bad_wxk_version` |
 | `members_changed` | host, local | §10.4: the member set grew since the owner approved it; never sent on the link |
 | `view_gap`, `view_fork` (p4) | `log_sync` reply | §10.7: a page that leaves a hole (or a ticket line ahead of the workspace log the hub holds); a line that contradicts the chain the hub holds. Reused there: `bad_wrap`, `bad_epoch`, `too_large`, `wrong_mode` |

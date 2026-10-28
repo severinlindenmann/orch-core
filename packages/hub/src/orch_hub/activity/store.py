@@ -31,12 +31,16 @@ ACTIVITY_TYPES = (
     "pairing.issued",
     "pairing.used",
     "change.cancelled",
+    "space.mode_set",
+    "space.archived",
+    "space.unarchived",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(
     {
         "channel_id",
         "change_id",
+        "mode",
         "connection_id",
         "invite_id",
         "pairing_id",

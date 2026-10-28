@@ -76,7 +76,14 @@ def test_get_shape(tmp_path, monkeypatch):
     monkeypatch.setattr(claude_folder, "config_state", lambda *a, **k: "ready")
     res = build(tmp_path).get("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust")
     assert res.status_code == 200, res.text
-    assert res.json() == {"available": True, "on": True, "config": "ready", "offered": True, "why_not": "", "parent_config": ""}
+    assert res.json() == {
+        "available": True,
+        "on": True,
+        "config": "ready",
+        "offered": True,
+        "why_not": "",
+        "parent_config": "",
+    }
 
 
 def test_consent_without_claudes_settings_file_is_not_on(tmp_path, monkeypatch):

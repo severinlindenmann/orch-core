@@ -5,18 +5,14 @@ import { skeleton, loading, enter, toast, watchDialogs, replaceContent, retryDel
 import { CanonError, parseStrict } from "./cj.js";
 import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, signProof, signRegistration } from "./channel.js";
 import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
-import { parseRoute } from "./route.js";
+import { parseRoute, registerPages } from "./route.js";
+import { PAGES } from "./pages.js";
 import { homeView, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
-import { skillsPage } from "./skills.js";
-import { mcpPage } from "./mcp.js";
-import { spacesPage } from "./spaces.js";
-import { addonsPage } from "./addons.js";
 import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
 import { inviteView } from "./invite.js";
-import { connectionsPage } from "./connections.js";
 import { servicesView } from "./services.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
@@ -165,16 +161,30 @@ function shell(active, ...nodes) {
   if (active !== "services") { clearInterval(servicesTimer); viewRevision++; } // leave the Services page: stop its refresh
   const sameRoute = paintedRoute === location.hash;
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
+  // The section tabs: orch's own, with every page module of pages/ slotted in after the tab it names (PAGES is generated
+  // from the folder by the server; nothing here lists a page).
+  const items = [["home", "Home"], ["approvals", "Approvals"], ["workspaces", "Workspaces"], ["phones", "Phones"], ["handoffs", "Hand-offs"], ["account", "Account"], ["services", "Services", true], ["activity", "Activity", true], ["admin", "Admin", true]].map(([id, label, admin]) => ({ id, label, admin: !!admin }));
+  for (let todo = [...PAGES].sort((x, y) => (x.path < y.path ? -1 : 1)), moved = true; todo.length && moved;) {
+    moved = false;
+    for (const pg of [...todo]) {
+      const at = items.findIndex((t) => t.id === pg.nav.after);
+      if (at < 0) continue;
+      items.splice(at + 1, 0, { id: pg.path, label: pg.nav.label, admin: pg.nav.admin });
+      todo.splice(todo.indexOf(pg), 1); moved = true;
+    }
+  }
+  for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
+  const tabs = (cls) => items.filter((t) => !t.admin || state.user?.is_admin).map((t) => tab(t.id, t.label, cls));
   const name = renderText(state.user?.name ?? "");
   const hubName = renderText(state.rail.hubName);
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), tab("phones", "Phones", "nv"), state.user?.is_admin ? tab("connections", "Connections", "nv") : null, tab("handoffs", "Hand-offs", "nv"), tab("account", "Account", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("addons", "Add-ons", "nv") : null, state.user?.is_admin ? tab("skills", "Skills", "nv") : null, state.user?.is_admin ? tab("mcp", "Tools", "nv") : null, state.user?.is_admin ? tab("spaces", "Spaces", "nv") : null, state.user?.is_admin ? tab("spaces", "Spaces", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
+    ...tabs("nv"),
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), tab("phones", "Phones", "nav"), state.user?.is_admin ? tab("connections", "Connections", "nav") : null, tab("handoffs", "Hand-offs", "nav"), tab("account", "Account", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("addons", "Add-ons", "nav") : null, state.user?.is_admin ? tab("skills", "Skills", "nav") : null, state.user?.is_admin ? tab("mcp", "Tools", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
+      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, ...tabs("nav")),
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -1113,6 +1123,22 @@ async function workspacePage(route) {
 // Serialize renders so an earlier slow read cannot overwrite the final route.
 let routing = false;
 let pendingRoute = false;
+// A page module's render gets the console's own helpers (the same object for every page). The gate is HERE, not left to the
+// page: the session is read first, nobody signed in goes to sign-in, and a non-admin never reaches an admin page's render
+// (a new page that forgets its own check is still gated; the pages keep theirs). The page's first refresh() is answered
+// from this one, so a page does not ask the server twice.
+const pageRender = (kind) => {
+  const pg = PAGES.find((x) => x.path === kind);
+  if (!pg) return null;
+  return async () => {
+    if (!(await refresh())) return loginView();
+    if (pg.nav.admin && !state.user?.is_admin) return home();
+    let first = true;
+    const pageRefresh = async () => (first ? ((first = false), true) : refresh());
+    return pg.render({ api, refresh: pageRefresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner });
+  };
+};
+registerPages(PAGES.map((x) => x.path));
 async function renderRoute() {
   pendingRoute = true;
   if (routing) return;
@@ -1128,7 +1154,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin, activity , account , handoffs , connections: () => connectionsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , phones , skills: () => skillsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , addons: () => addonsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , mcp: () => mcpPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , spaces: () => spacesPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) }[route.kind] ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones }[route.kind] ?? pageRender(route.kind) ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

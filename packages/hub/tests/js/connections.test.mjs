@@ -15,8 +15,8 @@ globalThis.document = {
   createElement: (tag) => new Node(tag),
   createElementNS: (namespace, tag) => { assert.equal(namespace, "http://www.w3.org/2000/svg"); return new Node(tag); },
 };
-const { connectionsView } = await import("../../src/orch_hub/web/connections.js");
-const { parseRoute } = await import("../../src/orch_hub/web/route.js");
+const { connectionsView } = await import("../../src/orch_hub/web/pages/connections.js");
+const { parseRoute, registerPages } = await import("../../src/orch_hub/web/route.js");
 const data = {
   workspaces: [{ workspace_id: "a", name: "Alpha" }, { workspace_id: "b", name: "Beta" }, { workspace_id: "c", name: "<img onerror=bad>" }],
   edges: [{ from: "a", to: "b" }, { from: "c", to: "a" }],
@@ -55,12 +55,13 @@ test("reciprocal arrows and self permissions have finite geometry", () => {
   assert.notEqual(lines[0].attrs.x1, lines[1].attrs.x2);
   assert.doesNotMatch(JSON.stringify(view.all().map((n) => n.attrs)), /NaN|Infinity/);
 });
-test("empty state, route, admin tab and narrow-screen matrix", () => {
+test("empty state, route, admin tab and narrow-screen matrix", async () => {
   assert.match(connectionsView({ workspaces: [], edges: [] }).textContent, /No workspaces yet/);
+  const { page } = await import("../../src/orch_hub/web/pages/connections.js");   // the registry entry: route, tab, renderer
+  assert.deepEqual([page.path, page.nav.admin, page.render.name], ["connections", true, "connectionsPage"]);
+  assert.deepEqual(parseRoute("#/connections"), { kind: "home" });                  // unknown until app.js registers the page
+  registerPages([page.path]);
   assert.deepEqual(parseRoute("#/connections"), { kind: "connections" });
-  const app = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
-  assert.match(app, /state.user\?\.is_admin \? tab\("connections"/);
-  assert.match(app, /connections: \(\) => connectionsPage/);
   const css = readFileSync(new URL("../../src/orch_hub/web/app.css", import.meta.url), "utf8");
   assert.match(css, /@media \(max-width:639px\) \{ \.connections-map \{ display:none; \}/);
 });

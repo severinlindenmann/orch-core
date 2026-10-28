@@ -1,8 +1,8 @@
 // The company Tool servers page (M3, #1435 #1436): remote MCP servers a hub admin offers to workspaces. Offering is not
 // enabling: a workspace's owner sees the exact address and turns a server on at their own host, and agents reach it only
 // through the host's own proxy. There is no way to offer a program to run, only an https address.
-import { emptyState, loading } from "./feel.js";
-import { h, text } from "./ui.js";
+import { emptyState, loading } from "../feel.js";
+import { h, text } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
 const wsName = (w) => text(w?.name || (w?.workspace_id ? "Workspace " + w.workspace_id.slice(0, 8) : "A workspace"));
@@ -85,3 +85,6 @@ export async function mcpPage(d) {
     d.state.notice = null;
   } finally { finish(); }
 }
+
+// The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
+export const page = { path: "mcp", nav: { label: "Tools", admin: true, after: "skills" }, render: mcpPage };

@@ -24,7 +24,7 @@ test("switching sections preserves rail, buttons, top bar and updates selected t
   const root = new Element("main");
   const state = { user: { name: "Ann", is_admin: true }, rail: { hubName: "Company", rows: [{ id: "ab".repeat(16), name: "Legal", online: false }] }, menu: false };
   const location = { hash: "#/home" };
-  const context = vm.createContext({ clearInterval, root, state, location, parseRoute, enter, replaceContent: (el, nodes) => el.replaceChildren(...nodes), renderText: String, initials: (s) => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: (t) => new Element(t), createTextNode: (text) => Object.assign(new Element("#text"), { textContent: text }) } });
+  const context = vm.createContext({ clearInterval, root, state, PAGES: [], location, parseRoute, enter, replaceContent: (el, nodes) => el.replaceChildren(...nodes), renderText: String, initials: (s) => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: (t) => new Element(t), createTextNode: (text) => Object.assign(new Element("#text"), { textContent: text }) } });
   vm.runInContext(source.slice(source.indexOf("function h("), source.indexOf("const field =")) + source.slice(source.indexOf("function shell("), source.indexOf("async function loadRail(")), context);
   context.shell("home", new Element("h1"));
   const rail = root.querySelector(".rail"), top = root.querySelector(".topbar"), button = rail.childNodes[0];
@@ -45,7 +45,7 @@ test("switching sections preserves rail, buttons, top bar and updates selected t
 test("hash changes and sign-in continuation dispatch the wanted view", async () => {
   const visits = [], handlers = {};
   const location = { hash: "#/admin" };
-  const context = vm.createContext({ location, parseRoute, window: { addEventListener: (event, fn) => { handlers[event] = fn; } },
+  const context = vm.createContext({ location, parseRoute, PAGES: [], registerPages() {}, window: { addEventListener: (event, fn) => { handlers[event] = fn; } },
     phones: async () => visits.push("phones"), handoffs: async () => visits.push("handoffs"), account: async () => visits.push("account"), home: async () => visits.push("home"), approvals: async () => visits.push("approvals"), workspaces: async () => visits.push("workspaces"), services: async () => visits.push("services"), admin: async () => visits.push("admin"), activity: async () => visits.push("activity"),
     loginView: () => visits.push("login"), addonView: async (w, k) => visits.push("addon:" + k), settingsView: async (w, k) => visits.push("settings:" + k), setupView: () => visits.push("setup"), landFromTicket: async () => visits.push("ticket") });
   vm.runInContext(source.slice(source.indexOf("// Serialize renders")), context);
@@ -95,4 +95,26 @@ test("only first paint and route changes show skeletons", () => {
   context.location.hash = "#/services";
   context.pageLoading("services");
   assert.deepEqual(calls, [["home", "home"], ["services", "services"]]);
+});
+
+test("a page module is gated by the shell, not by itself: nobody signed in goes to sign-in, a non-admin never reaches an admin page", async () => {
+  const visits = [];
+  const mk = (path, admin) => ({ path, nav: { label: path, admin, after: "services" }, render: async (d) => { visits.push("render:" + path); await d.refresh(); await d.refresh(); } });
+  const PAGES = [mk("secret", true), mk("open", false)];
+  let signedIn = false;
+  const state = { user: null };
+  const context = vm.createContext({ PAGES, state, home: async () => visits.push("home"), loginView: () => visits.push("login"), refresh: async () => { visits.push("refresh"); return signedIn; },
+    api() {}, loadRail() {}, reauthView() {}, pageLoading() {}, shell() {}, say() {}, banner() {} });
+  vm.runInContext(source.slice(source.indexOf("const pageRender"), source.indexOf("registerPages(PAGES")) + "\nthis.pageRender = pageRender;", context);
+  assert.equal(context.pageRender("nope"), null);
+  await context.pageRender("secret")();
+  assert.deepEqual(visits.splice(0), ["refresh", "login"]);                              // not signed in: sign-in, the page never runs
+  signedIn = true; state.user = { is_admin: false };
+  await context.pageRender("secret")();
+  assert.deepEqual(visits.splice(0), ["refresh", "home"]);                               // a non-admin is sent home before render
+  await context.pageRender("open")();
+  assert.deepEqual(visits.splice(0), ["refresh", "render:open", "refresh"]);            // the page's first refresh() is answered from the shell's, the second is real
+  state.user = { is_admin: true };
+  await context.pageRender("secret")();
+  assert.deepEqual(visits.splice(0), ["refresh", "render:secret", "refresh"]);
 });

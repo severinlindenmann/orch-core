@@ -242,3 +242,30 @@ def test_c5_market_add_needs_a_full_session_and_installs_nothing(client, token, 
     added = client.post(url(stub, "/add"), json={"url": "https://market.example.test/source"}, headers=hdr(token))
     assert added.status_code == 200
     assert [op for op, *_ in host.calls] == ["market.add"]
+
+
+def test_enabled_update_is_a_separate_grant_with_required_digest_and_caps():
+    from orch_dashboard.signing import MarketUpdate
+
+    data = {
+        "action": "market_update",
+        "name": "echo",
+        "staged": STAGE,
+        "digest": "sha256:" + "a" * 64,
+        "caps": ["network"],
+    }
+    body = parse(data)
+    assert isinstance(body, MarketUpdate)
+    assert host_call(body) == ("addon.grant", {k: v for k, v in data.items() if k != "action"})
+    event = {
+        "type": "addon.granted",
+        "name": "echo",
+        "staged": STAGE,
+        "package_sha256": data["digest"],
+        "capabilities": data["caps"],
+    }
+    assert expected(body)([event])
+    assert not expected(body)([{**event, "capabilities": []}])
+    for required in ("digest", "caps"):
+        with pytest.raises(ValidationError):
+            parse({k: v for k, v in data.items() if k != required})

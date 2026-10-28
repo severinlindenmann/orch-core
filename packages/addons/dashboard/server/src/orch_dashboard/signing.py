@@ -855,6 +855,16 @@ class MarketGrant(Action):
         )
 
 
+class MarketUpdate(Action):
+    """Update an enabled package through its own reviewed grant, without an enable sequence."""
+
+    action: Literal["market_update"]
+    name: MarketName
+    staged: StageId
+    digest: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
+    caps: list[str]
+
+
 class AddonDisable(Action):
     """`addon.disable {name}`: turn it off. Its data stays; refused while its work is running."""
 
@@ -1097,6 +1107,7 @@ PrepareBody = Annotated[
     | DeviceRemove
     | AddonGrant
     | MarketGrant
+    | MarketUpdate
     | AddonDisable
     | AddonPurge
     | AddonSettings
@@ -1284,6 +1295,13 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "device.remove", {"device": action.device}
         case AddonGrant():
             return "addon.grant", {"name": action.name}
+        case MarketUpdate():
+            return "addon.grant", {
+                "name": action.name,
+                "staged": action.staged,
+                "digest": action.digest,
+                "caps": action.caps,
+            }
         case MarketGrant():
             from orch.host import sequence
 
@@ -1470,6 +1488,15 @@ def expected(action: Action, person: str | None = None):
             )
         case AddonGrant():
             return lambda ev: one(ev, "addon.granted", name=action.name)
+        case MarketUpdate():
+            return lambda ev: one(
+                ev,
+                "addon.granted",
+                name=action.name,
+                staged=action.staged,
+                package_sha256=action.digest,
+                capabilities=action.caps,
+            )
         case MarketGrant():
             from orch.host import seqaddon
 
@@ -1639,7 +1666,7 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
             base = question_base(data, body.question)
     if addon_base_ is not None:
         base = addon_base_
-    if isinstance(body, MarketGrant):
+    if isinstance(body, MarketGrant | MarketUpdate):
         # one intent per stage: a new stage (a new review) is a new request, the same stage is one
         base = {"addon": body.name, "staged": body.staged}
     person = link.welcome["peer"]["person"]

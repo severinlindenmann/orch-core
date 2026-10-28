@@ -889,7 +889,7 @@ it('D3: staged install shows exact settings inline and keeps capability risk on 
   const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '2'.repeat(26), expires_at: expires, op: 'settings.set', confirm: 'click' })
   vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'e'.repeat(64), view: {
     risk: CLICK_RISK, op: 'settings.set', headline: 'Install and turn on add-on', risk_lines: ['Connects to the internet'],
-    workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', lines: [], checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null,
+    workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', lines: ['package: ' + action.grant.package_sha256], checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null,
     content: { headline: 'Install and turn on add-on', fields_inline: true, fields_changed: [{ field: 'calendar: channel', before: null, after: '"team channel"' }] },
   } })
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({} as Awaited<ReturnType<typeof api.getHostSettings>>)
@@ -897,6 +897,33 @@ it('D3: staged install shows exact settings inline and keeps capability risk on 
   render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Install and turn on add-on" action={action} inline onClose={() => {}} /></QueryClientProvider>)
   vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
   await userEvent.click(await screen.findByRole('button', { name: 'Install and turn on' }, T))
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  expect(within(panel).getByText('"team channel"')).toBeVisible()
+  expect(within(panel).getByTestId('sign-risk-lines')).toBeVisible()
+  expect(within(panel).getByTestId('sign-risk-lines')).toHaveTextContent('Connects to the internet')
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  expect(sign).not.toHaveBeenCalled()
+})
+
+it('D3: enabled update shows signer risk and never signs on the opening press', async () => {
+  const { CLICK_RISK } = await import('@/api/click')
+  const gesture = await import('@/components/sign/trustedPress')
+  const ws = 'a'.repeat(32)
+  clickWorkspace(ws)
+  const action = { action: 'market_update' as const, name: 'calendar', staged: 'st_' + '1'.repeat(32), digest: 'sha256:' + 'a'.repeat(64), caps: ['network'] }
+  const expires = new Date(Date.now() + 6e5).toISOString()
+  const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '2'.repeat(26), expires_at: expires, op: 'addon.grant', confirm: 'click' })
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'e'.repeat(64), view: {
+    risk: CLICK_RISK, op: 'addon.grant', headline: 'Approve add-on update', risk_lines: ['Connects to the internet'],
+    workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', lines: ['package: ' + action.digest], checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null,
+    content: { headline: 'Approve add-on update', fields_inline: true, fields_changed: [{ field: 'calendar: channel', before: null, after: '"team channel"' }] },
+  } })
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({} as Awaited<ReturnType<typeof api.getHostSettings>>)
+  const sign = vi.spyOn(api, 'signClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Approve add-on update" action={action} inline onClose={() => {}} /></QueryClientProvider>)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await userEvent.click(await screen.findByRole('button', { name: 'Approve and install' }, T))
   await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
   const panel = await screen.findByTestId('click-panel', {}, T)
   expect(within(panel).getByText('"team channel"')).toBeVisible()

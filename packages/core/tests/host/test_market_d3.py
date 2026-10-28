@@ -76,7 +76,10 @@ def test_extra_signed_capability_refused_before_prefix(served, human, net, tmp_p
 
 def test_stage_swap_after_verified_read_uses_snapshot(served, human, net, monkeypatch):
     st, _ = setup(served, net, settings=False)
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     signed = human.sign(prepared)
     converge = marketinstall._converge
 
@@ -130,6 +133,12 @@ def test_signer_view_has_inline_values_identity_and_capability_risk(served, net)
         assert rows["standup: channel"] == '"general"'
         assert rows["add-on"] == "standup" and rows["version"] == st["version"]
         assert rows["publisher (per host, not signed)"] == st["market"]["publisher"]["fingerprint"]
+        assert any(st["package_sha256"] in line for line in view["lines"])
+        # A prepared settings prefix with signed capability risk never signs merely by dwelling.
+        assert op == "settings.set"
+        assert view["risk_lines"] == ["It may use the internet."]
+        c.mono.t += 5
+        assert c.view(prepared["request_id"])["view"]["risk_lines"] == view["risk_lines"]
         assert c.signatures == 0 and not M.addon_dir(served).exists()
     finally:
         c.close()
@@ -180,3 +189,59 @@ def test_cancel_or_refusal_consumes_stage_before_prefix(served, human, net, tmp_
     assert M.mfiles(served).read_stage(st["stage"]) is None
     assert not M.addon_dir(served).exists()
     assert not served.service.store.state.workspace.settings.get("addons")
+
+
+@pytest.mark.parametrize("missing", ["digest", "caps"])
+def test_staged_grant_requires_reviewed_digest_and_caps(served, human, net, missing):
+    st, intent = setup(served, net, settings=False)
+    args = sequence.steps(intent)[0]["args"]
+    del args[missing]
+    assert err(human.prepare_res("addon.grant", args)) == "invalid.input"
+    assert not M.addon_dir(served).exists()
+
+
+@pytest.mark.parametrize("missing", ["package_sha256", "capabilities"])
+def test_staged_intent_requires_digest_and_caps(served, net, missing):
+    _, intent = setup(served, net)
+    del intent["grant"][missing]
+    with pytest.raises(sequence.SequenceInvalid):
+        sequence.validate_intent(intent)
+
+
+@pytest.mark.parametrize("sweep", [True, False])
+def test_stage_ttl_is_thirty_minutes_and_expiry_deletes_file(served, net, sweep):
+    from orch.market import MarketError
+
+    st, _ = setup(served, net)
+    files = M.mfiles(served)
+    doc = files.read_stage(st["stage"])
+    assert doc["expires_at"] - doc["created_at"] == 30 * 60
+    path = files.dir / "staged" / f"{st['stage']}.json"
+    served.lab.ws.clock[0] = doc["expires_at"]
+    if sweep:
+        M.on_worker(served, lambda: marketinstall.recover(served.service))
+    else:
+        with pytest.raises(MarketError):
+            marketinstall.staged_package(files, st["name"], st["stage"], doc["expires_at"])
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("code, retained", [("lock.busy", True), ("invalid.input", False)])
+def test_submit_refusal_retains_only_retryable_stage(served, human, net, tmp_path, monkeypatch, code, retained):
+    from orch.host.errors import HostError
+    from orch.host.human import HumanOps
+
+    st, intent = setup(served, net)
+    first = Rig(human, tmp_path, intent).first()
+    signed = human.sign(first)
+    original = HumanOps._submit
+
+    def refuse(*args, **kwargs):
+        raise HostError(code, "test refusal")
+
+    monkeypatch.setattr(HumanOps, "_submit", refuse)
+    assert err(human.submit_res(first["request"]["id"], signed.events)) == code
+    assert (M.mfiles(served).read_stage(st["stage"]) is not None) == retained
+    if retained:
+        monkeypatch.setattr(HumanOps, "_submit", original)
+        ok(human.submit_res(first["request"]["id"], signed.events))

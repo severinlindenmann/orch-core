@@ -117,6 +117,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     root = h.store.layout.store  # addons/ lives in the store
     stage = args.get("staged")
     stage_doc = None
+    if stage is not None and not {"digest", "caps"} <= args.keys():
+        raise OrchError("invalid.input", "a staged grant requires digest and caps")
     if stage is not None:
         stage_doc, package, manifest = _staged(h, ctx, name, stage)
     else:
@@ -147,10 +149,7 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
             _market_files(h).drop_stage(stage)
             raise OrchError("invalid.input", str(exc)) from None
         event["staged"] = stage
-        if (
-            args.get("digest", package.digest) != package.digest
-            or args.get("caps", event["capabilities"]) != event["capabilities"]
-        ):
+        if args["digest"] != package.digest or args["caps"] != event["capabilities"]:
             _market_files(h).drop_stage(stage)
             raise OrchError("addon.stage_changed", "the staged package changed after review")
     if manifest.runtime is not None:

@@ -5,7 +5,7 @@ import { ARM_MS } from '@/api/click'
 import * as gesture from '@/components/sign/trustedPress'
 import { READS, show, trustedPresses, useFakeHost, workspace } from '@/test/hostHarness'
 import { openInfo } from '@/test/info'
-import { market, stage, installedAddon } from '@/test/fixtures/market'
+import { market, stage, installedAddon, updateStage } from '@/test/fixtures/market'
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
 vi.mock('@/api/useLiveUpdates', async (original) => ({
@@ -267,8 +267,10 @@ it('D3: required defaults are inline, editable, and posted exactly as displayed'
   await userEvent.clear(input)
   await userEvent.type(input, 'team channel')
   await userEvent.click(screen.getByRole('button', { name: 'Install and turn on' }))
-  await screen.findByTestId('click-panel', {}, T)
+  expect(await screen.findByTestId('click-panel', {}, T)).toHaveTextContent('FROM-THE-SIGNER settings.set')
   expect(state.host.clickPrepares()[0].body).toEqual({ action: 'market_grant', name: 'calendar', staged: 'demo-stage', grant: stage().grant, settings: { channel: 'team channel' } })
+  const confirm = await screen.findByRole('button', { name: 'Install and turn on' }, T)
+  await waitFor(() => expect(confirm).toBeEnabled(), { timeout: ARM_MS + 3000 })
   expect(state.host.clickSigned).toHaveLength(0)
 })
 
@@ -280,4 +282,92 @@ it('D3: cancelling inline setup consumes the unsigned stage', async () => {
   await userEvent.click(within(setup).getByRole('button', { name: 'Cancel' }))
   await waitFor(() => expect(state.host.calls.some(c => c.method === 'DELETE' && c.path.endsWith('/market/stage/demo-stage'))).toBe(true))
   expect(state.host.clickSigned).toHaveLength(0)
+})
+
+it('update diff values from the package sit inside the AddonFrame', async () => {
+  ws().marketStage = updateStage(true)
+  const d = await openReview('installed')
+  inFrame(within(d).getByText('+ fields:', { exact: false }))
+  inFrame(within(d).getByText('- fields:', { exact: false }))
+})
+
+it('expanded widened review marks new lines in host order and shows additions and removals', async () => {
+  ws().marketStage = updateStage(true)
+  const d = await openReview('installed')
+  expect(within(d).getByText('This update asks for more than before.')).toBeInTheDocument()
+  expect(within(d).getByText('+ fields:', { exact: false })).toHaveTextContent('Calendar link')
+  expect(within(d).getByText('- fields:', { exact: false })).toHaveTextContent('Old link')
+  expect(within(d).getByText('capabilities network:calendar.example.test', { exact: false }).closest('li')).toHaveClass('text-success')
+  expect(within(d).queryByText('Show full review')).toBeNull()
+  // The warning leads, then the permissions, then the diff, then the source (Codex a10c).
+  const before = (a: HTMLElement, b: HTMLElement) => expect(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  const warning = within(d).getByText('This update asks for more than before.')
+  const review = within(d).getByRole('list', { name: 'Full review' })
+  before(warning, review)
+  before(review, within(d).getByRole('region', { name: 'Update changes' }))
+  expect(d.textContent!.indexOf('capabilities network:calendar.example.test')).toBeLessThan(d.textContent!.indexOf('from https://'))
+  expect(state.host.calls.find((c) => c.path.endsWith('/market/stage'))?.body).toEqual({ id: 'calendar', update: true })
+})
+
+it('non-widened updates offer the compact disclosure', async () => {
+  ws().marketStage = updateStage(false)
+  const d = await openReview('installed')
+  expect(within(d).getByText('Show full review').parentElement).not.toHaveAttribute('open')
+  expect(within(d).getByText('Dependency lock updated')).toBeInTheDocument()
+})
+
+it('with One click on, stale, dev and widened warnings stay visible above the signer review (V3-D38 L2)', async () => {
+  clickOn()
+  const base = updateStage(true)
+  ws().marketStage = { ...base, market: { ...base.market, stale: true, class: 'dev' }, update: { ...base.update!, widened: true } }
+  const d = await openReview('installed')
+  trusted()
+  await userEvent.click(within(d).getByRole('button', { name: 'Review installation' }))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  const lead = screen.getByTestId('install-summary')
+  expect(lead.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(within(lead).getByRole('alert')).toHaveTextContent('This update asks for more than before.')
+  expect(lead).toHaveTextContent('out of date')
+  expect(lead).toHaveTextContent('test marketplace (dev sandbox only)')
+  expect(lead).toHaveTextContent('not signed')
+  expect(lead).toHaveTextContent('not verified')
+})
+
+async function openReview(tab = 'installed', state = 'enabled') {
+  ws().marketInstalled = { addons: [installedAddon({ state })] }
+  show(`/w/DEMO/addons?tab=${tab}`)
+  await userEvent.click(await screen.findByRole('button', { name: 'Update...' }, T))
+  return screen.findByRole('dialog', {}, T)
+}
+
+it.each(['enabled', 'active'])('%s updates use the separate grant review and require a second press for new capabilities', async status => {
+  clickOn()
+  ws().marketStage = updateStage(true)
+  const d = await openReview('installed', status)
+  expect(within(d).getByText('This update asks for more than before.')).toBeInTheDocument()
+  trusted()
+  await userEvent.click(within(d).getByRole('button', { name: 'Review installation' }))
+  await screen.findByTestId('click-panel', {}, T)
+  expect(state.host.clickPrepares().map(c => c.body)).toEqual([{
+    action: 'market_update', name: 'calendar', staged: 'demo-stage',
+    digest: stage().package_sha256, caps: stage().grant.capabilities,
+  }])
+  const button = await screen.findByRole('button', { name: 'Approve and install' }, T)
+  await waitFor(() => expect(button).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  expect(state.host.clickSigned).toHaveLength(0)
+  trustedPresses()
+  await userEvent.click(button)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+})
+
+it('expired update reviews discard the old stage before reviewing again', async () => {
+  ws().marketStage = { ...updateStage(true), expires_at: 1 }
+  const d = await openReview()
+  expect(within(d).queryByRole('button', { name: 'Review installation' })).toBeNull()
+  ws().marketStage = { ...updateStage(true), stage: 'demo-stage-new' }
+  await userEvent.click(within(d).getByRole('button', { name: 'Review again' }))
+  await screen.findByRole('button', { name: 'Review installation' }, T)
+  expect(state.host.calls.some(c => c.method === 'DELETE' && c.path.endsWith('/market/stage/demo-stage'))).toBe(true)
+  expect(state.host.calls.filter(c => c.method === 'POST' && c.path.endsWith('/market/stage'))).toHaveLength(2)
+  expect(state.host.clickPrepares()).toHaveLength(0)
 })

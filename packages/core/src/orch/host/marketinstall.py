@@ -551,6 +551,7 @@ def staged_package(files: MarketFiles, name: str, stage: str, now: float) -> Any
     if doc is None or doc.get("name") != name or not isinstance(doc.get("expires_at"), (int, float)):
         raise MarketError("market.staged_changed")
     if now >= doc["expires_at"]:
+        files.drop_stage(stage)
         raise MarketError("market.staged_changed")
     try:
         pkg = from_files({p: base64.b64decode(b, validate=True) for p, b in doc["files"].items()})
@@ -575,10 +576,11 @@ def recheck(service: WorkspaceService, record: dict[str, Any], events: list[dict
     try:
         _recheck(service, record, ev)
     except MarketError as exc:
-        if record.get("staged"):
-            _files(service).drop_stage(record["staged"]["stage"])
         code = "addon.stage_changed" if exc.code == "market.staged_changed" else exc.code
-        raise HostError(code, ERRORS[code].message if code in ERRORS else code) from None
+        error = HostError(code, ERRORS[code].message if code in ERRORS else code)
+        if record.get("staged") and not error.retryable:
+            _files(service).drop_stage(record["staged"]["stage"])
+        raise error from None
 
 
 def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, Any]) -> None:
@@ -889,7 +891,7 @@ def recover(service: WorkspaceService) -> None:
                 _converge(service, doc["stage"], ev)
             except Exception:  # noqa: BLE001
                 LOG.exception("market install: recovery of %s failed", doc["name"])
-        elif now > doc.get("expires_at", 0):
+        elif now >= doc.get("expires_at", 0):
             files.drop_stage(doc["stage"])
     sweep_credentials(service)  # V3 G6 C4: idempotent at start
     root = _store_root(service)

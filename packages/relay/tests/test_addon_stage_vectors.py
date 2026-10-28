@@ -1,36 +1,28 @@
-"""D3 shared event vectors: stage, digest and caps survive transport and are signature-bound."""
+"""F1 payload bytes survive the existing authenticated relay mailbox path.
+
+The relay is opaque transport, not an F1 event verifier. Endpoint verification is covered by core and hub.
+"""
 
 import json
 from pathlib import Path
 
-from orch_relay.proto import SUITE, cj, unb64u
+import pytest
+from test_hub_phone import hub  # noqa: F401 - existing authenticated HTTP harness
+
+from orch_relay.proto import cj, unb64u
 
 V = json.loads(
     (Path(__file__).resolve().parents[3] / "contracts/core/f1/signatures.json").read_text()
 )
-EXCLUDED = {"seq", "at", "prev", "ws_seq", "sig", "host_sig"}
+CASES = [V[k] for k in ("ticket_event", "ws_event", "addon_event")]
+CASES += [c for c in V["person_refused"] if c["name"].startswith("addon_")]
 
 
-def signing_bytes(event):
-    return b"orch/v2/sig/ws-event|" + cj(
-        {
-            "contract": 1,
-            "suite": 2,
-            "workspace_id": V["workspace_id"],
-            "log": "workspace",
-            "event": {k: v for k, v in event.items() if k not in EXCLUDED},
-        }
-    )
-
-
-def test_staged_grant_and_tampered_variants():
-    case = V["addon_event"]
-    event = case["event"]
-    pub = unb64u(case["cert"]["o"]["dk_sig_pub"])
-    msg = signing_bytes(event)
-    assert msg.hex() == case["person_signing_hex"]
-    assert SUITE.verify(pub, unb64u(event["sig"]), msg)
-    cases = [c for c in V["person_refused"] if c["name"].startswith("addon_")]
-    assert len(cases) == 3
-    for bad in cases:
-        assert not SUITE.verify(pub, unb64u(bad["event"]["sig"]), signing_bytes(bad["event"]))
+@pytest.mark.parametrize("case", CASES)
+def test_f1_payload_is_transported_without_field_filtering(hub, case):  # noqa: F811
+    raw = cj(case["event"])
+    assert hub.mb_put(c=raw).status_code == 200
+    got = hub.mb_get()
+    assert got.status_code == 200
+    assert unb64u(got.json()["c"]) == raw
+    assert json.loads(unb64u(got.json()["c"])) == case["event"]

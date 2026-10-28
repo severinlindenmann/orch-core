@@ -24,7 +24,7 @@ from . import adapters
 from .errors import fail
 from .gateway import Gateway
 from .reads import Key, workspace
-from .signing import TTL, AddonGrant, Handoffs, MarketGrant, expected, plan, read_done, send_prepare
+from .signing import TTL, AddonGrant, Handoffs, MarketGrant, MarketUpdate, expected, plan, read_done, send_prepare
 
 #: modes in which no local key signs ("unknown" fails closed as full)
 HUB_ONLY = ("full", "unknown")
@@ -177,7 +177,7 @@ def panel(got: dict) -> dict:
 
 
 #: FB15: the only actions the hub approval route prepares (an add-on turned on, shipped or from a marketplace)
-HubApproval = Annotated[AddonGrant | MarketGrant, Field(discriminator="action")]
+HubApproval = Annotated[AddonGrant | MarketGrant | MarketUpdate, Field(discriminator="action")]
 #: the request states in which the hub may still answer it
 OPEN = ("prepared", "bound")
 

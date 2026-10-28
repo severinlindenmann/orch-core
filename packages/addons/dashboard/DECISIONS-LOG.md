@@ -2079,3 +2079,9 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 **Decision:** One inline review signs required non-secret settings, then the stage-bound grant last. Defaults are editable; capabilities retain C3's second press. Already-on add-ons are refused by the host.
 **Why:** A settings-only prefix cannot install code or change running code; the installer consumes the bytes verified under the store lock.
 **Revert:** Revert D3 together with its core event schema, signer sequence and shared signature vectors.
+
+### 2026-10-28 — D3 review fixes (#1520)
+
+**Decision:** Enabled marketplace add-ons use a separate update review and `market_update` grant, including the reviewed digest and capabilities. Fresh installs retain the staged enable sequence. Both core's `enabled` and the older `active` UI state select updates.
+**Why:** The enable sequence deliberately refuses already-enabled add-ons. Updates must retain their widened diff and signer-owned capability risk requiring a second press.
+**Revert:** Revert the separate update action, state mapping and review together; do not route enabled updates through `addon_enable`.

@@ -142,7 +142,7 @@ export function createApi(transport: Transport) {
     stateClick: (ws: string, requestId: string) => call<ClickState>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
     hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>('POST', `/api/w/${ws}/hubsign`, body),
     /** FB15: an add-on grant prepared for the hub (nothing is signed here), and where it is now. */
-    prepareHubApproval: (ws: string, action: Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' }>) => call<import('./hubsign').HubApproval>('POST', `/api/w/${ws}/hub/approve/prepare`, action),
+    prepareHubApproval: (ws: string, action: Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' | 'market_update' }>) => call<import('./hubsign').HubApproval>('POST', `/api/w/${ws}/hub/approve/prepare`, action),
     getHubApproval: (ws: string, id: string) => call<import('./hubsign').HubApprovalState>('GET', `/api/w/${ws}/hub/approve/${id}`),
     /** V3 A7: the hub pages' reads (the server signs nothing here). */
     getHubStatus: (ws: string) => call<import('./hub').HubStatus>('GET', `/api/w/${ws}/hub`),

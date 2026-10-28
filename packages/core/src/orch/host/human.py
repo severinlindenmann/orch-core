@@ -983,10 +983,11 @@ class HumanOps:
             # before anything landed, which refuse() stores only when it is not retryable
             outcomes.fail(begun, stored.error)
             raise stored.error from None
-        except HostError as exc:  # a refusal before any append: a D3 stage is single-use even on refusal
-            with contextlib.suppress(HostError):
-                record = self._requests(service).load(args["request_id"], call.principal)
-                marketinstall.discard_request_stage(service, record)
+        except HostError as exc:  # keep the reviewed bytes available for a retryable refusal
+            if not exc.retryable:
+                with contextlib.suppress(HostError):
+                    record = self._requests(service).load(args["request_id"], call.principal)
+                    marketinstall.discard_request_stage(service, record)
             outcomes.refuse(begun, redactor.error(exc))
             self._note_refusal(call, args["request_id"], exc.code)
             raise redactor.error(exc) from None

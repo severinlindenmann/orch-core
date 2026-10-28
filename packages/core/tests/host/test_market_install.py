@@ -53,7 +53,10 @@ def test_install_stages_then_the_signed_grant_installs(served, human, ready):
     assert st["market"]["source_note"] == "source as claimed by the marketplace"
     assert any(line.startswith("package sha256:") for line in st["review"])
     assert not addon_dir(served).exists() and mfiles(served).installs()["addons"] == {}  # staged is not installed
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     assert prepared["material"]["market"]["url"] == H.OFFICIAL
     assert [e["type"] for e in prepared["events"]] == ["addon.granted"]
     assert prepared["events"][0]["package_sha256"] == st["package_sha256"]
@@ -78,7 +81,10 @@ def test_the_review_text_labels_the_market_block_as_not_signed(served, human, re
     from orch.host import signer
 
     st = ok(stage(served))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     text = signer.render(prepared, lambda w: ("ws", "ORCH"))
     assert "marketplace (per host, not signed)" in text and "first use" in text and "network" in text
 
@@ -260,13 +266,52 @@ def test_a_stage_that_was_edited_expired_or_is_another_name_is_staged_changed(se
         d["files"]["main.py"] = base64.b64encode(b"print('evil')\n").decode()
 
     stage_edit(served, st, edit)
-    assert err(human.prepare_res("addon.grant", {"name": "standup", "staged": st})) == "addon.stage_changed"
+    assert (
+        err(
+            human.prepare_res(
+                "addon.grant",
+                {
+                    "name": "standup",
+                    "staged": st,
+                    "digest": mfiles(served).read_stage(st)["digest"],
+                    "caps": ["network"],
+                },
+            )
+        )
+        == "addon.stage_changed"
+    )
     st2 = ok(stage(served))["data"]["stage"]
-    assert err(human.prepare_res("addon.grant", {"name": "other", "staged": st2})) == "addon.stage_changed"
+    assert (
+        err(
+            human.prepare_res(
+                "addon.grant",
+                {
+                    "name": "other",
+                    "staged": st2,
+                    "digest": mfiles(served).read_stage(st2)["digest"],
+                    "caps": ["network"],
+                },
+            )
+        )
+        == "addon.stage_changed"
+    )
     assert mfiles(served).read_stage(st2) is None
     st2 = ok(stage(served))["data"]["stage"]
     stage_edit(served, st2, lambda d: d.update(expires_at=1))
-    assert err(human.prepare_res("addon.grant", {"name": "standup", "staged": st2})) == "addon.stage_changed"
+    assert (
+        err(
+            human.prepare_res(
+                "addon.grant",
+                {
+                    "name": "standup",
+                    "staged": st2,
+                    "digest": mfiles(served).read_stage(st2)["digest"],
+                    "caps": ["network"],
+                },
+            )
+        )
+        == "addon.stage_changed"
+    )
     nothing_changed_but_stage(served)
 
 
@@ -279,7 +324,10 @@ def test_a_stage_swapped_between_prepare_and_submit_is_refused_under_the_lock(se
     import base64
 
     st = ok(stage(served))["data"]["stage"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st, "digest": mfiles(served).read_stage(st)["digest"], "caps": ["network"]},
+    )
     signed = human.sign(prepared)
     stage_edit(served, st, lambda d: d["files"].update(**{"main.py": base64.b64encode(b"x").decode()}))
     assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "addon.stage_changed"
@@ -291,7 +339,10 @@ def test_a_stage_swapped_between_prepare_and_submit_is_refused_under_the_lock(se
 def test_the_install_record_is_rechecked_at_submit(served, human, ready):
     """C2: a record that appeared between prepare and submit (a newer version installed, a key remembered) is judged."""
     st = ok(stage(served))["data"]["stage"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st, "digest": mfiles(served).read_stage(st)["digest"], "caps": ["network"]},
+    )
     signed = human.sign(prepared)
     f = mfiles(served)
     with f.commit_installs() as write:
@@ -309,7 +360,10 @@ def test_the_install_record_is_rechecked_at_submit(served, human, ready):
     assert mfiles(served).read_stage(st) is None
     assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "addon.stage_changed"
     st = ok(stage(served))["data"]["stage"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st, "digest": mfiles(served).read_stage(st)["digest"], "caps": ["network"]},
+    )
     signed = human.sign(prepared)
     # official class (#1191): the staged key is pinned by this release, so a record on another key is a rotation; the
     # strict TOFU recheck of a key change is in test_market_update (pins changed) and test_rotation (other classes)
@@ -355,7 +409,10 @@ def test_replaces_must_be_a_digest(served, human, ready):
     from orch.host import signer
 
     st = ok(stage(served))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     prepared["material"]["market"]["replaces"] = "not a digest"
     with pytest.raises(signer.SignerRefused):
         human.check(prepared)

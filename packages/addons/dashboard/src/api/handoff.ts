@@ -4,6 +4,7 @@ import { sha256Hex } from './sha256'
 /** An add-on a person can switch: built in or installed from a marketplace (the server checks the shape, the host knows the installed list). */
 export type AddonSwitchName = string
 export type HandoffAction =
+  | { action: 'market_update'; name: string; staged: string; digest: string; caps: string[] }
   | { action: 'market_grant'; name: string; staged: string; grant: Record<string, unknown>; settings?: Record<string, unknown> }
   | { action: 'accept_criterion'; key: string; ac: string; note?: string }
   | { action: 'withdraw_acceptance'; key: string; ac: string; reason: string }

@@ -141,3 +141,6 @@ export function marketError(error: unknown): string {
   if (code === 'market.publisher_key_changed') return 'The publisher key changed. Review is required.'
   return 'The marketplace request could not be completed. Try again.'
 }
+
+/** Core reports enabled; older dashboard fixtures use active. */
+export const isEnabled = (state: string | undefined) => state === 'enabled' || state === 'active'

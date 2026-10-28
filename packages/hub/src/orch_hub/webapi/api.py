@@ -47,7 +47,9 @@ from ..access.store import ADMIN_GROUP, check_name
 from ..activity.feed import feed as activity_feed
 from ..changes import ChangeError
 from ..channels import Channels
+from ..channels.cli import pair_link
 from ..channels.service import MIN_PASSWORD, ChannelError
+from ..config import dev_of
 from ..connect import LinkError, build_link
 from ..contract import channelapi as CA
 from ..contract import market_policy as MP
@@ -58,7 +60,7 @@ from ..contract.hub import HV, Refused, channel_proof_bytes
 from ..invites import Invite, InviteError, proof_digest
 from ..relay.client import RelayError
 from ..switch import SwitchError, clean_return_to, workspace_rows
-from ..versions import MIN_SUPPORTED_VERSION, workspace_status
+from ..versions import MIN_PHONE_VERSION, MIN_SUPPORTED_VERSION, version_state, workspace_status
 from .changes_api import ChangeHandlers, confirmed
 from .static import StaticSite
 
@@ -87,6 +89,10 @@ STATUS = {
     "malformed": 400,
     "bad_pairing_code": 400,
     "weak_password": 400,
+    "same_password": 400,
+    "bad_code": 400,
+    "no_pending": 409,
+    "pending_expired": 410,
     "reserved_group": 400,
     "wrong_mode": 409,
     "event_changed": 409,
@@ -94,6 +100,7 @@ STATUS = {
     "channel_exists": 409,
     "key_in_use": 409,
     "conflict": 409,
+    "no_approver": 409,
     "stale_snapshot": 409,
     "unknown_snapshot": 409,
     # access changes that wait for a workspace owner (changes/)
@@ -234,6 +241,8 @@ class WebDeps:
     services: Any = None
     #: the route queue (``recent``): hand-offs between workspaces, for the Workspaces page; None = an empty list
     routes: Any = None
+    authz: Any = None  # live routing authorization; None means no allowed edges
+    connections: Any = None  # orch_hub.connections.Connections: the stored connections and the counts
     delivery: Any = None  # custodial DeliveryQueue; None = no pending deliveries
     activity: Any = None  # hub-local admin history; None = no local events
     changes: Any = (
@@ -311,6 +320,20 @@ ROUTES: tuple[Route, ...] = (
     ),
     _r(
         "POST",
+        "/me/connections",
+        "session",
+        "connection_set",
+        "Ask to allow a connection (waits for an approver of the receiving workspace) or close one at once",
+    ),
+    _r(
+        "GET",
+        "/me/connections/traffic",
+        "session",
+        "my_connection_traffic",
+        "Hand-off counts per connection, last 30 days, only for pairs I am responsible for",
+    ),
+    _r(
+        "POST",
         "/me/changes/{change_id}/approve/prepare",
         "session",
         "change_prepare",
@@ -329,6 +352,30 @@ ROUTES: tuple[Route, ...] = (
         "session",
         "change_reject",
         "Say no to an access change (session and a registered channel)",
+    ),
+    _r("POST", "/me/password", "session", "my_password", "Change my password (needs current password and code)"),
+    _r(
+        "POST",
+        "/me/authenticator/begin",
+        "session",
+        "my_auth_begin",
+        "Start a new authenticator (current password and code); the old one works until confirmed",
+    ),
+    _r(
+        "POST",
+        "/me/authenticator/confirm",
+        "session",
+        "my_auth_confirm",
+        "Confirm the new authenticator with a code from it; the old one stops, other sessions end",
+    ),
+    _r("POST", "/me/sessions/end-all", "session", "my_end_all", "Sign me out everywhere, this device too"),
+    _r("POST", "/me/channels/seen", "session", "my_channels_seen", "Dismiss the 'a new phone was added' notice"),
+    _r(
+        "POST",
+        "/me/pairing",
+        "session",
+        "my_pairing",
+        "A one-time code to pair my own phone (needs my password and a fresh code)",
     ),
     # (c) signing
     _r("POST", "/sign/prepare", "session", "prepare", "Hub builds the event; returns ctx, digest and what to show"),
@@ -358,6 +405,7 @@ ROUTES: tuple[Route, ...] = (
         "Register the phone's APNs target and push key (channel session of that channel)",
     ),
     # (d) admin console
+    _r("GET", "/admin/people/{user_id}/reach", "admin", "a_person_reach", "Explain a person's workspace access"),
     _r("GET", "/admin/users", "admin", "a_users", "List users"),
     _r("DELETE", "/admin/users/{user_id}", "admin", "a_user_remove", "Remove a user"),
     _r(
@@ -386,6 +434,7 @@ ROUTES: tuple[Route, ...] = (
         "a_workspace_remove",
         "Remove a workspace that has left (deletes the hub's record)",
     ),
+    _r("GET", "/admin/connections", "admin", "a_connections", "Read current workspace connections"),
     _r("GET", "/admin/workspaces", "admin", "a_workspaces", "List workspaces with mode, binding status and grants"),
     _r(
         "GET",
@@ -483,7 +532,7 @@ SWITCH_HANDLERS = frozenset(
 #: E4: routes only the console PAGE may call (its cookie session, from its own origin). The console's own session sent
 #: as a bearer is ``not_allowed``; an unknown bearer stays ``no_session`` and an app (pairing/channel) one
 #: ``forbidden_role``, as on every route.
-BROWSER_ONLY = frozenset({"switch_ticket"})
+BROWSER_ONLY = frozenset({"switch_ticket", "my_pairing", "my_channels_seen"})
 
 
 def route_scopes(rt: Route) -> frozenset[str]:
@@ -1374,15 +1423,67 @@ class WebApi(ChangeHandlers):
             code = b.get("pairing_code")
             if type(code) is not str:
                 raise ApiError("malformed")
-            return 200, self.d.channels.begin_phone_registration(c.user_id, code, key, label, token=c.token)
+            return 200, self.d.channels.begin_phone_registration(
+                c.user_id, code, key, label, token=c.token, app_version=b.get("app_version")
+            )  # app_version: untrusted, display only; a bad one is dropped there, never an error
         raise ApiError("malformed")
 
     def _h_reg_complete(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, challenge_id=str, signed=dict)
-        return 200, {"channel_cert": self.d.channels.complete_registration(b["challenge_id"], b["signed"])}
+        cert, got = self.d.channels.complete_registration_ex(b["challenge_id"], b["signed"], b.get("app_version"))
+        if got["pairing_source"] == "console" and self.d.activity is not None:  # the code itself is never recorded
+            self.d.activity.record(
+                "pairing.used",
+                actor_id=got["user_id"],
+                subject_user=got["user_id"],
+                detail={"channel_id": got["channel_id"]},
+            )
+        return 200, {"channel_cert": cert}
+
+    @staticmethod
+    def _channel_row(row: dict[str, Any]) -> dict[str, Any]:
+        """A channel as the console shows it: ``update_needed`` is display only (a phone that reports a version below
+        :data:`MIN_PHONE_VERSION`); no route refuses a channel for its version."""
+        v = row.get("app_version")
+        old = (
+            row["kind"] == "phone"
+            and v is not None
+            and version_state(v, MIN_PHONE_VERSION, MIN_PHONE_VERSION) == "unsupported"
+        )
+        return {**row, "update_needed": old}
 
     def _h_my_channels(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        return 200, {"channels": self.d.channels.channels(c.user_id)}
+        # the SESSION user only: no query or body field picks another person (condition 18). The notice of a newly added
+        # phone goes to the browser console only, so the new phone's own session cannot read or dismiss it.
+        rows = [self._channel_row(r) for r in self.d.channels.channels(c.user_id)]
+        new = self.d.channels.new_channels(c.user_id) if c.scope == "full" else []
+        return 200, {"channels": rows, "new_channels": new}
+
+    def _h_my_channels_seen(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        self.d.channels.dismiss_new_channels(c.user_id)
+        return 200, {"ok": True}
+
+    def _h_my_pairing(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Condition 19: a person pairs their OWN phone from the console. Browser session only (a switch-ticket session is
+        ``reauth_required``, an app session ``forbidden_role``); the password and the CURRENT code are checked again through
+        the same caps and lockouts as a browser key registration. The code is bound to this session's user."""
+        b = _need(b, password=str, totp=str)
+        pw, totp = b["password"], b["totp"]
+        self._guarded_credentials(c, c.user_id, lambda: self.d.channels.reauth(c.user_id, pw, totp, c.source))
+        got = self.d.channels.create_console_pairing_code(c.user_id)
+        if self.d.activity is not None:  # who and when only: never the code
+            self.d.activity.record("pairing.issued", actor_id=c.user_id, subject_user=c.user_id)
+        out: dict[str, Any] = {"code": got["code"], "expires_ms": got["expires_ms"]}
+        if self.d.api_origin is not None:
+            out["address"] = self.d.api_origin
+            try:
+                out["link"] = pair_link(
+                    self.d.keys.hub_id, c.user_id, got["code"], self.d.api_origin, dev_of(self.d.keys)
+                )
+                out["fingerprint"] = CA.fingerprint(self.d.keys.hub_id)
+            except ChannelError:
+                pass  # no usable link for this origin: the person types the address and the code
+        return 200, out
 
     def _h_revoke(self, c: Ctx, p: dict, q: dict, b: dict | None):
         if c.scope == "channel" and p["channel_id"] != c.channel_id:
@@ -1400,7 +1501,54 @@ class WebApi(ChangeHandlers):
                 logging.getLogger("orch_hub.webapi").exception("channel.revoked was not recorded")
         return 200, {"ok": True}
 
+    # --- (f) my own account security: own act only; a switch session never reaches these (SWITCH_HANDLERS) ------------
+
+    def _note(self, kind: str, c: Ctx, **detail: Any) -> None:
+        if self.d.activity is not None:  # references only, never a secret
+            try:  # the credential change has happened: a failed record is logged, never turned into an error
+                self.d.activity.record(kind, actor_id=c.user_id, subject_user=c.user_id, detail=detail or None)
+            except Exception:
+                logging.getLogger("orch_hub.webapi").exception("%s was not recorded", kind)
+
+    def _reauth_me(self, c: Ctx, b: dict, password_key: str) -> None:
+        """Current password + a current code, through the same caps and limiter state as browser key registration."""
+        pw, totp = b[password_key], b["totp"]
+        self._guarded_credentials(c, c.user_id, lambda: self.d.channels.reauth(c.user_id, pw, totp, c.source))
+
+    def _h_my_password(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, current_password=str, totp=str, new_password=str)
+        if len(b["new_password"]) < MIN_PASSWORD:
+            raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")
+        if b["new_password"] == b["current_password"]:
+            raise ChannelError("same_password")
+        self._reauth_me(c, b, "current_password")
+        self.d.channels.change_password(c.user_id, b["new_password"], c.token)
+        self._note("password.changed", c)
+        return 200, {"ok": True}
+
+    def _h_my_auth_begin(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, password=str, totp=str)
+        self._reauth_me(c, b, "password")
+        return 200, self.d.channels.begin_totp(c.user_id)  # shown once on the person's screen; never logged
+
+    def _h_my_auth_confirm(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, code=str)
+        self.d.channels.confirm_totp(c.user_id, b["code"], c.token)
+        self._note("authenticator.rotated", c)
+        return 200, {"ok": True}
+
+    def _h_my_end_all(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        n = self.d.channels.end_all_sessions(c.user_id)
+        self._note("sessions.ended", c, count=n)
+        clear = f"{self._cookie_name}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"
+        return 200, {"ok": True}, [("Set-Cookie", clear + ("; Secure" if self.d.secure_cookies else ""))]
+
     # --- (d) admin console (route auth = hub-admin, checked in the pipeline) -----------------------------------------
+
+    def _h_a_person_reach(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        from .reach import person_reach
+
+        return 200, person_reach(self.d.access, self.d.registry, p["user_id"])
 
     def _h_a_users(self, c: Ctx, p: dict, q: dict, b: dict | None):
         return 200, {"users": self.d.access.users()}
@@ -1714,6 +1862,8 @@ class WebApi(ChangeHandlers):
         for grant in self.d.access.grants(ws):
             self.d.access.revoke(ws, grant["group"], actor=c.user_id)
         reg.forget(ws)
+        if self.d.connections is not None:  # no connection to or from it, and no counts about it, outlive the workspace
+            self.d.connections.forget_workspace(ws)
         return 200, {"ok": True}
 
     def _h_a_workspaces(self, c: Ctx, p: dict, q: dict, b: dict | None):
@@ -1734,6 +1884,45 @@ class WebApi(ChangeHandlers):
                 }
             )
         return 200, {"workspaces": out}
+
+    def _h_a_connections(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        if self.d.authz is None:
+            raise ApiError("unavailable")  # an empty map would say "nobody can reach anyone": say nothing instead
+        reg = self.d.registry
+        workspaces = []
+        for ws in sorted(reg.pins()):
+            if reg.mode(ws) is None:
+                continue
+            name = (reg.card(ws) or {}).get("name")
+            workspaces.append(
+                {
+                    "workspace_id": ws,
+                    "name": P4.render_text(name) if type(name) is str and name else None,
+                }
+            )
+        edges = [
+            {"from": a["workspace_id"], "to": other["workspace_id"]}
+            for a in workspaces
+            for other in workspaces
+            if self.d.authz.may_route(a["workspace_id"], other["workspace_id"])
+        ]
+        stored = self.d.connections.edges() if self.d.connections is not None else []
+        pending = (
+            [x for x in self._chg().for_admin() if x["kind"] == "connection_allow" and x["state"] == "pending"]
+            if self.d.changes is not None
+            else []
+        )
+        traffic = self._chg().traffic_for(c.user_id) if self.d.changes is not None else []
+        return 200, {
+            "workspaces": workspaces,
+            "edges": edges,  # effective: a connection AND the access rule
+            "connections": [{"from": e["from"], "to": e["to"], "via": e["via"]} for e in stored],
+            "pending": [
+                {"id": x["id"], "from": x["body"]["from"], "to": x["body"]["to"], "proposer": x["proposer"]["name"]}
+                for x in pending
+            ],
+            "traffic": traffic,
+        }
 
     def _h_a_services(self, c: Ctx, p: dict, q: dict, b: dict | None):
         if self.d.services is None:
@@ -1771,7 +1960,8 @@ class WebApi(ChangeHandlers):
 
     def _h_a_channels(self, c: Ctx, p: dict, q: dict, b: dict | None):
         u = q.get("user_id")
-        return 200, {"channels": self.d.channels.channels(_hex32(u) if u is not None else None)}
+        rows = self.d.channels.channels(_hex32(u) if u is not None else None)
+        return 200, {"channels": [self._channel_row(r) for r in rows]}
 
     def _h_a_market_policy(self, c: Ctx, p: dict, q: dict, b: dict | None):
         return 200, {**self.d.access.market_policy(), "official_url": MP.OFFICIAL_URL}  # display: the one official URL

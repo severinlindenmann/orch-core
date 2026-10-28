@@ -18,7 +18,7 @@ _SCHEMA = """
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS change (
   id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('grant','member_add')),
+  kind TEXT NOT NULL CHECK (kind IN ('grant','member_add','connection_allow')),
   body TEXT NOT NULL,
   proposer TEXT NOT NULL,
   created_ms INTEGER NOT NULL,

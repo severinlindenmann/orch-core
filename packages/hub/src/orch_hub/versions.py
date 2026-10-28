@@ -5,6 +5,8 @@ import re
 from . import __version__
 
 MIN_SUPPORTED_VERSION = "2.0.0.dev0"
+#: the oldest phone app the Phones page does not flag "Update needed". Display only: no route ever refuses on it.
+MIN_PHONE_VERSION = "0.1.0"
 
 
 def version_state(v: str | None, hub_v: str | None, min_v: str | None) -> str:

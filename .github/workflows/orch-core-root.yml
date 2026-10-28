@@ -3,6 +3,9 @@ name: orch-core root tests
 # past 120 s on about one run in three (even run alone), so it is NOT part of PR CI and not a required check. It runs
 # nightly and on demand; a failure here prints what the hung process waited for (see the diagnose step).
 on:
+  push:  # schedule and workflow_dispatch only exist once the file is on the default branch (main); develop pushes work now
+    branches: [develop]
+    paths: ["packages/core/**", ".github/workflows/orch-core-root.yml"]
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:

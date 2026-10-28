@@ -147,6 +147,11 @@ class RunnerGrants:
         self.hub = hub
         self.tables: dict[str, GrantTable] = {}
         self._watching: asyncio.Task[None] | None = None
+        #: what the last hello reported, and which workspaces were served then: a workspace bound after it (a host that
+        #: has just started answers the runner's hello before it serves its workspaces) is settled in
+        #: :meth:`workspace_served`, never judged on a missing service (that dropped the runner's grant while the
+        #: persisted table still read "valid": "the runner holds no such runner grant")
+        self._hello: dict[str, Any] | None = None
         #: one deposit, forget or drop at a time per (workspace, person): a deposit in flight never undoes a forget
         #: or beats a newer replacement (#466 review, Opus M1)
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
@@ -292,17 +297,45 @@ class RunnerGrants:
         No await happens before the tables change (the drops are sent after every change is made), so this never
         interleaves with a deposit's or a forget's bookkeeping; if an await is ever added before a change, take the
         per-person lock (:meth:`lock`) around it."""
+        self._hello = {"reported": list(reported), "served": set(self.hub.host.services)}
+        await self._finish(self._settle(reported, None))
+
+    def workspace_served(self, wid: str) -> Any:
+        """A workspace was just bound after the runner's hello: settle it by what the runner reported then. Synchronous
+        up to the table changes (called right where the service is bound, before any await), so no deposit can
+        interleave; returns the coroutine that sends the drops, or ``None``."""
+        hello = self._hello
+        if hello is None or wid in hello["served"] or self.hub.host.services.get(wid) is None:
+            return None
+        hello["served"].add(wid)
+        return self._finish(self._settle([r for r in hello["reported"] if r["workspace_id"] == wid], wid))
+
+    async def forget_stale(self, workspace_id: str, person: str, gid: str) -> bool:
+        """The runner refused a launch for want of grant ``gid``: forget it if it is still the person's current one."""
+        async with self.lock(workspace_id, person):
+            table = self.table(workspace_id)
+            cur = table.current.get(person)
+            if cur is None or cur.get("grant") != gid:
+                return False
+            self._forget_current(table, person, "runner_lacks")
+            with contextlib.suppress(HostError):
+                table.save()
+            return True
+
+    def _settle(self, reported: list[dict[str, Any]], only: str | None) -> list[str]:
         held = {(r["workspace_id"], r["person"]): r for r in reported}
         drops: list[str] = []
         for (wid, person), rep in held.items():
             service = self.hub.host.services.get(wid)
+            if service is None:
+                continue  # not served yet: workspace_served settles it
             table = self.table(wid) if service is not None else None
             if table is None or not self._allowed(service, table, person, rep["grant"]):
                 drops.append(rep["grant"])
         # every served workspace's persisted table, loaded or not: after a host restart nothing is loaded yet, and a
         # persisted ``current`` the runner does not hold must not read as available (Codex P2 #2)
         for wid in sorted(set(self.tables) | {w for w, _ in held} | set(self.hub.host.services)):
-            if self.hub.host.services.get(wid) is None:
+            if self.hub.host.services.get(wid) is None or (only is not None and wid != only):
                 continue
             table = self.table(wid)
             changed = False
@@ -336,6 +369,9 @@ class RunnerGrants:
                     table.forgotten[rep["grant"]] = str(rep.get("until") or "")
                     with contextlib.suppress(HostError):
                         table.save()
+        return drops
+
+    async def _finish(self, drops: list[str]) -> None:
         for gid in drops:
             self._audit("grant.drop", grant=gid, reason="revalidated")
             await self._drop(gid)

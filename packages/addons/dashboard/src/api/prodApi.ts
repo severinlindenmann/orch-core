@@ -7,8 +7,7 @@ import { refreshFeatures } from './features'
 import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
-import type { SignDefault, SignMethod } from './signing'
-import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
+import type { HandoffAction } from './handoff'
 import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, GithubCredential, GithubSave, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { ClaudeTrust, QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
@@ -304,16 +303,9 @@ const empty = {
   getLocalMandatesPreview: (): MandatesPreviewState => ({ preview: true, on: false, preflight: [], orchestrators: [], may: [], always_human: [], protected_paths: [], mandate: null }),
 }
 
-/**
- * The signed actions (M3): the server prepares a sign request and the person signs in a terminal. These three calls are
- * the whole write surface of the dashboard; none of them signs, and nothing here ever submits a signature.
- */
-const handoff = {
-  prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
-  /** The host's look at a repository path before the form closes (a dry run: nothing is stored or signed). */
+/** The host's look at a repository path before the form closes (a dry run: nothing is stored or signed). */
+const repos = {
   checkRepo: (ws: string, action: HandoffAction) => call<{ ok: true }>(`${w(ws)}/repos/check`, 'POST', action),
-  getHandoff: (ws: string, id: string) => call<HandoffState>(`${w(ws)}/handoff/${encodeURIComponent(id)}`),
-  cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>(`${w(ws)}/handoff/${encodeURIComponent(id)}`, 'DELETE'),
 }
 
 /**
@@ -334,19 +326,23 @@ const click = {
   stateClick: (ws: string, requestId: string) => call<ClickState>(`${w(ws)}/click/state`, 'POST', { request_id: requestId }),
   /** V3 C11: what the host says to check when the hub's channel signs (a read; nothing is prepared or signed here). */
   hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>(`${w(ws)}/hubsign`, 'POST', body),
+  /** FB15: an add-on grant prepared for the hub (nothing is signed here), and where it is now. */
+  prepareHubApproval: (ws: string, action: Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' }>) => call<import('./hubsign').HubApproval>(`${w(ws)}/hub/approve/prepare`, 'POST', action),
+  getHubApproval: (ws: string, id: string) => call<import('./hubsign').HubApprovalState>(`${w(ws)}/hub/approve/${encodeURIComponent(id)}`),
   getHubStatus: (ws: string) => call<import('./hub').HubStatus>(`${w(ws)}/hub`),
   getHubShare: (ws: string) => call<import('./hub').HubShare>(`${w(ws)}/hub/share`),
   getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
     call<import('./hub').HubPreview>(`${w(ws)}/hub/share/preview`, 'POST', body),
-  getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>(`${w(ws)}/hub/command`, 'POST', body),
+  /** Stop sharing (one ticket, or one rule with the plan the owner was shown): a plain owner click, no signature. */
+  revokeHubShare: (ws: string, ref: string) => call<import('./hub').HubReduced>(`${w(ws)}/hub/share/revoke`, 'POST', { ref }),
+  removeHubRule: (ws: string, rule: import('./hub').HubRule, expect: string) =>
+    call<import('./hub').HubReduced>(`${w(ws)}/hub/share/rule-remove`, 'POST', { rule, expect }),
   getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>(`${w(ws)}/hub/link`, 'POST', { link }),
   connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
   // How I approve (B6): the person's own default way to sign, and whether a phone is paired. Both were missing here, so
   // every real host looked as if it "does not provide personal approval preferences" (B11 10). An older server answers
   // 404 and the page then hides the controls.
-  getSignDefault: (ws: string) => call<SignDefault>(`${w(ws)}/me/sign_default`),
-  putSignDefault: (ws: string, body: { method: SignMethod; fallback?: SignMethod }) => call<SignDefault>(`${w(ws)}/me/sign_default`, 'PUT', body),
   phoneAvailable: (ws: string) => call<{ phones: number }>(`${w(ws)}/phone/available`),
   clickStatus: (ws: string) => call<ClickCard>(`${w(ws)}/click/status`),
   switchClick: (ws: string, body: ClickSwitch) => call<ClickCard>(`${w(ws)}/click/custody`, 'POST', body),
@@ -369,7 +365,7 @@ const cosmetic = {
   setCosmetic: (ws: string, body: CosmeticBody) => call<Cosmetic>(`${w(ws)}/workspace/cosmetic`, 'PUT', body),
 }
 
-const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records, ...cosmetic }
+const implemented: Record<string, unknown> = { ...reads, ...empty, ...repos, ...click, ...records, ...cosmetic }
 
 /** Every other method of the mock's api refuses plainly: a control that reaches one is a bug, not a silent no-op. */
 export const api = new Proxy(implemented, {

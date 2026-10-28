@@ -2,8 +2,8 @@
 
 test_manual_acceptance.py checks the `expected()` / `expected_material()` predicates on hand-built events; this module
 runs core's in-process host (tests.host.human_helpers) and passes what it prepares through
-`adapters.handoff.request` exactly as the /handoff and click routes do, so a drift between the host's `Material` and
-the dashboard's check (the e2e "does not match its own hashes" refusal) fails here.
+`adapters.handoff.request` exactly as `click/view` does, so a drift between the host's `Material` and the dashboard's
+check (the e2e "does not match its own hashes" refusal) fails here.
 """
 
 import copy
@@ -14,7 +14,7 @@ from pydantic import TypeAdapter
 
 from orch_dashboard import adapters
 from orch_dashboard.errors import HostError
-from orch_dashboard.handoff import PrepareBody, expected, expected_material, host_call
+from orch_dashboard.signing import PrepareBody, expected, expected_material, host_call
 from tests.host import human_helpers
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
@@ -33,10 +33,10 @@ def parse(body):
 
 
 def through_dashboard(human, body):
-    """`human.prepare` (handoff) for the action, then the dashboard's own check of the answer (handoff.py prepare)."""
+    """`human.prepare` bound to a signer for the action, then the dashboard's own check of the answer (click/view)."""
     action = parse(body)
     op, args = host_call(action)
-    prepared = human.prepare(op, args, handoff=True)
+    prepared = human.prepare(op, args)
     return prepared, adapters.handoff.request(
         prepared,
         human.served.wid,
@@ -82,7 +82,7 @@ def test_a_statement_is_still_checked_against_what_was_asked(human):
     key = criterion(human)
     action = parse({"action": "accept_criterion", "key": key, "ac": "AC1", "note": "I tried it"})
     op, args = host_call(action)
-    prepared = human.prepare(op, args, handoff=True)
+    prepared = human.prepare(op, args)
 
     def check(p, act=action):
         return adapters.handoff.request(
@@ -113,9 +113,9 @@ def test_a_statement_is_refused_on_any_other_action(human):
     key = criterion(human)
     action = parse({"action": "comment", "key": key, "message": "hello"})
     op, args = host_call(action)
-    prepared = human.prepare(op, args, handoff=True)
+    prepared = human.prepare(op, args)
     adapters.handoff.request(prepared, human.served.wid, expect_op=op, expect_key=key)  # as prepared: fine
-    stolen = human.prepare("ac.accept", {"ref": key, "ac": "AC1"}, handoff=True)["material"]["statement"]
+    stolen = human.prepare("ac.accept", {"ref": key, "ac": "AC1"})["material"]["statement"]
     p = copy.deepcopy(prepared)
     p["material"]["statement"] = stolen
     with pytest.raises(HostError):

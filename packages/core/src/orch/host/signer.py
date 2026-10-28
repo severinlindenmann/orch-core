@@ -10,7 +10,7 @@ grant's secret here, never in the preparer (F1), builds the signing bytes itself
 custody backend, whose prompt shows fields derived from those bytes (:func:`orch.custody.describe.describe_payload`).
 
 :func:`run` is the CLI composite (``orch approve`` and every person op in host mode): ``human.prepare`` with the
-signer, check, review on the person's terminal, confirmation word, sign, ``human.submit``, and only then the grant
+signer, check, review on the person's terminal, Enter confirmation, sign, ``human.submit``, and only then the grant
 secret on the person's own terminal.
 """
 
@@ -26,6 +26,7 @@ from typing import Any
 
 from orch import canon
 from orch.addons.settings_value import KEY as ADDONS_KEY
+from orch.ops.errors import OrchError
 
 from . import review, signcontent
 
@@ -34,7 +35,6 @@ __all__ = [
     "SignerRefused",
     "check",
     "check_reviews",
-    "confirm_word",
     "finish",
     "header",
     "render",
@@ -64,9 +64,7 @@ _FORBIDDEN = frozenset({"seq", "at", "prev", "ws_seq", "host_sig", "sig"})
 _GATE_TYPES = {"gate.approved": None, "gate.changes_requested": None, "verdict.given": "verify"}
 _MEMBER_OPS = frozenset({"member.add", "member.remove", "member.role"})
 _ADDON_OPS = frozenset({"addon.grant", "addon.disable", "addon.purge"})
-#: the addon ops whose typed word is ``<name>~<WS8>``: the ONE definition, shared by the terminal (``orch sign``), the
-#: click view (:func:`orch.click.view.word` delegates here) and the dashboard's hand-off page
-#: (packages/addons/dashboard/src/test/confirm-words.json pins all three)
+#: Workspace-scoped add-on operations.
 _ADDON_WS_OPS = frozenset({"addon.grant", "addon.purge"})
 
 
@@ -183,7 +181,7 @@ def verify_material(prepared: Mapping[str, Any], *, workspace_id: str) -> None:
 
 def _formats(prepared: Mapping[str, Any]) -> None:
     """Every identifier the review shows or the person types is checked against its F1 format before anything is
-    rendered: a host string can never carry a terminal control sequence into the header or the confirmation word."""
+    rendered: a host string can never carry a terminal control sequence into the header or the Enter confirmation."""
     if not isinstance(prepared.get("workspace_id"), str) or not _HEX32.fullmatch(prepared["workspace_id"]):
         _refuse("workspace_id is malformed")
     log = prepared["log"]
@@ -246,7 +244,6 @@ _SETTINGS_KEYS = frozenset(
         "grant_hours",
         "claim_ttl_min",
         "lease_ttl_min",
-        "sign_methods",
         "repos",
         "publish",
         ADDONS_KEY,
@@ -811,51 +808,6 @@ def _clean(value: Any) -> str:
     return canon.clean(text).replace("\n", "⟨U+000A⟩")
 
 
-def confirm_word(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str] | None] | None = None) -> str:
-    """The word the person types: the ticket key for decisions and ticket ops (``move`` and a ticket ``policy.set``
-    included), ``GRANT`` for grants, the person id for member ops, the addon name for addon ops (``<name>~<WS8>`` for
-    grant/purge),
-    ``<PREFIX>~<WS8>/POLICY`` for a workspace ``policy.set`` and ``<PREFIX>~<WS8>/SETTINGS`` for ``settings.set`` (the
-    prefix and the workspace id's last eight from the signer's **own** registry, ``workspace``), else the op name."""
-    op, ev, ticket = prepared["op"], prepared["events"][0], prepared["material"].get("ticket")
-    seq = prepared["material"].get("sequence")
-    if isinstance(seq, dict) and isinstance(seq.get("intent"), dict) and seq["intent"].get("kind") == "addon_enable":
-        # turning on an add-on that needs settings: the add-on's word, as for addon.grant (not the SETTINGS word)
-        return f"{_clean(seq['intent'].get('name'))}~{_clean(prepared['workspace_id'])[-8:]}"
-    if isinstance(seq, dict) and isinstance(seq.get("intent"), dict) and seq["intent"].get("agent") is not None:
-        return "GRANT"  # a sequence that gives agents access is confirmed with the grant's word (its strongest step)
-    if op in ("policy.set", "settings.set") and ticket is None:
-        wid = prepared["workspace_id"]
-        known = workspace(wid) if workspace is not None else None
-        if known is None:
-            _refuse("this workspace is not in your own registry")
-        # the last 8 of the id the registry knows it by: two workspaces with one prefix never share a word
-        return f"{_clean(known[1])}~{_clean(wid)[-8:]}/{'POLICY' if op == 'policy.set' else 'SETTINGS'}"  # type: ignore[index]
-    if op == "grant":
-        return "GRANT"
-    if op in _MEMBER_OPS:
-        return _clean(ev.get("person"))
-    if op in _ADDON_WS_OPS:  # addon names repeat across workspaces: the last 8 of the workspace id disambiguate
-        return f"{_clean(ev.get('name'))}~{_clean(prepared['workspace_id'])[-8:]}"
-    if op in _ADDON_OPS:
-        return _clean(ev.get("name"))
-    if ticket is not None:
-        return ticket_word(prepared)
-    return op.upper()
-
-
-def uid_fragment(log: str) -> str:
-    """The last eight characters of the signed log's uid (taken from the request's ``log``, which the signature
-    names, never from host text): what the person types next to the host-attested key."""
-    return log[-8:]
-
-
-def ticket_word(prepared: Mapping[str, Any]) -> str:
-    """``KEY/FRAG``: the key is the host's word for the ticket (not proven in H5a), the fragment comes from the uid
-    of the log the signature names, so the typed word always names the ticket that is signed."""
-    return f"{_clean(prepared['material']['ticket']['key'])}/{uid_fragment(prepared['log'])}"
-
-
 def header(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, str] | None]) -> list[str]:
     """Built before any ticket content: the workspace from the signer's own registry, the op in plain words, the
     origin (kernel UID and PID recorded by the host; the client name is unverified), the fingerprint."""
@@ -870,7 +822,7 @@ def header(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, st
         fields["when"] = fields.get(fields["field"], "")
     fields.setdefault("gate", "verify")
     fields.setdefault("option", "none (text only)")
-    fields["ticket"] = ticket_word(prepared) if ticket else "the workspace"
+    fields["ticket"] = f"{_clean(ticket['key'])}/{prepared['log'][-8:]}" if ticket else "the workspace"
     try:
         key = "hub.join.full" if prepared["op"] == "hub.join" and fields.get("mode") == "full" else prepared["op"]
         plain = _PLAIN.get(key, "{op} on {ticket}").format_map(_Default({**fields, "op": prepared["op"]}))
@@ -884,7 +836,7 @@ def header(prepared: Mapping[str, Any], workspace: Callable[[str], tuple[str, st
     if ticket is not None:
         lines.append(
             f"ticket: {_clean(ticket['key'])} (ticket key per host, not proven) uid {prepared['log']} "
-            f"(signed; you type its last eight: {uid_fragment(prepared['log'])})"
+            "(signed ticket id)"
         )
     return [
         *lines,
@@ -913,7 +865,7 @@ def _summary(block: Mapping[str, Any]) -> str:
 #: event types whose digest (``sha256``, ``bytes``) has no preimage in the material: the signer can compare it only with
 #: bytes it holds itself
 ARTIFACT_TYPES = frozenset({"artifact.added", "artifact.replaced"})
-UNSEEN = "signed commitment: orch sign has not seen these bytes; compare with the file you meant"
+UNSEEN = "signed commitment: the signer has not seen these bytes; compare with the file you meant"
 SEEN = "checked against your local file"
 
 
@@ -1149,7 +1101,7 @@ def plain(
         _refuse("the review would carry a control character")
     out = Review(prefix + body)
     out.details = prefix + full
-    out.details_first = os.environ.get("ORCH_SIGN_DETAILS") == "1"  # `orch sign --details` sets it
+    out.details_first = os.environ.get("ORCH_SIGN_DETAILS") == "1"
     return out
 
 
@@ -1220,7 +1172,7 @@ def sign(
         be = backend
         if len(events) > 1:
             # ONE passphrase for the events of one reviewed request (an Extend is two): the person saw every event in
-            # the one review and typed its word. The key signs this log's event label and nothing else (D65 stays the
+            # the one review and pressed Enter. The key signs this log's event label and nothing else (D65 stays the
             # rule for anything that was not reviewed as one batch). The unlock itself lives in sequence_terminal.
             from .sequence_terminal import request_backend
 
@@ -1320,7 +1272,7 @@ def run(
     person: str,
     device: str,
     workspace: Callable[[str], tuple[str, str] | None],
-    confirm: Callable[[str, str], bool],
+    confirm: Callable[[str], bool],
     show_secret: Callable[[str], None],
     idem: str,
     files: dict[str, Any] | None = None,
@@ -1328,8 +1280,8 @@ def run(
     owner_proof: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The CLI composite of a person op in host mode. ``call(op, args, **opts)`` sends one request on the pinned
-    workspace connection and returns its ``result`` (raising the host's error); ``confirm(text, word)`` shows the
-    review on the person's terminal and returns whether the person typed ``word``; ``show_secret`` writes to that
+    workspace connection and returns its ``result`` (raising the host's error); ``confirm(text)`` shows the
+    review on the person's terminal and returns whether the person pressed Enter; ``show_secret`` writes to that
     terminal only. Returns ``human.submit``'s result."""
     prepared = call(
         "human.prepare", {"op": op, "args": args, "signer": {"device": device, "auth": backend.auth}}, files=files
@@ -1408,7 +1360,7 @@ def finish(
     person: str,
     device: str,
     workspace: Callable[[str], tuple[str, str] | None],
-    confirm: Callable[[str, str], bool],
+    confirm: Callable[[str], bool],
     show_secret: Callable[[str], None],
     idem: str,
     files: dict[str, Any] | None = None,
@@ -1418,9 +1370,9 @@ def finish(
     on_secret: Callable[[str], list[str]] | None = None,
     owner_proof: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """The tail every signing client shares (the composite and ``orch sign``): ``before`` (a client's own extra
+    """The tail every signing client shares (the composite and the CLI signer): ``before`` (a client's own extra
     checks), :func:`check`, :func:`check_uploads` (when ``files`` is given), the review (``prefix``, then
-    :func:`render`), the confirmation word, :func:`sign`; any failure up to there cancels the request (it expires
+    :func:`render`), the Enter confirmation, :func:`sign`; any failure up to there cancels the request (it expires
     anyway) and re-raises. Then ``human.submit`` with ``idem``, and only after the commit a grant's secret on the
     person's terminal. Returns ``human.submit``'s result."""
     try:
@@ -1430,8 +1382,8 @@ def finish(
         if files is not None:
             check_uploads(prepared, files)
         text = plain(prepared, workspace, artifacts=artifacts, prefix=prefix, members=members_of(call))
-        if not confirm(text, confirm_word(prepared, workspace)):
-            _refuse("not confirmed")
+        if not confirm(text):
+            raise OrchError("sign.cancelled", "nothing was signed")
         proof = None
         if any(e.get("type") in review.OWNER_PROOF_TYPES for e in prepared["events"]):  # #1198 C9: the backup key
             make = owner_proof or (

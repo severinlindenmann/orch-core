@@ -57,6 +57,45 @@ def test_an_unknown_reason_is_dropped_never_echoed(code, reason):
     assert closed_detail(code, {"reason": reason, "devices": [DEV_A]}) == {"devices": [DEV_A]}
 
 
+def test_a_reason_only_at_the_start_of_the_message_reaches_the_page_as_detail():
+    # core's member.add refusal names its reason only there ("no_declaration: d_… would read a workspace …")
+    msg = (
+        f"no_declaration: {DEV_A} would read a workspace with convenience signatures and has not declared that it"
+        " understands them"
+    )
+    got = body(HostError({"code": "sign.convenience_readers", "message": msg, "retryable": False}, 3))
+    assert got["error"]["detail"] == {"reason": "no_declaration"}
+    # the detail's own reason wins; its devices stay
+    got = body(
+        HostError(
+            {
+                "code": "sign.convenience_readers",
+                "message": msg,
+                "retryable": False,
+                "detail": {"reason": "reader_too_old", "devices": [DEV_A]},
+            },
+            3,
+        )
+    )
+    assert got["error"]["detail"] == {"reason": "reader_too_old", "devices": [DEV_A]}
+
+
+@pytest.mark.parametrize(
+    "code,message",
+    [
+        ("sign.convenience_readers", "disabled: a reason of the other code"),
+        ("sign.convenience_readers", "relay_reader_old: not in this slice"),
+        ("sign.convenience_readers", "the reader no_declaration: not at the start"),
+        ("sign.convenience_readers", "No_declaration: case"),
+        ("reader.decl_invalid", "no_declaration: another code"),
+        ("human.click_refused", "disabled: another code"),
+    ],
+)
+def test_a_message_reason_outside_the_closed_set_or_code_is_not_taken(code, message):
+    got = body(HostError({"code": code, "message": message, "retryable": False}, 3))
+    assert "detail" not in got["error"]
+
+
 def test_extra_detail_keys_are_dropped():
     detail = {
         "reason": "reader_too_old",

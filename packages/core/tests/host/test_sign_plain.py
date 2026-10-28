@@ -6,15 +6,12 @@ from __future__ import annotations
 
 import json
 import os
-import pty
 import re
-import threading
 import time
 
 import pytest
 
 from orch.host import signcontent, signer
-from orch.ops import human as ops_human
 from tests.host import human_helpers
 from tests.host.test_human import ready
 
@@ -160,79 +157,6 @@ def test_the_view_of_a_click_carries_the_headline_and_the_content_next_to_the_un
     assert v["headline"].startswith("Add a note to DEMO-0001") and v["content"]["sections"][0]["text"] == "note"
     assert v["lines"] == signer.render(p, WS).rstrip("\n").split("\n")  # the full review is still there, line for line
     assert v["risk"]
-
-
-# --- the prompt -------------------------------------------------------------------------------------------------------
-
-
-def _prompt(monkeypatch, text, answers):
-    """Run ``review_prompt`` on a pty; the test types ``answers``, one after each prompt. Returns (result, shown)."""
-    master, slave = pty.openpty()
-    monkeypatch.setattr(ops_human, "open_tty", lambda flags: os.dup(slave))
-    shown = bytearray()
-    done = threading.Event()
-
-    def person():
-        queue = list(answers)
-        seen = 0
-        while queue and not done.is_set():
-            try:
-                shown.extend(os.read(master, 65536))
-            except OSError:
-                return
-            prompts = shown.count(b"): ") + shown.count(b"stops: ")
-            if prompts > seen:
-                seen = prompts
-                time.sleep(0.3)  # the prompt flushes pending input once it is written: type after that
-                os.write(master, queue.pop(0).encode() + b"\n")
-
-    t = threading.Thread(target=person, daemon=True)
-    t.start()
-    watchdog = threading.Timer(8, lambda: os.write(master, b"\n"))  # never hang a test run
-    watchdog.start()
-    try:
-        result = ops_human.review_prompt(text, "DEMO-0001/ABCD1234")
-    finally:
-        watchdog.cancel()
-        done.set()
-        os.close(slave)
-        t.join(2)
-        os.close(master)
-    return result, shown.decode()
-
-
-def _review():
-    r = signer.Review("Approve the requirements of DEMO-0001\n\n")
-    r.details = "FULL DUMP\nfingerprint: abc\n"
-    return r
-
-
-def test_the_prompt_shows_the_plain_view_and_d_prints_the_full_dump(monkeypatch):
-    ok, shown = _prompt(monkeypatch, _review(), ["d", "DEMO-0001/ABCD1234"])
-    assert ok and "Type DEMO-0001/ABCD1234 to continue (d = details): " in shown
-    assert shown.index("Approve the requirements") < shown.index("FULL DUMP")  # plain first, details on request
-
-
-def test_without_d_the_details_are_not_shown(monkeypatch):
-    ok, shown = _prompt(monkeypatch, _review(), ["DEMO-0001/ABCD1234"])
-    assert ok and "FULL DUMP" not in shown
-
-
-def test_a_wrong_word_stops(monkeypatch):
-    ok, _ = _prompt(monkeypatch, _review(), ["d", "yes"])
-    assert not ok
-
-
-def test_details_first_shows_the_dump_without_d(monkeypatch):
-    r = _review()
-    r.details_first = True
-    ok, shown = _prompt(monkeypatch, r, ["DEMO-0001/ABCD1234"])
-    assert ok and "FULL DUMP" in shown and "Approve the requirements" not in shown
-
-
-def test_a_review_without_details_keeps_the_old_prompt(monkeypatch):
-    ok, shown = _prompt(monkeypatch, "plain text\n", ["DEMO-0001/ABCD1234"])
-    assert ok and "and Enter to continue; anything else stops: " in shown
 
 
 # --- the invariant: nothing that carries authority or identity is left out of the plain view -----------------------------
@@ -433,7 +357,6 @@ def test_authority_is_in_the_plain_view_of_a_grant_a_member_and_a_gate(human, se
 
 
 def _tz(monkeypatch, name):
-    import time
 
     monkeypatch.setenv("TZ", name)
     time.tzset()
@@ -441,7 +364,6 @@ def _tz(monkeypatch, name):
 
 @pytest.fixture
 def restore_tz():
-    import os
     import time
 
     old = os.environ.get("TZ")

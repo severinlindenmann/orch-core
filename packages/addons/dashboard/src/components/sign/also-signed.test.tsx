@@ -105,16 +105,6 @@ describe('the quick review', () => {
   })
 })
 
-describe('run-9 feedback 3.8: the terminal path folds the quick task too', () => {
-  it('HandoffPanel hands the typed values to the review (it used to show the long fallback)', async () => {
-    const { HandoffPanel } = await import('./HandoffPanel')
-    const { fakeRequest } = await import('@/test/handoffHarness')
-    render(<HandoffPanel request={{ ...fakeRequest(), content: hostContent() }} quick={typed} />)
-    expect(screen.getByTestId('sign-also')).not.toHaveAttribute('open')
-    expect(screen.queryByText('Plan tasks')).toBeNull()
-  })
-})
-
 describe('the compact summary layout', () => {
   it('shows facts and the risk line, keeps the exact values in a closed fold, and no arrow table', () => {
     render(<SignContent content={{

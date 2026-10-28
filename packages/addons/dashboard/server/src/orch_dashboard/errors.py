@@ -57,6 +57,7 @@ def status(code: str) -> int:
         return 400
     if code in {
         "human_only",
+        "session.readonly",
         "role.denied",
         "op.not_allowed",
         "peer.denied",
@@ -375,6 +376,21 @@ TOP_KEYS = {
 }
 
 
+#: the codes whose closed reason core also puts at the start of the message (`"<reason>: ..."`, core `ops/readers.py`)
+MESSAGE_REASON_CODES = ("sign.convenience_readers", "sign.convenience_unavailable")
+MESSAGE_REASON = re.compile(r"([a-z_]{1,32}): ")
+
+
+def message_reason(code, message) -> str | None:
+    """The closed reason a convenience refusal names at the start of its message, when its `detail` has none (core's
+    `member.add` refusal carries it only there). Only a member of the code's closed set counts; the rest is dropped."""
+    if code not in MESSAGE_REASON_CODES or not isinstance(message, str):
+        return None
+    m = MESSAGE_REASON.match(message)
+    allowed = DETAIL_KEYS[code]["reason"]
+    return m.group(1) if m and m.group(1) in allowed else None
+
+
 def allowed_error(raw) -> dict | None:
     """The browser's error from a host (or this server's) error, through `TOP_KEYS`, `closed_detail` and the `fix`
     rule; None when its `code` is missing or invalid (the caller answers `internal`)."""
@@ -388,6 +404,9 @@ def allowed_error(raw) -> dict | None:
             error[key] = raw[key]
     error.setdefault("retryable", False)
     detail = closed_detail(code, raw.get("detail"))
+    reason = message_reason(code, message)
+    if reason is not None and (detail is None or "reason" not in detail):
+        detail = {**(detail or {}), "reason": reason}
     if detail is not None:
         error["detail"] = detail
     # The host's `fix` stays out of the browser, as since M0 (it can carry argv and paths), except: a plain-text fix,

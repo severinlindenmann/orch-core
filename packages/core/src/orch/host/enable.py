@@ -17,7 +17,7 @@ itself: it only asks the service manager to.
 * **Windows and anything else:** no service; the workspace stays in direct mode (owner re-plan, 12 Oct 2026).
 
 The unit runs ``<release>/current/bin/orch-host run --state <state> --run <run>`` with ``python -I``. In tier A the run
-directory is ``<state>/run``, the one the CLI, ``orch sign`` and the dashboard look in; the root-owned
+directory is ``<state>/run``, the one the CLI, the CLI signer and the dashboard look in; the root-owned
 ``/Users/Shared/orch/run`` and ``/run/orch`` of tier B come with the setup helper (H3c, phase 3).
 
 **One service per UID.** The label is fixed, so a unit that is installed for another state dir, run dir or interpreter

@@ -103,7 +103,6 @@ function CancelButton({ row, ws }: { row: ScheduleRow; ws: string }) {
           ws={ws}
           title={`Cancel the schedule on ${row.ticket}`}
           action={{ action: 'schedule_cancel', key: row.ticket, id: row.id }}
-          autoStart
           confirmLabel="Cancel schedule"
           doneToast=""
           onSettled={(p) => {
@@ -120,7 +119,6 @@ function CancelButton({ row, ws }: { row: ScheduleRow; ws: string }) {
           ws={ws}
           title={`Restore the schedule on ${row.ticket}`}
           action={scheduleAddAction(formOf(row))}
-          autoStart
           confirmLabel="Restore schedule"
           onSettled={(p) => p === 'done' && refresh()}
           onClose={() => setPhase('idle')}
@@ -276,7 +274,6 @@ function NewScheduleDialog({ ws, tickets, maxHours, leadS, onClose }: { ws: stri
               ws={ws}
               title={`Schedule on ${ticket}`}
               action={scheduleAddAction(form)}
-              autoStart
               confirmLabel="Create schedule"
               minLeadS={leadS}
               onSettled={(p) => {

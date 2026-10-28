@@ -443,7 +443,6 @@ def build_p4(
     act5("action_settings_changed_by_admin", {**st, "set": {"grant_hours": 72}}, "admin", ok("settings.changed"))
     act5("action_settings_changed_by_edit", {**st, "set": {"grant_hours": 72}}, "edit", {"error": "forbidden_role"})
     for nm, v, why in (
-        ("sign_methods", {"sign_methods": ["terminal"]}, "how signatures are made stays off the channel in V3"),
         ("repos", {"repos": {"api": {"path": "/tmp/x"}}}, "host paths are not channel-settable"),
         ("models", {"models": None}, "not channel-settable in V3"),
         ("grant_hours_over", {"grant_hours": 169}, ""),
@@ -861,7 +860,6 @@ def build_p4(
         ("grant_requested_with_secret_hash", "grant.requested", {**grp, "secret_hash": HASH_A},
          "the grant secret is made by the host after admission, never by the hub"),
         ("grant_requested_with_grant_id", "grant.requested", {**grp, "grant": "gr_01J9ZP0000000000000000GRT1"}, ""),
-        ("settings_with_sign_methods", "settings.changed", {"set": {"sign_methods": ["hub", "terminal"]}}, ""),
         ("policy_with_factor", "policy.changed",
          {"gates": {"plan": {**pcl["gates"]["plan"], "factor": "passkey"}}}, ""),
     ):  # fmt: skip

@@ -76,8 +76,7 @@ class AgentRefused(RuntimeError):
 
 def refuse_agent(environ=None):
     """Refuse (#542 item 1) when ORCH_GRANT or ORCH_SESSION is set and non-empty: the same code, exit and message
-    as core's ``orch dashboard`` (and ``orch sign``'s ``human_only``). A speed bump in tier A (same UID), not a
-    boundary."""
+    as core's ``orch dashboard``. A speed bump in tier A (same UID), not a boundary."""
     environ = os.environ if environ is None else environ
     if any(environ.get(name) for name in AGENT_ENV):
         raise AgentRefused()

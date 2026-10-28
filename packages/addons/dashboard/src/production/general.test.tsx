@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
-import { OWNER, TOM, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { OWNER, TOM, clickOn, prepareByClick, show, useFakeHost, workspace } from '@/test/hostHarness'
 
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
@@ -105,6 +105,7 @@ it('explains a missing records folder and keeps its error code under closed Deta
 })
 
 it('saves agent access separately from changed reservation times', async () => {
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   await openRecords()
   const reserved = screen.getByLabelText('Ticket reserved for (minutes)')
@@ -112,10 +113,12 @@ it('saves agent access separately from changed reservation times', async () => {
   await user.type(reserved, '90')
   await user.selectOptions(screen.getByRole('combobox', { name: 'Longest agent access you can give' }), '24')
   await user.click(screen.getByRole('button', { name: 'Save' }))
-  await screen.findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map(c => c.body)).toEqual([{ action: 'settings_set', grant_hours: 24 }])
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Change the workspace settings')
+  expect(state.host.clickPrepares().map(c => c.body)).toEqual([{ action: 'settings_set', grant_hours: 24 }])
   await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
   await user.click(screen.getByRole('button', { name: 'Save settings' }))
-  await screen.findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map(c => c.body)).toEqual([{ action: 'settings_set', grant_hours: 24 }, { action: 'settings_set', claim_ttl_min: 90 }])
+  await prepareByClick(await screen.findByRole('dialog', {}, T), 'Change the workspace settings')
+  expect(state.host.clickPrepares().map(c => c.body)).toEqual([{ action: 'settings_set', grant_hours: 24 }, { action: 'settings_set', claim_ttl_min: 90 }])
+  expect(state.host.posts()).toEqual([])
 })

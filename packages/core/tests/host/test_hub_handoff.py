@@ -234,7 +234,6 @@ def test_a_settings_change_gets_one_fragment_link_with_the_terms(served, full):
     [
         {"kind": "settings"},
         {"kind": "settings", "set": {}},
-        {"kind": "settings", "set": {"sign_methods": ["click"]}},
         {"kind": "settings", "set": {"grant_hours": 500}},
         {"kind": "settings", "set": {"grant_hours": 1}, "ticket": "X"},
     ],

@@ -265,20 +265,9 @@
         },
         "sign_methods": {
           "type": "array",
-          "description": "B6 (owner decision F, 16 Oct 2026): the ways a signature may be made in this workspace. terminal is always present; touchid is reserved and not selectable yet.",
+          "description": "Accepted and ignored (B6 retired): One click workspaces created since #1442 carry it in their genesis settings.changed. Still accepted so those logs replay; it has no effect and new code never writes it.",
           "items": {
-            "enum": [
-              "terminal",
-              "click",
-              "phone",
-              "hub"
-            ]
-          },
-          "uniqueItems": true,
-          "minItems": 1,
-          "maxItems": 4,
-          "contains": {
-            "const": "terminal"
+            "type": "string"
           }
         },
         "repos": {

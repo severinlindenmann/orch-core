@@ -49,7 +49,11 @@ class Rig:
         monkeypatch.setattr(remote, "_is_local", lambda a: a in self.local)
         monkeypatch.setattr(remote, "_port_busy", lambda p: p in self.busy)
         monkeypatch.setattr(remote, "_run", self._run)
-        monkeypatch.setattr(remote, "TERMINAL", self)
+
+        def review(text, verb="sign"):  # D4: nothing here is signed, so the prompt says "continue"
+            return verb == "continue" and self.ask(text) in ("y", "yes")
+
+        monkeypatch.setattr("orch.ops.human.review_prompt", review)
         monkeypatch.setattr(remote, "_no_answer", lambda p: True)
         monkeypatch.setattr("orch.cli.dashboard.find_entry_point", lambda env, err=None: ["/opt/orch-dashboard"])
         monkeypatch.setattr(remote, "_front_installed", lambda: False)
@@ -205,7 +209,7 @@ def test_a_root_side_problem_is_shown_in_the_dry_run_and_stops_the_real_run(rig)
 def test_declining_the_confirm_changes_nothing(rig):
     rig.answer = "n"
     code, out, _ = rig.go("enable", "--name", NAME)
-    assert code == 1 and rig.asked == ["Make these changes? [y/N] "] and rig.calls == [] and rig.files() == []
+    assert code == 1 and rig.asked == ["Make these changes?"] and rig.calls == [] and rig.files() == []
     rig.answer = ""
     assert rig.go("enable", "--name", NAME)[0] == 1 and rig.calls == []
 
@@ -215,9 +219,14 @@ def test_no_terminal_means_no_change(rig, monkeypatch):
         def ask(self, prompt):
             raise OSError("no controlling terminal")
 
-    monkeypatch.setattr(remote, "TERMINAL", NoTty())
+    from orch.ops.errors import OrchError
+
+    def missing(text, verb="sign"):
+        raise OrchError("tty.required", "no controlling terminal")
+
+    monkeypatch.setattr("orch.ops.human.review_prompt", missing)
     code, _, err = rig.go("enable", "--name", NAME)
-    assert code == 3 and "human_only" in err and rig.calls == []
+    assert code == 3 and "tty.required" in err and rig.calls == []
 
 
 # --- enable ----------------------------------------------------------------------------------------------------------
@@ -344,7 +353,7 @@ def test_disable_asks_first(rig):
     _enabled(rig)
     rig.answer = "no"
     assert rig.go("disable")[0] == 1 and rig.calls == [] and (rig.state / "dashboard" / "remote.json").exists()
-    assert rig.asked[-1] == "Take remote access away? [y/N] "
+    assert rig.asked[-1] == "Take remote access away?"
 
 
 def test_disable_when_the_root_step_fails_has_still_taken_remote_json_away(rig):

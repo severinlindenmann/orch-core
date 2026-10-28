@@ -53,18 +53,16 @@ __all__ = [
 CONFIRM_ATTEMPTS = 5
 CODE_WORDS = 24
 #: what the person types on the setup terminal once the page shows the same three words (R3)
-TTY_WORD = "yes"
 
 
 def tty_confirm_text(words: str) -> str:
-    """The block the setup terminal shows before it asks for :data:`TTY_WORD` (plain words, owner B11)."""
+    """The block the setup terminal shows before it asks for the Enter confirmation (plain words, owner B11)."""
     return (
         "\n========================================================\n"
         "orch setup is asking you to confirm.\n"
         "The setup page in your browser should show these three words:\n\n"
         f"    {words}\n\n"
-        f"Check the page. If they match, type {TTY_WORD} and press Enter.\n"
-        "Anything else (or Enter alone) cancels; nothing is created.\n"
+        "Check the page. If they match, press Enter to sign; any other key cancels and nothing is created.\n"
         "========================================================\n"
     )
 
@@ -634,24 +632,23 @@ class Creator:
 
     # -- R3
     def _tty_confirm(self) -> None:
-        """R3, in plain words (B11): the terminal shows the words the page must show, and the person types the
-        confirm word. Written straight to ``/dev/tty`` (unbuffered ``os.write``), from the run thread, right after
-        the page's Create; the page says so before that click, so nobody waits for the terminal before it."""
+        """Compare the page's three-word channel binding, then authorize on the controlling tty."""
         if not self.plan.tty_confirm:
             return
         words = " ".join(self.plan.fingerprint or [])
         self.run.waiting_tty = True
         try:
-            self.ports.terminal.show(tty_confirm_text(words))
-            typed = self.ports.terminal.ask(f"If they match, type {TTY_WORD}: ")
+            from orch.ops.human import review_prompt
+
+            confirmed = review_prompt(tty_confirm_text(words))
         except SetupError:
             raise
         except Exception:  # noqa: BLE001 - no terminal: nothing is created
-            raise SetupError("tty.unavailable", "no terminal to confirm on; nothing was created", 409) from None
+            raise SetupError("tty.required", "no terminal to confirm on; nothing was created", 409) from None
         finally:
             self.run.waiting_tty = False
-        if typed.strip().lower() != TTY_WORD:
-            raise SetupError("tty.declined", "the terminal did not confirm; nothing was created", 409)
+        if not confirmed:
+            raise SetupError("sign.cancelled", "the terminal did not confirm; nothing was created", 409)
 
     # -- keys, genesis, register (B5)
     def _genesis(self) -> None:
@@ -1051,7 +1048,7 @@ class RealPorts:
 
     def identity(self, wid: str) -> Identity:
         from orch.custody.select import device_backend
-        from orch.host.handoff import _own_workspaces
+        from orch.host.signer_registry import _own_workspaces
         from orch.identity import device_ref
 
         entry = next(iter(_own_workspaces(self.state, self.uid, wid)), None)
@@ -1145,7 +1142,7 @@ class RealPorts:
     def workspace(self, wid: str) -> Any:
         from orch import hostclient
         from orch.host.client import Connection, Pin
-        from orch.host.handoff import _own_workspaces
+        from orch.host.signer_registry import _own_workspaces
 
         entry = next(iter(_own_workspaces(self.state, self.uid, wid)), None)
         if entry is None:
@@ -1177,7 +1174,7 @@ class RealPorts:
             yield backend
             return
         # B11 finding 24: the plan was read on the setup page; the terminal says so in a line and keeps the technical
-        # block behind `d` (shared with `orch sign`, see custody.passphrase.note_plain_review).
+        # block behind `d` (shared with the CLI signer, see custody.passphrase.note_plain_review).
         requests = dict(fields).get("requests", "")
         self.terminal.show(
             f"\norch setup will sign {requests or 'the'} item(s) you read on the setup page, with one passphrase.\n"

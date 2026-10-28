@@ -89,9 +89,11 @@ export function ClickProblemBox({ problem, ws }: { problem: { title: string; bod
   return (
     <div role="alert" data-testid="click-problem" data-click-next={problem.next} className="rounded-md border border-warning/40 px-3 py-2 text-[13px]">
       <p className="font-medium text-text">{problem.title}</p>
-      <p title={problem.signedAt ?? undefined} className="text-text-muted">
-        <Raw>{body}</Raw>
-      </p>
+      {body && (
+        <p title={problem.signedAt ?? undefined} className="text-text-muted">
+          <Raw>{body}</Raw>
+        </p>
+      )}
       {problem.details && <TechnicalDetails text={problem.details} />}
       {ws && problem.devices && <RefusalDevices ws={ws} ids={problem.devices} />}
     </div>

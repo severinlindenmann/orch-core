@@ -90,7 +90,6 @@ export function repoCheckWords(c: HostRepoCheck): string {
 
 /** `available: false` is a host without `settings/1`: everything else is then unknown. */
 export interface HostSettings {
-  sign_methods?: import('./signing').SignMethod[] | null
   available: boolean
   grant_hours: number | null
   claim_ttl_min: number | null
@@ -263,6 +262,32 @@ export function certProblem(raw: string): string | null {
   } catch {
     return 'The certificate file is not JSON.'
   }
+  return null
+}
+
+/** Core `member_add.DECL_FILE_MAX`: the host refuses a longer reader declaration file (the server checks it again). */
+export const MAX_READER_DECL_BYTES = 4096
+
+/** A reader declaration file (core `orch.identity.reader`: `{o: {kind: "reader_decl", ...}, sig}`); the host verifies it. */
+export function isReaderDecl(raw: string): boolean {
+  try {
+    const value: unknown = JSON.parse(raw)
+    const o = value && typeof value === 'object' && !Array.isArray(value) ? (value as { o?: unknown }).o : null
+    return !!o && typeof o === 'object' && (o as { kind?: unknown }).kind === 'reader_decl'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Why the new member's One click confirmation (their reader declaration, made by their orch app with the certificate)
+ * cannot be sent, or null. A workspace that signs by one click admits a new reader only with it (core
+ * `sign.convenience_readers`), and the dashboard signs by one click only.
+ */
+export function declProblem(raw: string, who: string): string | null {
+  if (!raw.trim()) return `${who} needs to confirm they understand One click signatures. Add the confirmation file their orch app made with the certificate.`
+  if (new TextEncoder().encode(raw).length > MAX_READER_DECL_BYTES) return 'The confirmation file is larger than 4 KiB, so it is not a One click confirmation.'
+  if (!isReaderDecl(raw)) return 'This file is not a One click confirmation. Add the confirmation file their orch app made with the certificate.'
   return null
 }
 

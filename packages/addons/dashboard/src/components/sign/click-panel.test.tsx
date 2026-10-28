@@ -5,6 +5,7 @@ import { ARM_MS, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ClickSignPanel } from './ClickSignPanel'
 import { storyOf } from './story'
+import * as gesture from './trustedPress'
 
 const WS = '705d40abbb8c1c90354a1acaa94c935c'
 const answer = (over: Partial<ClickViewAnswer['view']> = {}, digest = 'sha256:' + 'a'.repeat(64)): ClickViewAnswer => ({
@@ -40,6 +41,9 @@ const press = (el: HTMLElement) => {
   fireEvent.pointerDown(el)
   fireEvent.click(el)
 }
+const realTrusted = gesture.trustedPress
+/** Every press from here on is a trusted, non-repeat gesture, judged by the real rule (a key repeat still blocks it). */
+const trusted = () => vi.spyOn(gesture, 'trustedPress').mockImplementation((e) => realTrusted({ isTrusted: true, repeat: e.repeat }))
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -175,6 +179,7 @@ describe('Sign is armed by presentation', () => {
   })
 
   it('ignores a press that began before the button was armed, and a held-down key', () => {
+    trusted() // even trusted presses: the began-armed rule alone refuses these
     const { onSign } = mount()
     fireEvent.pointerDown(sign()) // pressed during the first 500 ms (disabled: React drops it)
     arm()
@@ -187,7 +192,28 @@ describe('Sign is armed by presentation', () => {
     expect(onSign).not.toHaveBeenCalled()
   })
 
-  it('signs on a press that began armed, by pointer or by key, once', () => {
+  it('never signs on a synthetic (untrusted) click, even one that began armed', () => {
+    const { onSign } = mount()
+    arm()
+    press(sign()) // jsdom events are untrusted: what a script's click is
+    fireEvent.keyDown(sign(), { key: 'Enter' })
+    fireEvent.click(sign())
+    expect(onSign).not.toHaveBeenCalled()
+  })
+
+  it('never signs on a key auto-repeat, even a trusted one', () => {
+    trusted()
+    const { onSign } = mount()
+    arm()
+    fireEvent.keyDown(sign(), { key: 'Enter' }) // began armed
+    fireEvent.keyDown(document, { key: 'Enter', repeat: true }) // the key is held: auto-repeat before the click lands
+    fireEvent.click(sign())
+    expect(onSign).not.toHaveBeenCalled()
+    fireEvent.keyUp(document, { key: 'Enter' })
+  })
+
+  it('signs on a trusted press that began armed, by pointer or by key, once', () => {
+    trusted()
     const { onSign } = mount()
     arm()
     press(sign())

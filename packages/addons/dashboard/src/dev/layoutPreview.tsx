@@ -7,7 +7,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import { fingerprintOf, reviewDigestOf, type HandoffEvent, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import type { QuickRow, RecordsStatus } from '@/api/quickRecords'
 import { ApiError } from '@/api/types'
 import { SettingsFrame } from '@/app/pages/settings'
@@ -271,233 +270,6 @@ const records = (scenario: LayoutScenario): RecordsStatus => {
   return base
 }
 
-/** The first request of a New ticket sequence as the dashboard server sends it: `ticket.created`, the whole intent in the material, one SignContent with the ticket and its text. */
-function sequenceRequest(action: Record<string, unknown>): HandoffRequest {
-  serial += 1
-  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
-  const order = ['summary', 'context', 'requirements', 'out_of_scope', 'plan', 'decisions', 'verification', 'findings', 'current_state']
-  const sections = Object.entries((action.sections ?? {}) as Record<string, string>).sort(([a], [b]) => order.indexOf(a) - order.indexOf(b))
-  const sets: Record<string, unknown> = {
-    ...(action.priority ? { priority: action.priority } : {}),
-    ...(action.size ? { size: action.size } : {}),
-    ...(Array.isArray(action.labels) && action.labels.length ? { labels: [...(action.labels as string[])].sort() } : {}),
-    ...(action.parent ? { parent: action.parent } : {}),
-  }
-  const criteria = ((action.acceptance as string[] | undefined) ?? []).filter(Boolean)
-  const people = (action.people as Record<string, string | string[]> | undefined) ?? {}
-  const asList = (v: string | string[]) => (Array.isArray(v) ? v : [v])
-  const peopleRows = (['assignees', 'reviewers', 'owner'] as const).flatMap((role) => asList(people[role] ?? []).map((p) => ({ field: `${role}: add`, before: null, after: String(p) })))
-  const intent = { v: 1, kind: 'new_ticket', title: action.title, ticket_type: action.type, set: sets, sections: Object.fromEntries(sections), ...(criteria.length ? { acceptance: criteria } : {}), ...(Object.keys(people).length ? { people } : {}) }
-  const of = 1 + (Object.keys(sets).length ? 1 : 0) + sections.length + criteria.length + peopleRows.length
-  const key = 'DEMO-0199'
-  const uid = '01J9ZP0000000000000000X0AB'
-  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: null, id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.created', key, ticket_type: action.type, title: action.title, owner: 'p_' + 'a'.repeat(32) }
-  const material = {
-    kind: 'payload' as const,
-    ticket: { key, uid },
-    sequence: { digest: 'sha256:' + 'c'.repeat(64), of, intent },
-    review: [{ event_id: id, type: 'ticket.created', payload: { key, ticket_type: action.type, title: action.title, owner: 'p_' + 'a'.repeat(32) }, derived: { sections: {} } }],
-  }
-  const digest = reviewDigestOf(material)
-  const events = [event] as unknown as HandoffEvent[]
-  const written = [sections.length ? `${sections.length} written section${sections.length === 1 ? '' : 's'}` : '', Object.keys(sets).length ? 'its details' : ''].filter(Boolean)
-  const headline = `Create ${key}: ${String(action.title)}`
-  const parts = [sections.length ? `its text (${sections.length} section${sections.length === 1 ? '' : 's'})` : '', criteria.length ? `${criteria.length} acceptance check${criteria.length === 1 ? '' : 's'}` : '', peopleRows.length ? 'its people' : ''].filter(Boolean)
-  const subline = parts.length ? `and ${parts.join(', ')}` : undefined
-  void written
-  const title = (sid: string) => sid.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
-  return {
-    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
-    code: '7F3K-Q2MA',
-    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
-    state: 'prepared',
-    op: 'new',
-    key,
-    fingerprint: fingerprintOf(digest, events, 'new'),
-    review_digest: digest,
-    gate_hash: null,
-    headline,
-    content: {
-      headline: `Create ${key} (key per host; signed id …${uid.slice(-8)}): ${String(action.title)}`,
-      title: headline.replace('Create ', 'New ticket '),
-      subline: subline?.replace(/^and /, 'Includes '),
-      ticket: { key, title: String(action.title), uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
-      sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
-      ...(criteria.length ? { acceptance: criteria.map((text, i) => ({ id: `AC${i + 1}`, text, checked: false })) } : {}),
-      fields_title: 'Details',
-      fields_changed: [
-        { field: 'type', before: null, after: String(action.type) },
-        { field: 'owner', before: null, after: 'you' },
-        ...Object.entries(sets).map(([field, v]) => ({ field, before: null, after: Array.isArray(v) ? v.join(', ') : String(v) })),
-        ...peopleRows,
-      ],
-      notes: [`One confirmation signs all ${of} steps. If the ticket changes meanwhile, signing stops and what is already signed stays.`],
-    },
-    material,
-    events,
-    origin: null,
-  } as unknown as HandoffRequest
-}
-
-/** The first request of a quick start as the dashboard server sends it (the plan is derived, shown verbatim). */
-function quickRequest(action: Record<string, unknown>): HandoffRequest {
-  serial += 1
-  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
-  const title = String(action.title)
-  const description = String(action.description ?? title)
-  const checks = ((action.checks as { text: string; cmd?: string }[] | undefined) ?? [{ text: title }]).map((c) => ({ text: c.text, cmd: c.cmd ?? null }))
-  const agent = (action.agent as { hours: number } | undefined) ?? null
-  const plan = ['Quick task: do these steps in order.', ...checks.flatMap((c, i) => [`${i + 1}. ${c.text}`, ...(c.cmd ? [`   Checked by: ${c.cmd}`] : [])])].join('\n')
-  const of = 6 + 2 * checks.length + (agent ? 1 : 0)
-  const key = 'DEMO-0200'
-  const uid = '01J9ZP0000000000000000X0AC'
-  const intent = { v: 1, kind: 'quick_task', title, description, checks, agent: agent ? { hours: agent.hours, scope: 'workable' } : null }
-  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: null, id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.created', key, ticket_type: 'chore', title, owner: 'p_' + 'a'.repeat(32) }
-  const material = {
-    kind: 'payload' as const,
-    ticket: { key, uid },
-    sequence: { digest: 'sha256:' + 'd'.repeat(64), of, intent },
-    review: [{ event_id: id, type: 'ticket.created', payload: { key, ticket_type: 'chore', title, owner: 'p_' + 'a'.repeat(32) }, derived: { sections: {} } }],
-  }
-  const digest = reviewDigestOf(material)
-  const events = [event] as unknown as HandoffEvent[]
-  const headline = `Start task ${key}: ${title}`
-  const until = new Date(Date.now() + (agent?.hours ?? 0) * 3_600_000).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
-  return {
-    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
-    code: '7F3K-Q2MA',
-    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
-    state: 'prepared',
-    op: 'new',
-    key,
-    fingerprint: fingerprintOf(digest, events, 'new'),
-    review_digest: digest,
-    gate_hash: null,
-    headline,
-    content: {
-      headline,
-      subline: 'creates the task and approves its requirements and plan',
-      ticket: { key, title, uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
-      sections: [
-        { id: 'requirements', title: 'Requirements', text: description },
-        { id: 'plan', title: 'Plan', text: plan },
-      ],
-      acceptance: checks.map((c, i) => ({ id: `AC${i + 1}`, text: c.text, checked: false })),
-      tasks: checks.map((c, i) => ({ n: i + 1, id: `T${i + 1}`, title: `${c.text} (proves AC${i + 1})`, ...(c.cmd ? { verify: [c.cmd] } : {}) })),
-      fields_changed: [
-        { field: 'type', before: null, after: 'chore' },
-        { field: 'labels', before: null, after: 'quick' },
-      ],
-      notes: [
-        'Approves the requirements as written above, and the plan as written above.',
-        'The task still ends with your own verdict: nothing closes it for you.',
-        ...(agent ? [`Agents may work on all workable tickets, not only this one, until about ${until}. The grant is signed last; its secret goes to your orch runner or your own terminal, never to the dashboard.`] : []),
-        `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,
-      ],
-    },
-    material,
-    events,
-    origin: null,
-  } as unknown as HandoffRequest
-}
-
-/** The first request of an edit sequence as the dashboard server sends it: the first change as the host prepared it, the whole intent in the material, one SignContent with every change. */
-function editRequest(action: Record<string, unknown>): HandoffRequest {
-  serial += 1
-  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
-  const key = String(action.key)
-  const uid = '01J9ZP0000000000000000X0AD'
-  const sections = Object.entries((action.sections ?? {}) as Record<string, string>)
-  const acceptance = (action.acceptance ?? { edit: {}, add: [] }) as { edit: Record<string, string>; add: string[] }
-  const people = (action.people ?? {}) as Record<string, { add: string[]; remove: string[] }>
-  const peopleRows = Object.entries(people).flatMap(([role, c]) => [...c.add.map((p) => ({ field: `${role}: add`, before: null, after: p })), ...c.remove.map((p) => ({ field: `${role}: remove`, before: null, after: p }))])
-  const links = action.links as { repos: string[]; branches: Record<string, string> } | undefined
-  const linkRows = (links?.repos ?? []).map((repo) => ({ field: `repository ${repo}`, before: 'not linked', after: links?.branches[repo] ? `linked, branch ${links.branches[repo]}` : 'linked, no branch' }))
-  const of = sections.length + Object.keys(acceptance.edit).length + acceptance.add.length + (links ? 1 : 0) + Object.keys(people).length
-  const intent = { v: 1, kind: 'edit_ticket', ticket: { key, uid }, ticket_type: 'feature', head: 'sha256:' + 'e'.repeat(64), sections: Object.fromEntries(sections.map(([sid, text]) => [sid, { was: 'sha256:' + '0'.repeat(64), text }])) }
-  const first = sections[0] ?? null
-  const event = { v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'e'.repeat(64), id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'ticket.updated', base_rev: { [`body.${first?.[0] ?? 'summary'}`]: 'sha256:' + '0'.repeat(64) }, sections: { [first?.[0] ?? 'summary']: { hash: 'sha256:' + '1'.repeat(64), refs: [] } } }
-  const material = {
-    kind: 'payload' as const,
-    ticket: { key, uid },
-    texts: first ? { [first[0]]: first[1] } : {},
-    sequence: { digest: 'sha256:' + 'f'.repeat(64), of, intent },
-    review: [{ event_id: id, type: 'ticket.updated', payload: { base_rev: event.base_rev, sections: event.sections }, derived: {} }],
-  }
-  const digest = reviewDigestOf(material)
-  const events = [event] as unknown as HandoffEvent[]
-  const title = (sid: string) => sid.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
-  const headline = `Edit ${key}`
-  const changed = [...Object.entries(acceptance.edit).map(([id2, text]) => ({ id: id2, text })), ...acceptance.add.map((text, i) => ({ id: `AC${i + 4}`, text }))]
-  return {
-    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
-    code: '7F3K-Q2MA',
-    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
-    state: 'prepared',
-    op: 'section.set',
-    key,
-    fingerprint: fingerprintOf(digest, events, 'section.set'),
-    review_digest: digest,
-    gate_hash: null,
-    headline,
-    content: {
-      headline,
-      subline: 'its text, acceptance checks, repositories and people, as shown below',
-      ticket: { key, title: 'Load tariff tables as dbt seeds', uid_tail: uid.slice(-8), new: true, key_note: `key per host, not proven; the ticket's signed id ends …${uid.slice(-8)}` },
-      sections: sections.map(([sid, text]) => ({ id: sid, title: title(sid), text })),
-      ...(changed.length ? { acceptance: changed.map((c) => ({ ...c, checked: false })) } : {}),
-      fields_changed: [...linkRows, ...peopleRows],
-      notes: [
-        'Only the ticket as it was when you opened it is edited. If anyone changes it meanwhile, signing stops and nothing more is signed.',
-        `One confirmation signs all ${of} steps, in order (${of} signatures). If the ticket changes meanwhile, signing stops and what was already signed stays as it is.`,
-      ],
-    },
-    material,
-    events,
-    origin: null,
-  } as unknown as HandoffRequest
-}
-
-/** The op of each request this preview prepared (the state it answers must name the same op). */
-const opOf = new Map<string, string>()
-let serial = 0
-function request(action: Record<string, unknown>): HandoffRequest {
-  if (action.action === 'new_sequence') return sequenceRequest(action)
-  if (action.action === 'edit_sequence') return editRequest(action)
-  if (action.action === 'quick_start') return quickRequest(action)
-  serial += 1
-  const id = '01J9ZP00000000000000000' + String(serial).padStart(3, '0')
-  const type = action.action === 'new' ? 'ticket.created' : 'ticket.updated'
-  const event = action.action === 'new' ? { type, ticket: { key: 'DEMO-0199', type: 'chore', title: action.title } } : { type, ticket: action.key, labels: action.labels }
-  const events = [{ v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'a'.repeat(64), id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, ...event }] as unknown as HandoffEvent[]
-  const { type: t, ...payload } = event
-  const material = { kind: 'payload' as const, ticket: null, review: [{ event_id: id, type: t, payload, derived: {} }] }
-  const digest = reviewDigestOf(material)
-  const op = String(action.action)
-  if (action.action === 'runner_grant') {
-    const grant = { v: 2, hash_v: 1, roster_v: 3, based_on: 'sha256:' + 'a'.repeat(64), id, actor: { kind: 'person', id: 'p_' + 'a'.repeat(32), device: null }, auth: null, type: 'grant.issued', grant: 'gr_01M4Y46B485AXD4CBEJZ15Z1TV', scope: action.scope, verbs: 'agent', label: 'runner', hours: action.hours, issued_at: '2026-10-17T09:00:00Z', expires_at: '2026-10-18T09:00:00Z' }
-    const { type: gt, v: _v, id: _id, actor: _a, auth: _au, hash_v: _h, roster_v: _r, based_on: _b, ...gp } = grant
-    const gm = { kind: 'payload' as const, ticket: null, review: [{ event_id: id, type: gt, payload: gp, derived: {} }] }
-    const gd = reviewDigestOf(gm)
-    const ge = [grant] as unknown as HandoffEvent[]
-    return { id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'), code: '7F3K-Q2MA', expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'), state: 'prepared', op: 'grant', key: null, fingerprint: fingerprintOf(gd, ge, 'grant'), review_digest: gd, gate_hash: null, material: gm, events: ge, origin: null }
-  }
-  return {
-    id: 'hr_' + '0'.repeat(22) + String(serial).padStart(4, '0'),
-    code: '7F3K-Q2MA',
-    expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z'),
-    state: 'prepared',
-    op,
-    key: null,
-    fingerprint: fingerprintOf(digest, events, op),
-    review_digest: digest,
-    gate_hash: null,
-    material,
-    events,
-    origin: null,
-  }
-}
-
 const RUN_BASE = 'r_01M4Y46B485AXD4CBEJZ15Z1'
 const fixtureRun = (id: string, over: Partial<Run> = {}): Run => ({
   run: RUN_BASE + id, rev: 1, kind: 'shell', ticket: null, harness: 'shell', mode: null, model: null, as_person: true, state: 'running',
@@ -757,7 +529,6 @@ export function resetLayoutPreview() {
   dropFixture = null
   installed = false
   current = 'quick-normal'
-  serial = 0
 }
 
 /** Replaces the mock api's methods that these pages call. Done once; the answers follow `current`. */
@@ -861,11 +632,6 @@ function install() {
     }
     throw new TypeError('fixture: the connection was lost')
   })
-  set('prepareHandoff', async (_ws: string, action: Record<string, unknown>) => {
-    const made = request(action)
-    opOf.set(made.id, made.op)
-    return made
-  })
   set('getAddOns', async () => ({
     available: true,
     add_ons: [
@@ -893,8 +659,6 @@ function install() {
   set('getRoster', async () => rosterFor(current))
   set('listHostGrants', async (_ws: string, active: boolean) => accessGrants(current).filter((g) => !active || (!g.revoked && Date.parse(g.expires_at) > Date.now())))
   set('getReaders', async () => current === 'readers-solo' ? { available: true, required_reader: 1, readers: [{ device: 'd_00112233445566778899aabbccddeeff', person: 'p_me', reader: 0, level: 0 }] } : readersOf(rosterFor(current), current === 'readers-devices' || current === 'settings-members' ? 1 : 0))
-  set('getHandoff', async (_ws: string, id: string): Promise<HandoffState> => ({ id, state: 'prepared', op: opOf.get(id) ?? 'new', key: null, expires_at: new Date(Date.now() + 600_000).toISOString(), event_ids: [], seq: null }))
-  set('cancelHandoff', async (_ws: string, id: string) => ({ id, state: 'cancelled' }))
 }
 
 /**

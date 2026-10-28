@@ -53,7 +53,7 @@ def build(tmp: Path, mp: pytest.MonkeyPatch, mode: Any = None) -> HumanWs:
     ws = HumanWs(tmp)
     ws.bootstrap()
     mp.setattr(human, "open_backend", ws.backend)
-    mp.setattr(human, "review_prompt", lambda text, expect: True)
+    mp.setattr(human, "review_prompt", lambda text: True)
     with (mode or _direct)(ws) as extra:
         agent, me = Cli(ws, **extra), Cli(ws, grant=False, session=None, **extra)
         first = make_ticket(agent, "Needs approval")  # DEMO-0001: filled, nothing approved yet
@@ -148,7 +148,7 @@ def run(base: Path, name: str, as_json: bool, mp: pytest.MonkeyPatch, mode: Any 
         if who == "wrong":
             ws.provider.passphrase = "not the passphrase"
         mp.setattr(human, "open_backend", ws.backend)
-        mp.setattr(human, "review_prompt", lambda text, expect: True)
+        mp.setattr(human, "review_prompt", lambda text: True)
         mp.setattr(human, "show_secret", lambda text: None)  # the secret goes to a terminal; a golden file is not one
         with (mode or _direct)(ws) as extra:
             cli = Cli(ws, **extra) if who == "agent" else Cli(ws, grant=False, session=None, **extra)

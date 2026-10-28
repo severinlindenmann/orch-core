@@ -57,7 +57,7 @@ it('lists terminals and agents with their state and who controls them, and the m
   expect(screen.getAllByRole('link', { name: 'Terminals' }).length).toBeGreaterThan(0)
 })
 
-it('Stop uses the dock\'s stop route; New terminal shows the host\'s preview first', async () => {
+it('Stop uses the dock\'s stop route; New terminal opens the host\'s previewed spec in one press, with no confirm dialog', async () => {
   route()
   const user = userEvent.setup()
   show('/w/DEMO/terminals')
@@ -67,12 +67,15 @@ it('Stop uses the dock\'s stop route; New terminal shows the host\'s preview fir
   state.host.override = (path, method) => {
     if (path.endsWith('/terminals/preview') && method === 'POST')
       return Response.json({ spec: 'f'.repeat(64), display: 'zsh', display_hidden: false, cwd_path: '/Users/demo/code', cwd_path_hidden: false, notice: null, as_person: true, login_shell: false, env: [], blocked: null, warnings: [] })
+    if (path.endsWith('/terminals/open') && method === 'POST') return Response.json({ run: run('E5') })
     return Response.json(RUNS)
   }
-  await user.click(screen.getByRole('button', { name: /New terminal/ }))
-  const dialog = await screen.findByRole('dialog', {}, T)
-  expect(dialog).toHaveTextContent('Open a terminal in code?')
-  expect(dialog).toHaveTextContent('It runs on this computer as you, so it can read and change your files and keys.')
   expect(screen.queryByTestId('terminals-start-agent')).toBeNull() // the host does not serve agent_start here
-  expect(calls('/terminals/open')).toHaveLength(0) // nothing starts before the confirmation
+  await user.click(screen.getByRole('button', { name: /New terminal/ }))
+  await waitFor(() => expect(calls('/terminals/open', 'POST')).toHaveLength(1), T)
+  expect(calls('/terminals/preview', 'POST')).toHaveLength(1) // the preview comes first
+  expect(state.host.calls.findIndex((c) => c.path.endsWith('/terminals/preview'))).toBeLessThan(state.host.calls.findIndex((c) => c.path.endsWith('/terminals/open')))
+  expect(calls('/terminals/open')[0].body).toMatchObject({ spec: 'f'.repeat(64), idem: expect.stringMatching(/^a_/) })
+  expect(screen.queryByRole('dialog')).toBeNull() // no "Open a terminal?" confirm
+  expect(screen.queryByRole('alert')).toBeNull()
 })

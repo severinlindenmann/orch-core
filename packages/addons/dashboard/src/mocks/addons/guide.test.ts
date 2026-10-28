@@ -79,11 +79,13 @@ describe('Keyboard shortcuts page is generated from the shortcut registry', () =
 })
 
 describe('what the pages promise', () => {
-  it('says coming later for relay, phone and auto-close, and names the terminal hand-off', async () => {
+  it('says coming later for relay, phone and auto-close, and approving is One click with no terminal hand-off', async () => {
     const pages = (await state(setup())).pages
     const later = pages.find((p) => p.slug === 'later')!.markdown.toLowerCase()
     for (const w of ['relay', 'phone', 'close themselves']) expect(later, w).toContain(w)
-    expect(pages.find((p) => p.slug === 'approving')!.markdown).toContain('orch sign CODE')
+    const approving = pages.find((p) => p.slug === 'approving')!.markdown
+    expect(approving).toContain('One click')
+    expect(approving).not.toMatch(/orch sign|terminal/i)
   })
   it('has no raw ids', async () => {
     for (const p of (await state(setup())).pages) expect(p.markdown, p.slug).not.toMatch(/\b[A-Z]{2,6}-\d{3,}\b|p_[a-z]+|ws_/)

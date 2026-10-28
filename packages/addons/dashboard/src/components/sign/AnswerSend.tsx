@@ -1,31 +1,36 @@
-// "Send answer" for one question, in the card itself. In one-click (convenience) custody picking an option prepares the
-// request with the signer and shows ITS View as a "You are sending" strip: the ticket, the question, the option and the
-// note exactly as the signer will sign them. The button is bound to that request and its digest only and turns on after the
-// strip has been visible for 1 s (useArming); every new View (another option, another note, a new request after expiry)
-// starts the timer over. Anything else (passphrase, Touch ID, terminal hand-off, a View without the fields the strip needs,
-// a refusal) is the existing two-step dialog: the button calls `fallback`. Nothing here signs without a shown View.
+// "Send answer" for one question, in the card itself (Today card and ticket page). C2: nothing is prepared on render, on
+// a pick or while the note is typed. Only a trusted press of Send answer (isTrusted, not a key repeat: trustedPress)
+// prepares the request with the signer; its View then shows as the "You are answering" strip: the ticket, the question,
+// the option and the note exactly as the signer will sign them, the workspace line (D6) and the technical facts behind
+// the small "i". The strip's Send answer is bound to that request and its digest only and turns on after the strip has
+// been visible for 1 s (useArming); a second press signs. A changed answer or Cancel cancels the open request (a
+// tombstone, never signed later); the next press is a new attempt. Signing is never routed by hub mode.
+// A workspace that is not click-ready gets one plain line with one button (Turn on One click), never a terminal dialog.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link, useRouter } from '@tanstack/react-router'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { HandoffAction } from '@/api/handoff'
 import { clickReady } from '@/api/click'
-import { handoffMode } from '@/api/features'
+import { isRealHost } from '@/api/features'
 import { queries } from '@/api/queries'
 import { answeredNow, signedNow } from '@/api/signedDrop'
 import type { QuestionStatus } from '@/api/types'
-import { uuid8, workspaceOfTicket } from '@/api/workspaces'
+import { workspaceOfTicket } from '@/api/workspaces'
 import { useMe } from '@/app/useMe'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
 import { Loader2 } from 'lucide-react'
 import { ClickProblemBox } from './RefusalDevices'
-import { TechnicalFacts } from './ClickSignPanel'
+import { ClickSignPanel, TechnicalFacts } from './ClickSignPanel'
 import { SignContent, compactAnswer } from './SignContent'
-import { useSignMethods } from './SignMethods'
+import { trustedPress } from './trustedPress'
 import { useActivation, useArming } from './useArming'
 import { useClickSign } from './useClickSign'
+import { WorkspaceLine } from './WorkspaceLine'
 import { Raw } from './visible'
 
-const BUSY = ['preparing', 'viewing', 'signing', 'settling', 'done']
-const NOTE_DEBOUNCE_MS = 400
+/** Phases in which a changed answer waits: the step in flight ends first (a prepare) or the answer is already on its way. */
+const HOLD = ['preparing', 'signing', 'settling', 'done']
 
 export function AnswerSend({
   ticket,
@@ -37,7 +42,6 @@ export function AnswerSend({
   onViewQuestion,
   onBusy,
   onSent,
-  type = 'button',
 }: {
   ticket: string
   question: QuestionStatus
@@ -45,40 +49,28 @@ export function AnswerSend({
   text?: string
   /** An answer is chosen and the ticket is loaded. */
   canSend: boolean
-  /** The existing dialog (two steps), for every case the strip does not serve. */
-  fallback: () => void
+  /** The mockup only (no real host, no one click): its simulated dialog. A real host never uses it. */
+  fallback?: () => void
   /** The question text of the signer's View, when it is shown (it replaces the card's text); null otherwise. */
   onViewQuestion?: (text: string | null) => void
   /** True while the signature is on its way or done: the owner of the answer form locks the option and the note. */
   onBusy?: (busy: boolean) => void
   /** The host confirmed the answer sent from here (before its item is dropped from "what needs you"). */
   onSent?: () => void
-  type?: 'button' | 'submit'
 }) {
   const qc = useQueryClient()
   const workspaces = useQuery(queries.workspaces())
   const here = workspaceOfTicket(ticket, workspaces.data ?? [])
   const ws = here?.id
   const me = useMe(ws)
-  const methods = useSignMethods(ws)
+  const router = useRouter({ warn: false })
   const note = text?.trim() || undefined
   const action = useMemo<HandoffAction | null>(
     () => (option || note ? { action: 'answer', key: ticket, question: question.id, ...(option ? { option } : {}), ...(note ? { message: note } : {}) } : null),
     [ticket, question.id, option, note],
   )
-  // The way this workspace signs, as the dialog works it out (no phone for an answer): inline only for one click.
   const canClick = clickReady(here)
-  const { allowed, preference } = methods
-  const usable = (m: string) => m !== 'click' || canClick
-  const preferred = preference?.method
-  const fallbackMethod = preference?.fallback
-  const method = allowed
-    ? preferred && allowed.includes(preferred) && usable(preferred) ? preferred
-      : fallbackMethod && allowed.includes(fallbackMethod) && usable(fallbackMethod) ? fallbackMethod
-        : !preferred && canClick && allowed.includes('click') ? 'click' : 'terminal'
-    : canClick ? 'click' : 'terminal'
-  // Needs a picked option: a note alone is the dialog's (no request per keystroke).
-  const inline = handoffMode(ws) && !methods.loading && !!action && !!option && method === 'click' && !workspaces.isPending
+  const many = (workspaces.data?.length ?? 0) > 1
 
   const click = useClickSign(ws, () => {
     // No toast: the answer is shown where it was given (the card turns into "Answered"), one message only. The owner of
@@ -91,45 +83,33 @@ export function AnswerSend({
   })
   const clickRef = useRef(click)
   clickRef.current = click
-  const [nonce, setNonce] = useState(0)
-  const current = `${JSON.stringify(action)}#${nonce}`
-  const started = useRef<string | null>(null)
-  const lastText = useRef(note)
+  const current = JSON.stringify(action)
+  // The answer the open attempt was prepared for (set only by a trusted press).
+  const startedFor = useRef<string | null>(null)
 
-  // Prepare on pick: the request in the signer always belongs to exactly the answer on screen.
+  // A changed answer: the open request is cancelled (a tombstone) and the card is back to Send answer. Nothing is prepared
+  // here; the next trusted press prepares the new answer.
   useEffect(() => {
+    if (startedFor.current === null || startedFor.current === current) return
     const c = clickRef.current
-    if (!inline || !action) {
-      if (c.prepared && !BUSY.includes(c.phase)) void c.cancel().then(() => clickRef.current.reset())
-      started.current = null
-      return
-    }
-    if (BUSY.includes(c.phase)) return // an earlier step is in flight: this effect runs again when it ends
-    if (started.current === current) return
-    const delay = lastText.current !== note ? NOTE_DEBOUNCE_MS : 0
-    lastText.current = note
-    const t = setTimeout(async () => {
-      const k = clickRef.current
-      if (k.prepared && k.phase !== 'idle') {
-        await k.cancel() // no earlier request stays open
-        clickRef.current.reset()
-        return // idle again: the effect runs once more and starts the new one
-      }
-      if (k.phase !== 'idle') {
-        k.reset()
-        return
-      }
-      started.current = current
-      void k.start(action)
-    }, delay)
-    return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inline, current, click.phase])
+    if (HOLD.includes(c.phase)) return // runs again when the prepare in flight ends
+    startedFor.current = null
+    if (c.phase === 'idle') return
+    void c.cancel().then(() => clickRef.current.reset())
+  }, [current, click.phase])
 
-  // The strip stays mounted (disabled) while the signature is on its way and after it, never flashing away mid-sign.
-  const shown = inline && started.current === current && ['ready', 'signing', 'settling', 'done'].includes(click.phase) && !!click.view
-  const content = shown ? click.view!.view.content : undefined
-  const parts = shown && click.view!.view.confirm.kind === 'click' ? compactAnswer(content) : null
+  const press = (e: MouseEvent) => {
+    if (!trustedPress(e.nativeEvent) || !action || !canSend) return // a render, a synthetic click or a key repeat grants nothing
+    const c = clickRef.current
+    startedFor.current = current
+    if (c.phase === 'idle') void c.start(action)
+    else if (c.phase === 'cancelled' || c.phase === 'failed') void c.again(action) // a new attempt, never the old request
+  }
+
+  const mine = startedFor.current === current
+  const shown = mine && ['ready', 'signing', 'settling', 'done'].includes(click.phase) && !!click.view
+  const view = shown ? click.view!.view : undefined
+  const parts = view && view.confirm.kind === 'click' ? compactAnswer(view.content) : null
 
   const viewQuestion = parts ? parts.question.text : null
   useEffect(() => {
@@ -138,59 +118,90 @@ export function AnswerSend({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewQuestion])
 
-  const busyNow = inline && ['signing', 'settling', 'done'].includes(click.phase)
+  const busyNow = ['signing', 'settling', 'done'].includes(click.phase)
   useEffect(() => {
     onBusy?.(busyNow)
     return () => onBusy?.(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busyNow])
 
-  // The View expires, or the signer says it changed: a new request, a new View, the timer starts over.
+  // The View expires: the request is cancelled (never signed later). The next press prepares a new one.
   const expires = shown && click.phase === 'ready' ? Date.parse(click.view!.view.expires_at) : NaN
   useEffect(() => {
     if (Number.isNaN(expires)) return
-    const t = setTimeout(() => setNonce((n) => n + 1), Math.max(0, expires - Date.now()))
+    const t = setTimeout(() => void clickRef.current.cancel(), Math.max(0, expires - Date.now()))
     return () => clearTimeout(t)
   }, [expires])
-  const autoFor = useRef<string | null>(null)
+  // The signer says the View changed: read it again (the same request, no new prepare); the arm starts over.
+  const reviewedFor = useRef<string | null>(null)
   useEffect(() => {
     const id = click.prepared?.request_id ?? null
-    if (click.phase !== 'failed' || !click.problem || !id || autoFor.current === id) return
-    if (click.problem.next === 'review') {
-      autoFor.current = id
-      void click.review()
-    } else if (click.problem.next === 'prepare' || click.problem.next === 'again') {
-      autoFor.current = id
-      setNonce((n) => n + 1)
-    }
+    if (click.phase !== 'failed' || click.problem?.next !== 'review' || !id || reviewedFor.current === id) return
+    reviewedFor.current = id
+    void click.review()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [click.phase, click.problem])
 
-  const open = async () => {
-    // Never sign from here: the dialog takes over, and an open request here is cancelled first.
-    if (click.prepared && !BUSY.includes(click.phase)) await click.cancel()
-    fallback()
-  }
+  const cancel = () => void clickRef.current.cancel()
 
-  if (!inline) {
+  if (!canClick) {
+    // The mockup keeps its simulated dialog; a real host has one plain line.
+    if (!isRealHost() && fallback) {
+      return (
+        <div className="flex justify-end">
+          <Button type="button" size="sm" disabled={!canSend} onClick={fallback}>
+            Send answer
+          </Button>
+        </div>
+      )
+    }
+    if (workspaces.isPending) {
+      return (
+        <div className="flex justify-end">
+          <Button type="button" size="sm" disabled>
+            Send answer
+          </Button>
+        </div>
+      )
+    }
     return (
-      <div className="flex justify-end">
-        <Button type={type} size="sm" disabled={!canSend} onClick={type === 'submit' ? undefined : fallback}>
-          Send answer
-        </Button>
+      <div data-testid="answer-not-ready" className="flex flex-wrap items-center justify-end gap-2 text-[13px] text-text-muted">
+        <p>One click is not ready on this computer.</p>
+        {router && (
+          <Button asChild size="sm" variant="outline">
+            <Link to="/settings/$tab" params={{ tab: 'general' }}>
+              Turn on One click
+            </Link>
+          </Button>
+        )}
       </div>
     )
   }
   if (shown && parts && click.view) {
-    return <Presented key={click.view.view_digest} click={click} showWorkspace={(workspaces.data?.length ?? 0) > 1} />
+    return <Presented key={click.view.view_digest} click={click} many={many} onCancel={cancel} />
   }
-  const preparing = !['ready', 'failed', 'cancelled'].includes(click.phase) || started.current !== current
+  if (shown && click.view) {
+    // A View without what the strip needs: the full review, in place, with the same arm.
+    if (click.phase === 'settling')
+      return (
+        <p role="status" data-testid="strip-settling" className="text-[13px] text-text-muted">
+          The outcome is not certain yet. Do not send again. {click.settleNote}
+        </p>
+      )
+    if (click.phase === 'done') return null
+    return <ClickSignPanel ws={ws} answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={cancel} label="Send answer" manyWorkspaces={many} />
+  }
+  const preparing = mine && ['preparing', 'viewing'].includes(click.phase)
   return (
     <div className="space-y-2">
-      {click.phase === 'failed' && click.problem && <ClickProblemBox problem={click.problem} ws={ws} />}
+      {mine && click.phase === 'failed' && click.problem && <ClickProblemBox problem={click.problem} ws={ws} />}
+      {mine && click.phase === 'cancelled' && (
+        <p role="status" data-testid="answer-cancelled" className="text-[13px] text-text-muted">
+          Nothing was signed.
+        </p>
+      )}
       <div className="flex justify-end">
-        {/* A View without what the strip needs, or a refusal: the full review dialog, the same as before. */}
-        <Button type="button" size="sm" disabled={!canSend || preparing} onClick={() => void open()} aria-busy={preparing}>
+        <Button type="button" size="sm" disabled={!canSend || !action || preparing} onClick={press} aria-busy={preparing}>
           {preparing ? (
             <>
               <Loader2 className="size-4 animate-spin" aria-hidden /> Preparing…
@@ -204,36 +215,49 @@ export function AnswerSend({
   )
 }
 
-function Presented({ click, showWorkspace }: { click: ReturnType<typeof useClickSign>; showWorkspace: boolean }) {
+function Presented({ click, many, onCancel }: { click: ReturnType<typeof useClickSign>; many: boolean; onCancel: () => void }) {
   const answer = click.view!
   const { view, view_digest: digest } = answer
   const armed = useArming(digest) // starts at mount (a new View is a new mount) and only runs while this strip is visible
   const activation = useActivation(armed)
   const signing = click.phase === 'signing' || click.phase === 'settling'
   const can = armed && click.phase === 'ready'
-  const go = () => {
-    if (!activation.take() || !can) return
+  const go = (e: MouseEvent) => {
+    if (!activation.take(e.nativeEvent) || !can) return // a synthetic click or a key repeat never signs
     void click.sign()
   }
   return (
-    <section data-testid="answer-strip" aria-label="Your answer" className="space-y-3 rounded-md border border-border bg-bg p-3">
+    <section data-testid="answer-strip" aria-label="Your answer" className="relative space-y-3 rounded-md border border-border bg-bg p-3">
       <p role="status" className="sr-only" data-testid="strip-live">
         <Said text={liveText(click.phase, armed)} />
       </p>
-      {showWorkspace && view.workspace?.name && (
-        <p data-testid="strip-workspace" className="text-[12px] text-text-muted">
-          {/* the name is unsigned (D6): never alone, always after the prefix and the id tail */}
-          Workspace <Raw>{view.workspace.prefix}</Raw> · <span className="font-mono" data-ws-id>{uuid8(view.workspace.id)}</span> · <bdi><Raw>{view.workspace.name}</Raw></bdi>
+      <InfoDrawer corner label="Technical details" testId="strip-technical">
+        <TechnicalFacts view={view} />
+      </InfoDrawer>
+      <WorkspaceLine workspace={view.workspace} many={many} testId="strip-workspace" />
+      <SignContent content={view.content!} ws={view.workspace?.id} compact />
+      {view.checks.filter((c) => !c.clean).map((c, i) => (
+        <p key={i} role="note" className="text-[13px] text-warning">
+          Repository <Raw>{c.repo}</Raw>: not clean
+        </p>
+      ))}
+      {view.artifacts === 'unseen' && (
+        <p role="note" data-testid="click-artifacts" className="text-[13px] text-warning">
+          The files could not be checked before signing.
         </p>
       )}
-      <SignContent content={view.content!} ws={view.workspace?.id} technical={<TechnicalFacts view={view} />} compact />
       {click.phase === 'settling' && (
         <p role="status" data-testid="strip-settling" className="text-[13px] text-text-muted">
           The outcome is not certain yet. Do not send again. {click.settleNote}
         </p>
       )}
       {click.problem && click.phase !== 'settling' && <ClickProblemBox problem={{ ...click.problem, next: undefined, signedAt: undefined }} ws={undefined} />}
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {click.phase === 'ready' && (
+          <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+        )}
         <Button
           type="button"
           size="sm"

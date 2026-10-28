@@ -144,10 +144,30 @@
         ]
       },
       {
+        "code": "sign.cancelled",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run it again to review",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
         "code": "sign.convenience_readers",
         "exit": 3,
         "retryable": false,
         "hint": "pass the reader's declaration (orch keys reader declare --enrol, then --reader-decl PATH)",
+        "fix": [
+          "orch",
+          "help"
+        ]
+      },
+      {
+        "code": "tty.required",
+        "exit": 3,
+        "retryable": false,
+        "hint": "run it in your terminal",
         "fix": [
           "orch",
           "help"

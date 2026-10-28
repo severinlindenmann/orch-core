@@ -1,7 +1,5 @@
-"""V3 A7: the hub pages' routes relay the host's reads through a closed shape and build Terminal commands; they sign
-nothing and send no hub write to the host."""
-
-import shlex
+"""V3 A7: the hub pages' routes relay the host's reads through a closed shape; they sign nothing and send no hub write
+to the host."""
 
 import pytest
 from fastapi import FastAPI
@@ -150,47 +148,9 @@ def test_preview_refuses_malformed_rules(body):
     assert link.calls == []
 
 
-def cmd(c, body):
-    return c.post(f"/api/w/{WS}/hub/command", json=body)
-
-
-def test_commands_are_the_terminal_lines_and_nothing_is_sent_to_the_host():
-    link = Link({})
-    c = client(link)
-    got = cmd(c, {"kind": "join", "invite": "INV-7QK2-M9XD", "card": "/tmp/my hub.json", "mode": "selective"})
-    assert got.json()["command"] == "orch hub join INV-7QK2-M9XD --hub-card '/tmp/my hub.json' --mode selective"
-    assert (
-        cmd(c, {"kind": "mode_full", "card": "card.json"}).json()["command"]
-        == "orch hub mode full --hub-card card.json"
-    )
-    assert cmd(c, {"kind": "leave"}).json()["command"] == "orch hub leave"
-    assert cmd(c, {"kind": "leave_hub_down"}).json()["command"] == "orch hub leave"
-    assert cmd(c, {"kind": "stop_telling"}).json()["command"] == "orch hub unbind"
-    assert cmd(c, {"kind": "share_sync"}).json()["command"] == "orch hub share sync"
-    assert cmd(c, {"kind": "share_revoke", "ref": "PRD-0014"}).json()["command"] == "orch hub share revoke PRD-0014"
-    r = {"kind": "share_add", "rule": {"kind": "tag", "value": "team; rm -rf ~"}}
-    line = cmd(c, r).json()["command"]
-    assert shlex.split(line) == ["orch", "hub", "share", "rule", "add", "--tag", "team; rm -rf ~"]
-    assert (
-        cmd(c, {"kind": "share_remove", "rule": {"kind": "needs_you"}}).json()["command"].endswith("remove --needs-you")
-    )
-    assert link.calls == []
-
-
-@pytest.mark.parametrize("body", [
-    {"kind": "join", "invite": "INV-1234", "card": "c.json"},  # mode missing
-    {"kind": "join", "invite": "bad invite", "card": "c.json", "mode": "full"},
-    {"kind": "join", "invite": "INV-1234", "card": "-c.json", "mode": "full"},
-    {"kind": "join", "invite": "INV-1234", "card": "c\n.json", "mode": "full"},
-    {"kind": "join", "invite": "INV-1234", "card": "c.json", "mode": "all"},
-    {"kind": "leave", "card": "c.json"}, {"kind": "mode_full"}, {"kind": "share_add"},
-    {"kind": "share_revoke", "ref": "a b"}, {"kind": "hub.join"}, {"kind": "leave", "extra": 1},
-])  # fmt: skip
-def test_commands_refuse_malformed_requests(body):
-    assert cmd(client(Link({})), body).status_code in (
-        400,
-        422,
-    )  # 400 in the real app (invalid.input); the bare test app says 422
+def test_there_is_no_terminal_command_route():
+    """The old 'run this in your Terminal' lines are gone: every hub change is signed with one click."""
+    assert client(Link({})).post(f"/api/w/{WS}/hub/command", json={"kind": "leave"}).status_code in (404, 405)
 
 
 def test_old_core_says_so():
@@ -208,10 +168,14 @@ def test_module_never_names_a_hub_write():
 
     src = Path(hub.__file__).read_text()
     calls = re.findall(r"\.call\(\s*\"([a-z_.]+)\"", src)
-    # connect: C11's one write; addon.list: a read (the join-pause check)
-    allowed = {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link", "addon.list"}
+    # connect: C11's one write; addon.list: a read (the join-pause check); member.list: the owner check of the
+    # one-click share reductions
+    allowed = {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link", "addon.list", "member.list"}
     assert set(calls) <= allowed
-    assert src.count("write=True") == 1
+    # the other write: `reduce`, which sends only the two ops that take sharing away (never an add or a sync)
+    assert src.count("write=True") == 2
+    assert set(re.findall(r"\"(share\.[a-z_]+)\"", src)) == {"share.rules", "share.preview", "share.revoke",
+                                                             "share.rule_remove"}  # fmt: skip
     assert "hubclient" not in src and "import orch" not in src
 
 

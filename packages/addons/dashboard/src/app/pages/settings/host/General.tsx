@@ -1,7 +1,6 @@
 import { versionQueries, vLabel } from '@/api/versions'
 import { RunnerSwitch } from '@/components/RunnerSwitch'
 import { AccessLength } from '../AccessLength'
-import { ApprovalMethods } from './ApprovalMethods'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { DURATIONS, canChangeSettings, inRange, type DurationKey } from '@/api/settings'
@@ -69,7 +68,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
     ask({
       title: 'Change the workspace settings',
       action: { action: 'settings_set', ...set },
-      autoStart: true,
+
     })
   }
   // D6: the name is one unsigned PUT (owners only); the editor closes once it is saved.
@@ -155,7 +154,6 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           )}
 
           <div><h4 className="mb-2 font-semibold">Signing methods</h4>
-            <ApprovalMethods key={workspace.id} ws={workspace.id} owner={role === 'owner'} />
           </div>
 
           <div><h4 className="mb-2 font-semibold">How long things are held</h4>

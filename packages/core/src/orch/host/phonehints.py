@@ -317,9 +317,6 @@ def create(service: Any, viewer: Viewer, args: dict[str, Any]) -> dict[str, Any]
     store = service.store
     with store.locked():
         store.refresh()
-        methods = store.state.workspace.settings.get("sign_methods")
-        if methods is not None and "phone" not in methods:
-            raise HostError("op.not_allowed", "this workspace does not allow signing with a phone")
         view = viewer.ticket(store, args["ref"])
         g = view.gates[gate]
         if not g.applies:

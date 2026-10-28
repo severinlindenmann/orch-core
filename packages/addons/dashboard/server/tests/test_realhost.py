@@ -1,9 +1,10 @@
 """The dashboard server against a REAL orch host (core H6b and later): `orch host run --foreground` as a subprocess.
 
 A disposable workspace is created with the real `orch setup` (the page played over the setup socket, the terminal in a pty), seeded with the real CLI, served by a real host
-and read through the server's TestClient. Every hand-off is signed with the real `orch sign CODE` in a pty. Nothing
-touches `~/.config/orch`: state, HOME and XDG_CONFIG_HOME are explicit and under a throwaway directory (see
-`realhost_kit`). Skipped when the host cannot start (no pty, no unix sockets, ...). Run: `uv run pytest -m realhost`.
+and read through the server's TestClient. Every action is signed with one click: the dashboard's click routes and core's
+real signer child (`click_child.py`, file custody under the disposable state). Nothing touches `~/.config/orch`: state,
+HOME and XDG_CONFIG_HOME are explicit and under a throwaway directory (see `realhost_kit`). Skipped when the host cannot
+start (no pty, no unix sockets, ...). Run: `uv run pytest -m realhost`.
 """
 
 import itertools
@@ -16,10 +17,11 @@ import uuid
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
-from realhost_kit import Workspace, seed, short_run_root
+from realhost_kit import Workspace, click_sign, seed, short_run_root
 
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
+from orch_dashboard.click_signer import Signer
 from orch_dashboard.gateway import Gateway
 
 pytestmark = [
@@ -42,6 +44,7 @@ def world(tmp_path_factory):
     ws = Workspace(root / "w")
     try:
         keys = ws.bring_up(seed)
+        ws.convenience_on()  # one click is the dashboard's only way to sign
     except (RuntimeError, TimeoutError, OSError) as exc:
         ws.stop_host()
         shutil.rmtree(root, ignore_errors=True)
@@ -50,7 +53,7 @@ def world(tmp_path_factory):
     (static / "assets").mkdir()
     (static / "index.html").write_text('<html><script src="/assets/main-hash.js"></script></html>')
     (static / "assets/main-hash.js").write_text("console.log(1)")
-    gateway = Gateway(ws.state)
+    gateway = Gateway(ws.state, click=Signer(ws.state, start=ws.click_start()))
     auth = Auth()
     with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
         yield type(
@@ -70,7 +73,8 @@ def token(world):
 
 
 @pytest.fixture
-def api(world, token):
+def api(world, token, monkeypatch):
+    monkeypatch.delenv("ORCH_DASHBOARD_CLICK", raising=False)  # the suite's default is "no signer child"
     headers = {"Authorization": f"Bearer {token}"}
 
     class Api:
@@ -82,22 +86,10 @@ def api(world, token):
         def post(self, path, body):
             return world.client.post(self.base + path, json=body, headers={**headers, "Origin": ORIGIN})
 
-        def handoff(self, body, *, sign=True, timeout=60):
-            """prepare -> `orch sign CODE` in a pty -> follow to the end. Returns (prepared, final)."""
+        def sign(self, body):
+            """One click: prepare -> view -> sign through the dashboard's click routes. Returns (prepared, signed)."""
             body = {**body, "retry": new_retry()}
-            res = self.post("/handoff", body)
-            assert res.status_code == 200, res.text + world.ws.log.read_text()[-3000:]
-            prepared = res.json()
-            if not sign:
-                return prepared, None
-            world.ws.sign(prepared["code"])
-            deadline = time.time() + timeout
-            while time.time() < deadline:
-                final = self.get(f"/handoff/{prepared['id']}").json()
-                if final["state"] not in ("prepared", "bound"):
-                    return prepared, final
-                time.sleep(0.3)
-            raise AssertionError("the request never reached a final state")
+            return click_sign(world.client, self.base, {**headers, "Origin": ORIGIN}, body)
 
     return Api()
 
@@ -281,8 +273,8 @@ def test_a_stream_that_is_cut_resyncs_and_shows_the_write(world, token):
 
 def test_approve_a_gate_with_the_real_signer(world, api):
     key = world.keys["gate"]
-    prepared, final = api.handoff({"action": "approve", "key": key, "gate": "requirements"})
-    assert prepared["state"] == "prepared" and prepared["events"][0]["type"] == "gate.approved"
+    prepared, final = api.sign({"action": "approve", "key": key, "gate": "requirements"})
+    assert prepared["op"] == "approve" and prepared["confirm"] == "click" and prepared["request_id"].startswith("hr_")
     assert final["state"] == "submitted", final
     gate = api.get(f"/tickets/{key}").json()["gates"]["requirements"]
     assert gate["state"] == "approved" and gate["approvals"][0]["by"] == world.ws.person
@@ -290,7 +282,7 @@ def test_approve_a_gate_with_the_real_signer(world, api):
 
 def test_request_changes_and_the_ticket_shows_it(world, api):
     key = world.keys["changes"]
-    _, final = api.handoff(
+    _, final = api.sign(
         {"action": "request_changes", "key": key, "gate": "requirements", "message": "Say how many rows."}
     )
     assert final["state"] == "submitted", final
@@ -300,7 +292,7 @@ def test_request_changes_and_the_ticket_shows_it(world, api):
 
 def test_answer_a_question(world, api):
     key = world.keys["question"]
-    _, final = api.handoff(
+    _, final = api.sign(
         {"action": "answer", "key": key, "question": "Q1", "option": "no", "message": "Keep it simple."}
     )
     assert final["state"] == "submitted", final
@@ -315,25 +307,24 @@ def test_comment_label_close_and_reopen(world, api):
         {"action": "label", "key": key, "label": "ui"},
         {"action": "close", "key": key, "resolution": "wont_do", "message": "Not now."},
     ):
-        _, final = api.handoff(body)
+        _, final = api.sign(body)
         assert final["state"] == "submitted", (body, final)
     assert api.get(f"/tickets/{key}").json()["status"] == "closed"
-    _, final = api.handoff({"action": "reopen", "key": key})
+    _, final = api.sign({"action": "reopen", "key": key})
     assert final["state"] == "submitted", final
     doc = api.get(f"/tickets/{key}").json()
     assert doc["status"] == "open" and "ui" in doc["labels"]
 
 
 def test_new_ticket_then_complete_the_details(world, api):
-    prepared, final = api.handoff({"action": "new", "title": "Archive old invoices", "type": "chore"})
+    _, final = api.sign({"action": "new", "title": "Archive old invoices", "type": "chore"})
     assert final["state"] == "submitted", final
-    key = prepared["key"] or final.get("key")
     board = api.get("/tickets", params={"q": "Archive old invoices"}).json()
     assert [r["title"] for r in board["rows"]] == ["Archive old invoices"]
     key = board["rows"][0]["key"]
-    _, final = api.handoff({"action": "details", "key": key, "priority": "high", "size": "s", "labels": ["archive"]})
+    _, final = api.sign({"action": "details", "key": key, "priority": "high", "size": "s", "labels": ["archive"]})
     assert final["state"] == "submitted", final
-    _, final = api.handoff(
+    _, final = api.sign(
         {
             "action": "section",
             "key": key,
@@ -350,47 +341,29 @@ def test_new_ticket_then_complete_the_details(world, api):
 VERIFY_OWNER = {"approvers": ["owner"], "count": 1, "not": [], "applies": "all", "independent": False}
 
 
-def direct(world, op, args):
-    """Prepare directly through the host link (no dashboard route), sign with the real signer, wait for the end."""
-    link = world.gateway.link(world.ws.ws_id)
-    prepared = link.call("human.prepare", {"op": op, "args": args, "handoff": True})
-    world.ws.sign(prepared["request"]["code"])
-    for _ in range(100):
-        rows = link.call("human.pending", {"request_id": prepared["request"]["id"]})["requests"]
-        if rows and rows[0]["state"] == "submitted":
-            return rows[0]
-        time.sleep(0.2)
-    raise AssertionError(rows)
-
-
 def test_settings_set_through_the_dashboard(world, api):
-    _, final = api.handoff({"action": "settings_set", "grant_hours": 12})
+    _, final = api.sign({"action": "settings_set", "grant_hours": 12, "claim_ttl_min": 90})
     assert final["state"] == "submitted", final
+    st = api.get("/settings").json()
+    assert st["grant_hours"] == 12 and st["claim_ttl_min"] == 90 and st["settings_at"]["by"] == world.ws.person
 
 
 def test_policy_set_through_the_dashboard(world, api):
-    _, final = api.handoff({"action": "policy_set", "gate": "verify", "policy": VERIFY_OWNER})
+    _, final = api.sign({"action": "policy_set", "gate": "verify", "policy": VERIFY_OWNER})
     assert final["state"] == "submitted", final
-
-
-def test_the_real_signer_signs_settings_set_and_policy_set(world, api):
-    """H6b taught `orch sign` these words (<PREFIX>~<WS8>/SETTINGS and /POLICY): proven with a prepare that has no idem."""
-    direct(world, "settings.set", {"set": {"grant_hours": 12, "claim_ttl_min": 90}})
-    st = api.get("/settings").json()
-    assert st["grant_hours"] == 12 and st["claim_ttl_min"] == 90 and st["settings_at"]["by"] == world.ws.person
-    direct(world, "policy.set", {"gates": {"verify": VERIFY_OWNER}})
     st = api.get("/settings").json()
     assert st["gates"]["verify"]["approvers"] == ["owner"] and st["gates"]["verify"]["not"] == []
 
 
 def test_verdicts_after_the_verify_policy_lets_the_owner_decide(world, api):
-    direct(world, "policy.set", {"gates": {"verify": VERIFY_OWNER}})
-    _, final = api.handoff(
+    _, final = api.sign({"action": "policy_set", "gate": "verify", "policy": VERIFY_OWNER})
+    assert final["state"] == "submitted", final
+    _, final = api.sign(
         {"action": "verdict", "key": world.keys["verdict"], "outcome": "pass", "message": "Matches the spec."}
     )
     assert final["state"] == "submitted", final
     assert api.get(f"/tickets/{world.keys['verdict']}").json()["status"] == "done"
-    _, final = api.handoff(
+    _, final = api.sign(
         {"action": "verdict", "key": world.keys["testing"], "outcome": "fail", "message": "Retries are not capped."}
     )
     assert final["state"] == "submitted", final
@@ -407,17 +380,42 @@ def invitee():
 
 
 def test_add_a_member_from_a_certificate_file(world, api):
+    from tests.identity.reader_helpers import decl
+
     person, pk, cert = invitee()
-    _, final = api.handoff({"action": "member_add", "name": "Nia", "role": "member", "pk": pk, "cert": cert})
+    # the workspace signs by one click, so a new reader comes with its declaration (`orch keys reader declare
+    # --enrol`, orch-v2-host §0.8.6 item 9.4); without it core refuses sign.convenience_readers no_declaration
+    body = {"action": "member_add", "name": "Nia", "role": "member", "pk": pk, "cert": cert}
+    reader_decl = json.dumps(decl(person, world.ws.ws_id, via="enrol", created_ms=int(time.time() * 1000)))
+    res = api.post("/click/prepare", {**body, "retry": new_retry()})
+    assert res.status_code == 409 and res.json()["error"]["code"] == "sign.convenience_readers", res.text
+    # the page says it in one plain line from the closed reason (refusals.ts READERS_SENTENCE.no_declaration)
+    assert res.json()["error"].get("detail", {}).get("reason") == "no_declaration", res.text
+    # the click path carries the declaration file beside the certificate, as the Add person form sends it: the host
+    # finds it under the name the `reader_decl` argument gives (no `no_declaration`, no `reader.decl_invalid`)
+    from pydantic import TypeAdapter
+
+    from orch_dashboard.signing import READER_DECL_FILE, PrepareBody, host_call, host_files
+
+    action = TypeAdapter(PrepareBody).validate_python({**body, "reader_decl": reader_decl})
+    _, args = host_call(action)
+    assert args["reader_decl"] == READER_DECL_FILE and set(host_files(action)) == {"cert", "reader_decl"}
+    _, final = api.sign({**body, "reader_decl": reader_decl})
     assert final["state"] == "submitted", final
     members = {m["person"]: m for m in api.get("/members").json()}
     assert members[person.ref]["name"] == "Nia" and members[person.ref]["role"] == "member"
+    # the host kept the new device's declaration: it reads the workspace at the level One click requires
+    readers = api.get("/readers").json()
+    assert readers["available"] and readers["required_reader"] == 1, readers
+    nia = [r for r in readers["readers"] if r["person"] == person.ref]
+    assert len(nia) == 1 and nia[0]["level"] >= readers["required_reader"], readers
+    assert nia[0]["device"] == person.device and nia[0]["reader"] >= 1, nia  # the declaration that was sent, verified
 
 
 def test_revoke_a_grant(world, api):
     grants = api.get("/grants").json()
     gid = grants[0]["id"]
-    _, final = api.handoff({"action": "grant_revoke", "grant": gid, "reason": "done for today"})
+    _, final = api.sign({"action": "grant_revoke", "grant": gid, "reason": "done for today"})
     assert final["state"] == "submitted", final
     got = {g["id"]: g for g in api.get("/grants", params={"active": "false"}).json()}
     assert got[gid]["revoked"]["by"] == world.ws.person
@@ -430,24 +428,20 @@ def test_move_is_offered_and_prepares_ticket_moved_on_the_real_host(world, api, 
     assert "move" in features and "do:move" in features
     key = world.keys["changes"]
     # core #416 fixed RH-3: a prepare with the intent idem works for move
-    res = api.post("/handoff", {"action": "move", "key": key, "to": "backlog", "retry": new_retry()})
-    assert res.status_code == 200, res.text
+    res = api.post("/click/prepare", {"action": "move", "key": key, "to": "backlog", "retry": new_retry()})
+    assert res.status_code == 200 and res.json()["op"] == "move", res.text
+    assert api.post("/click/cancel", {"request_id": res.json()["request_id"]}).status_code == 200  # leave none open
 
 
 def test_move_through_the_dashboard(world, api):
     key = world.keys["changes"]
-    _, final = api.handoff({"action": "move", "key": key, "to": "backlog"})
+    _, final = api.sign({"action": "move", "key": key, "to": "backlog"})
     assert final["state"] == "submitted", final
-    assert api.get(f"/tickets/{key}").json()["status"] == "backlog"
-
-
-def test_the_real_signer_signs_move(world, api):
-    key = world.keys["changes"]
-    direct(world, "move", {"ref": key, "to": "backlog"})
     assert api.get(f"/tickets/{key}").json()["status"] == "backlog"
     board = api.get("/board").json()["rows"]
     assert next(r for r in board if r["key"] == key)["status"] == "backlog"
-    direct(world, "move", {"ref": key, "to": "open", "reason": "back to work"})
+    _, final = api.sign({"action": "move", "key": key, "to": "open", "reason": "back to work"})
+    assert final["state"] == "submitted", final
     assert api.get(f"/tickets/{key}").json()["status"] == "open"
 
 
@@ -564,13 +558,12 @@ def test_record_real_host_goldens(world):
         },
     ],
 )
-def test_turn_on_an_addon_with_its_settings_on_the_real_host(world, api, token, body):
+def test_turn_on_an_addon_with_its_settings_on_the_real_host(world, api, body):
     """e2e run 4: "Turn on" for an add-on with settings answered 500 (`addon.preview` sent as a write). Prepared on the
     real host: the request is prepared (the real host checked the intent and its grant body); nothing is signed."""
-    prepared, _ = api.handoff(body, sign=False)
-    assert prepared["state"] == "prepared" and prepared["op"] == "settings.set", prepared
-    assert api.get(f"/handoff/{prepared['id']}").json()["state"] == "prepared"
-    res = world.client.delete(
-        f"{api.base}/handoff/{prepared['id']}", headers={"Authorization": f"Bearer {token}", "Origin": ORIGIN}
-    )
+    res = api.post("/click/prepare", {**body, "retry": new_retry()})
+    assert res.status_code == 200 and res.json()["op"] == "settings.set", res.text
+    rid = res.json()["request_id"]
+    assert api.post("/click/state", {"request_id": rid}).json()["state"] == "bound"  # bound to the click signer
+    res = api.post("/click/cancel", {"request_id": rid})
     assert res.status_code == 200 and res.json()["state"] == "cancelled", res.text

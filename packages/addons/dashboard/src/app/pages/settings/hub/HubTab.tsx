@@ -27,7 +27,7 @@ export function HubTab({ workspace }: { workspace: Workspace }) {
   if (s.mode === 'unknown') return <Panel title="Hub state not known"><p>The workspace has not reported its hub mode.</p></Panel>
   // Keep active dialogs mounted when a refetch changes the mode, so their done screen remains visible.
   return <div className="space-y-4" data-testid="hub-tab">
-    {flow === 'share' && s.mode === 'selective' ? <ShareRules ws={ws} onBack={() => setFlow(undefined)} /> : <>
+    {flow === 'share' && s.mode === 'selective' ? <ShareRules ws={ws} workspace={workspace} onBack={() => setFlow(undefined)} /> : <>
       {s.not_told && <NotTold ws={ws} />}
       <HubBanner ws={ws} />
       {(s.reseal_needed || s.key_change_pending || s.log_sync_stuck || s.link === 'joining' || s.link === 'switching') && <Panel title="Hub needs attention" tone="border-warning/40 bg-warning-soft"><p>The hub connection has work pending. Check its state in a terminal before making changes.</p></Panel>}

@@ -19,7 +19,6 @@ export function AddonSetup({ name, enabling, close, submit }: { name: 'publish';
           <DialogTitle><Inline>{title}</Inline></DialogTitle>
           <DialogDescription>{enabling ? 'Choose the settings, then review and sign to turn it on.' : 'Choose the settings, then review and sign.'}</DialogDescription>
         </DialogHeader>
-        <p className="text-[13px] text-text-muted">Publish is signed in your terminal.</p>
         <PublishForm server={server} share={share} setServer={setServer} setShare={setShare} />
         <DialogFooter>
           <Button variant="ghost" onClick={close}>Cancel</Button>

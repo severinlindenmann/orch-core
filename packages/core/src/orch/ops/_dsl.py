@@ -144,6 +144,8 @@ def operation(
         declared.append(err("addon.off"))  # the central availability check (guarded) raises it for every such op
     present = {e["code"] for e in declared}
     extra = list(_IMPLIED.get(who, ()))
+    if who != "read":
+        extra.extend(("tty.required", "sign.cancelled"))
     props_ = props or {}
     if ("ref" in props_ and "ref" not in required) or "task" in props_ or name == "apply":
         extra.append("ambiguous_ref")  # REF left out means "my claim"; none or several is ambiguous

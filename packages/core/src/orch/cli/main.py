@@ -377,10 +377,6 @@ def main(
         from orch.cli.publish import main as publish_main
 
         return publish_main(args[1:], env=env, out=out, err=err, now=now)
-    if args[:1] == ["sign"]:  # a hand-off signed at the person's terminal (H5b): a host client, not a registry op
-        from orch.host.handoff import main as sign_main
-
-        return sign_main(args[1:], env=env, out=out, err=err)
     if args[:2] == ["quick", "start"]:  # B11 step (ii): a person's quick task on one review (a host client, like sign)
         from orch.host.quickstart import main as start_main
 

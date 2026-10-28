@@ -7,7 +7,7 @@ import { Link } from '@tanstack/react-router'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { hasFeature } from '@/api/features'
-import { cleanupDoubt, exitText, newIdem, runQueries, runsApi, type Run, type TermPreview } from '@/api/runs'
+import { cleanupDoubt, exitText, runQueries, runsApi, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { LoadFailed } from '@/components/LoadFailed'
 import { Inline } from '@/components/sign/visible'
@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { PreviewDialog } from '@/app/terminal/real/PreviewDialog'
 import { StartAgentDialog } from '@/app/terminal/real/StartAgentDialog'
+import { useOpenTerminal } from '@/app/terminal/real/useOpenTerminal'
 import { runName } from '@/app/terminal/real/runName'
 import { openDockOn } from '@/app/terminal/dock/request'
 import { useWorkspace } from '@/app/workspace'
@@ -69,8 +70,7 @@ export function TerminalsPage() {
   const list = useQuery({ ...runQueries.list(ws ?? ''), enabled: served })
   const [error, setError] = useState('')
   const [doubt, setDoubt] = useState<Record<string, boolean>>({})
-  const [preview, setPreview] = useState<{ data: TermPreview | null; error: string; idem: string } | null>(null)
-  const [busy, setBusy] = useState(false)
+  const terminal = useOpenTerminal(ws ?? '')
   const [starting, setStarting] = useState(false)
   if (!workspace || !ws) return null
   const agents = hasFeature('agent_start', ws)
@@ -87,30 +87,7 @@ export function TerminalsPage() {
   if (list.isError) return <LoadFailed what="terminals" onRetry={() => void list.refetch()} />
   const runs = (list.data?.runs ?? []).filter((r) => r.kind === 'shell' || r.kind === 'agent')
   const off = list.data?.runner && (!list.data.runner.enabled || !list.data.runner.terminals)
-  const ask = async () => {
-    setPreview({ data: null, error: '', idem: newIdem() })
-    try {
-      const data = await runsApi.preview(ws, {})
-      setPreview((p) => (p ? { ...p, data } : p))
-    } catch (e) {
-      setPreview((p) => (p ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p))
-    }
-  }
-  const confirm = async () => {
-    if (!preview?.data || preview.data.blocked) return
-    setBusy(true)
-    try {
-      const { run } = await runsApi.open(ws, {}, preview.data.spec, preview.idem)
-      setPreview(null)
-      void qc.invalidateQueries({ queryKey: ['runs', ws] })
-      openDockOn(run.run)
-    } catch (e) {
-      // The same idem is kept: a retry of this confirmation returns the same run, never a second one.
-      setPreview((p) => (p ? { ...p, error: e instanceof ApiError ? e.message : 'The host did not answer.' } : p))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const ask = () => terminal.ask({})
   const stop = async (r: Run) => {
     setError('')
     try {
@@ -164,7 +141,7 @@ export function TerminalsPage() {
           ))}
         </ul>
       )}
-      <PreviewDialog preview={preview} busy={busy} onClose={() => setPreview(null)} onConfirm={() => void confirm()} />
+      <PreviewDialog {...terminal} />
       {agents && (
         <StartAgentDialog
           ws={ws}

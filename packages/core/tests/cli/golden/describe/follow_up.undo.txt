@@ -13,6 +13,8 @@ errors:
   custody.wrong_passphrase (exit 3): run the command again and type your passphrase | fix: orch help
   followup.denied (exit 3): read the denial code and resolve it before retrying | fix: orch show
   human_only (exit 3): orch ask or orch wait | fix: orch describe ask
+  sign.cancelled (exit 3): run it again to review | fix: orch help
+  tty.required (exit 3): run it in your terminal | fix: orch help
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   members.stale (exit 9 retry): retry; the person re-signs | fix: orch status
 out: ok {key} followup.restored {id} seq={seq} / next: {next}

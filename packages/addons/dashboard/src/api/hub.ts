@@ -1,7 +1,7 @@
-// The hub pages (V3 A7, orch-core #859). Mission Control explains and shows exactly what changes; the owner signs in the
-// Terminal. Nothing here signs, joins or leaves: the server relays the host's reads in a closed shape and builds the
-// Terminal command for a change (`POST /hub/command`). Values that come from the hub are labelled "from the hub, not
-// signed" wherever they are shown.
+// The hub pages (V3 A7, orch-core #859). Mission Control explains and shows exactly what changes. Nothing here signs:
+// the server relays the host's reads in a closed shape; a join, a mode switch and a leave are signed by click; stopping
+// sharing (one ticket, or one rule) is a plain owner click (`HubReduced`). Values that come from the hub are labelled
+// "from the hub, not signed" wherever they are shown.
 import { queryOptions } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { hasFeature } from './features'
@@ -62,14 +62,16 @@ export interface HubPreview {
   more: number
   items: { kind: 'ticket' | 'question' | 'summary'; line: string }[]
   rules: string[]
+  /** The digest of exactly this selection; a rule removal sends it back (`expect`) and the host refuses any other. */
+  plan?: string | null
 }
 
-export type HubCommandRequest =
-  | { kind: 'join'; invite: string; card: string; mode: 'selective' | 'full' }
-  | { kind: 'mode_full'; card: string }
-  | { kind: 'leave' | 'leave_hub_down' | 'stop_telling' | 'share_sync' }
-  | { kind: 'share_add' | 'share_remove'; rule: HubRule }
-  | { kind: 'share_revoke'; ref: string }
+/**
+ * `POST /hub/share/revoke` and `POST /hub/share/rule-remove`: the two share changes that only take sharing away. One
+ * click, no signature (like the workspace name and icon): owner only, from a full session, as the session's person.
+ * `synced: false`: saved, the hub is told on the next sync (`pending` says why).
+ */
+export interface HubReduced { synced: boolean; pending: string | null; revoked: number }
 
 /** `POST /hub/connect` (#1198 C11): tell the hub about a join just signed by click. `idem` is `a_` + a ULID-shaped id. */
 export interface HubConnectRequest { idem: string; invite?: string; hub_card: string; addr?: string }
@@ -77,11 +79,6 @@ export interface HubConnectRequest { idem: string; invite?: string; hub_card: st
  * link's hub id). `hub_card` is the card as text, to hand back to the join; nothing is signed or kept by this read. */
 export interface HubLinkInfo { hub_id: string; name: string; code: string; endpoint: string | null; owner_user?: string | null; dev: boolean; hub_card: string }
 export interface HubConnected { connected: true; mode: HubMode | null }
-
-export interface HubCommand {
-  command: string
-  kind: HubCommandRequest['kind']
-}
 
 /** Does this host serve the hub reads (and so the pages)? The mock lists every feature. */
 export const hubServed = (ws: string | undefined): boolean => hasFeature('hub', ws)

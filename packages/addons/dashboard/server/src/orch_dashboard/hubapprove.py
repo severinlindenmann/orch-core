@@ -3,20 +3,28 @@ nothing and holds no hub credential. It can only (1) ask the host for the worksp
 host's read `hub.handoff` for what the "Approve on your phone or in the hub" panel shows: a summary, the 12-hex short
 hash and one link the HOST built from its pinned hub address.
 
+FB15 (the one prepare here): `POST /hub/approve/prepare {action: addon_grant | market_grant}` asks the host to prepare
+an add-on grant as an UNBOUND request for the hub (`human.prepare {handoff: true}`, no signer; core marks it
+`hub_handoff`), for the owner of a workspace joined in full mode, from a full session. `GET /hub/approve/<id>` polls a
+request that route prepared. No other action and no other hand-off is prepared here.
+
 **This module imports no hub code, opens no connection to a hub, and builds no link.** The link is checked against
 the host's closed grammar (`URL`) and dropped if it does not match; agent-written text (`summary.title`) is one plain
 field the page renders as text, never as a link.
 """
 
 import re
+from dataclasses import replace
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from . import adapters
 from .errors import fail
 from .gateway import Gateway
 from .reads import Key, workspace
+from .signing import TTL, AddonGrant, Handoffs, MarketGrant, expected, plan, read_done, send_prepare
 
 #: modes in which no local key signs ("unknown" fails closed as full)
 HUB_ONLY = ("full", "unknown")
@@ -168,7 +176,89 @@ def panel(got: dict) -> dict:
     }
 
 
+#: FB15: the only actions the hub approval route prepares (an add-on turned on, shipped or from a marketplace)
+HubApproval = Annotated[AddonGrant | MarketGrant, Field(discriminator="action")]
+#: the request states in which the hub may still answer it
+OPEN = ("prepared", "bound")
+
+
 def register(app: FastAPI, gateway: Gateway):
+    #: the requests the hub approval route prepared, per (person, workspace), and its own per-session quota: the poll
+    #: answers only for these (a click request id, or one prepared elsewhere, looks like one that never existed)
+    approvals = Handoffs()
+
+    def approval_owner(ws: str, request: Request):
+        """A full session (never a switch or read-mostly one), the SESSION's person holds the role owner, and the host
+        says the workspace is joined to a hub in full mode. The host checks the role and the mode again."""
+        from .cosmetic_routes import full_session
+        from .hub import status_view
+
+        token = request.state.token
+        if app.state.auth.login_kind(token) == "switch" or not full_session(app.state.auth, token):
+            raise fail("session.readonly", "Open a full session to ask for an approval in the hub.", exit=3)
+        link = gateway.enabled(ws)
+        if not all(link.supports(op, "hub/1") for op in ("hub.status", "hub.handoff")):
+            raise fail("click.contract", "Update orch-core: it cannot hand an approval to the hub yet.", exit=9)
+        person = app.state.person_of(ws)
+        role = next((m.get("role") for m in link.call("member.list")["members"] if m.get("person") == person), None)
+        if role != "owner":
+            raise fail("role.denied", "Only the workspace owner asks for an approval in the hub.", exit=3)
+        hub = status_view(link.call("hub.status"))
+        if not (hub["joined"] and hub["mode"] == "full"):
+            raise fail("hub.not_joined", "This workspace is not joined to a hub in full mode.", exit=3)
+        return link, person, token
+
+    @app.post("/api/w/{ws}/hub/approve/prepare")
+    def hub_approve_prepare(body: HubApproval, request: Request, ws: str = Depends(workspace)):
+        """FB15: turn an add-on on through the hub. The host prepares the grant as an unbound request (`human.prepare
+        {handoff: true}`, no signer: core marks it for the hub), and its `hub.handoff` read names it and builds the one
+        link. Nothing is signed here; the hub's channel answers the request."""
+        link, person, token = approval_owner(ws, request)
+        with approvals.lock:
+            approvals.reserve(token)
+        try:
+            planned = plan(gateway, ws, body)
+            if planned.op != "addon.grant" or planned.sequence is not None:
+                raise fail("internal", exit=1)
+            # its own intent: the same add-on prepared for one click is another request (another binding at the host)
+            planned = replace(planned, base={"via": "hub", "base": planned.base})
+
+            def call(idem: str):
+                sent = {"op": planned.op, "args": planned.args, "handoff": True}
+                return app.state.human(ws, "human.prepare", sent, idem=idem, files=planned.files)
+
+            prepared = send_prepare(planned, ws, body.retry, call, lambda: app.state.human(ws, "human.pending", {}))
+            got = adapters.handoff.request(
+                prepared, ws, expect_op="addon.grant", expect_events=expected(body, person), expect_material=None
+            )
+            if got["state"] == "submitted":
+                raise read_done(app.state.human, ws, got["id"])
+            if got["state"] not in OPEN:
+                raise fail("human.request_state", "The request ended before it was approved. Try again.", exit=5)
+            shown = panel(link.call("hub.handoff", {"kind": "addon", "request": got["id"]}))
+        except BaseException:
+            approvals.release(token)
+            raise
+        approvals.own(person, ws, got["id"], TTL)
+        approvals.commit(token, ws, got["id"], until=approvals.clock() + TTL, kind="hub")
+        if shown.get("kind") != "addon":
+            raise fail("internal", exit=1)
+        return {"id": got["id"], "state": got["state"], "expires_at": got["expires_at"]} | with_console_origin(
+            shown, link, request
+        )
+
+    @app.get("/api/w/{ws}/hub/approve/{request_id}")
+    def hub_approve_state(request_id: RequestId, request: Request, ws: str = Depends(workspace)):
+        """Where a request this route prepared is now (host `human.pending`), so the panel follows the hub's answer."""
+        if not approvals.owns(app.state.person_of(ws), ws, request_id):
+            raise fail("not_found", exit=2)
+        rows = app.state.human(ws, "human.pending", {"request_id": request_id})["requests"]
+        if len(rows) != 1 or rows[0].get("id") != request_id:
+            raise fail("not_found", exit=2)
+        if rows[0].get("state") not in OPEN:
+            approvals.settle_all(request_id)
+        return adapters.handoff.state(rows[0])
+
     @app.post("/api/w/{ws}/hubsign")
     def hubsign_read(body: HubSign, request: Request, ws: str = Depends(workspace)):
         """A read: what to show for an approval that the hub's channel signs. Nothing is prepared, signed or logged."""

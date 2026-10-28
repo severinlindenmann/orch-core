@@ -406,7 +406,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       return
     }
     if (handoffOn) {
-      // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
+      // On a real host the ticket is created by a signed event: prepare it and sign it with one click (design 4.5).
       // "Usable" is a matter of time: decide on the grant as it is right now, not as the form last drew it.
       const fresh = plan.grantNow()
       // F-712-B: so is the step limit (it depends on whether the access has to be signed too): recompute it with the fresh grant,
@@ -679,7 +679,6 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             const again = handoffNewTicket(handoffNew.draft, me.person, plan.hours)
             return 'problem' in again ? handoffNew.action : again.action
           })()}
-          autoStart
           startsAgent={!!handoffNew.start}
           summary={<div className="space-y-1 text-[13px]" data-testid="nt-summary"><p><span className="text-text-muted">Title </span><Inline>{handoffNew.draft.title.trim()}</Inline></p>{handoffNew.draft.sections.requirements?.trim() && <p className="line-clamp-3 whitespace-pre-line"><span className="text-text-muted">Should be true </span><Inline>{handoffNew.draft.sections.requirements.trim()}</Inline></p>}</div>}
           anchor={handoffNew.anchor}

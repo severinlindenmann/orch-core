@@ -544,15 +544,6 @@ T3. Every group is one PR, or a short stack of PRs, into `develop`. The bot merg
 | **P5 Apps** | orch-publish: rename done, signed HTTPS API, namespaces, per-recipient tokens, the dashboard pages. | Each demo workspace publishes in its own namespace and cannot touch the other's apps. |
 | **P6 The rest** | Drop in full (inbox claim, documents, links, web agents), linked workspaces, colleagues and the internal relay, the AI Factory and Dark profile rebuild, the remaining addons, TIX switch-off. | Persona "colleague" exchanges a ticket and a document; iPhone session 3. |
 
-**Owner re-plan, 12 Oct 2026** (coordination log "OWNER RE-PLAN P2"; host D-P2-23). The frontend work is cut into three
-phases. **Phase 1:** core + dashboard running for real in direct mode and tier A (the host as the person's UID), with
-**click-to-sign** from the dashboard (host §0.8.6, group H5c: the `convenience` custody backend and a signer process
-beside the dashboard; `orch sign CODE` as the fallback; per workspace, only while every reader is local and updated;
-the accepted risk "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign"
-on the workspace card). The phase-1 gate replaces the cutover gate's H9 (host §8). **Phase 2:** the addons (#307–#310) and mobile. **Phase 3:** Touch ID (H9) and
-tier B (agents under their own OS users; Linux VPS and macOS local); Windows stays in direct mode. D41's
-per-signature presence applies again from phase 3.
-
 ## 14. Former open items (decided 8 Oct 2026)
 
 | # | Item | Decision |

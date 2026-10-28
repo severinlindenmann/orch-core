@@ -1,4 +1,4 @@
-"""The dev stub, its `human.*` and its stub signer are never shipped: not in the wheel, not imported by the server."""
+"""The dev stub and its `human.*` are never shipped: not in the wheel, not imported by the server."""
 
 import shutil
 import subprocess
@@ -21,7 +21,7 @@ def test_the_wheel_configuration_selects_only_the_server_package():
     assert wheel["packages"] == ["src/orch_dashboard"]
     assert not {"include", "only-include", "force-include", "sources"} & set(wheel)
     assert not {"include", "only-include", "force-include"} & set(config()["tool"]["hatch"]["build"])
-    for module in ("humanops.py", "sign.py", "review.py", "host.py"):
+    for module in ("humanops.py", "review.py", "host.py"):
         assert (DEVHOST / module).is_file() and not (SERVER / "src/orch_dashboard" / module).exists()
 
 
@@ -33,7 +33,7 @@ def test_the_server_never_imports_the_dev_stub_or_signs():
 
 
 def test_dev_files_say_never_shipped():
-    for module in ("humanops.py", "sign.py", "review.py"):
+    for module in ("humanops.py", "review.py"):
         assert "never shipped" in (DEVHOST / module).read_text().split('"""')[1]
 
 

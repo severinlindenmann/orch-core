@@ -19,7 +19,6 @@ test("a settings change is signable and says it in plain words", () => {
 
 test("not signable: a ticket log, an off-channel key, out of range, empty, extra field", () => {
   assert.equal(d(ev({ grant_hours: 24 }), "01J9ZP0000000000000000TKT1").signable, false);
-  assert.equal(d(ev({ sign_methods: ["click"] })).signable, false);
   assert.equal(d(ev({ grant_hours: 500 })).signable, false);
   assert.equal(d(ev({ claim_ttl_min: 14 })).signable, false);
   assert.equal(d(ev({})).signable, false);

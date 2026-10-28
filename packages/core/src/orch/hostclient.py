@@ -26,7 +26,7 @@ never gets here (``human_only``).
 **``wait``** is one request: the host parks it on its bus (H6a). Its socket timeout is the ``--timeout`` plus a margin.
 
 The run directory is ``ORCH_HOST_RUN_DIR`` when set (tests, dev), else ``<state>/run`` (tier A, as ``orch host`` and
-``orch sign``; H7). ``ORCH_HOST_RUN_DIR`` is the one environment name for it in core (``ORCH_RUN_DIR`` is never
+the CLI signer; H7). ``ORCH_HOST_RUN_DIR`` is the one environment name for it in core (``ORCH_RUN_DIR`` is never
 read). It only says where to look: it is **not** a trust
 input. Whom the socket may belong to comes from the registry or the root-owned pin, checked by the handshake.
 """

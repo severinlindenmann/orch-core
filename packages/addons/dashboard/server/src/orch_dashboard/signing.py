@@ -1,8 +1,8 @@
-"""The signed actions of #305 (M3): prepare, look at, and cancel a hand-off. A closed allowlist of typed actions.
+"""The signed actions of #305 (M3): prepare, look at, and cancel a request. A closed allowlist of typed actions.
 
-**This server never signs and never holds a factor, and it never calls `human.submit`.** The person signs in a
-trusted place (`orch sign CODE` in a terminal, later the Touch ID helper), which fetches the request itself and submits
-it. The dashboard only asks the host to prepare the request, shows the host's `material`, and follows the outcome.
+**This server never signs and never holds a factor, and it never calls `human.submit`.** The person signs with one
+click: core's signer child (`click.py`, `click_signer.py`) fetches the request itself, shows its own review and submits
+it. Here the host is only asked to prepare the request; its `material` is shown and the outcome followed.
 
 Every route has a typed model that forbids extras; the host op and its arguments are fixed per action. The browser
 never names an op, a path or a raw event.
@@ -632,6 +632,11 @@ PolicyGate = Literal["requirements", "plan", "verify", "code"]
 TicketType = Literal["feature", "bug", "chore", "spike", "epic"]
 MAX_PK = 87  # base64url of a 65-byte public key, no padding
 MAX_CERT_BYTES = 16384  # a device certificate is a few hundred bytes; anything near this is not one
+MAX_READER_DECL_BYTES = 4096  # core `member_add.DECL_FILE_MAX`: the host refuses a longer declaration file
+#: its logical file name: the host reads the bytes of `files.reader_decl` under the name the `reader_decl` argument
+#: gives, and its key-file check (auth.KEY_FILE_ARGS) matches that name to the `files` key, so the two are the same
+#: word (the certificate is `-`; the host wants distinct names)
+READER_DECL_FILE = "reader_decl"
 PK_BYTES = 65
 
 
@@ -642,24 +647,11 @@ class SettingsSet(Action):
     grant_hours: Annotated[int, Field(ge=1, le=168)] | None = None  # core GRANT_MAX_HOURS (cross-checked by a test)
     claim_ttl_min: Annotated[int, Field(ge=15, le=1440)] | None = None
     lease_ttl_min: Annotated[int, Field(ge=5, le=1440)] | None = None
-    #: B6 (owner decision F): the workspace's allowed ways to sign; `terminal` is always present, `touchid` is reserved
-    sign_methods: (
-        Annotated[list[Literal["terminal", "click", "phone", "hub"]], Field(min_length=1, max_length=4)] | None
-    ) = None
 
     @model_validator(mode="after")
     def something(self):
-        if (
-            self.grant_hours is None
-            and self.claim_ttl_min is None
-            and self.lease_ttl_min is None
-            and self.sign_methods is None
-        ):
+        if self.grant_hours is None and self.claim_ttl_min is None and self.lease_ttl_min is None:
             raise ValueError("change at least one setting")
-        if self.sign_methods is not None and (
-            "terminal" not in self.sign_methods or len(set(self.sign_methods)) != len(self.sign_methods)
-        ):
-            raise ValueError("sign_methods always contains terminal, once each")
         return self
 
 
@@ -750,13 +742,18 @@ class MemberAdd(Action):
     """`member.add`: the invitee made their own key and first device certificate; the owner signs the roster change.
 
     The public key and the certificate are the invitee's own files, uploaded by the person (host contract R9: the
-    certificate goes through `human.prepare`'s `files`, the key is an argument). Nothing is read from a path."""
+    certificate goes through `human.prepare`'s `files`, the key is an argument). Nothing is read from a path.
+
+    `reader_decl`: the invitee's reader declaration (`orch keys reader declare --enrol`, orch-v2-host §0.8.6 item 9.4),
+    a file like the certificate. A workspace with one-click signatures admits a new reader only with it (core refuses
+    `sign.convenience_readers` without); the host verifies it, this server only checks it is a strict JSON object."""
 
     action: Literal["member_add"]
     name: Annotated[str, StringConstraints(min_length=1, max_length=64), OneLine]
     role: Role
     pk: Annotated[str, StringConstraints(min_length=MAX_PK, max_length=MAX_PK, pattern=r"^[A-Za-z0-9_-]+$")]
     cert: Annotated[str, StringConstraints(min_length=2, max_length=MAX_CERT_BYTES)]
+    reader_decl: Annotated[str, StringConstraints(min_length=2, max_length=MAX_READER_DECL_BYTES)] | None = None
 
     @model_validator(mode="after")
     def check_files(self):
@@ -771,6 +768,13 @@ class MemberAdd(Action):
         if len(self.cert.encode("utf-8", "strict")) > MAX_CERT_BYTES:
             raise ValueError("the certificate is too large")
         _strict_json_object(self.cert)
+        if self.reader_decl is not None:
+            if len(self.reader_decl.encode("utf-8", "strict")) > MAX_READER_DECL_BYTES:
+                raise ValueError("the reader declaration is too large")
+            try:
+                _strict_json_object(self.reader_decl)
+            except ValueError:
+                raise ValueError("the reader declaration is not a strict JSON object") from None
         return self
 
 
@@ -822,10 +826,9 @@ StageId = Annotated[str, StringConstraints(pattern=r"^st_[0-9a-f]{32}$")]
 
 class MarketGrant(Action):
     """`addon.grant {name, staged}`: install or update the package the host staged and the person reviewed (A10).
-    Exactly these two keys (`extra="forbid"`). **One click** where click-to-sign is on (V3-D38, owner 24 Oct: the
-    signer shows the whole review, the marketplace lines "per host, not signed" included), the terminal hand-off where
-    it is off. `publish` is terminal only (`click.prepare` refuses it). It has no agent route (the dashboard session
-    is the person's). The host re-reads the stage and judges it again when the signed request is submitted."""
+    Exactly these two keys (`extra="forbid"`). **One click** (V3-D38, owner 24 Oct: the signer shows the whole review,
+    the marketplace lines "per host, not signed" included). It has no agent route (the dashboard session is the
+    person's). The host re-reads the stage and judges it again when the signed request is submitted."""
 
     action: Literal["market_grant"]
     name: MarketName
@@ -874,8 +877,7 @@ Origin = Annotated[
 
 class PublishSetup(Action):
     """`settings.set {set:{publish:{server, share}}}`: where shared files are sent and where a link opens. Signed; the
-    review says both addresses in words. Only a person changes it (never an agent), and always in the terminal: it
-    decides where files go."""
+    review says both addresses in words. Only a person changes it (never an agent): it decides where files go."""
 
     action: Literal["publish_setup"]
     server: Origin
@@ -922,7 +924,7 @@ class PublishShare(Action):
     """`publish.share {staged_id}` through `human.prepare`: a person's signature over the exact words the host builds
     from the staged copy (ticket, kind, days, server, every file with size and hash). The page then calls
     `POST /shares/send`; the host refuses it without this signature. `key` is the ticket the copy belongs to (the
-    prepared review must be about that ticket). Terminal only: the click signer does not serve this op."""
+    prepared review must be about that ticket). Signed with one click (core #1198 C2)."""
 
     action: Literal["publish_share"]
     key: Key
@@ -969,21 +971,21 @@ class MarkTaskDone(Action):
 
 
 class RunnerGrant(Action):
-    """M7b, the runner grant (D-P2-27): a click request, or a terminal hand-off with runner set by this
-    server, never by the browser. The click path maps to the
+    """M7b, the runner grant (D-P2-27): a click request; `runner` is set by this server, never by the browser.
+    The click path maps to the
     signer's `prepare {op:"grant", args:{hours, scope}, deposit:true}`; the signer itself sets `label:"runner"` and
     `verbs:"agent"` and hands the secret to the runner, so neither the label nor the verbs are the browser's to send."""
 
     action: Literal["runner_grant"]
     hours: Annotated[int, Field(ge=1, le=168)] = 8  # core GRANT_MAX_HOURS; the host holds the workspace cap
     scope: Literal["all", "workable"] = "workable"
-    #: B8 Extend: the runner grant this one replaces (one request, one signature, typed word); the signer revokes it
+    #: B8 Extend: the runner grant this one replaces (one request, one signature); the signer revokes it
     extend: Annotated[str, StringConstraints(pattern=r"^gr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")] | None = None
 
 
 class AgentAccess(Action):
     """#1198 C7, agent access for a tool outside the dashboard: a click request whose secret comes back sealed to the
-    page's own key and is shown once there. Click only (never a terminal hand-off); the signer fixes the verbs
+    page's own key and is shown once there. Click only; the signer fixes the verbs
     (`agent`) and refuses a runner label, so neither is the browser's to send. A runner grant is `RunnerGrant`."""
 
     action: Literal["agent_access"]
@@ -1007,8 +1009,8 @@ MAX_HUB_CARD_BYTES = 16 * 1024
 
 class HubJoin(Action):
     """#1198 C10, join a hub (selective only: a full join needs the key in passphrase custody, so it is the terminal's).
-    Click only: the backup key is typed once in the page, sealed to the signer, and makes the owner proof; never a
-    terminal hand-off. The card is the hub's own file, as text (strict JSON); the host verifies it, not this server."""
+    Click only: the backup key is typed once in the page, sealed to the signer, and makes the owner proof. The card
+    is the hub's own file, as text (strict JSON); the host verifies it, not this server."""
 
     action: Literal["hub_join"]
     hub_card: Annotated[str, StringConstraints(min_length=2, max_length=MAX_HUB_CARD_BYTES)]
@@ -1121,8 +1123,8 @@ def _grant_landed(gateway: Gateway, ws: str, intent: dict, person, since) -> boo
 
 def sequence_progress(gateway: Gateway, ws: str, key, intent: dict, person=None, since=None) -> dict | None:
     """B11: how many steps of a sequence are in the ticket's log now, read from the host (`ticket.get`): the created
-    ticket, then the fields, then each section whose latest hash is the intent's text. A display aid for the terminal
-    path (the signer drives the run in the person's terminal); it decides nothing."""
+    ticket, then the fields, then each section whose latest hash is the intent's text. A display aid for a run the
+    signer drives (how far it got); it decides nothing."""
     from orch import canon
     from orch.host import sequence
 
@@ -1235,7 +1237,7 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case WriteSection():
             return "section.set", {"ref": action.key, "section": action.section, "message": action.text}
         case SettingsSet():
-            return "settings.set", {"set": action.model_dump(include={*DURATIONS, "sign_methods"}, exclude_none=True)}
+            return "settings.set", {"set": action.model_dump(include=set(DURATIONS), exclude_none=True)}
         case AddonEnable():
             return "settings.set", {"set": action.settings()}
         case PublishSetup():
@@ -1249,8 +1251,11 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case PolicySet():
             return "policy.set", {"gates": {action.gate: action.policy.canonical()}}
         case MemberAdd():
-            # `cert` names the file (`-`); its bytes travel in `files` (host_files). `pk` is a plain argument.
-            return "member.add", {"name": action.name, "role": action.role, "pk": action.pk, "cert": "-"}
+            # `cert` names the file (`-`), `reader_decl` its own; their bytes travel in `files` (host_files). `pk` is a
+            # plain argument.
+            return "member.add", {"name": action.name, "role": action.role, "pk": action.pk, "cert": "-"} | (
+                {"reader_decl": READER_DECL_FILE} if action.reader_decl is not None else {}
+            )
         case MemberRole():
             return "member.role", {"person": action.person, "role": action.role}
         case MemberRemove():
@@ -1309,9 +1314,13 @@ WORKSPACE_OPS = (
 
 
 def host_files(action: Action) -> dict | None:
-    """The inner op's files for `human.prepare` (R9): only a member's certificate, inline as `b64`."""
+    """The inner op's files for `human.prepare` (R9): only a member's certificate and its reader declaration, inline
+    as `b64`."""
     if isinstance(action, MemberAdd):
-        return {"cert": {"b64": base64.b64encode(action.cert.encode()).decode()}}
+        files = {"cert": {"b64": base64.b64encode(action.cert.encode()).decode()}}
+        if action.reader_decl is not None:
+            files["reader_decl"] = {"b64": base64.b64encode(action.reader_decl.encode()).decode()}
+        return files
     return None
 
 
@@ -1680,14 +1689,15 @@ def send_prepare(plan_: Plan, ws: str, retry: int, call, pending=None):
     The idem is the intent plus `retry`. An attempt that ENDED unsigned (cancelled, expired) can never be signed, so
     pressing again steps to the next retry: a fresh request, never the dead one. An OPEN attempt is returned as it is
     (a double click, a second tab, an agent: one request per person and action); a SIGNED one is returned too and
-    stays "Already done" (never stepped past). The terminal path sees an ended request in the host's answer, the click
-    path as the signer's `the request is <ended>`; both are stepped past.
+    stays "Already done" (never stepped past). An ended request comes back in the host's answer or as the signer's
+    `the request is <ended>`; both are stepped past.
 
     Retention expiry of a record (`idem.expired`, 24 h) is not stepped past: an earlier one may have been signed, so
     only the person's explicit "Start again" advances `retry` there.
 
-    `idem.conflict` means the host holds an attempt bound to another path or signer. Report it as
-    `intent.open` while a matching op+key is open, otherwise `intent.blocked`. Neither prepares another request.
+    `idem.conflict` means the host holds an attempt bound to another signer (or an unbound request left from before
+    one-click signing). The host's binding names the signer, so such a request is never reused or signed here. Report
+    it as `intent.open` while a matching op+key is open, otherwise `intent.blocked`. Neither prepares another request.
 
     A HostError leaves with `retry_used`: the retry whose attempt it is about."""
     used = retry
@@ -1819,7 +1829,7 @@ class Handoffs:
 
     def __init__(self, clock=time.monotonic):
         #: B11: the intent of a sequence's first request, by request id (a display aid: the progress of a run that the
-        #: signer drives in the person's terminal). Not a guard of anything. Kept per person, so
+        #: signer drives). Not a guard of anything. Kept per person, so
         #: another person's burst of prepares cannot evict mine.
         self.intents: dict[str, dict[str, dict]] = {}
         self.clock = clock
@@ -1879,7 +1889,7 @@ class Handoffs:
         with self.lock:
             self.pending[token] = max(0, self.pending.get(token, 0) - 1)
 
-    def commit(self, token: str, ws: str, request_id: str, until: float | None = None, kind: str = "handoff"):
+    def commit(self, token: str, ws: str, request_id: str, until: float | None = None, kind: str = "click"):
         """The reserved slot becomes the open request `request_id` (one this session holds already adds no slot)."""
         with self.lock:
             self.pending[token] = max(0, self.pending.get(token, 0) - 1)
@@ -1961,7 +1971,7 @@ class Handoffs:
 
 
 def register(app: FastAPI, gateway: Gateway):
-    handoffs = app.state.handoffs = Handoffs()
+    app.state.handoffs = Handoffs()
 
     def human(
         ws: str, op: str, args: dict, idem: str | None = None, dry_run: bool | None = None, files: dict | None = None
@@ -2000,128 +2010,5 @@ def register(app: FastAPI, gateway: Gateway):
                 del checks[k]  # tokens with no recent check are dropped: the dict stays small
         # The host decides first (it checks the role, then the folder); the local look is not run before it.
         op, args = host_call(body)
-        human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, dry_run=True)
+        human(ws, "human.prepare", {"op": op, "args": args}, dry_run=True)
         return {"ok": True}
-
-    @app.post("/api/w/{ws}/handoff")
-    def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
-        token = request.state.token
-        gateway.enabled(ws)
-        with handoffs.lock:
-            handoffs.reserve(token)  # checks and takes a slot atomically: concurrent prepares cannot overshoot
-        try:
-            if isinstance(
-                body, RepoSet
-            ):  # the host's path check, before any request exists (plain refusal in the dialog)
-                gateway.check_repo_path(ws, body.path)
-            if isinstance(
-                body, AgentAccess
-            ):  # the secret is shown only in the page, sealed: a click request, never here
-                raise fail(
-                    "invalid.input",
-                    "Agent access with a shown secret is signed with one click in the dashboard.",
-                    exit=1,
-                )
-            if isinstance(
-                body, HubJoin | HubModeFull | HubLeave
-            ):  # the backup key is typed in the page and sealed: a click only
-                raise fail(
-                    "invalid.input",
-                    "A hub step is signed with one click in the dashboard.",
-                    exit=1,
-                )
-            planned = plan(gateway, ws, body)
-            if planned.sequence and planned.sequence["intent"].get("images"):
-                raise fail(
-                    "invalid.input",
-                    "Pictures can only be signed with one click in the dashboard. Switch on click to sign "
-                    "(Settings) or take the pictures out of the text.",
-                    exit=1,
-                )
-            op = planned.op
-            # A runner grant signed in the terminal: `orch sign` draws the secret and offers to hand it to the runner,
-            # which needs `runner` so the signer sets label runner (the click path sets it itself).
-            args = planned.args | ({"runner": True} if isinstance(body, RunnerGrant) else {})
-
-            def call(idem: str):
-                return human(
-                    ws,
-                    "human.prepare",
-                    {
-                        "op": op,
-                        "args": args,
-                        "handoff": True,
-                        **({"sequence": planned.sequence} if planned.sequence else {}),
-                    },
-                    idem=idem,
-                    files=planned.files,
-                )
-
-            prepared = send_prepare(planned, ws, body.retry, call, lambda: human(ws, "human.pending", {}))
-            response = adapters.handoff.request(
-                prepared,
-                ws,
-                expect_op=op,
-                expect_key=getattr(body, "key", None),
-                expect_events=expected(body, planned.person),
-                expect_material=expected_material(body),
-            )
-        except BaseException:
-            handoffs.release(token)
-            raise
-        if response["state"] == "submitted":
-            handoffs.release(token)
-            raise read_done(human, ws, response["id"])
-        handoffs.own(planned.person, ws, response["id"], TTL)
-        if planned.sequence:
-            handoffs.note_intent(planned.person, response["id"], planned.sequence["intent"])
-        if response["state"] in ("prepared", "bound"):
-            handoffs.commit(token, ws, response["id"], until=handoffs.clock() + TTL)
-        else:
-            handoffs.release(token)
-        return response
-
-    def owned_ws(ws: str, request_id: str) -> str:
-        if not handoffs.owns(app.state.person_of(ws), ws, request_id):
-            raise fail("not_found", exit=2)  # a request nobody here prepared looks like one that never existed
-        return ws
-
-    @app.get("/api/w/{ws}/handoff/{request_id}")
-    def state(request_id: RequestId, request: Request, ws: str = Depends(workspace)):
-        owned_ws(ws, request_id)
-        rows = human(ws, "human.pending", {"request_id": request_id})["requests"]
-        if len(rows) != 1 or rows[0]["id"] != request_id:
-            raise fail("not_found", exit=2)
-        if rows[0]["state"] not in ("prepared", "bound"):
-            handoffs.settle_all(request_id)  # it no longer counts against any session's open requests
-        out = adapters.handoff.state(rows[0])
-        intent = handoffs.intent_of(app.state.person_of(ws), request_id)
-        if intent is not None and rows[0]["state"] == "submitted" and rows[0].get("seq") is not None:
-            out["progress"] = sequence_progress(
-                gateway, ws, rows[0].get("key"), intent, person=app.state.person_of(ws), since=rows[0].get("created_at")
-            )
-            if out["progress"] is not None and intent.get("agent") is not None:
-                out["progress"]["last"] = "grant"  # the terminal signs the agent access last (the dialog says so)
-        return out
-
-    @app.delete("/api/w/{ws}/handoff/{request_id}")
-    def cancel(request_id: RequestId, request: Request, ws: str = Depends(workspace)):
-        owned_ws(ws, request_id)
-        done = human(ws, "human.cancel", {"request_id": request_id})
-        handoffs.settle_all(request_id)
-        return {"id": request_id, "state": done["state"]}
-
-    def cancel_session(token: str):
-        """Logout: every request this session still holds open is cancelled, each on its own (best effort), except one
-        another session of the person holds too."""
-        for rid, ws in handoffs.held(token, "handoff"):
-            if handoffs.shared(token, rid):
-                handoffs.settle(token, rid)
-                continue
-            try:
-                human(ws, "human.cancel", {"request_id": rid})
-            except Exception:  # noqa: BLE001 - one failed cancel must not stop the rest, nor the logout
-                pass
-            handoffs.settle(token, rid)
-
-    app.state.cancel_session = cancel_session

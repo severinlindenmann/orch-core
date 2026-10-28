@@ -34,6 +34,9 @@ ACTIVITY_TYPES = (
     "skill.saved",
     "skill.removed",
     "skill.offered",
+    "mcp.saved",
+    "mcp.removed",
+    "mcp.offered",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(
@@ -50,6 +53,7 @@ DETAIL_FIELDS = frozenset(
         "groups_removed",
         "direct",
         "skill",
+        "server",
     }
 )
 REASON_MAX_BYTES = 800  # 200 characters of UTF-8

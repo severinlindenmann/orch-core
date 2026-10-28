@@ -347,6 +347,19 @@ def org_skills_get(c: OpContext) -> dict[str, Any]:
     return {"bundle": fn(c.workspace_id, mode)}
 
 
+def mcp_servers_get(c: OpContext) -> dict[str, Any]:
+    """M3 (#1435): the signed remote-MCP-servers bundle of the LINK's workspace (never a caller-named one). Offered, not
+    enabled: the owner's accept at the host decides, and the host reaches a server only through its own proxy."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        mode = c.registry.mode(c.workspace_id)
+    fn = getattr(c.snapshots, "mcp_servers", None)
+    if fn is None:
+        raise Refused("unavailable")
+    return {"bundle": fn(c.workspace_id, mode)}
+
+
 def publish_out(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:
         _require_pin(c)
@@ -615,6 +628,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "owner_get": owner_get,
     "status_put": status_put,
     "org_skills_get": org_skills_get,
+    "mcp_servers_get": mcp_servers_get,
     "profile_put": profile_put,
     "directory_get": directory_get,
 }

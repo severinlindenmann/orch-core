@@ -162,6 +162,7 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_channel_push` | `orch/v2/hub-channel-push\|` | channel key | `cj(o)` of `hub.channel_push` (names the channel's push key) | 6.4 |
 | `sig_hub_channel_relay_req` | `orch/v2/hub-channel-relay-req\|` | channel key | the bytes of a channel → relay request | 10.8.4 |
 | `sig_hub_org_skills` | `orch/v2/hub-org-skills\|` | `HK_op` | `cj(o)` of `hub.org_skills` | 7.3 |
+| `sig_hub_mcp_servers` | `orch/v2/hub-mcp-servers\|` | `HK_op` | `cj(o)` of `hub.mcp_servers` | 7.4 |
 | `h_hub_session_ref` | `orch/v2/hub-session-ref\|` | hash | names a pairing session inside `hub.channel_auth` | 6.4 |
 | `sig_hub_space_proposal` | `orch/v2/hub-space-proposal\|` | `HK_op` | `cj(o)` of `hub.space_proposal` | 10.4 |
 | `sig_hub_relay_request` | `orch/v2/hub-relay-req\|` | `HK_op` | the bytes of a hub → relay request | 10.8 |
@@ -602,6 +603,30 @@ A skill is offered, never enabled: the host shows the full text to its owner and
 exact digest (human-only). Any change of text is a new digest and needs a new accept; withdrawing a skill narrows and applies
 at the next sync. Accepted skills reach agents as labelled company skills below orch's rules and cannot widen permissions or
 override the guard. Unbind or leave removes them at the host. Vectors: `vectors_org_skills.json` (both sides replay them).
+
+### 7.4 Remote MCP servers `hub.mcp_servers` (M3, #1435 #1436)
+
+```
+hub.mcp_servers {v, suite, kind: "hub.mcp_servers", hv, hub_id, op_cert_id, workspace_id, version: int >= 1, issued_ms,
+                 servers: [{name, url, auth, secret, description, digest}] (0..20, sorted by name, unique), dev}
+                                                                  signed by HK_op, label sig_hub_mcp_servers
+```
+
+Verified exactly like 7.3 (`verify_org_mcp`: `other_workspace`, `stale_bundle`, `bundle_conflict`; a skills bundle is not a servers
+bundle: another kind, another label). **Remote only in v1:** an entry has no field for a command, arguments, an environment or
+headers, and any other member makes the bundle `malformed`. `name` as a skill name (`[a-z][a-z0-9-]{1,39}`, not `orch*`); `url` an
+`https` address of at most 200 printable ASCII characters with no space, no user or password, no query, no fragment, a valid port,
+and not this computer (`localhost`, `*.localhost`, loopback, unspecified, link-local such as the cloud metadata address, multicast,
+reserved, or a one-word host); `auth` `none` | `hub_secret`; `secret` the NAME of a company secret (`[a-z][a-z0-9-]{0,39}`)
+exactly when `auth` is `hub_secret`, else `null` (a value is never in a bundle); `description` at most 200 characters of the visible-text
+allowlist of 7.3 and no newline; `digest` = `"sha256:" + hex(sha256(cj({name,url,auth,secret,description})))`. Per-person sign-in
+(`auth.person`) and tool lists are not in v1: the server's own tool list is untrusted and the host starts every tool Off.
+
+A server is offered, never enabled. The host shows the owner the exact address and which secret goes where, keeps the server Off
+until the owner accepts that digest (human-only), and an agent reaches it only through a host-side proxy under the host's UID that adds
+the credential, filters `tools/list` and refuses `tools/call` for an Off tool; the agent's `--mcp-config` holds only the proxy's local
+address and a per-session capability. Any change of address, sign-in or secret is a new digest and a new accept; withdrawing applies at
+the next sync; unbind removes the cached bundle. Vectors: `vectors_org_skills.json` (`mcp_cases`, `mcp_bundle_cases`).
 
 ## 8. Custodial events
 
@@ -1293,6 +1318,7 @@ unknown `op` is `unknown_op`.
 | `op` | Request direction | Mode | Request body (exact) | Reply body |
 |---|---|---|---|---|
 | `snapshot_get` | w2h | both | `{}` | `{"snapshot": <hub.snapshot>}` |
+| `mcp_servers_get` | w2h | both | `{}` | `{"bundle": <hub.mcp_servers>}`: the remote MCP servers offered to the link's workspace (M3 #1435, 7.4) |
 | `org_skills_get` | w2h | both | `{}` | `{"bundle": <hub.org_skills>}`: the company skills offered to the link's workspace (M3 #1430, 7.3) |
 | `event_deliver` | h2w | both | `{"log", "event"}`: a custodial event (§8) | `{}` or `{"error"}` |
 | `route_out` | w2h | both | `{"envelope": b64u}`: a v2 §11 ws→ws envelope, as is | `{}` |
@@ -1340,6 +1366,8 @@ fields except `listed`. Only other bound, explicitly listed workspaces for which
 Selective mode does not imply listing or bypass routing authorization.
 
 `org_skills_get` (M3, #1430): the bundle of the LINK's workspace only (never a caller-named one); an unpinned or unbound workspace is refused like `snapshot_get`. See 7.3.
+
+`mcp_servers_get` (M3, #1435): the same rules as `org_skills_get` for `hub.mcp_servers`. See 7.4.
 
 `status_put` reports display-only workspace metadata over its authenticated WSK link, once per host process/hub.
 Its exact body has a version matching `[0-9A-Za-z.+-]+` (at most 32 characters), a hex commit (at most 40,

@@ -18,7 +18,7 @@ from . import suite as S
 from .canon import CanonError, b64u, cj, loads_strict, unb64u, unhex
 from .labels import EVENT_TYPE, L, custodial_label
 from .market_policy import valid_policy
-from .org_bundles import valid_org_skills
+from .org_bundles import valid_org_mcp, valid_org_skills
 
 HV = 0  # hub contract version (H0)
 CONTRACT_NAME = "orch.hub/0"
@@ -202,6 +202,15 @@ FIELDS: dict[str, dict[str, Check]] = {
         "skills": valid_org_skills,
         "dev": _bool,
     },
+    "hub.mcp_servers": {  # M3 (#1435): the remote MCP servers offered to one workspace; Off until its owner accepts
+        "hub_id": _hex16,
+        "op_cert_id": _hex16,
+        "workspace_id": _hex16,
+        "version": _int_min(1),
+        "issued_ms": _int_min(0),
+        "servers": valid_org_mcp,
+        "dev": _bool,
+    },
     "hub.binding": {
         "workspace_id": _hex16,
         "wsk_pub": _pub,
@@ -369,6 +378,7 @@ LABEL_OF_KIND = {
     "hub.channel_cert": "sig_hub_channel_cert",
     "hub.snapshot": "sig_hub_snapshot",
     "hub.org_skills": "sig_hub_org_skills",
+    "hub.mcp_servers": "sig_hub_mcp_servers",
     "hub.binding": "sig_hub_binding",
     "hub.unbound": "sig_hub_unbound",
     "hub.publish_approval": "sig_hub_publish_approval",
@@ -620,6 +630,28 @@ def verify_snapshot(
     return o
 
 
+def _verify_bundle(
+    kind: str,
+    signed: Any,
+    held: Mapping[str, Any],
+    workspace_id: str,
+    dev_mode: bool,
+    pinned: Mapping[str, Any] | None,
+    revoked_op_certs: frozenset[str],
+) -> dict[str, Any]:
+    o = _under_card(signed, kind, held, dev_mode, revoked_op_certs)
+    if o["workspace_id"] != workspace_id:
+        raise Refused("other_workspace")
+    if pinned is not None:
+        if o["version"] < pinned["version"]:
+            raise Refused("stale_bundle")
+        if o["version"] == pinned["version"]:
+            if cj(o) != cj(pinned):
+                raise Refused("bundle_conflict")
+            return dict(pinned)
+    return o
+
+
 def verify_org_skills(
     signed: Any,
     held: Mapping[str, Any],
@@ -631,17 +663,20 @@ def verify_org_skills(
 ) -> dict[str, Any]:
     """M3 condition 1: a bundle names this hub and this workspace, is signed by HK_op under the verified card, and its
     ``version`` never goes down (``pinned`` is the bundle the host holds). Same version, different bytes is a conflict."""
-    o = _under_card(signed, "hub.org_skills", held, dev_mode, revoked_op_certs)
-    if o["workspace_id"] != workspace_id:
-        raise Refused("other_workspace")
-    if pinned is not None:
-        if o["version"] < pinned["version"]:
-            raise Refused("stale_bundle")
-        if o["version"] == pinned["version"]:
-            if cj(o) != cj(pinned):
-                raise Refused("bundle_conflict")
-            return dict(pinned)
-    return o
+    return _verify_bundle("hub.org_skills", signed, held, workspace_id, dev_mode, pinned, revoked_op_certs)
+
+
+def verify_org_mcp(
+    signed: Any,
+    held: Mapping[str, Any],
+    *,
+    workspace_id: str,
+    dev_mode: bool,
+    pinned: Mapping[str, Any] | None,
+    revoked_op_certs: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """The same rules for ``hub.mcp_servers`` (M3 #1435): remote servers only, offered, never enabled."""
+    return _verify_bundle("hub.mcp_servers", signed, held, workspace_id, dev_mode, pinned, revoked_op_certs)
 
 
 # --- UK: the custodial event ----------------------------------------------------------------------------------------
@@ -1359,6 +1394,7 @@ PROFILE_FIELDS: dict[str, Check] = {
 LINK_OPTIONAL: dict[str, frozenset[str]] = {"join": frozenset({"alias_users"}), "directory_get": frozenset({"query"})}
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "snapshot_get": ("w2h", None, {}),
+    "mcp_servers_get": ("w2h", None, {}),  # M3 (#1435): the signed hub.mcp_servers of the link's workspace
     "org_skills_get": ("w2h", None, {}),  # M3 (#1430): the signed hub.org_skills of the link's workspace
     "event_deliver": ("h2w", None, {"log": lambda x: type(x) is str, "event": lambda x: type(x) is dict}),
     "route_out": ("w2h", None, {"envelope": _b64u_any}),

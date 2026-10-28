@@ -83,3 +83,97 @@ def valid_org_skills(x: Any) -> bool:
             return False
         names.append(s["name"])
     return names == sorted(set(names))
+
+
+# --- remote MCP servers (M3, #1435 #1436) ---------------------------------------------------------------------------------
+
+MCP_MAX = 20
+URL_MAX = 200
+DESCRIPTION_MAX = 200
+AUTHS = ("none", "hub_secret")
+SECRET_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
+
+
+def url_problem(url: Any) -> str | None:
+    """A server is remote and public by name or address: https only, no credentials, query or fragment in the URL (a
+    secret belongs in the secret store, never in a link), not this computer. A local command cannot be written at all."""
+    import ipaddress
+    from urllib.parse import urlsplit
+
+    if type(url) is not str or not url or len(url) > URL_MAX:
+        return "url"
+    if not url.startswith("https://"):
+        return "https_only"
+    if not url.isascii() or not url.isprintable() or " " in url:
+        return "url"
+    try:
+        u = urlsplit(url)
+        port = u.port
+    except ValueError:
+        return "url"
+    host = u.hostname
+    if (
+        not host
+        or u.username is not None
+        or u.password is not None
+        or u.query
+        or u.fragment
+        or "?" in url
+        or "#" in url
+    ):
+        return "url"
+    if port is not None and not 1 <= port <= 65535:
+        return "url"
+    if host == "localhost" or host.endswith(".localhost") or host.endswith("."):
+        return "not_remote"
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return None if "." in host else "not_remote"  # a one-word host is this network's own box, not a service
+    if ip.is_loopback or ip.is_unspecified or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+        return "not_remote"
+    return None
+
+
+def mcp_problem(s: Any) -> str | None:
+    """None when one server entry (without its digest) is acceptable, else a short reason code."""
+    if type(s) is not dict or not {"name", "url", "auth", "secret", "description"} <= set(s):
+        return "shape"
+    name, auth, secret, desc = s["name"], s["auth"], s["secret"], s["description"]
+    if type(name) is not str or SKILL_NAME.fullmatch(name) is None:
+        return "name"
+    if name.startswith(RESERVED_PREFIX):
+        return "reserved_name"
+    bad = url_problem(s["url"])
+    if bad is not None:
+        return bad
+    if auth not in AUTHS:
+        return "auth"
+    if (auth == "none") != (secret is None) or (
+        secret is not None and (type(secret) is not str or SECRET_NAME.fullmatch(secret) is None)
+    ):
+        return "secret"
+    if type(desc) is not str or len(desc) > DESCRIPTION_MAX or "\n" in desc or not text_ok(desc):
+        return "description"
+    return None
+
+
+def mcp_digest(s: dict[str, Any]) -> str:
+    return (
+        "sha256:" + hashlib.sha256(cj({k: s[k] for k in ("name", "url", "auth", "secret", "description")})).hexdigest()
+    )
+
+
+def valid_org_mcp(x: Any) -> bool:
+    """The ``servers`` member of ``hub.mcp_servers``: sorted by name, each ``{name, url, auth, secret, description, digest}``
+    and nothing else (there is no field a command, an argument list or an environment could hide in)."""
+    if type(x) is not list or len(x) > MCP_MAX:
+        return False
+    names = []
+    for s in x:
+        if type(s) is not dict or set(s) != {"name", "url", "auth", "secret", "description", "digest"}:
+            return False
+        if mcp_problem(s) is not None or s["digest"] != mcp_digest(s):
+            return False
+        names.append(s["name"])
+    return names == sorted(set(names))

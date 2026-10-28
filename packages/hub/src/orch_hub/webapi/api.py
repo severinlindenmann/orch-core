@@ -89,6 +89,7 @@ _PARAM = {"change_id": r"[0-9A-Za-z]{26,32}"}
 STATUS = {
     "malformed": 400,
     "unknown_skill": 404,
+    "unknown_server": 404,
     "too_many": 409,
     "bad_pairing_code": 400,
     "weak_password": 400,
@@ -490,6 +491,10 @@ ROUTES: tuple[Route, ...] = (
     _r("PUT", "/admin/skills/{name}", "admin", "a_skill_put", "Create or replace a company skill (new digest)"),
     _r("DELETE", "/admin/skills/{name}", "admin", "a_skill_delete", "Remove a company skill"),
     _r("PUT", "/admin/skills/{name}/offers", "admin", "a_skill_offer", "Set the workspaces a skill is offered to"),
+    _r("GET", "/admin/mcp-servers", "admin", "a_mcp", "Remote MCP servers and the workspaces they are offered to"),
+    _r("PUT", "/admin/mcp-servers/{name}", "admin", "a_mcp_put", "Create or replace a remote MCP server (new digest)"),
+    _r("DELETE", "/admin/mcp-servers/{name}", "admin", "a_mcp_delete", "Remove a remote MCP server"),
+    _r("PUT", "/admin/mcp-servers/{name}/offers", "admin", "a_mcp_offer", "Set the workspaces a server is offered to"),
 )
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
 #: (password + TOTP from the app) may only read the card, register a phone, bind and sign out; ``channel`` is bound to

@@ -68499,6 +68499,7 @@
   "sig_hub_channel_relay_req": "orch/v2/hub-channel-relay-req|",
   "sig_hub_link": "orch/v2/sig/hub-link|",
   "sig_hub_link_auth": "orch/v2/sig/hub-link-auth|",
+  "sig_hub_mcp_servers": "orch/v2/hub-mcp-servers|",
   "sig_hub_op_cert": "orch/v2/hub-op-cert|",
   "sig_hub_op_revoked": "orch/v2/hub-op-revoked|",
   "sig_hub_org_skills": "orch/v2/hub-org-skills|",

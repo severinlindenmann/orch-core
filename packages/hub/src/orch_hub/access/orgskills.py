@@ -103,12 +103,6 @@ class OrgSkillStore:
         """Unbind or leave: no skill is offered to that workspace any more (same transaction as the caller's)."""
         self._a._w("DELETE FROM org_skill_offer WHERE workspace_id=?", (_hex(workspace_id, "workspace_id"),))
 
-    def bundle_row(self, workspace_id: str) -> tuple[int, str, str] | None:
-        rows = self._a._q(
-            "SELECT version, fingerprint, signed FROM org_skills_bundle WHERE workspace_id=?", (workspace_id,)
-        )
-        return None if not rows else rows[0]
-
 
 def org_skills(a: Access) -> OrgSkillStore:
     """One store per Access (the tables are created once)."""

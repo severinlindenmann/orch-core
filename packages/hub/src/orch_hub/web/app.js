@@ -9,6 +9,7 @@ import { parseRoute } from "./route.js";
 import { homeView, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { adminView } from "./admin.js";
+import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
 import { inviteView } from "./invite.js";
 import { servicesView } from "./services.js";
 import { workspacesView, workspaceDetailsView } from "./workspaces.js";
@@ -80,6 +81,12 @@ const WORDS = {
   unavailable: "The hub cannot be reached.",
   bad_ticket: "This link expired. Go back and click again.",
   no_origin: "Open that workspace's dashboard once first, then try again.",
+  stale_change: "Access to this workspace changed since this was asked, so the request was closed. Ask for it again.",
+  unknown_change: "This request is no longer waiting for you.",
+  not_pending: "This request has already been answered.",
+  expired: "This request has lapsed. Ask for it again.",
+  no_channel: "Set up this browser first (Home > Where you can sign).",
+  owner_protected: "This would take away the workspace owner's own admin access, which is never allowed.",
   last_admin: "This is the last administrator. Make someone else an administrator first.",
   self_disable: "You cannot disable yourself.",
   conflict: "That is not possible in the person's current state.",
@@ -423,9 +430,61 @@ async function services(silent = false) {
 async function approvals(filter = {}) {
   if (!(await refresh())) return loginView();
   await loadRail();
-  const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
+  const [ws, needs, chg] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/changes")]);
   if (ws.status !== 200 || needs.status !== 200) return shell("approvals", banner("bad", "Cannot read approvals", "Please try again."));
-  shell("approvals", inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals }));
+  const changes = chg.status === 200 ? changesView(chg.body, { approve: approveChange, reject: rejectChange, canSign: !!state.me }, Date.now()) : [];
+  shell("approvals", changes, inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals }));
+}
+
+// An access change that waits for me as the workspace owner: prepare, check the digest here, sign with this browser's key.
+const changePath = (change, tail) => "/me/changes/" + encodeURIComponent(change.id) + tail;
+function changeFailed(code) {
+  dialog(banner("bad", "Nothing was approved", say(code)), h("div", { class: "row" }, h("button", { text: "Close", onclick: async () => { closeDialog(); await approvals(); } })));
+}
+async function approveChange(change, ap) {
+  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  const me = state.me;
+  const r = await api("POST", changePath(change, "/approve/prepare"), { workspace_id: ap.workspace_id });
+  if (r.status === 401) return loginView(say("no_session"));
+  if (r.status !== 200) return changeFailed(r.body.error);
+  let digest;
+  try { digest = await checkChange(r.body, change, ap.workspace_id); } catch (e) { return changeFailed(e.message === "event_changed" ? "event_changed" : "malformed"); }
+  const sign = h("button", { class: "pri", id: "sign", "data-sign": "", disabled: true, text: "Please review…" });
+  sign.arm = () => arm(sign, "Sign and send");
+  const onVis = () => sign.arm();
+  document.addEventListener("visibilitychange", onVis);
+  window.addEventListener("focus", onVis);
+  const done = () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); closeDialog(); };
+  sign.addEventListener("click", async (ev) => {
+    if (!ev.isTrusted || sign.disabled || offline || sign.getAttribute("aria-busy") === "true") return; // a script's .click() never signs
+    sign.disabled = true;
+    sign.setAttribute("aria-busy", "true");
+    try {
+      const proof = await signProof(me.pair.privateKey, digest);
+      const a = await api("POST", changePath(change, "/approve"), { channel_id: me.channelId, proof, workspace_id: ap.workspace_id });
+      document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis);
+      if (a.status !== 200) {
+        if (a.body.error === "channel_revoked") await deleteChannel().catch(() => {}); // only the hub's own word removes the key
+        return changeFailed(a.body.error);
+      }
+      dialog(banner("ok", a.body.state === "applied" ? "Approved and applied" : "Approved", a.body.state === "applied" ? "The change is now in effect." : "It still waits for " + a.body.remaining + " more workspace owner(s)."),
+        h("div", { class: "row" }, h("button", { class: "pri", text: "Back to approvals", onclick: async () => { closeDialog(); await approvals(); } })));
+    } catch {
+      changeFailed("unavailable");
+    }
+  });
+  dialog(h("h1", { text: "Approve an access change" }),
+    h("p", { class: "sentence", text: changeSentence(change, ap.workspace_name) + ". The hub signs this approval for you with this browser's key." }),
+    h("details", {}, h("summary", { text: "What exactly is signed" }), factsList([["Change", change.id], ["Workspace", ap.workspace_id], ["Access version it was based on", String(r.body.ctx.base_snapshot_version)], ["Lapses on", new Date(change.expires_ms).toLocaleString()]])),
+    h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign));
+  sign.arm();
+}
+async function rejectChange(change, ap) {
+  const r = await api("POST", changePath(change, "/reject"), { workspace_id: ap.workspace_id });
+  if (r.status === 401) return loginView(say("no_session"));
+  if (r.status !== 200) return changeFailed(r.body.error);
+  toast("Rejected. Nothing was changed.");
+  await approvals();
 }
 
 async function home() {

@@ -169,6 +169,40 @@ def test_agent_access_requires_a_separate_grant_confirmation(click, served, huma
     assert v["view"]["confirm"] == {"kind": "click", "mode": "press"}
     assert v["view"]["op"] == "grant" and v["view"]["risk_lines"]
     assert click.signatures == 0
+    # execution switched off after the review: the sign is refused, nothing is signed
+    click.mono.t += 2
+    click.signer._execution = lambda entry: False
+    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
+    assert click.signatures == 0
+    # a fresh request signs all five steps, the grant (gr_) last
+    click.signer._execution = lambda entry: True
+    p2 = click_prepare(click, intent_of(agent=AGENT))
+    v2 = click.view(p2["request_id"])
+    click.mono.t += 2
+    out = click.sign(p2["request_id"], v2["view_digest"])
+    assert click.signatures == 5
+    assert out["grant"].startswith("gr_")
+
+
+def test_a_retained_grant_request_with_an_old_daily_view_is_refused_at_sign(click, served, human, monkeypatch):  # noqa: F811
+    """A request prepared before the press-mode rule, whose View is the old daily one (op new, no risk, arm), must be
+    refused when it is signed."""
+    from orch.click import view as views
+    from orch.click.protocol import ClickError
+
+    click.signer._execution = lambda entry: True
+    p = click_prepare(click, intent_of(agent=AGENT))
+    v = click.view(p["request_id"])
+    real = views.build
+
+    def old_build(*args, **kwargs):  # the View a signer built before the press-mode rule: op new, no risk, arm
+        return {**real(*args, **kwargs), "op": "new", "risk_lines": [], "confirm": {"kind": "click"}}
+
+    monkeypatch.setattr(views, "build", old_build)
+    click.mono.t += 2
+    with pytest.raises(ClickError):
+        click.sign(p["request_id"], v["view_digest"])
+    assert click.signatures == 0
 
 
 def test_i5_the_review_says_the_start_is_not_signed_and_names_the_grant(human, tmp_path):

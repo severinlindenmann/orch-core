@@ -808,11 +808,6 @@ def register(app: FastAPI, gateway: Gateway):
         if isinstance(body, NewTicketSequence | QuickStart) and body.agent is not None:
             if planned.sequence and not planned.sequence["intent"].get("agent"):
                 body = body.model_copy(update={"agent": None})
-        # A grant-carrying sequence requires a grant/press View, checked before it reaches the page.
-        # Keep the host-selected intent: valid access can remove the browser's proposed grant.
-        if isinstance(body, NewTicketSequence | QuickStart) and body.agent is not None:
-            if planned.sequence and not planned.sequence["intent"].get("agent"):
-                body = body.model_copy(update={"agent": None})
         files = planned.files
 
         def call(idem: str):

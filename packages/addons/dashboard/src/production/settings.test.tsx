@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { agentsApi } from '@/api/agents'
 import { ARM_MS } from '@/api/click'
 import { READERS_SENTENCE } from '@/api/refusals'
-import { DO, GRANT_A, GRANT_B, MARA, OWNER, READS, TOM, clickOn as clickOnFor, grant, policy, prepareByClick, settingsOf, useFakeHost, workspace, show } from '@/test/hostHarness'
+import { DO, GRANT_A, GRANT_B, MARA, OWNER, READS, TOM, clickOn as clickOnFor, grant, policy, prepareByClick, settingsOf, trustedPresses, useFakeHost, workspace, show } from '@/test/hostHarness'
 
 // Every page of the app reads through the production api, as the build wires it (vite.config.ts alias).
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
@@ -320,10 +320,17 @@ it('adding a member is signed with One click and sends the invitee\'s certificat
   expect(panel).toHaveTextContent('FROM-THE-SIGNER member.add')
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'member_add', name: 'Nia', role: 'member', pk: PK, cert: CERT, reader_decl: DECL }])
   expect(state.host.posts()).toEqual([]) // no hand-off is ever prepared
-  // C3: adding a member carries no risk lines: the press that prepared signs at the end of the 1 s arm
-  expect(within(dialog).getByRole('button', { name: 'FROM-THE-SIGNER headline member.add' })).toBeEnabled()
+  // C3: adding a member is not a daily op: its risk lines show, the press that prepared never signs, the second press does
+  expect(within(dialog).getByTestId('sign-risk-lines')).toHaveTextContent('FROM-THE-SIGNER risk: a person is added to this workspace')
+  expect(within(dialog).queryByTestId('sign-progress')).toBeNull()
+  await new Promise((r) => setTimeout(r, ARM_MS + 200))
   expect(state.host.clickSigned).toEqual([])
-  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), { timeout: ARM_MS + 3000 })
+  const sign = within(dialog).getByTestId('sign-button')
+  await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  trustedPresses()
+  fireEvent.pointerDown(sign)
+  fireEvent.click(sign)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
 })
 
 it('the One click confirmation can be chosen or dropped on its own field', async () => {

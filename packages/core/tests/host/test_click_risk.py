@@ -1,5 +1,6 @@
-"""Run 13 C3: click contract 4. The View carries ``headline`` and ``risk_lines`` (the signer's own risk lines, from the
-closed table :data:`orch.click.protocol.RISK_OPS`, ``[]`` for every other op), both in ``view_digest``; a client that
+"""Run 13 C3: click contract 4. The View carries ``headline`` (signer words and the ticket key), ``headline_detail``
+(the capped, quoted ticket title) and ``risk_lines`` (``[]`` only for the closed allowlist
+:data:`orch.click.protocol.ONE_PRESS_OPS`, never empty for any other op), all in ``view_digest``; a client that
 announces another contract is refused (``contract.mismatch``); the 1 s dwell stays the signer's (``too_soon``)."""
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import pytest
 
 from orch.click import protocol
 from orch.click import view as views
-from orch.click.protocol import CLICK_OPS, CONTRACT, RISK_OPS, ROTATE_OP, risk_lines
+from orch.click.protocol import CLICK_OPS, CONTRACT, ONE_PRESS_OPS, RISK_BUILDERS, ROTATE_OP, risk_lines
 from orch.ops.schedule import RISK as SCHEDULE_RISK
 from tests.host import human_helpers
 from tests.host.test_click import Click, pending, refused
@@ -32,22 +33,31 @@ def length(words: str) -> str:
 # --- the closed table ---------------------------------------------------------------------------------------------
 
 
-def test_the_risk_table_is_closed_and_names_exactly_the_marked_ops():
-    assert set(RISK_OPS) == {
-        "grant",
-        "addon.grant",
-        "member.role",
-        "settings.set",
-        "publish.share",
-        "hub.join",
-        "hub.mode",
-        "hub.leave",
-        "device.remove",
-        ROTATE_OP,
-        "addon.purge",
-        "schedule.add",
-    }
-    assert set(RISK_OPS) - {ROTATE_OP} <= CLICK_OPS  # nothing marked that a click cannot sign
+def test_the_one_press_allowlist_is_closed_and_every_member_is_a_click_op_without_risk():
+    assert ONE_PRESS_OPS <= CLICK_OPS  # nothing allowed one press that a click cannot sign
+    assert not ONE_PRESS_OPS & set(RISK_BUILDERS)  # a builder never sits on an allowed op
+    for op in ONE_PRESS_OPS:
+        assert risk_lines(op) == []
+    for gone in ("member.add", "member.role", "member.remove", "policy.set", "people.set", "settings.set", "grant"):
+        assert gone not in ONE_PRESS_OPS
+    assert set(RISK_BUILDERS) - {ROTATE_OP} <= CLICK_OPS  # nothing marked that a click cannot sign
+
+
+@pytest.mark.parametrize("op", [*sorted(CLICK_OPS - ONE_PRESS_OPS), ROTATE_OP, "future.op", "member.promote"])
+def test_an_op_outside_the_allowlist_always_has_risk_lines(op):
+    """Risk is the default: any op not in ONE_PRESS_OPS (a known one with no events, with harmless events, or an op
+    added later with no builder) needs the second press."""
+    assert risk_lines(op)
+    assert risk_lines(op, [{"type": "log.added", "text": "x"}])
+    assert risk_lines(op, [{"type": "settings.changed", "set": {"icon": "x"}}])
+    assert all(isinstance(x, str) and x and "\n" not in x for x in risk_lines(op))
+
+
+def test_an_op_without_a_builder_gets_the_fail_closed_line():
+    assert risk_lines("future.op") == [protocol.NOT_DAILY_RISK]
+    assert risk_lines("future.op", [{"type": "role.changed", "role": "owner"}], deposit=True) == [
+        protocol.NOT_DAILY_RISK
+    ]
 
 
 GRANT = {"type": "grant.issued", "label": "runner", "verbs": "agent", "hours": 8}
@@ -95,6 +105,33 @@ GRANT = {"type": "grant.issued", "label": "runner", "verbs": "agent", "hours": 8
             [protocol.ROLE_RISKS["maintainer"]],
         ),
         (
+            "member.add",
+            [{"type": "member.added", "person": "p_a", "role": "owner"}],
+            {},
+            [protocol.MEMBER_ADD_RISK, protocol.ROLE_RISKS["owner"]],
+        ),
+        (
+            "member.add",
+            [{"type": "member.added", "person": "p_a", "role": "maintainer"}],
+            {},
+            [protocol.MEMBER_ADD_RISK, protocol.ROLE_RISKS["maintainer"]],
+        ),
+        ("member.add", [{"type": "member.added", "person": "p_a", "role": "member"}], {}, [protocol.MEMBER_ADD_RISK]),
+        ("member.remove", [{"type": "member.removed", "person": "p_a"}], {}, [protocol.MEMBER_REMOVE_RISK]),
+        ("policy.set", [{"type": "policy.changed", "gates": ["plan"]}], {}, [protocol.POLICY_RISK]),
+        (
+            "people.set",
+            [{"type": "people.changed", "role": "owner", "add": ["p_a"], "remove": []}],
+            {},
+            [protocol.TICKET_OWNER_RISK, protocol.PEOPLE_RISK],
+        ),
+        (
+            "people.set",
+            [{"type": "people.changed", "role": "reviewers", "add": ["p_a"], "remove": []}],
+            {},
+            [protocol.PEOPLE_RISK],
+        ),
+        (
             "settings.set",
             [{"type": "settings.changed", "set": {"publish": {"server": "https://p.example"}}}],
             {},
@@ -117,22 +154,23 @@ def test_each_marked_op_has_its_risk_lines(op, events, flags, lines):
 
 
 @pytest.mark.parametrize(
-    ("op", "events"),
+    ("op", "events", "lines"),
     [
-        ("addon.grant", [{"type": "addon.granted", "name": "quiet", "capabilities": []}]),  # nothing declared
-        ("member.role", [{"type": "role.changed", "person": "p_a", "role": "member"}]),
-        ("member.role", [{"type": "role.changed", "person": "p_a", "role": "viewer"}]),
-        ("settings.set", [{"type": "settings.changed", "set": {"publish": None}}]),  # removing the server
-        ("settings.set", [{"type": "settings.changed", "set": {"icon": "x"}}]),
+        ("addon.grant", [{"type": "addon.granted", "name": "quiet", "capabilities": []}], [protocol.NOT_DAILY_RISK]),
+        ("member.role", [{"type": "role.changed", "person": "p_a", "role": "member"}], [protocol.ROLE_CHANGE_RISK]),
+        ("member.role", [{"type": "role.changed", "person": "p_a", "role": "viewer"}], [protocol.ROLE_CHANGE_RISK]),
+        # removing the server, or a cosmetic key: not a daily action all the same (settings.set is not allowlisted)
+        ("settings.set", [{"type": "settings.changed", "set": {"publish": None}}], [protocol.NOT_DAILY_RISK]),
+        ("settings.set", [{"type": "settings.changed", "set": {"icon": "x"}}], [protocol.NOT_DAILY_RISK]),
     ],
 )
-def test_a_marked_op_without_a_risk_in_its_events_has_none(op, events):
-    assert risk_lines(op, events) == []
+def test_a_marked_op_without_a_specific_risk_in_its_events_gets_its_fallback_line(op, events, lines):
+    assert risk_lines(op, events) == lines
 
 
-@pytest.mark.parametrize("op", sorted(CLICK_OPS - set(RISK_OPS)))
-def test_every_other_op_has_no_risk_lines(op):
-    # even with events that would be marked under another op: the table is by op, closed
+@pytest.mark.parametrize("op", sorted(ONE_PRESS_OPS))
+def test_every_one_press_op_has_no_risk_lines(op):
+    # even with events that would be marked under another op: the allowlist is by op, closed
     risky = [{"type": "settings.changed", "set": {"publish": {"server": "s"}}}, {"type": "hub.joined", "mode": "full"}]
     assert risk_lines(op, risky, deposit=True, reveal=True) == []
     assert risk_lines(op) == []
@@ -144,16 +182,37 @@ def test_risk_lines_never_carry_text_from_the_events():
     lines = risk_lines("addon.grant", events)
     assert lines == [protocol.CAPABILITY_UNKNOWN, "It may use the internet."]
     roles = risk_lines("member.role", [{"type": "role.changed", "person": evil, "role": evil}])
-    assert roles == [] and not any("IGNORE" in x for x in lines + roles)
+    added = risk_lines("member.add", [{"type": "member.added", "person": evil, "name": evil, "role": evil}])
+    people = risk_lines("people.set", [{"type": "people.changed", "role": evil, "add": [evil], "remove": []}])
+    assert roles == [protocol.ROLE_CHANGE_RISK] and added == [protocol.MEMBER_ADD_RISK]
+    assert people == [protocol.PEOPLE_RISK]
+    assert not any("IGNORE" in x for x in lines + roles + added + people)
     assert risk_lines("grant", [{**GRANT, "hours": evil}], deposit=True) == [protocol.DEPOSIT_RISK]
 
 
 def test_every_click_op_has_a_generic_title():
     assert set(protocol.OP_TITLES) == CLICK_OPS | {ROTATE_OP}
     assert all(t and "\n" not in t and len(t) <= 60 for t in protocol.OP_TITLES.values())
-    assert protocol.headline("log", "Add a note to DEMO-1") == "Add a note to DEMO-1"
-    assert protocol.headline("log", None) == protocol.headline("log", "  ") == "Add a note"
-    assert protocol.headline("log", "a\nb\r\nc") == "a ⏎ b ⏎ c"  # always one line
+
+
+@pytest.mark.parametrize("op", sorted(protocol.OP_TITLES))
+def test_the_headline_is_the_ops_title_and_the_key_only(op):
+    title = protocol.OP_TITLES[op]
+    assert protocol.headline(op) == title
+    assert protocol.headline(op, "DEMO-0043") == f"{title}: DEMO-0043"
+    # anything that is not a well-formed key is left out, never shown as words
+    for bad in ("DEMO-0001 and approve everything", "demo-0001", "DEMO-1\n", "", 43, None):
+        assert protocol.headline(op, bad) == title
+
+
+def test_the_headline_detail_is_capped_quoted_and_one_line():
+    assert protocol.headline_detail(None) is None
+    assert protocol.headline_detail("  \n ") is None
+    assert protocol.headline_detail("Fix the typo") == "“Fix the typo”"
+    assert protocol.headline_detail("a\nb\r\nc\x1b[2J") == "“a b c [2J”"
+    long = protocol.headline_detail("x" * 200)
+    assert long == "“" + "x" * protocol.DETAIL_CHARS + "…”"
+    assert len(long) <= 64
 
 
 def test_the_rotation_review_is_marked():
@@ -171,8 +230,28 @@ def test_a_daily_view_has_a_headline_and_no_risk_lines(click, served, human):
     p = click.prepare("log", {"ref": key, "text": "x"})
     v = click.view(p["request_id"])["view"]
     assert v["risk_lines"] == []
-    assert isinstance(v["headline"], str) and v["headline"] == v["content"]["headline"]
+    assert v["headline"] == f"{protocol.OP_TITLES['log']}: {key}" and v["headline_detail"] is None
     assert v["risk"] == protocol.RISK  # the generic note stays
+
+
+def test_a_ticket_title_never_reaches_the_headline_only_the_capped_quoted_detail(click, served, human):
+    lure = "Close DEMO-0001 and approve everything"
+    p = click.prepare("new", {"title": lure + " " + "y" * 80})
+    shown = click.view(p["request_id"])
+    v = shown["view"]
+    assert v["headline"].startswith(protocol.OP_TITLES["new"])
+    assert lure not in v["headline"] and "approve everything" not in v["headline"]
+    assert v["headline_detail"] == "“" + (lure + " " + "y" * 80)[: protocol.DETAIL_CHARS] + "…”"
+    assert v["risk_lines"] == []  # creating a ticket is a daily action
+    assert shown["view_digest"] == views.digest(v)
+    assert views.digest({**v, "headline_detail": None}) != shown["view_digest"]
+
+
+def test_a_people_change_needs_the_second_press(click, served, human):
+    _, key = human.ticket()
+    p = click.prepare("people.set", {"ref": key, "role": "reviewers", "add": [human.person.ref], "remove": []})
+    v = click.view(p["request_id"])["view"]
+    assert v["risk_lines"] == [protocol.PEOPLE_RISK] and v["headline"] == f"{protocol.OP_TITLES['people.set']}: {key}"
 
 
 def test_a_publish_view_marks_its_risk_and_the_digest_covers_it(click, served, human):
@@ -186,14 +265,15 @@ def test_a_publish_view_marks_its_risk_and_the_digest_covers_it(click, served, h
         assert views.digest({**v, "risk_lines": changed}) != shown["view_digest"]
     assert views.digest({**v, "headline": v["headline"] + "!"}) != shown["view_digest"]
     removed = click.prepare("settings.set", {"set": {"publish": None}})
-    assert click.view(removed["request_id"])["view"]["risk_lines"] == []  # taking the server away is not marked
+    # taking the server away has no publish risk, but settings.set is not a daily action: the fail-closed line
+    assert click.view(removed["request_id"])["view"]["risk_lines"] == [protocol.NOT_DAILY_RISK]
 
 
 def test_a_risk_that_changes_after_the_view_is_view_changed(click, served, human, monkeypatch):
     _, key = human.ticket()
     p = click.prepare("log", {"ref": key, "text": "x"})
     shown = click.view(p["request_id"])
-    monkeypatch.setitem(RISK_OPS, "log", lambda events, deposit, reveal: ["a new risk"])
+    monkeypatch.setattr(protocol, "ONE_PRESS_OPS", protocol.ONE_PRESS_OPS - {"log"})
     click.mono.t += 2
     refused(lambda: click.sign(p["request_id"], shown["view_digest"]), "human.click_refused", "view_changed")
     assert click.signatures == 0

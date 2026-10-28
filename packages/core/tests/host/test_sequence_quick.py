@@ -306,7 +306,7 @@ def click_prepare(click_, intent):
 def test_one_click_signs_the_whole_quick_task(click, served, human):  # noqa: F811
     p = click_prepare(click, quick())
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"] == {"kind": "click"} and v["view"]["headline"].startswith("Start task")
+    assert v["view"]["confirm"] == {"kind": "click"} and v["view"]["headline"].startswith("Create a ticket")
     click.mono.t += 2
     out = click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == 8

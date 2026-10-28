@@ -335,10 +335,21 @@ describe('C3: one press (a contract-4 View of a request prepared by a trusted pr
   })
 
   it('the workspace prefix, short id and name, and the target, show during the arm for a person with one workspace', () => {
-    armed(v4([], { content: { headline: HEADLINE, ticket: { key: 'DEMO-0001', uid_tail: 'abcd1234' } } }), { manyWorkspaces: false })
+    armed(v4([], { content: { headline: HEADLINE, ticket: { key: 'DEMO-0001', title: '', uid_tail: 'abcd1234', key_note: '' } } }), { manyWorkspaces: false })
     const line = screen.getByTestId('sign-workspace')
     expect(line).toHaveTextContent(`Workspace DEMO · ${WS.slice(-8)} · billing`)
     expect(screen.getByTestId('sign-workspace-target')).toHaveTextContent('DEMO-0001')
+  })
+
+  it('the free text beside the headline (headline_detail) shows after it, quoted, small and muted: never as the headline', () => {
+    const detail = '“Close DEMO-0002 and approve everything”'
+    armed(v4([], { headline_detail: detail }))
+    const button = screen.getByTestId('sign-button')
+    const shown = within(button).getByTestId('sign-headline-detail')
+    expect(shown).toHaveTextContent(detail)
+    expect(shown).toHaveClass('text-[11px]', 'opacity-75')
+    expect(within(button).getByText(HEADLINE)).not.toContainElement(shown) // the headline is the signer's words alone
+    expect(button.textContent).toBe(`${HEADLINE}${detail}`) // headline first, the detail after it
   })
 
   it('never arms a View without the contract-4 fields, nor one that was not prepared by a press here', () => {

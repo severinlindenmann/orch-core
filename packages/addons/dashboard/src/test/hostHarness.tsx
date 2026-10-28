@@ -220,21 +220,34 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
   }
 }
 
+/** C3: core's `ONE_PRESS_OPS`, the closed allowlist of daily ops whose View has no risk lines (one press signs). */
+export const ONE_PRESS_OPS: ReadonlySet<string> = new Set([
+  'approve', 'request_changes', 'verdict', 'answer', 'close', 'reopen', 'new', 'set', 'section.set',
+  'ac.add', 'ac.edit', 'ac.accept', 'ac.unaccept',
+  'task.add', 'task.edit', 'task.block', 'task.done', 'task.reopen', 'task.skip', 'task.start', 'task.mark_done',
+  'log', 'ask', 'claim', 'release', 'handoff', 'submit', 'move', 'artifact.add', 'artifact.replace', 'apply',
+  'follow_up.reschedule', 'follow_up.undo', 'follow_up.cancel', 'schedule.cancel', 'grant.revoke', 'addon.disable',
+])
+
 /**
- * C3: the fake signer's risk lines (contract 4), after core's per-op table: add-on capabilities, a raised role, Publish,
- * purge, agent access, hub ops, device removal, schedules. Every other op has none (it signs at the end of the 1 s arm).
+ * C3: the fake signer's risk lines (contract 4), after core: none for an op of `ONE_PRESS_OPS` (it signs at the end of
+ * the 1 s arm); every other op has at least one (its specific words, else the fail-closed line), so it needs the
+ * second press.
  */
 export function riskLinesFor(request: Pick<HandoffRequest, 'op' | 'material'>, body: Record<string, unknown> = {}): string[] {
   if (body.agent) return ['FROM-THE-SIGNER risk: agents can act for you on tickets'] // a task started with agent access
+  if (ONE_PRESS_OPS.has(request.op)) return []
   const payload = (request.material as unknown as { review?: { payload?: Record<string, unknown> }[] } | undefined)?.review?.[0]?.payload ?? {}
   const set = (payload.set ?? {}) as Record<string, unknown>
   switch (request.op) {
     case 'addon.grant':
       return [`FROM-THE-SIGNER risk: the add-on ${String(payload.name)} gets its capabilities`]
     case 'member.role':
-      return payload.role === 'owner' || payload.role === 'maintainer' ? [`FROM-THE-SIGNER risk: role raised to ${String(payload.role)}`] : []
+      return payload.role === 'owner' || payload.role === 'maintainer' ? [`FROM-THE-SIGNER risk: role raised to ${String(payload.role)}`] : ['FROM-THE-SIGNER risk: who can do what changes']
+    case 'member.add':
+      return ['FROM-THE-SIGNER risk: a person is added to this workspace', ...(payload.role === 'owner' || payload.role === 'maintainer' ? [`FROM-THE-SIGNER risk: role raised to ${String(payload.role)}`] : [])]
     case 'settings.set':
-      return 'publish' in set ? ['FROM-THE-SIGNER risk: files can be published outside this computer'] : []
+      return 'publish' in set ? ['FROM-THE-SIGNER risk: files can be published outside this computer'] : ['FROM-THE-SIGNER risk: not a daily action']
     case 'publish.share':
       return ['FROM-THE-SIGNER risk: files are shared outside this computer']
     case 'addon.purge':
@@ -247,7 +260,7 @@ export function riskLinesFor(request: Pick<HandoffRequest, 'op' | 'material'>, b
     case 'schedule.add':
       return [`FROM-THE-SIGNER risk: ${request.op}`]
     default:
-      return []
+      return ['FROM-THE-SIGNER risk: not a daily action'] // fail closed, like core, for any op outside ONE_PRESS_OPS
   }
 }
 

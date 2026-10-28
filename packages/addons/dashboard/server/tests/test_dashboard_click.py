@@ -861,6 +861,9 @@ def test_l3_a_view_without_the_verbatim_risk_line_is_not_shown(client, token, st
         {"risk_lines": [""]},
         {"risk_lines": ["a\nb"]},
         {"risk_lines": ["x"] * 65},
+        {"headline_detail": ""},
+        {"headline_detail": "“two\nlines”"},
+        {"headline_detail": 3},
     ],
 )
 def test_c3_a_view_without_its_headline_or_risk_lines_is_not_shown(client, token, stub, script, bad):
@@ -877,7 +880,8 @@ def test_c3_a_view_without_its_headline_or_risk_lines_is_not_shown(client, token
 def test_c3_the_view_and_its_risk_lines_are_passed_on_unchanged(client, token, stub, script):
     prepare(client, token, stub)
     risk = ["Files you share will be sent to this Publish server; whoever runs it can read them."]
-    script.view = {"view": {**script.view["view"], "risk_lines": risk}, "view_digest": HASH}
+    view = {**script.view["view"], "risk_lines": risk, "headline_detail": "“Export does nothing”"}
+    script.view = {"view": view, "view_digest": HASH}
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
     assert res.status_code == 200, res.text
     assert res.json() == script.view  # nothing added, hidden or re-rendered

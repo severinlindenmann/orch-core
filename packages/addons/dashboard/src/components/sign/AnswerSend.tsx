@@ -23,13 +23,13 @@ import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
 import { Loader2 } from 'lucide-react'
 import { ClickProblemBox } from './RefusalDevices'
-import { ArmFill, ClickSignPanel, RiskLines, TechnicalFacts } from './ClickSignPanel'
+import { ArmFill, ClickSignPanel, RiskLines, SignerHeadline, TechnicalFacts } from './ClickSignPanel'
 import { SignContent, compactAnswer } from './SignContent'
 import { trustedPress } from './trustedPress'
 import { ARM_INSIDE, usePressSign } from './useArming'
 import { useClickSign } from './useClickSign'
 import { WorkspaceLine } from './WorkspaceLine'
-import { Inline, Raw } from './visible'
+import { Raw } from './visible'
 
 /** Phases in which a changed answer waits: the step in flight ends first (a prepare) or the answer is already on its way. */
 const HOLD = ['preparing', 'signing', 'settling', 'done']
@@ -281,7 +281,7 @@ function Presented({ click, many, onCancel }: { click: ReturnType<typeof useClic
           ) : arming ? (
             <>
               <ArmFill key={press.round} />
-              <span className="relative"><Inline>{view.headline ?? 'Send answer'}</Inline></span>
+              <span className="relative"><SignerHeadline view={view} fallback="Send answer" /></span>
             </>
           ) : (
             'Send answer'

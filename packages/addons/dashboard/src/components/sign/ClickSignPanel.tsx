@@ -84,6 +84,22 @@ export function ArmFill({ ms = ARM_MS }: { ms?: number }) {
   return <span aria-hidden data-testid="sign-progress" className="pointer-events-none absolute inset-y-0 left-0 bg-white/25 transition-[width] ease-linear" style={{ width: full ? '100%' : '0%', transitionDuration: `${ms}ms` }} />
 }
 
+/** C3: the signer's headline (its own words and the ticket key) and, after it, small and muted, its `headline_detail`
+ * (the capped, quoted free text: never read as part of the headline). */
+export function SignerHeadline({ view, fallback }: { view: Pick<ClickViewAnswer['view'], 'headline' | 'headline_detail'>; fallback: ReactNode }) {
+  const detail = typeof view.headline_detail === 'string' && view.headline_detail.trim() !== '' ? view.headline_detail : null
+  return (
+    <>
+      {view.headline ? <Inline>{view.headline}</Inline> : fallback}
+      {view.headline && detail && (
+        <span data-testid="sign-headline-detail" className="ml-1.5 text-[11px] font-normal opacity-75">
+          <Inline>{detail}</Inline>
+        </span>
+      )}
+    </>
+  )
+}
+
 /** C3: the signer's risk lines, under the button, never folded. Each line carries `RISK_LINE` (counted before a press counts). */
 export function RiskLines({ lines, box, testId = 'sign-risk-lines' }: { lines: readonly string[]; box?: (el: HTMLElement | null) => void; testId?: string }) {
   if (lines.length === 0) return null
@@ -244,7 +260,7 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
             ) : arming ? (
               <>
                 <ArmFill key={press.round} />
-                <span className="relative"><Inline>{view.headline ?? label}</Inline></span>
+                <span className="relative"><SignerHeadline view={view} fallback={label} /></span>
               </>
             ) : (
               label

@@ -2503,7 +2503,7 @@ by proving the passphrase of a key that is in passphrase custody now, and it nev
   orch-core differs from the host's") and `status` shows `available:false, problem:"version_mismatch"`. Algorithm
   drift the registry digest does not see still fails closed in the signer's checks (`check_failed`). `status` also
   answers `core` (the orch-core version), `contract` and `features`. **Contract 4** (run 13 C3) is the only one: the
-  View carries `headline` and `risk_lines` (below), both in `view_digest`, and a client may announce the contract it
+  View carries `headline`, `headline_detail` and `risk_lines` (below), all in `view_digest`, and a client may announce the contract it
   speaks as `contract:int` in the `args` of any request (the dashboard sends it on `prepare`, `view` and `sign`); the
   signer refuses any other value (strictly the int: `true`, `4.0` and `"4"` are other contracts) with
   `contract.mismatch` before anything else, and a request without `contract` is not refused. Everything of contract 3
@@ -2549,8 +2549,9 @@ status  {} → {core:str, contract:4, features:[str], workspaces:[{workspace_id:
 View = {risk:"Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.",
                                                    // contract 4: the same generic note for every op (schedule.add too)
         op:OpName, workspace:{id:WsId, name:str, prefix:str}, fingerprint:str/[0-9a-f]{12}/,
-        headline:str,                              // contract 4: always; one line: content.headline, else the op's title (OP_TITLES)
-        risk_lines:[str],                          // contract 4: the signer's own risk lines (RISK_OPS), [] for every other op
+        headline:str,                              // contract 4: always; signer words only: OP_TITLES[op] (+ ": " + ticket key)
+        headline_detail:str|null,                  // contract 4: the ticket's title (free text), one line, ≤60 chars + "…", in “…”
+        risk_lines:[str],                          // contract 4: [] only for ONE_PRESS_OPS; never empty for any other op
         content?:SignContent,                      // B6: the plain view (additive), derived from the same events and material
         lines:[str],                                       // the terminal review of CLI signing, line for line, escaped
         checks:[{repo:str, clean:true, attested_by:"worker", at:Time}],   // shown; `at` is not in view_digest
@@ -2559,22 +2560,35 @@ View = {risk:"Convenience signing: agents running as you, or anything that takes
         deposit?:true,                 // v1.6: set only for a deposit grant (§0.8.6 item 6); the line below is then in lines
         deposit_line?:"The secret goes to your orch runner on this machine and is never shown",
         seal?:{v:1, alg:str, purposes:["grant.secret"], for:str}}   // C7: a shown-secret grant only (item 6)
-view_digest = "sha256:" + hex(sha256(cj(View with every checks[].at removed)))   // headline and risk_lines included
+view_digest = "sha256:" + hex(sha256(cj(View with every checks[].at removed)))   // headline, headline_detail, risk_lines included
 Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, one per click, reused on retry
 ```
 
-  **Risk lines (contract 4, run 13 C3, normative).** `risk_lines` is built by the signer from its closed per-op table
-  `orch.click.protocol.RISK_OPS` (next to `CLICK_OPS`) over the signed events only, never from client text: an event
-  value reaches a line only through a closed table (a capability's words, a role) or as a number (a grant's hours).
-  The marked ops: `grant` (deposit: `DEPOSIT_RISK`; shown once: `REVEAL_RISK`; then the length, "Agents get this
-  authority for N hours/days, until it ends or you stop it."), `addon.grant` (one plain line per declared capability,
-  "It may <words>."; an unknown capability: one fixed line; Publish: its own line first), `member.role` to `owner` or
-  `maintainer`, `settings.set` that sets (not removes) `publish`, `publish.share`, `hub.join`/`hub.mode` (selective or
-  full words by the signed mode), `hub.leave`, `device.remove`, `device.rotate` (the `rotate` review), `addon.purge`
-  and `schedule.add` (the schedule risk and "No click or confirmation is required at firing time.", also at the end of
-  `lines`). Every other op has `risk_lines: []`. The rotate review (`rotate {begin}`) carries `headline` and
-  `risk_lines` too. A risk line that changes between `view` and `sign` changes the rebuilt View's digest:
-  `view_changed`. The 1 s dwell (`too_soon`) is the signer's own monotonic clock from the View it built; nothing a
+  **Headline (contract 4, normative).** `headline` is built from signer-owned words only: `OP_TITLES[op]`, then
+  `": "` and the ticket key when the request names one (`material.ticket.key`, format-checked; "Close a ticket:
+  DEMO-0043"). It never carries free text, and never the plain view's own headline (which embeds a title). The
+  ticket's title, when a signed event states it, goes to `headline_detail`: one line, at most 60 characters then
+  "…", always in quotes ("“…”"), shown after the headline as secondary text; `null` when there is none.
+
+  **Risk lines (contract 4, run 13 C3, normative).** Risk is the default: `orch.click.protocol.ONE_PRESS_OPS`
+  is the closed allowlist of daily, low-risk ops (the gate decisions, answers, ticket and task edits, notes, claims,
+  files, `apply`, the follow-up and schedule cancels/undos, `grant.revoke`, `addon.disable`) whose `risk_lines` is
+  `[]`. Every other op (any other click op, `device.rotate`, and any op added later) has non-empty `risk_lines`, so
+  the page asks for the second press: the lines of its builder in `orch.click.protocol.RISK_BUILDERS`, built over the
+  signed events only, never from client text (an event value reaches a line only through a closed table: a
+  capability's words, a role; or as a number: a grant's hours), or, when it has no builder or the builder finds
+  nothing, the fail-closed line "This change is not a daily action: read it before you sign.". The builders: `grant`
+  (deposit: `DEPOSIT_RISK`; shown once: `REVEAL_RISK`; then the length, "Agents get this authority for N hours/days,
+  until it ends or you stop it."), `addon.grant` (one plain line per declared capability, "It may <words>."; an
+  unknown capability: one fixed line; Publish: its own line first), `member.add` ("Adds a person to this workspace."
+  and the role's risk for `owner`/`maintainer`), `member.role` (the role's risk, else "This changes who can do what in
+  this workspace."), `member.remove`, `policy.set` ("Changes who may approve and what is required …"), `people.set`
+  (who works on or reviews the ticket; an owner change also the ticket owner's authority), `settings.set` that sets
+  `publish`, `publish.share`, `hub.join`/`hub.mode` (selective or full words by the signed mode), `hub.leave`,
+  `device.remove`, `device.rotate` (the `rotate` review), `addon.purge` and `schedule.add` (the schedule risk and "No
+  click or confirmation is required at firing time.", also at the start of `lines`). The rotate review (`rotate
+  {begin}`) carries `headline`, `headline_detail` and `risk_lines` too. A risk line that changes between `view` and
+  `sign` changes the rebuilt View's digest: `view_changed`. The 1 s dwell (`too_soon`) is the signer's own monotonic clock from the View it built; nothing a
   client sends shortens it.
 
   **Error codes on the channel.** `invalid.input`; `custody.no_key` (no device key for the workspace on this machine);
@@ -4222,8 +4236,9 @@ existing op changes its version.
     a reveal grant (feature `reveal`) shows a grant secret once, sealed to the page (§0.8.6 items 5 and 6,
     [orch-v2-sealed-field.md](orch-v2-sealed-field.md)). The dashboard accepted only contract 3 then. The terminal signer
     keeps its `/dev/tty` word. No host op or wire schema change on the workspace socket.
-23. **Risk lines in the click View (run 13 C3; click-signer contract 4):** the View carries `headline` and
-    `risk_lines` (the signer's closed `RISK_OPS` table, `[]` for other ops), both in `view_digest`; a client may announce
+23. **Risk lines in the click View (run 13 C3; click-signer contract 4):** the View carries `headline` (signer words and
+    the ticket key), `headline_detail` (the capped, quoted ticket title or null) and `risk_lines` (`[]` only for the
+    closed `ONE_PRESS_OPS` allowlist, never empty for any other op), all in `view_digest`; a client may announce
     `args.contract` and another value is `contract.mismatch` (§0.8.6 item 5). The dashboard accepts only contract 4. No
     host op or wire schema change on the workspace socket.
 

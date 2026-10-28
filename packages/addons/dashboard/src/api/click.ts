@@ -70,8 +70,10 @@ export const CLICK_CONTRACT_HEADER = 'X-Orch-Click-Contract'
 
 /** The signer's View, as it came (the server adds nothing). `lines` are core's terminal review, already escaped. */
 export interface ClickView {
-  /** Contract 4: one short line the signer built; the button shows it during the 1 s arm. */
+  /** Contract 4: one short line the signer built from its own words and the ticket key; the button shows it during the 1 s arm. */
   headline?: string
+  /** Contract 4: the free text beside the headline (a ticket's title), capped and already quoted by the signer, or null. Shown small and muted after the headline. */
+  headline_detail?: string | null
   /**
    * Contract 4: the lines the signer marks as risk (agent access, add-on capabilities, a raised role, Publish, hub ops,
    * device removal, purge, a schedule, a shown secret). Non-empty: never signed at the end of the arm; the lines are

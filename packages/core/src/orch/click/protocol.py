@@ -35,8 +35,10 @@ __all__ = [
     "CONTRACT_MISMATCH",
     "FEATURES",
     "OP_TITLES",
-    "RISK_OPS",
+    "ONE_PRESS_OPS",
+    "RISK_BUILDERS",
     "headline",
+    "headline_detail",
     "risk_lines",
     "ClickError",
     "RISK",
@@ -44,9 +46,11 @@ __all__ = [
     "op_class",
 ]
 
-#: 4 (run 13 C3): the View carries ``headline`` (one short line) and ``risk_lines`` (the lines the signer marks as risk,
-#: from :data:`RISK_OPS` only, ``[]`` for every other op), both in ``view_digest``; a client may announce the contract
-#: it speaks (``contract`` in any request's args) and another one is refused with :data:`CONTRACT_MISMATCH`.
+#: 4 (run 13 C3): the View carries ``headline`` (signer words: the op's title and the ticket key, no free text),
+#: ``headline_detail`` (a ticket's title, capped and quoted, or null) and ``risk_lines`` (the lines the signer marks as
+#: risk: ``[]`` only for :data:`ONE_PRESS_OPS`, never empty for any other op), all in ``view_digest``; a client may
+#: announce the contract it speaks (``contract`` in any request's args) and another one is refused with
+#: :data:`CONTRACT_MISMATCH`.
 #: 3 (#1198 C1, C2): no typed-word class: every op that was a word op is a click, Publish (``settings.set`` publish,
 #: ``addon.grant`` of publish, ``publish.share``) included; ``sign`` reads no ``word`` and the ``word`` refusal is
 #: gone; a client reads ``status.contract`` and sends nothing typed.
@@ -241,7 +245,7 @@ CLICK_OPS = frozenset(
 )
 #: every op not in :data:`CLICK_OPS` is terminal-only (fail closed for ops added later)
 
-#: contract 4: the View's ``headline`` when the plain view (``signcontent``) has none: one short line per op
+#: contract 4: the signer-owned words of the View's ``headline`` (see :func:`headline`): one short line per op
 OP_TITLES: dict[str, str] = {
     "approve": "Approve a gate",
     "request_changes": "Request changes",
@@ -299,12 +303,33 @@ OP_TITLES: dict[str, str] = {
 }
 
 
-def headline(op: str, content_headline: Any = None) -> str:
-    """The View's ``headline``: the plain view's own when there is one, else the op's title from :data:`OP_TITLES`.
-    Always one line: a line break is shown as `` ⏎ `` (as ``signcontent.one`` does)."""
-    if isinstance(content_headline, str) and content_headline.strip():
-        return " ⏎ ".join(content_headline.replace("\r\n", "\n").replace("\r", "\n").split("\n"))
-    return OP_TITLES.get(op, "Sign this change")
+#: a ticket key as the signer checks it (``orch.host.signer._formats``): letters, digits and one dash, never free text
+TICKET_KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-(?:(?!0000)[0-9]{4}|[1-9][0-9]{4,})")
+#: the most characters of free text (a ticket title) ``headline_detail`` shows, before the closing ``…``
+DETAIL_CHARS = 60
+
+
+def headline(op: str, key: Any = None) -> str:
+    """The View's ``headline``: signer-owned words only, the op's title from :data:`OP_TITLES` and, when the request
+    names a ticket, its key (``Close a ticket: DEMO-0043``). Never any free text: a title a person or a host chose goes
+    to :func:`headline_detail`. A key that is not a well-formed ticket key is left out."""
+    title = OP_TITLES.get(op, "Sign this change")
+    if isinstance(key, str) and TICKET_KEY.fullmatch(key):
+        return f"{title}: {key}"
+    return title
+
+
+def headline_detail(text: Any) -> str | None:
+    """The free text beside the headline (a ticket's title), visually secondary: one line, at most
+    :data:`DETAIL_CHARS` characters (cut with ``…``), always in quotes (``“…”``); ``None`` when there is none."""
+    if not isinstance(text, str):
+        return None
+    flat = " ".join("".join(c if c.isprintable() else " " for c in text).split())  # no control or line break
+    if not flat:
+        return None
+    if len(flat) > DETAIL_CHARS:
+        flat = flat[:DETAIL_CHARS].rstrip() + "…"
+    return f"“{flat}”"
 
 
 # -- contract 4: the risk lines (run 13 C3) ----------------------------------------------------------------------------
@@ -340,6 +365,14 @@ ROLE_RISKS: dict[str, str] = {
     "owner": "An owner can do everything in this workspace, change its members and their roles included.",
     "maintainer": "A maintainer gets more authority over everyone's work in this workspace.",
 }
+ROLE_CHANGE_RISK = "This changes who can do what in this workspace."
+MEMBER_ADD_RISK = "Adds a person to this workspace."
+MEMBER_REMOVE_RISK = "Removes a person from this workspace: their devices can no longer sign for it."
+POLICY_RISK = "Changes who may approve and what is required before an approval counts."
+PEOPLE_RISK = "Changes who works on or reviews this ticket, and so who may act on it."
+TICKET_OWNER_RISK = "A ticket owner decides who works on and reviews this ticket and may change its approval rules."
+#: the fail-closed line of an op outside :data:`ONE_PRESS_OPS` whose builder has nothing to say (or that has none)
+NOT_DAILY_RISK = "This change is not a daily action: read it before you sign."
 
 Events = list[Mapping[str, Any]]
 
@@ -375,9 +408,22 @@ def _addon_grant_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
     return list(dict.fromkeys(out))
 
 
-def _role_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
-    roles = [ev.get("role") for ev in events if ev.get("type") == "role.changed"]
+def _roles(events: Events, typ: str) -> list[str]:
+    roles = [ev.get("role") for ev in events if ev.get("type") == typ]
     return list(dict.fromkeys(ROLE_RISKS[r] for r in roles if isinstance(r, str) and r in ROLE_RISKS))
+
+
+def _role_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    return _roles(events, "role.changed") or [ROLE_CHANGE_RISK]
+
+
+def _member_add_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    return [MEMBER_ADD_RISK, *_roles(events, "member.added")]
+
+
+def _people_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
+    owner = any(ev.get("type") == "people.changed" and ev.get("role") == "owner" for ev in events)
+    return [TICKET_OWNER_RISK, PEOPLE_RISK] if owner else [PEOPLE_RISK]
 
 
 def _settings_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
@@ -409,12 +455,61 @@ def _fixed(*lines: str) -> Callable[[Events, bool, bool], list[str]]:
     return lambda events, deposit, reveal: list(lines)
 
 
-#: op -> builder ``(events, deposit, reveal) -> lines``: the closed table of the ops whose View marks risk lines. Every
-#: other op's ``risk_lines`` is ``[]``.
-RISK_OPS: dict[str, Callable[[Events, bool, bool], list[str]]] = {
+#: the closed allowlist of daily, low-risk click ops (the stop, undo and everyday ones): their View has no risk lines
+#: and one press signs. EVERY other op (a click op not listed here, :data:`ROTATE_OP`, any op added later) is risky by
+#: default: its ``risk_lines`` are never empty, so the page asks for the second press.
+ONE_PRESS_OPS = frozenset(
+    {
+        "approve",
+        "request_changes",
+        "verdict",
+        "answer",
+        "close",
+        "reopen",
+        "new",
+        "set",
+        "section.set",
+        "ac.add",
+        "ac.edit",
+        "ac.accept",
+        "ac.unaccept",
+        "task.add",
+        "task.edit",
+        "task.block",
+        "task.done",
+        "task.reopen",
+        "task.skip",
+        "task.start",
+        "task.mark_done",
+        "log",
+        "ask",
+        "claim",
+        "release",
+        "handoff",
+        "submit",
+        "move",
+        "artifact.add",
+        "artifact.replace",
+        "apply",
+        "follow_up.reschedule",
+        "follow_up.undo",
+        "follow_up.cancel",
+        "schedule.cancel",
+        "grant.revoke",
+        "addon.disable",
+    }
+)
+
+#: op -> builder ``(events, deposit, reveal) -> lines``: the signer's specific risk words of an op outside
+#: :data:`ONE_PRESS_OPS`. An op without a builder, or whose builder finds nothing, still gets :data:`NOT_DAILY_RISK`.
+RISK_BUILDERS: dict[str, Callable[[Events, bool, bool], list[str]]] = {
     "grant": _grant_risk,
     "addon.grant": _addon_grant_risk,
+    "member.add": _member_add_risk,
     "member.role": _role_risk,
+    "member.remove": _fixed(MEMBER_REMOVE_RISK),
+    "policy.set": _fixed(POLICY_RISK),
+    "people.set": _people_risk,
     "settings.set": _settings_risk,
     "publish.share": _fixed(PUBLISH_SHARE_RISK),
     "hub.join": _hub_risk,
@@ -428,12 +523,15 @@ RISK_OPS: dict[str, Callable[[Events, bool, bool], list[str]]] = {
 
 
 def risk_lines(op: str, events: Events | None = None, *, deposit: bool = False, reveal: bool = False) -> list[str]:
-    """The View's ``risk_lines`` for ``op`` over its signed ``events`` (see :data:`RISK_OPS`); ``[]`` for other ops."""
-    build = RISK_OPS.get(op)
-    if build is None:
+    """The View's ``risk_lines`` for ``op`` over its signed ``events``: ``[]`` only for :data:`ONE_PRESS_OPS`; for any
+    other op its builder's lines (:data:`RISK_BUILDERS`), or :data:`NOT_DAILY_RISK` when there is no builder or it
+    finds nothing (fail closed: never empty)."""
+    if op in ONE_PRESS_OPS:
         return []
+    build = RISK_BUILDERS.get(op)
     good = [e for e in events or [] if isinstance(e, Mapping)]
-    return [str(line) for line in build(good, deposit, reveal)]
+    lines = [str(line) for line in build(good, deposit, reveal)] if build is not None else []
+    return lines or [NOT_DAILY_RISK]
 
 
 #: ``settings.set`` keys that need more than a click: none (#1198 C2). ``publish`` (where shared files go) is a click

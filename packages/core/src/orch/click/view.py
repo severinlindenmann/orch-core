@@ -27,6 +27,7 @@ from .protocol import (
     RUNNER_OFF_LINE,
     SEALED_OPS,
     headline,
+    headline_detail,
     op_class,
     refused,
     risk_lines,
@@ -193,8 +194,9 @@ def build(
     ``seal_in`` ``(pk, purposes)`` (#1198 C10):
     an op that asks for a typed secret (the hub backup key) carries ``seal`` with the signer's per-request public key
     and exactly those purposes (sealed-field contract section 7), and ``backup_key_line`` in ``lines``.
-    Contract 4: every View has ``headline`` (the plain view's, else the op's title) and ``risk_lines`` (the signer's own
-    risk lines of :data:`~orch.click.protocol.RISK_OPS`, ``[]`` for other ops); ``view_digest`` covers both."""
+    Contract 4: every View has ``headline`` (the op's title and the ticket key: signer words only), ``headline_detail``
+    (the ticket's title, capped and quoted, or ``None``) and ``risk_lines`` (``[]`` only for
+    :data:`~orch.click.protocol.ONE_PRESS_OPS`, never empty otherwise); ``view_digest`` covers all three."""
     known = workspace(prepared["workspace_id"])
     if known is None:
         raise refused("check_failed", "this workspace is not in your own registry")
@@ -231,7 +233,13 @@ def build(
     }
     # contract 4 (run 13 C3): the signer marks the risk lines itself, from its closed table and the signed events only;
     # `risk` stays the generic convenience note of every View. Both new fields are in `view_digest`.
-    view["headline"] = headline(str(prepared["op"]), content["headline"] if content is not None else None)
+    # the headline is the signer's words and the (format-checked) ticket key only; the ticket's title, free text, goes
+    # capped and quoted to `headline_detail` (never the plain view's own headline, which embeds that text)
+    ticket = prepared["material"].get("ticket") if isinstance(prepared.get("material"), Mapping) else None
+    ticket = ticket if isinstance(ticket, Mapping) else {}
+    shown_ticket = content.get("ticket") if content is not None else None
+    view["headline"] = headline(str(prepared["op"]), ticket.get("key"))
+    view["headline_detail"] = headline_detail(shown_ticket.get("title") if isinstance(shown_ticket, Mapping) else None)
     view["risk_lines"] = risk_lines(
         str(prepared["op"]), list(prepared["events"]), deposit=deposit, reveal=reveal is not None
     )
@@ -301,6 +309,7 @@ def rotation(*, workspace: Mapping[str, str], old: str, new: str, pk: str) -> di
         "new": new,
         "lines": lines,
         "headline": headline(ROTATE_OP),
+        "headline_detail": None,
         "risk_lines": risk_lines(ROTATE_OP),  # contract 4: replacing the key is marked
         "confirm": {"kind": "click"},
         "seal": {"v": sealed.VERSION, "alg": sealed.ALG, "pk": pk, "purposes": list(ROTATE_PURPOSES)},

@@ -13,7 +13,7 @@ import { useMe } from '@/app/useMe'
 import { Button } from '@/components/ui/button'
 import { lastTrigger, SignShell } from './SignShell'
 import { Inline } from './visible'
-import { ClickSignPanel } from './ClickSignPanel'
+import { ClickSignPanel, SignerHeadline } from './ClickSignPanel'
 import { ClickProblemBox, RefusalDevices } from './RefusalDevices'
 import { settledAs, useClickSign, type ClickPhase } from './useClickSign'
 import { storyOf } from './story'
@@ -161,7 +161,7 @@ export function SignPopover(p: SignPopoverProps) {
       <div className="flex justify-end gap-2"><Button variant="outline" ref={cancelRef} onClick={p.onClose}>Close</Button></div>
     </SignShell>
   }
-  return <SignShell inline={p.inline} anchor={anchor} open={!folded} onDismiss={() => void close()} title={<Inline>{click.view?.view.content?.title ?? click.view?.view.headline ?? p.title}</Inline>} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
+  return <SignShell inline={p.inline} anchor={anchor} open={!folded} onDismiss={() => void close()} title={click.view?.view.content?.title ? <Inline>{click.view.view.content.title}</Inline> : <SignerHeadline view={click.view?.view ?? {}} fallback={<Inline>{p.title}</Inline>} />} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
     {p.controls}{p.lead}{!click.view && p.summary}
     {/* The switch is read before the press; a request already open keeps its review (the signer refuses it if the switch moved). */}
     {!canClick && click.phase === 'idle' ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}<div className="flex justify-end">{dismiss('Close')}</div></> : <>

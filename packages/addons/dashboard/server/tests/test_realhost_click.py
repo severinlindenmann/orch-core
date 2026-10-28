@@ -191,7 +191,10 @@ def test_a_policy_op_signs_on_one_click_and_takes_no_word(world, click):
     time.sleep(1.2)
     typed = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"], "word": "POLICY"})
     assert typed.status_code == 400 or typed.status_code == 422  # since contract 3: there is no word field
-    assert view["view"]["risk_lines"] == [] and view["view"]["headline"]  # contract 4: policy is not a marked op
+    from orch.click.protocol import OP_TITLES, POLICY_RISK
+
+    # contract 4: policy.set is not a daily op, so it is marked (the page asks for the second press); the server signs
+    assert view["view"]["risk_lines"] == [POLICY_RISK] and view["view"]["headline"] == OP_TITLES["policy.set"]
     ok = click.post("sign", {"request_id": rid, "view_digest": view["view_digest"]})
     assert ok.status_code == 200, ok.text
 

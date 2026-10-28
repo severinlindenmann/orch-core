@@ -142,12 +142,14 @@ RISK_LINES_MAX, RISK_LINE_CHARS, HEADLINE_CHARS = 64, 400, 2000
 
 def contract4_view_ok(view: dict) -> bool:
     """Contract 4's View fields: `headline`, one line of text (not empty), and `risk_lines`, a list of lines of text
-    (maybe empty), both the signer's and in its `view_digest`. Passed on unchanged; only their shape is checked here."""
-    head, risk = view.get("headline"), view.get("risk_lines")
+    (maybe empty), and `headline_detail`, null or one line of text (the capped, quoted free text beside the headline),
+    all the signer's and in its `view_digest`. Passed on unchanged; only their shape is checked here."""
+    head, risk, detail = view.get("headline"), view.get("risk_lines"), view.get("headline_detail")
     return (
         isinstance(head, str)
         and 0 < len(head) <= HEADLINE_CHARS
         and "\n" not in head
+        and (detail is None or (isinstance(detail, str) and 0 < len(detail) <= HEADLINE_CHARS and "\n" not in detail))
         and isinstance(risk, list)
         and len(risk) <= RISK_LINES_MAX
         and all(isinstance(x, str) and 0 < len(x) <= RISK_LINE_CHARS and "\n" not in x for x in risk)

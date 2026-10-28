@@ -19,12 +19,14 @@ import { DEV_HOST_SENTENCE, DEV_REFUSED, devRefusedSentence, signerProblem } fro
 import { ApiError, type Workspace } from '@/api/types'
 import { CLICK_RISK } from '@/api/click'
 import { queries } from '@/api/queries'
+import { hubApproves } from '@/api/hub'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { CopyButton } from '../../ticket/Header'
 import { Section } from '../../ticket/shared'
+import { useHub } from '../hub/shared'
 import { SignShell, SignFooter, STICKY_FOOTER } from '@/components/sign/SignShell'
 
 const CLICK_RISK_SHORT = 'One click signs for you from this browser on this computer; anyone using this browser, and agents running as you, could approve. You can turn it off any time.'
@@ -88,9 +90,12 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const status = useQuery({ queryKey: ['click-status', workspace.id], queryFn: () => api.clickStatus(workspace.id) })
   const card: ClickCard | null = status.data ?? workspace.click ?? null
   const on = !!card && card.enabled
-  // Full mode (joined to a hub): the host signs nothing locally, so the card says approvals go through the hub, in view.
+  // Hub approval is on only where the signed list names the hub AND the host says it is joined to one (full mode):
+  // One click setup writes "hub" into the list in every workspace, so the list alone is no hub (run 13).
   const hostSettings = useQuery(queries.hostSettings(workspace.id))
-  const viaHub = (hostSettings.data?.sign_methods as string[] | null | undefined)?.includes('hub') === true
+  const hub = useHub(workspace.id)
+  const viaHub = (hostSettings.data?.sign_methods as string[] | null | undefined)?.includes('hub') === true && hubApproves(hub.data)
+  const clickLive = on && !!card?.available
   const [mode, setMode] = useState<'idle' | 'on' | 'off' | 'resume'>('idle')
   const [pass, setPass] = useState('')
   const [pass2, setPass2] = useState('')
@@ -180,10 +185,12 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
           <p className="mt-1" data-testid="click-risk-full">{CLICK_RISK}</p>
         </details>
         {viaHub && <p data-testid="hub-approvals" className="font-medium text-text">Approving through your hub is on.</p>}
-        <p data-testid="signing-state" className={on && card?.available && !viaHub ? "sr-only" : "text-text-muted"}>
-          {viaHub
+        <p data-testid="signing-state" className={clickLive && !viaHub ? "sr-only" : "text-text-muted"}>
+          {viaHub && clickLive
+            ? 'On: you approve here with one click. You can also approve in the hub.'
+            : viaHub
             ? 'In this workspace approvals go through your hub: you approve in the hub or on your phone, not with one click here.'
-            : on && card?.available
+            : clickLive
             ? 'On: you approve here with one click.'
             : on
               ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''} Approve in the terminal.`

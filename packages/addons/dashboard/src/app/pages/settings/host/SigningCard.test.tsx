@@ -472,6 +472,42 @@ describe('SigningCard in a Full-mode workspace (run 12 rerun 2, 4.4)', () => {
     expect(screen.queryByTestId('hub-approvals')).toBeNull()
     expect(screen.getByTestId('signing-state')).toHaveTextContent('On: you approve here with one click.')
   })
+  const hubStatus = (joined: boolean) => ({ mode: joined ? 'full' : 'standalone', joined, hub_id: joined ? 'ab'.repeat(8) : null, member: joined, link: joined ? 'bound' : null, reachable: null, not_told: false, owed: 0, reseal_needed: false, key_change_pending: false, log_sync_stuck: false, groups: null, snapshot_version: null }) as Awaited<ReturnType<typeof api.getHubStatus>>
+  const HUB_LIST = { sign_methods: ['terminal', 'click', 'phone', 'hub'] } as Awaited<ReturnType<typeof api.getHostSettings>>
+  it('run 13: hub in the signed list but never joined: no hub note, the one-click line stays', async () => {
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue(HUB_LIST)
+    const status = vi.spyOn(api, 'getHubStatus').mockResolvedValue(hubStatus(false))
+    mount(ON)
+    await openSwitch()
+    await waitFor(() => expect(status).toHaveBeenCalled())
+    expect(screen.queryByTestId('hub-approvals')).toBeNull()
+    expect(screen.queryByText(/approvals go through your hub/)).toBeNull()
+    expect(screen.getByTestId('signing-state')).toHaveTextContent('On: you approve here with one click.')
+  })
+  it('run 13: hub in the signed list, never joined, One click off: says the terminal, not the hub', async () => {
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue(HUB_LIST)
+    const status = vi.spyOn(api, 'getHubStatus').mockResolvedValue(hubStatus(false))
+    mount(OFF)
+    await openSwitch()
+    await waitFor(() => expect(status).toHaveBeenCalled())
+    expect(screen.queryByTestId('hub-approvals')).toBeNull()
+    expect(screen.getByTestId('signing-state')).toHaveTextContent('Off: you approve in the terminal with your passphrase.')
+  })
+  it('run 13: joined to a hub in full mode with hub in the list: the hub note shows', async () => {
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue(HUB_LIST)
+    vi.spyOn(api, 'getHubStatus').mockResolvedValue(hubStatus(true))
+    mount(OFF, true, { ...workspace, signing: 'full' } as Workspace)
+    expect(await screen.findByTestId('hub-approvals')).toHaveTextContent('Approving through your hub is on.')
+    expect(screen.getByTestId('signing-state')).toHaveTextContent('approvals go through your hub')
+  })
+  it('run 13: joined with One click on: the hub note shows and the one-click line still says you approve here', async () => {
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue(HUB_LIST)
+    vi.spyOn(api, 'getHubStatus').mockResolvedValue(hubStatus(true))
+    mount(ON, true, { ...workspace, signing: 'full' } as Workspace)
+    await openSwitch()
+    expect(await screen.findByTestId('hub-approvals')).toBeInTheDocument()
+    expect(screen.getByTestId('signing-state')).toHaveTextContent('On: you approve here with one click. You can also approve in the hub.')
+  })
   it('a standalone workspace shows no hub note and keeps the one-click line', async () => {
     mount(ON, true, { ...workspace, signing: 'standalone' } as Workspace)
     await openSwitch()

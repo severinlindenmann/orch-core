@@ -26,8 +26,23 @@ it('saves allowed methods through the signed settings flow and keeps reserved me
   fireEvent.click(screen.getByRole('button', { name: 'Save allowed methods' }))
   expect(ask).toHaveBeenCalledWith(expect.objectContaining({ action: { action: 'settings_set', sign_methods: ['terminal', 'click'] } }))
 })
+const hubStatus = (joined: boolean) => ({ mode: joined ? 'full' : 'standalone', joined, hub_id: joined ? 'ab'.repeat(8) : null, member: joined, link: joined ? 'bound' : null, reachable: null, not_told: false, owed: 0, reseal_needed: false, key_change_pending: false, log_sync_stuck: false, groups: null, snapshot_version: null }) as Awaited<ReturnType<typeof api.getHubStatus>>
+it('run 13: a workspace that never joined a hub does not say hub approval is on, even with hub in the list (and keeps it on save)', async () => {
+  vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 1 })
+  const status = vi.spyOn(api, 'getHubStatus').mockResolvedValue(hubStatus(false))
+  mount(true, true, 'convenience', ['terminal', 'click', 'phone', 'hub'])
+  const phone = await screen.findByLabelText('Phone (Face ID)')
+  await waitFor(() => expect(status).toHaveBeenCalled())
+  await waitFor(() => expect(screen.getByLabelText('One click on this computer')).toBeChecked())
+  expect(screen.queryByTestId('hub-approvals-methods')).toBeNull()
+  expect(screen.queryByText(/Approving through your hub/)).toBeNull()
+  fireEvent.click(phone)
+  fireEvent.click(screen.getByRole('button', { name: 'Save allowed methods' }))
+  expect(ask).toHaveBeenCalledWith(expect.objectContaining({ action: { action: 'settings_set', sign_methods: ['terminal', 'click', 'hub'] } }))
+})
 it('keeps hub in the saved list when the workspace approves through a hub (no box for it)', async () => {
   vi.spyOn(api, 'phoneAvailable').mockResolvedValue({ phones: 1 })
+  vi.spyOn(api, 'getHubStatus').mockResolvedValue(hubStatus(true))
   mount(true, true, 'convenience', ['terminal', 'click', 'phone', 'hub'])
   const phone = await screen.findByLabelText('Phone (Face ID)')
   await waitFor(() => expect(screen.getByTestId('hub-approvals-methods')).toBeTruthy())

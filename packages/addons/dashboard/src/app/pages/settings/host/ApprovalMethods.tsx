@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
+import { hubApproves } from '@/api/hub'
 import { pairServed } from '@/api/pairing'
 import { queries } from '@/api/queries'
 import { methodLabel, type SignMethod } from '@/api/signing'
 import { useSignMethods } from '@/components/sign/SignMethods'
 import { Button } from '@/components/ui/button'
 import { Section } from '../../ticket/shared'
+import { useHub } from '../hub/shared'
 import { useSettingsHandoff } from './useSettingsHandoff'
 
 export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
@@ -22,7 +24,9 @@ export function ApprovalMethods({ ws, owner }: { ws: string; owner: boolean }) {
   // Approving through the hub is switched on by One click setup has no box here: saving this list keeps it.
   const hostSettings = useQuery(queries.hostSettings(ws))
   const hubOn = (hostSettings.data?.sign_methods as string[] | null | undefined)?.includes('hub') === true
-  const hubNote = hubOn
+  // The note says hub approval is on only where the host is joined to a hub (full mode), not from the list alone.
+  const hub = useHub(ws)
+  const hubNote = hubOn && hubApproves(hub.data)
   const [draft, setDraft] = useState<SignMethod[] | null>(null)
   const [method, setMethod] = useState<SignMethod | null>(null)
   const [fallback, setFallback] = useState<SignMethod | '' | null>(null)

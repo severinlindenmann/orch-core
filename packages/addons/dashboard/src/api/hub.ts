@@ -91,6 +91,10 @@ export const hubQueries = {
   share: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'share'], queryFn: () => api.getHubShare(ws), retry: false }),
 }
 
+/** Can this workspace approve through its hub? Only once the host says it is joined in full mode: a `hub` entry in the
+ * signed sign_methods alone (One click setup writes it) is not a hub. Not known yet counts as no. */
+export const hubApproves = (s: HubStatus | null | undefined): boolean => !!s && s.joined && s.mode === 'full'
+
 /** What the top-bar chip says (A5.1). Grey is quiet (standalone, or online and connected), amber needs attention. */
 export type ChipTone = 'neutral' | 'amber'
 export interface HubChip {

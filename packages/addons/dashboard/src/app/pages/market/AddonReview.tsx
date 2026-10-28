@@ -4,6 +4,7 @@ import type { AddOnRow } from '@/api/addOnSwitches'
 import type { SignContent } from '@/api/signing'
 import type { Workspace } from '@/api/types'
 import { clickReady } from '@/api/click'
+import { hubApproves } from '@/api/hub'
 import { useClickSign } from '@/components/sign/useClickSign'
 import { useHandoff } from '@/components/sign/useHandoff'
 import { useSignMethods } from '@/components/sign/SignMethods'
@@ -12,6 +13,7 @@ import { HandoffPanel } from '@/components/sign/HandoffPanel'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
 import { Button } from '@/components/ui/button'
+import { useHub } from '../settings/hub/shared'
 
 /** Presentation only: the host's lines, notes and risk are shown as sent (the trust-line rule lives in the host's signcontent.py). */
 export function capabilityWords(value: string): string {
@@ -36,6 +38,9 @@ export function AddonReview({ workspace, row, marketplace, onBusy, onDone, onClo
   const viaClick = clickReady(workspace) && (!methods.allowed || methods.allowed.includes('click'))
   // Local signing is the default in every hub mode; the hub approval (FB15) is an optional extra the person asks for.
   const [viaHub, setViaHub] = useState(false)
+  // Offered only where the host says this workspace is joined to a hub in full mode, on the click and terminal paths alike.
+  const hubOffered = hubApproves(useHub(workspace.id).data)
+  const hubButton = (disabled = false) => hubOffered && <Button variant="ghost" disabled={disabled} onClick={() => void (viaClick ? click.cancel() : terminal.cancel()).finally(() => setViaHub(true))}>Approve in the hub instead</Button>
   const started = useRef(false)
   useEffect(() => {
     if (methods.loading || viaHub || started.current) return
@@ -61,10 +66,10 @@ export function AddonReview({ workspace, row, marketplace, onBusy, onDone, onClo
   return <div ref={panel} className="mt-2 space-y-2 rounded-lg border border-border bg-surface p-3 [&_[data-testid=sign-exact]]:max-h-[30vh] [&_[data-testid=sign-exact]]:overflow-auto" aria-label={`${label} ${row.title}`}>
     <p className="font-medium">{label} <Inline>{row.title}</Inline></p>
     {row.version && <InfoDrawer><p>Version <Inline>{row.version}</Inline></p></InfoDrawer>}
-    {viaClick && click.view ? <ClickSignPanel answer={{ ...click.view, view: { ...click.view.view, content: click.view.view.content && addonContent(click.view.view.content, marketplace) } }} ws={workspace.id} problem={click.problem} signing={signing} ready={click.phase === 'ready'} waitUntil={waitUntil} extra={click.phase === 'failed' && click.problem?.next !== 'check' ? <Button onClick={() => void (click.problem?.next === 'review' ? click.review() : click.again(action))}>Review again</Button> : undefined} label={`Approve and ${label.toLowerCase()}`} onSign={() => void click.sign()} onCancel={() => void close()} /> : terminal.request && terminal.phase === 'waiting' ? <>
+    {viaClick && click.view ? <ClickSignPanel answer={{ ...click.view, view: { ...click.view.view, content: click.view.view.content && addonContent(click.view.view.content, marketplace) } }} ws={workspace.id} problem={click.problem} signing={signing} ready={click.phase === 'ready'} waitUntil={waitUntil} extra={<>{click.phase === 'failed' && click.problem?.next !== 'check' && <Button onClick={() => void (click.problem?.next === 'review' ? click.review() : click.again(action))}>Review again</Button>}{hubButton(signing)}</>} label={`Approve and ${label.toLowerCase()}`} onSign={() => void click.sign()} onCancel={() => void close()} /> : terminal.request && terminal.phase === 'waiting' ? <>
       <HandoffPanel request={{ ...terminal.request, content: terminal.request.content && addonContent(terminal.request.content, marketplace) }} />
       <Button variant="ghost" onClick={() => void close()}>Cancel</Button>
-      {workspace.signing === 'full' && <Button variant="ghost" onClick={() => void (viaClick ? click.cancel() : terminal.cancel()).finally(() => setViaHub(true))}>Approve in the hub instead</Button>}
+      {hubButton()}
     </> : <>
       <p className="text-text-muted">{click.problem?.body ?? terminal.error?.message ?? 'Reading what this add-on can access…'}</p>
       <Button variant="ghost" onClick={() => void close()}>Cancel</Button>

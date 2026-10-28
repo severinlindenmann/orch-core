@@ -154,6 +154,71 @@ def test_orchs_own_claude_md_in_a_fresh_setup_folder_is_fine_after_setup_wrote_i
     assert claude_folder.trust_folder(env, root) is True
 
 
+def _setup_folder(tmp_path: Path, name: str) -> tuple[Path, Path, dict[str, str]]:
+    """A fresh workspace folder with what setup writes into it: the instructions, orch's skill copies in .claude."""
+    from orch.instructions.harness import write_workspace_files
+
+    (tmp_path / name).mkdir()
+    home, env = _home(tmp_path / name, {"projects": {}})
+    root = tmp_path / name / "work" / "ws"
+    (root / ".orch").mkdir(parents=True)
+    write_workspace_files(root, pointers=True, store=root / ".orch")
+    assert any((root / ".claude" / "skills").iterdir())
+    return home, root, env
+
+
+def test_orchs_own_claude_folder_from_setup_is_offered_and_trusted(tmp_path):
+    home, root, env = _setup_folder(tmp_path, "a")
+    assert claude_folder.foreign_config(root, env) is False and claude_folder.refusal(env, root) is None
+    assert claude_folder.offered(env, root) is True
+    assert claude_folder.trust_folder(env, root) is True
+    doc = json.loads((home / ".claude.json").read_text())
+    assert doc["projects"][os.path.realpath(root)] == {"hasTrustDialogAccepted": True}
+    home, root, env = _setup_folder(tmp_path, "b")
+    assert claude_folder.grant_consent(env, root) is None  # the Settings switch
+
+
+def test_anything_else_in_orchs_claude_folder_is_still_refused(tmp_path):
+    from orch.instructions.skills import builtin_skills
+
+    skill = builtin_skills()[0].name
+    cases = {
+        "settings": lambda r: (r / ".claude" / "settings.json").write_text('{"hooks": {}}'),
+        "local-settings": lambda r: (r / ".claude" / "settings.local.json").write_text("{}"),
+        "extra-skill": lambda r: (
+            (r / ".claude" / "skills" / "mine").mkdir(),
+            (r / ".claude" / "skills" / "mine" / "SKILL.md").write_text("---\nname: mine\n---\n"),
+        ),
+        "extra-file-in-orch-skill": lambda r: (r / ".claude" / "skills" / skill / "run.sh").write_text("x"),
+        "edited-skill": lambda r: (r / ".claude" / "skills" / skill / "SKILL.md").write_text("changed\n"),
+        "linked-skill": lambda r: (
+            (r / ".claude" / "skills" / skill / "SKILL.md").unlink(),
+            (r / ".claude" / "skills" / skill / "SKILL.md").symlink_to(r / ".agents" / "skills" / skill / "SKILL.md"),
+        ),
+        "commands": lambda r: (r / ".claude" / "commands").mkdir(),
+        "memory": lambda r: (r / ".claude" / "CLAUDE.md").write_text("hi\n"),
+        "mcp": lambda r: (r / ".mcp.json").write_text("{}"),
+        "local-md": lambda r: (r / "CLAUDE.local.md").write_text("hi\n"),
+    }
+    for name, add in cases.items():
+        home, root, env = _setup_folder(tmp_path, name)
+        add(root)
+        assert claude_folder.offered(env, root) is False, name
+        assert claude_folder.offered(env, root, allow_parent=True) is False, name
+        assert claude_folder.trust_folder(env, root) is False, name
+        assert claude_folder.grant_consent(env, root) is not None, name
+        assert json.loads((home / ".claude.json").read_text()) == {"projects": {}}, name
+    home, root, env = _setup_folder(tmp_path, "named")
+    (root / ".claude" / "settings.json").write_text("{}")
+    assert str(root.resolve() / ".claude" / "settings.json") in (claude_folder.refusal(env, root) or "")
+
+
+def test_a_claude_md_that_is_not_setups_own_is_still_refused(tmp_path):
+    home, root, env = _setup_folder(tmp_path, "a")
+    (root / "CLAUDE.md").write_text("@AGENTS.md\n@~/secrets.md\n")
+    assert claude_folder.offered(env, root) is False and "CLAUDE.md" in (claude_folder.refusal(env, root) or "")
+
+
 def test_a_failed_row_is_never_ready_a_macos_block_is_named_and_try_again_works(tmp):
     from tests.setup.fakes import FakePorts
     from tests.setup.test_create import progress

@@ -63,7 +63,8 @@ export function NotSignedBlock({ plan, notice = false }: { plan: Pick<StartPlan,
       </p>
       {notice && (
         <div role="note" data-testid="not-signed-notice" className="mt-2 space-y-1 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-xs leading-5 text-warning">
-          <p>{EXECUTION_LINE}</p>
+          {/* The same constant the Start agent dialog shows (and acknowledges as `start_agent`): never a copy of its words. */}
+          <p data-testid="not-signed-execution-line">{EXECUTION_LINE}</p>
           <p>Signing and starting the agent confirms you have read this.</p>
         </div>
       )}

@@ -1,6 +1,8 @@
 // "Create and start agent" (U4 PR2): the default path, Only create, agent access only without a usable grant, the step
 // limit, the start compared with the review, the risk notices, partial failures, one idem, and a reload that never starts.
-import { cleanup, screen, waitFor, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentsApi, LOGIN_NOTICE, type AgentPreview } from '@/api/agents'
 import { api, mockStore } from '@/api/client'
@@ -15,15 +17,21 @@ import { nowMs } from '@/lib/time'
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
 // The signing dialog is its own feature; here it shows the action, the "not signed" block, and reports how it ended.
 vi.mock('@/components/sign/SignPopover', () => ({
-  SignPopover: (p: { title: string; startsAgent?: boolean; controls?: React.ReactNode; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown) => void; onClose: () => void }) => {
+  SignPopover: (p: { title: string; startsAgent?: boolean; controls?: React.ReactNode; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown, how?: { via: string; unsignedShown: boolean }) => void; onClose: () => void }) => {
     const req = { ...fakeRequest({ key: 'DEMO-0044', id: 'hr_' + '0'.repeat(25) + '7' }), op: 'new' }
+    const done = (how?: { via: string; unsignedShown: boolean }) => p.onSettled?.('done', state(req, { state: 'submitted', key: 'DEMO-0044' }), req, how)
     return (
       <div role="dialog" aria-label={p.title}>
         <pre data-testid="sent-action">{JSON.stringify(p.action)}</pre>
         <span data-testid="starts-agent">{String(!!p.startsAgent)}</span>
         {p.controls}
         {p.unsigned}
-        <button onClick={() => p.onSettled?.('done', state(req, { state: 'submitted', key: 'DEMO-0044' }), req)}>signed</button>
+        {/* "signed": one click from this popover, with the unsigned slot on screen (what the real popover reports then) */}
+        <button onClick={() => done({ via: 'click', unsignedShown: true })}>signed</button>
+        <button onClick={() => done({ via: 'click', unsignedShown: false })}>signed-click-slot-not-shown</button>
+        <button onClick={() => done({ via: 'terminal', unsignedShown: false })}>signed-in-terminal</button>
+        <button onClick={() => done({ via: 'hub', unsignedShown: false })}>signed-on-hub</button>
+        <button onClick={() => done()}>signed-unknown-path</button>
         <button onClick={() => p.onSettled?.('done', state({ ...req, id: 'hr_' + '0'.repeat(25) + '8' }, { state: 'submitted', key: 'DEMO-0099' }), req)}>signed-other-request</button>
         <button onClick={() => p.onSettled?.('failed', state(req, { state: 'submitted', key: 'DEMO-0044', progress: { done: 4, of: 5, last: 'grant' } }), req)}>access-missing</button>
         <button onClick={() => p.onSettled?.('failed', state(req, { state: 'submitted', key: 'DEMO-0044', progress: { done: 2, of: 5 } }), req)}>stopped-early</button>
@@ -267,6 +275,40 @@ describe('after the ticket exists', () => {
     await waitFor(() => expect(ack).toHaveBeenCalledWith(WS(), 'start_agent'), T)
     expect(markOf(WS(), 'DEMO-0044')).toBeDefined() // "Getting started…"
     expect(markOf(WS(), 'DEMO-0044')?.failed).toBeUndefined()
+  })
+
+  it.each(['signed-in-terminal', 'signed-on-hub', 'signed-click-slot-not-shown', 'signed-unknown-path'])('the notice was in the review but signed another way (%s): not saved as read, no automatic start, Start agent is offered', async (button) => {
+    setup({ acked: {} })
+    const ack = vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } })
+    const { r, sheet } = await open()
+    await waitFor(() => expect(s.notices).toHaveBeenCalled(), T)
+    await r.user.click(await startBtn(sheet))
+    expect(await screen.findByTestId('not-signed-notice')).toBeInTheDocument()
+    await r.user.click(screen.getByRole('button', { name: button }))
+    const failed = await failedOf()
+    expect(failed.initial).toMatchObject({ harness: 'claude-code', mode: 'refine' }) // the pill's Start agent, prefilled
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
+    expect(s.start).not.toHaveBeenCalled()
+    expect(ack).not.toHaveBeenCalled()
+  })
+
+  it('the notice in the review is exactly the text the Start agent dialog shows and acknowledges', async () => {
+    setup({ acked: {} })
+    const { r, sheet } = await open()
+    await waitFor(() => expect(s.notices).toHaveBeenCalled(), T)
+    await r.user.click(await startBtn(sheet))
+    const reviewText = (await screen.findByTestId('not-signed-execution-line')).textContent
+    cleanup()
+    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ ...mockStore.workspaces[0], grant_hours: 168 }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    const { StartAgentDialog } = await import('@/app/terminal/real/StartAgentDialog')
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TooltipProvider>
+        <StartAgentDialog ws={WS()} ticket="DEMO-0044" open onClose={() => {}} onStarted={() => {}} />
+      </TooltipProvider></QueryClientProvider>,
+    )
+    const full = await screen.findByTestId('agent-risk-full', {}, T) // the notice the dialog shows in full until acknowledged
+    expect(within(full).getByTestId('execution-line').textContent).toBe(reviewText)
+    expect(reviewText).toBe(EXECUTION_LINE)
   })
 
   it('a notice already read is not shown in the review', async () => {

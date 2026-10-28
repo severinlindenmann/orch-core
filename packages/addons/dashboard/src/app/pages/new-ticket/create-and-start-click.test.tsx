@@ -10,6 +10,8 @@ import { routingApi } from '@/api/modelRouting'
 import { ApiError, type TicketDocument } from '@/api/types'
 import { clearMark, markOf, phaseOf } from '@/app/pages/ticket/progress'
 import { renderApp } from '@/test/renderApp'
+import { fakeRequest, state } from '@/test/handoffHarness'
+import { fingerprintOf, type HandoffRequest } from '@/api/handoff'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
 
@@ -127,6 +129,38 @@ describe('the real click path', () => {
     const mark = markOf(mockStore.workspaces[0].id, 'DEMO-0044')
     expect(mark?.failed).toBeUndefined()
     expect(phaseOf({ status: 'draft', claim: null } as unknown as TicketDocument, { needsYou: false, mark, run: null, now: Date.now() }).kind).toBe('starting')
+  })
+
+  it('"runs as you" never read, One click off: the notice is in the review but signed in the terminal, so it is not saved as read and nothing starts', async () => {
+    const listed = api.getWorkspaces as unknown as ReturnType<typeof vi.spyOn>
+    const before = listed.getMockImplementation() as () => Promise<Awaited<ReturnType<typeof api.getWorkspaces>>>
+    listed.mockImplementation(async () => (await before()).map((w) => ({ ...w, click: { custody: 'convenience' as const, enabled: false, available: true } })))
+    const GRANT = { id: 'gr_01M4Y46B485AXD4CBEJZ15Z1TV', until: new Date(Date.now() + 86_400_000).toISOString(), scope: 'workable' as const }
+    ;(agentsApi.runner as unknown as ReturnType<typeof vi.spyOn>).mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: GRANT } })
+    ;(agentsApi.riskNotices as unknown as ReturnType<typeof vi.spyOn>).mockResolvedValue({ acknowledged: {} })
+    const ack = vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } })
+    const base = fakeRequest({ key: 'DEMO-0044' })
+    const req = { ...base, op: 'new', fingerprint: fingerprintOf(base.review_digest, base.events, 'new') } as HandoffRequest
+    vi.spyOn(api, 'prepareHandoff').mockResolvedValue(req)
+    vi.spyOn(api, 'getHandoff').mockResolvedValue(state(req, { state: 'submitted', key: 'DEMO-0044', seq: 9 }))
+    s.preview.mockResolvedValue({
+      spec: 'f'.repeat(64), ticket: 'DEMO-0044', display: 'claude "work on DEMO-0044"', display_hidden: false, model: null, model_source: 'default',
+      cwd: { kind: 'workspace' }, cwd_path: '/w/billing', cwd_path_hidden: false, will_create_worktree: false, login_shell: false,
+      env: ['TERM'], grant: GRANT, blocked: null, warnings: [],
+    })
+    const r = renderApp('/board')
+    await waitFor(() => expect(screen.getByTestId('topbar-title')).not.toHaveTextContent(/^$/), T)
+    await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
+    const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
+    await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
+    await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
+    await r.user.click(await within(sheet).findByRole('button', { name: 'Create and start' }, T))
+    expect(await screen.findByTestId('not-signed-notice', {}, T)).toBeInTheDocument() // shown, next to the terminal panel
+    expect(s.sign).not.toHaveBeenCalled()
+    const failed = await failedOf()
+    expect(failed.reason).toMatch(/has not been read yet/)
+    expect(s.start).not.toHaveBeenCalled()
+    expect(ack).not.toHaveBeenCalled()
   })
 
   it('signed and the hand-over confirmed: the start goes on to preview for the ticket\'s own key', async () => {

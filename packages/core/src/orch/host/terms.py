@@ -145,7 +145,9 @@ def runner_info(service: WorkspaceService, person: str | None = None) -> dict[st
     hub = getattr(service, "runners", None)
     if hub is None:
         return {"connected": False, "enabled": False, "terminals": False, "gen": None, "grant": None}
-    info = hub.runner_state(service.workspace_id, person)
+    from .runnergrants import _iso
+
+    info = {**hub.runner_state(service.workspace_id, person), "now": _iso(service.clock())}
     if info["grant"] is not None and person:
         # the host's own launch rule, computed host-side so no client re-derives it (15-minute floor, member scope,
         # revoked grant, role change); `startable_until` is when the floor

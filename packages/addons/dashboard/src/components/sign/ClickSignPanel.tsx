@@ -129,6 +129,7 @@ export function TechnicalFacts({ view, action }: { view: ClickViewAnswer['view']
   return (
     <>
       {action}
+      {view.info_lines?.map((line, i) => <p key={i} data-testid="click-info-line"><Inline>{line}</Inline></p>)}
       {riskLinesOf(view).length > 0 && (
         <ul data-testid="click-risk-full" className="space-y-0.5 text-[12px] text-text">
           {riskLinesOf(view).map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}

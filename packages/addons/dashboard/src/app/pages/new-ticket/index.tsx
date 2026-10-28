@@ -417,6 +417,9 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       const withAccess = startNow && !fresh
       const made = handoffNewTicket(full, me.person, withAccess ? plan.hours : null)
       if ('problem' in made) return setServerError(made.problem)
+      if (startNow && made.action.action === 'new_sequence') {
+        made.action.launch = { harness: plan.choice.harness, mode: plan.choice.mode, ...(plan.choice.model ? { model: plan.choice.model } : {}) }
+      }
       const start: StartSnapshot | null = startNow
         ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess, notice: plan.noticeUnread }
         : null
@@ -475,7 +478,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     onDirtyChange?.(false)
   }
   /** The signer's event is in the log: the ticket exists. */
-  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null, deposit?: string, how?: SignedHow) => {
+  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null, deposit?: string, how?: SignedHow, requestId?: string) => {
     ticketExists()
     setHandoffNew(null)
     // One click signed the agent access too: only a confirmed hand-over to the runner counts as access given.
@@ -484,7 +487,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       return afterCreate(false, ticketKey)
     }
     // Only the key of this form's own `new` request starts anything; without it the ticket is just created.
-    if (start && ticketKey) return void beginStart(ticketKey, start, noticeSeen(start, how))
+    if (start && ticketKey) return void beginStart(ticketKey, start, noticeSeen(start, how), requestId)
     afterCreate(another, ticketKey)
   }
   /** The notice counts as read only when the person saw it: the review's slot showed it next to the one-click review
@@ -492,8 +495,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   const noticeSeen = (snap: StartSnapshot, how?: SignedHow) => snap.notice && how?.via === 'click' && how.unsignedShown
   const initialOf = (snap: StartSnapshot): StartInitial => ({ harness: snap.reviewed.choice.harness, mode: snap.reviewed.choice.mode, ...(snap.reviewed.choice.model ? { model: snap.reviewed.choice.model } : {}) })
   /** Every signature landed: the start runs in the background and the ticket page opens at once with "Getting started…". */
-  const beginStart = (ticketKey: string, snap: StartSnapshot, noticeRead: boolean) => {
-    void startInBackground(qc, { ws: workspace.id, key: ticketKey, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds, noticeRead })
+  const beginStart = (ticketKey: string, snap: StartSnapshot, noticeRead: boolean, requestId?: string) => {
+    void startInBackground(qc, { ws: workspace.id, key: ticketKey, requestId, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds, noticeRead })
     afterCreate(false, ticketKey)
   }
   const afterCreate = (another: boolean, ticketKey: string | null) => {
@@ -677,7 +680,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             // The access length is chosen in the review; the action follows it (a refusal for size keeps the one that was prepared).
             if (!handoffNew.start?.withAccess) return handoffNew.action
             const again = handoffNewTicket(handoffNew.draft, me.person, plan.hours)
-            return 'problem' in again ? handoffNew.action : again.action
+            return 'problem' in again ? handoffNew.action : { ...again.action, launch: handoffNew.action.action === 'new_sequence' ? handoffNew.action.launch : undefined }
           })()}
           startsAgent={!!handoffNew.start}
           summary={<div className="space-y-1 text-[13px]" data-testid="nt-summary"><p><span className="text-text-muted">Title </span><Inline>{handoffNew.draft.title.trim()}</Inline></p>{handoffNew.draft.sections.requirements?.trim() && <p className="line-clamp-3 whitespace-pre-line"><span className="text-text-muted">Should be true </span><Inline>{handoffNew.draft.sections.requirements.trim()}</Inline></p>}</div>}
@@ -695,7 +698,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           }}
           onSettled={(phase, state, request, how) => {
             const ticketKey = ownKey(state, request)
-            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start, state?.deposit, how)
+            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start, state?.deposit, how, request?.id)
             const p = state?.progress
             if (handoffNew.start && ticketKey && p?.last === 'grant' && p.done === p.of - 1) {
               partialKey.current = { key: ticketKey, initial: initialOf(handoffNew.start) }

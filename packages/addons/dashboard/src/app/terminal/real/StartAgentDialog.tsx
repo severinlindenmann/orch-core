@@ -66,6 +66,7 @@ function argsOf(f: { ticket?: string; harness: Harness; mode: AgentMode; model: 
 
 /** What a caller prefilled (the New ticket form after "Create and start agent"): the choice and one plain sentence saying why the person is asked. */
 export interface StartInitial {
+  afterRequest?: string
   harness?: Harness
   mode?: AgentMode
   model?: string
@@ -95,10 +96,26 @@ function rememberHarness(ws: string, h: Harness) {
  */
 export function StartAgentDialog({ ws, ticket, open, onClose, onStarted, initial, choose }: { ws: string; ticket?: string; open: boolean; onClose: () => void; onStarted?: (run: Run) => void; initial?: StartInitial; /** Show the form even when the agent could start right away. */ choose?: boolean }) {
   if (!open) return null
+  if (initial?.afterRequest) return <RetrySequenceStart ws={ws} requestId={initial.afterRequest} note={initial.note} onClose={onClose} onStarted={onStarted} />
   return <StartAgent ws={ws} ticket={ticket} onClose={onClose} onStarted={onStarted} initial={initial} choose={choose} />
 }
 
-type Step = 'form' | 'sign' | 'starting'
+function RetrySequenceStart({ ws, requestId, note, onClose, onStarted }: { ws: string; requestId: string; note?: string; onClose: () => void; onStarted?: (run: Run) => void }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(note)
+  const retry = async () => {
+    setBusy(true)
+    try {
+      const { run } = await agentsApi.startAfter(ws, requestId)
+      onStarted?.(run)
+      onClose()
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not start the agent.') }
+    finally { setBusy(false) }
+  }
+  return <SignShell title="Start agent" open anchor={null} onDismiss={onClose} showClose onOpenAutoFocus={() => {}}><p role="status">{error}</p><Button disabled={busy} onClick={() => void retry()}>Retry start</Button></SignShell>
+}
+
+type Step = 'form'  | 'sign' | 'starting'
 
 function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: string; ticket?: string; onClose: () => void; onStarted?: (run: Run) => void; initial?: StartInitial; choose?: boolean }) {
   const qc = useQueryClient()

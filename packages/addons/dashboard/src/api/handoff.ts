@@ -32,7 +32,7 @@ export type HandoffAction =
    * B11 (finding 9): a new ticket WITH its fields and written text on ONE review and ONE confirmation. The signer signs
    * `ticket.created`, the fields and one `ticket.updated` per written section, each checked against this intent.
    */
-  | { action: 'new_sequence'; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] }; agent?: { hours: number }; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
+  | { action: 'new_sequence'; launch?: { harness: 'claude-code' | 'codex'; mode: string; model?: string }; title: string; type: 'feature' | 'bug' | 'chore' | 'spike' | 'epic'; priority?: 'low' | 'high' | 'urgent'; size?: 'xs' | 's' | 'm' | 'l' | 'xl'; labels?: string[]; parent?: string; sections: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: string[]; people?: { owner?: string; assignees?: string[]; reviewers?: string[] }; agent?: { hours: number }; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
   /**
    * B12D (N3): an edit of an EXISTING ticket on ONE review and ONE confirmation: the changed sections (their new text), the
    * criteria to change or add, the repositories (and a branch each) the ticket is linked to, and the people to add or remove. `head_seq` is the log head the page showed: the server
@@ -216,7 +216,7 @@ function reviewMatches(material: HandoffMaterial, events: HandoffEvent[]): boole
 const MATERIAL_KEYS: Record<string, [string[], string[]]> = {
   gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review', 'manual_acceptances']],
   question: [['kind', 'ticket', 'question', 'review'], ['kind', 'ticket', 'question', 'review']],
-  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence', 'statement', 'grants', 'market', 'deps', 'removed_device']],
+  payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence', 'statement', 'grants', 'market', 'deps', 'removed_device', 'agent_access_until']],
 }
 /** The only ops whose material may carry a manual acceptance `statement` (core signer `_person_op`). */
 const STATEMENT_OPS = ['ac.accept', 'ac.unaccept']

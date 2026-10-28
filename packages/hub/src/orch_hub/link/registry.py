@@ -199,10 +199,13 @@ class Registry:
                 (
                     render_text(body["version"])[:32],
                     render_text(body["commit"])[:40],
-                    render_text(body["host"])[:80],
+                    "" if self._mode_locked(ws) else render_text(body["host"])[:80],  # a selective workspace keeps its host name
                     ws,
                 ),
             )
+
+    def _mode_locked(self, ws: str) -> bool:
+        return self.last_mode(ws) == "selective"
 
     def seen(self, ws: str, now_ms: int, peer_addr: str) -> None:
         """Display telemetry must never fail an authenticated operation."""

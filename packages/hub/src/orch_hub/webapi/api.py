@@ -1040,8 +1040,15 @@ class WebApi:
     # --- (b) person home ---------------------------------------------------------------------------------------------
 
     def _h_my_workspaces(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        rows = []
+        for w in self._workspaces(c.user_id):
+            st = workspace_status(self.d.registry, w["workspace_id"])
+            # host name, address and last seen only for the workspace owner and hub admins, never to a phone session
+            if not (w["role"] in ("admin", "owner") and c.scope != "channel"):
+                st = {k: v for k, v in st.items() if k not in ("host", "address", "last_seen_ms")}
+            rows.append({**w, **st})
         return 200, {
-            "workspaces": self._workspaces(c.user_id),
+            "workspaces": rows,
             "hub": {"version": hub_version, "min_supported": MIN_SUPPORTED_VERSION},
         }
 

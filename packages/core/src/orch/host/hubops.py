@@ -1002,7 +1002,7 @@ def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: boo
                 {
                     "version": orch.__version__,
                     "commit": "",
-                    "host": socket.gethostname()[:80],
+                    "host": socket.gethostname()[:80] if state.mode == "full" else "",  # selective keeps its host name
                 },
             )
     except Exception:

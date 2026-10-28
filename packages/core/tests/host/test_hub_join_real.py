@@ -350,3 +350,25 @@ def test_hub_snapshot_status_once_per_service_and_hub(monkeypatch, fail):
     service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
     hubops._snapshot_link(service, state, b"", None, True)
     assert len(calls) == 3
+
+
+def test_selective_status_sends_no_host_name(monkeypatch):
+    from types import SimpleNamespace
+
+    import orch.hubclient
+
+    calls = []
+
+    class Link:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def call(self, op, body):
+            calls.append(body)
+
+    monkeypatch.setattr(orch.hubclient, "HubLink", Link)
+    monkeypatch.setattr(hubops, "_transport", lambda *args: object())
+    monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
+    state = SimpleNamespace(hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="selective", hub_id="one")
+    hubops._snapshot_link(SimpleNamespace(workspace_id="ws", clock=lambda: 0), state, b"", None, True)
+    assert calls and calls[0]["host"] == "" and calls[0]["version"]

@@ -18,7 +18,6 @@ from typing import Any
 
 from ..access import role_rank
 from ..contract import phase4 as P4
-from ..versions import workspace_status
 
 TTL_MS = 30_000
 MAX_LIVE = 1000
@@ -72,7 +71,6 @@ def workspace_rows(registry: Any, access: Any, user: str) -> list[dict[str, Any]
         name = card.get("name") if type(card.get("name")) is str else None
         out.append(
             {
-                **workspace_status(registry, ws),
                 "workspace_id": ws,
                 "name": P4.render_text(name) if name else None,
                 "mode": mode,

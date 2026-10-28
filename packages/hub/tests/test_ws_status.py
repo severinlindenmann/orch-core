@@ -1,14 +1,11 @@
 """Workspace status is display-only; roles are a read of the access model."""
 
-from types import SimpleNamespace
-
 import pytest
 from webapi_helpers import WS, WS_SEL, Web
 
 from orch_hub.contract import vectorgen as G
 from orch_hub.contract.phase4 import render_text
 from orch_hub.link import LinkError, Registry
-from orch_hub.switch import workspace_rows
 from orch_hub.versions import MIN_SUPPORTED_VERSION, version_state
 from orch_hub.webapi.api import ROUTES, SWITCH_HANDLERS, route_scopes
 
@@ -21,12 +18,10 @@ def test_status_stores_rows_and_socket_address(hub, mode):
     c.request("join", hub.join_body(mode=mode))
     assert c.request("status_put", STATUS) == {}
     status = hub.registry.status(G.WS_A)
-    assert status == {**STATUS, "host": render_text(STATUS["host"]), "address": "127.0.0.1", "last_seen_ms": G.NOW}
     with hub.registry.lock, hub.registry._db:
         hub.registry._db.execute("INSERT OR REPLACE INTO owner_alias VALUES (?, ?)", (G.WS_A, G.U_ALICE))
-    access = SimpleNamespace(role_of=lambda user, ws: "admin")
-    (row,) = workspace_rows(hub.registry, access, G.U_ALICE)
-    assert all(row[k] == v for k, v in status.items())
+    host = render_text(STATUS["host"]) if mode == "full" else ""  # a selective workspace keeps its host name
+    assert status == {**STATUS, "host": host, "address": "127.0.0.1", "last_seen_ms": G.NOW}
     hub.server._now = lambda: G.NOW + 1
     c.request("owner_get", {})
     assert hub.registry.status(G.WS_A)["last_seen_ms"] == G.NOW + 1
@@ -126,8 +121,14 @@ def test_roles_and_api_rows(tmp_path):
         result = w.call("GET", "/me/workspaces", token=ann)[1]
         assert result["hub"]["min_supported"] == MIN_SUPPORTED_VERSION
         for row in result["workspaces"] + w.call("GET", "/admin/workspaces", token=admin)[1]["workspaces"]:
-            assert {"version", "commit", "host", "address", "last_seen_ms", "version_state"} <= row.keys()
+            assert {"version", "commit", "version_state"} <= row.keys()
             assert row["version_state"] == "unknown"
+        # host, address and last seen: the owner and hub admins only (ann is an edit member of WS here)
+        private = {"host", "address", "last_seen_ms"}
+        assert all(private.isdisjoint(r) for r in result["workspaces"] if r["role"] not in ("admin", "owner"))
+        assert any(r["role"] == "read" for r in result["workspaces"])
+        assert all(private <= r.keys() for r in w.call("GET", "/admin/workspaces", token=admin)[1]["workspaces"])
+        assert all(private <= r.keys() for r in w.call("GET", "/me/workspaces", token=admin)[1]["workspaces"])
     finally:
         w.close()
 

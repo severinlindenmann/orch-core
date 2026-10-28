@@ -306,7 +306,7 @@ class StubHub:
         return sign_with(private_key("hk_op"), "sig_hub_route", o)
 
     def ops(self):
-        return [m["o"]["op"] for m in self.sent if m["o"]["op"] != "status_put"]  # the display-only status report is not under test
+        return [m["o"]["op"] for m in self.sent]
 
 
 @pytest.fixture

@@ -113,6 +113,7 @@ OPS = (
     "view",
     "sign",
     "cancel",
+    "cancel_holds",
     "status",
     "custody_on",
     "custody_off",

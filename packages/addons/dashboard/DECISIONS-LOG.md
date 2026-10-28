@@ -2090,3 +2090,12 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 **Why:** Holds have already left the handoff quota, so logout must cancel them separately; serialization prevents a hold arriving after its logout cancellation.
 
 **Revert:** Revert the session-removal callback and admission lock together; doing so reopens the logout signing race.
+
+
+## 2026-10-28 — D5 second review: signer-owned session cancellation
+
+**Decision:** Auth marks sessions ending under its lock and drains cleanup after release. Hold admission and cancellation serialize outside that lock; pending holds are recorded before IPC and survive a lost reply. `cancel_holds` cancels the signer's unsigned queue by the SHA-256 hash of the bearer. A failed cancellation kills the signer, with a fresh process started on its next call. Finished dashboard hold entries are pruned; only holds require the preparing session for cancellation. Risk lines disallow holding.
+
+**Why:** The signer owns the queue even when its reply is lost. Slow or failed IPC must neither block authentication under its global lock nor leave unsigned holds eligible to sign after cleanup.
+
+**Revert:** Revert the protocol, admission gate and cleanup together; reverting just one reopens the lost-reply or logout race.

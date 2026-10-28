@@ -788,6 +788,7 @@ class ClickSigner:
             if approval.seal is None or approval.vault
             else (approval.seal.public, SEALED_OPS[approval.op]),
         )
+        approval.hold_allowed = approval.hold_allowed and not built["risk_lines"]
         built["hold_allowed"] = approval.hold_allowed
         return built
 
@@ -1473,6 +1474,24 @@ class ClickSigner:
         self._note("uncertain", workspace=approval.workspace_id, request=approval.request_id, code=exc.code)
         raise refused("uncertain", f"{exc.code}; the request is {state}") from None
 
+    def cancel_holds(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        """Forget every unsigned hold of a session, without waiting on the host."""
+        session = args.get("session")
+        if not isinstance(session, str) or not session:
+            raise ClickError("invalid.input", "session is required")
+        with self.lock:
+            for key, hold in list(self.holds.items()):
+                if hold["session"] != session or hold["state"] != "held":
+                    continue
+                approval = self.approvals.get(key)
+                if key in self._attempted or (approval is not None and approval.signed is not None):
+                    continue
+                hold["state"] = "cancelled"
+                hold["finished_at"] = self.wall()
+                if approval is not None:
+                    self._drop(approval)
+        return {"state": "cancelled"}
+
     def cancel(self, args: Mapping[str, Any]) -> dict[str, Any]:
         with self.lock:
             key = (args.get("workspace_id"), args.get("request_id"))
@@ -1487,8 +1506,6 @@ class ClickSigner:
                 hold["state"] = "cancelled"
                 hold["finished_at"] = self.wall()
             entry, approval = self._approval(args)
-            if approval.session and args.get("session") != approval.session:
-                raise ClickError("hold.session", "only the preparing session may cancel")
             if approval.signed is not None or key in self._attempted:
                 return {"state": "already_signed"}
             self._drop(approval)
@@ -2324,6 +2341,7 @@ class ClickSigner:
             "view": self.view,
             "sign": self.sign,
             "cancel": self.cancel,
+            "cancel_holds": self.cancel_holds,
             "custody_on": self.custody_on,
             "custody_off": self.custody_off,
             "rotate": self.rotate,

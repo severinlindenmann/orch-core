@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from orch.click.protocol import HOLD_OPS
+from orch.click.protocol import HOLD_OPS, RISK_BUILDERS
 from tests.host import human_helpers
 from tests.host.test_click import Click, pending, refused
 
@@ -41,6 +41,7 @@ def cancel(click, rid, session="session-a"):
 
 
 def test_closed_list():
+    assert not HOLD_OPS & RISK_BUILDERS.keys()
     assert HOLD_OPS == {"log", "set", "move", "section.set", "follow_up.reschedule"}
 
 
@@ -329,3 +330,31 @@ def test_finished_tail_does_not_consume_approval_or_hold_quota(click, human, mon
     rid, digest = hold(click, human)
     refused(lambda: hold(click, human), "rate.limited")
     assert sign(click, rid, digest)["state"] == "held"
+
+
+def test_cancel_all_unsigned_holds_by_session(click, human):
+    first, digest = hold(click, human)
+    sign(click, first, digest)
+    second, digest = hold(click, human)
+    sign(click, second, digest)
+    click.signer.holds[(click.served.wid, second)]["session"] = "other"
+    assert click.signer.handle("cancel_holds", {"session": "session-a"}) == {"state": "cancelled"}
+    advance(click, 10)
+    click.signer.run_holds()
+    assert click.signatures == 1
+    assert click.signer.holds[(click.served.wid, first)]["state"] == "cancelled"
+
+
+def test_relogin_can_cancel_normal_request(click, human):
+    rid, _ = hold(click, human)
+    assert cancel(click, rid, "new-session")["state"] == "cancelled"
+
+
+def test_risk_lines_disable_hold(click, human, monkeypatch):
+    from orch.click import view
+
+    build = view.build
+    monkeypatch.setattr(view, "build", lambda *a, **kw: {**build(*a, **kw), "risk_lines": ["Risk"]})
+    rid, digest = hold(click, human)
+    refused(lambda: sign(click, rid, digest), "hold.not_allowed")
+    assert click.signatures == 0

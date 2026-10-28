@@ -426,6 +426,7 @@ def verify(prepared: dict, ws: str, **expect) -> dict:
 def register(app: FastAPI, gateway: Gateway):
     clicks = app.state.clicks = Clicks()
     failed_bumps: dict[str, int] = {}
+    hold_gate = threading.Lock()  # serialize hold admission with session cancellation, never under auth.lock
     held: dict[str, tuple[str, str]] = {}  # request -> (workspace, preparing session); no signed bytes
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
     signer = gateway.click
@@ -800,7 +801,13 @@ def register(app: FastAPI, gateway: Gateway):
         files = planned.files
 
         def call(idem: str):
-            sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem, "session": token}
+            sent = {
+                "workspace_id": ws,
+                "op": planned.op,
+                "args": planned.args,
+                "idem": idem,
+                "session": hashlib.sha256(token.encode()).hexdigest(),
+            }
             if files:
                 sent["files"] = files
             if planned.sequence:
@@ -961,7 +968,16 @@ def register(app: FastAPI, gateway: Gateway):
         if rid in held:
             if held[rid] != (ws, request.state.token):
                 raise fail("not_found", exit=2)
-            got = signer.call("status", {"workspace_id": ws, "request_id": rid, "session": request.state.token})
+            got = signer.call(
+                "status",
+                {
+                    "workspace_id": ws,
+                    "request_id": rid,
+                    "session": hashlib.sha256(request.state.token.encode()).hexdigest(),
+                },
+            )
+            if got["state"] not in {"held", "unknown"}:
+                held.pop(rid, None)
             if got["state"] != "unknown":
                 return {"id": rid, **got}
         else:
@@ -981,6 +997,7 @@ def register(app: FastAPI, gateway: Gateway):
         if got not in STATES:
             return {"id": rid, "state": "unknown"}  # the host sent something this dashboard does not know: say so
         if got not in ("prepared", "bound"):
+            held.pop(rid, None)
             handoffs.settle_all(rid)  # every session's slot
             handoffs.settled(rid)
             clicks.forget(rid)
@@ -1018,7 +1035,7 @@ def register(app: FastAPI, gateway: Gateway):
                 "request_id": rid,
                 "view_digest": body.view_digest,
                 "delay_s": body.delay_s,
-                "session": request.state.token,
+                "session": hashlib.sha256(request.state.token.encode()).hexdigest(),
             }
             if isinstance(wanted, AgentAccess):
                 if body.reveal_key != wanted.reveal_key:  # the key of the review, nothing else (the signer checks too)
@@ -1032,22 +1049,26 @@ def register(app: FastAPI, gateway: Gateway):
             elif body.sealed is not None:
                 raise fail("invalid.input", "only a hub step takes a sealed value", exit=1)
             if body.delay_s:
-                # Session removal uses this same lock: no hold can arrive after its logout cancel.
+                # Logout marks ending before it waits for this gate; IPC never holds auth.lock.
                 auth = app.state.auth
                 if not auth.valid(request.state.token, touch=False):
                     raise fail("session.ended", exit=2)
-                with auth.lock:
-                    if request.state.token not in auth.sessions:
-                        raise fail("session.ended", exit=2)
-                    got = signer.call("sign", sent, lost=lost_sign())
-                    if got.get("state") == "held":
+                with hold_gate:
+                    with auth.lock:
+                        if request.state.token in auth.ending or request.state.token not in auth.sessions:
+                            raise fail("session.ended", exit=2)
                         held[rid] = (ws, request.state.token)
+                    got = signer.call("sign", sent, lost=lost_sign())
+                    if got.get("state") != "held":
+                        held.pop(rid, None)
             else:
                 got = signer.call("sign", sent, lost=lost_sign())
         except HostError as exc:
             # Before follow-up host reads, which may themselves fail. A definite failure never clears an earlier or a
             # concurrent unknown outcome; the rule lives in Handoffs.end_sign.
             outcome = "uncertain" if exc.error.get("reason") == "uncertain" else "definite"
+            if body.delay_s and outcome == "definite":
+                held.pop(rid, None)
             handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, outcome)
             if exc.error.get("code") == "human.request_state":
                 rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])
@@ -1108,13 +1129,22 @@ def register(app: FastAPI, gateway: Gateway):
         if rid in held:
             if held[rid] != (ws, request.state.token):
                 raise fail("not_found", exit=2)
-            got = signer.call("cancel", {"workspace_id": ws, "request_id": rid, "session": request.state.token})
+            got = signer.call(
+                "cancel",
+                {
+                    "workspace_id": ws,
+                    "request_id": rid,
+                    "session": hashlib.sha256(request.state.token.encode()).hexdigest(),
+                },
+            )
+            if got.get("state") != "held":
+                held.pop(rid, None)
             return {"id": rid, **got}
         mine(ws, rid)
         if handoffs.is_unsettled(rid):
             raise refusal_check("A signature of this is settling; it cannot be cancelled now.")
         try:
-            got = _signer_call("cancel", ws, rid, session=request.state.token)
+            got = _signer_call("cancel", ws, rid, session=hashlib.sha256(request.state.token.encode()).hexdigest())
         except HostError as exc:
             if (exc.error.get("reason") or exc.error["code"]) in ENDED | {"not_found"}:
                 ended(ws, rid)  # the signer forgot it: cancel it at the host ourselves
@@ -1127,16 +1157,15 @@ def register(app: FastAPI, gateway: Gateway):
     def cancel_session(token: str):
         """Logout: the click requests this session left open are cancelled (best effort, each on its own), except one
         whose signature is unknown and one another session of the person holds too."""
-        for rid, (ws, owner) in list(held.items()):
-            if owner != token:
-                continue
+        with hold_gate:
             try:
-                signer.call("cancel", {"workspace_id": ws, "request_id": rid, "session": token})
-            except Exception:  # noqa: BLE001 - keep cancelling the remaining holds
-                pass
-            finally:
-                held.pop(rid, None)
-                clicks.forget(rid)
+                signer.call("cancel_holds", {"session": hashlib.sha256(token.encode()).hexdigest()})
+            except Exception:  # noqa: BLE001 - an unacknowledged cancel must destroy the unsigned queue
+                signer.restart()
+            for rid, (_, owner) in list(held.items()):
+                if owner == token:
+                    held.pop(rid, None)
+                    clicks.forget(rid)
         for rid, ws in handoffs.held(token, "click"):
             if handoffs.is_unsettled(rid):
                 continue  # logout never cancels a signature whose outcome is unknown
@@ -1144,7 +1173,10 @@ def register(app: FastAPI, gateway: Gateway):
                 handoffs.settle(token, rid)
                 continue
             try:
-                signer.call("cancel", {"workspace_id": ws, "request_id": rid, "session": token})
+                signer.call(
+                    "cancel",
+                    {"workspace_id": ws, "request_id": rid, "session": hashlib.sha256(token.encode()).hexdigest()},
+                )
             except Exception:  # noqa: BLE001 - one failed cancel must not stop the rest, nor the logout
                 pass
             clicks.forget(rid)

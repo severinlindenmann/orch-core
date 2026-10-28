@@ -28,9 +28,10 @@ def serve(sock: socket.socket, signer: Any) -> None:
     """Read requests until EOF; answer each one. A framing error closes the channel."""
     decoder = frames.Decoder()
     while True:
-        if hasattr(signer, "run_holds"):
-            signer.run_holds()
+        # Give queued cancellation a turn before deadlines; idle holds still run without browser traffic.
         if not fdwait.readable(sock, 0.1):
+            if hasattr(signer, "run_holds"):
+                signer.run_holds()
             continue
         data = sock.recv(65536)
         if not data:
@@ -60,6 +61,9 @@ def serve(sock: socket.socket, signer: Any) -> None:
                 _answer(
                     sock, {"t": "res", "id": rid, "ok": False, "error": ClickError("internal", "too large").error()}
                 )
+
+        if hasattr(signer, "run_holds"):
+            signer.run_holds()
 
 
 def _watch_parent(parent: int) -> None:

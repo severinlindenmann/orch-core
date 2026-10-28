@@ -5,6 +5,7 @@ import secrets
 import threading
 import time
 from collections import deque
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -130,12 +131,32 @@ class Auth:
         self.attempts = deque()
         self.on_session_end = lambda token: None
         self.lock = threading.Lock()
+        self.ending = set()
+        self._ended = []
+
+    @contextmanager
+    def _locked(self):
+        """Collect ended sessions atomically; perform cleanup outside the auth lock."""
+        ended = []
+        try:
+            with self.lock:
+                try:
+                    yield
+                finally:
+                    ended, self._ended = self._ended, []
+        finally:
+            for token in ended:
+                try:
+                    self.on_session_end(token)
+                finally:
+                    with self.lock:
+                        self.ending.discard(token)
 
     def probe(self, nonce):
         return hmac.new(bytes.fromhex(self.probe_key), (nonce + self.instance).encode(), hashlib.sha256).hexdigest()
 
     def launch(self, port, setup=False, tunnel=False):
-        with self.lock:
+        with self._locked():
             now = self.clock()
             for stale in [c for c, until in self.codes.items() if until <= now]:
                 self._forget(stale)
@@ -182,13 +203,13 @@ class Auth:
 
     def expire(self, code):
         """The timer at the code's expiry: invalidate it and remove its file, unless redemption already did."""
-        with self.lock:
+        with self._locked():
             self._forget(code)
 
     def exchange_setup(self, nonce):
         """The one-time browser nonce of ``orch setup`` (a launch code minted for setup): constant-time compare,
         single use, 5 min. True only for the first browser that presents it; it never opens a normal session."""
-        with self.lock:
+        with self._locked():
             now = self.clock()
             found = None
             for code in self.setup_codes:  # compare against every candidate: no early exit on a prefix
@@ -206,7 +227,7 @@ class Auth:
         kinds in LAUNCH_KINDS can come out of it, and the session belongs to the loopback listener."""
         if kind not in LAUNCH_KINDS:
             raise ValueError("a launch code opens a local session only")
-        with self.lock:
+        with self._locked():
             now = self.clock()
             if code in self.setup_codes:
                 return None, 401 if self._attempt(now) else 429  # a setup nonce is not a login code
@@ -225,7 +246,7 @@ class Auth:
         oldest evicted first. ``credential_id`` is the passkey that logged in: removing it ends this session, and a
         removed one opens none (returns None)."""
         key = source_key(source) if source is not None else None
-        with self.lock:
+        with self._locked():
             if credential_id in self.revoked:
                 return None
             now = self.clock()
@@ -245,7 +266,7 @@ class Auth:
         presented a one-use ticket). Kind ``switch`` is NOT ``local``: the local-only gates and the step-up rule treat
         it like a remote session (a passkey touch for the sensitive actions). It works on the listener it was
         redeemed on, 12 h / 2 h idle like a remote one; at most ``SWITCH_SESSIONS`` live, the oldest evicted first."""
-        with self.lock:
+        with self._locked():
             now = self.clock()
             self._drop_dead(now)
             self._evict("switch", SWITCH_SESSIONS - 1)
@@ -255,7 +276,7 @@ class Auth:
 
     def switch_workspace(self, token):
         """The one workspace a switch session may read, or None for any other kind of session."""
-        with self.lock:
+        with self._locked():
             return self.switch_ws.get(token) if token in self.sessions else None
 
     # --- trusted browsers (run 12) ---
@@ -265,7 +286,7 @@ class Auth:
         one, not one a key opened. ``people`` is ``{workspace: person}`` of this computer's user now (the key's
         enrolled person). Returns the key id, or None."""
         clean = trust.clean_jwk(jwk)
-        with self.lock:
+        with self._locked():
             if (
                 clean is None
                 or token not in self.sessions
@@ -277,12 +298,12 @@ class Auth:
             return self.trusted.enrol(clean, origin, people)
 
     def trusted_list(self):
-        with self.lock:
+        with self._locked():
             return self.trusted.listing()
 
     def revoke_key(self, kid):
         """Forget a browser key; every session it opened ends (see `_end_unknown_keys`)."""
-        with self.lock:
+        with self._locked():
             found = self.trusted.remove(kid)
             self._end_unknown_keys()
             return found
@@ -300,7 +321,7 @@ class Auth:
         """E4 step 1: a nonce for the page to sign with its browser key before it presents ticket ``t_hash`` (sha256
         hex). Single use, 60 s, bound to the ticket hash and ``origin``; a newer one for the same hash replaces the
         older. Loopback only (remote listeners have no keys). None when refused or rate-limited."""
-        with self.lock:
+        with self._locked():
             now = self.clock()
             if listener != LOOPBACK or not isinstance(t_hash, str):
                 return None
@@ -338,7 +359,7 @@ class Auth:
         challenge is alive and was made for this origin, the key is enrolled (not revoked, not idle) for this origin,
         the key's enrolled person in ``ws`` is ``person`` (this dashboard's local person there), and the signature
         covers `trusted.message`. Nothing is used or renewed here (`open_keyed` does that after the redeem)."""
-        with self.lock:
+        with self._locked():
             now = self.clock()
             t_hash = trust.ticket_hash(ticket)
             held = self.switch_challenges.pop(t_hash, None)
@@ -364,7 +385,7 @@ class Auth:
         """E4 step 3, after the hub redeemed the ticket a key proved itself for: a ``local`` session pinned to loopback
         (the kind follows the listener; only loopback holds keys), exactly what a launch link gives, with no step-up
         window of its own. Using the key renews its idle time. None when the key went away in between."""
-        with self.lock:
+        with self._locked():
             now = self.clock()
             if self.trusted.get(kid) is None:
                 return None
@@ -379,7 +400,7 @@ class Auth:
         """One switch-ticket try: a remote source has its own bucket (like a passkey login); on loopback there is no
         client address, so the launch limiter (10 a minute) applies. False when the bucket is full."""
         if address is None:
-            with self.lock:
+            with self._locked():
                 return self._attempt(self.clock())
         return self.remote_attempt(address)
 
@@ -396,7 +417,9 @@ class Auth:
 
     def _drop(self, token):
         """Hold ``self.lock``."""
-        self.on_session_end(token)
+        if token not in self.ending:
+            self.ending.add(token)
+            self._ended.append(token)
         for table in (
             self.sessions,
             self.kinds,
@@ -450,7 +473,7 @@ class Auth:
         key = source_key(address)
         if key is None:
             return False
-        with self.lock:
+        with self._locked():
             now = self.clock()
             while self.remote_all and self.remote_all[0] <= now - 60:  # amortised O(1)
                 self.remote_all.popleft()
@@ -474,7 +497,7 @@ class Auth:
             return True
 
     def valid(self, token, touch=True):
-        with self.lock:
+        with self._locked():
             now = self.clock()
             # Bound retained state even if expired tabs never return.
             self._drop_dead(now)
@@ -493,12 +516,12 @@ class Auth:
 
     def login_kind(self, token):
         """How this session was opened (``"local"`` or ``"remote"``), or None for an unknown session."""
-        with self.lock:
+        with self._locked():
             return self.kinds.get(token) if token in self.sessions else None
 
     def passkey_session(self, token):
         """Is this a remote session that a passkey login opened (the passkey it used is known)? False for any other."""
-        with self.lock:
+        with self._locked():
             return (
                 token in self.sessions
                 and self.kinds.get(token) == "remote"
@@ -510,7 +533,7 @@ class Auth:
         """A verified passkey step-up for ``action`` with ``digest``, kept for this session only (never for another
         token). A newer one for the same pair replaces the older; the oldest goes beyond ``STEPUPS_PER_SESSION``.
         ``credential_id`` is the passkey that made it: removing that passkey drops it."""
-        with self.lock:
+        with self._locked():
             if token not in self.sessions or credential_id in self.revoked:
                 return False
             held = self.stepups.setdefault(token, {})
@@ -526,7 +549,7 @@ class Auth:
     def stepup_take(self, token, action, digest):
         """``(True, proof)`` once for a step-up of this session for exactly (``action``, ``digest``) that is at most
         ``STEPUP_FRESH`` old, else ``(False, None)``. Taking spends it, whatever happens to the op afterwards."""
-        with self.lock:
+        with self._locked():
             if token not in self.sessions:
                 return False, None
             entry = self.stepups.get(token, {}).pop((action, digest), None)
@@ -537,13 +560,13 @@ class Auth:
     def allow_credential(self, credential_id):
         """A passkey with this id was enrolled (again): it is no longer revoked. A new enrollment is a new passkey
         even when an authenticator reuses the id."""
-        with self.lock:
+        with self._locked():
             self.revoked.discard(credential_id)
 
     def drop_credential(self, credential_id):
         """A passkey was removed: end every session it opened (the requesting one too, if it used it) and drop every
         step-up it made in any session."""
-        with self.lock:
+        with self._locked():
             self.revoked.add(credential_id)
             for token in [t for t, c in self.credentials.items() if c == credential_id]:
                 self._drop(token)
@@ -554,17 +577,17 @@ class Auth:
     def listener_of(self, token):
         """The listener this session was opened on (``"loopback"`` or ``"remote"``), or None when unknown. A session
         without a recorded listener (a test that wrote ``kinds`` by hand) belongs to loopback."""
-        with self.lock:
+        with self._locked():
             return self.listeners.get(token, LOOPBACK) if token in self.sessions else None
 
     def logout(self, token):
-        with self.lock:
+        with self._locked():
             self._drop(token)
 
     def logout_everywhere(self, kind="remote"):
         """End every session of ``kind`` ("Log out everywhere" in Settings, R1-8); a remote logout ends the sessions
         opened by a hub switch too."""
-        with self.lock:
+        with self._locked():
             kinds = {kind, "switch"} if kind == "remote" else {kind}
             for token in [t for t, k in self.kinds.items() if k in kinds]:
                 self._drop(token)
@@ -574,14 +597,14 @@ class Auth:
 
         Retain only a credential hash and setup id; never any setup request or response body.
         """
-        with self.lock:
+        with self._locked():
             self.setup_sessions.clear()  # one setup process / bound browser per local socket
             self.setup_sessions[hashlib.sha256(token.encode()).hexdigest()] = setup_id
 
     def valid_setup(self, token):
-        with self.lock:
+        with self._locked():
             return bool(token) and hashlib.sha256(token.encode()).hexdigest() in self.setup_sessions
 
     def forget_setup(self, token):
-        with self.lock:
+        with self._locked():
             self.setup_sessions.pop(hashlib.sha256(token.encode()).hexdigest(), None)

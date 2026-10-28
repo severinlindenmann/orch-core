@@ -294,7 +294,6 @@ button[aria-busy="true"]::before { content:""; display:inline-block; width:12px;
 .connection-edge.dim { opacity:.15; }
 .connection-node { cursor:pointer; }
 .connection-node circle { fill:var(--bg, #18202a); stroke:#159c80; stroke-width:3; }
-.connection-node.offline circle { stroke:#788591; }
 .connection-node text { fill:var(--text, #e8eaed); font-size:13px; }
 .connection-node[aria-pressed="true"] circle, .connection-node:focus circle { stroke:var(--text, #e8eaed); stroke-width:5; }
 .connection-matrix { overflow-x:auto; }

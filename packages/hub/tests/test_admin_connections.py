@@ -42,14 +42,31 @@ def test_selective_recipient_and_unbound_workspaces(w):
     assert next(row for row in result["workspaces"] if row["workspace_id"] == WS_OTHER) == {
         "workspace_id": WS_OTHER,
         "name": "Sender",
-        "online": True,
-        "mode": "full",
-    }
+    }  # no presence claim: the map says only who may send to whom
 
 
-def test_missing_authz_and_empty_registry(w):
+def test_missing_authz_is_unavailable_not_an_empty_map(w):
     w.api.d.authz = None
-    assert read(w)["edges"] == []
+    status, body, _ = w.call("GET", "/admin/connections", token=w.login(w.admin))
+    assert (status, body) == (503, {"error": "unavailable"}) or body == {"error": "unavailable"}
+
+
+def test_serve_wires_the_real_authz_into_the_web_deps():
+    """The fixtures above set ``authz`` by hand: this proves ``serve()`` hands the SAME router authz to ``WebDeps``."""
+    import ast
+    from pathlib import Path
+
+    import orch_hub.serve as serve_module
+
+    tree = ast.parse(Path(serve_module.__file__).read_text())
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "WebDeps"]
+    assert calls, "serve() builds WebDeps"
+    for call in calls:
+        kw = {k.arg: k.value for k in call.keywords}
+        assert isinstance(kw.get("authz"), ast.Name) and kw["authz"].id == "authz"
+
+
+def test_empty_registry(w):
     w.reg.ws.clear()
     assert read(w) == {"workspaces": [], "edges": []}
 

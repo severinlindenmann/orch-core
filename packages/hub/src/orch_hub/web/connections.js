@@ -13,7 +13,9 @@ export function connectionsView(data, actions = {}) {
   const workspaces = data.workspaces ?? [], edges = data.edges ?? [];
   const has = (a, b) => edges.some((e) => e.from === a && e.to === b);
   const root = h("div", { class: "connections" }, h("h1", { text: "Connections" }),
-    h("p", { class: "lead", text: "Shows who may send hand-offs to whom right now, from people's access. Changing connections comes later." }));
+    h("div", { class: "row" }, h("p", { class: "lead grow", text: "Who can send to whom, right now." }),
+      h("details", { class: "info" }, h("summary", { "aria-label": "About this map", text: "i" }),
+        h("p", { class: "small muted", text: "An arrow from A to B means A can send hand-offs to B. A return arrow means B can send to A too. Choose a workspace to highlight its connections. Changing connections comes later." }))));
   if (!workspaces.length) { root.append(emptyState("workspaces")); return root; }
   const details = h("div", { class: "connection-details", "aria-live": "polite", text: "Choose a workspace to see who it can reach and who can reach it." });
   const map = svg("svg", { viewBox: "0 0 640 480", "aria-label": "Connections between workspaces" });
@@ -49,8 +51,8 @@ export function connectionsView(data, actions = {}) {
   }
   for (const w of workspaces) {
     const [x, y] = positions.get(w.workspace_id);
-    const node = svg("g", { class: "connection-node " + (w.online ? "online" : "offline"), role: "button", tabindex: 0, "aria-pressed": "false", "aria-label": label(w) + (w.online ? " · online" : " · offline") });
-    const name = svg("text", { x, y: y + 47, "text-anchor": "middle" }); name.textContent = label(w) + (w.online ? "" : " · offline");
+    const node = svg("g", { class: "connection-node", role: "button", tabindex: 0, "aria-pressed": "false", "aria-label": label(w) });
+    const name = svg("text", { x, y: y + 47, "text-anchor": "middle" }); name.textContent = label(w);
     const initial = svg("text", { x, y: y + 6, "text-anchor": "middle" }); initial.textContent = label(w).slice(0, 2);
     node.append(svg("circle", { cx: x, cy: y, r: 28 }), initial, name);
     node.addEventListener("click", () => select(w));
@@ -58,7 +60,7 @@ export function connectionsView(data, actions = {}) {
     nodes.push({ workspace: w, node }); map.append(node);
   }
   root.append(h("section", { class: "card connections-map" }, h("h2", { text: "Map" }),
-    h("p", { text: "An arrow A → B means A may reach B. A return arrow means B may reach A too. Green workspaces are online; grey ones are offline. Choose a workspace to highlight its connections." }), map, details));
+    map, details));
   root.append(h("section", { class: "card connection-matrix" }, h("h2", { text: "Who may reach whom" }),
     h("table", {}, h("caption", { text: "Read from a row to a column." }),
       h("thead", {}, h("tr", {}, h("th", { scope: "col", text: "From / to" }), workspaces.map((w) => h("th", { scope: "col", text: label(w) })))),

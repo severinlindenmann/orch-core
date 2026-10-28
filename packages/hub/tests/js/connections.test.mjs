@@ -18,7 +18,7 @@ globalThis.document = {
 const { connectionsView } = await import("../../src/orch_hub/web/connections.js");
 const { parseRoute } = await import("../../src/orch_hub/web/route.js");
 const data = {
-  workspaces: [{ workspace_id: "a", name: "Alpha", online: true }, { workspace_id: "b", name: "Beta", online: false }, { workspace_id: "c", name: "<img onerror=bad>", online: true }],
+  workspaces: [{ workspace_id: "a", name: "Alpha" }, { workspace_id: "b", name: "Beta" }, { workspace_id: "c", name: "<img onerror=bad>" }],
   edges: [{ from: "a", to: "b" }, { from: "c", to: "a" }],
 };
 test("directional matrix is text only, with safe names and honest explanation", () => {
@@ -27,7 +27,8 @@ test("directional matrix is text only, with safe names and honest explanation", 
   assert.equal(all.filter((n) => n.tag === "button" || n.tag === "img").length, 0);
   assert.match(view.textContent, /<img onerror=bad>/);
   assert.match(view.textContent, /Changing connections comes later/);
-  assert.equal(all.filter((n) => n.attrs.class === "connection-node offline").length, 1);
+  assert.doesNotMatch(view.textContent.replace(/An arrow from A[^]*later\./, ""), /online|offline/i); // no presence claim; the legend sits behind the i
+  assert.ok(all.some((n) => n.tag === "summary" && n.textContent === "i"));
   assert.equal(all.filter((n) => n.tag === "path").length, 2);
 });
 test("click and keyboard selection highlight incoming and outgoing arrows", () => {

@@ -1367,26 +1367,25 @@ class WebApi:
         return 200, {"workspaces": out}
 
     def _h_a_connections(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        if self.d.authz is None:
+            raise ApiError("unavailable")  # an empty map would say "nobody can reach anyone": say nothing instead
         reg = self.d.registry
         workspaces = []
         for ws in sorted(reg.pins()):
-            mode = reg.mode(ws)
-            if mode is None:
+            if reg.mode(ws) is None:
                 continue
             name = (reg.card(ws) or {}).get("name")
             workspaces.append(
                 {
                     "workspace_id": ws,
                     "name": P4.render_text(name) if type(name) is str and name else None,
-                    "online": True,
-                    "mode": mode,
                 }
             )
         edges = [
-            {"from": a["workspace_id"], "to": b["workspace_id"]}
+            {"from": a["workspace_id"], "to": other["workspace_id"]}
             for a in workspaces
-            for b in workspaces
-            if self.d.authz is not None and self.d.authz.may_route(a["workspace_id"], b["workspace_id"])
+            for other in workspaces
+            if self.d.authz.may_route(a["workspace_id"], other["workspace_id"])
         ]
         return 200, {"workspaces": workspaces, "edges": edges}
 

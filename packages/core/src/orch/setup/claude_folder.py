@@ -14,6 +14,7 @@ from pathlib import Path
 __all__ = [
     "claude_installed",
     "claude_path",
+    "config_state",
     "foreign_config",
     "grant_consent",
     "offered",
@@ -213,6 +214,34 @@ def grant_consent(env: Mapping[str, str], root: str | os.PathLike[str], *, allow
     return why
 
 
+def _create_config(cfg: Path, real: str) -> bool:
+    """``~/.claude.json`` does not exist yet: create it with exactly ``{"projects": {<root>: {trust}}}`` (the runner's
+    locked, exclusive, 0600 writer; a missing or odd home folder, or a file made meanwhile, gives False)."""
+    from orch.runner.claude_trust import _write
+
+    try:
+        if not os.path.isdir(cfg.parent) or os.path.islink(cfg.parent):
+            return False
+        return bool(_write(cfg, [real]))
+    except Exception:  # noqa: BLE001 - Claude Code then asks itself
+        return False
+
+
+def config_state(env: Mapping[str, str], root: str | os.PathLike[str] | None = None) -> str:
+    """The real state of Claude Code's settings file: ``"missing"`` (Claude Code has not been started on this computer
+    yet), ``"odd"`` (a link, unreadable or not a JSON object: left alone), ``"ready"`` otherwise."""
+    from orch.runner.claude_trust import _config_path
+
+    cfg = _config_path(env)
+    if cfg is None or not os.path.lexists(cfg):
+        return "missing"
+    data = _read_regular(str(cfg))
+    try:
+        return "ready" if data is not None and isinstance(json.loads(data.decode("utf-8")), dict) else "odd"
+    except ValueError:
+        return "odd"
+
+
 def trust_folder(env: Mapping[str, str], root: str | os.PathLike[str], *, allow_parent: bool = False) -> bool:
     """Record the trust for ``root``. False (silently) when there is no ``claude`` config file to edit, the file is
     odd, or the folder is not a safe workspace root; never raises."""
@@ -226,7 +255,11 @@ def trust_folder(env: Mapping[str, str], root: str | os.PathLike[str], *, allow_
     if not allow_parent and parent_config(real, env):  # above the folder: only on the explicit choice
         return False
     _consent(real)
-    if cfg is None or not _root_ok(real, env) or os.path.islink(cfg) or not os.path.isfile(cfg):
+    if cfg is None or not _root_ok(real, env):
+        return False
+    if not os.path.lexists(cfg):  # Claude Code has not run yet: make the smallest valid file, only our one entry
+        return _create_config(cfg, real)
+    if os.path.islink(cfg) or not os.path.isfile(cfg):
         return False
     for _ in (1, 2):
         try:

@@ -1,4 +1,4 @@
-import onePressOps from '../../../../contracts/core/click_one_press_ops.json'
+import onePressOps from '../../../../contracts/core/click_one_press_ops.json' with { type: 'json' }
 // A fake dashboard server for the browser spec of the Add-ons page (A10): it serves the production build (`dist/`) and answers
 // the dashboard server's /api routes from plain data, including the marketplace host ops (mocked: the Python side is G3's).
 // Every request is recorded in `calls`, so the spec can prove what the page asked for (the staged id in the hand-off) and that

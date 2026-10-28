@@ -278,6 +278,7 @@ function NewScheduleDialog({ ws, tickets, maxHours, leadS, onClose }: { ws: stri
               action={scheduleAddAction(form)}
               autoStart
               confirmLabel="Create schedule"
+              minLeadS={leadS}
               onSettled={(p) => {
                 if (p === 'done') {
                   void qc.invalidateQueries({ queryKey: scheduleKey(ws) })

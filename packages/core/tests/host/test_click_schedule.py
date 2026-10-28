@@ -53,6 +53,9 @@ def test_a_schedule_set_prepared_by_the_host_is_accepted_and_signed_by_the_click
     # schedule's own risk is a line of the review
     assert shown["risk"] == RISK
     assert SCHEDULE_RISK in shown["lines"] and "No click or confirmation is required at firing time." in shown["lines"]
+    # FIRST, before the rule's details: the dashboard shows `lines` in a short scroll box (ClickSignPanel max-h-64)
+    assert shown["lines"][:2] == [SCHEDULE_RISK, "No click or confirmation is required at firing time."]
+    assert shown["lines"].count(SCHEDULE_RISK) == 1
     click.mono.t += 1.5
     res = click.sign(p["request_id"], v["view_digest"])
     assert res["result"] and click.signatures == 1

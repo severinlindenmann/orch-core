@@ -292,7 +292,7 @@ export function alreadySigned(e: Pick<ApiError, 'signed_at' | 'op' | 'summary'>)
 export const alreadyDetails = (e: Pick<ApiError, 'summary'>): string | undefined => e.summary || undefined
 
 /** Every code and reason of section 0.8.6 as one honest message and the one thing to do next. Unknown codes are shown as they are. */
-export function clickProblem(e: unknown): ClickProblem {
+export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
   if (!(e instanceof ApiError)) return { title: 'Could not reach the dashboard server', body: 'Try again.', next: 'retry' }
   switch (e.code) {
     case 'human.click_refused':
@@ -354,7 +354,7 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'Not found', body: 'The dashboard server does not know this request any more. Prepare it again.', next: 'prepare' }
     case 'schedule.denied': {
       // run 13: the host's raw words ("first occurrence must be after the minimum scheduling lead") stay folded
-      const lead = scheduleDenial(e.code, e.message)
+      const lead = scheduleDenial(e.code, e.message, minLeadS)
       if (lead) return { title: 'Too soon', body: `${lead} Nothing was signed. Pick a later time.`, next: 'terminal', details: e.message }
       return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: 'terminal' }
     }

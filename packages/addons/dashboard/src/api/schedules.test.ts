@@ -49,6 +49,15 @@ describe('the minimum scheduling lead (run 13)', () => {
     expect(p.details).toBe(raw) // the host's own words stay folded under Technical details
     expect(clickProblem(new ApiError(400, { code: 'schedule.denied', message: 'ticket_closed', retryable: false })).body).toBe('ticket_closed')
   })
+
+  it('says the lead the server returned when it is known, not always an hour', () => {
+    const raw = 'first occurrence must be after the minimum scheduling lead'
+    expect(scheduleDenial('schedule.denied', raw, 30)).toBe('A schedule must start at least 30 seconds from now.')
+    expect(scheduleDenial('schedule.denied', raw, undefined)).toBe('A schedule must start at least 1 hour from now.')
+    const p = clickProblem(new ApiError(400, { code: 'schedule.denied', message: raw, retryable: false }), 7200)
+    expect(p.body).toContain('A schedule must start at least 2 hours from now.')
+    expect(p.body).not.toContain('1 hour')
+  })
 })
 
 describe('scheduleSummary', () => {

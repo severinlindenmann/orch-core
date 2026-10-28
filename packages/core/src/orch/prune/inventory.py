@@ -3,7 +3,8 @@
 Sources, all of them recorded by orch itself: the install record (``<state>/install/install.json``), the host registry
 (``<state>/host/workspaces.json``), the per-workspace pins (``<state>/hosts/<id>/git-pins.json``), the unit files orch
 writes (named by the constants of the modules that write them), the state and release folders, Claude Code's
-``.claude.json`` (only the entries the runner wrote for ticket work folders and the one trust key setup set on a workspace root) and, on Linux, the accounts of
+``.claude.json`` (only the entries the runner wrote for ticket work folders, and the one trust key setup set on a
+workspace root) and, on Linux, the accounts of
 :mod:`orch.setup.osusers`. A folder that is not recorded is never listed for removal.
 """
 

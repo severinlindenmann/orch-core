@@ -5,15 +5,16 @@ import { ago, chip, dot, h, text } from "./ui.js";
 
 const WHAT = {
   hub: "This server. Your workspaces, people and approvals live here.",
-  relay: "Sends phone alerts so you can approve on your iPhone.",
+  relay: "Sends phone alerts so you can approve on your phone.",
+  edge: "Edge: puts the hub on a public address.",
   publish: "Shows shared pages to people outside the company.",
 };
-const NAME = { hub: "Hub", relay: "Relay", publish: "Publish" };
+const NAME = { hub: "Hub", relay: "Relay", publish: "Publish", edge: "Edge" };
 const COMMAND = { hub: "orch install hub", relay: "orch install relay", publish: "orch install publish" };
 
 /** One row's state in plain words: label, chip kind, dot kind. */
 export function stateOf(svc) {
-  if (svc.state === "up") return { label: svc.name === "hub" ? "Running" : "Responding", kind: "ok", dot: "up" };
+  if (svc.state === "up") return { label: ["hub", "edge"].includes(svc.name) ? "Running" : "Responding", kind: "ok", dot: "up" };
   if (svc.state === "not_set_up") return { label: "Not set up", kind: "", dot: "" };
   return { label: "Not answering", kind: "warn", dot: "warn" };
 }
@@ -46,28 +47,53 @@ function restart(name, copy) {
     h("div", { class: "cmd" }, h("code", { text: cmd }), btn));
 }
 
+function connections(data) {
+  const node = (name, status, kind) => h("li", { class: "node " + kind },
+    h("b", { text: text(name) }), h("span", { class: "small", text: status }));
+  const serviceNode = (name) => {
+    const svc = data[name] ?? { state: "not_set_up" };
+    const st = stateOf({ ...svc, name });
+    return node(NAME[name], svc.state === "up" ? "Running" : st.label, st.kind || "muted");
+  };
+  const ws = data.workspaces ?? { count: 0, online: 0 };
+  const list = data.workspaces_list;
+  const workspaces = Array.isArray(list) && list.length ? list.slice(0, 8).map((w) =>
+    node(w.name ?? "Workspace " + String(w.workspace_id ?? "").slice(0, 8), w.online ? "online" : "offline", w.online ? "ok" : "muted")) :
+    [node("Workspaces", Array.isArray(list) ? "0 workspaces, 0 online" : ws.count + " workspaces, " + ws.online + " online", "muted")];
+  if (list?.length > 8) workspaces.push(h("li", { class: "small muted", text: "+" + (list.length - 8) + " more" }));
+  const arrow = (label) => h("div", { class: "arrow" }, label,
+    h("span", { class: "flow-direction", "aria-hidden": "true" }));
+  return h("section", { class: "card svc-connections", "aria-labelledby": "connections-title" },
+    h("h2", { id: "connections-title", text: "How it connects" }),
+    h("div", { class: "flow" },
+      h("ul", { class: "flow-column", "aria-label": "Workspaces" }, workspaces), arrow("link"),
+      h("ul", { class: "flow-column", "aria-label": "Hub" }, serviceNode("hub")), arrow(""),
+      h("ul", { class: "flow-column", "aria-label": "Connected services" }, ["relay", "publish", "edge"].map(serviceNode))));
+}
+
 /** data: GET /admin/services. actions: {check, open, copy}. */
 export function servicesView(data, actions, now = Date.now()) {
   if (!["hub", "relay", "publish"].some((name) => data[name])) return [h("h1", { text: "Services" }), emptyState("services")];
   const sum = summary(data);
-  const rows = ["hub", "relay", "publish"].map((name) => {
-    const svc = data[name], st = stateOf({ ...svc, name });
+  const rows = ["hub", "relay", "publish", "edge"].map((name) => {
+    const svc = data[name] ?? { state: "not_set_up", url: null }, st = stateOf({ ...svc, name });
     return h("article", { class: "svc-row", id: "svc-" + name, "data-state": svc.state },
       h("div", { class: "svc-main" },
         h("h3", {}, dot(st.dot), NAME[name]),
         h("p", { class: "small muted", text: WHAT[name] }),
-        h("p", { class: "small muted", text: detail(name, svc, now) })),
+        h("p", { class: "small muted", text: name === "edge" ? text(svc.url) : detail(name, svc, now) })),
       h("div", { class: "svc-side" },
         chip(st.label, st.kind),
-        h("span", { class: "small muted", text: svc.version ? "Version " + text(svc.version) : "Version -" }),
-        name !== "hub" ? h("button", { class: svc.state === "down" ? "pri" : "", text: "Check now", onclick: () => actions.check() }) : null),
-      restart(name, actions.copy));
+        name !== "edge" ? h("span", { class: "small muted", text: svc.version ? "Version " + text(svc.version) : "Version -" }) : null,
+        ["relay", "publish"].includes(name) ? h("button", { class: svc.state === "down" ? "pri" : "", text: "Check now", onclick: () => actions.check() }) : null),
+      name !== "edge" ? restart(name, actions.copy) : null);
   });
   const ws = data.workspaces ?? { count: 0, online: 0 };
   return [
     h("h1", { text: "Services" }),
     h("div", { class: "overall " + sum.kind, id: "services-summary", role: "status" }, dot(sum.kind ? "warn" : "up"), sum.text),
     h("p", { class: "muted", text: "Workspaces connect to this hub. The hub sends phone alerts through Relay and outside pages through Publish." }),
+    connections(data),
     h("section", { class: "card svc-list", "aria-label": "Services" }, rows),
     h("section", { class: "card row" },
       h("div", { class: "grow" }, h("h3", { text: "Workspaces" }), h("p", { class: "small muted", id: "services-ws", text: ws.count + (ws.count === 1 ? " workspace" : " workspaces") + ", " + ws.online + " online" })),

@@ -35,10 +35,11 @@ function h(tag, props = {}, ...kids) {
   if (props["data-sign"] !== undefined) { e.arm = () => arm(e); e.arm(); }
   return e;
 }
+let servicesTimer, viewRevision = 0;
 let frame = null;
 let railSnapshot = "";
 let paintedRoute = null;
-const show = (...nodes) => { frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
+const show = (...nodes) => { clearInterval(servicesTimer); viewRevision++; frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
 const field = (label, input) => h("div", {}, h("label", { text: label }), input);
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
@@ -137,6 +138,7 @@ function pageLoading(active, kind = active) {
 }
 
 function shell(active, ...nodes) {
+  if (active !== "services") { clearInterval(servicesTimer); viewRevision++; } // leave the Services page: stop its refresh
   const sameRoute = paintedRoute === location.hash;
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
   const name = renderText(state.user?.name ?? "");
@@ -332,19 +334,28 @@ async function copyText(t) {
   try { await navigator.clipboard.writeText(t); toast("Copied"); return true; } catch { toast("Copy failed: select the text by hand"); return false; }
 }
 
-async function services() {
-  const finishLoading = loading();
-  pageLoading("services");
+async function services(silent = false) {
+  const revision = viewRevision;
+  const finishLoading = silent ? () => {} : loading();
+  if (!silent) pageLoading("services");
   try {
     if (!(await refresh())) return loginView();
     state.menu = false;
     await loadRail();
     if (!state.user.is_admin) return home();
     if (state.user.needs_sign_in) return reauthView();
-    const r = await api("GET", "/admin/services");
+    const [r, ws] = await Promise.all([api("GET", "/admin/services"), api("GET", "/me/workspaces")]);
+    if (revision !== viewRevision) return;
     if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
     if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
-    shell("services", servicesView(r.body, { check: services, open: () => navigate("#/workspaces"), copy: copyText }));
+    shell("services", servicesView({ ...r.body, workspaces_list: ws.status === 200 ? ws.body.workspaces : undefined }, { check: () => services(), open: () => navigate("#/workspaces"), copy: copyText }));
+    clearInterval(servicesTimer);
+    let checking = false;
+    servicesTimer = setInterval(async () => {
+      if (document.hidden || checking) return;
+      checking = true;
+      try { await services(true); } finally { checking = false; }
+    }, 15000);
   } finally { finishLoading(); }
 }
 

@@ -358,6 +358,7 @@ ROUTES: tuple[Route, ...] = (
         "Register the phone's APNs target and push key (channel session of that channel)",
     ),
     # (d) admin console
+    _r("GET", "/admin/people/{user_id}/reach", "admin", "a_person_reach", "Explain a person's workspace access"),
     _r("GET", "/admin/users", "admin", "a_users", "List users"),
     _r("DELETE", "/admin/users/{user_id}", "admin", "a_user_remove", "Remove a user"),
     _r(
@@ -1401,6 +1402,11 @@ class WebApi(ChangeHandlers):
         return 200, {"ok": True}
 
     # --- (d) admin console (route auth = hub-admin, checked in the pipeline) -----------------------------------------
+
+    def _h_a_person_reach(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        from .reach import person_reach
+
+        return 200, person_reach(self.d.access, self.d.registry, p["user_id"])
 
     def _h_a_users(self, c: Ctx, p: dict, q: dict, b: dict | None):
         return 200, {"users": self.d.access.users()}

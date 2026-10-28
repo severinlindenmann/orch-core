@@ -107,6 +107,7 @@ test("workspace table shows modes, status, versions, hosts, warnings and hand-of
   assert.match(t, /The hub still works with 0.1.0 and newer\./);
   assert.match(t, /Everything/);
   assert.match(t, /Only what I choose/);
+  assert.match(t, /Personal: only its owner/);
   assert.match(t, /Offline.*since 2 min ago/);
   assert.match(t, /0.2.0 · abcdef1/);
   assert.match(t, /newest/);

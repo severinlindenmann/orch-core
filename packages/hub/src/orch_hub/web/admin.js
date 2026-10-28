@@ -1,3 +1,4 @@
+import { personReachView } from "./admin_reach.js";
 import { skeleton, replaceContent, toast } from "./feel.js";
 import { renderText } from "./render.js";
 import { sentence } from "./changes.js";
@@ -263,7 +264,7 @@ export function adminView(d) {
     const workspace = select(data.workspaces.filter((w) => w.mode === "full").map((w) => [w.workspace_id, w.name ?? w.workspace_id]));
     const group = select(data.groups.filter((g) => g.name !== "hub-admin").map((g) => [g.name, g.name]));
     const role = select(["read", "edit", "admin"].map((r) => [r, roleName(r)]));
-    return [h("h2", { text: "Access" }), p("Groups grant access to full workspaces. Selective workspaces accept only their owner. Hub administrators manage every full workspace."),
+    return [h("h2", { text: "Access" }), personReachView(d, data.users), p("Groups grant access to full workspaces. Selective workspaces accept only their owner. Hub administrators manage every full workspace."),
       table(["Group", ...data.workspaces.map((w) => workspaceName(w.workspace_id)), "Members"], data.groups.map((g) => [txt(g.name),
         ...data.workspaces.map((w) => w.mode === "selective" ? "Personal · owner only" : g.name === "hub-admin" ? "Admin" : roleName(data.grants.find((x) => x.workspace_id === w.workspace_id && x.group === g.name)?.role ?? "No access")),
         String(g.members.length)]), "Grants overview"),

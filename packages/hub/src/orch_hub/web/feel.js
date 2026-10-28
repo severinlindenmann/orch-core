@@ -73,7 +73,7 @@ export function toast(msg, { undo } = {}) {
   const dismiss = () => { clearTimeout(timer); el.remove(); };
   if (typeof undo === "function") el.append(h("button", { text: "Undo", onclick: () => { dismiss(); undo(); } }));
   region.append(el);
-  const timer = setTimeout(dismiss, TOAST_DURATION);
+  const timer = setTimeout(dismiss, typeof undo === "function" ? UNDO_DURATION : TOAST_DURATION);
   dismissToast = dismiss;
   return dismiss;
 }
@@ -162,4 +162,82 @@ export function replaceContent(container, nodes, preserve = true) {
       if (typeof old.selectionStart === "number") el.setSelectionRange?.(old.selectionStart, old.selectionEnd, old.selectionDirection);
     }
   }
+}
+// Pure interaction rules, shared by the driver and node tests.
+export const UNDO_DURATION = 5000;
+export const retryDelay = (attempt) => Math.min(15000, 2000 * 2 ** Math.max(0, attempt));
+export const itemKey = (item) => JSON.stringify([item.workspace_id, item.item_id ?? item.key]);
+export function searchEntries({ admin = false, workspaces = [], items = [], people = [] }) {
+  const pages = [["Home", "home"], ["Workspaces", "workspaces"], ...(admin ? [["Services", "services"], ["Admin", "admin"]] : [])];
+  return [
+    ...pages.map(([label, page]) => ({ group: "Pages", label, hash: "#/" + page })),
+    ...workspaces.map((w) => ({ group: "Workspaces", label: w.name || w.id, hash: "#/w/" + encodeURIComponent(w.id) })),
+    ...items.map((it) => ({ group: "Tickets and items", label: [it.key, it.title ?? it.kind].filter(Boolean).join(" · "), hash: "#/w/" + encodeURIComponent(it.workspace_id) + "/item/" + encodeURIComponent(it.key || it.item_id) })),
+    ...(admin ? people.map((p) => ({ group: "People", label: p.name || p.user_id, hash: "#/admin" })) : []),
+    ...(admin ? [{ group: "Actions", label: "Connect a workspace", hash: "#/admin", action: "connect" }] : []),
+  ];
+}
+export function filterSearch(entries, query) {
+  const words = query.trim().toLocaleLowerCase().split(/\s+/);
+  return entries.filter((e) => words.every((word) => e.label.toLocaleLowerCase().includes(word)));
+}
+export function shortcut(key, { typing = false, meta = false, ctrl = false, alt = false, prefix = false, admin = false } = {}) {
+  if (typing || alt) return null;
+  if (meta || ctrl) return key.toLowerCase() === "k" ? "search" : null;
+  if (key === "/") return "search";
+  if (key === "?") return "shortcuts";
+  if (prefix) return ({ h: "home", w: "workspaces", ...(admin ? { s: "services", a: "admin" } : {}) })[key] ?? null;
+  return key === "g" ? "prefix" : null;
+}
+export async function busyButton(button, action) {
+  if (button.disabled || button.getAttribute("aria-busy") === "true") return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  try { return await action(); }
+  finally { button.removeAttribute("aria-busy"); if (button.arm) button.arm(); else button.disabled = false; }
+}
+export function slideOut(row) {
+  if (row.classList.contains("row-done")) return;
+  row.classList.add("row-done");
+  setTimeout(() => {
+    const rect = row.getBoundingClientRect();
+    row.remove();
+    if (rect.bottom < 0) window.scrollBy(0, -rect.height);
+  }, 220);
+}
+
+// Retain matching nodes (and their focus/listeners) while updating read-only lists.
+export function reconcileRows(target, source) {
+  const old = [...target.children];
+  const keyed = new Map(old.filter((el) => el.dataset.liveKey).map((el) => [el.dataset.liveKey, el]));
+  const used = new Set();
+  [...source.children].forEach((fresh, index) => {
+    const key = fresh.dataset.liveKey;
+    const existing = key ? keyed.get(key) : old[index];
+    if (existing && existing.tagName === fresh.tagName && !used.has(existing) && (!existing.dataset.liveKey || key)) {
+      used.add(existing);
+      for (const attr of fresh.attributes) if (attr.name !== "class" || !existing.classList.contains("row-new")) existing.setAttribute(attr.name, attr.value);
+      const oldText = [...existing.childNodes].filter((n) => n.nodeType === 3);
+      const newText = [...fresh.childNodes].filter((n) => n.nodeType === 3);
+      if (oldText.length === newText.length) oldText.forEach((n, i) => { if (n.textContent !== newText[i].textContent) n.textContent = newText[i].textContent; });
+      if (existing.children.length || fresh.children.length) reconcileRows(existing, fresh);
+      else if (existing.textContent !== fresh.textContent) existing.textContent = fresh.textContent;
+    } else {
+      target.append(fresh);
+      for (const row of fresh.matches("article[data-live-key]") ? [fresh] : fresh.querySelectorAll("article[data-live-key]")) {
+        row.classList.add("row-new");
+        row.append(h("span", { class: "new-mark", text: "New" }));
+        setTimeout(() => { row.classList.remove("row-new"); row.querySelector(".new-mark")?.remove(); }, 2000);
+      }
+    }
+  });
+  for (const el of old) if (!used.has(el)) {
+    // A focused row remains until focus leaves, so polling never steals focus.
+    if (el.contains(document.activeElement)) el.addEventListener("focusout", () => { queueMicrotask(() => { if (!el.contains(document.activeElement)) slideOut(el); }); }, { once: true });
+    else slideOut(el);
+  }
+}
+
+export function shouldPoll({ now, due, visible, active, busy }) {
+  return visible && active && !busy && now >= due;
 }

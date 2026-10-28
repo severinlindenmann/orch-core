@@ -1,4 +1,4 @@
-import { emptyState } from "./feel.js";
+import { emptyState, itemKey } from "./feel.js";
 import { renderText } from "./render.js";
 
 function h(tag, props = {}, ...kids) {
@@ -52,9 +52,9 @@ export function homeView(d) {
   const workspaceName = (id) => shortName(byId.get(id), id);
   const needs = h("section", { class: "card needs-you", "aria-labelledby": "needs-heading" },
     h("div", { class: "section-head row" }, h("h2", { id: "needs-heading", class: "grow", text: "Needs you" }), chip(String(items.length))),
-    items.length ? workspaces.filter((w) => items.some((it) => it.workspace_id === w.workspace_id)).map((w) => h("section", { class: "workspace-needs" },
+    items.length ? workspaces.filter((w) => items.some((it) => it.workspace_id === w.workspace_id)).map((w) => h("section", { class: "workspace-needs", "data-live-key": w.workspace_id },
       h("h3", { text: workspaceName(w.workspace_id) }),
-      items.filter((it) => it.workspace_id === w.workspace_id).map((it) => h("article", { class: "list-row row" },
+      items.filter((it) => it.workspace_id === w.workspace_id).map((it) => h("article", { class: "list-row row", "data-live-key": itemKey(it) },
       h("div", { class: "grow" }, h("h3", { text: text(it.title ?? it.kind) }),
         note([text(it.key), workspaceName(it.workspace_id)].filter(Boolean).join(" · ")),
         note(summary(it) ? "Summary only, answer on your Mac" : "Shared with the hub, you can sign here")),
@@ -64,7 +64,7 @@ export function homeView(d) {
       h("div", { class: "grow" }, h("b", { text: workspaceName(id) }), note("Workspace is offline")), chip("Waiting", "warn"))));
   const spaces = h("section", { class: "card health-strip", "aria-labelledby": "workspaces-heading" },
     h("h2", { id: "workspaces-heading", text: "My workspaces" }),
-    workspaces.length ? workspaces.map((w) => h("article", { class: "list-row row" },
+    workspaces.length ? workspaces.map((w) => h("article", { class: "list-row row", "data-live-key": w.workspace_id },
       h("div", { class: "grow" }, h("b", { text: shortName(w, w.workspace_id) }),
         note(workspaceStatus(w) + " · " + (w.online
           ? health.items.filter((it) => it.workspace_id === w.workspace_id).length + " things need you"

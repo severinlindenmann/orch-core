@@ -372,3 +372,40 @@ def test_selective_status_sends_no_host_name(monkeypatch):
     state = SimpleNamespace(hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="selective", hub_id="one")
     hubops._snapshot_link(SimpleNamespace(workspace_id="ws", clock=lambda: 0), state, b"", None, True)
     assert calls and calls[0]["host"] == "" and calls[0]["version"]
+
+
+def test_a_refused_install_is_reported_to_the_bound_hub_with_the_actor(monkeypatch):
+    from types import SimpleNamespace
+
+    import orch.hubclient
+
+    calls = []
+
+    class Link:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def call(self, op, body):
+            calls.append((op, body))
+
+    monkeypatch.setattr(orch.hubclient, "HubLink", Link)
+    monkeypatch.setattr(hubops, "_transport", lambda *args: object())
+    monkeypatch.setattr(hubops, "_addr", lambda *args: "unused")
+    monkeypatch.setattr(hubops, "_wsk_sign", lambda service: (b"", None))
+    monkeypatch.setattr(hubops, "workspace_dev", lambda service: True)
+    state = SimpleNamespace(
+        hk_op_pub=crypto.b64u(b"x" * 65), tls_spki="unused", mode="full", hub_id="one", status="bound"
+    )
+    monkeypatch.setattr(hubops, "_load_state", lambda service: state)
+    service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
+    hubops.report_addon_request(service, "wiki", "1.2.0", "agent")
+    hubops.report_addon_request(service, "Not A Name")  # a malformed name is never sent
+    hubops.report_addon_request(service, "wiki", "x" * 40)  # a malformed version is sent empty
+    sent = [c for c in calls if c[0] == "addon_request"]
+    assert sent == [
+        ("addon_request", {"name": "wiki", "version": "1.2.0", "actor": "agent"}),
+        ("addon_request", {"name": "wiki", "version": "", "actor": "person"}),
+    ]
+    state.status = "unbound"  # not bound: nothing is sent
+    hubops.report_addon_request(service, "wiki")
+    assert len([c for c in calls if c[0] == "addon_request"]) == 2

@@ -10,6 +10,7 @@ import { homeView, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { accountView } from "./account.js";
 import { skillsPage } from "./skills.js";
+import { mcpPage } from "./mcp.js";
 import { spacesPage } from "./spaces.js";
 import { addonsPage } from "./addons.js";
 import { adminView } from "./admin.js";
@@ -169,11 +170,11 @@ function shell(active, ...nodes) {
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), tab("phones", "Phones", "nv"), state.user?.is_admin ? tab("connections", "Connections", "nv") : null, tab("handoffs", "Hand-offs", "nv"), tab("account", "Account", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("addons", "Add-ons", "nv") : null, state.user?.is_admin ? tab("skills", "Skills", "nv") : null, state.user?.is_admin ? tab("spaces", "Spaces", "nv") : null, state.user?.is_admin ? tab("spaces", "Spaces", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
+    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), tab("phones", "Phones", "nv"), state.user?.is_admin ? tab("connections", "Connections", "nv") : null, tab("handoffs", "Hand-offs", "nv"), tab("account", "Account", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("addons", "Add-ons", "nv") : null, state.user?.is_admin ? tab("skills", "Skills", "nv") : null, state.user?.is_admin ? tab("mcp", "Tools", "nv") : null, state.user?.is_admin ? tab("spaces", "Spaces", "nv") : null, state.user?.is_admin ? tab("spaces", "Spaces", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), tab("phones", "Phones", "nav"), state.user?.is_admin ? tab("connections", "Connections", "nav") : null, tab("handoffs", "Hand-offs", "nav"), tab("account", "Account", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("addons", "Add-ons", "nav") : null, state.user?.is_admin ? tab("skills", "Skills", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
+      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), tab("phones", "Phones", "nav"), state.user?.is_admin ? tab("connections", "Connections", "nav") : null, tab("handoffs", "Hand-offs", "nav"), tab("account", "Account", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("addons", "Add-ons", "nav") : null, state.user?.is_admin ? tab("skills", "Skills", "nav") : null, state.user?.is_admin ? tab("mcp", "Tools", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -1123,7 +1124,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin, activity , account , handoffs , connections: () => connectionsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , phones , skills: () => skillsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , addons: () => addonsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , spaces: () => spacesPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) }[route.kind] ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity , account , handoffs , connections: () => connectionsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , phones , skills: () => skillsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , addons: () => addonsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , mcp: () => mcpPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , spaces: () => spacesPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) }[route.kind] ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

@@ -34,6 +34,9 @@ ACTIVITY_TYPES = (
     "skill.saved",
     "skill.removed",
     "skill.offered",
+    "mcp.saved",
+    "mcp.removed",
+    "mcp.offered",
     "space.mode_set",
     "space.archived",
     "space.unarchived",
@@ -59,6 +62,7 @@ DETAIL_FIELDS = frozenset(
         "groups_removed",
         "direct",
         "skill",
+        "server",
     }
 )
 REASON_MAX_BYTES = 800  # 200 characters of UTF-8

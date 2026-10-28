@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from orch_hub.contract import vectorgen as G
-from orch_hub.contract.org_bundles import skill_digest
+from orch_hub.contract.org_bundles import mcp_digest, skill_digest
 
 RLO = chr(0x202E)  # built, so no bidi character sits in this file
 TEXT = "Write invoice numbers as INV-2026-0001."
@@ -89,6 +89,125 @@ def text_cases() -> list[dict[str, Any]]:
     ):
         cases.append({"name": n, "skill_name": name, "text": text, "expect": expect})
     return cases
+
+
+URL = "https://tools.example.com/mcp"
+
+
+def server(name: str = "crm", **kw: Any) -> dict[str, Any]:
+    e = {"name": name, "url": URL, "auth": "none", "secret": None, "description": "Our CRM", **kw}
+    return {**e, "digest": mcp_digest(e)}
+
+
+def mcp_bundle(
+    version: int = 2, servers: list | None = None, ws: str = G.WS_A, key: str = "hk_op", **kw: Any
+) -> dict[str, Any]:
+    o = {
+        **G.hdr("hub.mcp_servers"),
+        "hub_id": G.HUB_ID,
+        "op_cert_id": G.OP_CERT_ID,
+        "workspace_id": ws,
+        "version": version,
+        "issued_ms": G.NOW - 60_000,
+        "servers": servers if servers is not None else [server()],
+        "dev": True,
+        **kw,
+    }
+    return G.signed(key, "sig_hub_mcp_servers", o)
+
+
+def mcp_cases() -> list[dict[str, Any]]:
+    """Server entries (the host replays them with its own ``mcp_problem``) and signed bundles (both sides)."""
+    entries = [
+        ("remote https server", {}, None),
+        ("a port and a path", {"url": "https://tools.example.com:8443/a/b"}, None),
+        ("a company secret by name", {"auth": "hub_secret", "secret": "crm-key"}, None),
+        ("http is refused", {"url": "http://tools.example.com/mcp"}, "https_only"),
+        ("a command is not an address", {"url": "npx -y some-server"}, "https_only"),
+        ("a key in the query", {"url": URL + "?key=abc"}, "url"),
+        ("a fragment", {"url": URL + "#x"}, "url"),
+        ("credentials in the address", {"url": "https://user:pw@tools.example.com/"}, "url"),
+        ("a space", {"url": "https://tools.example.com/a b"}, "url"),
+        ("loopback name", {"url": "https://localhost/mcp"}, "not_remote"),
+        ("loopback address", {"url": "https://127.0.0.1/mcp"}, "not_remote"),
+        ("loopback v6", {"url": "https://[::1]/mcp"}, "not_remote"),
+        ("cloud metadata address", {"url": "https://169.254.169.254/x"}, "not_remote"),
+        ("a one-word host", {"url": "https://intranet/mcp"}, "not_remote"),
+        ("a global address", {"url": "https://8.8.8.8/mcp"}, None),
+        ("private 10/8", {"url": "https://10.0.0.5/mcp"}, "not_remote"),
+        ("private 192.168/16", {"url": "https://192.168.1.1/mcp"}, "not_remote"),
+        ("private 172.16/12", {"url": "https://172.16.0.1/mcp"}, "not_remote"),
+        ("shared 100.64/10 (VPN)", {"url": "https://100.64.0.1/mcp"}, "not_remote"),
+        ("unique-local fd00::/8", {"url": "https://[fd00::1]/mcp"}, "not_remote"),
+        ("mapped private ::ffff:10.0.0.1", {"url": "https://[::ffff:10.0.0.1]/mcp"}, "not_remote"),
+        ("short form 127.1", {"url": "https://127.1/mcp"}, "not_remote"),
+        ("hex form 0x7f.0.0.1", {"url": "https://0x7f.0.0.1/mcp"}, "not_remote"),
+        ("octal form 0177.0.0.1", {"url": "https://0177.0.0.1/mcp"}, "not_remote"),
+        ("decimal form 2130706433", {"url": "https://2130706433/mcp"}, "not_remote"),
+        ("suffix .local", {"url": "https://printer.local/mcp"}, "not_remote"),
+        ("suffix .internal", {"url": "https://tools.internal/mcp"}, "not_remote"),
+        ("suffix .lan", {"url": "https://nas.lan/mcp"}, "not_remote"),
+        ("suffix .home", {"url": "https://router.home/mcp"}, "not_remote"),
+        ("suffix .corp", {"url": "https://crm.corp/mcp"}, "not_remote"),
+        ("reserved name", {"name": "orch-tools"}, "reserved_name"),
+        ("sign-in needs a secret name", {"auth": "hub_secret"}, "secret"),
+        ("a secret name without a sign-in", {"secret": "crm-key"}, "secret"),
+        ("unknown sign-in", {"auth": "oauth"}, "auth"),
+        ("hidden character in the description", {"description": "ok" + chr(0xE0041)}, "description"),
+        ("a newline in the description", {"description": "a\nb"}, "description"),
+    ]
+    out = [
+        {
+            "name": n,
+            "entry": {"name": "crm", "url": URL, "auth": "none", "secret": None, "description": "Our CRM", **kw},
+            "expect": e,
+        }
+        for n, kw, e in entries
+    ]
+    out.append({"name": "no room for a command", "entry": {"name": "crm", "command": "npx"}, "expect": "shape"})
+    return out
+
+
+def mcp_bundle_cases() -> list[dict[str, Any]]:
+    ok = mcp_bundle()
+    cases = [
+        ("accepted", {"bundle": ok, "workspace_id": G.WS_A, "pinned": None}, {"ok": True}),
+        (
+            "a lower version is a rollback",
+            {"bundle": mcp_bundle(1), "workspace_id": G.WS_A, "pinned": ok["o"]},
+            {"error": "stale_bundle"},
+        ),
+        (
+            "the bundle of another workspace",
+            {"bundle": mcp_bundle(ws=G.WS_B), "workspace_id": G.WS_A, "pinned": None},
+            {"error": "other_workspace"},
+        ),
+        (
+            "signed by the wrong key",
+            {"bundle": mcp_bundle(key="hk_root"), "workspace_id": G.WS_A, "pinned": None},
+            {"error": "bad_signature"},
+        ),
+        (
+            "a local command smuggled into an entry",
+            {"bundle": mcp_bundle(servers=[{**server(), "command": "npx"}]), "workspace_id": G.WS_A, "pinned": None},
+            {"error": "malformed"},
+        ),
+        (
+            "an http address",
+            {
+                "bundle": mcp_bundle(servers=[server(url="http://x.example.com/")]),
+                "workspace_id": G.WS_A,
+                "pinned": None,
+            },
+            {"error": "malformed"},
+        ),
+        (
+            "a skills bundle is not a servers bundle",
+            {"bundle": bundle(), "workspace_id": G.WS_A, "pinned": None},
+            {"error": "malformed"},
+        ),
+    ]
+    return [{"name": n, "args": a, "expect": e} for n, a, e in cases]
 
 
 def build() -> dict[str, Any]:
@@ -187,6 +306,8 @@ def build() -> dict[str, Any]:
         "card": G.card(),
         "now_ms": G.NOW,
         "text_cases": text_cases(),
+        "mcp_cases": mcp_cases(),
+        "mcp_bundle_cases": mcp_bundle_cases(),
         "cases": [{"name": n, "args": a, "expect": e} for n, a, e in cases],
     }
 

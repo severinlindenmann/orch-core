@@ -21,3 +21,10 @@ def test_text_case(case: dict) -> None:
 def test_every_hidden_class_is_in_the_vectors() -> None:
     names = {c["name"] for c in VEC["text_cases"]}
     assert {"variation selector", "tag character", "hangul filler", "line separator"} <= names
+
+
+@pytest.mark.parametrize("case", VEC["mcp_cases"], ids=[c["name"] for c in VEC["mcp_cases"]])
+def test_mcp_case(case: dict) -> None:
+    from orch.hubclient.orgtext import mcp_problem
+
+    assert mcp_problem(case["entry"]) == case["expect"]

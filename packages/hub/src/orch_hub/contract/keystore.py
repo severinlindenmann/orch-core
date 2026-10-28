@@ -86,6 +86,7 @@ class OpSigner(_Signer):
             "hub.audit": "sig_hub_audit",
             "hub.space_proposal": "sig_hub_space_proposal",
             "hub.org_skills": "sig_hub_org_skills",
+            "hub.mcp_servers": "sig_hub_mcp_servers",
             "hub.api_origin": "sig_hub_api_origin",
         }
     )

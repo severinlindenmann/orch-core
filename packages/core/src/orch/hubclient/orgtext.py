@@ -7,10 +7,13 @@ spaces, plus newline and tab. Everything else is refused, never stripped. ``cont
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import unicodedata
+from typing import Any
+from urllib.parse import urlsplit
 
-__all__ = ["SKILL_TEXT_MAX", "skill_problem", "text_ok"]
+__all__ = ["SKILL_TEXT_MAX", "mcp_problem", "skill_problem", "text_ok", "url_problem"]
 
 SKILL_NAME = re.compile(r"[a-z][a-z0-9-]{1,39}")
 RESERVED_PREFIX = "orch"  # orch's own skills; a company skill never shadows a builtin name
@@ -45,4 +48,86 @@ def skill_problem(name: object, text: object) -> str | None:
         return "hidden_characters"
     if text.lstrip().startswith("---"):
         return "front_matter"
+    return None
+
+
+MCP_MAX = 20
+URL_MAX = 200
+DESCRIPTION_MAX = 200
+AUTHS = ("none", "hub_secret")
+_LOCAL_SUFFIXES = (
+    ".localhost",
+    ".local",
+    ".internal",
+    ".lan",
+    ".home",
+    ".corp",
+)  # names that are only meaningful inside one network
+SECRET_NAME = re.compile(r"[a-z][a-z0-9-]{0,39}")
+
+
+def url_problem(url: Any) -> str | None:
+    """A server is remote and public by name or address: https only, no credentials, query or fragment in the URL (a
+    secret belongs in the secret store, never in a link), not this computer. A local command cannot
+    be written at all."""
+    if type(url) is not str or not url or len(url) > URL_MAX:
+        return "url"
+    if not url.startswith("https://"):
+        return "https_only"
+    if not url.isascii() or not url.isprintable() or " " in url:
+        return "url"
+    try:
+        u = urlsplit(url)
+        port = u.port
+    except ValueError:
+        return "url"
+    host = u.hostname
+    if (
+        not host
+        or u.username is not None
+        or u.password is not None
+        or u.query
+        or u.fragment
+        or "?" in url
+        or "#" in url
+    ):
+        return "url"
+    if port is not None and not 1 <= port <= 65535:
+        return "url"
+    if host == "localhost" or host.endswith(_LOCAL_SUFFIXES) or host.endswith("."):
+        return "not_remote"
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        # a name: it needs a dot and a last label that starts with a letter, so no spelling of a number
+        # (127.1, 0x7f.0.0.1, 0177.0.0.1) passes for a name
+        last = host.rsplit(".", 1)[-1]
+        return None if "." in host and re.fullmatch(r"[a-z][a-z0-9-]*", last) else "not_remote"
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped  # ::ffff:10.0.0.1 is the private address 10.0.0.1
+    return (
+        None if ip.is_global else "not_remote"
+    )  # private, shared (VPN 100.64/10), unique-local, loopback, link-local, reserved...
+
+
+def mcp_problem(s: Any) -> str | None:
+    """None when one server entry (without its digest) is acceptable, else a short reason code."""
+    if type(s) is not dict or not {"name", "url", "auth", "secret", "description"} <= set(s):
+        return "shape"
+    name, auth, secret, desc = s["name"], s["auth"], s["secret"], s["description"]
+    if type(name) is not str or SKILL_NAME.fullmatch(name) is None:
+        return "name"
+    if name.startswith(RESERVED_PREFIX):
+        return "reserved_name"
+    bad = url_problem(s["url"])
+    if bad is not None:
+        return bad
+    if auth not in AUTHS:
+        return "auth"
+    if (auth == "none") != (secret is None) or (
+        secret is not None and (type(secret) is not str or SECRET_NAME.fullmatch(secret) is None)
+    ):
+        return "secret"
+    if type(desc) is not str or len(desc) > DESCRIPTION_MAX or "\n" in desc or not text_ok(desc):
+        return "description"
     return None

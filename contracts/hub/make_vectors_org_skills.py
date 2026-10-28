@@ -14,6 +14,7 @@ from typing import Any
 from orch_hub.contract import vectorgen as G
 from orch_hub.contract.org_bundles import skill_digest
 
+RLO = chr(0x202E)  # built, so no bidi character sits in this file
 TEXT = "Write invoice numbers as INV-2026-0001."
 
 
@@ -49,7 +50,7 @@ def build() -> dict[str, Any]:
         ("signed by the wrong key", {"bundle": bundle(key="hk_root"), "workspace_id": G.WS_A, "pinned": None}, {"error": "bad_signature"}),
         ("content changed after signing", {"bundle": {"o": {**ok["o"], "skills": []}, "sig": ok["sig"]}, "workspace_id": G.WS_A, "pinned": None}, {"error": "bad_signature"}),
         ("a name starting with orch shadows a builtin skill", {"bundle": bundle(skills=[skill("orch-tickets")]), "workspace_id": G.WS_A, "pinned": None}, {"error": "malformed"}),
-        ("a bidi control character in the text", {"bundle": bundle(skills=[skill("invoices", "ok‮")]), "workspace_id": G.WS_A, "pinned": None}, {"error": "malformed"}),
+        ("a bidi control character in the text", {"bundle": bundle(skills=[skill("invoices", "ok" + RLO)]), "workspace_id": G.WS_A, "pinned": None}, {"error": "malformed"}),
         ("front matter", {"bundle": bundle(skills=[skill("invoices", "---\nname: x\n---\nbody")]), "workspace_id": G.WS_A, "pinned": None}, {"error": "malformed"}),
         ("a text over 2400 characters", {"bundle": bundle(skills=[skill("invoices", "x" * 2401)]), "workspace_id": G.WS_A, "pinned": None}, {"error": "malformed"}),
         ("a digest that does not match the text", {"bundle": bundle(skills=[skill("invoices", digest="sha256:" + "0" * 64)]), "workspace_id": G.WS_A, "pinned": None}, {"error": "malformed"}),

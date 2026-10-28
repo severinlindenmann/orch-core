@@ -20,7 +20,9 @@ RESERVED_PREFIX = "orch"
 SKILL_TEXT_MAX = 2400
 SKILLS_MAX = 20
 #: characters that reorder or hide text: bidi controls, isolates, zero width, the BOM
-_HIDDEN = frozenset("؜​‌‍‎‏‪‫‬‭‮⁠⁦⁧⁨⁩﻿")
+_HIDDEN = frozenset(
+    chr(c) for c in (0x061C, *range(0x200B, 0x2010), *range(0x202A, 0x202F), 0x2060, *range(0x2066, 0x206A), 0xFEFF)
+)
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 

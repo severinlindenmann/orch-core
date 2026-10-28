@@ -13,9 +13,9 @@ import pytest
 from webapi_helpers import WS, Web
 
 from orch_hub.access import Access, AccessSnapshots
-from orch_hub.activity.store import ActivityLog
 from orch_hub.access.orgskills import org_skills
 from orch_hub.access.store import AccessError
+from orch_hub.activity.store import ActivityLog
 from orch_hub.contract import hub as H
 from orch_hub.contract import org_bundles as OB
 from orch_hub.contract.canon import cj
@@ -25,6 +25,7 @@ from orch_hub.link import Registry
 from orch_hub.link.ops import HANDLERS, org_skills_get
 
 ADMIN = "aa" * 16
+RLO, ZW = chr(0x202E), chr(0x200B)  # a bidi override and a zero-width space, built so no such character is in this file
 WS2 = "b2" * 16
 TEXT = "Write invoice numbers as INV-2026-0001. Ask before changing a customer's address."
 
@@ -75,8 +76,8 @@ def verify(keys, signed, ws=WS, pinned=None):
         ("invoices", "x" * 2400, None),
         ("invoices", "---\nname: x\n---\nbody", "front_matter"),
         ("invoices", "  ---\nbody", "front_matter"),
-        ("invoices", "ok‮txt", "hidden_characters"),  # bidi override
-        ("invoices", "ok​hidden", "hidden_characters"),  # zero width
+        ("invoices", "ok" + RLO + "txt", "hidden_characters"),  # bidi override
+        ("invoices", "ok" + ZW + "hidden", "hidden_characters"),  # zero width
         ("invoices", "ok\x1b[31m", "hidden_characters"),  # a control character
         ("invoices", 5, "empty"),
     ],
@@ -86,12 +87,12 @@ def test_the_skill_text_rules(name, text, problem):
 
 
 def test_clean_text_strips_control_and_bidi_but_keeps_lines_and_tabs():
-    assert OB.clean_text("a‮b\x00c​d\r\ne\tf\rg") == "abcd\ne\tf\ng"
+    assert OB.clean_text("a" + RLO + "b\x00c" + ZW + "d\r\ne\tf\rg") == "abcd\ne\tf\ng"
 
 
 def test_put_strips_hidden_characters_and_refuses_what_stays_bad(env):
     _k, _acc, _s, store = env
-    store.put("invoices", "keep‮ this\x00", actor=ADMIN)
+    store.put("invoices", "keep" + RLO + " this\x00", actor=ADMIN)
     assert store.list()[0]["text"] == "keep this"
     for name, text in (("orch-x", TEXT), ("ok-name", "---\nx"), ("ok-name", "x" * 2401)):
         with pytest.raises(AccessError):
@@ -176,7 +177,7 @@ def test_the_contract_refuses_a_bundle_whose_text_or_digest_is_bad(env):
     o = verify(keys, snaps.org_skills(WS, "full"))
     good = o["skills"][0]
     for bad in (
-        [{**good, "text": "ok‮"}],
+        [{**good, "text": "ok" + RLO}],
         [{**good, "digest": "sha256:" + "0" * 64}],
         [{**good, "name": "orch-evil", "digest": OB.skill_digest("orch-evil", TEXT)}],
         [good, good],
@@ -221,7 +222,7 @@ def test_the_op_serves_the_link_workspace_only(env, reg):
     keys, _acc, snaps, store = env
     store.put("invoices", TEXT, actor=ADMIN)
     store.set_offers("invoices", [WS], actor=ADMIN)
-    c = lambda ws: SimpleNamespace(registry=reg, workspace_id=ws, snapshots=snaps, body={})  # noqa: E731
+    c = lambda ws: SimpleNamespace(registry=reg, workspace_id=ws, snapshots=snaps, body={})
     got = org_skills_get(c(WS))
     assert set(got) == {"bundle"} and [s["name"] for s in verify(keys, got["bundle"])["skills"]] == ["invoices"]
     assert verify(keys, org_skills_get(c(WS2))["bundle"], ws=WS2)["skills"] == []
@@ -241,7 +242,7 @@ def test_the_admin_routes_save_offer_remove_audit_and_are_admin_only(tmp_path):
     try:
         admin, ann = w.login(w.admin), w.login(w.ann)
         w.reg.add(WS, "full", name="Product")
-        s, o, _ = w.call("PUT", "/admin/skills/invoices", {"text": TEXT + "‮"}, token=admin)
+        s, o, _ = w.call("PUT", "/admin/skills/invoices", {"text": TEXT + RLO}, token=admin)
         assert s == 200 and o["digest"] == OB.skill_digest("invoices", TEXT)
         s, o, _ = w.call("PUT", "/admin/skills/invoices/offers", {"workspaces": [WS]}, token=admin)
         assert s == 200 and o["offered_to"] == [WS]

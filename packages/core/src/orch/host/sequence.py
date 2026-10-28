@@ -1189,11 +1189,15 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
             **expected_payload(intent, k, person),
         }
         events.append(ev)
-        for sid in ev.get("sections") or {}:
+        for sid in (ev.get("sections") or {}) if plan[k]["op"] == "section.set" else ():
             texts[sid] = plan[k]["args"]["message"]
     new_material: dict[str, Any] = {"kind": "payload", "ticket": material.get("ticket"), "review": []}
     if texts:
         new_material["texts"] = texts
+    if intent["kind"] == ADDON:
+        for key in ("market", "deps"):
+            if material.get(key) is not None:
+                new_material[key] = copy.deepcopy(material[key])
     if intent["kind"] == ADDON and material.get("before"):
         new_material["before"] = copy.deepcopy(material["before"])  # the host's current settings (unsigned, labelled)
     if intent["kind"] == EDIT and "links" in intent:
@@ -1230,7 +1234,15 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
     intent = validate_intent(meta["intent"])
     n = int(meta["of"])
     if intent["kind"] == ADDON:  # no ticket: the workspace's settings and one add-on
-        return _addon_content(content, intent, n)
+        content = _addon_content(content, intent, n)
+        publisher = (prepared["material"].get("market") or {}).get("publisher", {}).get("fingerprint")
+        if intent.get("staged"):
+            rows = content.setdefault("fields_changed", [])
+            content["fields_changed"] = [row for row in rows if row["field"] != "package digest"]
+            if not any(row["field"] == "add-on" for row in rows):
+                signcontent._row(content, "add-on", intent["name"])
+            signcontent._row(content, "publisher (per host, not signed)", publisher or "unsigned")
+        return content
     key = prepared["material"]["ticket"]["key"]
     # the key is the host's word: said so right next to it (invariant 1), with the end of the signed id
     key = f"{signcontent.one(key)} (key per host; signed id …{content['ticket']['uid_tail']})"
@@ -1302,7 +1314,9 @@ def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -
     the events, built by :func:`signcontent.build`), and what happens if signing stops between the two."""
     from orch.addons.settings_needs import TITLES
 
-    content["headline"] = f"Turn on {TITLES[intent['name']]}"
+    content["fields_inline"] = True
+    content.pop("summary", None)  # settings and identity stay inline, never folded behind a grant summary
+    content["headline"] = f"Turn on {TITLES.get(intent['name'], intent['name'])}"
     content["subline"] = "its settings are signed first, then the add-on is turned on"
     notes = content.setdefault("notes", [])
     notes.append(

@@ -209,7 +209,7 @@ def test_every_schema_property_of_a_person_event_is_classified(typ):
 VALUES = {
     "log": "marker-log", "receipt": {"cmd": "marker-command", "exit": 0, "ms": 1, "repo": None, "commit": None},
     "name": "Marker-Name", "kind": "marker-kind", "label": "marker-label", "ac": "AC9", "task": "T9", "ref": "marker-ref",
-    "addon": "marker-addon", "bytes": 4242, "sha256": "sha256:" + "ab" * 32, "version": "9.9.9", "package_sha256": "sha256:" + "cd" * 32,
+    "addon": "marker-addon", "staged": "st_" + "3" * 32, "bytes": 4242, "sha256": "sha256:" + "ab" * 32, "version": "9.9.9", "package_sha256": "sha256:" + "cd" * 32,
     "capabilities": ["marker-cap"], "artifact_kinds": ["marker-akind"], "fields": ["marker-field"], "replaces": "marker-old",
     "device": "d_" + "1" * 32, "cert": CERT, "device_cert": CERT, "pk_pub": "marker-pubkey", "person": "p_" + "2" * 32,
     "role": "maintainer", "outcome": "pass", "text": "marker text", "source_sha": [{"repo": "app", "ref": "refs/heads/x", "sha": "a" * 40}],

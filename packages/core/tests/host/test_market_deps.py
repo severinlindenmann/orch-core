@@ -50,7 +50,10 @@ def test_stage_lists_the_packages_and_the_signed_grant_names_runtime(served, hum
     )
     assert "dep idna 3.10" in st["review"] and "dep six 1.16.0" in st["review"]
     assert st["grant"]["runtime"] == {"kind": "python-requirements", "lock": "requirements.txt", "packages": 2}
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     assert prepared["events"][0]["runtime"] == st["grant"]["runtime"]
     assert prepared["material"]["deps"]["count"] == 2
     human.check(prepared)  # the signer accepts the material
@@ -65,7 +68,10 @@ def test_a_package_without_runtime_has_no_deps_anywhere(served, human, net, read
     ok(person(served, "market.refresh"))
     st = ok(stage(served))["data"]
     assert st["deps"] is None and "runtime" not in st["grant"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     assert "deps" not in prepared["material"]
     human.check(prepared)
 
@@ -105,7 +111,10 @@ def test_a_lock_that_this_computer_cannot_install_is_refused_at_stage(served, ne
 def test_the_signer_refuses_material_deps_that_disagree_with_the_signed_runtime(served, human, net, ready, registry):
     publish(served, net, lock=py_lock(registry.IDNA, registry.SIX))
     st = ok(stage(served))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
 
     def tweak(fn):
         p = copy.deepcopy(prepared)
@@ -227,7 +236,10 @@ def test_runtime_removed_and_a_changed_kind(served, human, net, ready, registry)
 def click_view(served, human, st):
     from orch.click import view as views
 
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     return views.build(
         prepared, lambda w: ("Acme", "DEMO") if w == served.wid else None, device="d_" + "1" * 32,
         expires_at="2026-10-24T12:00:00Z", artifacts=None,
@@ -275,7 +287,10 @@ def test_the_signer_checks_the_diff_block(served, human, net, ready, registry):
     M.install(served, human)
     publish(served, net, "1.1.0", py_lock(registry.IDNA, registry.SIX))
     st = ok(stage(served, update=True))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     human.check(prepared)
     for bad in ({"lines": ["x\ny"], "widened": True}, {"lines": ["x"], "widened": 1}, {"lines": ["x"]}, "x"):
         p = copy.deepcopy(prepared)
@@ -306,7 +321,10 @@ def test_more_than_a_thousand_diff_lines_fall_back_to_the_full_review(served, hu
 
     publish(served, net, lock=py_lock(registry.IDNA))
     st = ok(stage(served))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     prepared["material"]["deps"]["diff"] = {"lines": ["+ dep x 1 (new)"] * 1001, "widened": True}
     signer._deps(prepared["material"], prepared["events"])  # the signer accepts up to 2 x 1000 + 1 lines
     with pytest.raises(signcontent.PlainUnavailable):

@@ -183,10 +183,10 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
   shown.view.headline = 'Create ticket and start agent'
   const needsGrant = minutes === null || minutes < 15
   if (minutes !== null) {
-    const now = Date.now()
+    const now = Date.now() // 15 means 15 minutes and a little: the page adds the time since the read (a stopwatch), so exactly 15 would be 14:59 by submit
     vi.mocked(agentsApi.runner).mockResolvedValue({ runner: {
       connected: true, enabled: true, terminals: false, now: new Date(now).toISOString(),
-      grant: { id: 'gr_demo', until: new Date(now + minutes * 60_000).toISOString(), scope: 'workable', startable: true },
+      grant: { id: 'gr_demo', until: new Date(now + minutes * 60_000 + (minutes >= 15 ? 30_000 : 0)).toISOString(), scope: 'workable', startable: true },
     } })
   }
   shown.view.op = needsGrant ? 'grant' : 'new'

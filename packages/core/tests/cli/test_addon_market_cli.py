@@ -103,7 +103,8 @@ def test_setup_asks_the_host_to_build_and_install_prints_what_it_did(monkeypatch
                 return {"data": {"name": "standup", "state": "ready", "count": 7, "bytes": 1}}
             if op == "market.stage":
                 return {"data": {"name": "standup", "version": "1.0.0", "stage": "st_" + "0" * 32, "review": [],
-                                 "grant": {"runtime": {"kind": "python-requirements", "lock": "r.txt", "packages": 1}},
+                                 "grant": {"capabilities": ["network"],
+                                           "runtime": {"kind": "python-requirements", "lock": "r.txt", "packages": 1}},
                                  "market": {"url": "u", "class": "official", "index_version": 1, "stale": False,
                                             "commit": "a" * 40, "source_note": "n", "summary": None,
                                             "publisher": {"fingerprint": None, "tofu": "unsigned"}},

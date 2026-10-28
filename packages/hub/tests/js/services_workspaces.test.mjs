@@ -14,7 +14,7 @@ class Node_ {
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
 const { servicesView, summary, stateOf } = await import("../../src/orch_hub/web/services.js");
-const { workspacesView, workspaceDetailsView, connectWorkspaceView, statusOf } = await import("../../src/orch_hub/web/workspaces.js");
+const { workspacesView, workspaceDetailsView, connectWorkspaceView } = await import("../../src/orch_hub/web/workspaces.js");
 const { when, ago } = await import("../../src/orch_hub/web/ui.js");
 
 const NOW = new Date(2026, 9, 27, 12, 0).getTime();
@@ -65,29 +65,17 @@ test("Check now re-probes, Copy copies the exact command", async () => {
   assert.equal(btn.textContent, "Copied");
 });
 
-test("hand-offs: names, sent time, Delivered / Waiting; a stranger is 'Another workspace'", () => {
-  const A = { workspace_id: "a".repeat(32), name: "Product", online: true };
-  const L = { workspace_id: "b".repeat(32), name: "Legal", online: false };
-  const X = { workspace_id: null, name: null, online: false };
-  const handoffs = [
-    { id: "1", from: A, to: L, sent_ms: NOW - 86400000, status: "waiting" },
-    { id: "2", from: A, to: X, sent_ms: NOW - 3600000, status: "delivered" },
-  ];
-  const out = workspacesView({ handoffs, workspaces: [{ ...A, mode: "full" }, { ...L, mode: "full" }] }, NOW);
-  const t = text(out);
-  assert.match(t, /Product→Legal/);
-  assert.match(t, /Waiting for Legal to come online/);
-  assert.match(t, /since Yesterday 12:00/);
-  assert.match(t, /Product→Another workspace/);
-  assert.match(t, /Delivered/);
-  assert.match(t, /1 hand-off is waiting for this workspace/);
-  assert.equal(statusOf({ ...handoffs[0], to: { ...L, online: true } }, NOW).label, "Waiting for Legal to take it");
+test("workspaces keep waiting counts without the hand-offs table", () => {
+  const out = workspacesView({ workspaces: [{ workspace_id: "a", name: "Product" }],
+    handoffs: [{ status: "waiting", to: { workspace_id: "a" } }] }, NOW);
+  assert.match(text(out), /1 hand-off is waiting for this workspace/);
+  assert.doesNotMatch(text(out), /Hand-offs between workspaces|From → to/);
 });
 
 test("empty states and times", () => {
   const t = text(workspacesView({ handoffs: [], workspaces: [] }, NOW));
   assert.match(t, /No workspaces yet/);
-  assert.match(t, /No tickets have been sent between workspaces yet/);
+  assert.doesNotMatch(t, /No hand-offs/);
   assert.equal(when(NOW - 60000, NOW), "Today 11:59");
   assert.equal(ago(NOW - 120000, NOW), "2 min ago");
 });
@@ -96,7 +84,7 @@ const workspace = (extra = {}) => ({ workspace_id: "a".repeat(32), name: "Produc
   version: "0.2.0", commit: "abcdef123456", host: "Office", address: "10.0.0.2", version_state: "newest", ...extra });
 const clickButton = (out, label) => find(out, (n) => n.tag === "button" && n.textContent === label)[0].listeners.click();
 
-test("workspace table shows modes, status, versions, hosts, warnings and hand-offs below it", () => {
+test("workspace table shows modes, status, versions, hosts, warnings without a hand-offs table", () => {
   const out = workspacesView({ workspaces: [workspace(), workspace({ workspace_id: "b", name: "Legal", mode: "selective",
     online: false, last_seen_ms: NOW - 120000, version_state: "older" }),
   workspace({ workspace_id: "c", name: "Archive", version_state: "unsupported", host: null, address: null })],
@@ -115,7 +103,7 @@ test("workspace table shows modes, status, versions, hosts, warnings and hand-of
   assert.match(t, /not supported any more/);
   assert.match(t, /Office10.0.0.2/);
   assert.match(t, /unknownunknown/);
-  assert.ok(t.indexOf("Connected workspaces") < t.indexOf("Hand-offs between workspaces"));
+  assert.doesNotMatch(t, /Hand-offs between workspaces/);
   assert.equal(find(out, (n) => n.tag === "th" && n.textContent === "Runs on").length, 1);
 });
 

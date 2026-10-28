@@ -13,6 +13,7 @@ import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
 import { inviteView } from "./invite.js";
 import { servicesView } from "./services.js";
+import { handoffsView } from "./handoffs.js";
 import { workspacesView, workspaceDetailsView } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
@@ -162,11 +163,11 @@ function shell(active, ...nodes) {
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), tab("account", "Account", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
+    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), tab("handoffs", "Hand-offs", "nv"), tab("account", "Account", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), tab("account", "Account", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
+      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), tab("handoffs", "Hand-offs", "nav"), tab("account", "Account", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -361,6 +362,22 @@ async function admin() {
       state.adminPage = adminView({ api: adminApi, say, notice, refresh, self: state.user?.user_id });
       shell("admin", state.adminPage);
     }
+  } finally { finishLoading(); }
+}
+
+async function handoffs() {
+  const finishLoading = loading();
+  pageLoading("handoffs");
+  try {
+    if (!(await refresh())) return loginView();
+    await loadRail();
+    const [ws, ho] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs")]);
+    if (ws.status !== 200 || ho.status !== 200) return shell("handoffs", h("h1", { text: "Hand-offs" }),
+      h("p", { role: "alert", text: "Could not load hand-offs. Please try again." }), h("button", { text: "Try again", onclick: handoffs }));
+    shell("handoffs", handoffsView({ workspaces: ws.body.workspaces ?? [], handoffs: ho.body.handoffs ?? [] }, {
+      dialog, close: closeDialog,
+      open: async (w) => { await openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); closeDialog(); }, // the dialog stays if opening fails
+    }));
   } finally { finishLoading(); }
 }
 
@@ -1050,7 +1067,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin, activity , account }[route.kind] ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity , account , handoffs }[route.kind] ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

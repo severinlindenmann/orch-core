@@ -28,7 +28,7 @@ test("switching sections preserves rail, buttons, top bar and updates selected t
   vm.runInContext(source.slice(source.indexOf("function h("), source.indexOf("const field =")) + source.slice(source.indexOf("function shell("), source.indexOf("async function loadRail(")), context);
   context.shell("home", new Element("h1"));
   const rail = root.querySelector(".rail"), top = root.querySelector(".topbar"), button = rail.childNodes[0];
-  for (const page of ["workspaces", "services", "admin", "account", "activity", "home"]) {
+  for (const page of ["workspaces", "services", "admin", "activity", "account", "home"]) {
     location.hash = "#/" + page;
     context.shell(page, new Element("h1"));
     assert.equal(root.querySelector(".rail"), rail);
@@ -51,7 +51,7 @@ test("hash changes and sign-in continuation dispatch the wanted view", async () 
   vm.runInContext(source.slice(source.indexOf("// Serialize renders")), context);
   await context.renderRoute();
   assert.equal(visits.at(-1), "admin");
-  for (const page of ["home", "approvals", "services", "account", "activity", "home"]) { location.hash = "#/" + page; await handlers.hashchange(); assert.equal(visits.at(-1), page); }
+  for (const page of ["home", "approvals", "services", "activity", "account", "home"]) { location.hash = "#/" + page; await handlers.hashchange(); assert.equal(visits.at(-1), page); }
   location.hash = "#/w/" + "ab".repeat(16) + "/addon/terms";
   vm.runInContext(source.slice(source.indexOf("async function afterLogin()"), source.indexOf("// FB15")), context);
   await context.afterLogin();

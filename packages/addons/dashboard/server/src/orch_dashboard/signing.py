@@ -1447,11 +1447,30 @@ def expected(action: Action, person: str | None = None):
         case FollowupUndo():
             return lambda ev: one(ev, "followup.restored", followup=action.id)
         case ScheduleAdd():
-            return lambda ev: (
-                one(ev, "schedule.set")
-                and ev[0].get("target", "existing") == action.target
-                and ev[0].get("title") == action.title
-            )
+
+            def scheduled(ev):
+                if action.target != "new":
+                    return (
+                        one(ev, "schedule.set")
+                        and ev[0].get("target", "existing") == "existing"
+                        and "title" not in ev[0]
+                    )
+                # a new-ticket schedule: exactly the anchor ticket.created, then its schedule.set, in that order
+                if len(ev) != 2 or ev[0].get("type") != "ticket.created" or ev[1].get("type") != "schedule.set":
+                    return False
+                anchor, rule = ev
+                return (
+                    anchor.get("ticket_type") == "chore"
+                    and anchor.get("title") == action.title
+                    and (person is None or anchor.get("owner") == person)
+                    and isinstance(anchor.get("schedule"), str)
+                    and anchor.get("schedule") == rule.get("schedule")
+                    and "via" not in anchor
+                    and rule.get("target") == "new"
+                    and rule.get("title") == action.title
+                )
+
+            return scheduled
         case ScheduleCancel():
             return lambda ev: one(ev, "schedule.cancelled", schedule=action.id)
         case Move():

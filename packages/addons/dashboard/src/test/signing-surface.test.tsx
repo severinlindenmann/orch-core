@@ -553,26 +553,6 @@ const CASES: Case[] = [
     verbOnly: true,
   },
   {
-    name: 'relay pair.confirm (add a device)',
-    path: '/settings/relay',
-    open: async (user) => {
-      await user.click(await screen.findByRole('button', { name: 'Connect' }, T))
-      await user.click(await screen.findByRole('button', { name: 'Sign and connect' }, T))
-      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Online'), T)
-      await user.click(screen.getByRole('button', { name: 'Pair a device' }))
-      const pair = await dialogNamed(/Pair a device/)
-      await user.click(within(pair).getByRole('button', { name: /Simulate: a phone scans/ }))
-      await user.click(await within(pair).findByRole('button', { name: 'Codes match' }, T))
-      return dialogNamed(/^Add .* to /)
-    },
-    confirm: press('Sign and add device'),
-    method: 'postRelay',
-    arg: 1,
-    op: 'pair.confirm',
-    skip: ['op'],
-    shown: { pairing: (v) => `pairing ${v}`, fingerprint: (v) => `(${v})` },
-  },
-  {
     name: 'relay device.remove',
     path: '/settings/relay',
     open: async (user) => {

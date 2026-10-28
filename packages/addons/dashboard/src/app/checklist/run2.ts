@@ -51,7 +51,7 @@ export const RUN2_INTRO = [
 export const RUN2_KNOWN_GAPS = [
   'Quick tasks do not close by themselves yet (auto-close comes after this run). Close them by hand.',
   'A project folder that still has an orch store from an older version in its root (config.json, keys.jsonl, events/) is refused by setup, with a message saying what to delete. Nothing is converted.',
-  'Phone pairing only works through the CLI (see F). Setup and Settings do not offer it.',
+  'Phones pair through the hub (see F): Settings, Devices, "Add a phone" opens the hub\'s Phones page. Setup does not offer it.',
 ]
 
 export const RUN2_REPORT_HELP = {
@@ -387,7 +387,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
     title: 'Phone',
     where: 'iPhone, optional. Uses workspace A (terminal approval)',
     intro:
-      'Setup and Settings do not offer pairing yet: use the CLI path below (untested on a real phone). The lead prepares the TestFlight build number (newer than 0.1.0 261016.160026; it needs the B10 "Approve on your phone" screens, orch-mobile #92, and push), and the invite file for the relay: save it as ~/orch-invite and chmod 600 it. Ask the lead; single use, valid 1 h.',
+      'Phones pair through the hub: Settings, Devices, "Add a phone" opens the hub\'s Phones page (the workspace must be joined to a hub). The lead prepares the TestFlight build number (newer than 0.1.0 261016.160026; it needs the B10 "Approve on your phone" screens, orch-mobile #92, and push), and the invite file for the relay: save it as ~/orch-invite and chmod 600 it. Ask the lead; single use, valid 1 h.',
     steps: [
       {
         id: 'F1',
@@ -397,23 +397,9 @@ const CORE_SECTIONS: ChecklistSection[] = [
       },
       {
         id: 'F2',
-        title: 'Pairing (CLI path)',
-        text: 'Find the id: "orch host list" (workspace_id = W, all 32 characters). Then:',
-        commands: [
-          'orch host list',
-          'orch keys primary init --workspace W --relay https://relay.dev.severin.io --invite-file ~/orch-invite',
-          'orch host relay link --workspace W --max-publication-bytes 4194304',
-          'orch host relay primary set --workspace W',
-          'orch host relay pair --workspace W',
-        ],
-        points: [
-          'a) keys primary init: new primary passphrase twice, once more to unlock, then the 24 recovery words typed; this is a different passphrase from the workspace one. See "registered": true. primary.invite_unusable: ask for a new invite. primary.account_failed: run again.',
-          'b) host relay link: type <8 hex>/GENESIS, workspace passphrase.',
-          'c) host relay primary set.',
-          'd) Phone: "Pair your Mac"; then run host relay pair. See a QR, an orch:// link, "valid 10 min". Scan it in the app; "Review this invitation" shows relay.dev.severin.io; Connect.',
-          'e) Mac asks the phone\'s 6 characters; then primary passphrase + recovery words; then the phone\'s second 6 characters; then a review ending "Type <8 chars of the device id>" and the workspace passphrase. Phone shows "Ready" with Look and Decide, then Live Home.',
-          'If the offer expires or breaks: orch host relay pair --workspace W --resume --offer O',
-        ],
+        title: 'Pairing (through the hub)',
+        text: 'Join the workspace to the hub first. Then Settings, Devices, "Add a phone": the hub console opens on its Phones page. Make the pairing code there and enter it in the phone app.',
+        see: 'The hub lists the phone. Without a hub, Devices says "Phones connect through your company hub" and has no button.',
       },
       {
         id: 'F3',

@@ -41382,6 +41382,7 @@
   {
    "args": {
     "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "workspace",
      "scope": "workable",
@@ -41403,6 +41404,7 @@
   {
    "args": {
     "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "workspace",
      "scope": "workable",
@@ -41426,6 +41428,7 @@
   {
    "args": {
     "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "workspace",
      "scope": "workable",
@@ -41444,6 +41447,7 @@
   {
    "args": {
     "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "01J9ZP0000000000000000TKT1",
      "scope": "workable",
@@ -41462,6 +41466,46 @@
   {
    "args": {
     "action": {
+     "hours": 72,
+     "log": "workspace",
+     "scope": "workable",
+     "type": "grant.requested",
+     "verbs": "agent"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_grant_requested_without_handoff",
+   "note": "required local record id",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "handoff": "hr_01J9ZP00000000000000000001",
+     "hours": 72,
+     "log": "workspace",
+     "scope": "workable",
+     "type": "grant.requested",
+     "verbs": "agent"
+    },
+    "role": "admin"
+   },
+   "check": "action",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "action_grant_requested_bad_handoff",
+   "note": "grant ids are ULIDs",
+   "phase": 5
+  },
+  {
+   "args": {
+    "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 169,
      "log": "workspace",
      "scope": "workable",
@@ -41481,6 +41525,7 @@
   {
    "args": {
     "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 0,
      "log": "workspace",
      "scope": "workable",
@@ -41499,6 +41544,7 @@
   {
    "args": {
     "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "workspace",
      "scope": "workable",
@@ -41521,6 +41567,7 @@
   {
    "args": {
     "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "workspace",
      "scope": "workable",
@@ -41539,6 +41586,7 @@
   {
    "args": {
     "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "workspace",
      "scope": "workable",
@@ -41560,6 +41608,7 @@
   {
    "args": {
     "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "workspace",
      "scope": "admin",
@@ -41578,6 +41627,7 @@
   {
    "args": {
     "action": {
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "workspace",
      "scope": "workable",
@@ -41599,6 +41649,7 @@
    "args": {
     "action": {
      "grant": "gr_01J9ZP0000000000000000GRT1",
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "workspace",
      "scope": "workable",
@@ -41619,6 +41670,7 @@
    "args": {
     "action": {
      "expires_at": "2026-10-30T00:00:00Z",
+     "handoff": "01J9ZP00000000000000000001",
      "hours": 72,
      "log": "workspace",
      "scope": "workable",
@@ -46238,7 +46290,8 @@
       "sig": "nqr1qA-e5yXPo9vSziaXYLCFqQPQxcr_Lzw73LtOVx8xFwrx8Cbi2NlvbF5Mb2Zqm8FY9xHPKxi7ubZJcx5Pbg"
      },
      "channel_factor": "se-unlocked",
-     "channel_proof": "iMz7b5c1PJzpGwmkUP2taQwKiCihuPGIgKEkDM43sazaEx0M65W-6QIH76cQpag2HxrnA5hqZeCy2RGXX5BrLw",
+     "channel_proof": "H5w2oNYGRiPv2dUrObvnfYFY-gaZBcBGSMWvUCdz2Htk6Dcn8ofQh7GbRkpinGwfnTXvhFpeoVaXVjOcFruTKQ",
+     "handoff": "01J9ZP00000000000000000001",
      "hash_v": 1,
      "hours": 72,
      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
@@ -46246,7 +46299,7 @@
      "label": "Tariff import",
      "roster_v": 4,
      "scope": "workable",
-     "sig": "tGeOuFJUiarGMwpYQXSRKuNGf_SEyldv6sE-dC1NamxixG173hXHM9VkCa3KRa9wKhmZNSeF09alUKejBo5e_Q",
+     "sig": "Lh44Y7HpbC9NSra0vq1Yguubuy7Iqf-qO2CA2T5FIYyyvacDs_g3-iKQCnPOnby0nMvmLP1XmZByhvjbfKHutA",
      "snapshot_version": 3,
      "type": "grant.requested",
      "uk_cert": {
@@ -51492,7 +51545,285 @@
       "sig": "nqr1qA-e5yXPo9vSziaXYLCFqQPQxcr_Lzw73LtOVx8xFwrx8Cbi2NlvbF5Mb2Zqm8FY9xHPKxi7ubZJcx5Pbg"
      },
      "channel_factor": "se-unlocked",
-     "channel_proof": "mbvZZ1k5DWEoUKntEQnlfPa0JWft89Tcn5jLkD7QD8sTn8iOT16Y3PW2AeSD4PQ9CKxvSQrM1sMx__XLAJl_ZA",
+     "channel_proof": "iMz7b5c1PJzpGwmkUP2taQwKiCihuPGIgKEkDM43sazaEx0M65W-6QIH76cQpag2HxrnA5hqZeCy2RGXX5BrLw",
+     "hash_v": 1,
+     "hours": 72,
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "id": "01J9ZP0000000000000000EVT1",
+     "label": "Tariff import",
+     "roster_v": 4,
+     "scope": "workable",
+     "sig": "tGeOuFJUiarGMwpYQXSRKuNGf_SEyldv6sE-dC1NamxixG173hXHM9VkCa3KRa9wKhmZNSeF09alUKejBo5e_Q",
+     "snapshot_version": 3,
+     "type": "grant.requested",
+     "uk_cert": {
+      "o": {
+       "dev": true,
+       "expires_ms": 1792592000000,
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.uk_cert",
+       "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "suite": 2,
+       "uk_pub": "BF4SFZF9XTgilhkgCN-Uo4rQowEfmNi-PdkCmealCT7KAUXMJ8qzUn2IDYvV0bD6DF-Hmifxb0OgibzvYNTGmMk",
+       "user_id": "a368bd380588e5dabee62a516031e21f",
+       "v": 2
+      },
+      "sig": "tDs-OR4_RgCKGi3w6hwJqr4HW1yTzwpGWXUOBij9wvO_czqiqO81yYCS5F1dHtZPgoZ448XXG_rSh0_7hpaYNw"
+     },
+     "v": 2,
+     "verbs": "agent"
+    },
+    "log": "workspace",
+    "now_ms": 1790000000000,
+    "snapshot": {
+     "dev": true,
+     "generation": 0,
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "hv": 0,
+     "issued_ms": 1789999940000,
+     "kind": "hub.snapshot",
+     "market_policy": {
+      "addons": {
+       "allow": null,
+       "block": []
+      },
+      "ceiling": null,
+      "markets": [
+       {
+        "class": "official",
+        "keys": [],
+        "url": "https://github.com/severinlindenmann/orch-marketplace"
+       }
+      ]
+     },
+     "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+     "revoked_channels": [],
+     "roles": {
+      "a368bd380588e5dabee62a516031e21f": "admin"
+     },
+     "suite": 2,
+     "v": 2,
+     "version": 3,
+     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+    },
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "check": "custodial",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "custodial_event_grant_requested_without_handoff",
+   "note": "the signed request must name the pending grant record",
+   "phase": 5
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "dev_mode": true,
+    "event": {
+     "actor": {
+      "id": "u_a368bd380588e5dabee62a516031e21f",
+      "kind": "person",
+      "via": "a521208444bffafc2188fe6b5f1f286f"
+     },
+     "auth": "hub",
+     "based_on": "sha256:6b241bb0e70240694c042e752a2baed2457752ab1c036ec542334acec5cc5367",
+     "channel": "a521208444bffafc2188fe6b5f1f286f",
+     "channel_cert": {
+      "o": {
+       "channel_id": "a521208444bffafc2188fe6b5f1f286f",
+       "dev": true,
+       "expires_ms": 1792592000000,
+       "factor": "se-unlocked",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "key_pub": "BJr__CqBPz4fbs0dWgg8yS6TooSjaMWMIuSL0S5Iw7-6F6d_sFz9ilNhI0j4GlX6G8rpZZ_QY9JnvaWLXb2cdZA",
+       "kind": "hub.channel_cert",
+       "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "suite": 2,
+       "user_id": "a368bd380588e5dabee62a516031e21f",
+       "v": 2
+      },
+      "sig": "nqr1qA-e5yXPo9vSziaXYLCFqQPQxcr_Lzw73LtOVx8xFwrx8Cbi2NlvbF5Mb2Zqm8FY9xHPKxi7ubZJcx5Pbg"
+     },
+     "channel_factor": "se-unlocked",
+     "channel_proof": "D9chWx0NZIrq02icKNoqpTLO-WtoqutF1o7eDCE9dCcPJItK0e2K81kB1MbnfTE26rSE7_-lz6wMe2j7_LkvNg",
+     "handoff": "hr_01J9ZP00000000000000000001",
+     "hash_v": 1,
+     "hours": 72,
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "id": "01J9ZP0000000000000000EVT1",
+     "label": "Tariff import",
+     "roster_v": 4,
+     "scope": "workable",
+     "sig": "iefyHOkZHbA7aKWBMwoRZn1VGAM0Oy9DK0c3Y_2ZeDgvma_GEqnFYBb2nAc8Wmrj4xq-_ZnJfwAPOgMtq6sggQ",
+     "snapshot_version": 3,
+     "type": "grant.requested",
+     "uk_cert": {
+      "o": {
+       "dev": true,
+       "expires_ms": 1792592000000,
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.uk_cert",
+       "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "suite": 2,
+       "uk_pub": "BF4SFZF9XTgilhkgCN-Uo4rQowEfmNi-PdkCmealCT7KAUXMJ8qzUn2IDYvV0bD6DF-Hmifxb0OgibzvYNTGmMk",
+       "user_id": "a368bd380588e5dabee62a516031e21f",
+       "v": 2
+      },
+      "sig": "tDs-OR4_RgCKGi3w6hwJqr4HW1yTzwpGWXUOBij9wvO_czqiqO81yYCS5F1dHtZPgoZ448XXG_rSh0_7hpaYNw"
+     },
+     "v": 2,
+     "verbs": "agent"
+    },
+    "log": "workspace",
+    "now_ms": 1790000000000,
+    "snapshot": {
+     "dev": true,
+     "generation": 0,
+     "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+     "hv": 0,
+     "issued_ms": 1789999940000,
+     "kind": "hub.snapshot",
+     "market_policy": {
+      "addons": {
+       "allow": null,
+       "block": []
+      },
+      "ceiling": null,
+      "markets": [
+       {
+        "class": "official",
+        "keys": [],
+        "url": "https://github.com/severinlindenmann/orch-marketplace"
+       }
+      ]
+     },
+     "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+     "revoked_channels": [],
+     "roles": {
+      "a368bd380588e5dabee62a516031e21f": "admin"
+     },
+     "suite": 2,
+     "v": 2,
+     "version": 3,
+     "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+    },
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "check": "custodial",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "custodial_event_grant_requested_with_addon_handoff",
+   "note": "an add-on hand-off id cannot name a pending grant record",
+   "phase": 5
+  },
+  {
+   "args": {
+    "card": {
+     "o": {
+      "card_seq": 1,
+      "dev": true,
+      "hk_root_pub": "BI_UMykYqAqu1C9i1pPLsPGXktAHAqZlKB_EpiicGtikqSoV9hdFn8S3nWlSvAmzbCp1iQ79iiLjD9tWA1p39ik",
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "hxk_pub": "BPL5BSYzK4pViSYlGYnw-Ow5FIY3-D1et4PP74_LVjLF1s_FvTIh8KJq3syjmkJN6B2VQoHH14tnC7fsxzTtuX0",
+      "issued_ms": 1789913600000,
+      "kind": "hub.card",
+      "reader": 1,
+      "relay_url": null,
+      "suite": 2,
+      "tls_spki_sha256": "19dzV-BWnXf27oDtjqrK-6FGcfYbFEPuMUYMTzOrlY4",
+      "v": 2
+     },
+     "op_cert": {
+      "o": {
+       "cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "dev": true,
+       "expires_ms": 1821536000000,
+       "hk_op_pub": "BGKyaYh6M5-PTj4pcMYwjvcmBflbTMCaHcCtr8J0vV4knajypjV15SXhIGpnZO404RAfMhkTi9R1g6_7JxV96s4",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "kind": "hub.op_cert",
+       "op_seq": 1,
+       "suite": 2,
+       "v": 2
+      },
+      "sig": "IkiDO7ivIMFh9v4YZOITIZ4S2fsRo8hL5q7RBkafUZ5q3ZMpIXjeXU-g16p8YbpDLpjxC4N0eCWK-IRhCkW1bg"
+     },
+     "sig": "d0rBLWzgy0K4VFAnAQ8tNGP0wbe8qLVXs_OLHN6ynAnrAx09-gjRuC-nYdKl8CHFLYh0289CgvUU0B10fZShRA"
+    },
+    "dev_mode": true,
+    "event": {
+     "actor": {
+      "id": "u_a368bd380588e5dabee62a516031e21f",
+      "kind": "person",
+      "via": "a521208444bffafc2188fe6b5f1f286f"
+     },
+     "auth": "hub",
+     "based_on": "sha256:6b241bb0e70240694c042e752a2baed2457752ab1c036ec542334acec5cc5367",
+     "channel": "a521208444bffafc2188fe6b5f1f286f",
+     "channel_cert": {
+      "o": {
+       "channel_id": "a521208444bffafc2188fe6b5f1f286f",
+       "dev": true,
+       "expires_ms": 1792592000000,
+       "factor": "se-unlocked",
+       "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+       "hv": 0,
+       "issued_ms": 1789913600000,
+       "key_pub": "BJr__CqBPz4fbs0dWgg8yS6TooSjaMWMIuSL0S5Iw7-6F6d_sFz9ilNhI0j4GlX6G8rpZZ_QY9JnvaWLXb2cdZA",
+       "kind": "hub.channel_cert",
+       "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+       "suite": 2,
+       "user_id": "a368bd380588e5dabee62a516031e21f",
+       "v": 2
+      },
+      "sig": "nqr1qA-e5yXPo9vSziaXYLCFqQPQxcr_Lzw73LtOVx8xFwrx8Cbi2NlvbF5Mb2Zqm8FY9xHPKxi7ubZJcx5Pbg"
+     },
+     "channel_factor": "se-unlocked",
+     "channel_proof": "NlUXmJA3lKNHFYVQtHEC80TbN6vR_pSap78n3PnBXYS-aJywmYQ1WfkBDN5J8QC5thlPMR8DgakvzHhpoW4iJg",
+     "handoff": "01J9ZP00000000000000000001",
      "hash_v": 1,
      "hours": 72,
      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
@@ -51501,7 +51832,7 @@
      "roster_v": 4,
      "scope": "workable",
      "secret_hash": "sha256:d11cbffd720709b4fff84f9e914c49e67e3368dbbf16f288ae8cb9ba025a5995",
-     "sig": "3i9sO5MDhUEzM_CUPgcMAKmlsmIIYVOtxjJ3W31INdm5B4omOf28sdIIH4eGdFzv1ILCocfZOUfv6q4oth3E4w",
+     "sig": "Bj9BBLlHOnYBq1e90ZMwfAyNbZiTwCfyjto1FZV_fgio2vkiZLEnqCRiNBj6RT82aBDKyFIOX7zHqN38k5UN3Q",
      "snapshot_version": 3,
      "type": "grant.requested",
      "uk_cert": {
@@ -51631,8 +51962,9 @@
       "sig": "nqr1qA-e5yXPo9vSziaXYLCFqQPQxcr_Lzw73LtOVx8xFwrx8Cbi2NlvbF5Mb2Zqm8FY9xHPKxi7ubZJcx5Pbg"
      },
      "channel_factor": "se-unlocked",
-     "channel_proof": "y8OQ8MPOnvDSTJ3uj7V0zdHOktpvar4TOBn2g8yj35J7OMQ4Ck_dAOtqhnodjvO73Gr87jNE7uW8zCtjpBJz0w",
+     "channel_proof": "43B71OLjXX3vvx3Q2k5lv_3an2fse0G14OmtePLXienq-gTNNammCBKQ8m9jng2N2bVecJRT4YvlaQzEdFgXTA",
      "grant": "gr_01J9ZP0000000000000000GRT1",
+     "handoff": "01J9ZP00000000000000000001",
      "hash_v": 1,
      "hours": 72,
      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
@@ -51640,7 +51972,7 @@
      "label": "Tariff import",
      "roster_v": 4,
      "scope": "workable",
-     "sig": "MxS6yPeR1qx9pGyuJyOc_rkTBXEqWxKO69wXef40SFVZBUbXr8r-qq9PuE_7FPVQMez4XJpfdWq6uTqz65yncQ",
+     "sig": "O_CJycVuh7dt4xhE7j8uo-E_qAEMBYpZHvgCKCYpoglnlGXg-mIgfbXyaJvwrhiXRwtr5DGN-YDrAg0Bcxf4aQ",
      "snapshot_version": 3,
      "type": "grant.requested",
      "uk_cert": {
@@ -52083,7 +52415,8 @@
       "sig": "nqr1qA-e5yXPo9vSziaXYLCFqQPQxcr_Lzw73LtOVx8xFwrx8Cbi2NlvbF5Mb2Zqm8FY9xHPKxi7ubZJcx5Pbg"
      },
      "channel_factor": "se-unlocked",
-     "channel_proof": "iMz7b5c1PJzpGwmkUP2taQwKiCihuPGIgKEkDM43sazaEx0M65W-6QIH76cQpag2HxrnA5hqZeCy2RGXX5BrLw",
+     "channel_proof": "H5w2oNYGRiPv2dUrObvnfYFY-gaZBcBGSMWvUCdz2Htk6Dcn8ofQh7GbRkpinGwfnTXvhFpeoVaXVjOcFruTKQ",
+     "handoff": "01J9ZP00000000000000000001",
      "hash_v": 1,
      "hours": 72,
      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
@@ -52091,7 +52424,7 @@
      "label": "Tariff import",
      "roster_v": 4,
      "scope": "workable",
-     "sig": "tGeOuFJUiarGMwpYQXSRKuNGf_SEyldv6sE-dC1NamxixG173hXHM9VkCa3KRa9wKhmZNSeF09alUKejBo5e_Q",
+     "sig": "Lh44Y7HpbC9NSra0vq1Yguubuy7Iqf-qO2CA2T5FIYyyvacDs_g3-iKQCnPOnby0nMvmLP1XmZByhvjbfKHutA",
      "snapshot_version": 3,
      "type": "grant.requested",
      "uk_cert": {

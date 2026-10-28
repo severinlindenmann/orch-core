@@ -159,6 +159,7 @@ describe('the form', () => {
 
 describe('what is signed', () => {
   it('asks the host to conditionally grant access and binds the launch settings', async () => {
+    setup({ grant: null }) // no usable access: the grant is proposed (with valid access the request carries none, see create-and-start-click)
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
     const action = await sent()

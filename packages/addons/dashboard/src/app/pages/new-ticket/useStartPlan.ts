@@ -8,6 +8,7 @@ import { GRANT_MAX_HOURS, grantDefaultHours, runnerLengths, reusableAccess } fro
 import { routingQueries } from '@/api/modelRouting'
 import { queries } from '@/api/queries'
 import type { Workspace } from '@/api/types'
+import { nowMs } from '@/lib/time'
 import { DEFAULT_CHOICE, shownModel, type AgentChoiceValue, type Reviewed } from './startAfterCreate'
 
 export const agentPrefKey = (person: string, ws: string) => `orch.dashboard.new-ticket.agent.${person}.${ws}`
@@ -78,8 +79,10 @@ export function useStartPlan(workspace: Workspace, person: string) {
     return () => clearInterval(t)
   }, [feature])
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const grant = useMemo(() => reusableAccess(info), [info, tick])
-  const grantNow = useCallback(() => reusableAccess(info), [info])
+  // the stopwatch: the page clock when this read of the host arrived (only differences of it are used)
+  const readAt = useMemo(() => nowMs(), [info]) // eslint-disable-line react-hooks/exhaustive-deps
+  const grant = useMemo(() => reusableAccess(info, nowMs() - readAt), [info, readAt, tick])
+  const grantNow = useCallback(() => reusableAccess(info, nowMs() - readAt), [info, readAt])
   const needsGrant = available && !grant
 
   // Access length: the workspace maximum caps it; 1, 3 or 7 days (a workspace that allows less offers its own maximum).

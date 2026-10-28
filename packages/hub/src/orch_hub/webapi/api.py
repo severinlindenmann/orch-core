@@ -94,6 +94,7 @@ STATUS = {
     "channel_exists": 409,
     "key_in_use": 409,
     "conflict": 409,
+    "no_approver": 409,
     "stale_snapshot": 409,
     "unknown_snapshot": 409,
     # access changes that wait for a workspace owner (changes/)
@@ -235,6 +236,7 @@ class WebDeps:
     #: the route queue (``recent``): hand-offs between workspaces, for the Workspaces page; None = an empty list
     routes: Any = None
     authz: Any = None  # live routing authorization; None means no allowed edges
+    connections: Any = None  # orch_hub.connections.Connections: the stored connections and the counts
     delivery: Any = None  # custodial DeliveryQueue; None = no pending deliveries
     activity: Any = None  # hub-local admin history; None = no local events
     changes: Any = (
@@ -309,6 +311,20 @@ ROUTES: tuple[Route, ...] = (
         "session",
         "my_changes",
         "Access changes waiting for my approval, and overrides on my workspaces (session person only)",
+    ),
+    _r(
+        "POST",
+        "/me/connections",
+        "session",
+        "connection_set",
+        "Ask to allow a connection (waits for an approver of the receiving workspace) or close one at once",
+    ),
+    _r(
+        "GET",
+        "/me/connections/traffic",
+        "session",
+        "my_connection_traffic",
+        "Hand-off counts per connection, last 30 days, only for pairs I am responsible for",
     ),
     _r(
         "POST",
@@ -1716,6 +1732,8 @@ class WebApi(ChangeHandlers):
         for grant in self.d.access.grants(ws):
             self.d.access.revoke(ws, grant["group"], actor=c.user_id)
         reg.forget(ws)
+        if self.d.connections is not None:  # no connection to or from it, and no counts about it, outlive the workspace
+            self.d.connections.forget_workspace(ws)
         return 200, {"ok": True}
 
     def _h_a_workspaces(self, c: Ctx, p: dict, q: dict, b: dict | None):
@@ -1758,7 +1776,23 @@ class WebApi(ChangeHandlers):
             for other in workspaces
             if self.d.authz.may_route(a["workspace_id"], other["workspace_id"])
         ]
-        return 200, {"workspaces": workspaces, "edges": edges}
+        stored = self.d.connections.edges() if self.d.connections is not None else []
+        pending = (
+            [x for x in self._chg().for_admin() if x["kind"] == "connection_allow" and x["state"] == "pending"]
+            if self.d.changes is not None
+            else []
+        )
+        traffic = self._chg().traffic_for(c.user_id) if self.d.changes is not None else []
+        return 200, {
+            "workspaces": workspaces,
+            "edges": edges,  # effective: a connection AND the access rule
+            "connections": [{"from": e["from"], "to": e["to"], "via": e["via"]} for e in stored],
+            "pending": [
+                {"id": x["id"], "from": x["body"]["from"], "to": x["body"]["to"], "proposer": x["proposer"]["name"]}
+                for x in pending
+            ],
+            "traffic": traffic,
+        }
 
     def _h_a_services(self, c: Ctx, p: dict, q: dict, b: dict | None):
         if self.d.services is None:

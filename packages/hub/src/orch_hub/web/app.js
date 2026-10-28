@@ -173,6 +173,7 @@ function shell(active, ...nodes) {
       todo.splice(todo.indexOf(pg), 1); moved = true;
     }
   }
+  for (const pg of PAGES) if (!items.some((t) => t.id === pg.path)) items.push({ id: pg.path, label: pg.nav.label, admin: pg.nav.admin }); // an unresolved nav.after is still reachable (pages.test.mjs fails on it)
   const tabs = (cls) => items.filter((t) => !t.admin || state.user?.is_admin).map((t) => tab(t.id, t.label, cls));
   const name = renderText(state.user?.name ?? "");
   const hubName = renderText(state.rail.hubName);
@@ -1118,10 +1119,20 @@ async function workspacePage(route) {
 // Serialize renders so an earlier slow read cannot overwrite the final route.
 let routing = false;
 let pendingRoute = false;
-// A page module's render gets the console's own helpers (the same object for every page).
+// A page module's render gets the console's own helpers (the same object for every page). The gate is HERE, not left to the
+// page: the session is read first, nobody signed in goes to sign-in, and a non-admin never reaches an admin page's render
+// (a new page that forgets its own check is still gated; the pages keep theirs). The page's first refresh() is answered
+// from this one, so a page does not ask the server twice.
 const pageRender = (kind) => {
   const pg = PAGES.find((x) => x.path === kind);
-  return pg ? () => pg.render({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) : null;
+  if (!pg) return null;
+  return async () => {
+    if (!(await refresh())) return loginView();
+    if (pg.nav.admin && !state.user?.is_admin) return home();
+    let first = true;
+    const pageRefresh = async () => (first ? ((first = false), true) : refresh());
+    return pg.render({ api, refresh: pageRefresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner });
+  };
 };
 registerPages(PAGES.map((x) => x.path));
 async function renderRoute() {

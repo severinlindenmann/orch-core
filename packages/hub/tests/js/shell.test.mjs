@@ -96,3 +96,25 @@ test("only first paint and route changes show skeletons", () => {
   context.pageLoading("services");
   assert.deepEqual(calls, [["home", "home"], ["services", "services"]]);
 });
+
+test("a page module is gated by the shell, not by itself: nobody signed in goes to sign-in, a non-admin never reaches an admin page", async () => {
+  const visits = [];
+  const mk = (path, admin) => ({ path, nav: { label: path, admin, after: "services" }, render: async (d) => { visits.push("render:" + path); await d.refresh(); await d.refresh(); } });
+  const PAGES = [mk("secret", true), mk("open", false)];
+  let signedIn = false;
+  const state = { user: null };
+  const context = vm.createContext({ PAGES, state, home: async () => visits.push("home"), loginView: () => visits.push("login"), refresh: async () => { visits.push("refresh"); return signedIn; },
+    api() {}, loadRail() {}, reauthView() {}, pageLoading() {}, shell() {}, say() {}, banner() {} });
+  vm.runInContext(source.slice(source.indexOf("const pageRender"), source.indexOf("registerPages(PAGES")) + "\nthis.pageRender = pageRender;", context);
+  assert.equal(context.pageRender("nope"), null);
+  await context.pageRender("secret")();
+  assert.deepEqual(visits.splice(0), ["refresh", "login"]);                              // not signed in: sign-in, the page never runs
+  signedIn = true; state.user = { is_admin: false };
+  await context.pageRender("secret")();
+  assert.deepEqual(visits.splice(0), ["refresh", "home"]);                               // a non-admin is sent home before render
+  await context.pageRender("open")();
+  assert.deepEqual(visits.splice(0), ["refresh", "render:open", "refresh"]);            // the page's first refresh() is answered from the shell's, the second is real
+  state.user = { is_admin: true };
+  await context.pageRender("secret")();
+  assert.deepEqual(visits.splice(0), ["refresh", "render:secret", "refresh"]);
+});

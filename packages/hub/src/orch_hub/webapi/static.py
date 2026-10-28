@@ -51,7 +51,13 @@ PAGE_FILE = re.compile(r"[a-z][a-z0-9-]{0,31}\.js")
 def page_files(root: Path = WEB_DIR) -> list[str]:
     """The page modules of ``<root>/pages``, sorted. Anything else in the folder is a build error."""
     folder = root / "pages"
-    names = sorted(p.name for p in folder.iterdir()) if folder.is_dir() else []
+    # dotfiles (.DS_Store, editor swap files) and __pycache__ are not pages and are never served; anything else that is not
+    # a page module name still fails the build
+    names = (
+        sorted(p.name for p in folder.iterdir() if not p.name.startswith(".") and p.name != "__pycache__")
+        if folder.is_dir()
+        else []
+    )
     bad = [n for n in names if not PAGE_FILE.fullmatch(n) or not (folder / n).is_file()]
     if bad:
         raise ValueError(f"not a page module name: {bad}")

@@ -231,7 +231,9 @@ def test_every_page_module_is_served_and_the_generated_list_names_exactly_those(
 
     names = page_files()
     assert names and all(PAGE_FILE.fullmatch(n) for n in names)
-    on_disk = sorted(p.name for p in (WEB_DIR / "pages").iterdir())
+    on_disk = sorted(
+        p.name for p in (WEB_DIR / "pages").iterdir() if not p.name.startswith(".") and p.name != "__pycache__"
+    )
     assert (
         names == on_disk
     )  # a file in the folder is served; nothing is served from the folder that is not a file in it
@@ -256,7 +258,7 @@ def test_a_file_in_pages_that_is_not_a_page_module_name_fails_the_build(tmp_path
 
     root = tmp_path / "web"
     shutil.copytree(WEB_DIR, root)
-    for odd in ("Bad.js", "x.txt", "a_b.js", ".hidden.js"):
+    for odd in ("Bad.js", "x.txt", "a_b.js"):
         (root / "pages" / odd).write_text("x")
         with pytest.raises(ValueError):
             StaticSite(hsts=False, root=root)
@@ -286,3 +288,22 @@ def test_the_generated_pages_module_loads_and_lists_every_page(tmp_path):
         check=True,
     ).stdout
     assert json.loads(out) == [n[:-3] for n in page_files()]
+
+
+def test_dotfiles_and_pycache_in_pages_are_ignored_not_served(tmp_path):
+    import shutil
+
+    from orch_hub.webapi.static import StaticSite
+
+    root = tmp_path / "web"
+    shutil.copytree(WEB_DIR, root)
+    base = StaticSite(hsts=False, root=root)
+    (root / "pages" / ".DS_Store").write_text("x")
+    (root / "pages" / ".hidden.js").write_text("export const page = {}")
+    (root / "pages" / "__pycache__").mkdir()
+    (root / "pages" / "__pycache__" / "x.pyc").write_text("x")
+    site = StaticSite(hsts=False, root=root)  # no failure at start
+    assert site.pages == base.pages
+    for path in ("/pages/.DS_Store", "/pages/.hidden.js", "/pages/__pycache__"):
+        assert site.get(path) is None
+    assert b".hidden" not in site.get("/pages.js")[2]

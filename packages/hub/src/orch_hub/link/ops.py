@@ -498,6 +498,51 @@ def switch_redeem(c: OpContext) -> dict[str, Any]:
     return {"user_id": r["user"], "name": name, "return_to": r["rt"], "kind": r["kind"]}
 
 
+def profile_put(c: OpContext) -> dict[str, Any]:
+    if set(c.body) != set(H.PROFILE_FIELDS) or not all(check(c.body[k]) for k, check in H.PROFILE_FIELDS.items()):
+        raise Refused("malformed")
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        c.registry.put_profile(c.workspace_id, c.body)
+    return {}
+
+
+def directory_get(c: OpContext) -> dict[str, Any]:
+    from ..contract.phase4 import strip_text as render_text
+    from ..router import AccessAuthz
+
+    if set(c.body) - {"query"} or type(c.body.get("query", "")) is not str or len(c.body.get("query", "")) > 80:
+        raise Refused("malformed")
+    entries = []
+    query = c.body.get("query", "").casefold()
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        authz = AccessAuthz(c.registry, c.access)
+        for ws in sorted(c.registry.pins()):
+            profile = c.registry.profile(ws)
+            if ws == c.workspace_id or c.registry.mode(ws) is None or not profile or not profile["listed"]:
+                continue
+            if not authz.may_route(c.workspace_id, ws):
+                continue
+            name = render_text((c.registry.card(ws) or {}).get("name", "") or "")
+            haystack = [name, profile["description"], *profile["tags"], *profile["handles"]]
+            if query and not any(query in value.casefold() for value in haystack):
+                continue
+            entries.append(
+                {
+                    "workspace_id": ws,
+                    "name": name,
+                    "online": c.router.is_online(ws) if c.router else False,
+                    **{k: v for k, v in profile.items() if k != "listed"},
+                }
+            )
+            if len(entries) == 50:
+                break
+    return {"entries": entries}
+
+
 def status_put(c: OpContext) -> dict[str, Any]:
     if c.registry.pin(c.workspace_id) is None:
         raise Refused("unknown_workspace")
@@ -555,6 +600,8 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "rail_get": rail_get,
     "owner_get": owner_get,
     "status_put": status_put,
+    "profile_put": profile_put,
+    "directory_get": directory_get,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

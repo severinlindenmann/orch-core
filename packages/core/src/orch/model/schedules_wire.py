@@ -297,9 +297,17 @@ def root_valid(core, root_id, now):
     return True  # ordinary person-issued root
 
 
+CHILD_ENVELOPE = frozenset(
+    {"v", "id", "type", "actor", "hash_v", "based_on", "seq", "at", "prev", "ws_seq", "host_sig"}
+)
+CHILD_FIELDS = frozenset({"key", "ticket_type", "title", "owner", "via"})
+
+
 def child_creation(core, uid, e):
     """A host-authenticated creation spends one recorded firing, never a runner grant."""
-    if any(k in e for k in ("auth", "sig", "roster_v", "schedule")):
+    # an ALLOWLIST: the chain envelope the store stamps plus exactly the child's own fields; any other field (auth, sig,
+    # roster_v, schedule, an optional ticket field...) means it did not come from the runner's _create_child
+    if set(e) - CHILD_ENVELOPE - CHILD_FIELDS:
         return denied("a schedule child uses only its recorded schedule authority")
     via = e.get("via")
     if not isinstance(via, dict) or set(via) != {"anchor", "schedule_id", "occurrence", "set_sig_hash"}:

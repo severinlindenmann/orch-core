@@ -37,6 +37,9 @@ class FakeRegistry:
     ) -> None:
         self.ws[ws] = {"mode": mode, "owner": owner, "status": status, "name": name, "left_ms": left_ms}
 
+    def profile(self, ws):
+        return self.ws.get(ws, {}).get("profile")
+
     def status(self, ws):
         return {"version": None, "commit": None, "host": None, "address": "", "last_seen_ms": None}
 

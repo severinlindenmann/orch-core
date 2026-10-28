@@ -145,8 +145,9 @@ export function skippedText(last: ScheduleOutcome | null | undefined): string | 
 export const scheduleKey = (ws: string) => ['schedules', ws] as const
 
 /** The person's schedules in one workspace (`schedule.list`). */
-export function useSchedules(ws: string) {
+export function useSchedules(ws: string, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: scheduleKey(ws),
     queryFn: () => call<ScheduleList>('GET', `/api/w/${encodeURIComponent(ws)}/schedules`),
   })

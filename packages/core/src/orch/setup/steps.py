@@ -174,7 +174,7 @@ class Secrets:
             if self.dead:
                 return []
             code = bytes(self._code).decode("ascii")
-            return [bytes(self._pass).decode("ascii"), code, *map(Word, code.split())]
+            return [*held_words(bytes(self._pass).decode("ascii")), *held_words(code)]
 
     def _wipe(self) -> None:
         _wipe(self._pass)
@@ -237,11 +237,23 @@ def _b64_forms(b: bytes) -> list[str]:
 #: A filesystem path in error text ("/home/x/.config/orch/person", "~/.orch/key"): two or more segments after a leading
 #: "/" or "~/". Directory and file names are ordinary words that a 24-word recovery code (or a passphrase word) matches
 #: by chance, about once in fifty setups, so they must not make an error unreadable.
-_PATH = re.compile(r"(?<![\w/])(?:~|\.{0,2})/(?:[\w.@+%~-]*/)+[\w.@+%~-]*")
+#: Strict: a non-empty first segment, not after ":" (URLs) or inside a base64 / word run ("a/b/c" glued to a letter).
+_PATH = re.compile(r"(?<![\w/:+=.~-])(?:~|\.{1,2})?/[\w.@%~-]+(?:/[\w.@%~-]+)+/?")
 
 
 def _without_paths(text: str) -> str:
     return _PATH.sub(" ", text)
+
+
+class Code(str):
+    """The whole recovery code as held by a session: its single words are checked separately, as :class:`Word`."""
+
+    __slots__ = ()
+
+
+def held_words(secret: str) -> list[str]:
+    """A held secret as the redaction gate wants it: the whole (Code) and each of its words (Word)."""
+    return [Code(secret), *(Word(w) for w in _tokens(secret))]
 
 
 class Word(str):
@@ -262,44 +274,44 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
     Fails closed on odd input: a non-str secret is ignored, never raised on."""
     texts = {text, urllib.parse.unquote(text), urllib.parse.unquote_plus(text)}
     forms = [_forms(t) for t in texts]
-    # single words and word pairs are ignored inside a filesystem path; the whole secret and
-    # every encoding are still checked against the complete text above
-    plain = [_without_paths(t) for t in texts]
-    toks = [set(_tokens(t)) for t in plain]
-    plain_an = [_forms(t)[1] for t in plain]
+    toks = [set(_tokens(t)) for t in texts]
     raw_nows = ["".join(t.split()) for t in texts]
-    plain_forms = [_forms(t) for t in plain]
-    plain_nows = ["".join(t.split()) for t in plain]
+    # The ONLY path exemption: one held recovery word (Word) is not looked for inside a filesystem path. Everything
+    # else (whole code, passphrase, runs of 2+ words, hex / base64 / quoted forms) is checked on the full text.
+    plain_forms = [_forms(_without_paths(t)) for t in texts]
     for sec in secrets:
         if not isinstance(sec, str) or not sec.strip():
             continue
         s_ws, s_an = _forms(sec)
-        # one recovery word (a Word) is, like the single-word rule below, not looked for inside a path
-        forms_, raw_nows_ = (plain_forms, plain_nows) if isinstance(sec, Word) else (forms, raw_nows)
-        for t_ws, t_an in forms_:
+        for t_ws, t_an in plain_forms if isinstance(sec, Word) else forms:
             if len(s_ws) >= _MIN_SECRET and s_ws in t_ws:
                 return True
             if len(s_an) >= _MIN_SECRET and s_an in t_an:
                 return True
         words = _tokens(sec)
-        for w in words:
-            if len(w) >= _MIN_SECRET and any(w in tk for tk in toks):
-                return True
-        for w1, w2 in zip(words, words[1:], strict=False):
-            pair = w1 + w2
-            if len(pair) >= _MIN_SECRET and any(pair in t_an for t_an in plain_an):
-                return True
+        if not isinstance(sec, Code | Word):  # a held code's single words are checked as Word secrets (path-exempt)
+            for w in words:
+                if len(w) >= _MIN_SECRET and any(w in tk for tk in toks):
+                    return True
+        for i in range(len(words)):  # every run of 2+ consecutive words, joined
+            run = words[i]
+            for w2 in words[i + 1 :]:
+                run += w2
+                if len(run) >= _MIN_SECRET and any(run in t_an for _, t_an in forms):
+                    return True
         raw = sec.encode("utf-8", "replace")
         hexed = {raw.hex(), "".join(sec.split()).encode("utf-8", "replace").hex()}
-        if any(h in t_ws for h in hexed for t_ws, _ in forms_):
+        if any(h in t_ws for h in hexed for t_ws, _ in forms):
             return True
         for variant in (sec, " ".join(sec.split()), "".join(sec.split())):
             vb = variant.encode("utf-8", "replace")
             for e in _b64_forms(vb):
-                if any(e in r for r in raw_nows_):
+                if any(e in r for r in raw_nows):
                     return True
             for q in (urllib.parse.quote(variant), urllib.parse.quote_plus(variant)):
-                if len(q) >= _MIN_SECRET and any(q.lower() in t_ws for t_ws, _ in forms_):
+                if isinstance(sec, Word) and q.lower() == s_ws:
+                    continue  # the unchanged word: already checked above, outside paths only
+                if len(q) >= _MIN_SECRET and any(q.lower() in t_ws for t_ws, _ in forms):
                     return True
     return False
 
@@ -528,7 +540,7 @@ class Creator:
         self._genesis_started = False  # ports.genesis was called: its outcome may be unknown, the key may land
 
     def _held_secrets(self) -> list[str]:
-        out: list[str] = [self._passphrase] if self._passphrase else []
+        out: list[str] = held_words(self._passphrase) if self._passphrase else []
         if self.secrets is not None:
             out += self.secrets.held()
         return out

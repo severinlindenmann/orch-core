@@ -75,6 +75,7 @@ async function openForm() {
   view()
   fireEvent.click(screen.getByRole('button', { name: 'New schedule' }))
   const d = within(screen.getByRole('dialog'))
+  fireEvent.click(d.getByRole('radio', { name: 'An existing ticket' }))
   await user.click(d.getByRole('combobox', { name: 'Ticket' }))
   await user.click(await screen.findByRole('option', { name: 'DEMO-1 Import' }))
   await waitFor(() => expect(d.getByRole('combobox', { name: 'Ticket' }).textContent).toContain('DEMO-1 Import'))
@@ -124,6 +125,49 @@ describe('New schedule and the minimum lead (run 13)', () => {
 })
 
 describe('MySchedules', () => {
+  it('defaults to new tickets and requires a title as well as the brief', () => {
+    view()
+    fireEvent.click(screen.getByRole('button', { name: 'New schedule' }))
+    const d = within(screen.getByRole('dialog'))
+    expect((d.getByRole('radio', { name: 'A new ticket each run' }) as HTMLInputElement).checked).toBe(true)
+    expect(d.queryByRole('combobox', { name: 'Ticket' })).toBeNull()
+    const create = d.getByRole('button', { name: 'Create schedule' }) as HTMLButtonElement
+    fireEvent.change(d.getByLabelText('What should the agent do'), { target: { value: 'Check for mail.' } })
+    expect(create.disabled).toBe(true)
+    const title = d.getByLabelText('Ticket title') as HTMLInputElement
+    expect(title.maxLength).toBe(100)
+    fireEvent.change(title, { target: { value: '   ' } })
+    expect(create.disabled).toBe(true)
+    fireEvent.change(title, { target: { value: 'Check the shared mailbox' } })
+    expect(create.disabled).toBe(false)
+    fireEvent.click(create)
+    fireEvent.click(screen.getByRole('button', { name: 'Sign: A new ticket each run' }))
+    expect(h.signed).toEqual([expect.objectContaining({ action: 'schedule_add', target: 'new', title: 'Check the shared mailbox' })])
+    expect(h.signed[0]).not.toHaveProperty('key')
+  })
+
+  it('requires a picked ticket when switching to existing', () => {
+    view()
+    fireEvent.click(screen.getByRole('button', { name: 'New schedule' }))
+    const d = within(screen.getByRole('dialog'))
+    fireEvent.change(d.getByLabelText('Ticket title'), { target: { value: 'Mailbox' } })
+    fireEvent.change(d.getByLabelText('What should the agent do'), { target: { value: 'Check mail.' } })
+    fireEvent.click(d.getByRole('radio', { name: 'An existing ticket' }))
+    expect((d.getByRole('button', { name: 'Create schedule' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(d.queryByLabelText('Ticket title')).toBeNull()
+  })
+
+  it('restores the new-ticket target when undoing cancellation', async () => {
+    h.rows = [{ ...WEEKLY, target: 'new', title: 'Mailbox' }]
+    view()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Sign: Cancel the schedule/ }))
+    h.show.mock.calls[0][1].action.onClick()
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign: Restore schedule: A new ticket each run' }))
+    expect(h.signed[1]).toEqual(expect.objectContaining({ target: 'new', title: 'Mailbox' }))
+    expect(h.signed[1]).not.toHaveProperty('key')
+  })
+
   it('renders my rows with their summaries and hides other people for a member', () => {
     view()
     expect(screen.getByText('Runs every week on Mon and Thu at 09:00')).toBeTruthy()
@@ -184,6 +228,7 @@ describe('MySchedules', () => {
     const dialog = screen.getByRole('dialog')
     const d = within(dialog)
     // The ticket is the shared Dropdown (radix Select): open the combobox, press the option.
+    fireEvent.click(d.getByRole('radio', { name: 'An existing ticket' }))
     await user.click(d.getByRole('combobox', { name: 'Ticket' }))
     await user.click(await screen.findByRole('option', { name: 'DEMO-1 Import' }))
     await waitFor(() => expect(d.getByRole('combobox', { name: 'Ticket' }).textContent).toContain('DEMO-1 Import'))
@@ -230,5 +275,12 @@ describe('MySchedules', () => {
     view()
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
     expect(screen.getByText(/Cancelled/)).toBeTruthy()
+  })
+
+  it('an unsupported row is one quiet line and does not hide the others', () => {
+    h.rows = [row({ id: 'sc_x', supported: false, note: 'Needs a newer dashboard' } as never), row({ id: 'sc_y', rule: { every: 'day', at: '09:00', tz: 'UTC' } })]
+    view()
+    expect(screen.getByText('Needs a newer dashboard')).toBeInTheDocument()
+    expect(screen.getAllByText('DEMO-1').length).toBeGreaterThan(0)
   })
 })

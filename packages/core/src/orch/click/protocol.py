@@ -454,9 +454,17 @@ def _hub_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
 
 
 def _schedule_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
-    from orch.ops.schedule import RISK as SCHEDULE_RISK
+    from orch.ops.schedule import describe, risk
 
-    return [SCHEDULE_RISK, SCHEDULE_FIRING_LINE]
+    lines = []
+    for event in events:
+        if event.get("type") != "schedule.set":
+            continue
+        target = event.get("target", "existing")
+        if target == "new":
+            lines.append(describe(event["rule"], "", event["ends"], target, event.get("title")))
+        lines.append(risk(target))
+    return [*lines, SCHEDULE_FIRING_LINE]
 
 
 def _fixed(*lines: str) -> Callable[[Events, bool, bool], list[str]]:

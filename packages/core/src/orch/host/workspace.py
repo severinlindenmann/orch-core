@@ -721,7 +721,7 @@ class WorkspaceGate:
         verified = auth.verify((frame.get("auth") or {}).get("grant"), now)
         mapped = self.host.registry.mapped_person(peer.uid, self.workspace_id) if peer.kind == "person" else None
         valid = mapped is not None and not self.host.pins.pinned(peer.uid) and auth.person_ok(mapped, now)
-        return refusal(resolve(peer.kind, verified.state, valid), kind)
+        return refusal(resolve(peer.kind, verified.state, valid), kind, frame.get("op"))
 
     def _column(self, service: WorkspaceService, peer: Peer, frame: dict[str, Any]) -> tuple[Column, str | None, Any]:
         """The authoritative column, viewer and grant, from the freshly refreshed store (worker thread, F8)."""
@@ -750,7 +750,7 @@ class WorkspaceGate:
                 column, viewer, verified = Column("N", "no-person"), None, Verified("absent")
             else:
                 column, viewer, verified = await service.call(self._column, service, session.peer, frame)
-                code = refusal(column, kind)
+                code = refusal(column, kind, frame.get("op"))
                 if code is not None:
                     raise HostError(code, f"{frame['op']} is not allowed here")
                 if service.state == "unavailable":  # an H2a backend: step 10 here

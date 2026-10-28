@@ -2115,3 +2115,8 @@ Revert: Restore the prior gate only together with a coordinated click contract c
 **Why:** A blocked or lost cancellation must not be the mechanism that prevents a disconnected session's holds from signing. Queued input is drained before deadlines; stale leases cancel unsigned holds locally.
 
 **Revert:** Revert the lease protocol and renewal loop together only when replacing them with another signer-enforced liveness boundary.
+### 2026-10-28 — New-ticket schedule dialog
+
+- **Decision:** Default New schedule to “A new ticket each run”, with a literal title limited to 100 characters. Keep the existing ticket picker as the other choice; preserve the row’s target when undoing cancellation.
+- **Why:** Repeated checks need a fresh ticket for each run. Keep the form short, with the longer explanation behind the information button. Preserve existing-ticket action arguments.
+- **Revert:** Remove the target choice and optional action/model fields, and restore the ticket picker as the first control.

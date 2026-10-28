@@ -319,7 +319,8 @@ class Channels:
         salt, ph, secret, last = row[0] if row else (None, None, None, 0)
         ok = bool(row) and ph is not None and secret is not None
         try:
-            ok = ok and self.acc.has_user(u)
+            # a disabled person, or one enabled but not yet recovered, fails like a wrong password (the hashing ran above)
+            ok = ok and self.acc.is_active(u) and not self.acc.must_recover(u)
         except AccessError:
             ok = False
         h = _pw_hash(password, salt or _DUMMY_SALT)  # always spend the hashing time
@@ -381,6 +382,13 @@ class Channels:
         ``via`` is ``switch``: the hub did not see a password sign-in, so hub-admin routes refuse this session until the
         person signs in for real (``reauth_required``)."""
         u = self._known_user(user_id)
+        try:
+            if not self.acc.is_live(
+                u
+            ):  # disabled, or enabled but not yet recovered: no session for a switch ticket either
+                raise ChannelError("unknown_user")
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
         token = secrets.token_urlsafe(32)
         now = self._now()
 
@@ -404,7 +412,9 @@ class Channels:
         if not rows or rows[0][1] <= self._now():
             raise ChannelError("no_session")
         try:
-            if not self.acc.has_user(rows[0][0]):  # a removed user's sessions are dead
+            if not self.acc.is_active(rows[0][0]) or self.acc.must_recover(
+                rows[0][0]
+            ):  # removed, disabled, unrecovered
                 raise ChannelError("no_session")
         except AccessError:
             raise ChannelError("no_session") from None
@@ -473,7 +483,7 @@ class Channels:
                 raise ChannelError("no_session")
             user = row[0]
             try:
-                if not self.acc.has_user(user):
+                if not self.acc.is_live(user):
                     raise ChannelError("no_session")
             except AccessError:
                 raise ChannelError("no_session") from None
@@ -695,7 +705,7 @@ class Channels:
         if not r or r[0][0] <= now:
             raise ChannelError("no_session" if kind == "browser" else "bad_pairing_code")
         try:
-            if not self.acc.has_user(u):
+            if not self.acc.is_live(u):
                 raise ChannelError("unknown_user")
         except AccessError:
             raise ChannelError("unknown_user") from None
@@ -821,6 +831,23 @@ class Channels:
         except AccessError as e:
             raise ChannelError(e.code) from None
 
+    def revoke_all(self, user_id: str) -> int:
+        """Revoke EVERY live channel of one user (operator-level path, like :meth:`remove_user`: the caller has already
+        been authorised, a disabling or a redeemed recovery link). Audited and purged at the relay per channel;
+        idempotent. Returns how many were revoked now."""
+        u = self._user(user_id)
+        n = 0
+        for c in self.channels(u):
+            if c["status"] != "revoked":
+                self.revoke(c["channel_id"])
+                n += 1
+        return n
+
+    def end_sessions(self, user_id: str) -> None:
+        """Kill every session (browser, pairing and channel) of this user at once."""
+        u = self._user(user_id)
+        self._guard(lambda: self.db.w("DELETE FROM sessions WHERE user_id=?", (u,)))
+
     def revoke_as(self, token: str, channel_id: str) -> None:
         self.revoke(channel_id, actor=self.session_user(token))
 
@@ -835,8 +862,8 @@ class Channels:
                 return None
             if not (_HEX32.fullmatch(user_id) and _HEX32.fullmatch(channel_id)):
                 return None
-            if not self.acc.has_user(user_id) or channel_id in self.acc.revoked_channels():
-                return None
+            if not self.acc.is_live(user_id) or channel_id in self.acc.revoked_channels():
+                return None  # a disabled person has no live channel, even one that was never revoked (stale)
             reg = self.db.q("SELECT revoked_ms FROM channels WHERE channel_id=? AND user_id=?", (channel_id, user_id))
             if not reg or reg[0][0] is not None:
                 return None

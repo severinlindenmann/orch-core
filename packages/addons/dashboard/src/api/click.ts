@@ -158,6 +158,7 @@ export type HubModeFullAction = { action: 'hub_mode_full'; hub_card: string; hub
 export type HubLeaveAction = { action: 'hub_leave' }
 
 /** Every typed action a click request may carry. */
+// Schedule actions inherit both existing-ticket and new-ticket shapes from HandoffAction.
 export type ClickAction = HandoffAction | RunnerGrantAction | AgentAccessAction | HubJoinAction | HubModeFullAction | HubLeaveAction
 
 /** Core's constant (orch.click.protocol DEPOSIT_LINE): a deposit View must carry it, or Sign is not offered. */

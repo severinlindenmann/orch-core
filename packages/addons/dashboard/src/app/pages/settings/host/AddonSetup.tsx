@@ -17,7 +17,7 @@ export function AddonSetup({ name, enabling, close, submit }: { name: 'publish';
       <DialogContent className="max-h-[85vh] overflow-y-auto border-border bg-surface">
         <DialogHeader>
           <DialogTitle><Inline>{title}</Inline></DialogTitle>
-          <DialogDescription>{enabling ? 'Choose the settings, then review and sign to turn it on.' : 'Choose the settings, then review and sign.'}</DialogDescription>
+          <DialogDescription>{enabling ? 'Choose where files go, then review and confirm to turn it on.' : 'Choose where files go, then review and confirm.'}</DialogDescription>
         </DialogHeader>
         <PublishForm server={server} share={share} setServer={setServer} setShare={setShare} />
         <DialogFooter>

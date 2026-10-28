@@ -913,6 +913,16 @@ class AddonPurge(Action):
     name: AddonName
 
 
+def _canonical_origin(value: str) -> str:
+    """The host's own check (`wire.check_origin`: no `..` hosts, port at most 65535); the host runs it again."""
+    from orch.wsproto import wire
+
+    try:
+        return wire.check_origin(value)
+    except wire.WireError:
+        raise ValueError("not a valid address") from None
+
+
 #: core `publishOrigin` (schemas/common.json): https, or http on this computer only; no path, lower case
 Origin = Annotated[
     str,
@@ -921,6 +931,7 @@ Origin = Annotated[
         pattern=r"^(?:https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?"
         r"|http://(?:localhost|127\.0\.0\.1|10\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|172\.(?:1[6-9]|2[0-9]|3[01])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|192\.168\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])|100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9]))(?::[1-9][0-9]{0,4})?)$",
     ),
+    AfterValidator(_canonical_origin),
 ]
 
 

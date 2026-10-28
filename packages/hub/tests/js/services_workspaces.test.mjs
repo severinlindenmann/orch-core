@@ -195,3 +195,94 @@ test("workspace and access names stay text even when they contain markup", () =>
   assert.match(text(out), /<img/);
   assert.equal(find(out, (n) => n.tag === "img").length, 0);
 });
+
+
+const actions = { check() {}, open() {}, copy: async () => true };
+const diagram = (out) => find(out, (n) => n.attrs["aria-labelledby"] === "connections-title")[0];
+
+test("connection diagram has accessible workspace and service nodes with text and colour states", () => {
+  const d = base();
+  d.workspaces_list = [{ name: "Product", online: true }, { name: "<Legal>", online: false }];
+  d.relay.state = "down";
+  d.publish.state = "not_set_up";
+  d.edge = { state: "up", url: "https://hub.test" };
+  const out = servicesView(d, actions, NOW), flow = diagram(out);
+  const nodes = find([flow], (n) => n.className.startsWith("node "));
+  assert.deepEqual(nodes.map((n) => [n.tag, n.textContent, n.className]), [
+    ["li", "Productonline", "node ok"], ["li", "<Legal>offline", "node muted"],
+    ["li", "HubRunning", "node ok"], ["li", "RelayNot answering", "node warn"],
+    ["li", "PublishNot set up", "node muted"], ["li", "EdgeRunning", "node ok"],
+  ]);
+  assert.equal(find([flow], (n) => n.className === "arrow")[0].textContent, "link");
+  assert.ok(out.indexOf(flow) < out.findIndex((n) => n.className === "card svc-list"));
+  const edge = find(out, (n) => n.attrs.id === "svc-edge")[0];
+  assert.match(edge.textContent, /Edge: puts the hub on a public address\./);
+  assert.match(edge.textContent, /https:\/\/hub.test/);
+  assert.match(edge.textContent, /Running/);
+  assert.equal(find([edge], (n) => n.tag === "button" || n.tag === "details").length, 0);
+});
+
+test("workspace diagram caps names at eight and reports how many remain", () => {
+  const d = base();
+  d.workspaces_list = Array.from({ length: 11 }, (_, i) => ({ name: "Workspace " + i, online: true }));
+  const flow = diagram(servicesView(d, actions, NOW));
+  assert.equal(find([flow], (n) => n.className.startsWith("node ")).length, 12);
+  assert.match(flow.textContent, /Workspace 7online\+3 more/);
+  assert.doesNotMatch(flow.textContent, /Workspace 8/);
+});
+
+test("old response shape and an empty workspace list still render", () => {
+  const d = base();
+  let out = servicesView(d, actions, NOW);
+  assert.match(diagram(out).textContent, /3 workspaces, 2 online/);
+  assert.match(find(out, (n) => n.attrs.id === "svc-edge")[0].textContent, /Not set up/);
+  assert.match(diagram(out).textContent, /RelayRunningPublishRunningEdgeNot set up/);
+  d.workspaces_list = [];
+  out = servicesView(d, actions, NOW);
+  assert.match(diagram(out).textContent, /0 workspaces, 0 online/);
+});
+
+test("services refresh every 15 seconds, pause while hidden, and stop after navigation", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { runInNewContext } = await import("node:vm");
+  const source = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const timers = new Map(), requests = [];
+  let nextTimer = 0, rendered, release;
+  const context = {
+    root: { classList: { remove() {} }, replaceChildren() {} },
+    document: { hidden: false }, state: { user: { is_admin: true } },
+    refresh: async () => true, loadRail: async () => {},
+    api: async (_, path) => {
+      requests.push(path);
+      if (release && path === "/admin/services") await new Promise((resolve) => { release = resolve; });
+      return { status: 200, body: path === "/admin/services" ? base() : { workspaces: [{ name: "Product", online: true }] } };
+    },
+    servicesView: (data) => { rendered = data; return []; },
+    workspaces() {}, copyText() {},
+    setInterval: (fn, ms) => { assert.equal(ms, 15000); timers.set(++nextTimer, fn); return nextTimer; },
+    clearInterval: (id) => timers.delete(id), loading: () => () => {}, pageLoading() {}, loginView() {}, home() {}, navigate() {},
+    banner() {}, h() {}, say() {}, reauthView() {},
+  };
+  runInNewContext(source.match(/let servicesTimer[^\n]+/)[0] + "\n" + "let paintedRoute = null;\n" + source.match(/const show = [^\n]+/)[0] + "\n" +
+    "function shell() { show(); }\n" + source.slice(source.indexOf("async function services("), source.indexOf("async function home()")), context);
+  await context.services();
+  assert.deepEqual(requests, ["/admin/services", "/me/workspaces"]);
+  assert.equal(rendered.workspaces_list[0].name, "Product");
+  assert.equal(timers.size, 1);
+  context.document.hidden = true;
+  await [...timers.values()][0]();
+  assert.equal(requests.length, 2);
+  context.document.hidden = false;
+  await [...timers.values()][0]();
+  assert.equal(requests.length, 4);
+  assert.equal(timers.size, 1);
+  // A reply already in flight must not reopen Services after another page renders.
+  release = true;
+  const pending = [...timers.values()][0]();
+  while (release === true) await Promise.resolve();
+  context.shell("home");
+  assert.equal(timers.size, 0);
+  release();
+  await pending;
+  assert.equal(timers.size, 0);
+});

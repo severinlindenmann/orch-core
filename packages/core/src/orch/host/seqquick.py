@@ -102,7 +102,7 @@ def grant_line(agent: Mapping[str, Any], now: float | None = None) -> str:
     until = time.strftime("%a %d %b %H:%M %Z", time.localtime(t + agent["hours"] * 3600))  # this computer's time
     return (
         f"Agents may work on any ticket they are allowed to work on, not only this one, until about {until} "
-        f"({span(agent['hours'])}). Typed word: GRANT. The grant is signed last; its secret goes to your orch "
+        f"({span(agent['hours'])}). The grant is signed last; its secret goes to your orch "
         "runner or your own terminal, never to the dashboard."
     )
 

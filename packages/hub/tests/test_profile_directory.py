@@ -70,6 +70,7 @@ def directory():
             {"status": "bound", "binding": {"mode": "selective" if ws == "selective" else "full"}},
             owner_alias="alice" if ws == "caller" else "bob",
         )
+        reg.put_status(ws, {"version": "2.0.0", "commit": "", "host": "", "name": ws})
         reg.put_profile(ws, {**PROFILE, "listed": ws != "unlisted"})
     c = SimpleNamespace(registry=reg, workspace_id="caller", access=access, router=None, body={})
     yield c, allowed

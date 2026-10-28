@@ -92,7 +92,7 @@ class Changes:
 
     def _ws_name(self, ws: str) -> str | None:
         try:
-            name = (self._reg.card(ws) or {}).get("name")
+            name = self._reg.display_name(ws)
         except KeyError:
             return None
         return render_text(name) if type(name) is str and name else None

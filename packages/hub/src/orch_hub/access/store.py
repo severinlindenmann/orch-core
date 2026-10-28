@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS market_policy (
   id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL CHECK (version >= 1),
   policy TEXT NOT NULL, hash TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS workspace_addon_allow (workspace_id TEXT PRIMARY KEY, ids TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS addon_request (
+  workspace_id TEXT NOT NULL, name TEXT NOT NULL, version TEXT NOT NULL, actor TEXT NOT NULL DEFAULT 'person',
+  first_ms INTEGER NOT NULL, last_ms INTEGER NOT NULL, n INTEGER NOT NULL,
+  PRIMARY KEY (workspace_id, name)
+);
 CREATE TABLE IF NOT EXISTS recovery_notes (
   user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
   by_user TEXT NOT NULL, at_ms INTEGER NOT NULL
@@ -96,6 +102,10 @@ def check_name(name: object) -> str:
     if type(name) is not str or not name or len(name) > 80 or any(ord(ch) < 32 or ord(ch) == 127 for ch in name):
         raise AccessError("malformed", "name: 1-80 printable characters")
     return name
+
+
+_ADDON_ID = re.compile(r"[a-z][a-z0-9-]{0,39}")
+_VERSION = re.compile(r"[0-9A-Za-z.+-]{0,32}")
 
 
 def _grp(x: object) -> str:
@@ -578,6 +588,120 @@ class Access:
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
         return {"version": version, "policy": new, "hash": h}
+
+    # --- per-workspace add-on allowlist and the requests that feed it (M3, #1449 #1450) ---------------------------------
+
+    def workspace_addon_allow(self, workspace_id: str) -> list[str] | None:
+        """This ONE workspace's own allow list: ``None`` = no limit of its own (the hub-wide rule alone applies), a list =
+        only these (and only those the hub-wide rule also allows). It can narrow, never widen (Opus condition 13)."""
+        rows = self._q(
+            "SELECT ids FROM workspace_addon_allow WHERE workspace_id=?", (_hex(workspace_id, "workspace_id"),)
+        )
+        return None if not rows else list(loads_strict(rows[0][0]))
+
+    def set_workspace_addon_allow(self, workspace_id: str, ids: object, *, actor: str) -> list[str] | None:
+        """Set (a list, possibly empty) or clear (``None``) the workspace's own allow list. Hub admin only."""
+        _hex(workspace_id, "workspace_id")
+        _hex(actor, "actor")
+        if ids is not None and (
+            type(ids) is not list
+            or len(ids) > 256
+            or any(type(i) is not str or not _ADDON_ID.fullmatch(i) for i in ids)
+        ):
+            raise AccessError("malformed", "add-on ids")
+        with self.lock:
+            if not self.is_hub_admin(actor):
+                raise AccessError("forbidden_role", "only a hub-admin sets an allowlist")
+            if ids is None:
+                self._w("DELETE FROM workspace_addon_allow WHERE workspace_id=?", (workspace_id,))
+                return None
+            clean = sorted(set(ids))
+            self._w(
+                "INSERT INTO workspace_addon_allow(workspace_id, ids) VALUES (?,?) "
+                "ON CONFLICT(workspace_id) DO UPDATE SET ids=excluded.ids",
+                (workspace_id, cj(clean).decode()),
+            )
+            return clean
+
+    def effective_market_policy(self, workspace_id: str) -> dict[str, Any]:
+        """The policy THIS workspace's snapshot carries: the hub-wide one with ``addons.allow`` INTERSECTED with the
+        workspace's own list when it has one (``null`` hub-wide = the workspace list alone). ``block`` (joined) and
+        ``ceiling`` are never touched, so the result can only be narrower than the hub-wide policy, never wider. Same shape
+        as :meth:`market_policy`, so the snapshot and core need no change."""
+        base = self.market_policy()
+        own = self.workspace_addon_allow(workspace_id)
+        if own is None:
+            return base
+        allow = base["policy"]["addons"]["allow"]
+        policy = loads_strict(cj(base["policy"]).decode())
+        policy["addons"]["allow"] = sorted(set(own) if allow is None else set(allow) & set(own))
+        try:
+            policy = MP.check_policy(policy)
+        except MP.PolicyMalformed:
+            raise AccessError("store_error", "effective policy") from None
+        return {"version": base["version"], "policy": policy, "hash": MP.policy_hash(policy)}
+
+    def add_addon_request(
+        self, workspace_id: str, name: object, version: object = "", actor: object = "person"
+    ) -> None:
+        """A workspace's host says an install was refused (``market.addon_not_allowed``). Display data only: bounded, one row
+        per (workspace, add-on) with a counter, at most 50 distinct add-ons per workspace. Never an authority."""
+        _hex(workspace_id, "workspace_id")
+        if (
+            type(name) is not str
+            or not _ADDON_ID.fullmatch(name)
+            or type(version) is not str
+            or not _VERSION.fullmatch(version)
+            or actor not in ("person", "agent")
+        ):
+            raise AccessError("malformed", "add-on request")
+        now = self._now()
+        with self.lock:
+            if self._q("SELECT 1 FROM addon_request WHERE workspace_id=? AND name=?", (workspace_id, name)):
+                self._w(
+                    "UPDATE addon_request SET version=?, actor=?, last_ms=?, n=n+1 WHERE workspace_id=? AND name=?",
+                    (version, actor, now, workspace_id, name),
+                )
+            elif self._q("SELECT COUNT(*) FROM addon_request WHERE workspace_id=?", (workspace_id,))[0][0] < 50:
+                self._w(
+                    "INSERT INTO addon_request VALUES (?,?,?,?,?,?,1)", (workspace_id, name, version, actor, now, now)
+                )
+
+    def addon_requests(self) -> list[dict[str, Any]]:
+        rows = self._q(
+            "SELECT workspace_id, name, version, first_ms, last_ms, n, actor FROM addon_request ORDER BY last_ms DESC"
+        )
+        return [
+            {"workspace_id": w, "name": nm, "version": v, "first_ms": f, "last_ms": la, "count": n, "actor": actor}
+            for w, nm, v, f, la, n, actor in rows
+        ]
+
+    def decide_addon_request(self, workspace_id: str, name: object, approve: bool, *, actor: str) -> None:
+        """Approve or turn down a request. Approving makes the id allowed where it was refused: in the hub-wide allow list
+        when that is a list (a policy change for EVERYONE, audited, and the page says so) and in this workspace's own list when
+        it has one. A blocked id cannot be approved: ``block`` wins everywhere. The owner's local grant is still needed."""
+        _hex(workspace_id, "workspace_id")
+        _hex(actor, "actor")
+        if type(name) is not str or not _ADDON_ID.fullmatch(name):
+            raise AccessError("malformed", "name")
+        with self.lock:
+            if not self.is_hub_admin(actor):
+                raise AccessError("forbidden_role", "only a hub-admin decides a request")
+            if not self._q("SELECT 1 FROM addon_request WHERE workspace_id=? AND name=?", (workspace_id, name)):
+                raise AccessError("unknown_request")
+            if approve:
+                base = self.market_policy()
+                if any(b == name or b.startswith(name + "@") for b in base["policy"]["addons"]["block"]):
+                    raise AccessError("blocked", "a blocked add-on cannot be allowed")
+                allow = base["policy"]["addons"]["allow"]
+                if allow is not None and name not in allow:
+                    policy = loads_strict(cj(base["policy"]).decode())
+                    policy["addons"]["allow"] = sorted({*allow, name})
+                    self.set_market_policy(base["version"], policy, actor=actor)
+                own = self.workspace_addon_allow(workspace_id)
+                if own is not None and name not in own:
+                    self.set_workspace_addon_allow(workspace_id, [*own, name], actor=actor)
+            self._w("DELETE FROM addon_request WHERE workspace_id=? AND name=?", (workspace_id, name))
 
     # --- snapshot persistence (used by AccessSnapshots) -----------------------------------------------------------
 

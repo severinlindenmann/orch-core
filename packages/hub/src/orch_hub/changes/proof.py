@@ -4,7 +4,7 @@ The digest binds ONE approval to ONE change and ONE workspace::
 
     digest = SHA-256( "orch/v2/hub-access-change|" || cj({
         "contract": 1, "kind": "orch.access_change.v1", "change_id", "workspace_id", "body",
-        "base_snapshot_version", "expires_ms" }) )
+        "base_snapshot_version", "expires_ms", "delta" }) )
 
 ``cj`` is the contract's canonical JSON (the fields are one object, so no field can slide into another). The owner's
 CHANNEL key signs ``"orch/v2/hub-channel-proof|" || digest`` and the hub checks that with
@@ -26,7 +26,12 @@ MIN_FACTOR = "password+totp"
 
 
 def context(
-    change_id: str, workspace_id: str, body: dict[str, Any], base_snapshot_version: int, expires_ms: int
+    change_id: str,
+    workspace_id: str,
+    body: dict[str, Any],
+    base_snapshot_version: int,
+    expires_ms: int,
+    delta: list[dict[str, str]],
 ) -> dict[str, Any]:
     return {
         "contract": 1,
@@ -34,6 +39,7 @@ def context(
         "change_id": change_id,
         "workspace_id": workspace_id,
         "body": body,
+        "delta": delta,  # who gains or is raised in THIS workspace: what the owner actually approves
         "base_snapshot_version": base_snapshot_version,
         "expires_ms": expires_ms,
     }

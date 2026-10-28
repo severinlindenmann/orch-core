@@ -201,6 +201,7 @@ class Changes:
             if ch["body"] == text and [a["workspace_id"] for a in aps] == [ws for ws, _ in needs]:
                 return self._propose_view(ch)  # the same request again: the one already waiting
         versions = {ws: self._version(ws) for ws, _ in needs}
+        deltas = R.reach_delta(self._access, self._reg, kind, body)  # who the owners are really asked about
         cid = new_id(now)
         with self._db.tx() as db:
             db.execute(
@@ -209,9 +210,9 @@ class Changes:
             )
             for ws, owner in needs:
                 db.execute(
-                    "INSERT INTO approval(change_id, workspace_id, approver_user, base_snapshot_version, state) "
-                    "VALUES (?,?,?,?,'pending')",
-                    (cid, ws, owner, versions[ws]),
+                    "INSERT INTO approval(change_id, workspace_id, approver_user, base_snapshot_version, state, delta) "
+                    "VALUES (?,?,?,?,'pending',?)",
+                    (cid, ws, owner, versions[ws], cj(deltas.get(ws, [])).decode()),
                 )
         ch = self._db.change(cid)
         assert ch is not None
@@ -248,8 +249,11 @@ class Changes:
                     stale = self._version(a["workspace_id"]) != a["base_snapshot_version"]
                 except ChangeError:
                     stale = False
+            delta = json.loads(a["delta"])
             rows.append(
                 {
+                    "delta": delta,
+                    "people": [{**d, "name": names.get(d["user_id"])} for d in delta],
                     "workspace_id": a["workspace_id"],
                     "workspace_name": self._ws_name(a["workspace_id"]),
                     "owner_user_id": owner or a["approver_user"],
@@ -331,11 +335,21 @@ class Changes:
 
     def _context(self, ch: dict[str, Any], ap: dict[str, Any]) -> dict[str, Any]:
         return P.context(
-            ch["id"], ap["workspace_id"], json.loads(ch["body"]), ap["base_snapshot_version"], ch["expires_ms"]
+            ch["id"],
+            ap["workspace_id"],
+            json.loads(ch["body"]),
+            ap["base_snapshot_version"],
+            ch["expires_ms"],
+            json.loads(ap["delta"]),
         )
 
+    def _delta_same(self, ch: dict[str, Any], ap: dict[str, Any]) -> bool:
+        """The people the owner was shown are exactly who the change would add or raise NOW (recomputed, not remembered)."""
+        now = R.reach_delta(self._access, self._reg, ch["kind"], json.loads(ch["body"])).get(ap["workspace_id"], [])
+        return cj(now) == cj(json.loads(ap["delta"]))
+
     def _check_fresh(self, ch: dict[str, Any], ap: dict[str, Any]) -> None:
-        if self._version(ap["workspace_id"]) != ap["base_snapshot_version"]:
+        if self._version(ap["workspace_id"]) != ap["base_snapshot_version"] or not self._delta_same(ch, ap):
             self._stale(ch["id"], ap["workspace_id"])
             raise ChangeError("stale_change")
 
@@ -420,7 +434,7 @@ class Changes:
                 failure = "expired"
             elif R.owner_of(self._reg, ws) != user_id:
                 raise ChangeError("unknown_change")
-            elif self._version(ws) != ap["base_snapshot_version"]:
+            elif self._version(ws) != ap["base_snapshot_version"] or not self._delta_same(ch, ap):
                 self._stale(ch["id"], ws, db)
                 logged.append(("change.rejected", ch, [ws], {"reason": "stale_change"}))
                 failure = "stale_change"
@@ -469,7 +483,7 @@ class Changes:
         # the access to every affected workspace is exactly what each owner saw (a later approval does not cover an
         # earlier one that went stale), and nobody else needs to approve now that did not have to when it was proposed
         for a in aps:
-            if self._version(a["workspace_id"]) != a["base_snapshot_version"]:
+            if self._version(a["workspace_id"]) != a["base_snapshot_version"] or not self._delta_same(ch, a):
                 db.execute(
                     "UPDATE approval SET state='stale' WHERE change_id=? AND workspace_id=?",
                     (ch["id"], a["workspace_id"]),

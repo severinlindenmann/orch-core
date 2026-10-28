@@ -7,7 +7,7 @@ import { cj, hex, sha256, utf8 } from "./cj.js";
 
 export const LABEL = "orch/v2/hub-access-change|";
 export const KIND = "orch.access_change.v1";
-const CTX_KEYS = "base_snapshot_version body change_id contract expires_ms kind workspace_id";
+const CTX_KEYS = "base_snapshot_version body change_id contract delta expires_ms kind workspace_id";
 
 const ROLE = { read: "read", edit: "edit", admin: "admin" };
 const role = (r) => ROLE[r] ?? text(r);
@@ -29,6 +29,9 @@ export async function checkChange(prepared, change, workspaceId) {
     digest = await sha256(utf8(LABEL + cj(ctx)));
     ours = cj(change.body);
     if (cj(ctx.body) !== ours) throw new Error("event_changed");
+    // the people the owner was shown are exactly the ones signed for (what the change does to who can reach the workspace)
+    const shown = (change.approvals ?? []).find((a) => a.workspace_id === workspaceId);
+    if (!shown || cj(ctx.delta) !== cj(shown.delta)) throw new Error("event_changed");
   } catch (e) {
     throw new Error(e?.message === "event_changed" ? "event_changed" : "malformed");
   }
@@ -49,6 +52,7 @@ export function changesView(data, actions, now = Date.now()) {
       const live = !ap.stale && !expired;
       rows.push(h("div", { class: "list-row row change" }, h("div", { class: "grow" },
         h("strong", { text: sentence(change, ap.workspace_name) }),
+        ap.people?.length ? h("p", { class: "small", text: "This gives access to: " + ap.people.map((x) => text(x.name || "A person") + " (" + role(x.role) + ")").join(", ") + "." }) : null,
         h("p", { class: "small muted", text: "Asked " + when(change.created_ms, now) + ". If nobody answers it lapses on " + when(change.expires_ms, now) + ", and nothing changes." }),
         ap.stale ? h("p", { class: "small", text: "Access to this workspace changed after this was asked, so it can no longer be approved. " + text(change.proposer?.name || "The administrator") + " can ask again." }) : null,
         expired ? h("p", { class: "small", text: "This request has lapsed." }) : null,

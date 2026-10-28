@@ -27,7 +27,7 @@ const WS = "a1".repeat(16), WS2 = "b2".repeat(16);
 const grant = {
   id: "01MCC5SH9G1SNTXZSDWC7Q3PF3", kind: "grant", state: "pending", body: { group: "devs", role: "edit", workspace_id: WS },
   group: "devs", role: "edit", person_name: null, proposer: { user_id: "x", name: "Ada" }, created_ms: NOW - 3600_000, expires_ms: NOW + 86400_000, decided_ms: null, decided_by: null, reason: null,
-  approvals: [{ workspace_id: WS, workspace_name: "Orchard", owner_name: "Olive", state: "pending", stale: false }],
+  approvals: [{ workspace_id: WS, workspace_name: "Orchard", owner_name: "Olive", state: "pending", stale: false, delta: [{ role: "edit", user_id: "u1" }], people: [{ role: "edit", user_id: "u1", name: "Dana" }] }],
 };
 const member = { ...grant, id: "01MCC5SH9GQAHYGG43BXAZ5XYE", kind: "member_add", body: { group: "devs", user_id: "u1" }, role: null, person_name: "Newbie" };
 const text = (nodes) => nodes.map((n) => n.textContent).join("\n");
@@ -63,6 +63,7 @@ test("an out-of-date or lapsed change cannot be approved; no browser key disable
   assert.equal(button(out, "Approve")[0].attrs.disabled, "");
   assert.match(text(out), /Set up this browser/);
   assert.deepEqual(changesView({ pending: [], notices: [] }, {}, NOW), []);
+  assert.match(text(changesView({ pending: [grant] }, { canSign: true }, NOW)), /This gives access to: Dana \(edit\)/);
 });
 
 test("an override shows up as a notice with the reason", () => {
@@ -75,8 +76,8 @@ test("an override shows up as a notice with the reason", () => {
 });
 
 // The digest, built here by hand: H("orch/v2/hub-access-change|" || canonical JSON of the context).
-const ctxOf = (c, ws = WS) => ({ contract: 1, kind: KIND, change_id: c.id, workspace_id: ws, body: c.body, base_snapshot_version: 7, expires_ms: c.expires_ms });
-const canonical = `{"base_snapshot_version":7,"body":{"group":"devs","role":"edit","workspace_id":"${WS}"},"change_id":"${grant.id}","contract":1,"expires_ms":${grant.expires_ms},"kind":"orch.access_change.v1","workspace_id":"${WS}"}`;
+const ctxOf = (c, ws = WS) => ({ contract: 1, kind: KIND, change_id: c.id, workspace_id: ws, body: c.body, base_snapshot_version: 7, expires_ms: c.expires_ms, delta: (c.approvals.find((a) => a.workspace_id === ws) ?? c.approvals[0]).delta });
+const canonical = `{"base_snapshot_version":7,"body":{"group":"devs","role":"edit","workspace_id":"${WS}"},"change_id":"${grant.id}","contract":1,"delta":[{"role":"edit","user_id":"u1"}],"expires_ms":${grant.expires_ms},"kind":"orch.access_change.v1","workspace_id":"${WS}"}`;
 const digestHex = (s) => createHash("sha256").update(LABEL + s).digest("hex");
 
 test("checkChange recomputes the digest and refuses anything that is not the listed change", async () => {
@@ -93,6 +94,8 @@ test("checkChange recomputes the digest and refuses anything that is not the lis
   await refused({ ctx: { ...ctx, kind: "orch.other.v1" }, digest: good.digest }, grant, WS, "event_changed");
   await refused({ ctx: { ...ctx, extra: 1 }, digest: good.digest }, grant, WS, "malformed");
   await refused({ ctx: null, digest: good.digest }, grant, WS, "malformed");
+  // the people shown are the people signed for: a different delta in the context is refused
+  await refused({ ctx: { ...ctx, delta: [{ role: "edit", user_id: "u2" }] }, digest: good.digest }, grant, WS, "event_changed");
   await refused({ ctx: { ...ctx, base_snapshot_version: 1.5 }, digest: "x" }, grant, WS, "malformed");
 });
 

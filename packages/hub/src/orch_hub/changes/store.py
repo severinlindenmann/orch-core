@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS approval (
   state TEXT NOT NULL CHECK (state IN ('pending','approved','rejected','stale')),
   decided_ms INTEGER,
   proof_digest TEXT UNIQUE,
+  delta TEXT NOT NULL DEFAULT '[]',
   PRIMARY KEY (change_id, workspace_id)
 );
 CREATE INDEX IF NOT EXISTS change_state ON change(state, expires_ms);
@@ -61,6 +62,7 @@ APPROVAL_COLS = (
     "state",
     "decided_ms",
     "proof_digest",
+    "delta",
 )
 
 
@@ -78,6 +80,10 @@ class ChangesDB:
         try:
             self._db = open_private_db(str(path), check_same_thread=False, isolation_level=None)
             self._db.executescript(_SCHEMA)
+            if "delta" not in {r[1] for r in self._db.execute("PRAGMA table_info(approval)")}:
+                self._db.execute(
+                    "ALTER TABLE approval ADD COLUMN delta TEXT NOT NULL DEFAULT '[]'"
+                )  # before the reach rule
         except PrivateFileError as e:
             raise ChangeError("unavailable", str(e)) from None
         except (sqlite3.Error, OSError) as e:

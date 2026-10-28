@@ -57,6 +57,12 @@ def w(tmp_path):
     web.reg.add(WS_SEL, "selective", owner=web.olive)
     e.acc.add_group("devs")
     e.acc.add_group("readers")
+    web.dana, web.dora = (
+        e.user("dana"),
+        e.user("dora"),
+    )  # members: a grant to an EMPTY group adds nobody, so needs no approval
+    e.acc.add_member("devs", web.dana)
+    e.acc.add_member("readers", web.dora)
     yield web
     web.activity.close()
     web.close()
@@ -150,7 +156,7 @@ def test_member_add_to_a_group_with_a_grant_on_an_owned_workspace_is_pending(w):
     s, o, _ = w.call("PUT", f"/admin/groups/devs/members/{w.newbie}", token=tok)
     assert s == 202 and o["waiting_for"] == [{"workspace_id": WS2, "owner_name": "olive"}]
     assert snapshot(w) == before
-    assert acc(w).members("devs") == []
+    assert acc(w).members("devs") == [w.dana]
     assert row(w, o["change_id"])["kind"] == "member_add"
 
 
@@ -166,7 +172,7 @@ def test_when_no_rule_applies_the_change_is_applied_as_before(w):
     )
     assert w.call("PUT", f"/admin/groups/readers/members/{w.newbie}", token=tok)[0] == 200
     assert has_grant(w, WS, "devs", "edit") and has_grant(w, WS_SEL, "devs", "edit")
-    assert acc(w).members("readers") == [w.newbie]
+    assert sorted(acc(w).members("readers")) == sorted([w.dora, w.newbie])
     assert w.changes._db.changes() == []
 
 
@@ -194,7 +200,7 @@ def test_the_owner_as_actor_applies_at_once(w):
     assert w.changes._db.changes() == []
     # a membership change applies at once when the actor owns every affected workspace
     assert w.call("PUT", f"/admin/groups/devs/members/{w.newbie}", token=tok)[0] == 200
-    assert acc(w).members("devs") == [w.newbie]
+    assert sorted(acc(w).members("devs")) == sorted([w.dana, w.newbie])
 
 
 def test_a_lower_or_equal_role_never_waits(w):
@@ -357,7 +363,7 @@ def test_a_member_add_is_applied_by_the_approval(w):
     cid = w.call("PUT", f"/admin/groups/devs/members/{w.newbie}", token=w.login(w.admin))[1]["change_id"]
     otok, signer, ch = owner_session(w, w.olive)
     assert approve(w, otok, cid, signer, ch)[:2] == (200, {"ok": True, "state": "applied", "remaining": 0})
-    assert acc(w).members("devs") == [w.newbie]
+    assert sorted(acc(w).members("devs")) == sorted([w.dana, w.newbie])
 
 
 def test_the_digest_binds_change_workspace_body_version_and_expiry(w):
@@ -375,6 +381,7 @@ def test_the_digest_binds_change_workspace_body_version_and_expiry(w):
         "body": {"group": "devs", "role": "edit", "workspace_id": WS2},
         "base_snapshot_version": version,
         "expires_ms": c["expires_ms"],
+        "delta": [{"role": "edit", "user_id": w.dana}],
     }
     assert ACCESS_CHANGE_KIND == "orch.access_change.v1"
     assert prep["ctx"] == ctx and prep["workspace_id"] == WS2
@@ -442,9 +449,8 @@ def test_a_digest_replayed_at_the_store_level_is_a_replay(w):
     a = propose(w, tok, WS2, "devs", "edit")
     b = propose(w, tok, WS2, "readers", "read")
     otok, signer, ch = owner_session(w, w.olive)
-    assert approve(w, otok, a, signer, ch)[0] == 200
-    # a proof whose digest the store already holds (here: planted on a's row) is a replay, whichever change it is for
     proof = w.proof(signer, prepare(w, otok, b)[1]["digest"])
+    # a proof whose digest the store already holds (here: planted on a's row) is a replay, whichever change it is for
     planted = hashlib.sha256(unb64u(proof, 64)).hexdigest()
     w.changes._db._db.execute("UPDATE approval SET proof_digest=? WHERE change_id=?", (planted, a))
     s, o, _ = w.call("POST", f"/me/changes/{b}/approve", {"channel_id": ch, "proof": proof}, token=otok)
@@ -664,6 +670,8 @@ def test_the_owner_view_is_scoped_by_the_session_alone(w):
     )
     assert view["approvals"] == [
         {
+            "delta": [{"user_id": w.dana, "role": "edit"}],
+            "people": [{"user_id": w.dana, "role": "edit", "name": "dana"}],
             "workspace_id": WS2,
             "workspace_name": "Orchard",
             "owner_user_id": w.olive,
@@ -706,11 +714,11 @@ def test_membership_in_several_workspaces_needs_every_owner(w):
     mtok, msig, mch = owner_session(w, w.omar)
     s, got, _ = approve(w, otok, cid, osig, och)
     assert (s, got) == (200, {"ok": True, "state": "pending", "remaining": 1})
-    assert acc(w).members("devs") == []  # one of two is not enough
+    assert acc(w).members("devs") == [w.dana]  # one of two is not enough
     assert row(w, cid)["state"] == "pending"
     s, got, _ = approve(w, mtok, cid, msig, mch)
     assert (s, got) == (200, {"ok": True, "state": "applied", "remaining": 0})
-    assert acc(w).members("devs") == [w.newbie] and row(w, cid)["state"] == "applied"
+    assert sorted(acc(w).members("devs")) == sorted([w.dana, w.newbie]) and row(w, cid)["state"] == "applied"
     assert len(activity(w, "change.approved")) == 2 and len(activity(w, "change.proposed")) == 2  # one per workspace
 
 
@@ -722,7 +730,7 @@ def test_one_rejection_rejects_a_membership_change(w):
     mtok, _msig, _mch = owner_session(w, w.omar)
     assert approve(w, otok, cid, osig, och)[1]["remaining"] == 1
     assert w.call("POST", f"/me/changes/{cid}/reject", {}, token=mtok)[0] == 200
-    assert row(w, cid)["state"] == "rejected" and acc(w).members("devs") == []
+    assert row(w, cid)["state"] == "rejected" and acc(w).members("devs") == [w.dana]
     assert w.call("POST", f"/me/changes/{cid}/approve/prepare", {}, token=otok)[:2] == (409, {"error": "not_pending"})
 
 
@@ -741,7 +749,7 @@ def test_an_owner_of_several_affected_workspaces_signs_each_one(w):
     s, o, _ = approve(w, otok, cid, osig, och, WS3, proof=w.proof(osig, "33" * 32))
     assert (s, o) == (403, {"error": "bad_channel_proof"})
     assert approve(w, otok, cid, osig, och, WS3)[1]["state"] == "applied"
-    assert acc(w).members("devs") == [w.newbie]
+    assert sorted(acc(w).members("devs")) == sorted([w.dana, w.newbie])
 
 
 def test_a_second_owner_whose_workspace_moved_stales_the_whole_change(w):
@@ -756,7 +764,7 @@ def test_a_second_owner_whose_workspace_moved_stales_the_whole_change(w):
     acc(w).grant(WS3, "readers", "read")  # WS3's roles moved before omar's answer arrived
     body = {"channel_id": mch, "proof": proof}
     assert w.call("POST", f"/me/changes/{cid}/approve", body, token=mtok)[:2] == (409, {"error": "stale_change"})
-    assert acc(w).members("devs") == [] and row(w, cid)["state"] == "rejected"
+    assert acc(w).members("devs") == [w.dana] and row(w, cid)["state"] == "rejected"
 
 
 # --- condition 9: override ------------------------------------------------------------------------------------------------------
@@ -1000,3 +1008,89 @@ def test_the_access_change_label_is_prefix_free_with_every_label():
     assert ACCESS_CHANGE_LABEL not in others
     for other in others:
         assert not other.startswith(ACCESS_CHANGE_LABEL) and not ACCESS_CHANGE_LABEL.startswith(other), other
+
+
+# --- the structural invariant: an owner approval is for the change in EFFECTIVE reach (reach_delta) ----------------------
+
+
+def reach(w, ws, user):
+    return acc(w).roles(ws).get(user)
+
+
+def test_adding_a_person_to_the_hub_admin_group_needs_every_owners_approval(w):
+    from orch_hub.access.store import ADMIN_GROUP
+
+    tok = w.login(w.admin)
+    before = snapshot(w)
+    s, o, _ = w.call("PUT", f"/admin/groups/{ADMIN_GROUP}/members/{w.newbie}", token=tok)
+    assert s == 202, o
+    waiting = {x["workspace_id"] for x in o["waiting_for"]}
+    assert {WS2, WS3} <= waiting  # every full workspace with an owner other than the actor
+    assert snapshot(w) == before and reach(w, WS2, w.newbie) is None
+    # the owners see the PERSON who would gain access, not just a group name
+    mine = w.call("GET", "/me/changes", token=w.login(w.olive))[1]["pending"]
+    assert [p["user_id"] for p in mine[0]["approvals"][0]["delta"]] == [w.newbie]
+    assert mine[0]["approvals"][0]["delta"][0]["role"] == "admin"
+    # one owner is not enough
+    otok, osig, och = owner_session(w, w.olive)
+    assert approve(w, otok, o["change_id"], osig, och)[1]["state"] == "pending"
+    assert reach(w, WS3, w.newbie) is None
+    mtok, msig, mch = owner_session(w, w.omar)
+    others = [x for x in waiting if x not in (WS2, WS3)]
+    assert approve(w, mtok, o["change_id"], msig, mch)[1]["state"] in ("pending", "applied")
+    if not others:
+        assert reach(w, WS2, w.newbie) == "admin" and reach(w, WS3, w.newbie) == "admin"
+
+
+def test_a_member_added_while_a_grant_is_pending_makes_the_approval_stale(w):
+    tok = w.login(w.admin)
+    cid = propose(w, tok, WS2, "devs", "edit")  # the owner is shown: dana
+    # newbie joins devs now: devs holds no grant yet, so nobody gains reach and it applies at once ...
+    assert w.call("PUT", f"/admin/groups/devs/members/{w.newbie}", token=tok)[0] == 200
+    assert reach(w, WS2, w.newbie) is None
+    # ... but approving the grant would now also give newbie edit, which the owner never saw: refused, re-review
+    otok, osig, och = owner_session(w, w.olive)
+    s, o, _ = w.call("POST", f"/me/changes/{cid}/approve/prepare", {}, token=otok)
+    assert (s, o) == (409, {"error": "stale_change"})
+    assert reach(w, WS2, w.newbie) is None and not has_grant(w, WS2, "devs", "edit")
+    # asking again shows both people
+    cid2 = propose(w, tok, WS2, "devs", "edit")
+    ap = w.call("GET", "/me/changes", token=otok)[1]["pending"][0]["approvals"][0]
+    assert {d["user_id"] for d in ap["delta"]} == {w.dana, w.newbie}
+    assert approve(w, otok, cid2, osig, och)[1]["state"] == "applied"
+    assert reach(w, WS2, w.newbie) == "edit"
+
+
+@pytest.mark.parametrize("grant_first", [True, False])
+def test_grant_and_member_add_in_either_order_never_give_unapproved_reach(w, grant_first):
+    tok = w.login(w.admin)
+    otok, osig, och = owner_session(w, w.olive)
+    pending = []
+    steps = [
+        lambda: w.call("PUT", "/admin/grants", {"workspace_id": WS2, "group": "devs", "role": "edit"}, token=tok),
+        lambda: w.call("PUT", f"/admin/groups/devs/members/{w.newbie}", token=tok),
+    ]
+    for step in steps if grant_first else steps[::-1]:
+        s, o, _ = step()
+        if s == 202:
+            pending.append(o["change_id"])
+    # whatever happened, newbie has no role in the owner's workspace until the owner approved what includes them
+    assert reach(w, WS2, w.newbie) is None
+    for cid in pending:
+        s, o, _ = w.call("POST", f"/me/changes/{cid}/approve/prepare", {}, token=otok)
+        if s == 200:
+            assert approve(w, otok, cid, osig, och)[0] == 200
+        else:
+            assert (s, o) == (409, {"error": "stale_change"})
+        # at no point did an unapproved person gain reach
+    for cid in [c["id"] for c in w.call("GET", "/me/changes", token=otok)[1]["pending"]]:
+        assert w.call("POST", f"/me/changes/{cid}/reject", {}, token=otok)[0] == 200
+    assert reach(w, WS2, w.newbie) in (None, "edit")
+    if reach(w, WS2, w.newbie) == "edit":
+        # it only happened through a change whose delta named newbie and that the owner approved
+        done = [c for c in w.changes._db.changes() if c["state"] == "applied"]
+        assert done and any(
+            w.newbie in {d["user_id"] for d in json.loads(a["delta"])}
+            for c in done
+            for a in w.changes._db.approvals(c["id"])
+        )

@@ -84,41 +84,52 @@ def roles_after(access: Access, ws: str, e: Edit) -> dict[str, str]:
 # --- increases: who must approve ---------------------------------------------------------------------------------------
 
 
-def _needs_of_workspace(registry: Any, ws: str, actor: str) -> tuple[str, str] | None:
-    """``(workspace, owner)`` when ``ws`` is a full workspace whose owner alias exists and is not the actor."""
-    if not is_full(registry, ws):
-        return None
-    owner = owner_of(registry, ws)
-    return (ws, owner) if owner is not None and owner != actor else None
+def _edit_of(kind: str, body: dict[str, Any]) -> Edit:
+    if kind == "grant":
+        return Edit(set_grant=(body["group"], body["role"]))
+    if kind == "member_add":
+        return Edit(add_member=(body["group"], body["user_id"]))
+    raise ValueError("unknown change kind")
+
+
+def _candidates(access: Access, registry: Any, kind: str, body: dict[str, Any]) -> list[str]:
+    """The full workspaces a change can reach: the one it names, or everything the group reaches (the hub-admin group
+    reaches every full workspace)."""
+    if kind == "grant":
+        return [body["workspace_id"]] if is_full(registry, body["workspace_id"]) else []
+    if kind == "member_add":
+        return affected_by_group(access, registry, body["group"])
+    raise ValueError("unknown change kind")
+
+
+def reach_delta(access: Access, registry: Any, kind: str, body: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+    """THE invariant. For every FULL workspace the change touches: the (person, role) pairs that would be ADDED or RAISED
+    if it were applied now, simulated with the same role computation the hub signs into snapshots (``roles_after``).
+    Workspaces with no added or raised pair are absent. Kind-independent: a grant, a member added to any group (the
+    hub-admin group included) and a role change are all judged by what they do to who can reach a workspace."""
+    e = _edit_of(kind, body)
+    out: dict[str, list[dict[str, str]]] = {}
+    for ws in _candidates(access, registry, kind, body):
+        before, after = access.roles(ws), roles_after(access, ws, e)
+        gained = [
+            {"user_id": u, "role": r} for u, r in sorted(after.items()) if role_rank(r) > role_rank(before.get(u))
+        ]
+        if gained:
+            out[ws] = gained
+    return out
 
 
 def needs_approval(access: Access, registry: Any, kind: str, body: dict[str, Any], actor: str) -> list[tuple[str, str]]:
     """THE rule. The ``(workspace_id, owner_user_id)`` pairs whose owners must approve this change before anything is
-    applied (empty: it applies at once). Only INCREASES are asked about:
-
-    * ``grant``: a new grant, or a higher role than the group holds now, on a full workspace;
-    * ``member_add``: adding a person who is not in the group yet to a group that holds a grant on a full workspace.
-
-    A workspace whose owner alias is the actor, has none, or is selective never needs approval. Reductions (revoke, a lower
-    role, member / group / user removal) are never asked about here; the owner protection covers them."""
-    out: list[tuple[str, str]] = []
-    if kind == "grant":
-        ws, group, role = body["workspace_id"], body["group"], body["role"]
-        now = next((g["role"] for g in access.grants(ws) if g["group"] == group), None)
-        if now is None or role_rank(role) > role_rank(now):
-            need = _needs_of_workspace(registry, ws, actor)
-            if need is not None:
-                out.append(need)
-    elif kind == "member_add":
-        group, user = body["group"], body["user_id"]
-        if user not in access.members(group):
-            for grant in access.grants_of_group(group):
-                need = _needs_of_workspace(registry, grant["workspace_id"], actor)
-                if need is not None:
-                    out.append(need)
-    else:
-        raise ValueError("unknown change kind")
-    return sorted(set(out))
+    applied (empty: it applies at once): every full workspace with a non-empty :func:`reach_delta` whose owner alias
+    exists and is not the actor. Only INCREASES are asked about; reductions (revoke, a lower role, member / group / user
+    removal) never are (the owner protection covers them)."""
+    out = []
+    for ws in reach_delta(access, registry, kind, body):
+        owner = owner_of(registry, ws)
+        if owner is not None and owner != actor:
+            out.append((ws, owner))
+    return sorted(out)
 
 
 # --- reductions: the owner is never locked out, and the last admin is not removed by accident --------------------------

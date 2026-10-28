@@ -37,7 +37,7 @@ import { ColumnHeader, ExpandRail } from './ColumnHead'
 import { EpicLanes, statusOfDrop } from './EpicLanes'
 import { groupByEpic, hasEpics, laneOf, movedAt } from './grouping'
 import { ListView } from './ListView'
-import { ScheduledGroup, useScheduledKeys } from './scheduled'
+import { ScheduledGroup, ScheduledKeysProvider, splitScheduled, useScheduledKeys } from './scheduled'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
 import { Toolbar } from './Toolbar'
 import { useBoardUrlState } from './urlState'
@@ -202,11 +202,10 @@ export function BoardPage() {
   const filtering = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS)
   // A ticket with a repeating schedule that sits in Open is not open work: it waits for its next run (own "Scheduled" group).
   const scheduledKeys = useScheduledKeys()
-  const scheduled = useMemo(() => filtered.filter((t) => t.status === 'open' && scheduledKeys.has(t.key)), [filtered, scheduledKeys])
-  const onBoard = useMemo(() => (scheduled.length ? filtered.filter((t) => !scheduled.includes(t)) : filtered), [filtered, scheduled])
   // Grouped by epic (the default) when this workspace has epics: epics are lane headers, not cards.
   const grouped = display.group === 'epic' && hasEpics(tickets)
   const epicKeys = useMemo(() => new Set(tickets.filter((t) => t.type === 'epic').map((t) => t.key)), [tickets])
+  const { scheduled, rest: onBoard } = useMemo(() => splitScheduled(filtered, scheduledKeys, grouped), [filtered, scheduledKeys, grouped])
   const groups = useMemo(() => groupByEpic(tickets, onBoard, filtering), [tickets, onBoard, filtering])
   const byStatus = useMemo(() => {
     const m = new Map<Status, TicketSummary[]>(STATUSES.map((s) => [s, []]))
@@ -344,6 +343,7 @@ export function BoardPage() {
   }
 
   return (
+    <ScheduledKeysProvider value={scheduledKeys}>
     <div ref={frame} className="flex h-full min-h-0 flex-col gap-4">
       <h1 className="sr-only">Board</h1>
       <Toolbar
@@ -459,5 +459,6 @@ export function BoardPage() {
         />
       )}
     </div>
+    </ScheduledKeysProvider>
   )
 }

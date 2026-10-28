@@ -1,25 +1,43 @@
 // Tickets with a recurring schedule are not open work: they wait for their next run. The board keeps them out of the
 // Open column and shows them in one quiet "Scheduled" group (folded, count shown); a small clock marks their card.
-import { useMemo } from 'react'
+import { createContext, useContext, useMemo } from 'react'
 import { Clock } from 'lucide-react'
 import { followupsOn } from '@/api/followups'
-import { useSchedules } from '@/api/schedules'
+import { useSchedules, type ScheduleRow } from '@/api/schedules'
 import type { TicketSummary } from '@/api/types'
 import { useWorkspace } from '@/app/workspace'
 import { ListView } from './ListView'
 import type { BoardPeople } from './TicketCard'
 
-/** The keys of tickets that have a live repeating schedule (a one-time run is just a wake-up, not a routine). */
+/** The keys of tickets with a live repeating schedule (a one-time run is a wake-up, not a routine); none when the
+ * schedules add-on is off. */
+export function scheduledKeysOf(rows: readonly ScheduleRow[] | undefined, on: boolean): ReadonlySet<string> {
+  if (!on) return new Set()
+  return new Set((rows ?? []).filter((r) => r.state === 'live' && !!r.rule.every && !!r.ticket).map((r) => r.ticket))
+}
+
+/** Open tickets that have such a schedule leave the board for the Scheduled group. A ticket that is in progress (or
+ * anything but Open) stays where it is, and so does an epic while epics are lanes (it is the lane header). */
+export function splitScheduled(tickets: TicketSummary[], keys: ReadonlySet<string>, epicsAreLanes: boolean) {
+  if (keys.size === 0) return { scheduled: [] as TicketSummary[], rest: tickets }
+  const isScheduled = (t: TicketSummary) => t.status === 'open' && keys.has(t.key) && !(epicsAreLanes && t.type === 'epic')
+  return { scheduled: tickets.filter(isScheduled), rest: tickets.filter((t) => !isScheduled(t)) }
+}
+
+const KeysContext = createContext<ReadonlySet<string>>(new Set())
+export const ScheduledKeysProvider = KeysContext.Provider
+
+/** Read once by the board (one query), handed to every card through the provider. */
 export function useScheduledKeys(): ReadonlySet<string> {
   const { workspace } = useWorkspace()
   const ws = workspace?.id
-  const { data } = useSchedules(ws ?? '', !!ws && followupsOn(workspace))
-  return useMemo(() => new Set((data?.rows ?? []).filter((r) => r.state === 'live' && !!r.rule.every && !!r.ticket).map((r) => r.ticket)), [data])
+  const on = !!ws && followupsOn(workspace)
+  const { data } = useSchedules(ws ?? '', on)
+  return useMemo(() => scheduledKeysOf(data?.rows, on), [data, on])
 }
 
 export function ScheduledMark({ ticketKey }: { ticketKey: string }) {
-  const keys = useScheduledKeys()
-  if (!keys.has(ticketKey)) return null
+  if (!useContext(KeysContext).has(ticketKey)) return null
   return <Clock role="img" aria-label="Has a schedule" className="size-3 shrink-0 text-text-faint" data-testid="scheduled-mark" />
 }
 

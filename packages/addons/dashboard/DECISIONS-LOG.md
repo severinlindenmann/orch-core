@@ -2081,3 +2081,12 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 **Why:** Closing a browser must not control delivery or expose signed artifacts. Every deadline rechecks custody and host authority. D2/D3 sequences, grants, installs and secret-bearing requests cannot enter the hold queue.
 
 **Revert:** Remove the hold request and toast together with the signer hold queue; keep C3's review, risk lines and second press.
+
+
+## 2026-10-28 — D5 security review: holds end with their session
+
+**Decision:** Session removal (including logout everywhere and expiry) cancels its signer holds and forgets their dashboard entries. Hold admission checks the live session under the same lock as session removal.
+
+**Why:** Holds have already left the handoff quota, so logout must cancel them separately; serialization prevents a hold arriving after its logout cancellation.
+
+**Revert:** Revert the session-removal callback and admission lock together; doing so reopens the logout signing race.

@@ -528,10 +528,9 @@ class ClickSigner:
                 raise ClickError("invalid.input", "a hub step takes no sequence, files or deposit")
         elif op_class(op, args=inner) == "terminal":
             raise refused("terminal_only", f"{op} is signed in the terminal")
-        if sum(k not in self.holds for k in self.approvals) >= MAX_APPROVALS:
-            self._sweep()
-            if sum(k not in self.holds for k in self.approvals) >= MAX_APPROVALS:
-                raise ClickError("rate.limited", "too many open sign requests", retry_after_ms=10_000, retryable=True)
+        self._sweep()
+        if sum(self.holds.get(k, {}).get("state") != "held" for k in self.approvals) >= MAX_APPROVALS:
+            raise ClickError("rate.limited", "too many open sign requests", retry_after_ms=10_000, retryable=True)
         self.records.prune()
         _, sel = self._convenience(entry)
         device = sel["device"]
@@ -840,6 +839,7 @@ class ClickSigner:
         Cancel and signing share the lock. A refusal is terminal; no delayed request is retried.
         """
         with self.lock:
+            self._sweep()
             blocked = set()
             for key, hold in list(self.holds.items()):
                 if hold["state"] != "held" or key[0] in blocked:
@@ -868,6 +868,7 @@ class ClickSigner:
                         except ClickError:
                             pass  # the host expires it if offline; the unsigned intent is already gone
                 finally:
+                    hold["finished_at"] = self.wall()
                     self.busy = False
 
     def _record(self, workspace_id: str, request_id: str) -> dict[str, Any] | None:
@@ -1484,6 +1485,7 @@ class ClickSigner:
                 if hold["state"] != "held":
                     return {"state": "cancelled"}
                 hold["state"] = "cancelled"
+                hold["finished_at"] = self.wall()
             entry, approval = self._approval(args)
             if approval.session and args.get("session") != approval.session:
                 raise ClickError("hold.session", "only the preparing session may cancel")
@@ -2220,6 +2222,12 @@ class ClickSigner:
             approval.seal.close()
 
     def _sweep(self) -> None:
+        for key, hold in list(self.holds.items()):
+            if hold["state"] != "held" and self.wall() - hold["finished_at"] >= 60:
+                del self.holds[key]
+                approval = self.approvals.get(key)
+                if approval is not None:
+                    self._drop(approval)
         for key, a in list(self.approvals.items()):
             if self._expired(a) or a.result is not None:
                 self.approvals.pop(key, None)

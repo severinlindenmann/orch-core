@@ -128,6 +128,7 @@ class Auth:
         self.remote_swept = 0.0
         self.setup_sessions: dict[str, str] = {}
         self.attempts = deque()
+        self.on_session_end = lambda token: None
         self.lock = threading.Lock()
 
     def probe(self, nonce):
@@ -395,6 +396,7 @@ class Auth:
 
     def _drop(self, token):
         """Hold ``self.lock``."""
+        self.on_session_end(token)
         for table in (
             self.sessions,
             self.kinds,
@@ -409,11 +411,9 @@ class Auth:
 
     def _drop_dead(self, now):
         """Hold ``self.lock``. Forget sessions past their lifetime (bounded state even if tabs never return)."""
-        self.sessions = {
-            t: (born, last)
-            for t, (born, last) in self.sessions.items()
-            if self._alive(self.kinds.get(t), born, last, now)
-        }
+        for token, (born, last) in list(self.sessions.items()):
+            if not self._alive(self.kinds.get(token), born, last, now):
+                self._drop(token)
         for table in (
             self.kinds,
             self.listeners,

@@ -1012,8 +1012,14 @@ def register(app: FastAPI, gateway: Gateway):
         # the request is refused by the signer and the host, which are the ones that know.)
         handoffs.begin_sign(ws, rid, handoffs.clock() + TTL + 60)
         try:
-            sent = {**step, "workspace_id": ws, "request_id": rid, "view_digest": body.view_digest,
-                    "delay_s": body.delay_s, "session": request.state.token}
+            sent = {
+                **step,
+                "workspace_id": ws,
+                "request_id": rid,
+                "view_digest": body.view_digest,
+                "delay_s": body.delay_s,
+                "session": request.state.token,
+            }
             if isinstance(wanted, AgentAccess):
                 if body.reveal_key != wanted.reveal_key:  # the key of the review, nothing else (the signer checks too)
                     raise fail("invalid.input", "reveal_key is not the key this review was made for", exit=1)
@@ -1025,7 +1031,19 @@ def register(app: FastAPI, gateway: Gateway):
                     sent["sealed"] = {"hub.backup_key": body.sealed.hub_backup_key.model_dump()}
             elif body.sealed is not None:
                 raise fail("invalid.input", "only a hub step takes a sealed value", exit=1)
-            got = signer.call("sign", sent, lost=lost_sign())
+            if body.delay_s:
+                # Session removal uses this same lock: no hold can arrive after its logout cancel.
+                auth = app.state.auth
+                if not auth.valid(request.state.token, touch=False):
+                    raise fail("session.ended", exit=2)
+                with auth.lock:
+                    if request.state.token not in auth.sessions:
+                        raise fail("session.ended", exit=2)
+                    got = signer.call("sign", sent, lost=lost_sign())
+                    if got.get("state") == "held":
+                        held[rid] = (ws, request.state.token)
+            else:
+                got = signer.call("sign", sent, lost=lost_sign())
         except HostError as exc:
             # Before follow-up host reads, which may themselves fail. A definite failure never clears an earlier or a
             # concurrent unknown outcome; the rule lives in Handoffs.end_sign.
@@ -1052,7 +1070,6 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "uncertain")
             raise
         if got.get("state") == "held":
-            held[rid] = (ws, request.state.token)
             handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "definite")
             handoffs.settle_all(rid)  # holds have their own signer-owned quota
             return {**got, "duplicate": False}
@@ -1110,6 +1127,16 @@ def register(app: FastAPI, gateway: Gateway):
     def cancel_session(token: str):
         """Logout: the click requests this session left open are cancelled (best effort, each on its own), except one
         whose signature is unknown and one another session of the person holds too."""
+        for rid, (ws, owner) in list(held.items()):
+            if owner != token:
+                continue
+            try:
+                signer.call("cancel", {"workspace_id": ws, "request_id": rid, "session": token})
+            except Exception:  # noqa: BLE001 - keep cancelling the remaining holds
+                pass
+            finally:
+                held.pop(rid, None)
+                clicks.forget(rid)
         for rid, ws in handoffs.held(token, "click"):
             if handoffs.is_unsettled(rid):
                 continue  # logout never cancels a signature whose outcome is unknown
@@ -1124,3 +1151,4 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.settle(token, rid)
 
     app.state.cancel_clicks = cancel_session
+    app.state.auth.on_session_end = cancel_session

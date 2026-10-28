@@ -284,3 +284,48 @@ def test_restart_after_delivery_reports_submitted(click, human, served):
         assert replacement.signatures == 0
     finally:
         replacement.close()
+
+
+@pytest.mark.parametrize("outcome", ["submitted", "cancelled", "not_sent", "unknown"])
+def test_finished_holds_are_swept_without_blocking_new_work(click, human, monkeypatch, outcome):
+    monkeypatch.setattr("orch.click.signer.MAX_APPROVALS", 1)
+    for _ in range(3):
+        rid, digest = hold(click, human)
+        sign(click, rid, digest)
+        key = (click.served.wid, rid)
+        if outcome == "cancelled":
+            cancel(click, rid)
+        else:
+            if outcome == "unknown":
+
+                def lost(args, key=key):
+                    click.signer._attempted.add(key)
+                    raise RuntimeError("lost reply")
+
+                monkeypatch.setattr(click.signer, "_sign", lost)
+            advance(click, 41 if outcome == "not_sent" else 10)
+            click.signer.run_holds()
+            if outcome == "unknown":
+                monkeypatch.undo()
+                monkeypatch.setattr("orch.click.signer.MAX_APPROVALS", 1)
+        assert click.signer.holds[key]["state"] == outcome
+        advance(click, 59)
+        click.signer.run_holds()
+        assert key in click.signer.holds
+        advance(click, 1)
+        click.signer.run_holds()
+        assert not click.signer.holds
+    rid, digest = hold(click, human)
+    assert sign(click, rid, digest)["state"] == "held"
+
+
+def test_finished_tail_does_not_consume_approval_or_hold_quota(click, human, monkeypatch):
+    monkeypatch.setattr("orch.click.signer.MAX_APPROVALS", 1)
+    for _ in range(3):
+        rid, digest = hold(click, human)
+        sign(click, rid, digest)
+        cancel(click, rid)
+    assert len(click.signer.holds) == 3
+    rid, digest = hold(click, human)
+    refused(lambda: hold(click, human), "rate.limited")
+    assert sign(click, rid, digest)["state"] == "held"

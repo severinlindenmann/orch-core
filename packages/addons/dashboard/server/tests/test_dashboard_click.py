@@ -404,8 +404,14 @@ def test_sign_sends_exactly_the_digest_and_answers_without_the_hosts_result(clie
     assert res.status_code == 200
     assert res.json() == {"state": "submitted", "duplicate": False, "key": "DEMO-0001", "seq": 7}
     sent = [c for c in script.clients[0].calls if c[0] == "sign"][0][1]
-    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH, "contract": 4,
-                    "delay_s": 0, "session": token}
+    assert sent == {
+        "workspace_id": stub.ws,
+        "request_id": REQ,
+        "view_digest": HASH,
+        "contract": 4,
+        "delay_s": 0,
+        "session": token,
+    }
 
 
 @pytest.mark.parametrize(
@@ -3418,3 +3424,59 @@ def test_d5_hold_relays_session_delay_and_preserves_cancel_and_reconnect(
     gateway.click.restarts += 1  # a stale signer epoch must not sweep a possibly signed hold
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
     assert not host_check.cancelled
+
+
+@pytest.mark.parametrize("everywhere", [False, True])
+def test_d5_logout_cancels_session_holds(client, token, stub, script, auth, everywhere):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    pending = set()
+
+    def delayed(op, args):
+        if op == "sign":
+            pending.add(args["request_id"])
+            return {"state": "held", "deadline_ms": 10000}
+        if op == "cancel":
+            assert args["session"] == token
+            pending.discard(args["request_id"])
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code == 200
+    assert pending == {REQ}
+    if everywhere:
+        auth.logout_everywhere(kind=auth.login_kind(token))
+    else:
+        assert client.post("/auth/logout", headers=hdr(token)).status_code == 200
+    assert not pending  # the signer's deadline queue has no intent left to sign
+    calls = len(script.clients[0].calls)
+    client.app.state.cancel_clicks(token)
+    assert len(script.clients[0].calls) == calls  # the dashboard dropped its held entry too
+    assert (
+        client.post(
+            url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+        ).status_code
+        == 401
+    )
+
+
+def test_d5_session_ending_after_authentication_cannot_enqueue(client, token, stub, script, auth, monkeypatch):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = auth.valid
+
+    def end_before_send(value, touch=True):
+        if not touch:
+            auth.logout(value)
+        return original(value, touch=touch)
+
+    monkeypatch.setattr(auth, "valid", end_before_send)
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code == 409
+    assert result.json()["error"]["code"] == "session.ended"
+    assert not any(op == "sign" for op, _ in script.clients[0].calls)

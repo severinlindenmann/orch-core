@@ -1,3 +1,4 @@
+import { emptyState } from "./feel.js";
 // The Workspaces page (run-11 feedback 13): connected workspaces and the tickets sent between them. The hub passes
 // hand-offs on sealed, so it knows who sent, to whom, when, and whether the receiver has taken it, never what it says.
 import { ago, chip, dot, h, text, when } from "./ui.js";
@@ -23,7 +24,7 @@ export function workspacesView(data, now = Date.now()) {
         chip(w.online ? "Online" : "Offline", w.online ? "ok" : "")),
       h("p", { class: "small muted", text: w.mode === "full" ? "Hub can read everything" : "Hub can read shared items and summaries" }),
       n ? h("p", { class: "small", text: n + (n === 1 ? " hand-off is" : " hand-offs are") + " waiting for this workspace" }) : null);
-  }) : h("p", { class: "empty", text: "No workspaces are connected yet." });
+  }) : emptyState("workspaces");
   const rows = data.handoffs.map((r) => {
     const st = statusOf(r, now);
     return h("tr", { "data-status": r.status },

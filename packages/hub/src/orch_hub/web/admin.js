@@ -1,3 +1,4 @@
+import { skeleton, replaceContent, toast } from "./feel.js";
 import { renderText } from "./render.js";
 
 let showLeft = false;
@@ -31,7 +32,7 @@ function table(headers, rows, label) {
 export function adminView(d) {
   const message = h("div", { "aria-live": "polite" });
   if (d.notice) message.append(d.notice.nodeType ? d.notice : p(txt(d.notice)));
-  const panels = h("div", {}, p("Loading admin data…"));
+  const panels = h("div", {}, skeleton("admin"));
   const tabs = h("div", { class: "section-tabs", role: "tablist", "aria-label": "Admin sections" });
   let data, selected = 0, generation = 0;
   const names = ["People & groups", "Access", "Workspaces", "Marketplaces", "Audit"];
@@ -54,6 +55,7 @@ export function adminView(d) {
   }
   async function load() {
     const current = ++generation;
+    if (!data) panels.replaceChildren(skeleton("admin"));
     try {
       const keys = ["users", "groups", "grants", "workspaces", "channels", "market-policy", "audit"];
       const responses = await Promise.all(keys.map((key) => d.api("GET", "/admin/" + key)));
@@ -72,7 +74,11 @@ export function adminView(d) {
       draw();
     } catch { if (current === generation) { error("unavailable"); panels.replaceChildren(h("button", { text: "Try again", onclick: load })); } }
   }
-  async function change(button, method, path, body) {
+  async function change(button, method, path, body, undoable = true) {
+    const membership = /^\/admin\/groups\/([^/]+)\/members\/([^/]+)$/.exec(path);
+    const wasMember = membership && data.groups.find((g) => g.name === decodeURIComponent(membership[1]))?.members.includes(decodeURIComponent(membership[2]));
+    const grantChange = path === "/admin/grants" || path === "/admin/grants/revoke";
+    const oldGrant = grantChange && data.grants.find((g) => g.workspace_id === body.workspace_id && g.group === body.group);
     button.disabled = true;
     try {
       const r = await d.api(method, path, body);
@@ -80,6 +86,12 @@ export function adminView(d) {
       message.replaceChildren(h("div", { class: "banner ok", role: "status", text: "Saved" }));
       await load();
       await d.refresh();
+      if (undoable && membership && ((method === "PUT" && !wasMember) || (method === "DELETE" && wasMember))) {
+        toast("Group membership updated", { undo: () => void change(button, method === "PUT" ? "DELETE" : "PUT", path, undefined, false) });
+      } else if (undoable && grantChange) {
+        const previous = { workspace_id: body.workspace_id, group: body.group, ...(oldGrant ? { role: oldGrant.role } : {}) };
+        toast("Workspace access updated", { undo: () => void change(button, oldGrant ? "PUT" : "POST", oldGrant ? "/admin/grants" : "/admin/grants/revoke", previous, false) });
+      }
     } catch { error("unavailable"); }
     finally { button.disabled = false; }
   }
@@ -413,10 +425,12 @@ export function adminView(d) {
       }), "Recent access changes"), !records.length ? p("No access changes recorded.") : null];
   }
   function draw() {
-    panels.replaceChildren(...[people, access, workspaces, marketplaces, audit].map((view, i) => h("section", {
+    replaceContent(panels, [people, access, workspaces, marketplaces, audit].map((view, i) => h("section", {
       id: "admin-panel-" + i, role: "tabpanel", "aria-labelledby": "admin-tab-" + i, hidden: i !== selected,
     }, view())));
   }
   void load();
-  return [h("h1", { text: "Admin" }), message, tabs, panels];
+  const view = [h("h1", { text: "Admin" }), message, tabs, panels];
+  view.reload = load;
+  return view;
 }

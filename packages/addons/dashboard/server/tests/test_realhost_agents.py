@@ -176,7 +176,11 @@ class AgentWorld:
             static = tmp_path / "static"
             (static / "assets").mkdir(parents=True)
             (static / "index.html").write_text("<html><head></head></html>")
-            self.client = TestClient(create_app(PORT, self.gateway, self.auth, static), base_url=ORIGIN)
+            self.client = TestClient(
+                create_app(PORT, self.gateway, self.auth, static),
+                base_url=ORIGIN,
+                headers={"X-Orch-Click-Contract": "4"},
+            )
             self.client.__enter__()
             res = self.client.post(
                 "/auth/session", json={"code": self.auth.launch(PORT)["code"]}, headers={"Origin": ORIGIN}

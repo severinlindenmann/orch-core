@@ -879,7 +879,7 @@ def test_c3_a_view_without_its_headline_or_risk_lines_is_not_shown(client, token
 
 def test_c3_the_view_and_its_risk_lines_are_passed_on_unchanged(client, token, stub, script):
     prepare(client, token, stub)
-    risk = ["Files you share will be sent to this Publish server; whoever runs it can read them."]
+    risk = []
     view = {**script.view["view"], "risk_lines": risk, "headline_detail": "“Export does nothing”"}
     script.view = {"view": view, "view_digest": HASH}
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
@@ -2236,12 +2236,29 @@ def test_a_market_install_for_publish_is_a_click_too(client, token, stub, script
     assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
 
 
+def legacy_agent_sequence(client, token, stub):
+    """Retained pre-upgrade request: these relay tests still check progress/result sanitization.
+
+    New requests with agent access are refused; the real signer also refuses signing a retained one.
+    """
+    from orch_dashboard.signing import NewTicketSequence
+
+    res = prepare(client, token, stub, SEQUENCE)
+    assert res.status_code == 200, res.text
+    rid = res.json()["request_id"]
+    ws, op, _, epoch = client.app.state.clicks.get(rid)
+    body = NewTicketSequence.model_validate({**SEQUENCE, "agent": {"hours": 24}})
+    client.app.state.clicks.add(ws, rid, op, body, epoch)
+    client.app.state.handoffs.note_intent(client.app.state.person_of(ws), rid, body.intent())
+    return res
+
+
 def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(
     client, token, stub, script, host_check, rich, monkeypatch
 ):
     """U4: the server (never error text) says the ticket landed and only the access is missing."""
     script.features = ["custody", "sequence"]
-    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    res = legacy_agent_sequence(client, token, stub)
     assert res.status_code == 200, res.text
     rid = res.json()["request_id"]
     seen = {}
@@ -2265,7 +2282,7 @@ def test_a_sequence_that_ends_in_the_agent_access_still_answers_its_ticket_key(c
     """The page starts the agent for exactly the ticket this signature created: its key must reach it when the sequence
     ends in a deposit (the access), as it does when there is none. The deposit fields stay the closed set."""
     script.features = ["custody", "sequence"]
-    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    res = legacy_agent_sequence(client, token, stub)
     assert res.status_code == 200, res.text
     rid = res.json()["request_id"]
     base = script.handler
@@ -2293,7 +2310,7 @@ def test_a_sequence_that_ends_in_the_agent_access_still_answers_its_ticket_key(c
 def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(client, token, stub, script, host_check):
     """The deposit's result is the grant's: it carries no ticket key. The host's own row of the request does."""
     script.features = ["custody", "sequence"]
-    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    rid = legacy_agent_sequence(client, token, stub).json()["request_id"]
     base = script.clients[0].handler
 
     def handler(op, args):
@@ -2318,7 +2335,7 @@ def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(cl
 def test_an_odd_ticket_key_or_seq_is_not_passed_on(client, token, stub, script, host_check):
     """The key must be a ticket key (from the result and from the host's row alike); seq must be a real integer."""
     script.features = ["custody", "sequence"]
-    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    rid = legacy_agent_sequence(client, token, stub).json()["request_id"]
     base = script.clients[0].handler
     answer = {}
 
@@ -2733,7 +2750,7 @@ def backup_view(**over):
         "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
         "fingerprint": "0123456789ab",
         "lines": ["join the hub", "", BACKUP_LINE],
-        "headline": "Join hub aaaaaaaa in selective mode: the hub sees only what you share",
+        "headline": "Join a hub",
         "risk_lines": [HUB_SELECTIVE_RISK],
         "seal": seal,
         "backup_key_line": BACKUP_LINE,
@@ -3374,3 +3391,49 @@ def test_c2_cancelled_request_is_never_signable(client, token, stub, script):
     fresh = prepare(client, token, stub, {**approve(), "retry": 1})
     assert fresh.status_code == 200
     assert fresh.json()["request_id"] != request_id
+
+
+@pytest.mark.parametrize("header", [None, "3", "4"])
+def test_every_click_route_requires_current_page_contract(client, token, stub, header):
+    from fastapi.routing import APIRoute
+
+    client.headers.pop("X-Orch-Click-Contract", None)
+    headers = hdr(token)
+    if header is not None:
+        headers["X-Orch-Click-Contract"] = header
+    routes = [r for r in client.app.routes if isinstance(r, APIRoute) and "/click/" in r.path]
+    assert len(routes) == 17
+    for route in routes:
+        path = route.path.replace("{ws}", stub.ws)
+        res = client.request(next(iter(route.methods)), path, json={}, headers=headers)
+        error = res.json().get("error", {})
+        if header != "4":
+            assert error.get("code") == "click.contract", (path, res.text)
+            assert error["message"] == "Reload the page: this page is out of date."
+        else:
+            assert error.get("message") != "Reload the page: this page is out of date.", path
+
+
+@pytest.mark.parametrize("op,risk", [("approve", ["risk"]), ("member.role", [])])
+def test_relay_refuses_risk_allowlist_mismatch(op, risk):
+    from orch_dashboard.click import contract4_view_ok
+
+    assert not contract4_view_ok({"op": op, "headline": "Review", "risk_lines": risk})
+
+
+def test_relay_caps_headline_at_sixty():
+    from orch_dashboard.click import contract4_view_ok
+
+    assert contract4_view_ok({"op": "approve", "headline": "x" * 60, "risk_lines": []})
+    assert not contract4_view_ok({"op": "approve", "headline": "x" * 61, "risk_lines": []})
+
+
+@pytest.mark.parametrize("action", ["new_sequence", "quick_start"])
+def test_agent_access_cannot_be_hidden_in_a_daily_sequence(client, token, stub, script, action):
+    body = {"action": action, "title": "Task", "agent": {"hours": 8}}
+    if action == "new_sequence":
+        body.update(type="feature", sections={})
+    res = prepare(client, token, stub, body)
+    assert res.status_code == 409, res.text
+    assert res.json()["error"]["reason"] == "terminal_only"
+    assert not [call for child in script.clients for call in child.calls if call[0] == "prepare"]

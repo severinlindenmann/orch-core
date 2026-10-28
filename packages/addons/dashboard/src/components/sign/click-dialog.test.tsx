@@ -180,12 +180,14 @@ describe('the action dialog with click-to-sign', () => {
 
 describe('C3: the outcome press, with a contract-4 View', () => {
   const HEADLINE = 'Approve the plan of DEMO-0044'
-  const v4 = (risk: string[] = []) => viewAnswer({ headline: HEADLINE, risk_lines: risk, content: { headline: HEADLINE, ticket: { key: 'DEMO-0044', uid_tail: 'abcd1234' } } } as never)
+  const v4 = (risk: string[] = []) => viewAnswer({ headline: HEADLINE, risk_lines: risk, content: { title: "Unsigned lure", headline: HEADLINE, ticket: { key: 'DEMO-0044', uid_tail: 'abcd1234' } } } as never)
 
   it('runs the 1 s arm on the signer’s headline and signs once at its end; the workspace and the ticket are named', async () => {
     c.view.mockResolvedValue(v4())
     const { dialog } = await toPanel()
     expect(within(dialog).getByRole('button', { name: HEADLINE })).toBeEnabled()
+    expect(within(dialog).getByRole('heading', { name: HEADLINE })).toBeInTheDocument()
+    expect(within(dialog).queryByText('Unsigned lure')).toBeNull()
     expect(within(dialog).getByTestId('sign-progress')).toBeInTheDocument()
     expect(within(dialog).getByTestId('sign-workspace')).toHaveTextContent('Workspace DEMO')
     expect(within(dialog).getByTestId('sign-workspace-target')).toHaveTextContent('DEMO-0044')

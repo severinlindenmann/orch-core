@@ -73,7 +73,9 @@ def world(tmp_path_factory):
     os.environ["ORCH_HOST_RUN_DIR"] = str(ws.run)
     gateway = Gateway(ws.state, click=Signer(ws.state, start=start))
     auth = Auth()
-    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+    with TestClient(
+        create_app(PORT, gateway, auth, static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+    ) as client:
         launch = client.post("/auth/session", json={"code": auth.launch(PORT)["code"]}, headers={"Origin": ORIGIN})
         token = launch.json()["token"]
         yield type(

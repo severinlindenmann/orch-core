@@ -344,3 +344,73 @@ def test_a_sign_within_a_second_of_the_view_is_too_soon_whatever_the_client_says
     click.mono.t += 0.6
     assert click.signer.handle("sign", args)["duplicate"] is False and click.signatures == 1
     assert json.dumps(click.signer.status({})["contract"]) == "4"
+
+
+def test_one_press_contract_json_does_not_drift():
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[4] / "contracts/core/click_one_press_ops.json"
+    assert json.loads(path.read_text()) == sorted(ONE_PRESS_OPS)
+
+
+def test_detail_strips_quote_characters():
+    assert protocol.headline_detail('a"b“c”d‘e’') == "“abcde”"
+
+
+@pytest.mark.parametrize("source", ["content", "event"])
+def test_headline_refuses_a_different_ticket(monkeypatch, source):
+    monkeypatch.setattr(views.signer, "render", lambda *a, **kw: "review")
+    monkeypatch.setattr(
+        views.signcontent,
+        "build",
+        lambda *a, **kw: {"ticket": {"key": "DEMO-0099" if source == "content" else "DEMO-0043"}},
+    )
+    prepared = {
+        "op": "new",
+        "workspace_id": "w",
+        "fingerprint": "f",
+        "material": {"ticket": {"key": "DEMO-0043"}},
+        "events": [{"type": "ticket.created", "key": "DEMO-0099"}],
+    }
+    refused(
+        lambda: views.build(prepared, lambda _: ("Workspace", "DEMO"), device="d", expires_at="later", artifacts=None),
+        "human.click_refused",
+        "check_failed",
+    )
+
+
+def test_unsigned_material_cannot_change_risks(monkeypatch):
+    monkeypatch.setattr(views.signer, "render", lambda *a, **kw: "review")
+    monkeypatch.setattr(views.signcontent, "build", lambda *a, **kw: {})
+    prepared = {
+        "op": "addon.grant",
+        "workspace_id": "w",
+        "fingerprint": "f",
+        "material": {},
+        "events": [{"type": "addon.granted", "name": "tools", "capabilities": ["network", "pty"]}],
+    }
+
+    def build():
+        return views.build(prepared, lambda _: ("Workspace", "DEMO"), device="d", expires_at="later", artifacts=None)
+
+    before = build()
+    prepared["material"] = {"capabilities": [], "manifest": {"capabilities": []}, "risk_lines": []}
+    after = build()
+    assert (
+        before["risk_lines"]
+        == after["risk_lines"]
+        == ["It may use the internet.", "It may open terminals on this computer, as you."]
+    )
+    assert views.digest(after) != views.digest({**after, "risk_lines": []})
+
+
+@pytest.mark.parametrize("op", ["task.start", "apply", "set"])
+@pytest.mark.parametrize("deposit", [False, True])
+def test_agent_grant_cannot_ride_on_daily_op(monkeypatch, op, deposit):
+    monkeypatch.setattr(views.signer, "check", lambda *a, **kw: None)
+    prepared = {"op": op, "workspace_id": "w", "events": [GRANT]}
+    refused(
+        lambda: views.check_prepared(prepared, workspace_id="w", person="p", device="d", files=None, deposit=deposit),
+        "human.click_refused",
+        "terminal_only",
+    )

@@ -14,6 +14,19 @@ export function attribution(row) {
   return actorText(row.actor);
 }
 
+const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
+
+/** What the page shows: a person's name, "An agent" (the session behind the "i"), never an agent under a person's name. */
+export function attributionView(row) {
+  const detail = row.detail ?? row;
+  if (detail.requested_by_agent_session && detail.approved_by) {
+    return h("p", { class: "muted" }, "An agent asked, " + text(detail.approved_by) + " approved ",
+      info("Which agent", "agent:" + text(detail.requested_by_agent_session)));
+  }
+  if (row.actor?.kind === "agent") return h("p", { class: "muted" }, "An agent ", info("Which agent", actorText(row.actor)));
+  return h("p", { class: "muted", text: actorText(row.actor) });
+}
+
 export function csvCell(value) {
   let s = String(value ?? "");
   if (/^[\t\r]/.test(s) || /^[=+@-]/.test(s.trimStart())) s = "'" + s;
@@ -51,7 +64,7 @@ export function activityView(data, actions = {}, now = Date.now()) {
   const paint = () => {
     const visible = filtered();
     list.replaceChildren(...(visible.length ? visible.map((r) => h("article", { class: "card" },
-      h("p", { text: text(r.text) }), h("p", { class: "muted", text: attribution(r) }),
+      h("p", { text: text(r.text) }), attributionView(r),
       h("p", { class: "small", text: [when(r.ts_ms, now), text(r.workspace_name)].filter(Boolean).join(" · ") }),
     )) : [h("p", { text: "No activity matches these filters." })]));
   };
@@ -76,12 +89,13 @@ export function activityView(data, actions = {}, now = Date.now()) {
   const form = h("form", { onsubmit: (ev) => { ev.preventDefault(); actions.filter?.({ ...filters }); } },
     select("Workspace", "workspace_id", unique((data.workspaces ?? rows.filter((r) => r.workspace_id)).map((r) => [r.workspace_id, r.name ?? r.workspace_name ?? r.workspace_id]))),
     select("Person", "person", unique(data.users ? data.users.map((u) => [u.user_id, u.name]) : rows.filter((r) => r.actor?.kind === "person").map((r) => [r.actor.id, r.actor.name]))),
-    select("Kind of event", "type", (data.types ?? unique(rows.map((r) => [r.type, r.type]))).map((entry) => Array.isArray(entry) ? [entry[0], entry[1].replaceAll(/[._]/g, " ")] : [entry, entry.replaceAll(/[._]/g, " ")])),
+    select("Kind of event", "type", (data.types ?? unique(rows.map((r) => [r.type, r.type]))).map((entry) => Array.isArray(entry) ? [entry[0], entry[1].replaceAll(/[._]/g, " ")] : [entry, (data.type_words ?? {})[entry] ?? entry.replaceAll(/[._]/g, " ")])),
     date("From", "since_ms", false), date("Until", "until_ms", true),
     h("button", { type: "submit", text: "Apply filters" }));
   paint();
   return h("section", {}, h("h1", { text: "Activity" }), form,
-    h("button", { type: "button", text: "Export CSV", onclick: () => (actions.export ?? download)(filtered()) }),
-    h("p", { class: "muted", text: "Export includes the matching rows loaded on this page." }), list,
-    data.before ? h("button", { type: "button", text: "Load older", onclick: () => actions.older?.(data.before, { ...filters }) }) : null);
+    h("div", { class: "row" },
+      h("button", { type: "button", text: "Export CSV", onclick: async () => (actions.save ?? download)(actions.exportAll ? await actions.exportAll({ ...filters }) : filtered()) }),
+      info("About the export", "The file holds every row that matches the filters you applied, not only the ones on this page.")), list,
+    data.before ? h("button", { type: "button", text: "Load older", onclick: () => actions.older?.(data.before) }) : null);
 }

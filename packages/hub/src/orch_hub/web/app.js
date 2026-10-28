@@ -305,17 +305,33 @@ async function activity() {
   if (state.user.needs_sign_in) return reauthView();
   await loadRail();
   const [users, workspaces] = await Promise.all([api("GET", "/admin/users"), api("GET", "/admin/workspaces")]);
-  let rows = [], revision = 0;
-  const load = async (filters = {}, before = null) => {
-    const request = ++revision;
+  let rows = [], revision = 0, applied = {};
+  const query = (filters, before) => {
     const params = new URLSearchParams(Object.entries(filters).filter(([, v]) => v !== "" && v != null));
     if (before) params.set("before", before);
-    const r = await api("GET", "/admin/activity?" + params);
+    return "/admin/activity?" + params;
+  };
+  const exportAll = async (filters) => { // every page that matches the filters, not only what is on screen
+    const all = [];
+    let before = null;
+    for (let page = 0; page < 200; page++) {
+      const r = await api("GET", query({ ...applied, ...filters, limit: "200" }, before));
+      if (r.status !== 200) throw new Error("export failed");
+      all.push(...r.body.rows);
+      if (!r.body.before) break;
+      before = r.body.before;
+    }
+    return all;
+  };
+  const load = async (filters = {}, before = null) => {
+    const request = ++revision;
+    if (!before) applied = filters;
+    const r = await api("GET", query(filters, before));
     if (location.hash !== "#/activity" || request !== revision) return;
     if (r.status !== 200) return shell("activity", banner("bad", "Activity could not be loaded", say(r.body.error)));
     rows = before ? [...rows, ...r.body.rows] : r.body.rows;
     shell("activity", activityView({ ...r.body, rows, filters, users: users.body.users ?? [], workspaces: workspaces.body.workspaces ?? [] }, {
-      filter: (next) => load(next), older: (cursor, next) => load(next, cursor),
+      filter: (next) => load(next), older: (cursor) => load(applied, cursor), exportAll: () => exportAll(applied),
     }));
   };
   await load();

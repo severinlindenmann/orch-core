@@ -6,6 +6,7 @@ events: the status stays unchanged and the event, which the host should not have
 
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
@@ -20,6 +21,8 @@ _KEY = re.compile(r"[A-Z][A-Z0-9]{0,15}-([1-9][0-9]{3,}|[1-9][0-9]{0,2}|0[0-9]{3
 
 def created(core: Core, uid: str, e: dict[str, Any]) -> Refusal | None:
     ws = core.ws
+    if "schedule" in e and (e["actor"]["kind"] != "person" or "via" in e):
+        return Refusal(Code.EVENT_BAD_ACTOR, "a schedule anchor must be signed by a person")
     key = e["key"]
     if not key.startswith(ws.prefix + "-") or not _KEY.fullmatch(key):
         return Refusal(Code.TICKET_BAD_REFERENCE, f"{key} is not a key of workspace prefix {ws.prefix}")
@@ -33,6 +36,12 @@ def created(core: Core, uid: str, e: dict[str, Any]) -> Refusal | None:
     core.keys[key] = uid
     core.created_at[uid] = position(e, uid)
     t = TCore(uid=uid, key=key, owner=e["owner"], status="open", fields=new_fields(e["ticket_type"], e["title"]))
+    t.anchor_schedule = e.get("schedule")
+    if "via" in e:
+        t.via = dict(e["via"])
+        t.fields["parent"] = core.tickets[e["via"]["anchor"]].key
+        # a child is exactly as visible as its anchor: a restricted routine never spawns workspace-wide tickets
+        t.fields["visibility"] = copy.deepcopy(core.tickets[e["via"]["anchor"]].fields["visibility"])
     core.tickets[uid] = t
     return None
 
@@ -100,12 +109,16 @@ def known_before(core: Core, t: TCore, key: str, e: dict[str, Any]) -> bool:
 
 
 def closed(core: Core, t: TCore, e: dict[str, Any]) -> Refusal | None:
-    if not claims.signer_manages(core.ws, t, e):
+    if e.get("resolution") == "nothing_to_do" and not t.via:
+        return Refusal(Code.STATUS_TRANSITION, "nothing_to_do is only for a schedule child")
+    agent_child = e["actor"]["kind"] == "agent" and t.via is not None
+    if not agent_child and not claims.signer_manages(core.ws, t, e):
         return Refusal(Code.ROLE_DENIED, "only the ticket owner, owners and maintainers close a ticket")
     if t.status == "closed":
         return Refusal(Code.STATUS_TRANSITION, "already closed")
     if "duplicate_of" in e and not known_before(core, t, e["duplicate_of"], e):
         return Refusal(Code.TICKET_BAD_REFERENCE, f"duplicate_of {e['duplicate_of']}")
+    t.close_resolution = e.get("resolution")
     t.status = "closed"
     if t.claim is not None:
         t.claim.ended = "ticket_closed"

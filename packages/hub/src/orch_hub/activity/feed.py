@@ -4,34 +4,57 @@ from ..contract.phase4 import render_text
 from .store import ACTIVITY_TYPES, bounded
 
 AUDIT_TYPES = ("custodial", "grant", "membership", "space", "channel", "share", "market_policy")
-WORDS = dict(
-    zip(
-        ACTIVITY_TYPES,
-        (
-            "created an invitation",
-            "used an invitation",
-            "issued an account reset",
-            "used account recovery",
-            "disabled a person",
-            "enabled a person",
-            "changed an authenticator",
-            "changed a password",
-            "ended sign-ins",
-            "proposed a change",
-            "approved a change",
-            "overrode a change",
-            "a change expired",
-            "rejected a change",
-            "allowed a connection",
-            "denied a connection",
-            "moved a connection",
-            "removed a device",
-            "issued a pairing",
-            "used a pairing",
-            "withdrew a change",
-        ),
-    )
-)
+WORDS = {
+    "invite.created": "invited a person",
+    "invite.redeemed": "accepted an invitation",
+    "reset.issued": "started a password and code reset",
+    "recovery.redeemed": "recovered an account",
+    "user.disabled": "disabled a person",
+    "user.enabled": "enabled a person",
+    "authenticator.rotated": "changed an authenticator",
+    "password.changed": "changed a password",
+    "sessions.ended": "signed out everywhere",
+    "change.proposed": "asked for an access change",
+    "change.approved": "approved an access change",
+    "change.overridden": "applied an access change without the owner",
+    "change.expired": "an access change lapsed",
+    "change.rejected": "rejected an access change",
+    "connection.allowed": "allowed a connection",
+    "connection.denied": "closed a connection",
+    "connection.migrated": "carried over a connection",
+    "channel.revoked": "removed a phone or browser",
+    "pairing.issued": "made a code to pair a phone",
+    "pairing.used": "paired a phone",
+}
+assert set(WORDS) == set(ACTIVITY_TYPES), "every activity type needs plain words"
+
+#: plain names for the signed audit chain's record types (the "Kind of event" list)
+AUDIT_WORDS = {
+    "custodial": "approvals",
+    "grant": "workspace access",
+    "membership": "group members",
+    "space": "shared spaces",
+    "channel": "phones and browsers",
+    "share": "shared information",
+    "market_policy": "add-on rules",
+}
+
+#: what an approval was about, in words (a verb the table does not know is said generically)
+VERB_WORDS = {
+    "ticket.created": "a new ticket",
+    "ticket.updated": "a ticket change",
+    "status.changed": "a status change",
+    "ticket.submitted": "a ticket for review",
+    "ticket.closed": "closing a ticket",
+    "ticket.reopened": "reopening a ticket",
+    "question.answered": "an answer",
+    "gate.approved": "a gate",
+    "gate.changes_requested": "a request for changes",
+    "verdict.given": "a verdict",
+    "grant.requested": "agent access",
+    "addon.requested": "an add-on",
+    "settings.changed": "a settings change",
+}
 
 
 def feed(deps, query):
@@ -119,7 +142,7 @@ def feed(deps, query):
                 who = actor("person", ev.get("user_id") if t == "custodial" else ev.get("actor_user_id"))
                 text = {
                     "custodial": "approved "
-                    + render_text(ev.get("verb", "change")).replace(".", " ")
+                    + VERB_WORDS.get(ev.get("verb"), "a change")
                     + " in "
                     + workspaces.get(ws, render_text(ws or "workspace")),
                     "grant": ("allowed workspace access for " if ev.get("role") else "removed workspace access for ")
@@ -156,4 +179,9 @@ def feed(deps, query):
     if len(rows) > limit:
         ts, source, seq = page[-1][0]
         cursor = f"{ts}:{source}:{seq}"
-    return {"rows": [row for _, row in page], "before": cursor, "types": [*ACTIVITY_TYPES, *AUDIT_TYPES]}
+    return {
+        "rows": [row for _, row in page],
+        "before": cursor,
+        "types": [*ACTIVITY_TYPES, *AUDIT_TYPES],
+        "type_words": {**WORDS, **AUDIT_WORDS},
+    }

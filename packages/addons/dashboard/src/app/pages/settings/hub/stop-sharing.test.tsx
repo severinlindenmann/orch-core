@@ -182,7 +182,40 @@ describe('stop sharing by a rule', () => {
     expect(within(dialog).queryByTestId('hub-rule-widens')).toBeNull()
   })
 
-  it('adding a rule says plainly it is not available here, with no button and no terminal command', async () => {
+  it('adding a rule: the review is the host\'s words, only new items, one trusted press, no terminal, no typed word', async () => {
+    const user = userEvent.setup()
+    const add = vi.spyOn(api, 'addHubRule').mockResolvedValue({ synced: true, pending: null, put: 1 })
+    vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
+      ...NOW, new: 1, plan: 'N'.repeat(43),
+      review: { hub_id: 'ab12cd34ef56ab12', audience: { read: 3, edit: 1, admin: 1 }, audience_note: 'from the hub, not signed', new_count: 1, new_more: 0,
+        new_items: ['ticket DEMO-0050: Later public note'], leaves: ['the ticket title, status, labels and deadline'],
+        later_edits: 'Later edits to these tickets are shared too, until you stop sharing them.' },
+    }))
+    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+    await user.click(await screen.findByTestId('hub-rule-add'))
+    await user.type(screen.getByTestId('hub-rule-value'), 'team')
+    await waitFor(() => expect(screen.getByTestId('hub-share-review')).toBeEnabled())
+    await user.click(screen.getByTestId('hub-share-review'))
+    const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
+    expect(within(dialog).getByTestId('hub-add-audience')).toHaveTextContent('3 read, 1 edit, 1 admin (from the hub, not signed)')
+    expect(within(dialog).getByTestId('hub-add-new')).toHaveTextContent('1 new item leaves')
+    expect(within(dialog).getByTestId('hub-add-later')).toHaveTextContent('Later edits to these tickets are shared too')
+    expect(within(dialog).queryByTestId('hub-add-list')).toBeNull() // the list is behind one small click
+    await user.click(within(dialog).getByText('Show list'))
+    expect(within(dialog).getByTestId('hub-add-list')).toHaveTextContent('Later public note')
+    expect(within(dialog).queryByRole('textbox')).toBeNull()
+    expect(dialog.textContent).not.toMatch(/orch |terminal|backup key|type the/i)
+    // a script-made click is not a press
+    const press = vi.spyOn(gesture, 'trustedPress').mockReturnValue(false)
+    fireEvent.click(within(dialog).getByTestId('hub-add-go'))
+    expect(add).not.toHaveBeenCalled()
+    press.mockReturnValue(true)
+    fireEvent.click(within(dialog).getByTestId('hub-add-go'))
+    await waitFor(() => expect(add).toHaveBeenCalledWith(WS.id, { kind: 'type', value: 'team' }, 'N'.repeat(43)))
+    expect(await within(dialog).findByTestId('hub-add-done')).toHaveTextContent('Shared.')
+  })
+
+  it('an older host without the review says so and offers no button', async () => {
     const user = userEvent.setup()
     mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
     await user.click(await screen.findByTestId('hub-rule-add'))
@@ -190,8 +223,7 @@ describe('stop sharing by a rule', () => {
     await waitFor(() => expect(screen.getByTestId('hub-share-review')).toBeEnabled())
     await user.click(screen.getByTestId('hub-share-review'))
     const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
-    expect(within(dialog).getByTestId('hub-rule-add-unavailable')).toHaveTextContent('Adding a sharing rule is not available in the dashboard yet.')
-    expect(within(dialog).queryByTestId('hub-rule-stop')).toBeNull()
-    expect(dialog.textContent).not.toMatch(/orch |terminal/i)
+    expect(within(dialog).getByTestId('hub-add-unsupported')).toBeTruthy()
+    expect(within(dialog).queryByTestId('hub-add-go')).toBeNull()
   })
 })

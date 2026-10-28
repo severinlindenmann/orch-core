@@ -165,9 +165,23 @@ def build(gateway: Gateway, ws: str, now: int | None = None) -> dict:
         if not isinstance(row, dict):
             continue
         if row.get("target", "existing") != "existing":
-            from .errors import fail
-
-            raise fail("schedule.denied", "This schedule target is not supported yet")
+            # one row this dashboard cannot read must not break the page: it is listed as unsupported
+            rows.append(
+                {
+                    "id": row.get("id"),
+                    "ticket": None,
+                    "title": None,
+                    "state": row.get("state"),
+                    "rule": {},
+                    "ends": None,
+                    "brief": "",
+                    "mine": row.get("person") == me,
+                    "can_cancel": False,
+                    "supported": False,
+                    "note": "Needs a newer dashboard",
+                }
+            )
+            continue
         key = row.get("key")
         mine = row.get("person") == me
         if mine and cap is None:

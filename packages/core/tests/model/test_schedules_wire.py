@@ -643,15 +643,12 @@ def test_ticket_people_changes_do_not_remove_the_right_to_act():
     assert refused(w, uid, "log.added", run, text="as a viewer") is not None
 
 
-def test_schedule_new_shape_admitted_but_cannot_fire_as_existing():
+def test_schedule_new_target_is_refused_until_the_new_ticket_piece_is_merged():
     w, uid, old, due = setup()
     payload = {k: old[k] for k in ("brief", "rule", "starts", "ends", "run_hours")}
-    e, result = w.try_(uid, "schedule.set", "tom", schedule="sc_" + w.nid(), target="new", title="Mail", **payload)
-    assert not hasattr(result, "code"), result
-    rec = w.state()._core.tickets[uid].schedules[e["schedule"]]
-    assert (rec.target, rec.title) == ("new", "Mail")
-    w.clock = due
-    assert fire(w, uid, e, due)[1].code == Code.SCHEDULE_DENIED
+    _, result = w.try_(uid, "schedule.set", "tom", schedule="sc_" + w.nid(), target="new", title="Mail", **payload)
+    assert result.code == Code.SCHEDULE_DENIED and "not switched on" in result.detail
+    assert not w.state()._core.tickets[uid].schedules.keys() - set(old and [old["schedule"]])
 
 
 def test_schedule_target_validation_in_model():

@@ -133,7 +133,7 @@ def _parser() -> argparse.ArgumentParser:
 def _tty_confirm(text: str) -> bool:
     from orch.ops.human import review_prompt
 
-    return review_prompt(text)
+    return review_prompt(text, verb="continue")  # git commits and timers: nothing is signed
 
 
 def _flat(res: dict[str, Any]) -> dict[str, Any]:

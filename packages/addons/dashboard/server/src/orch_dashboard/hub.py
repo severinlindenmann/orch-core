@@ -1,8 +1,7 @@
 """The hub pages of Mission Control (V3 A7, orch-core #859; mockups v3-a5-mode and v3-a3-flows).
 
-Mission Control explains and shows exactly what will change; **the owner signs in the terminal**. So this module has
-read routes that relay the host's own reads through a closed shape, and one route that builds the terminal command for
-a change. It signs nothing, holds no hub credential and opens no connection to a hub. The one hub write it sends the
+Mission Control explains and shows exactly what will change; the owner signs with one click. This module has read
+routes that relay the host's own reads through a closed shape. It signs nothing, holds no hub credential and opens no connection to a hub. The one hub write it sends the
 host is `hub.connect` after a join by click (see below); the other two are the share writes that only take sharing away
 (`share.revoke`, `share.rule_remove`, one click as the session's person, below). `hub.join`, `hub.mode`, `hub.leave`,
 `hub.unbind` and the share writes that add (`share.rule_add`, a confirming `share.sync`) are signed by click or run by
@@ -14,8 +13,6 @@ host is `hub.connect` after a join by click (see below); the other two are the s
 * `GET  /hub/share`          `share.rules` + `share.preview {}`: the rules, what each matches now, the tickets the hub
                              has (by key, for the Tickets column).
 * `POST /hub/share/preview`  `share.preview {add | remove}`: what the hub would see after ONE rule change.
-* `POST /hub/command`        the exact command to run in the terminal for one change. Closed bodies, every value
-                             checked and shell-quoted; a value with a hidden character is refused, never repaired.
 * `POST /hub/share/revoke`   `share.revoke {ref}`: stop sharing one ticket. One click, no signature (it only takes
                              sharing away, like the cosmetic settings: `cosmetic_routes`): owner only, from a FULL
                              session, as the session's person; a switch session is `session.readonly` (security.py).
@@ -35,7 +32,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import shlex
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
@@ -59,9 +55,7 @@ TICKET_LINE = re.compile(r"^ticket ([A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}): ")
 MAX_TICKETS = 100  # share.preview lists at most 100 rows; more means the list is not complete
 log = logging.getLogger("orch_dashboard.security")
 
-#: closed values the pages and the commands use
-Invite = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{3,255}$")]
-CardPath = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+#: closed values the pages use
 RuleValue = Annotated[str, StringConstraints(min_length=1, max_length=100)]
 
 
@@ -127,15 +121,6 @@ class Rule(BaseModel):
     def host(self) -> dict:
         return {"kind": self.kind} if self.value is None else {"kind": self.kind, self.kind: self.value}
 
-    def flag(self) -> str:
-        return {
-            "needs_you": "--needs-you",
-            "questions": "--questions",
-            "type": f"--type {shlex.quote(self.value or '')}",
-            "tag": f"--tag {shlex.quote(self.value or '')}",
-            "ticket": f"--ticket {shlex.quote(self.value or '')}",
-        }[self.kind]
-
 
 class PreviewBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -178,57 +163,6 @@ def reduce_view(raw) -> dict:
         "pending": pending if isinstance(pending, str) and re.fullmatch(r"[a-z_]{1,40}", pending) else None,
         "revoked": _int(raw.get("revoke")) or 0,
     }
-
-
-class CommandBody(BaseModel):
-    """The change the person wants to make; the answer is the command to run. Nothing is sent to the host."""
-
-    model_config = ConfigDict(extra="forbid", strict=True)
-    kind: Literal[
-        "join", "mode_full", "leave", "leave_hub_down", "stop_telling", "share_add", "share_remove", "share_revoke",
-        "share_sync",
-    ]  # fmt: skip
-    invite: Invite | None = None
-    card: CardPath | None = None
-    mode: Literal["selective", "full"] | None = None
-    rule: Rule | None = None
-    ref: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$")] | None = None
-
-    @model_validator(mode="after")
-    def shape(self):
-        need = {
-            "join": {"invite", "card", "mode"}, "mode_full": {"card"}, "share_add": {"rule"},
-            "share_remove": {"rule"}, "share_revoke": {"ref"},
-        }.get(self.kind, set())  # fmt: skip
-        given = {k for k in ("invite", "card", "mode", "rule", "ref") if getattr(self, k) is not None}
-        if given != need:
-            raise ValueError(f"{self.kind} takes exactly: {', '.join(sorted(need)) or 'nothing'}")
-        if self.card is not None and (hidden(self.card) or self.card.startswith("-")):
-            raise ValueError("the card path has invisible characters or a leading dash")
-        return self
-
-
-def command_of(body: CommandBody) -> str:
-    """The one line to run in the terminal. Every value is closed above and quoted here."""
-    k = body.kind
-    if k == "join":
-        return (
-            f"orch hub join {shlex.quote(body.invite or '')} --hub-card {shlex.quote(body.card or '')}"
-            f" --mode {body.mode}"
-        )
-    if k == "mode_full":
-        return f"orch hub mode full --hub-card {shlex.quote(body.card or '')}"
-    if k in ("leave", "leave_hub_down"):  # core's leave is logged at once and works while the hub is down
-        return "orch hub leave"
-    if k == "stop_telling":
-        return "orch hub unbind"
-    if k == "share_add":
-        return f"orch hub share rule add {body.rule.flag()}"  # type: ignore[union-attr]
-    if k == "share_remove":
-        return f"orch hub share rule remove {body.rule.flag()}"  # type: ignore[union-attr]
-    if k == "share_revoke":
-        return f"orch hub share revoke {shlex.quote(body.ref or '')}"
-    return "orch hub share sync"
 
 
 def _int(value, high=10**9):
@@ -384,12 +318,12 @@ def register(app: FastAPI, gateway: Gateway):
         return preview_view(link.call("share.preview", args))
 
     def owner_link(ws: str, request: Request, what: str):
-        """The cosmetic precedent (`cosmetic_routes`): a full session, and the link's person (the host's `call.viewer`)
-        is the owner. The host checks the role again."""
+        """The cosmetic precedent (`cosmetic_routes`): a full session, and the SESSION's person holds the role owner
+        (not whoever the link's peer is). The host checks the role again."""
         if not full_session(app.state.auth, request.state.token):
             raise refused(f"Sign in fully to {what}.")
         link = gateway.enabled(ws)
-        person = link.welcome["peer"]["person"]
+        person = app.state.person_of(ws)
         role = next((m.get("role") for m in link.call("member.list")["members"] if m.get("person") == person), None)
         if role != "owner":
             message = "Only the workspace owner changes what is shared."
@@ -454,8 +388,3 @@ def register(app: FastAPI, gateway: Gateway):
         got = link.call("hub.connect", args, write=True, idem=body.idem)
         mode = got.get("mode") if isinstance(got, dict) else None
         return {"connected": True, "mode": mode if mode in MODES else None}
-
-    @app.post("/api/w/{ws}/hub/command")
-    def hub_command(body: CommandBody, ws: str = Depends(reads.workspace)):
-        """Nothing is sent to the host: the answer is the line the owner runs where their key is."""
-        return {"command": command_of(body), "kind": body.kind}

@@ -49,7 +49,11 @@ class Rig:
         monkeypatch.setattr(remote, "_is_local", lambda a: a in self.local)
         monkeypatch.setattr(remote, "_port_busy", lambda p: p in self.busy)
         monkeypatch.setattr(remote, "_run", self._run)
-        monkeypatch.setattr("orch.ops.human.review_prompt", lambda text: self.ask(text) in ("y", "yes"))
+
+        def review(text, verb="sign"):  # D4: nothing here is signed, so the prompt says "continue"
+            return verb == "continue" and self.ask(text) in ("y", "yes")
+
+        monkeypatch.setattr("orch.ops.human.review_prompt", review)
         monkeypatch.setattr(remote, "_no_answer", lambda p: True)
         monkeypatch.setattr("orch.cli.dashboard.find_entry_point", lambda env, err=None: ["/opt/orch-dashboard"])
         monkeypatch.setattr(remote, "_front_installed", lambda: False)
@@ -217,7 +221,7 @@ def test_no_terminal_means_no_change(rig, monkeypatch):
 
     from orch.ops.errors import OrchError
 
-    def missing(text):
+    def missing(text, verb="sign"):
         raise OrchError("tty.required", "no controlling terminal")
 
     monkeypatch.setattr("orch.ops.human.review_prompt", missing)

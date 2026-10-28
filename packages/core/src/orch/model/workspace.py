@@ -330,7 +330,8 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return r
     s = e["set"]
     if "via" in e["actor"] and (bad := sorted(set(s) - CHANNEL_SETTINGS)):
-        # hub signed; one place for append and replay
+        # hub protocol 8.8 (V3-D29): repos, publish, addons, the ignored sign_methods ... stay off the channel, whatever
+        # the hub signed; one place for append and replay
         return Refusal(Code.SETTINGS_INVALID, f"a hub may not set {', '.join(bad)}")
     if ADDONS_KEY in s and len(s) != 1:  # G6: one add-on per event, nothing else beside it (one review, one word)
         return Refusal(Code.SETTINGS_INVALID, "addons: add-on settings are changed on their own")
@@ -377,6 +378,8 @@ def settings_changed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
             ws.settings.pop(ADDONS_KEY, None)
     # `set.icon` (before D6 the icon was signed): the schema still accepts it so older logs replay; it is ignored here
     # (no state, nothing rendered), the icon is the unsigned `workspace.icon` of config.json now
+    # `set.sign_methods` (B6 retired): every One click genesis since #1442 carries it; the schema accepts any list of
+    # strings so those logs replay, and it is ignored here (no state, no enforcement, nothing rendered)
     return None
 
 

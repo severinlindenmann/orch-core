@@ -20,7 +20,7 @@ describe('guide on a real host', () => {
     expect(await screen.findByRole('heading', { name: 'Approving things' }, T)).toBeInTheDocument()
     // one click is the only way to sign: the guide never sends people to a terminal signing step
     expect(screen.getByRole('heading', { name: 'One click' })).toBeInTheDocument()
-    expect(screen.getByText(/One click is the dashboard's signing path/)).toBeInTheDocument()
+    expect(screen.getByText(/You approve in the dashboard with one click/)).toBeInTheDocument()
     expect(document.body).not.toHaveTextContent(/orch sign/)
     await user.click(within(screen.getByRole('navigation', { name: 'Guide pages' })).getByRole('link', { name: 'Coming later' }))
     expect(await screen.findByRole('heading', { name: 'Coming later' }, T)).toBeInTheDocument()

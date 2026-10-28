@@ -42,9 +42,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/tickets/{key}/events",
         "/api/w/{ws}/tickets/{key}/changes",
         "/api/w/{ws}/tickets/{key}/artifacts/{name}",
-        "/api/w/{ws}/handoff",
         "/api/w/{ws}/repos/check",
-        "/api/w/{ws}/handoff/{request_id}",
         "/api/w/{ws}/click/status",
         "/api/w/{ws}/hubsign",
         "/api/w/{ws}/hub",
@@ -58,7 +56,6 @@ def test_closed_route_allowlist():
         "/auth/switch",
         "/auth/switch/challenge",
         "/api/w/{ws}/hub/connect",
-        "/api/w/{ws}/hub/command",
         "/api/w/{ws}/click/prepare",
         "/api/w/{ws}/click/view",
         "/api/w/{ws}/click/state",
@@ -218,7 +215,8 @@ def test_shell_p1_reads(client, token, stub):
     for path in [
         "/api/dev/reset",
         "/api/raw",
-        "/api/w/" + stub.ws + "/handoff",
+        "/api/w/" + stub.ws + "/handoff",  # the terminal hand-off is gone: no route answers it
+        "/api/w/" + stub.ws + "/hub/command",
         "/auth/unknown",
         "/docs",
         "/openapi.json",

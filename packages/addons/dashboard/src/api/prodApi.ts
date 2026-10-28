@@ -7,7 +7,7 @@ import { refreshFeatures } from './features'
 import { createFetchTransport } from './fetchTransport'
 import type { MandatesPreviewState } from './mandatesPreview'
 import type { Api, ListTicketsParams } from './apiFactory'
-import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
+import type { HandoffAction } from './handoff'
 import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, GithubCredential, GithubSave, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { ClaudeTrust, QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
@@ -303,16 +303,9 @@ const empty = {
   getLocalMandatesPreview: (): MandatesPreviewState => ({ preview: true, on: false, preflight: [], orchestrators: [], may: [], always_human: [], protected_paths: [], mandate: null }),
 }
 
-/**
- * The signed actions (M3): the server prepares a sign request and the person signs in a terminal. These three calls are
- * the whole write surface of the dashboard; none of them signs, and nothing here ever submits a signature.
- */
-const handoff = {
-  prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>(`${w(ws)}/handoff`, 'POST', { ...action, ...(retry ? { retry } : {}) }),
-  /** The host's look at a repository path before the form closes (a dry run: nothing is stored or signed). */
+/** The host's look at a repository path before the form closes (a dry run: nothing is stored or signed). */
+const repos = {
   checkRepo: (ws: string, action: HandoffAction) => call<{ ok: true }>(`${w(ws)}/repos/check`, 'POST', action),
-  getHandoff: (ws: string, id: string) => call<HandoffState>(`${w(ws)}/handoff/${encodeURIComponent(id)}`),
-  cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>(`${w(ws)}/handoff/${encodeURIComponent(id)}`, 'DELETE'),
 }
 
 /**
@@ -341,7 +334,6 @@ const click = {
   revokeHubShare: (ws: string, ref: string) => call<import('./hub').HubReduced>(`${w(ws)}/hub/share/revoke`, 'POST', { ref }),
   removeHubRule: (ws: string, rule: import('./hub').HubRule, expect: string) =>
     call<import('./hub').HubReduced>(`${w(ws)}/hub/share/rule-remove`, 'POST', { rule, expect }),
-  getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>(`${w(ws)}/hub/command`, 'POST', body),
   getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>(`${w(ws)}/hub/link`, 'POST', { link }),
   connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),
@@ -370,7 +362,7 @@ const cosmetic = {
   setCosmetic: (ws: string, body: CosmeticBody) => call<Cosmetic>(`${w(ws)}/workspace/cosmetic`, 'PUT', body),
 }
 
-const implemented: Record<string, unknown> = { ...reads, ...empty, ...handoff, ...click, ...records, ...cosmetic }
+const implemented: Record<string, unknown> = { ...reads, ...empty, ...repos, ...click, ...records, ...cosmetic }
 
 /** Every other method of the mock's api refuses plainly: a control that reaches one is a bug, not a silent no-op. */
 export const api = new Proxy(implemented, {

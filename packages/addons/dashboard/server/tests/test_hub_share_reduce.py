@@ -30,6 +30,7 @@ def link_of(person, role):
 def host(gateway, monkeypatch):
     fake = link_of(OWNER, "owner")
     monkeypatch.setattr(gateway, "enabled", lambda ws: fake)
+    monkeypatch.setattr(gateway, "link", lambda ws: fake)  # the session's person (`person_of`) is the link's here
     return fake
 
 
@@ -99,9 +100,23 @@ def test_bad_bodies_reach_nothing(client, token, stub, host):
 def test_a_member_is_refused_before_the_write(client, token, stub, gateway, monkeypatch):
     member = link_of(MEMBER, "member")
     monkeypatch.setattr(gateway, "enabled", lambda ws: member)
+    monkeypatch.setattr(gateway, "link", lambda ws: member)
     r = revoke(client, stub, token)
     assert r.status_code == 403 and r.json()["error"]["code"] == "role.denied"
     assert writes(member) == []
+
+
+def test_the_sessions_person_must_be_the_owner_not_the_links_peer(client, token, stub, host, monkeypatch):
+    """The dashboard link's peer is the owner, but this session's person is a member: refused before any write."""
+    host.answers["member.list"] = {
+        "members": [{"person": OWNER, "role": "owner"}, {"person": MEMBER, "role": "member"}]
+    }
+    monkeypatch.setattr(client.app.state, "person_of", lambda ws: MEMBER)
+    remove = {"rule": {"kind": "needs_you"}, "expect": PLAN}
+    for path, body in (("revoke", {"ref": "PRD-0014"}), ("rule-remove", remove)):
+        r = client.post(f"/api/w/{stub.ws}/hub/share/{path}", json=body, headers=hdr(token))
+        assert r.status_code == 403 and r.json()["error"]["code"] == "role.denied", path
+    assert writes(host) == []
 
 
 def test_a_switch_session_is_read_only(client, auth, stub, host):

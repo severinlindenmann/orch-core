@@ -322,7 +322,6 @@ describe('after the code', () => {
   })
 
   it('with the certificate in, adding the phone stays in the terminal: no button, nothing is prepared', async () => {
-    const handoff = vi.spyOn(api, 'prepareHandoff')
     const click = vi.spyOn(api, 'prepareClick')
     const { user } = open('pair-cert', { offers: [{ offer_id: '7'.repeat(32), state: 'cert_pending', created_ms: 0, expires_ms: Date.now() + 60_000, scopes: ['look'], cert_ready: true }] })
     expect(await screen.findByTestId('pair-primary-command', {}, T)).toHaveTextContent('orch host relay pair --resume --offer ' + '7'.repeat(32))
@@ -330,7 +329,6 @@ describe('after the code', () => {
     await user.click(screen.getByTestId('pair-add-details'))
     expect(await screen.findByTestId('info-drawer-content', {}, T)).toHaveTextContent('the command finishes adding it')
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(handoff).not.toHaveBeenCalled()
     expect(click).not.toHaveBeenCalled()
   })
 

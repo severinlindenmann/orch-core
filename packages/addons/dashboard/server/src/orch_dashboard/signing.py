@@ -633,7 +633,10 @@ TicketType = Literal["feature", "bug", "chore", "spike", "epic"]
 MAX_PK = 87  # base64url of a 65-byte public key, no padding
 MAX_CERT_BYTES = 16384  # a device certificate is a few hundred bytes; anything near this is not one
 MAX_READER_DECL_BYTES = 4096  # core `member_add.DECL_FILE_MAX`: the host refuses a longer declaration file
-READER_DECL_FILE = "reader_decl.json"  # its logical file name (the certificate is `-`; the host wants distinct names)
+#: its logical file name: the host reads the bytes of `files.reader_decl` under the name the `reader_decl` argument
+#: gives, and its key-file check (auth.KEY_FILE_ARGS) matches that name to the `files` key, so the two are the same
+#: word (the certificate is `-`; the host wants distinct names)
+READER_DECL_FILE = "reader_decl"
 PK_BYTES = 65
 
 
@@ -1686,14 +1689,15 @@ def send_prepare(plan_: Plan, ws: str, retry: int, call, pending=None):
     The idem is the intent plus `retry`. An attempt that ENDED unsigned (cancelled, expired) can never be signed, so
     pressing again steps to the next retry: a fresh request, never the dead one. An OPEN attempt is returned as it is
     (a double click, a second tab, an agent: one request per person and action); a SIGNED one is returned too and
-    stays "Already done" (never stepped past). `POST /handoff` sees an ended request in the host's answer, the click
-    path as the signer's `the request is <ended>`; both are stepped past.
+    stays "Already done" (never stepped past). An ended request comes back in the host's answer or as the signer's
+    `the request is <ended>`; both are stepped past.
 
     Retention expiry of a record (`idem.expired`, 24 h) is not stepped past: an earlier one may have been signed, so
     only the person's explicit "Start again" advances `retry` there.
 
-    `idem.conflict` means the host holds an attempt bound to another path or signer. Report it as
-    `intent.open` while a matching op+key is open, otherwise `intent.blocked`. Neither prepares another request.
+    `idem.conflict` means the host holds an attempt bound to another signer (or an unbound request left from before
+    one-click signing). The host's binding names the signer, so such a request is never reused or signed here. Report
+    it as `intent.open` while a matching op+key is open, otherwise `intent.blocked`. Neither prepares another request.
 
     A HostError leaves with `retry_used`: the retry whose attempt it is about."""
     used = retry
@@ -1885,7 +1889,7 @@ class Handoffs:
         with self.lock:
             self.pending[token] = max(0, self.pending.get(token, 0) - 1)
 
-    def commit(self, token: str, ws: str, request_id: str, until: float | None = None, kind: str = "handoff"):
+    def commit(self, token: str, ws: str, request_id: str, until: float | None = None, kind: str = "click"):
         """The reserved slot becomes the open request `request_id` (one this session holds already adds no slot)."""
         with self.lock:
             self.pending[token] = max(0, self.pending.get(token, 0) - 1)
@@ -2008,126 +2012,3 @@ def register(app: FastAPI, gateway: Gateway):
         op, args = host_call(body)
         human(ws, "human.prepare", {"op": op, "args": args, "handoff": True}, dry_run=True)
         return {"ok": True}
-
-    @app.post("/api/w/{ws}/handoff")
-    def prepare(body: PrepareBody, request: Request, ws: str = Depends(workspace)):
-        token = request.state.token
-        gateway.enabled(ws)
-        with handoffs.lock:
-            handoffs.reserve(token)  # checks and takes a slot atomically: concurrent prepares cannot overshoot
-        try:
-            if isinstance(
-                body, RepoSet
-            ):  # the host's path check, before any request exists (plain refusal in the dialog)
-                gateway.check_repo_path(ws, body.path)
-            if isinstance(
-                body, AgentAccess
-            ):  # the secret is shown only in the page, sealed: a click request, never here
-                raise fail(
-                    "invalid.input",
-                    "Agent access with a shown secret is signed with one click in the dashboard.",
-                    exit=1,
-                )
-            if isinstance(
-                body, HubJoin | HubModeFull | HubLeave
-            ):  # the backup key is typed in the page and sealed: a click only
-                raise fail(
-                    "invalid.input",
-                    "A hub step is signed with one click in the dashboard.",
-                    exit=1,
-                )
-            planned = plan(gateway, ws, body)
-            if planned.sequence and planned.sequence["intent"].get("images"):
-                raise fail(
-                    "invalid.input",
-                    "Pictures can only be signed with one click in the dashboard. Switch on click to sign "
-                    "(Settings) or take the pictures out of the text.",
-                    exit=1,
-                )
-            op = planned.op
-            # A runner grant prepared here carries `runner`, so its signer sets the label runner (the click path sets
-            # it itself).
-            args = planned.args | ({"runner": True} if isinstance(body, RunnerGrant) else {})
-
-            def call(idem: str):
-                return human(
-                    ws,
-                    "human.prepare",
-                    {
-                        "op": op,
-                        "args": args,
-                        "handoff": True,  # the protocol's unbound request (no signer named here)
-                        **({"sequence": planned.sequence} if planned.sequence else {}),
-                    },
-                    idem=idem,
-                    files=planned.files,
-                )
-
-            prepared = send_prepare(planned, ws, body.retry, call, lambda: human(ws, "human.pending", {}))
-            response = adapters.handoff.request(
-                prepared,
-                ws,
-                expect_op=op,
-                expect_key=getattr(body, "key", None),
-                expect_events=expected(body, planned.person),
-                expect_material=expected_material(body),
-            )
-        except BaseException:
-            handoffs.release(token)
-            raise
-        if response["state"] == "submitted":
-            handoffs.release(token)
-            raise read_done(human, ws, response["id"])
-        handoffs.own(planned.person, ws, response["id"], TTL)
-        if planned.sequence:
-            handoffs.note_intent(planned.person, response["id"], planned.sequence["intent"])
-        if response["state"] in ("prepared", "bound"):
-            handoffs.commit(token, ws, response["id"], until=handoffs.clock() + TTL)
-        else:
-            handoffs.release(token)
-        return response
-
-    def owned_ws(ws: str, request_id: str) -> str:
-        if not handoffs.owns(app.state.person_of(ws), ws, request_id):
-            raise fail("not_found", exit=2)  # a request nobody here prepared looks like one that never existed
-        return ws
-
-    @app.get("/api/w/{ws}/handoff/{request_id}")
-    def state(request_id: RequestId, request: Request, ws: str = Depends(workspace)):
-        owned_ws(ws, request_id)
-        rows = human(ws, "human.pending", {"request_id": request_id})["requests"]
-        if len(rows) != 1 or rows[0]["id"] != request_id:
-            raise fail("not_found", exit=2)
-        if rows[0]["state"] not in ("prepared", "bound"):
-            handoffs.settle_all(request_id)  # it no longer counts against any session's open requests
-        out = adapters.handoff.state(rows[0])
-        intent = handoffs.intent_of(app.state.person_of(ws), request_id)
-        if intent is not None and rows[0]["state"] == "submitted" and rows[0].get("seq") is not None:
-            out["progress"] = sequence_progress(
-                gateway, ws, rows[0].get("key"), intent, person=app.state.person_of(ws), since=rows[0].get("created_at")
-            )
-            if out["progress"] is not None and intent.get("agent") is not None:
-                out["progress"]["last"] = "grant"  # the agent access is signed last (the dialog says so)
-        return out
-
-    @app.delete("/api/w/{ws}/handoff/{request_id}")
-    def cancel(request_id: RequestId, request: Request, ws: str = Depends(workspace)):
-        owned_ws(ws, request_id)
-        done = human(ws, "human.cancel", {"request_id": request_id})
-        handoffs.settle_all(request_id)
-        return {"id": request_id, "state": done["state"]}
-
-    def cancel_session(token: str):
-        """Logout: every request this session still holds open is cancelled, each on its own (best effort), except one
-        another session of the person holds too."""
-        for rid, ws in handoffs.held(token, "handoff"):
-            if handoffs.shared(token, rid):
-                handoffs.settle(token, rid)
-                continue
-            try:
-                human(ws, "human.cancel", {"request_id": rid})
-            except Exception:  # noqa: BLE001 - one failed cancel must not stop the rest, nor the logout
-                pass
-            handoffs.settle(token, rid)
-
-    app.state.cancel_session = cancel_session

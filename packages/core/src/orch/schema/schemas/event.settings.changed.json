@@ -263,6 +263,13 @@
           "minimum": 5,
           "maximum": 1440
         },
+        "sign_methods": {
+          "type": "array",
+          "description": "Accepted and ignored (B6 retired): One click workspaces created since #1442 carry it in their genesis settings.changed. Still accepted so those logs replay; it has no effect and new code never writes it.",
+          "items": {
+            "type": "string"
+          }
+        },
         "repos": {
           "type": "object",
           "propertyNames": {

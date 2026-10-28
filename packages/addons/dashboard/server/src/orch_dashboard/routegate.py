@@ -32,9 +32,6 @@ GET, POST, PUT, DELETE, WEBSOCKET = "GET", "POST", "PUT", "DELETE", "WEBSOCKET"
 
 #: (method, route template) -> rule, with the reason where it is not obvious.
 TABLE: dict[tuple[str, str], tuple[str, str]] = {
-    (POST, W + "/handoff"): (ALLOWED, "prepares a request; it signs nothing"),
-    (GET, W + "/handoff/{request_id}"): (ALLOWED, ""),
-    (DELETE, W + "/handoff/{request_id}"): (ALLOWED, "cancels a request"),
     # --- the app shell and the session
     (GET, "/{path:path}"): (ALLOWED, "the closed SPA surface; which paths answer before login is policy.pre_login"),
     (GET, "/auth/probe"): (REFUSED, "launcher discovery on the local computer"),
@@ -107,9 +104,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     ),
     (POST, W + "/repos/check"): (ALLOWED, "a read-only check"),
     (GET, W + "/model-routing"): (ALLOWED, ""),
-    # --- hand-off: prepares the request for the ticket actions (approve, verdict, close, ...); signing is the click
-    # routes below or a Terminal, where the passkey/step-up rules apply
-    # --- click-to-sign
+    # --- click-to-sign: the only prepare route; the passkey/step-up rules apply at the touch
     (GET, W + "/click/status"): (ALLOWED, ""),
     (POST, W + "/click/custody/seal"): (
         ALLOWED,
@@ -145,7 +140,6 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/hub/share/rule-remove"): (ALLOWED, "turning off: owner, plain click, no signature, full session only"),
     (POST, W + "/hub/link"): (ALLOWED, "reads the link's hub card; nothing is signed or kept"),
     (POST, W + "/hub/connect"): (STEP_UP, "the second half of a hub join"),
-    (POST, W + "/hub/command"): (ALLOWED, "returns text only"),
     # --- the passkey step-up ceremony and the passkey store (R1-6)
     (POST, W + "/stepup/options"): (ALLOWED, "a challenge for this session; the actions are a closed list"),
     (POST, "/api/stepup/options"): (ALLOWED, "a challenge for this session; the actions are a closed list"),

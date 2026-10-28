@@ -206,7 +206,10 @@ class Machine:
         ctx.env = env
         from unittest.mock import patch
 
-        with patch("orch.ops.human.review_prompt", side_effect=lambda text: self.ask(text) in ("y", "yes")):
+        def review(text, verb="sign"):
+            return verb == "continue" and self.ask(text) in ("y", "yes")  # D4: prune signs nothing
+
+        with patch("orch.ops.human.review_prompt", side_effect=review):
             return main(list(args), env=env, out=self.out, err=self.err, ctx=ctx)
 
     def go(self, *args: str, answers: list[str] | None = None, **kw) -> int:

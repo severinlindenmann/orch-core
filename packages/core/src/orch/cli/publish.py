@@ -350,7 +350,9 @@ def main(
                     raise
             return _send(target, staged, env, out, as_json)
         if a.cmd == "revoke":
-            if not a.yes and not review_prompt(f"Revoke share {a.rest[0]}? Its link stops working at once."):
+            if not a.yes and not review_prompt(
+                f"Revoke share {a.rest[0]}? Its link stops working at once.", verb="continue"
+            ):
                 raise PubError("sign.cancelled", "not confirmed: nothing was revoked", 3)
             got = _call(target, "publish.revoke", {"share_id": a.rest[0]}, env)
             out.write(f"ok publish revoked {got.get('share_id')}: the link no longer works\n")

@@ -1,1 +1,1 @@
-err hub.proof_invalid the hub step is not backed by your backup key · retry:false · next: repeat the hub step and enter your backup key · fix: orch sign
+err hub.proof_invalid the hub step is not backed by your backup key · retry:false · next: repeat the hub step and enter your backup key · fix: orch hub status

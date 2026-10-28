@@ -60,7 +60,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'I2',
         title: 'Add a repository',
-        text: 'Click "Add repository". Write a name (for example "demo") and the full folder path of a real git folder on this Mac, leave the rest empty and click "Review and sign". Sign it in the Terminal as shown.',
+        text: 'Click "Add repository". Write a name (for example "demo") and the full folder path of a real git folder on this Mac, leave the rest empty and click "Review and sign". Press Approve, then the button again after a second.',
         see: 'A signing window that lists "repository demo: added", then Folder, Remote and Main branch on their own lines ("(none)" where you left it empty). After signing the list shows the new repository as "In place".',
       },
       {
@@ -193,7 +193,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'L2',
         title: 'Approving things',
         text: 'Click "Approving things".',
-        see: 'It names the Terminal way, "One click", and says Phone is coming later.',
+        see: 'It says you approve in the dashboard: press Approve, then the button again after a second.',
       },
       {
         id: 'L3',
@@ -283,7 +283,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'N4',
         title: 'Share the file with a secret link',
-        text: 'Press Share files, tick report.md, choose Secret link and 7 days, Prepare. Read the list, then Review and sign and sign in Terminal.',
+        text: 'Press Share files, tick report.md, choose Secret link and 7 days, Prepare. Read the list, then Review and sign: press Approve, then the button again after a second.',
         see: 'The review lists the file with its size. After signing you see the link once, with Copy and "You will not see this link again". Open it in a private window: an Open button, then the file.',
       },
       {
@@ -534,24 +534,24 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
   {
     id: 'W',
     title: 'Signing and reviews',
-    where: 'Browser and Terminal; test workspace',
+    where: 'Browser; test workspace',
     steps: [
       {
         id: 'W1',
-        title: 'Typed word, on and off',
-        text: 'On the Add-ons page turn an add-on on. The dialog shows a word: type exactly that word in the Terminal. Then turn the same add-on off.',
-        see: 'It signs. The off dialog shows a word too, and the Terminal asks for the same one.',
+        title: 'On and off, nothing to type',
+        text: 'On the Add-ons page turn an add-on on: press Approve, then the button again after a second. Then turn the same add-on off the same way.',
+        see: 'It signs. Neither dialog asks you to type anything.',
       },
       {
         id: 'W2',
-        title: 'A wrong word, then Try again',
-        text: 'Turn something on and type a wrong word in the Terminal. Then press Try again in the dashboard and sign properly. Close and reopen the same action.',
-        see: 'The dialog says Cancelled with one plain sentence and a Try again button. After Try again and signing it works; reopening the same action works too.',
+        title: 'Cancel, then Try again',
+        text: 'Turn something on and press Cancel in the review. Then press the same switch again and approve. Close and reopen the same action.',
+        see: 'The dialog says Cancelled with one plain sentence. Pressing again gives a fresh review and approving it works; reopening the same action works too.',
       },
       {
         id: 'W3',
         title: 'The dialog closes by itself',
-        text: 'Open Extend on the agent access pill, cancel in the Terminal once, then press Extend again. Later sign an add-on switch or a ticket edit.',
+        text: 'Open Extend on the agent access pill, press Cancel in the review once, then press Extend again. Later sign an add-on switch or a ticket edit.',
         see: 'The second Extend gives a new request. After a cancel, pressing the same action again gives a NEW request right away (here, and also for Estimate and add-on switches; fixed in #793). If it still first shows the old "Cancelled", report it. After signing an add-on switch or a ticket edit, the dialog closes by itself.',
       },
       {
@@ -569,8 +569,8 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'W6',
         title: 'The verification code',
-        text: 'Start a signature from the dashboard and review the exact values before signing with One click.',
-        see: 'Under the headline a line "Verification code: " with 12 characters, the same 12 in the dashboard (step 3: "Check that the verification code ... matches the one in Terminal, read what Terminal shows (that is what you approve), then type ...") and in the Terminal (the details still show "fingerprint:"). It is clear that the command and the code are two different things.',
+        text: 'Start a signature from the dashboard and read the review before you press Approve.',
+        see: 'The review shows the exact values you approve, with the 12-character verification code under Technical details. Nothing asks you to copy a command or type anything.',
       },
       {
         id: 'W7',
@@ -588,19 +588,19 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W9',
         title: 'Only create (simpler dialog)',
         text: 'New ticket, "Only create": open the review.',
-        see: 'With one-click signing the button says "Create ticket"; with Terminal signing (the default) there is no such button, the review shows "Sign in Terminal on this computer" and then "Waiting for approval in Terminal…". What happens next ends with "Nothing starts yet". No orange line, no "Other ways".',
+        see: 'The button says "Create ticket". What happens next ends with "Nothing starts yet". No orange line, no "Other ways".',
       },
       {
         id: 'W10',
         title: 'Create and start, no access yet',
         text: 'New ticket with "Create and start agent" while you have no agent access.',
-        see: 'The dialog shows the days and what agents may do. It does not ask for a word and has no greyed-out button: the review opens at once, says "Typed word: GRANT", and you type GRANT in the Terminal when you sign. The steps end "It stops and waits: nothing is built until you approve the plan."',
+        see: 'The dialog shows the days and what agents may do. It does not ask for a word and has no greyed-out button: the review opens at once and you press Approve, then the button again after a second. The steps end "It stops and waits: nothing is built until you approve the plan."',
       },
       {
         id: 'W11',
         title: 'Approvals and extending access',
         text: 'Approve requirements on a ticket, then approve the plan. Then extend agent access.',
-        see: 'The button reads "Sign requirements" with one-click signing ("Sign in Terminal" with Terminal signing), and the steps say the plan still needs approval. Approve plan reads "Sign and start building" (or "Sign in Terminal"). Extend: the steps say running agents stop and must be started again.',
+        see: 'The button reads "Sign requirements", and the steps say the plan still needs approval. Approve plan reads "Sign and start building". Extend: the steps say running agents stop and must be started again.',
       },
       {
         id: 'W12',
@@ -611,9 +611,9 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       },
       {
         id: 'W13',
-        title: 'Plain Terminal reviews',
-        text: 'On the Add-ons page: turn on Terminals (or Worktrees) and press Sign in Terminal. Then create a new ticket and sign in the Terminal.',
-        see: 'The review starts "Turn on Terminals: it says it will open terminals on this computer, as you", then the version. No digest, no "fields: {}" (press d to see the package digest and raw capabilities). A new ticket says "owner: your name" and never a long raw p_ id.',
+        title: 'Plain reviews',
+        text: 'On the Add-ons page: turn on Terminals (or Worktrees) and read the review. Then create a new ticket and read its review.',
+        see: 'The review starts "Turn on Terminals: it says it will open terminals on this computer, as you", then the version. No digest, no "fields: {}" (the package digest and raw capabilities are under Technical details). A new ticket says "owner: your name" and never a long raw p_ id.',
       },
       {
         id: 'W14',
@@ -625,18 +625,18 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'W15',
         title: 'Share approval review',
         text: 'Share a ticket\'s files (Shares page, or Share files on a ticket) and continue to approval.',
-        see: 'The review starts with "Share these files": the files, who can open them, how long the link works and where the files go. Below, "Exact signed details" shows the full signed text, and nothing in the summary disagrees with it. Numbered steps: "1. Copy this command." with the command, "2. Paste it into Terminal and press Return.", then "3. Check that the verification code ... matches the one in Terminal ... then type ...".',
+        see: 'The review starts with "Share these files": the files, who can open them, how long the link works and where the files go. Below, "Exact signed details" shows the full signed text, and nothing in the summary disagrees with it. You press Approve, then the button again after a second; there is no command to copy.',
       },
       {
         id: 'W16',
         title: 'Extend agent access wording',
         text: 'Open Extend next to agent access.',
-        see: 'The review is titled "Extend agent access for this Mac\'s runner" and shows how long and when the new access ends (your local time). "Running agents will stop." appears once. No gr_ id is in the headline or the body; the access ids are only under Technical details. It tells you to type GRANT. It says to choose r in Terminal for this Mac\'s agent runner with a one-line explanation. In the Terminal you are asked for the passphrase once (both signatures, the new access and the take-back of the old one, use that one unlock). After signing, choose r: agents start again with the new access.',
+        see: 'The review is titled "Extend agent access for this Mac\'s runner" and shows how long and when the new access ends (your local time). "Running agents will stop." appears once. No gr_ id is in the headline or the body; the access ids are only under Technical details. It says the new access goes to this Mac\'s agent runner, in one line. One press of Approve signs both (the new access and the take-back of the old one). After signing, agents start again with the new access.',
       },
       {
         id: 'W17',
         title: 'Stop agent access',
-        text: 'Stop your agent access from the top pill with an agent running, sign in the Terminal, then reload the page.',
+        text: 'Stop your agent access from the top pill with an agent running, press Approve, then the button again after a second, then reload the page.',
         see: 'The dialog says a started run needs its own Stop in the dock. After signing the run list refreshes. Each access is stopped with its own review ("Review and sign each stop separately"), so with several accesses listed you sign several stops. After the first stop the pill already reads "No agent access · Let agents work" (before any reload); click it and give access again. The headline reads "Take back agent access" (or "Take back 3 agent accesses" when several). Which access it is, for example "Agent access for this Mac\'s runner, until Sun 00:37", is in a row marked "(per host, not signed)", one distinct row per access; the access ids are only under Technical details.',
       },
     ],
@@ -710,7 +710,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'Y3',
         title: 'Sign the link',
-        text: 'Press "Review and sign" and sign in the Terminal. Open the ticket again.',
+        text: 'Press "Review and sign", then Approve, then the button again after a second. Open the ticket again.',
         see: 'ONE review with a line "repository NAME: not linked -> linked, branch BRANCH", no raw JSON, one signature. Afterwards the right-hand column shows the branch and repository under "Code" (and the Worktree box if Worktrees is on). No agent access was needed.',
       },
       {
@@ -801,7 +801,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'Z7',
         title: 'Paste a screenshot',
-        text: 'Needs one-click signing (with Terminal signing the picture is added in the form but refused only at Create: "Pictures can only be signed with one click in the dashboard"; then mark Z7 to Z9 as not testable). New ticket (one-click signing on): click into Context and paste a screenshot from the clipboard.',
+        text: 'New ticket: click into Context and paste a screenshot from the clipboard.',
         see: 'A small picture appears under the box and the text gets a line with the picture.',
       },
       {
@@ -813,7 +813,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'Z9',
         title: 'Sign a ticket with a picture',
-        text: 'Needs one-click signing (not testable with Terminal signing). Create the ticket. Then open it.',
+        text: 'Create the ticket. Then open it.',
         see: 'The review shows the picture with "matches what you sign"; sign. The picture shows in Context on the ticket Overview.',
       },
       {
@@ -832,8 +832,8 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       {
         id: 'Z12',
         title: 'Accept a criterion by hand',
-        text: 'On a real workspace (not the demo), open a ticket that is not Done as its owner, a reviewer or the workspace owner, on the Acceptance tab. Under a check that has no receipt press "Accept manually". In the window "Accept manually" read the text, type a short note (optional) and press "Sign in Terminal" (with one-click signing: the one-click sign button).',
-        see: 'The window shows the check\'s words, "No automated check backs this: you vouch for it yourself." and the field "Note (optional)". The window says "Approve in your terminal. This page only shows the request." The review is headed "Accept AC1 of KEY manually" with a "Statement" section holding the full statement. Afterwards the line under the check reads "Accepted manually by NAME · time · passphrase (or the method you used) · “your note”", the check has a person icon (not a receipt tick), with no "No evidence yet" label. The button changes to "Withdraw". History says "accepted AC1 manually". After signing the window says "Signed / Accept manually is in the ticket\'s log." and stays open until you press Close. When you later give the Verify verdict (Today, Give verdict), the small window before signing lists "AC1: accepted manually by NAME (no automated check)"; the signing review itself is more technical.',
+        text: 'On a real workspace (not the demo), open a ticket that is not Done as its owner, a reviewer or the workspace owner, on the Acceptance tab. Under a check that has no receipt press "Accept manually". In the window "Accept manually" read the text, type a short note (optional), press Approve, then the button again after a second.',
+        see: 'The window shows the check\'s words, "No automated check backs this: you vouch for it yourself." and the field "Note (optional)". The review is headed "Accept AC1 of KEY manually" with a "Statement" section holding the full statement. Afterwards the line under the check reads "Accepted manually by NAME · time · passphrase (or the method you used) · “your note”", the check has a person icon (not a receipt tick), with no "No evidence yet" label. The button changes to "Withdraw". History says "accepted AC1 manually". After signing the window says "Signed / Accept manually is in the ticket\'s log." and stays open until you press Close. When you later give the Verify verdict (Today, Give verdict), the small window before signing lists "AC1: accepted manually by NAME (no automated check)"; the signing review itself is more technical.',
       },
       {
         id: 'Z13',
@@ -864,7 +864,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'S2',
         title: 'Turn on Publish in one review',
         text: 'On the Add-ons page: switch on "Publish". It first asks for the two addresses (where files are sent, where links open). Press "Turn on".',
-        see: 'The dashboard tells you to sign in the Terminal (`One click`); a click is refused. In the Terminal the review shows both addresses and the grant, one word, one passphrase, "signed settings.set (2 signatures)". Publish shows "On". The publish server must know you and the workspace: it needs BOTH `ws allow` and `owners add` (owner id = 32 hex characters without "p_"). The lead does this on the edge host: if sharing is refused later, ask the lead (it is already done by the lead for this run).',
+        see: 'One review shows both addresses and the grant; press Approve, then the button again after a second (one press signs both). Publish shows "On". The publish server must know you and the workspace: it needs BOTH `ws allow` and `owners add` (owner id = 32 hex characters without "p_"). The lead does this on the edge host: if sharing is refused later, ask the lead (it is already done by the lead for this run).',
       },
       {
         id: 'S3',

@@ -62,8 +62,7 @@ def tty_confirm_text(words: str) -> str:
         "orch setup is asking you to confirm.\n"
         "The setup page in your browser should show these three words:\n\n"
         f"    {words}\n\n"
-        "Check the page. If they match, press Enter to sign.\n"
-        "Anything else (or Enter alone) cancels; nothing is created.\n"
+        "Check the page. If they match, press Enter to sign; any other key cancels and nothing is created.\n"
         "========================================================\n"
     )
 

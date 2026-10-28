@@ -276,7 +276,7 @@ def share_host(monkeypatch):
     monkeypatch.setattr(
         __import__("orch.ops.human", fromlist=["review_prompt"]),
         "review_prompt",
-        lambda prompt: (log.asked.append(prompt), log.yes)[1],
+        lambda prompt, verb="sign": (log.asked.append(prompt), verb == "continue" and log.yes)[1],  # D4: unsigned
     )
     return log
 

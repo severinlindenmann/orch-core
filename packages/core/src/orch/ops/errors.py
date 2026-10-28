@@ -632,7 +632,7 @@ _SPECS = [
         False,
         "the hub step is not backed by your backup key",
         "repeat the hub step and enter your backup key",
-        ["orch", "sign"],
+        ["orch", "hub", "status"],
         "A hub step (join, switch to full, leave) needs the owner proof, signed with the person key derived from the "
         "backup key (hub contract 9.6). Detail reason: proof_invalid, proof_expired, proof_missing, dev_mismatch or "
         "dev_refused.",

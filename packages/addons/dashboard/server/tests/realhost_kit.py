@@ -123,7 +123,10 @@ def confirm_rules(passphrase: str | Callable[[], str]) -> list[tuple[str, Callab
     get = passphrase if callable(passphrase) else (lambda: passphrase)
     return [
         (r"[Pp]assphrase: $", lambda m, t: get()),
-        (r"Press Enter to sign, any other key cancels\.\n?$", _enter_after_review),  # core's review_prompt
+        (
+            r"Press Enter to sign(?:, d for details)?, any other key cancels\.\n?$",
+            _enter_after_review,
+        ),  # core's review_prompt
     ]
 
 

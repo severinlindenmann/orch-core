@@ -228,8 +228,7 @@ def create_app(
     @app.post("/auth/logout")
     def logout(request: Request):
         try:
-            app.state.cancel_session(request.state.token)  # an open sign request is cancelled with its session
-            app.state.cancel_clicks(request.state.token)
+            app.state.cancel_clicks(request.state.token)  # an open sign request is cancelled with its session
             tickets.forget(request.state.token)  # its unused browser tickets go with it
         finally:
             auth.logout(request.state.token)  # the session ends even if a cancel failed

@@ -619,10 +619,8 @@ def policy_body(n):
 
 def families(stub):
     """(name, prepare url, request-scoped calls: (method, url-for-an-id) per step)."""
-    hand = f"/api/w/{stub.ws}/handoff"
     click = f"/api/w/{stub.ws}/click"
     return {
-        "handoff": {"prepare": hand, "steps": [("get", lambda r: f"{hand}/{r}"), ("delete", lambda r: f"{hand}/{r}")]},
         "click": {
             "prepare": f"{click}/prepare",
             "steps": [("post", lambda r: f"{click}/view"), ("post", lambda r: f"{click}/cancel")],
@@ -630,9 +628,8 @@ def families(stub):
     }
 
 
-@pytest.fixture(params=["handoff", "click"])
+@pytest.fixture(params=["click"])
 def family(request, stub, script, rich):
-    script.enabled = request.param != "handoff"  # the terminal hand-off exists only where click-to-sign is off
     return request.param, families(stub)[request.param]
 
 
@@ -1379,13 +1376,27 @@ def test_already_signed_and_an_unreadable_record_never_cancel_or_forget_the_requ
     assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
 
 
-# -- an unbound request (the hub and phone path) is still prepared where click-to-sign is on -------------------------
+# -- no unbound request is prepared any more: click/prepare is the only prepare route ---------------------------------
 
 
-def test_a_click_workspace_still_prepares_an_unbound_request(client, token, stub, script, rich):
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=comment(1), headers=hdr(token))
-    assert res.status_code == 200, res.text
-    assert res.json().get("id")
+def test_no_unbound_request_can_be_prepared(client, token, stub, script, host_check, rich):
+    for method in ("post", "get", "delete"):
+        path = f"/api/w/{stub.ws}/handoff" + ("" if method == "post" else "/" + REQ)
+        res = client.request(method, path, json=comment(1) if method == "post" else None, headers=hdr(token))
+        assert res.status_code in (404, 405), (method, res.text)
+    assert host_check.reads == []  # nothing reached the host
+
+
+def test_an_open_unbound_request_of_the_same_intent_is_never_reused(client, token, stub, script, host_check):
+    """A request prepared by the old terminal hand-off (no signer) has another host binding: the click prepare is
+    refused (`intent.open`), never handed that request to sign."""
+    script.refuse["prepare"] = ClickError("idem.conflict", "this idem was used for other arguments")
+    host_check.listing = [
+        {"id": REQ, "op": "log", "key": "DEMO-0001", "state": "prepared", "expires_at": "2026-10-13T15:30:00Z"}
+    ]
+    res = prepare(client, token, stub, comment(1))
+    assert res.json()["error"]["code"] == "intent.open"
+    assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 404
 
 
 def test_the_flag_flipped_off_ends_the_open_click_request(client, token, stub, script, host_check, rich):
@@ -2438,11 +2449,6 @@ def test_agent_access_needs_a_signer_that_can_seal(client, token, stub, reveals)
     assert res.status_code != 200 and sent_of(reveals, "prepare") == []
 
 
-def test_agent_access_is_not_a_terminal_hand_off(client, token, stub, reveals):
-    res = client.post(f"/api/w/{stub.ws}/handoff", json=agent_access(), headers=hdr(token))
-    assert res.status_code == 400
-
-
 @pytest.mark.parametrize(
     "over",
     [
@@ -2719,11 +2725,6 @@ def test_a_hub_step_needs_a_signer_that_takes_the_backup_key(client, token, stub
     backup.features = ["custody"]
     res = prepare(client, token, stub, hub_join())
     assert res.status_code != 200 and sent_of(backup, "prepare") == []
-
-
-def test_a_hub_step_is_not_a_terminal_hand_off(client, token, stub, backup):
-    assert client.post(f"/api/w/{stub.ws}/handoff", json=hub_join(), headers=hdr(token)).status_code == 400
-    assert client.post(f"/api/w/{stub.ws}/handoff", json={"action": "hub_leave"}, headers=hdr(token)).status_code == 400
 
 
 @pytest.mark.parametrize(

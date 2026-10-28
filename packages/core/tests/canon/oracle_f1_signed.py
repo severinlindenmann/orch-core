@@ -2260,7 +2260,27 @@ def refusal_order_scenarios() -> list[dict[str, Any]]:
         note="only ASCII case folds: non-ASCII case pairs remain distinct on every runtime",
     )
     out.append(w.scenario())
+    out.append(legacy_sign_methods_scenario())
     return out
+
+
+def legacy_sign_methods_scenario() -> dict[str, Any]:
+    """B6 retired: ``set.sign_methods`` (every One click genesis since #1442 carries it) is accepted and ignored."""
+    w = World("settings_legacy_sign_methods", "set.sign_methods is accepted and ignored: an old One click log replays and "
+              "a restrictive value refuses nothing")  # fmt: skip
+    w.genesis_event()
+    no_key = {"workspace": {"settings_absent": ["sign_methods"]}}
+    w.ev("workspace", "settings.changed", w.actor("sev"), {"set": {"sign_methods": ["terminal", "click", "phone", "hub"]}},
+         note="the genesis settings.changed of a One click workspace (#1442)", after=no_key)  # fmt: skip
+    w.member("mara", "maintainer")
+    w.ticket()
+    w.ev("workspace", "settings.changed", w.actor("sev"), {"set": {"sign_methods": ["terminal"]}},
+         note="a restrictive value: no state, no enforcement", after=no_key)  # fmt: skip
+    w.ev(TICKET, "log.added", w.actor("mara"), {"text": "one click"}, auth="convenience",
+         note="a convenience signature after a terminal-only sign_methods is accepted")  # fmt: skip
+    w.ev("workspace", "settings.changed", w.actor("sev"), {"set": {"sign_methods": ["anything"], "grant_hours": 4}},
+         note="any list of strings; the other keys of the event still apply", after=no_key)  # fmt: skip
+    return w.scenario()
 
 
 def restore_contract_vectors() -> dict[str, Any]:

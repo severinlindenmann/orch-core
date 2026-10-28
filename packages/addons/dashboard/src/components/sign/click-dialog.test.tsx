@@ -125,8 +125,8 @@ describe('the action dialog with click-to-sign', () => {
     expect(within(dialog).getByText('Approve the plan of DEMO-0044')).toBeInTheDocument()
     expect(await within(dialog).findByRole('button', { name: /^Sign( |$)/ }, T)).toBeDisabled() // the 1 s arm is the only way on
     expect(within(dialog).queryByRole('button', { name: 'One-click' })).toBeNull() // U5: one line and Sign, no chip
-    expect(c.prepare).toHaveBeenCalledTimes(1)
-    expect(s.prepare).not.toHaveBeenCalled() // one click request, never a hand-off one
+    expect(c.prepare).toHaveBeenCalledTimes(1) // one click request
+    expect(s.postAction).not.toHaveBeenCalled()
     await armed(dialog)
     expect(c.sign).not.toHaveBeenCalled() // arming never signs by itself
   })
@@ -166,7 +166,7 @@ describe('[rev818] adversarial: the switch moving never re-binds or signs an ope
     expect(within(dialog).getByTestId('click-panel')).toBeInTheDocument()
     expect(c.sign).not.toHaveBeenCalled()
     expect(c.cancel).not.toHaveBeenCalled()
-    expect(s.prepare).not.toHaveBeenCalled()
+    expect(s.postAction).not.toHaveBeenCalled()
     expect(c.prepare).toHaveBeenCalledTimes(1)
   })
 
@@ -178,7 +178,6 @@ describe('[rev818] adversarial: the switch moving never re-binds or signs an ope
     await new Promise((r) => setTimeout(r, 300))
     expect(c.sign).toHaveBeenCalledTimes(1)
     expect(c.prepare).toHaveBeenCalledTimes(1)
-    expect(s.prepare).not.toHaveBeenCalled()
     expect(s.postAction).not.toHaveBeenCalled()
   })
 })

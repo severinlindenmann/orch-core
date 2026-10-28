@@ -438,7 +438,8 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
             if not review_prompt(
                 f"Share {prev['count']} items. The hub will see {prev['count']} item(s) "
                 f"({prev['new']} new, {prev['revoked']} withdrawn):\n"
-                f"{lines}{_CANNOT_UNREAD}\nLater changes to these items are sent automatically.\n"
+                f"{lines}{_CANNOT_UNREAD}\nLater changes to these items are sent automatically.\n",
+                verb="continue",  # share rules are unsigned owner settings
             ):
                 raise PubError("sign.cancelled", "not confirmed; nothing changed", 3)
             args["expect"] = prev["plan"]
@@ -464,7 +465,8 @@ def _share(a: argparse.Namespace, env: Mapping[str, str], out: TextIO, as_json: 
     if not review_prompt(
         f"The hub {verb}: {describe(rule)}.\nAfter this change the hub sees {prev['count']} item(s) "
         f"({prev['new']} new, {prev['revoked']} withdrawn):\n{lines}{_CANNOT_UNREAD}\n"
-        "Later changes to these items are sent automatically.\n"
+        "Later changes to these items are sent automatically.\n",
+        verb="continue",
     ):
         raise PubError("sign.cancelled", "not confirmed; nothing changed", 3)
     d = _call(target, op, {"rule": rule, "expect": prev["plan"]}, env)

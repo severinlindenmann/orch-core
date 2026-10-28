@@ -40,6 +40,7 @@ from .signing import (
     NewTicketSequence,
     PrepareBody,
     QuickStart,
+    RepoSet,
     RequestId,
     RunnerGrant,
     done_error,
@@ -765,6 +766,8 @@ def register(app: FastAPI, gateway: Gateway):
             )
         if isinstance(body, HUB_STEPS) and not signer.backup_keys():
             raise fail("click.contract", "Update orch-core: its signing helper cannot take a backup key yet.", exit=9)
+        if isinstance(body, RepoSet):  # the host's path check, before any request exists (plain refusal in the dialog)
+            gateway.check_repo_path(ws, body.path)
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         if planned.sequence and planned.sequence["intent"].get("images") and not signer.images():
             raise fail("click.contract", "Update orch-core: its signing helper cannot sign pictures yet.", exit=9)

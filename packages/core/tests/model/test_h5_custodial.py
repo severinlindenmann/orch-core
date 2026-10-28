@@ -289,6 +289,7 @@ def test_replay_is_the_same_as_the_admission(w):
 @pytest.mark.parametrize(
     "key,value",
     [
+        ("sign_methods", ["terminal", "hub"]),  # accepted and ignored from a person, never from a hub
         ("repos", {"x": {"path": "../x"}}),
         ("addons", {"wiki": None}),
         ("publish", None),

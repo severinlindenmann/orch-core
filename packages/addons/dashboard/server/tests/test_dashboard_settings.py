@@ -1,5 +1,5 @@
-"""#306 (M4) server: the reduced workspace settings reads and their hand-offs. The server forwards what the host gives
-this person, never more; every write is a typed hand-off prepared by the host and signed elsewhere."""
+"""#306 (M4) server: the reduced workspace settings reads and their writes. The server forwards what the host gives
+this person, never more; every write is a typed request prepared by the host and signed with one click."""
 
 import base64
 import json
@@ -32,8 +32,52 @@ def team(p1):
     return env, people, grants
 
 
+def signer_of(world) -> dict:
+    """The one-click signer of the world's person: one of their valid devices, as core's signer names it."""
+    members = world.get(f"/api/w/{world.stub.ws}/members").json()
+    me = next(m for m in members if m["person"] == world.stub.person)
+    return {"device": next(d["id"] for d in me["devices"] if d["valid"]), "auth": "convenience"}
+
+
+def install_prepare(app, gateway, signer):
+    """A test-only route: what the one-click path asks of the host for one action, in one call. `click/prepare`'s
+    choice of op and arguments (`plan`), the bound prepare core's signer makes through the host, and `click/view`'s
+    check of the host's own record (`adapters.handoff.request`). The server itself has no such route: its only prepare
+    route is `click/prepare`, whose signer is faked in test_dashboard_click.py."""
+    from fastapi import Depends
+
+    from orch_dashboard.reads import workspace
+    from orch_dashboard.signing import PrepareBody, RepoSet, expected, expected_material, plan, send_prepare
+
+    @app.post("/api/w/{ws}/test-prepare")
+    def test_prepare(body: PrepareBody, ws: str = Depends(workspace)):
+        gateway.enabled(ws)
+        if isinstance(body, RepoSet):
+            gateway.check_repo_path(ws, body.path)  # as click/prepare does
+        planned = plan(gateway, ws, body)
+        human = app.state.human
+
+        def call(idem: str):
+            args = {"op": planned.op, "args": planned.args, "signer": signer}
+            return human(ws, "human.prepare", args, idem=idem, files=planned.files)
+
+        prepared = send_prepare(planned, ws, body.retry, call, lambda: human(ws, "human.pending", {}))
+        return adapters.handoff.request(
+            prepared,
+            ws,
+            expect_op=planned.op,
+            expect_key=getattr(body, "key", None),
+            expect_events=expected(body, planned.person),
+            expect_material=expected_material(body),
+        )
+
+
 def handoff(world, body, n=1):
-    return world.post(f"/api/w/{world.stub.ws}/handoff", {**body})
+    app = world.client.app
+    if not getattr(app.state, "test_prepare", False):
+        install_prepare(app, world.gateway, signer_of(world))
+        app.state.test_prepare = True
+    return world.post(f"/api/w/{world.stub.ws}/test-prepare", {**body})
 
 
 # ---- reads ----------------------------------------------------------------------------------------------------------
@@ -293,7 +337,7 @@ def test_an_op_the_host_does_not_list_is_not_offered_and_is_refused(worlds, team
     assert world.stub.requests.table == {}
 
 
-# ---- hand-offs -------------------------------------------------------------------------------------------------------
+# ---- writes (what click/prepare asks of the host) --------------------------------------------------------------------
 @pytest.fixture
 def host_calls(monkeypatch):
     seen = []
@@ -313,7 +357,7 @@ def test_settings_set_prepares_one_settings_changed_event_from_the_hosts_materia
     res = handoff(world, {"action": "settings_set", "grant_hours": 12, "lease_ttl_min": 90})
     assert res.status_code == 200, res.text
     got = res.json()
-    assert got["op"] == "settings.set" and got["key"] is None and got["state"] == "prepared"
+    assert got["op"] == "settings.set" and got["key"] is None and got["state"] == "bound"
     assert got["events"][0]["type"] == "settings.changed" and got["events"][0]["set"] == {
         "grant_hours": 12,
         "lease_ttl_min": 90,
@@ -323,21 +367,10 @@ def test_settings_set_prepares_one_settings_changed_event_from_the_hosts_materia
     assert prepare[1] == {
         "op": "settings.set",
         "args": {"set": {"grant_hours": 12, "lease_ttl_min": 90}},
-        "handoff": True,
+        "signer": signer_of(world),  # bound to the one-click signer: never an unbound hand-off
     }
     assert prepare[2].get("files") is None and all(c[0] != "human.submit" for c in host_calls)
     assert world.stub.ws and env.store.state.workspace.settings["grant_hours"] == 8  # nothing was written
-
-
-def test_runner_grant_goes_through_the_terminal_handoff_with_runner_set(worlds, team, host_calls):
-    """B11-P1: on a terminal-approval workspace the runner grant is a hand-off like any other signature."""
-    env, people, grants = team
-    world = worlds(env.owner.ref)
-    # The dev stub serves no `grant` op (the host does): what matters is the request this server sends.
-    got = handoff(world, {"action": "runner_grant", "hours": 24, "scope": "workable"}, 1)
-    assert got.status_code != 422  # the action is part of the hand-off schema now
-    ops = [(c[1]["op"], c[1]["args"]) for c in host_calls if c[0] == "human.prepare"]
-    assert ops == [("grant", {"hours": 24, "scope": "workable", "runner": True})]
 
 
 @pytest.mark.parametrize(
@@ -500,15 +533,13 @@ def test_member_add_sends_the_certificate_as_a_file_and_shows_what_it_says(world
     assert prepare[1] == {
         "op": "member.add",
         "args": {"name": "Nia", "role": "member", "pk": pk, "cert": "-"},
-        "handoff": True,
+        "signer": signer_of(world),
     }
     assert base64.b64decode(prepare[2]["files"]["cert"]["b64"]).decode() == cert  # the bytes the person uploaded
     # The certificate is never an inline argument (a host with blobs refuses that): only its logical name is.
     assert cert not in json.dumps(prepare[1]) and set(prepare[2]["files"]) == {"cert"}
     with pytest.raises(Exception) as inline:
-        world.stub.call(
-            "human.prepare", {"op": "member.add", "args": {**prepare[1]["args"], "cert": cert}, "handoff": True}, {}
-        )
+        world.stub.call("human.prepare", {**prepare[1], "args": {**prepare[1]["args"], "cert": cert}}, {})
     assert inline.value.error["code"] == "blob.invalid"
     assert person.ref not in env.store.state.workspace.members  # nothing was written
 

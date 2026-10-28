@@ -349,11 +349,11 @@ def test_setup_with_the_addon_off_saves_and_says_what_is_next(monkeypatch):
 
 def test_revoke_asks_first_and_yes_skips_the_question(rec, monkeypatch):
     asked = []
-    monkeypatch.setattr(publish, "review_prompt", lambda prompt: asked.append(prompt) or False)
+    monkeypatch.setattr(publish, "review_prompt", lambda prompt, verb="sign": asked.append((prompt, verb)) or False)
     code, out = run(["revoke", "a" * 32], {})
     assert code == 3 and "not confirmed: nothing was revoked" in out and rec.calls == []
-    assert asked and "stops working at once" in asked[0]
-    monkeypatch.setattr(publish, "review_prompt", lambda prompt: asked.append("again") or True)
+    assert asked and "stops working at once" in asked[0][0] and asked[0][1] == "continue"  # a revoke signs nothing
+    monkeypatch.setattr(publish, "review_prompt", lambda prompt, verb="sign": asked.append("again") or True)
     code, out = run(["revoke", "a" * 32], {})
     assert code == 0 and rec.calls == [("publish.revoke", {"share_id": "a" * 32})]
     asked.clear()

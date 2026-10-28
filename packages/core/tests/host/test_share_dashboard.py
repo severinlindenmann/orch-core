@@ -12,9 +12,9 @@ from orch.host import securitylog, shareops
 from tests.host import test_share_ops as S
 from tests.host.dispatch_helpers import ok
 from tests.host.human_helpers import err
-from tests.host.test_share_ops import agent, labelled, req, rule_op
+from tests.host.test_share_ops import agent, labelled, req, rule_op, settle, sync_shown
 
-lab, served, human, selective = S.lab, S.served, S.human, S.selective
+lab, served, human, selective, quick_auto = S.lab, S.served, S.human, S.selective, S.quick_auto
 dev_workspace, keystore = S.dev_workspace, S.keystore
 
 
@@ -75,6 +75,110 @@ def test_a_rule_removal_that_would_match_more_shares_nothing_new(served, selecti
     assert set(st.confirmed) == confirmed - {gone} and set(st.sent) <= sent
     assert "Later public" not in str([i["content"] for i in selective.opened])
     assert ok(req(served, "share.sync"))["data"]["put"] == 0  # nor does a later unconfirmed sync
+
+
+def test_after_a_removal_auto_sync_never_sends_what_it_newly_matches_only_a_confirmed_sync_does(
+    served, selective, quick_auto
+):
+    """B3 reduce-only: an item the remaining rules match but the owner never confirmed is not sent by the removal, nor
+    by any later automatic pass (a ticket change triggers one) or plain sync; only an explicit confirmed sync does."""
+    _, shared = labelled(served, "Public note", "public")
+    labelled(served, "Misc note", "misc")
+    ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
+    ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "misc"}))
+    labelled(served, "Later public", "public")  # matches the remaining rule, never confirmed
+    settle(served, quick_auto)
+    ok(rule_op(served, "share.rule_remove", {"kind": "tag", "tag": "misc"}))
+    ok(agent(served, "set", {"ref": shared, "pairs": ["title=Public, edited"]}))  # an automatic pass runs
+    settle(served, quick_auto)
+    assert ok(req(served, "share.sync"))["data"]["put"] == 0
+    titles = [i["content"].get("title") for i in selective.opened]
+    assert "Public, edited" in titles and "Later public" not in titles, titles
+    assert sync_shown(served)["put"] == 1  # the owner's explicit, confirmed sync
+    assert selective.opened[-1]["content"]["title"] == "Later public"
+
+
+def test_no_rule_kind_excludes_so_removing_any_rule_never_selects_more():
+    from orch.hubclient import shares as S
+    from orch.hubclient.shares import NeedFact, QuestionFact, TicketFact
+
+    assert set(S._RULE_KEYS) == shareops.SELECTING_KINDS  # a new kind must be reviewed as selecting
+    assert set(shareops._RULE["properties"]["kind"]["enum"]) == shareops.SELECTING_KINDS
+    facts = [
+        TicketFact(f"01J9ZK000000000000000000T{n}", f"K-{n}", ty, "t", "open", labels, None,
+                   (QuestionFact("Q1", "why?", True, "sha256:" + "a" * 64),), (NeedFact("question", "Q1", True),),
+                   (), None, None)
+        for n, (ty, labels) in enumerate([("bug", ("public",)), ("feature", ("misc",)), ("bug", ())])
+    ]  # fmt: skip
+    rules = [{"kind": "needs_you"}, {"kind": "questions"}, {"kind": "type", "type": "bug"},
+             {"kind": "ticket", "ticket": "K-1"}, {"kind": "tag", "tag": "public"}]  # fmt: skip
+    every = {i.logical for i in S.select(rules, facts)}
+    assert every
+    for r in rules:
+        rest = [x for x in rules if x != r]
+        assert {i.logical for i in S.select(rest, facts)} <= every, r
+        assert not shareops._widens(rules, rest, facts)
+
+
+def test_a_removal_that_would_select_more_is_refused_and_sends_nothing(served, selective, monkeypatch):
+    """Defence in depth for (c): were a rule kind ever to exclude, removing it would widen; the reduce path refuses."""
+    from orch.hubclient import shares as S
+
+    labelled(served, "Public note", "public")
+    labelled(served, "Hidden public", "secret")
+    ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
+    ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "veil"}))
+    real = S.select
+
+    def select(rules, tickets):  # a pretend exclusion: `secret` tickets are selected unless a `veil` rule hides them
+        rules, tickets = [dict(r) for r in rules], list(tickets)
+        items = real([*rules, {"kind": "tag", "tag": "secret"}], tickets)
+        if {"kind": "tag", "tag": "veil"} not in rules:
+            return items
+        hidden = {f"ticket:{t.uid}" for t in tickets if "secret" in t.labels}
+        return [i for i in items if i.logical not in hidden]
+
+    monkeypatch.setattr(S, "select", select)
+    before, st = list(selective.ops), shareops._load(served.service)
+    res = rule_op(served, "share.rule_remove", {"kind": "tag", "tag": "veil"})
+    assert err(res) == "invalid.input" and "would share more" in res["error"]["message"]
+    assert selective.ops == before and shareops._load(served.service).rules == st.rules
+
+
+def test_the_owner_check_runs_again_at_the_write(served, selective, monkeypatch):
+    """A role change between the worker's check and the write (off the worker) refuses the write."""
+    _, key = labelled(served, "Public note", "public")
+    ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
+    real, before = shareops._run, list(selective.ops)
+
+    def demoted(call, plan):
+        def no(_call):
+            raise shareops.HostError("role.denied", "share rules are for workspace owners")
+
+        monkeypatch.setattr(shareops, "_owner", no)
+        return real(call, plan)
+
+    monkeypatch.setattr(shareops, "_run", demoted)
+    assert err(req(served, "share.revoke", {"ref": key})) == "role.denied"
+    assert selective.ops == before and not shareops._load(served.service).withdrawn
+
+
+def test_the_owner_check_needs_column_p_a_direct_link_and_the_owner_role():
+    from types import SimpleNamespace as NS
+
+    def call(column="P", viewer="p_a", relay=None, role="owner"):
+        members = {} if role is None else {"p_a": NS(role=role)}
+        ws = NS(members=members)
+        service = NS(store=NS(state=NS(workspace=ws)))
+        return NS(column=NS(name=column), viewer=viewer, relay=relay, service=service)
+
+    shareops._owner(call())
+    for c, code in ((call(column="G"), "op.not_allowed"), (call(viewer=None), "op.not_allowed"),
+                    (call(relay="phone"), "op.not_allowed"), (call(role="maintainer"), "role.denied"),
+                    (call(role="viewer"), "role.denied"), (call(role=None), "role.denied")):  # fmt: skip
+        with pytest.raises(shareops.HostError) as exc:
+            shareops._owner(c)
+        assert exc.value.code == code
 
 
 def test_removing_a_rule_that_is_not_in_the_list_is_refused(served, selective):

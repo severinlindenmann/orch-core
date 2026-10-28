@@ -391,7 +391,15 @@ def test_add_a_member_from_a_certificate_file(world, api):
     assert res.status_code == 409 and res.json()["error"]["code"] == "sign.convenience_readers", res.text
     # the page says it in one plain line from the closed reason (refusals.ts READERS_SENTENCE.no_declaration)
     assert res.json()["error"].get("detail", {}).get("reason") == "no_declaration", res.text
-    # the click path carries the declaration file beside the certificate, as the Add person form sends it
+    # the click path carries the declaration file beside the certificate, as the Add person form sends it: the host
+    # finds it under the name the `reader_decl` argument gives (no `no_declaration`, no `reader.decl_invalid`)
+    from pydantic import TypeAdapter
+
+    from orch_dashboard.signing import READER_DECL_FILE, PrepareBody, host_call, host_files
+
+    action = TypeAdapter(PrepareBody).validate_python({**body, "reader_decl": reader_decl})
+    _, args = host_call(action)
+    assert args["reader_decl"] == READER_DECL_FILE and set(host_files(action)) == {"cert", "reader_decl"}
     _, final = api.sign({**body, "reader_decl": reader_decl})
     assert final["state"] == "submitted", final
     members = {m["person"]: m for m in api.get("/members").json()}
@@ -401,6 +409,7 @@ def test_add_a_member_from_a_certificate_file(world, api):
     assert readers["available"] and readers["required_reader"] == 1, readers
     nia = [r for r in readers["readers"] if r["person"] == person.ref]
     assert len(nia) == 1 and nia[0]["level"] >= readers["required_reader"], readers
+    assert nia[0]["device"] == person.device and nia[0]["reader"] >= 1, nia  # the declaration that was sent, verified
 
 
 def test_revoke_a_grant(world, api):

@@ -23,7 +23,7 @@ const view = (line: string): ClickViewAnswer => ({
     confirm: { kind: 'click' }, expires_at: new Date(Date.now() + 600_000).toISOString(), auth: 'convenience', device: 'd_x', artifacts: null,
   },
 })
-let s: { prepare: ReturnType<typeof vi.spyOn>; view: ReturnType<typeof vi.spyOn>; sign: ReturnType<typeof vi.spyOn>; handoff: ReturnType<typeof vi.spyOn>; postAction: ReturnType<typeof vi.spyOn> }
+let s: { prepare: ReturnType<typeof vi.spyOn>; view: ReturnType<typeof vi.spyOn>; sign: ReturnType<typeof vi.spyOn>; postAction: ReturnType<typeof vi.spyOn> }
 
 /** The armed Sign of the open review, pressed (fireEvent stands in for a real press: trustedPress is mocked). */
 async function signOpenReview(label: string) {
@@ -55,8 +55,7 @@ beforeEach(() => {
     prepare: vi.spyOn(api, 'prepareClick'),
     view: vi.spyOn(api, 'viewClick'),
     sign: vi.spyOn(api, 'signClick'),
-    // One click only: the terminal hand-off and an unsigned action are never used.
-    handoff: vi.spyOn(api, 'prepareHandoff'),
+    // One click only: an unsigned action is never used.
     postAction: vi.spyOn(api, 'postAction'),
   }
 })
@@ -99,7 +98,6 @@ describe('Complete details after a signed new ticket', () => {
     await signOpenReview('Prepare section')
     await waitFor(() => expect(onFinish).toHaveBeenCalledWith(2), { timeout: 9000 })
     expect(s.sign).toHaveBeenCalledTimes(2)
-    expect(s.handoff).not.toHaveBeenCalled()
     expect(s.postAction).not.toHaveBeenCalled()
   }, 30000)
 

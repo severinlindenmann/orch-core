@@ -42,7 +42,7 @@ import {
   type RelayState,
 } from './types'
 import type { MandatesPreviewRequest, MandatesPreviewState } from './mandatesPreview'
-import type { HandoffAction, HandoffRequest, HandoffState } from './handoff'
+import type { HandoffAction } from './handoff'
 import type { ClickAction, ClickCard, ClickState, ClickPrepared, ClickSigned, ClickSwitch, ClickViewAnswer, CustodySealOffer, GithubCredential, GithubSave, RotateBegin } from './click'
 import type { HostGrant, HostReaders, HostSettings, RosterMember } from './settings'
 import type { ClaudeTrust, QuickPage, QuickParams, RecordsRun, RecordsStatus } from './quickRecords'
@@ -127,13 +127,8 @@ export function createApi(transport: Transport) {
     getTicket: (key: string, _ws?: string) => call<TicketDocument>('GET', `/api/tickets/${key}`),
     getEvents: (key: string, since = 0, _ws?: string) => call<OrchEvent[]>('GET', `/api/tickets/${key}/events${qs({ since: String(since) })}`),
     postAction: (key: string, action: ActionRequest) => call<ActionResult>('POST', `/api/tickets/${key}/actions`, action),
-    /**
-     * The terminal hand-off (M3, real host only): `idem` is one id per click, reused on a retry. The server prepares the
-     * sign request; the person signs in a terminal. Nothing here signs.
-     */
+    /** The host's look at a repository path before the form closes (a dry run: nothing is stored or signed). */
     checkRepo: (ws: string, action: HandoffAction) => call<{ ok: true }>('POST', `/api/w/${ws}/repos/check`, action),
-    prepareHandoff: (ws: string, action: HandoffAction, retry = 0) => call<HandoffRequest>('POST', `/api/w/${ws}/handoff`, { ...action, ...(retry ? { retry } : {}) }),
-    getHandoff: (ws: string, id: string) => call<HandoffState>('GET', `/api/w/${ws}/handoff/${id}`),
     /** Click-to-sign (H5c, real host only; the mock never offers it): the signer's View is shown as it is. */
     prepareClick: async (ws: string, action: ClickAction, retry = 0) => {
       await uploadFor(action as { images?: PastedRef[] }, (b) => call('POST', `/api/w/${ws}/click/images`, b)) // R3 part B
@@ -146,7 +141,7 @@ export function createApi(transport: Transport) {
       call<ClickSigned>('POST', `/api/w/${ws}/click/sign`, { request_id: requestId, view_digest: viewDigest, ...(revealKey ? { reveal_key: revealKey } : {}), ...(sealed ? { sealed } : {}) }),
     stateClick: (ws: string, requestId: string) => call<ClickState>('POST', `/api/w/${ws}/click/state`, { request_id: requestId }),
     hubSign: (ws: string, body: import('./hubsign').HubSignRequest) => call<import('./hubsign').HubSignInfo>('POST', `/api/w/${ws}/hubsign`, body),
-    /** V3 A7: the hub pages' reads and the terminal command of a change (the server signs nothing and sends no hub write). */
+    /** V3 A7: the hub pages' reads (the server signs nothing here). */
     getHubStatus: (ws: string) => call<import('./hub').HubStatus>('GET', `/api/w/${ws}/hub`),
     getHubShare: (ws: string) => call<import('./hub').HubShare>('GET', `/api/w/${ws}/hub/share`),
     getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
@@ -154,7 +149,6 @@ export function createApi(transport: Transport) {
     revokeHubShare: (ws: string, ref: string) => call<import('./hub').HubReduced>('POST', `/api/w/${ws}/hub/share/revoke`, { ref }),
     removeHubRule: (ws: string, rule: import('./hub').HubRule, expect: string) =>
       call<import('./hub').HubReduced>('POST', `/api/w/${ws}/hub/share/rule-remove`, { rule, expect }),
-    getHubCommand: (ws: string, body: import('./hub').HubCommandRequest) => call<import('./hub').HubCommand>('POST', `/api/w/${ws}/hub/command`, body),
     getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>('POST', `/api/w/${ws}/hub/link`, { link }),
     connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>('POST', `/api/w/${ws}/hub/connect`, body),
     cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>('POST', `/api/w/${ws}/click/cancel`, { request_id: requestId }),
@@ -169,7 +163,6 @@ export function createApi(transport: Transport) {
     githubRemove: (ws: string) => call<{ credential: 'missing' }>('POST', `/api/w/${ws}/click/github/remove`, {}),
     rotateKey: (ws: string, body: { request_id: string; view_digest: string; sealed: Record<string, import('./sealed').Envelope> }) =>
       call<{ done: true } & ClickCard>('POST', `/api/w/${ws}/click/rotate`, body),
-    cancelHandoff: (ws: string, id: string) => call<{ id: string; state: string }>('DELETE', `/api/w/${ws}/handoff/${id}`),
     /** Reduced settings of a real host (M4): what the host says, `available: false` without `settings/1`. */
     phoneAvailable: (ws: string) => call<{ phones: number }>('GET', `/api/w/${ws}/phone/available`),
     phoneRequest: (ws: string, body: import('./phone').PhoneRequest & { idem: string }) => call<import('./phone').PhoneHint & { phones: number }>('POST', `/api/w/${ws}/phone/request`, body),

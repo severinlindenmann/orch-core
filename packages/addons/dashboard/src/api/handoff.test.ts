@@ -45,11 +45,6 @@ describe('the fingerprint is the one `orch sign` computes (host contract v1.4 se
   })
 })
 
-describe('the command', () => {
-  it('the command is exactly orch sign CODE', () => {
-  })
-})
-
 describe('a request must be what it says it is', () => {
   const base = () => ({ op: 'approve', material: structuredClone(vector.material), events, review_digest: vector.review_digest, fingerprint: vector.fingerprint, expires_at: new Date(Date.now() + 600_000).toISOString().replace(/\.\d+Z$/, 'Z') }) as unknown as HandoffRequest
   const rehash = (r: HandoffRequest): HandoffRequest => {

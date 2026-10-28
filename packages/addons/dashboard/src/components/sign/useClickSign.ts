@@ -55,6 +55,9 @@ export interface ClickRun {
   error: unknown
 }
 
+/** A cancel that failed: the request stays open until it expires, so it is never shown as cancelled. */
+export const CANCEL_FAILED = 'Could not cancel. It will expire by itself.'
+
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
 
 /** The `onSettled` arguments of the hand-off dialog, for a signed click request (callers read `key` of a signed `new`). */
@@ -267,7 +270,13 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     try {
       await api.cancelClick(where, open.request_id)
     } catch {
-      /* the signer and the host expire it anyway */
+      // The request is still open (the signer and the host expire it): never say "cancelled" for it.
+      if (mounted.current) {
+        setProblem({ title: CANCEL_FAILED, body: '', next: 'unavailable' }) // one plain line, no Try again
+
+        setPhase('failed')
+      }
+      return
     }
     if (mounted.current) {
       setPhase('cancelled')

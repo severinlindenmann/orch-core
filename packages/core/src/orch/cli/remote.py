@@ -180,7 +180,7 @@ def _approve(args: argparse.Namespace, out: TextIO, question: str) -> bool:
     from orch.ops.human import review_prompt
 
     try:
-        return review_prompt(question)
+        return review_prompt(question, verb="continue")  # sets up the HTTPS front: nothing is signed
     except OrchError as exc:
         raise Refused(exc.code, str(exc)) from None
 

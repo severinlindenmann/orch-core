@@ -138,16 +138,56 @@ class _AcceptAll:
         return None  # #1198 C9: the owner proof is made after the review; the submit and the append check it for real
 
 
-def review_prompt(text: str) -> bool:
-    """Review on the controlling terminal; only a fresh Enter authorizes signing.
+#: the words of :func:`review_prompt`: ``sign`` for a signature, ``continue`` for a confirmation that signs nothing
+REVIEW_VERBS = ("sign", "continue")
+
+
+def _write_all(fd: int, output: bytes) -> bool:
+    while output:
+        written = os.write(fd, output)
+        if written <= 0:
+            return False
+        output = output[written:]
+    return True
+
+
+def _fresh_key(fd: int) -> bytes:
+    """The first key pressed after a one-second dead time (input during it is discarded); ``b""`` cancels: an end of
+    input, or a burst continuing across the deadline (a held key is never consent)."""
+    import termios
+    import time
+
+    termios.tcdrain(fd)
+    termios.tcflush(fd, termios.TCIFLUSH)
+    deadline = time.monotonic() + 1.0
+    last_input = None
+    while (left := deadline - time.monotonic()) > 0:
+        if fdwait.readable(fd, left):
+            if not os.read(fd, 4096):
+                return b""
+            last_input = time.monotonic()
+    termios.tcflush(fd, termios.TCIFLUSH)
+    # Terminals report bytes, not key-up events. Refuse a repeat stream at
+    # the boundary; the person can start a fresh review after releasing it.
+    if last_input is not None and deadline - last_input < 0.15:
+        return b""
+    return os.read(fd, 1)
+
+
+def review_prompt(text: str, verb: str = "sign") -> bool:
+    """Review on the controlling terminal; only a fresh Enter authorizes (signing, or with ``verb="continue"`` an
+    action that signs nothing).
 
     Input during the first second is discarded. A burst continuing across the
-    deadline cancels rather than treating a held Enter as consent.
+    deadline cancels rather than treating a held Enter as consent. When signing, ``d`` prints the full review
+    (:attr:`orch.host.signer.Review.details`: ids and hashes) and waits again, with a new dead time; any other key
+    cancels.
     """
+    if verb not in REVIEW_VERBS:
+        raise ValueError(f"review_prompt: verb is one of {REVIEW_VERBS}")
     if os.name == "nt":  # no POSIX controlling terminal
         raise OrchError("tty.required", "signing requires a controlling terminal")
     import termios
-    import time
     import tty
 
     try:
@@ -160,32 +200,28 @@ def review_prompt(text: str) -> bool:
             raise OrchError("tty.required", "signing requires a controlling terminal")
         saved = termios.tcgetattr(fd)
         tty.setraw(fd)
-        shown = getattr(text, "details", "") if getattr(text, "details_first", False) else str(text)
-        output = (
-            "\r\n=== orch: read before you sign ===\r\n"
-            + shown.replace("\n", "\r\n")
-            + "\r\nPress Enter to sign, any other key cancels.\r\n"
-        ).encode()
-        while output:
-            written = os.write(fd, output)
-            if written <= 0:
-                return False
-            output = output[written:]
-        termios.tcdrain(fd)
-        termios.tcflush(fd, termios.TCIFLUSH)
-        deadline = time.monotonic() + 1.0
-        last_input = None
-        while (left := deadline - time.monotonic()) > 0:
-            if fdwait.readable(fd, left):
-                if not os.read(fd, 4096):
-                    return False
-                last_input = time.monotonic()
-        termios.tcflush(fd, termios.TCIFLUSH)
-        # Terminals report bytes, not key-up events. Refuse a repeat stream at
-        # the boundary; the person can start a fresh review after releasing it.
-        if last_input is not None and deadline - last_input < 0.15:
+        details = str(getattr(text, "details", "") or "")
+        first = bool(details) and getattr(text, "details_first", False)
+        shown = details if first else str(text)
+        # a signer review (orch.host.signer.Review) offers its details once, unless they are what was shown
+        offer = verb == "sign" and bool(details) and not first
+        keys = "Press Enter to sign, d for details, any other key cancels." if offer else (
+            f"Press Enter to {verb}, any other key cancels."
+        )  # fmt: skip
+        output = f"\r\n=== orch: read before you {verb} ===\r\n" + shown.replace("\n", "\r\n") + f"\r\n{keys}\r\n"
+        if not _write_all(fd, output.encode()):
             return False
-        return os.read(fd, 1) in (b"\r", b"\n")
+        key = _fresh_key(fd)
+        if offer and key == b"d":
+            output = (
+                "\r\n=== orch: the full review ===\r\n"
+                + details.replace("\n", "\r\n")
+                + "\r\nPress Enter to sign, any other key cancels.\r\n"
+            )
+            if not _write_all(fd, output.encode()):
+                return False
+            key = _fresh_key(fd)
+        return key in (b"\r", b"\n")
     except (KeyboardInterrupt, OSError, termios.error):
         return False
     finally:

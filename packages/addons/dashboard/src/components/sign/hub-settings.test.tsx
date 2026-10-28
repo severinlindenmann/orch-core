@@ -41,7 +41,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); setFeatures(null) })
 
 describe('a settings change through the hub', () => {
   it('shows the change in words and the hub link, and prepares nothing here', async () => {
-    const s = spies()
+    const s = { ...spies(), prepare: vi.spyOn(api, 'prepareClick') }
     const hub = vi.spyOn(api, 'hubSign').mockResolvedValue(INFO)
     mountPanel({ action: 'settings_set', grant_hours: 24 })
     const panel = await screen.findByTestId('hub-settings', {}, T)

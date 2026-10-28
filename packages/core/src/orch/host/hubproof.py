@@ -43,7 +43,7 @@ def refusal(code: str) -> HostError:
         "hub.proof_invalid",
         f"the hub step needs your backup key: {reason}",
         hint="repeat the hub step and enter your backup key",
-        fix=["orch", "sign"],
+        fix=["orch", "hub", "status"],
         detail={"reason": reason},
     )
 

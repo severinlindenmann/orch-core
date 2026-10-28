@@ -1,7 +1,7 @@
 // A simulated hub for the mockup and its tests (V3 A7). Scenario by address: `?hub=standalone|selective|full|offline|nottold`
 // (kept for the tab). Reads are fixed by the scenario. Stopping sharing (a ticket, a rule) is a plain owner click; a
 // join and a leave are signed by One click with the backup key and change the scenario (see the click routes below).
-import type { HubCommand, HubCommandRequest, HubPreview, HubRule, HubShare, HubStatus } from '@/api/hub'
+import type { HubPreview, HubRule, HubShare, HubStatus } from '@/api/hub'
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
 
@@ -91,26 +91,6 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
   return { count: items.length, new: added, revoked: removed, more: 0, items, rules: [], plan: 'P'.repeat(42) + String(items.length % 10) }
 }
 
-/** The same command lines the server builds (tests for the page only; the server's tests are the contract). */
-function mockCommand(b: HubCommandRequest): HubCommand {
-  const q = (v: string) => (/^[A-Za-z0-9._:/-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`)
-  const flag = (r: HubRule) => (r.kind === 'needs_you' ? '--needs-you' : r.kind === 'questions' ? '--questions' : `--${r.kind} ${q(r.value ?? '')}`)
-  const line = (() => {
-    switch (b.kind) {
-      case 'join': return `orch hub join ${q(b.invite)} --hub-card ${q(b.card)} --mode ${b.mode}`
-      case 'mode_full': return `orch hub mode full --hub-card ${q(b.card)}`
-      case 'leave':
-      case 'leave_hub_down': return 'orch hub leave'
-      case 'stop_telling': return 'orch hub unbind'
-      case 'share_add': return `orch hub share rule add ${flag(b.rule)}`
-      case 'share_remove': return `orch hub share rule remove ${flag(b.rule)}`
-      case 'share_revoke': return `orch hub share revoke ${q(b.ref)}`
-      default: return 'orch hub share sync'
-    }
-  })()
-  return { command: line, kind: b.kind }
-}
-
 export function registerHubRoutes(r: MockRouter) {
   r.add('GET', '/api/w/:ws/hub', () => ok(mockHubStatus()))
   r.add('GET', '/api/w/:ws/hub/share', () => ok(mockShare()))
@@ -129,11 +109,6 @@ export function registerHubRoutes(r: MockRouter) {
     return ok({ synced: true, pending: null, revoked: mockPreview({ remove: b.rule }).revoked })
   })
   registerHubClickRoutes(r)
-  r.add('POST', '/api/w/:ws/hub/command', (_s, c) => {
-    const b = c.body as HubCommandRequest | null
-    if (!b || typeof b !== 'object' || !('kind' in b)) return fail(400, 'invalid.input', 'Body must be {kind, ...}')
-    return ok(mockCommand(b))
-  })
 }
 
 // The One click path of the hub pages (#1198 C11), for the mockup and tests: prepare, review and sign a hub join or leave

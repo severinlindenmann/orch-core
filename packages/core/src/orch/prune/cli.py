@@ -82,7 +82,7 @@ def render(ctx: Ctx, inv: Inventory) -> int:
 def _approve(ctx: Ctx, prompt: str) -> bool:
     from orch.ops.human import review_prompt
 
-    return review_prompt(prompt.replace(" [y/N] ", ""))
+    return review_prompt(prompt.replace(" [y/N] ", ""), verb="continue")  # removes files: nothing is signed
 
 
 def _workspaces(ctx: Ctx, inv: Inventory, yes: bool, mode: str, res_notes: list[str]) -> tuple[set[Path], set[Path]]:

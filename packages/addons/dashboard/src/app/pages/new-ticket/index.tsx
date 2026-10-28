@@ -404,7 +404,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       return
     }
     if (handoffOn) {
-      // On a real host the ticket is created by a signed event: prepare it and sign in the terminal (design 4.5).
+      // On a real host the ticket is created by a signed event: prepare it and sign it with one click (design 4.5).
       // "Usable" is a matter of time: decide on the grant as it is right now, not as the form last drew it.
       const fresh = plan.grantNow()
       // F-712-B: so is the step limit (it depends on whether the access has to be signed too): recompute it with the fresh grant,

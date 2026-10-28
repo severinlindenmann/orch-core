@@ -113,7 +113,7 @@ Before you approve, the dashboard shows exactly what you are approving, in plain
 
 ## One click
 
-One click is the dashboard's signing path. Review the signer's exact values, then use the outcome button when it is ready. If One click is off, turn it on in Settings.
+You approve in the dashboard with one click. Read the review, press Approve, then press the button again after a second (it waits that long on purpose). If One click is off, turn it on in Settings.
 
 ## If it will not sign
 
@@ -248,7 +248,7 @@ On a ticket, in the **Shares** box, press **Share files**. Tick the files, choos
 
 **Shares** lists every link you made: its kind, when it ends, how often it was opened and its state (Live, Used up, Expired or Revoked). **Revoke** stops a link at once.
 
-An agent can only prepare a share. A person always signs it in the terminal.
+An agent can only prepare a share. A person always approves it in the dashboard.
 `,
   },
   {

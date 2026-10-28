@@ -193,15 +193,14 @@ const CORE_SECTIONS: ChecklistSection[] = [
         text: 'Click "New ticket", fill the text, acceptance checks and people (owner, assignee, reviewer).',
         points: [
           'Next to the key the view says "key per host" (by design).',
-          'The main button is your method ("Sign in Terminal"); "Other ways" lists only ways your workspace allows.',
-          'Terminal: a hand-over code appears; run "One click".',
+          'Press Create, read the review, then press Approve. The button waits about a second before it works; press it again then.',
         ],
-        see: 'ONE review for everything, plain like a ticket (a headline, the text, the checklist, people by name), with "Technical details" folded away. In the Terminal: a short plain review, a word to type, d = details. After signing the drawer closes and the new ticket opens.',
+        see: 'ONE review for everything, plain like a ticket (a headline, the text, the checklist, people by name), with "Technical details" folded away. Nothing to type. After signing the drawer closes and the new ticket opens.',
       },
       {
         id: 'C3',
         title: 'Edit a ticket',
-        text: 'Open the ticket page, "Edit text, checks, repositories and people". Sign it in the Terminal as in C2.',
+        text: 'Open the ticket page, "Edit text, checks, repositories and people". Press Approve, then the button again after a second, as in C2.',
         see: 'ONE review for all changes (old to new is clear, e.g. "remove: Severin").',
         warn: 'This crashed before (KeyError: title): if it fails again, BLOCKING.',
       },
@@ -213,7 +212,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
       {
         id: 'C5',
         title: 'Quick task',
-        text: 'Use Quick tasks, "Start task". Optional agent access: 8 h, 1 day or 3 days, never above your workspace maximum. Type the word GRANT in the dialog and in the Terminal.',
+        text: 'Use Quick tasks, "Start task". Optional agent access: 8 h, 1 day or 3 days, never above your workspace maximum. Press Approve, then the button again after a second.',
         see: 'ONE signature for everything (ticket, approvals, agent access). The pill moves to the new end. Quick tasks do not close by themselves yet (known gap).',
       },
       {
@@ -223,15 +222,14 @@ const CORE_SECTIONS: ChecklistSection[] = [
         points: [
           'Extend: choose a length, sign. Running agents stop; new ones use the new end. The pill shows the new end.',
           'Stop: sign each stop. After: "Agents stopped . Start again". Cancel a stop request: the pill must return to normal at once (report if it shows "Stopped 0 of 2").',
-          'Start again: choose 8 h / 1 day / 3 days, sign (in the Terminal press r to hand it to the runner). Times in these reviews are local, not "...Z".',
+          'Start again: choose 8 h / 1 day / 3 days, sign (the access goes to this computer\'s agent runner). Times in these reviews are local, not "...Z".',
         ],
       },
       {
         id: 'C7',
         title: 'Settings',
-        text: 'Allowed ways to approve. On a fresh terminal workspace Terminal is the only way you can use.',
+        text: 'Allowed ways to approve. You approve in the dashboard: press Approve, then the button again after a second.',
         points: [
-          'One click shows how to set it up (it needs "Sign in the dashboard" switched on first, and the optional workspace RC).',
           'Phone says it needs the relay add-on (later).',
           'Boxes that cannot change are greyed with a reason: report anything that is greyed without an explanation.',
           '"My settings": your own default way. "Agents may work for you for up to": 8 h / 1 day / 3 days / 7 days (lowering never shortens access already given).',
@@ -243,7 +241,7 @@ const CORE_SECTIONS: ChecklistSection[] = [
         title: 'One-click workspace RC',
         optional: true,
         text: 'Only if you did B3: create a ticket.',
-        see: 'One click signs after about 1 s, a small "One-click" badge, no big warning banner; "Other ways" still offers Terminal.',
+        see: 'Approve works after about 1 s, a small "One-click" badge, no big warning banner.',
       },
     ],
   },

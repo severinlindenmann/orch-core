@@ -63,30 +63,22 @@ def committed_epoch(ctx: ReadCtx) -> int:
 
 
 def config_name(store: Any) -> str:
-    """The display name in ``config.json`` of ``store`` ("" when absent or invalid); same checks as :func:`cosmetic`."""
-    from orch import schema
-    from orch.store import StoreError, fsio
-
-    try:
-        raw = store.fs.read_or_none("config.json")
-        if raw is None:
-            return ""
-        doc = fsio.loads(raw)
-        schema.validate("workspace", doc)
-        name = doc["workspace"]["name"]
-    except (OSError, ValueError, KeyError, TypeError, RecursionError, schema.SchemaError, StoreError):
-        return ""
-    return name if isinstance(name, str) else ""
+    """The display name in ``config.json`` of ``store`` ("" when absent or invalid), as :func:`cosmetic` reads it."""
+    return cosmetic_of(store, "")[0]
 
 
 def cosmetic(ctx: ReadCtx, prefix: str) -> tuple[str, Any]:
     """The workspace name and icon (D6): unsigned, from ``config.json`` only. The name falls back to the prefix, the
     icon to ``None`` (the automatic one)."""
+    return cosmetic_of(ctx.store, prefix)
+
+
+def cosmetic_of(store: Any, prefix: str) -> tuple[str, Any]:
     from orch import schema
     from orch.store import StoreError, fsio
 
     try:  # the store's own rules: below its pinned root (#516), no symlink, size limit, bounded nesting, schema-valid
-        raw = ctx.store.fs.read_or_none("config.json")
+        raw = store.fs.read_or_none("config.json")
         if raw is None:
             return prefix, None
         doc = fsio.loads(raw)

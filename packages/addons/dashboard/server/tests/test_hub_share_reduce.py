@@ -70,6 +70,19 @@ def test_a_rule_removal_sends_the_plan_that_was_shown(client, token, stub, host)
     assert args == {"rule": {"kind": "ticket", "ticket": "PRD-0014"}, "expect": PLAN}
 
 
+def test_removing_a_rule_the_host_does_not_have_is_refused_and_not_logged(client, token, stub, host, caplog):
+    from orch_dashboard.errors import HostError
+
+    message = "share: that rule is not in the list; nothing changed"
+    host.answers["share.rule_remove"] = HostError({"code": "not_found", "message": message, "retryable": False}, 2)
+    body = {"rule": {"kind": "tag", "value": "absent"}, "expect": PLAN}
+    with caplog.at_level(logging.WARNING, logger="orch_dashboard.security"):
+        r = client.post(f"/api/w/{stub.ws}/hub/share/rule-remove", json=body, headers=hdr(token))
+    assert r.status_code == 404 and r.json()["error"]["code"] == "not_found"
+    assert [c[0] for c in writes(host)] == ["share.rule_remove"]
+    assert not [r for r in caplog.records if r.name == "orch_dashboard.security"]  # nothing was taken away
+
+
 def test_bad_bodies_reach_nothing(client, token, stub, host):
     url = f"/api/w/{stub.ws}/hub/share/rule-remove"
     for body in (

@@ -11,7 +11,9 @@ Ops (all column P, owner role; an agent is refused, and no op here is reachable 
   withdrawn while it still matches a rule.
 * ``share.revoke`` and ``share.rule_remove`` only take sharing away (:data:`REDUCE_OPS`): the dashboard sends them with
   one click as the session's person, like ``workspace.cosmetic.set``; at most 10 a minute, and the security-log line
-  names the person. ``orch hub share rule remove`` still asks its own confirmation at the terminal.
+  names the person. ``orch hub share rule remove`` still asks its own confirmation at the terminal. Neither ever
+  shares something new: a removal that lets another rule match more sends only what was already confirmed and still
+  matches (the rest waits for ``share.sync {expect}``), and removing a rule that is not in the list is ``not_found``.
 * ``share.sync {expect?}``: make the hub's copy equal the selection (``share_put`` / ``share_revoke``). With ``expect``
   (the ``share.preview`` plan, checked like a rule change) the current selection is confirmed; without it a sync only
   retries what was already confirmed. Also run after every rule change and revoke.
@@ -476,6 +478,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 note = "withdrawn; what the hub already read cannot be taken back"
             else:
                 rule = S.normalize_rule(args["rule"])
+                if op == "share.rule_remove" and rule not in st.rules:
+                    raise HostError("not_found", "share: that rule is not in the list; nothing changed")
                 after, withdrawn, shown = _after(st, facts, add=rule if op == "share.rule_add" else None,
                                                  remove=rule if op == "share.rule_remove" else None)  # fmt: skip
                 changed = after != st.rules
@@ -488,10 +492,12 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                     _save(service, st)
                 note = "changed" if changed else "unchanged"
             # C6-2: the sync sends exactly the selection that was confirmed above, under the same lock (never a
-            # second selection that a ticket change in between could have altered). Only a rule change confirms
-            # (against the shown plan); a revoke narrows and sends nothing the owner has not confirmed (C6fud-1).
+            # second selection that a ticket change in between could have altered). Only an adding rule change confirms
+            # (against the shown plan). A reducing op (REDUCE_OPS: revoke, rule removal) only narrows: it keeps what was
+            # already confirmed and still matches and sends nothing new, even where a removal lets another rule match
+            # more (C6fud-1; the dashboard sends these unsigned and its review lists only what stops).
             selected = S.select(st.rules, facts)
-            if op == "share.revoke":
+            if op in REDUCE_OPS:
                 selected = st.auto_wanted(selected)
             else:
                 _approve(st, [i for i in selected if i.logical not in st.withdrawn], args["expect"])

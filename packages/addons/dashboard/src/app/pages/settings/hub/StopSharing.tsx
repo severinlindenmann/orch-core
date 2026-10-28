@@ -30,6 +30,7 @@ function refusal(e: unknown): string {
   if (code === 'role.denied') return 'Only the workspace owner can stop sharing.'
   if (code === 'session.readonly' || code === 'op.not_allowed' || code === 'step_up_required') return 'Sign in fully on this computer to stop sharing.'
   if (code === 'host.busy') return 'Too many sharing changes. Wait a minute, then try again.'
+  if (code === 'not_found') return 'That is no longer shared. Close this and look again.'
   if (code === 'invalid.input') return 'What would stop being shared changed meanwhile. Close this and look again.'
   return 'Could not stop sharing. Try again.'
 }
@@ -79,6 +80,11 @@ export function StopRule({ ws, workspace, rule, after }: { ws: string; workspace
   const now = useSharedNow(ws)
   const kept = new Set(after?.items.map(i => i.line) ?? [])
   const stops = now.data && after ? now.data.items.filter(i => !kept.has(i.line)) : []
+  // A removal can let another rule match more (`new`: items after this that the hub does not have). The host never
+  // shares those on a removal; this review only offers what takes sharing away, so it offers no button then.
+  const had = new Set(now.data?.items.map(i => i.line) ?? [])
+  const widens = !!after && after.new > 0
+  const added = widens && now.data ? after.items.filter(i => !had.has(i.line)) : []
   return <>
     <p>Remove this sharing rule. Items covered by other rules remain shared.</p>
     <p data-testid="hub-rule-review-rule">Rule: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}</p>
@@ -87,8 +93,15 @@ export function StopRule({ ws, workspace, rule, after }: { ws: string; workspace
       <p>{after.revoked} no longer shared · {after.count} items shared after this. Preview from the hub, not signed.</p>
       {stops.length > 0 && <ul className="space-y-1">{stops.slice(0, 20).map((i, n) => <li key={n}><Raw>{i.line}</Raw></li>)}</ul>}
       {stops.length > 20 && <p>and {stops.length - 20} more</p>}
+      {widens && <div data-testid="hub-rule-review-new">
+        <p>{after.new} newly shared</p>
+        {added.length > 0 && <ul className="space-y-1">{added.slice(0, 20).map((i, n) => <li key={n}><Raw>{i.line}</Raw></li>)}</ul>}
+        {added.length > 20 && <p>and {added.length - 20} more</p>}
+      </div>}
     </div>}
     <p className="text-warning">{caveat}</p>
-    <StopButton ws={ws} testId="hub-rule-stop" disabled={!after?.plan} act={() => api.removeHubRule(ws, rule, after!.plan!)} />
+    {widens
+      ? <p data-testid="hub-rule-widens">This change would also share new items, so it can&apos;t be done here yet.</p>
+      : <StopButton ws={ws} testId="hub-rule-stop" disabled={!after?.plan} act={() => api.removeHubRule(ws, rule, after!.plan!)} />}
   </>
 }

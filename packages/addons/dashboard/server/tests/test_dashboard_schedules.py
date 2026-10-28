@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from orch_dashboard import handoff, schedules
+from orch_dashboard import schedules, signing
 from orch_dashboard.errors import HostError
 
 ME = "p_" + "a" * 32
@@ -194,8 +194,8 @@ def add(**over):
 
 
 def test_add_maps_to_the_host_op():
-    body = handoff.ScheduleAdd(**add(run_hours=2))
-    op, args = handoff.host_call(body)
+    body = signing.ScheduleAdd(**add(run_hours=2))
+    op, args = signing.host_call(body)
     assert op == "schedule.add"
     assert args == {
         "ref": KEY,
@@ -209,8 +209,8 @@ def test_add_maps_to_the_host_op():
 
 
 def test_once_has_a_date_and_no_every():
-    body = handoff.ScheduleAdd(**add(every=None, weekdays=None, at="2030-02-03 08:30"))
-    _, args = handoff.host_call(body)
+    body = signing.ScheduleAdd(**add(every=None, weekdays=None, at="2030-02-03 08:30"))
+    _, args = signing.host_call(body)
     assert "every" not in args and args["at"] == "2030-02-03 08:30"
 
 
@@ -234,47 +234,47 @@ def test_once_has_a_date_and_no_every():
 )
 def test_add_refuses(over):
     with pytest.raises(ValidationError):
-        handoff.ScheduleAdd(**add(**over))
+        signing.ScheduleAdd(**add(**over))
 
 
 def test_add_brief_limit_is_inclusive():
-    handoff.ScheduleAdd(**add(brief="x" * 4096))
+    signing.ScheduleAdd(**add(brief="x" * 4096))
 
 
 def test_cancel_maps_to_the_host_op():
-    body = handoff.ScheduleCancel(action="schedule_cancel", key=KEY, id=SID)
-    assert handoff.host_call(body) == ("schedule.cancel", {"id": SID})
+    body = signing.ScheduleCancel(action="schedule_cancel", key=KEY, id=SID)
+    assert signing.host_call(body) == ("schedule.cancel", {"id": SID})
 
 
 @pytest.mark.parametrize("bad", ["sc_8" + "0" * 25, "fu_" + "0" * 26, "sc_" + "0" * 25, "sc_" + "I" * 26])
 def test_cancel_refuses_other_ids(bad):
     with pytest.raises(ValidationError):
-        handoff.ScheduleCancel(action="schedule_cancel", key=KEY, id=bad)
+        signing.ScheduleCancel(action="schedule_cancel", key=KEY, id=bad)
 
 
 def test_expected_events():
-    cancel = handoff.ScheduleCancel(action="schedule_cancel", key=KEY, id=SID)
-    check = handoff.expected(cancel)
+    cancel = signing.ScheduleCancel(action="schedule_cancel", key=KEY, id=SID)
+    check = signing.expected(cancel)
     assert check([{"type": "schedule.cancelled", "schedule": SID}])
     assert not check([{"type": "schedule.cancelled", "schedule": "sc_" + "1" * 26}])
     assert not check([{"type": "schedule.set", "schedule": SID}])
     assert not check([])
-    check = handoff.expected(handoff.ScheduleAdd(**add()))
+    check = signing.expected(signing.ScheduleAdd(**add()))
     assert check([{"type": "schedule.set", "schedule": SID}])
     assert not check([{"type": "schedule.cancelled", "schedule": SID}])
     assert not check([{"type": "schedule.set"}, {"type": "schedule.set"}])
 
 
 def test_plan_cancel_needs_the_schedule_on_that_ticket():
-    body = handoff.ScheduleCancel(action="schedule_cancel", key=KEY, id=SID)
-    planned = handoff.plan(FakeGateway(rows=[row()]), "w", body)
+    body = signing.ScheduleCancel(action="schedule_cancel", key=KEY, id=SID)
+    planned = signing.plan(FakeGateway(rows=[row()]), "w", body)
     assert (planned.op, planned.args, planned.person) == ("schedule.cancel", {"id": SID}, ME)
     for rows in ([], [row(key="ORCH-2")]):
         with pytest.raises(HostError) as err:
-            handoff.plan(FakeGateway(rows=rows), "w", body)
+            signing.plan(FakeGateway(rows=rows), "w", body)
         assert err.value.error["code"] == "not_found"
 
 
 def test_plan_add_has_no_base():
-    planned = handoff.plan(FakeGateway(), "w", handoff.ScheduleAdd(**add()))
+    planned = signing.plan(FakeGateway(), "w", signing.ScheduleAdd(**add()))
     assert planned.op == "schedule.add" and planned.base is None

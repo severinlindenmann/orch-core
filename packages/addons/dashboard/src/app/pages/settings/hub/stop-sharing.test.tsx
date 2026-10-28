@@ -156,6 +156,32 @@ describe('stop sharing by a rule', () => {
     expect(removeRule).not.toHaveBeenCalled()
   })
 
+  it('a removal that would also share new items lists them and offers no one-click button, only Cancel', async () => {
+    const widening: HubPreview = { ...AFTER, count: 2, new: 1, items: [NOW.items[1], { kind: 'ticket', line: 'ticket DEMO-0050: Later public note' }] }
+    vi.spyOn(api, 'getHubPreview').mockImplementation(async (_ws, body) => (body.remove ? widening : NOW))
+    const user = userEvent.setup()
+    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+    await user.click(await screen.findByTestId('hub-rule-remove-0'))
+    await waitFor(() => expect(screen.getByTestId('hub-share-review')).toBeEnabled())
+    await user.click(screen.getByTestId('hub-share-review'))
+    const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
+    const fresh = await within(dialog).findByTestId('hub-rule-review-new')
+    expect(fresh).toHaveTextContent('1 newly shared')
+    expect(fresh).toHaveTextContent('ticket DEMO-0050: Later public note')
+    expect(within(dialog).getByTestId('hub-rule-widens')).toHaveTextContent("This change would also share new items, so it can't be done here yet.")
+    expect(within(dialog).queryByTestId('hub-rule-stop')).toBeNull()
+    expect(within(dialog).getByTestId('hub-flow-cancel')).toHaveTextContent('Cancel')
+    expect(dialog.textContent).not.toMatch(/orch |terminal|command line/i)
+    expect(removeRule).not.toHaveBeenCalled()
+  })
+
+  it('a removal that shares nothing new keeps the one-click button and lists nothing as newly shared', async () => {
+    const { dialog, button } = await ruleReview()
+    expect(button).toBeTruthy()
+    expect(within(dialog).queryByTestId('hub-rule-review-new')).toBeNull()
+    expect(within(dialog).queryByTestId('hub-rule-widens')).toBeNull()
+  })
+
   it('adding a rule says plainly it is not available here, with no button and no terminal command', async () => {
     const user = userEvent.setup()
     mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)

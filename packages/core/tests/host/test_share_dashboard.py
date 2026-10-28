@@ -54,6 +54,50 @@ def test_the_owner_revokes_and_removes_a_rule_as_their_person_with_a_log_line(se
     assert add and "person" not in add[0]  # nothing else changes: an adding op's line is as it was
 
 
+def test_a_rule_removal_that_would_match_more_shares_nothing_new(served, selective):
+    """Review finding: removing a rule recomputes the selection; it must never confirm or send an item the owner has
+    not confirmed (here a public ticket labelled after the last confirm), only take away what the rule shared."""
+    labelled(served, "Public note", "public")
+    labelled(served, "Misc note", "misc")
+    ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
+    ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "misc"}))
+    st = shareops._load(served.service)
+    confirmed, sent = set(st.confirmed), set(st.sent)
+    labelled(served, "Later public", "public")  # matches a rule, never confirmed
+    prev = ok(req(served, "share.preview", {"remove": {"kind": "tag", "tag": "misc"}}))["data"]
+    assert prev["new"] == 1 and "Later public" in str(prev["items"])  # the after-plan holds it (the dashboard shows it)
+    before = list(selective.ops)
+    got = ok(rule_op(served, "share.rule_remove", {"kind": "tag", "tag": "misc"}))["data"]
+    assert got["put"] == 0 and got["revoke"] == 1
+    assert [o for o, _ in selective.ops[len(before) :]] == ["share_revoke"]  # the hub receives only the revoke
+    st = shareops._load(served.service)
+    (gone,) = sent - set(st.sent)
+    assert set(st.confirmed) == confirmed - {gone} and set(st.sent) <= sent
+    assert "Later public" not in str([i["content"] for i in selective.opened])
+    assert ok(req(served, "share.sync"))["data"]["put"] == 0  # nor does a later unconfirmed sync
+
+
+def test_removing_a_rule_that_is_not_in_the_list_is_refused(served, selective):
+    labelled(served, "Public note", "public")
+    before = list(selective.ops)
+    res = req(served, "share.rule_remove", {"rule": {"kind": "tag", "tag": "absent"}, "expect": "p" * 43})
+    assert err(res) == "not_found" and "not in the list" in res["error"]["message"]
+    assert selective.ops == before
+    assert [r["kind"] for r in ok(req(served, "share.rules"))["data"]["rules"]] == ["needs_you"]
+
+
+def test_revoke_still_withdraws_exactly_one_item(served, selective):
+    _, key = labelled(served, "Public note", "public")
+    labelled(served, "Other public", "public")
+    ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
+    st = shareops._load(served.service)
+    confirmed = set(st.confirmed)
+    got = ok(req(served, "share.revoke", {"ref": key}))["data"]
+    assert (got["put"], got["revoke"]) == (0, 1)
+    st = shareops._load(served.service)
+    assert len(st.sent) == 1 and set(st.confirmed) <= confirmed
+
+
 def test_ten_reducing_changes_a_minute(served, selective):
     _, key = labelled(served, "Public note", "public")
     ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))

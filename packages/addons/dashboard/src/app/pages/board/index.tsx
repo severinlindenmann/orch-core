@@ -37,6 +37,7 @@ import { ColumnHeader, ExpandRail } from './ColumnHead'
 import { EpicLanes, statusOfDrop } from './EpicLanes'
 import { groupByEpic, hasEpics, laneOf, movedAt } from './grouping'
 import { ListView } from './ListView'
+import { ScheduledGroup, useScheduledKeys } from './scheduled'
 import { TicketCard, TicketCardBody, type BoardPeople } from './TicketCard'
 import { Toolbar } from './Toolbar'
 import { useBoardUrlState } from './urlState'
@@ -199,16 +200,20 @@ export function BoardPage() {
 
   const filtered = useMemo(() => applyFilters(tickets, filters, me?.person), [tickets, filters, me])
   const filtering = JSON.stringify(filters) !== JSON.stringify(NO_FILTERS)
+  // A ticket with a repeating schedule that sits in Open is not open work: it waits for its next run (own "Scheduled" group).
+  const scheduledKeys = useScheduledKeys()
+  const scheduled = useMemo(() => filtered.filter((t) => t.status === 'open' && scheduledKeys.has(t.key)), [filtered, scheduledKeys])
+  const onBoard = useMemo(() => (scheduled.length ? filtered.filter((t) => !scheduled.includes(t)) : filtered), [filtered, scheduled])
   // Grouped by epic (the default) when this workspace has epics: epics are lane headers, not cards.
   const grouped = display.group === 'epic' && hasEpics(tickets)
   const epicKeys = useMemo(() => new Set(tickets.filter((t) => t.type === 'epic').map((t) => t.key)), [tickets])
-  const groups = useMemo(() => groupByEpic(tickets, filtered, filtering), [tickets, filtered, filtering])
+  const groups = useMemo(() => groupByEpic(tickets, onBoard, filtering), [tickets, onBoard, filtering])
   const byStatus = useMemo(() => {
     const m = new Map<Status, TicketSummary[]>(STATUSES.map((s) => [s, []]))
-    for (const t of filtered) if (!grouped || t.type !== 'epic') m.get(t.status)?.push(t)
+    for (const t of onBoard) if (!grouped || t.type !== 'epic') m.get(t.status)?.push(t)
     for (const list of m.values()) list.sort((a, b) => b.updated_at.localeCompare(a.updated_at))
     return m
-  }, [filtered, grouped])
+  }, [onBoard, grouped])
 
   // A narrow page area (N11): columns narrow to BOARD_COL_MIN, then more of them become rails until the board fits.
   // The person's own collapsed columns stay rails; a column they open from an automatic rail stays open (this visit).
@@ -430,6 +435,7 @@ export function BoardPage() {
               <AddonLanes railed={railed} onExpand={(id) => setRail(id, false)} />
             </div>
           )}
+          <ScheduledGroup tickets={scheduled} people={people} onOpen={open} />
           {/* No dnd-kit drop animation: it would fly back to the old column first. The card settles by FLIP in TicketCard. */}
           <DragOverlay dropAnimation={null}>
             {dragging ? (

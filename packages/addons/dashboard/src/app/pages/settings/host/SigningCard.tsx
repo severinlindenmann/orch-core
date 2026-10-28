@@ -17,11 +17,13 @@ import type { ClickCard, ClickSwitch } from '@/api/click'
 import { DEV_HOST_SENTENCE, DEV_REFUSED, devRefusedSentence, signerProblem } from '@/api/refusals'
 import { ApiError, type Workspace } from '@/api/types'
 import { CLICK_RISK } from '@/api/click'
+import { hubApproves } from '@/api/hub'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Section } from '../../ticket/shared'
+import { useHub } from '../hub/shared'
 import { SignShell, SignFooter, STICKY_FOOTER } from '@/components/sign/SignShell'
 
 const CLICK_RISK_SHORT = 'One click signs for you from this browser on this computer; anyone using this browser, and agents running as you, could approve. You can turn it off any time.'
@@ -67,6 +69,10 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
   const status = useQuery({ queryKey: ['click-status', workspace.id], queryFn: () => api.clickStatus(workspace.id) })
   const card: ClickCard | null = status.data ?? workspace.click ?? null
   const on = !!card && card.enabled
+  // The hub approval line shows only where the host says this workspace is joined to a hub in full mode (run 13).
+  const hub = useHub(workspace.id)
+  const viaHub = hubApproves(hub.data)
+  const clickLive = on && !!card?.available
   const [mode, setMode] = useState<'idle' | 'on' | 'off' | 'resume'>('idle')
   const [pass, setPass] = useState('')
   const [pass2, setPass2] = useState('')
@@ -155,8 +161,13 @@ export function SigningCard({ workspace, owner }: { workspace: Workspace; owner:
           <summary className="cursor-pointer">Details</summary>
           <p className="mt-1" data-testid="click-risk-full">{CLICK_RISK}</p>
         </details>
-        <p data-testid="signing-state" className={on && card?.available ? "sr-only" : "text-text-muted"}>
-          {on && card?.available
+        {viaHub && <p data-testid="hub-approvals" className="font-medium text-text">Approving through your hub is on.</p>}
+        <p data-testid="signing-state" className={clickLive && !viaHub ? "sr-only" : "text-text-muted"}>
+          {viaHub && clickLive
+            ? 'On: you approve here with one click. You can also approve in the hub.'
+            : viaHub
+            ? 'In this workspace approvals go through your hub: you approve in the hub or on your phone, not with one click here.'
+            : clickLive
             ? 'On: you approve here with one click.'
             : on
               ? `On, but not available now.${card?.problem ? ` ${signerProblem(card.problem)}` : ''}`

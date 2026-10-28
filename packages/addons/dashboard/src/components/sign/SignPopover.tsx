@@ -17,6 +17,8 @@ import { ClickProblemBox, RefusalDevices } from './RefusalDevices'
 import { settledAs, useClickSign, type ClickPhase } from './useClickSign'
 import { storyOf } from './story'
 import { takeTrustedPress, trustedPress } from './trustedPress'
+import { HubSettingsPanel } from './HubSignPanel'
+import { hubSettingsSplit } from '@/api/hubsign'
 
 export interface SignPopoverProps {
   /** Core's title: "Approve plan", "Comment", "Close DEMO-0043". */
@@ -58,6 +60,8 @@ export interface SignPopoverProps {
   /** Show the review in place, under the row that asked (an accordion), not as a popover. */
   inline?: boolean
   initialFocus?: () => HTMLElement | null
+  /** The person asked to approve in the hub instead (an optional extra, A1/FB15): show the hub panel, sign nothing here. */
+  forceHub?: boolean
 }
 
 export function SignPopover(p: SignPopoverProps) {
@@ -68,6 +72,9 @@ export function SignPopover(p: SignPopoverProps) {
   const here = p.workspace ?? workspaces.find(w => w.id === p.ws) ?? known.data?.find(w => w.id === p.ws)
   const many = new Set([...workspaces, ...(known.data ?? [])].map(w => w.id)).size > 1
   // A1/D83: local signing is valid in every hub mode, so the review never routes by the workspace's hub mode.
+  // The hub is an optional extra path: only when the caller asks for it, and only for what the hub can approve here.
+  // An add-on grant is not routed: the hub answers a prepared terminal hand-off request, which this branch removed.
+  const viaHub = p.forceHub === true && !!hubSettingsSplit(p.action)
   const click = useClickSign(p.ws, (_phase, state, request) => {
     if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
     p.onSettled?.('done', state, request)
@@ -80,7 +87,7 @@ export function SignPopover(p: SignPopoverProps) {
   const canClick = clickReady(here) && (!p.action || clickEligible(p.action))
   const started = useRef(false)
   useLayoutEffect(() => {
-    if (canClick && p.action && !p.children && !p.controls && !p.hint && !started.current && takeTrustedPress()) {
+    if (!viaHub && canClick && p.action && !p.children && !p.controls && !p.hint && !started.current && takeTrustedPress()) {
       started.current = true
       void click.start(p.action)
     }
@@ -111,6 +118,12 @@ export function SignPopover(p: SignPopoverProps) {
     p.onClose()
   }
   const dismiss = (label: 'Cancel' | 'Close') => <Button ref={cancelRef} variant="ghost" onClick={() => void close()}>{label}</Button>
+  if (viaHub) {
+    return <SignShell inline={p.inline} anchor={anchor} open onDismiss={p.onClose} title={<Inline>{p.title}</Inline>} description={null} showClose onOpenAutoFocus={e => e.preventDefault()}>
+      {hubSettingsSplit(p.action) && p.ws ? <HubSettingsPanel ws={p.ws} action={p.action as Extract<HandoffAction, { action: 'settings_set' }>} onDone={() => p.onSettled?.('done', null, null)} /> : null}
+      <div className="flex justify-end gap-2"><Button variant="outline" ref={cancelRef} onClick={p.onClose}>Close</Button></div>
+    </SignShell>
+  }
   return <SignShell inline={p.inline} anchor={anchor} open={!(p.onSigning && click.phase === 'signing')} onDismiss={() => void close()} title={<Inline>{click.view?.view.content?.title ?? click.view?.view.headline ?? p.title}</Inline>} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
     {p.controls}{p.lead}{!click.view && p.summary}
     {/* The switch is read before the press; a request already open keeps its review (the signer refuses it if the switch moved). */}

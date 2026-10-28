@@ -241,11 +241,11 @@ def build(
     view["headline"] = headline(str(prepared["op"]), ticket.get("key"))
     view["headline_detail"] = headline_detail(shown_ticket.get("title") if isinstance(shown_ticket, Mapping) else None)
     view["risk_lines"] = risk_lines(
-        str(prepared["op"]), list(prepared["events"]), deposit=deposit, reveal=reveal is not None
+        str(prepared["op"]), list(prepared.get("events") or []), deposit=deposit, reveal=reveal is not None
     )
     if prepared["op"] == "schedule.add":
-        # run 13: the schedule's own risk is a line of the review (FIRST: the review shows `lines` in a short scroll box and
-        # the consequence must be read before the rule's details); `risk` stays the convenience-signing notice
+        # run 13: the schedule's own risk is a line of the review (FIRST: the review shows `lines` in a short scroll
+        # box and the consequence must be read before the rule's details); `risk` stays the convenience notice
         view["lines"] = [*view["risk_lines"], "No click or confirmation is required at firing time.", *view["lines"]]
     if deposit:
         deposit_checks(prepared)

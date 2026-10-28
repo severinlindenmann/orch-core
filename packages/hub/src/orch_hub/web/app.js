@@ -8,7 +8,9 @@ import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { parseRoute } from "./route.js";
 import { homeView, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
+import { accountView } from "./account.js";
 import { adminView } from "./admin.js";
+import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
 import { inviteView } from "./invite.js";
 import { servicesView } from "./services.js";
 import { workspacesView, workspaceDetailsView } from "./workspaces.js";
@@ -80,6 +82,12 @@ const WORDS = {
   unavailable: "The hub cannot be reached.",
   bad_ticket: "This link expired. Go back and click again.",
   no_origin: "Open that workspace's dashboard once first, then try again.",
+  stale_change: "Access to this workspace changed since this was asked, so the request was closed. Ask for it again.",
+  unknown_change: "This request is no longer waiting for you.",
+  not_pending: "This request has already been answered.",
+  expired: "This request has lapsed. Ask for it again.",
+  no_channel: "Set up this browser first (Home > Where you can sign).",
+  owner_protected: "This would take away the workspace owner's own admin access, which is never allowed.",
   last_admin: "This is the last administrator. Make someone else an administrator first.",
   self_disable: "You cannot disable yourself.",
   conflict: "That is not possible in the person's current state.",
@@ -154,11 +162,11 @@ function shell(active, ...nodes) {
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
+    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), tab("account", "Account", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
+      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), tab("account", "Account", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -420,12 +428,78 @@ async function services(silent = false) {
   } finally { finishLoading(); }
 }
 
+async function account() {
+  const finishLoading = loading();
+  pageLoading("account");
+  try {
+    if (!(await refresh())) return loginView();
+    state.menu = false;
+    await loadRail();
+    const r = await api("GET", "/me/channels");
+    if (r.status !== 200) return shell("account", h("h1", { text: "Account" }), banner("bad", "Cannot read your phones and browsers", "Please try again."));
+    shell("account", state.notice, accountView({ user: state.user, channels: r.body.channels, thisBrowserId: state.me?.channelId }, { remove: removeChannel }));
+    state.notice = null;
+  } finally { finishLoading(); }
+}
+
 async function approvals(filter = {}) {
   if (!(await refresh())) return loginView();
   await loadRail();
-  const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
+  const [ws, needs, chg] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you"), api("GET", "/me/changes")]);
   if (ws.status !== 200 || needs.status !== 200) return shell("approvals", banner("bad", "Cannot read approvals", "Please try again."));
-  shell("approvals", inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals }));
+  const changes = chg.status === 200 ? changesView(chg.body, { approve: approveChange, reject: rejectChange, canSign: !!state.me }, Date.now()) : [];
+  shell("approvals", changes, inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals }));
+}
+
+// An access change that waits for me as the workspace owner: prepare, check the digest here, sign with this browser's key.
+const changePath = (change, tail) => "/me/changes/" + encodeURIComponent(change.id) + tail;
+function changeFailed(code) {
+  dialog(banner("bad", "Nothing was approved", say(code)), h("div", { class: "row" }, h("button", { text: "Close", onclick: async () => { closeDialog(); await approvals(); } })));
+}
+async function approveChange(change, ap) {
+  if (!state.me) { state.notice = banner("warn", "Register this browser first", null); return home(); }
+  const me = state.me;
+  const r = await api("POST", changePath(change, "/approve/prepare"), { workspace_id: ap.workspace_id });
+  if (r.status === 401) return loginView(say("no_session"));
+  if (r.status !== 200) return changeFailed(r.body.error);
+  let digest;
+  try { digest = await checkChange(r.body, change, ap.workspace_id); } catch (e) { return changeFailed(e.message === "event_changed" ? "event_changed" : "malformed"); }
+  const sign = h("button", { class: "pri", id: "sign", "data-sign": "", disabled: true, text: "Please review…" });
+  sign.arm = () => arm(sign, "Sign and send");
+  const onVis = () => sign.arm();
+  document.addEventListener("visibilitychange", onVis);
+  window.addEventListener("focus", onVis);
+  const done = () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); closeDialog(); };
+  sign.addEventListener("click", async (ev) => {
+    if (!ev.isTrusted || sign.disabled || offline || sign.getAttribute("aria-busy") === "true") return; // a script's .click() never signs
+    sign.disabled = true;
+    sign.setAttribute("aria-busy", "true");
+    try {
+      const proof = await signProof(me.pair.privateKey, digest);
+      const a = await api("POST", changePath(change, "/approve"), { channel_id: me.channelId, proof, workspace_id: ap.workspace_id });
+      document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis);
+      if (a.status !== 200) {
+        if (a.body.error === "channel_revoked") await deleteChannel().catch(() => {}); // only the hub's own word removes the key
+        return changeFailed(a.body.error);
+      }
+      dialog(banner("ok", a.body.state === "applied" ? "Approved and applied" : "Approved", a.body.state === "applied" ? "The change is now in effect." : "It still waits for " + a.body.remaining + " more workspace owner(s)."),
+        h("div", { class: "row" }, h("button", { class: "pri", text: "Back to approvals", onclick: async () => { closeDialog(); await approvals(); } })));
+    } catch {
+      changeFailed("unavailable");
+    }
+  });
+  dialog(h("h1", { text: "Approve an access change" }),
+    h("p", { class: "sentence", text: changeSentence(change, ap.workspace_name) + ". The hub signs this approval for you with this browser's key." }),
+    h("details", {}, h("summary", { text: "What exactly is signed" }), factsList([["Change", change.id], ["Workspace", ap.workspace_id], ["Access version it was based on", String(r.body.ctx.base_snapshot_version)], ["Lapses on", new Date(change.expires_ms).toLocaleString()]])),
+    h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign));
+  sign.arm();
+}
+async function rejectChange(change, ap) {
+  const r = await api("POST", changePath(change, "/reject"), { workspace_id: ap.workspace_id });
+  if (r.status === 401) return loginView(say("no_session"));
+  if (r.status !== 200) return changeFailed(r.body.error);
+  toast("Rejected. Nothing was changed.");
+  await approvals();
 }
 
 async function home() {
@@ -468,9 +542,11 @@ async function forgetLocal() {
 
 async function removeChannel(id) {
   const r = await api("POST", "/channels/" + encodeURIComponent(id) + "/revoke", {});
-  if (r.status === 200 && state.me?.channelId === id) await deleteChannel().catch(() => {}); // revoke first, then delete (A8-5)
-  state.notice = r.status === 200 ? banner("ok", "Removed", null) : banner("bad", "Not removed", say(r.body.error));
-  await home();
+  const wasThisBrowser = r.status === 200 && state.me?.channelId === id;
+  if (wasThisBrowser) await deleteChannel().catch(() => {}); // revoke first, then delete (A8-5)
+  // removing this browser's own key ends the session view: no notice may be left over for the next sign-in
+  state.notice = wasThisBrowser ? null : r.status === 200 ? banner("ok", "Removed", null) : banner("bad", "Not removed", say(r.body.error));
+  await (parseRoute(location.hash).kind === "account" ? account() : home());
 }
 
 function clearSession() {
@@ -974,7 +1050,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin, activity }[route.kind] ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity , account }[route.kind] ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

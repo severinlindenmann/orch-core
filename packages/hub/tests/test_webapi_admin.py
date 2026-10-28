@@ -21,9 +21,7 @@ def w(tmp_path):
 
 def test_users_groups_members_grants_round_trip(w):
     tok = w.login(w.admin)
-    s, o, _ = w.call("POST", "/admin/users", {"name": "carol"}, token=tok)
-    assert s == 200
-    carol = o["user_id"]
+    carol = w.env.user("carol", password=False)  # people join through an invitation link now (test_invites.py)
     assert w.call("POST", "/admin/groups", {"name": "devs"}, token=tok)[0] == 200
     assert w.call("POST", "/admin/groups", {"name": "devs"}, token=tok)[:2] == (409, {"error": "exists"})
     assert w.call("PUT", f"/admin/groups/devs/members/{carol}", token=tok)[0] == 200

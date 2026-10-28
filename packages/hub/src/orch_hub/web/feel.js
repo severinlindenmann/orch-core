@@ -14,6 +14,7 @@ export function emptyWords(kind) {
     home: ["Nothing needs you", "All approvals are done. New ones show up here by themselves."],
     workspaces: ["No workspaces yet", "Connect the first one with a one-time link. Ask your hub admin for a link, then open it in the workspace’s Mission Control (Settings › Hub › Connect)."],
     services: ["No services yet", "Ask your IT person to set up services on this hub, then check again."],
+    handoffs: ["No hand-offs yet", "Send a hand-off from a workspace to see its progress here."],
     search: ["Nothing found", "Try another name or a shorter search."],
   })[kind] ?? ["Nothing here yet", "Check again later."];
 }

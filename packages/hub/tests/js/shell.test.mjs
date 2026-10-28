@@ -28,7 +28,7 @@ test("switching sections preserves rail, buttons, top bar and updates selected t
   vm.runInContext(source.slice(source.indexOf("function h("), source.indexOf("const field =")) + source.slice(source.indexOf("function shell("), source.indexOf("async function loadRail(")), context);
   context.shell("home", new Element("h1"));
   const rail = root.querySelector(".rail"), top = root.querySelector(".topbar"), button = rail.childNodes[0];
-  for (const page of ["workspaces", "services", "admin", "home"]) {
+  for (const page of ["workspaces", "handoffs", "services", "admin", "home"]) {
     location.hash = "#/" + page;
     context.shell(page, new Element("h1"));
     assert.equal(root.querySelector(".rail"), rail);
@@ -46,12 +46,12 @@ test("hash changes and sign-in continuation dispatch the wanted view", async () 
   const visits = [], handlers = {};
   const location = { hash: "#/admin" };
   const context = vm.createContext({ location, parseRoute, window: { addEventListener: (event, fn) => { handlers[event] = fn; } },
-    home: async () => visits.push("home"), approvals: async () => visits.push("approvals"), workspaces: async () => visits.push("workspaces"), services: async () => visits.push("services"), admin: async () => visits.push("admin"),
+    handoffs: async () => visits.push("handoffs"), home: async () => visits.push("home"), approvals: async () => visits.push("approvals"), workspaces: async () => visits.push("workspaces"), services: async () => visits.push("services"), admin: async () => visits.push("admin"),
     loginView: () => visits.push("login"), addonView: async (w, k) => visits.push("addon:" + k), settingsView: async (w, k) => visits.push("settings:" + k), setupView: () => visits.push("setup"), landFromTicket: async () => visits.push("ticket") });
   vm.runInContext(source.slice(source.indexOf("// Serialize renders")), context);
   await context.renderRoute();
   assert.equal(visits.at(-1), "admin");
-  for (const page of ["home", "approvals", "services", "home"]) { location.hash = "#/" + page; await handlers.hashchange(); assert.equal(visits.at(-1), page); }
+  for (const page of ["home", "approvals", "handoffs", "services", "home"]) { location.hash = "#/" + page; await handlers.hashchange(); assert.equal(visits.at(-1), page); }
   location.hash = "#/w/" + "ab".repeat(16) + "/addon/terms";
   vm.runInContext(source.slice(source.indexOf("async function afterLogin()"), source.indexOf("// FB15")), context);
   await context.afterLogin();

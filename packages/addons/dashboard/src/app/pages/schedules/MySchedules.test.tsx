@@ -276,4 +276,11 @@ describe('MySchedules', () => {
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
     expect(screen.getByText(/Cancelled/)).toBeTruthy()
   })
+
+  it('an unsupported row is one quiet line and does not hide the others', () => {
+    h.rows = [row({ id: 'sc_x', supported: false, note: 'Needs a newer dashboard' } as never), row({ id: 'sc_y', rule: { every: 'day', at: '09:00', tz: 'UTC' } })]
+    view()
+    expect(screen.getByText('Needs a newer dashboard')).toBeInTheDocument()
+    expect(screen.getAllByText('DEMO-1').length).toBeGreaterThan(0)
+  })
 })

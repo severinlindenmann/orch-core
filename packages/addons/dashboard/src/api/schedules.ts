@@ -27,6 +27,9 @@ export interface ScheduleOutcome {
 
 /** A row as the dashboard server sends it (`GET /api/w/{ws}/schedules`, server/schedules.py). */
 export interface ScheduleRow {
+  /** false: a row this dashboard cannot read (a newer kind of schedule); only `note` is shown. */
+  supported?: boolean
+  note?: string
   id: string
   /** The ticket key. */
   ticket: string

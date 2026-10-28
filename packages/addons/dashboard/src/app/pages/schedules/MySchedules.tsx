@@ -345,9 +345,15 @@ export default function MySchedules({ ws, manager, tickets }: Props) {
         <p className="text-[13px] text-text-faint">Loading.</p>
       ) : rows.length ? (
         <ul className="space-y-2">
-          {rows.map((r) => (
-            <Row key={r.id} row={r} ws={ws} />
-          ))}
+          {rows.map((r) =>
+            r.supported === false ? (
+              <li key={r.id} className="rounded-lg border border-border bg-surface p-3 text-[13px] text-text-muted">
+                {r.note ?? 'Needs a newer dashboard'}
+              </li>
+            ) : (
+              <Row key={r.id} row={r} ws={ws} />
+            ),
+          )}
         </ul>
       ) : (
         <p className="text-[13px] text-text-faint">No schedules yet.</p>

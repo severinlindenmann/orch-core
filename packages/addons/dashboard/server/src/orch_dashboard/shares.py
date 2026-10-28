@@ -24,11 +24,12 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Query
+from fastapi import Depends, FastAPI, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import reads
 from .adapters.addons import display
+from .cosmetic_routes import full_session, refused
 from .errors import HostError, fail
 from .gateway import Gateway
 from .terminals import Idem
@@ -272,7 +273,12 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         return {"discarded": isinstance(data, dict) and data.get("discarded") is True}
 
     @app.post("/api/w/{ws}/shares/register")
-    def register_server(body: RegisterBody, ws: str = Depends(reads.workspace)):
+    def register_server(body: RegisterBody, request: Request, ws: str = Depends(reads.workspace)):
+        # Registering sends the workspace's delegation to the signed server: a full LOCAL session only (the host
+        # checks the owner role, agents, the rate of three a minute and takes no address from this request).
+        token = request.state.token
+        if not (full_session(app.state.auth, token) and app.state.auth.login_kind(token) == "local"):
+            raise refused("Sign in on this computer to connect this workspace to the publish server.")
         data = gateway.enabled(ws).call("publish.register", {}, write=True, idem=body.idem)
         result = data.get("result") if isinstance(data, dict) else None
         return {"registered": True, "result": result if result in ("registered", "unchanged") else "registered"}

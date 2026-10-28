@@ -216,7 +216,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/shares/send"): (ALLOWED, "admin action, plain click"),
     (POST, W + "/shares/revoke"): (ALLOWED, "turning off"),
     (POST, W + "/shares/discard"): (ALLOWED, "turning off"),
-    (POST, W + "/shares/register"): (ALLOWED, "admin action, plain click"),
+    (POST, W + "/shares/register"): (REFUSED, "connecting to the publish server is decided on this computer"),
 }
 assert all(rule in RULES for rule, _ in TABLE.values())
 

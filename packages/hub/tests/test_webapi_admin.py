@@ -166,7 +166,15 @@ def test_setup_token_creates_one_admin_once(w):
     f.write_text("tok-abc\n")
     w.api.d.setup_token_file = f
     body = {"token": "wrong", "name": "boss", "password": "a long password 1"}
-    assert w.call("POST", "/setup", body)[:2] == (401, {"error": "bad_credentials"})
+    assert w.call("POST", "/setup", body)[:2] == (
+        401,
+        {"error": "bad_credentials"},
+    )  # a wrong token: 401 whoever exists
+    # a second admin with the RIGHT token is refused (the fixture already has an admin); the token is not consumed
+    assert w.call("POST", "/setup", {**body, "token": "tok-abc"})[:2] == (403, {"error": "not_allowed"})
+    assert f.exists()
+    for admin in list(w.env.acc.members("hub-admin")):  # now a hub with no admin yet
+        w.env.acc.remove_member("hub-admin", admin)
     assert w.call("POST", "/setup", {**body, "token": "tok-abc", "password": "short"})[:2] == (
         400,
         {"error": "weak_password"},

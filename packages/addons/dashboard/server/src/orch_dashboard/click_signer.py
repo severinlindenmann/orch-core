@@ -34,6 +34,8 @@ TIMEOUT = {
     "view": 30.0,
     "sign": 60.0,
     "cancel": 30.0,
+    "cancel_holds": 8.0,
+    "session_alive": 2.0,
     "stash": 30.0,
     "custody_on": 60.0,
     "custody_off": 60.0,
@@ -260,12 +262,38 @@ class Signer:
                 return False
             return IMAGES_FEATURE in self.features
 
+    def restart(self) -> None:
+        """Fail closed: destroy unsigned holds even when a sign reply was lost.
+
+        The next call starts a fresh helper; durable signed claims survive.
+        """
+        with self.lock:
+            proc = getattr(self.client, "proc", None)
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.kill()  # do not allow a deadline to run while waiting for graceful shutdown
+                except ProcessLookupError:
+                    pass  # it exited between poll and kill
+            self._drop()
+            self.last_spawn = -1e9
+
     def close(self) -> None:
         with self.lock:
             self.stopped = True
             self._drop()
 
     # -- calls -----------------------------------------------------------------------------------------------------
+    def session_alive(self, session: str, live: Callable[[], bool]) -> None:
+        """Wait for the channel at most 1 s (a renewal skipped for a busy channel would let the 5 s lease lapse and
+        cancel a live hold); recheck session liveness after taking it."""
+        if not self.chan.acquire(timeout=1.0):
+            return
+        try:
+            if live():
+                self._call("session_alive", {"session": session})
+        finally:
+            self.chan.release()
+
     def call(self, op: str, args: dict, lost: "HostError | None" = None) -> dict:
         """One request on the channel (one at a time). See `_call`."""
         with self.chan:

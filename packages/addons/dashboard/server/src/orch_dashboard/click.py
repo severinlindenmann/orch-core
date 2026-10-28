@@ -11,15 +11,15 @@ the signer forwards it to `human.prepare`
 and the host answers every tab, retry and re-login with the SAME request (or its terminal state). The records below are
 a convenience (which ids this dashboard prepared, what a View is checked against, a settling display), never the guard.
 
-A request obtained through an intent belongs to the PERSON in that workspace: any session of that person may view, sign,
-poll and cancel it (the signer separately refuses anything it did not prepare itself, and signs a request once).
+A request obtained through an intent belongs to the PERSON in that workspace. D5 holds and cancellation are bound
+to the preparing session by the signer; other views retain the existing per-person read boundary.
 """
 
 import hashlib
 import re
 import threading
 from collections import OrderedDict
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
 from orch.click.protocol import ONE_PRESS_OPS
@@ -386,6 +386,7 @@ class RunnerBody(BaseModel):
 
 
 class Sign(Step):
+    delay_s: Literal[0, 10] = 0
     view_digest: ViewDigest
     #: a shown-secret grant only: the key the review was made for (the signer refuses any other)
     reveal_key: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{87}$")] | None = None
@@ -434,10 +435,64 @@ def register(app: FastAPI, gateway: Gateway):
 
     clicks = app.state.clicks = Clicks()
     failed_bumps: dict[str, int] = {}
+    hold_gate = threading.Lock()  # serialize admission only; logout never waits for it
+    held: dict[str, tuple[str, str]] = {}  # request -> (workspace, preparing session); no signed bytes
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
     signer = gateway.click
     signer.unsettled = handoffs.any_unsettled  # a hung signer is not replaced while a signature may be mid-submit
     STATES = ("prepared", "bound", "submitted", "cancelled", "expired")
+
+    lease_workers: set[str] = set()
+
+    def renew_session(token: str) -> None:
+        auth = app.state.auth
+
+        def live() -> bool:
+            with auth.lock:
+                return (
+                    token in auth.sessions
+                    and token not in auth.ending
+                    and any(owner == token for _, owner in list(held.values()))
+                )
+
+        stop = threading.Event()  # one Event for this renewer thread; nothing sets it, the wait is its timer
+        try:
+            while not stop.wait(2):
+                if not auth.valid(token, touch=False):
+                    return
+                with auth.lock:
+                    if token in auth.ending:
+                        return
+                    pending = [(rid, ws) for rid, (ws, owner) in list(held.items()) if owner == token]
+                if not pending:
+                    return
+                try:
+                    for rid, ws in pending:
+                        state = signer.call(
+                            "status",
+                            {
+                                "workspace_id": ws,
+                                "request_id": rid,
+                                "session": hashlib.sha256(token.encode()).hexdigest(),
+                            },
+                        )
+                        if state.get("state") != "held":
+                            held.pop(rid, None)
+                    if not live():
+                        return
+                    signer.session_alive(hashlib.sha256(token.encode()).hexdigest(), live)
+                except Exception:  # no renewal on channel failure: the signer lease expires
+                    return
+        finally:
+            with auth.lock:
+                lease_workers.discard(token)
+
+    def start_renewing(token: str) -> None:
+        with app.state.auth.lock:
+            if token in lease_workers:
+                return
+            lease_workers.add(token)
+            threading.Thread(target=renew_session, args=(token,), daemon=True).start()
 
     def ready(step: dict) -> dict:
         """A remote session's call goes to a signer that checks the passkey itself (`remote`, `stepup`), or to none: an
@@ -820,7 +875,13 @@ def register(app: FastAPI, gateway: Gateway):
         files = planned.files
 
         def call(idem: str):
-            sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem}
+            sent = {
+                "workspace_id": ws,
+                "op": planned.op,
+                "args": planned.args,
+                "idem": idem,
+                "session": hashlib.sha256(token.encode()).hexdigest(),
+            }
             if files:
                 sent["files"] = files
             if planned.sequence:
@@ -975,10 +1036,26 @@ def register(app: FastAPI, gateway: Gateway):
             raise
 
     @app.post("/api/w/{ws}/click/state", dependencies=[Depends(contract)])
-    def state(body: Step, ws: str = Depends(workspace)):
+    def state(body: Step, request: Request, ws: str = Depends(workspace)):
         """Where a request stands at the host (read through our own link): the answer to an unknown outcome."""
         rid = body.request_id
-        mine(ws, rid)
+        if rid in held:
+            if held[rid] != (ws, request.state.token):
+                raise fail("not_found", exit=2)
+            got = signer.call(
+                "status",
+                {
+                    "workspace_id": ws,
+                    "request_id": rid,
+                    "session": hashlib.sha256(request.state.token.encode()).hexdigest(),
+                },
+            )
+            if got["state"] not in {"held", "unknown"}:
+                held.pop(rid, None)
+            if got["state"] != "unknown":
+                return {"id": rid, **got}
+        else:
+            mine(ws, rid)
         try:
             rows = human(ws, "human.pending", {"request_id": rid})["requests"]
         except HostError:
@@ -994,6 +1071,7 @@ def register(app: FastAPI, gateway: Gateway):
         if got not in STATES:
             return {"id": rid, "state": "unknown"}  # the host sent something this dashboard does not know: say so
         if got not in ("prepared", "bound"):
+            held.pop(rid, None)
             handoffs.settle_all(rid)  # every session's slot
             handoffs.settled(rid)
             clicks.forget(rid)
@@ -1025,7 +1103,14 @@ def register(app: FastAPI, gateway: Gateway):
         # the request is refused by the signer and the host, which are the ones that know.)
         handoffs.begin_sign(ws, rid, handoffs.clock() + TTL + 60)
         try:
-            sent = {**step, "workspace_id": ws, "request_id": rid, "view_digest": body.view_digest}
+            sent = {
+                **step,
+                "workspace_id": ws,
+                "request_id": rid,
+                "view_digest": body.view_digest,
+                "delay_s": body.delay_s,
+                "session": hashlib.sha256(request.state.token.encode()).hexdigest(),
+            }
             if isinstance(wanted, AgentAccess):
                 if body.reveal_key != wanted.reveal_key:  # the key of the review, nothing else (the signer checks too)
                     raise fail("invalid.input", "reveal_key is not the key this review was made for", exit=1)
@@ -1037,11 +1122,28 @@ def register(app: FastAPI, gateway: Gateway):
                     sent["sealed"] = {"hub.backup_key": body.sealed.hub_backup_key.model_dump()}
             elif body.sealed is not None:
                 raise fail("invalid.input", "only a hub step takes a sealed value", exit=1)
-            got = signer.call("sign", sent, lost=lost_sign())
+            if body.delay_s:
+                # Logout marks ending independently of this gate; IPC never holds auth.lock.
+                auth = app.state.auth
+                if not auth.valid(request.state.token, touch=False):
+                    raise fail("session.ended", exit=2)
+                with hold_gate:
+                    with auth.lock:
+                        if request.state.token in auth.ending or request.state.token not in auth.sessions:
+                            raise fail("session.ended", exit=2)
+                        held[rid] = (ws, request.state.token)
+                    start_renewing(request.state.token)
+                    got = signer.call("sign", sent, lost=lost_sign())
+                    if got.get("state") != "held":
+                        held.pop(rid, None)
+            else:
+                got = signer.call("sign", sent, lost=lost_sign())
         except HostError as exc:
             # Before follow-up host reads, which may themselves fail. A definite failure never clears an earlier or a
             # concurrent unknown outcome; the rule lives in Handoffs.end_sign.
             outcome = "uncertain" if exc.error.get("reason") == "uncertain" else "definite"
+            if body.delay_s and outcome == "definite":
+                held.pop(rid, None)
             handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, outcome)
             if exc.error.get("code") == "human.request_state":
                 rows = human(ws, "human.pending", {"request_id": rid}).get("requests", [])
@@ -1063,6 +1165,10 @@ def register(app: FastAPI, gateway: Gateway):
             # Anything else: nobody knows whether the signer signed.
             handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "uncertain")
             raise
+        if got.get("state") == "held":
+            handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "definite")
+            handoffs.settle_all(rid)  # holds have their own signer-owned quota
+            return {**got, "duplicate": False}
         handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "ok")
         clicks.forget(rid)
         handoffs.settle_all(rid)
@@ -1093,13 +1199,28 @@ def register(app: FastAPI, gateway: Gateway):
         return out
 
     @app.post("/api/w/{ws}/click/cancel", dependencies=[Depends(contract)])
-    def cancel(body: Step, ws: str = Depends(workspace)):
+    def cancel(body: Step, request: Request, ws: str = Depends(workspace)):
         mine(ws, body.request_id)
         rid = body.request_id
+        if rid in held:
+            if held[rid] != (ws, request.state.token):
+                raise fail("not_found", exit=2)
+            got = signer.call(
+                "cancel",
+                {
+                    "workspace_id": ws,
+                    "request_id": rid,
+                    "session": hashlib.sha256(request.state.token.encode()).hexdigest(),
+                },
+            )
+            if got.get("state") != "held":
+                held.pop(rid, None)
+            return {"id": rid, **got}
+        mine(ws, rid)
         if handoffs.is_unsettled(rid):
             raise refusal_check("A signature of this is settling; it cannot be cancelled now.")
         try:
-            got = _signer_call("cancel", ws, rid)
+            got = _signer_call("cancel", ws, rid, session=hashlib.sha256(request.state.token.encode()).hexdigest())
         except HostError as exc:
             if (exc.error.get("reason") or exc.error["code"]) in ENDED | {"not_found"}:
                 ended(ws, rid)  # the signer forgot it: cancel it at the host ourselves
@@ -1112,6 +1233,18 @@ def register(app: FastAPI, gateway: Gateway):
     def cancel_session(token: str):
         """Logout: the click requests this session left open are cancelled (best effort, each on its own), except one
         whose signature is unknown and one another session of the person holds too."""
+        # Stop renewal before any potentially blocked IPC. The signer's lease is the safety boundary.
+        for rid, (_, owner) in list(held.items()):
+            if owner == token:
+                held.pop(rid, None)
+                clicks.forget(rid)
+        try:
+            signer.call("cancel_holds", {"session": hashlib.sha256(token.encode()).hexdigest()})
+        except Exception:  # restart is only a backstop; safety does not depend on success
+            try:
+                signer.restart()
+            except Exception:
+                pass
         for rid, ws in handoffs.held(token, "click"):
             if handoffs.is_unsettled(rid):
                 continue  # logout never cancels a signature whose outcome is unknown
@@ -1119,10 +1252,14 @@ def register(app: FastAPI, gateway: Gateway):
                 handoffs.settle(token, rid)
                 continue
             try:
-                signer.call("cancel", {"workspace_id": ws, "request_id": rid})
+                signer.call(
+                    "cancel",
+                    {"workspace_id": ws, "request_id": rid, "session": hashlib.sha256(token.encode()).hexdigest()},
+                )
             except Exception:  # noqa: BLE001 - one failed cancel must not stop the rest, nor the logout
                 pass
             clicks.forget(rid)
             handoffs.settle(token, rid)
 
     app.state.cancel_clicks = cancel_session
+    app.state.auth.on_session_end = cancel_session

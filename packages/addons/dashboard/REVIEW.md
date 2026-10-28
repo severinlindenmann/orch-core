@@ -675,3 +675,7 @@ Open `/w/DEMO/settings/hub?hub=selective` (also `standalone`, `full`, `offline`,
 In Add-ons → Browse, press Install. Required fields appear inline with manifest defaults; edit them and press Install and turn on. The signer shows the exact settings and capability risks. Wait at least one second, then press again to sign the sequence. Without required fields, Install opens the signer directly. Cancelling consumes the stage; staging alone installs nothing. Tokens use the existing sealed login after installation.
 
 D3 validation: 479 core tests (marketplace, add-on sequence, click risk, identity vectors), 404 dashboard server tests, 70 touched Vitest tests, and one vector test each in hub, relay and mobile passed. TypeScript and Ruff passed. Core tests used isolated temporary HOME directories. CLI addon.grant snapshots were refreshed for digest/caps and addon.stage_changed. No commit or push.
+
+### D5 check (2026-10-28)
+
+On a real host, post a comment and let the C3 arm finish: the toast says “Sending in N s; closing this page still sends.” Undo within ten seconds cancels without a signature. Navigate away or close/reopen the page to see delivery checked against the signer. Restart the signer during the wait to see “Not sent”; sleep past the deadline by more than 30 seconds has the same outcome. Add-on off and runner off offer Undo that opens a fresh turn-on review. Follow-up cancel keeps its existing signed, authority-checked Undo within 120 seconds.

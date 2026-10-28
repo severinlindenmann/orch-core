@@ -2086,6 +2086,32 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 **Why:** The enable sequence deliberately refuses already-enabled add-ons. Updates must retain their widened diff and signer-owned capability risk requiring a second press.
 **Revert:** Revert the separate update action, state mapping and review together; do not route enabled updates through `addon_enable`.
 
+## 2026-10-28 — D5 unsigned signer holds
+
+**Decision:** A signer-marked log-only action asks for `sign {delay_s: 10}` after the C3 arm. The signer owns the unsigned queue, session-bound cancel, wall-clock deadline and FIFO order per workspace. More than 30 seconds late means not sent. A restart drops unsigned intents. The shell toast stores only request IDs/deadlines and reads the true outcome after reconnect. Add-on off and runner off offer fresh-review Undo; follow-up cancel retains its existing signed `follow_up.undo` path. Member role changes have no Undo.
+
+**Why:** Closing a browser must not control delivery or expose signed artifacts. Every deadline rechecks custody and host authority. D2/D3 sequences, grants, installs and secret-bearing requests cannot enter the hold queue.
+
+**Revert:** Remove the hold request and toast together with the signer hold queue; keep C3's review, risk lines and second press.
+
+
+## 2026-10-28 — D5 security review: holds end with their session
+
+**Decision:** Session removal (including logout everywhere and expiry) cancels its signer holds and forgets their dashboard entries. Hold admission checks the live session under the same lock as session removal.
+
+**Why:** Holds have already left the handoff quota, so logout must cancel them separately; serialization prevents a hold arriving after its logout cancellation.
+
+**Revert:** Revert the session-removal callback and admission lock together; doing so reopens the logout signing race.
+
+
+## 2026-10-28 — D5 second review: signer-owned session cancellation
+
+**Decision:** Auth marks sessions ending under its lock and drains cleanup after release. Hold admission and cancellation serialize outside that lock; pending holds are recorded before IPC and survive a lost reply. `cancel_holds` cancels the signer's unsigned queue by the SHA-256 hash of the bearer. A failed cancellation kills the signer, with a fresh process started on its next call. Finished dashboard hold entries are pruned; only holds require the preparing session for cancellation. Risk lines disallow holding.
+
+**Why:** The signer owns the queue even when its reply is lost. Slow or failed IPC must neither block authentication under its global lock nor leave unsigned holds eligible to sign after cleanup.
+
+**Revert:** Revert the protocol, admission gate and cleanup together; reverting just one reopens the lost-reply or logout race.
+
 ### 2026-10-28 — C3 review hardening
 
 Decision: Require click contract 4 on every click route; validate the relay's risk allowlist against core. Generate the fake hosts' one-press allowlist from core. Refuse combined click sequences that include agent access until the UI can request a separate grant confirmation (terminal sequences still work). Gate risky confirmations on viewport intersection when supported, expire blocked arms, and prefer signer headlines.
@@ -2094,6 +2120,13 @@ Why: Stale pages must not sign without the risk review; fixtures must reflect th
 
 Revert: Restore the prior gate only together with a coordinated click contract change in core, server, and client.
 
+## 2026-10-28 — D5 third review: signer-enforced session leases
+
+**Decision:** Holds use monotonic deadlines and require a fresh three-second session lease in the signer. Registration renews it; the dashboard renews every two seconds while that session has live holds. Logout stops renewal and sends best-effort cancellation without waiting for the admission gate. Restart on cancellation failure is a backstop. Cleanup failures are isolated per token.
+
+**Why:** A blocked or lost cancellation must not be the mechanism that prevents a disconnected session's holds from signing. Queued input is drained before deadlines; stale leases cancel unsigned holds locally.
+
+**Revert:** Revert the lease protocol and renewal loop together only when replacing them with another signer-enforced liveness boundary.
 ### 2026-10-28 — New-ticket schedule dialog
 
 - **Decision:** Default New schedule to “A new ticket each run”, with a literal title limited to 100 characters. Keep the existing ticket picker as the other choice; preserve the row’s target when undoing cancellation.

@@ -1263,3 +1263,7 @@ Gaps for core: a hub-reachability field in `hub.status` (offline banner), per-ti
 D3 uses the local signer sequence. The existing single-event hub approval route returns `op.unsupported` for it. Signature vectors are shared from `contracts/core/f1/signatures.json` by core, hub, relay and mobile; this repository has no separate vendored copies.
 
 D3 review fix (#1520): enabled updates use `market_update {name, staged, digest, caps}` through the existing signing endpoints, mapped to plain `addon.grant` with those exact args (no enable sequence). The update diff remains visible before signing; capability risk comes from the signer's event-derived risk lines. `market_grant` remains the install-and-enable sequence. Staged grant digest and caps are required; retryable submit refusals retain the stage.
+
+### D5 — unsigned hold (2026-10-28)
+
+The signer's View includes `hold_allowed`, covered by `view_digest`. `POST click/sign` accepts `delay_s: 10` and returns `{state: "held", deadline_ms, duplicate: false}` without signed artifacts. The HTTP server supplies the authenticated preparing session, never a body-supplied session. `click/state` reports held/submitted/not_sent/cancelled/unknown; `click/cancel` returns cancelled or already_signed. Holds survive page closure, not signer restart. A later refusal is terminal and never retried. The signer permits only log, restricted set (labels/priority/size), move, section.set and follow_up.reschedule, excluding sequences. Its per-person cap is 20 and host expiry must leave at least 40 seconds when admitted.

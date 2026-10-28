@@ -310,4 +310,6 @@ def test_four_distinct_short_code_words_are_hidden_three_are_not():
     three = "go to item, then login, and tree it"
     assert redact_reason(three, held) == three
     msg = "Open System Settings, General, Login Items & Extensions and allow orch, then try again"
-    assert redact_reason(msg, held_words("zebra yonder login items allow")) == msg  # real message, pinned secrets
+    assert (
+        redact_reason(msg, held_words("zebra yonder harbor falcon walnut")) == msg
+    )  # real message; pinned words absent from it

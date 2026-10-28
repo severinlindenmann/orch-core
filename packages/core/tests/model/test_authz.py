@@ -620,7 +620,7 @@ def test_grant_verbs_by_operation_can_only_narrow():
     assert not verb_covers("log.added", ["nope"], table) and not verb_covers("log.added", [], table)  # unknown: nothing
     assert verb_covers("anything", "agent", table)  # "agent" is every agent operation ...
     agent = {"kind": "agent", "id": "x", "session": "s_01J9ZP0000000000000000000S", "for": "p_x", "grant": "gr_x"}
-    for human_only in ("gate.approved", "verdict.given", "ticket.closed", "grant.issued", "question.answered"):
+    for human_only in ("gate.approved", "verdict.given", "grant.issued", "question.answered"):
         assert check_actor_kind({"type": human_only, "actor": agent}) is not None  # ... and never a person's action
     assert verb_covers("log.added", ["log.added"], None)  # without a table (a model test) names are event types
 

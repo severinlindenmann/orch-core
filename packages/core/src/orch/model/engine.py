@@ -149,7 +149,11 @@ def _chain_check(core: Core, log: str, lc: LogCore, e: dict[str, Any], ctx: Ctx)
             sigs = getattr(ctx.verifier, "verify_custodial_sigs", None)
             if sigs is None or "sig" not in e or not sigs(e, workspace_id=core.ws.workspace_id, log=log):
                 return Refusal(Code.CHAIN_BROKEN, "the hub signatures do not verify")
-        elif e["actor"]["kind"] == "person" and (r := _person_sig_check(core, log, e, ctx, genesis)) is not None:
+        elif (
+            e["actor"]["kind"] == "person"
+            and not (e["type"] == "ticket.created" and "via" in e)
+            and (r := _person_sig_check(core, log, e, ctx, genesis)) is not None
+        ):
             return r
     if kind == "ticket":
         wsh = core.logs[WORKSPACE].seq if WORKSPACE in core.logs else 0
@@ -168,7 +172,12 @@ def _envelope_check(lc: LogCore, e: dict[str, Any]) -> Refusal | None:
     if e["id"] in lc.ids:
         return Refusal(Code.EVENT_DUPLICATE_ID, e["id"])
     based = e["based_on"]
-    if (e["seq"] == 1) != (based is None) or (based is not None and lc.heads.get(based, e["seq"]) >= e["seq"]):
+    anchor_set = e["type"] == "schedule.set" and e.get("target") == "new" and e["seq"] == 2
+    if (
+        not anchor_set
+        and (e["seq"] == 1) != (based is None)
+        or (based is not None and lc.heads.get(based, e["seq"]) >= e["seq"])
+    ):
         return Refusal(Code.EVENT_BAD_BASE, "based_on must be the head of an earlier event of this log")
     return None
 
@@ -314,6 +323,8 @@ def _authorize(core: Core, log: str, t: TCore | None, e: dict[str, Any], ctx: Ct
         return None if not ws.created else Refusal(Code.GENESIS_INVALID, "the workspace already has a genesis")
     if not ws.created:
         return Refusal(Code.GENESIS_INVALID, "the first event of a workspace is workspace.created")
+    if e["type"] == "ticket.created" and "via" in e:
+        return schedules_wire.child_creation(core, log, e) or authz.freeze_check(core, log, e)
     if a["kind"] == "person" and "via" in a:
         if (r := authz.authorize_hub(core, log, e, ctx.verifier, dev=hub_dev_of(core, ctx))) is not None:
             return r

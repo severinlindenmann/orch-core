@@ -150,7 +150,9 @@ class ScheduleAdd(Action):
     "YYYY-MM-DD HH:MM" for a one-off one (no `every`); both are in `tz`."""
 
     action: Literal["schedule_add"]
-    key: Key
+    key: Key | None = None
+    target: Literal["existing", "new"] | None = None
+    title: Annotated[str, StringConstraints(min_length=1, max_length=100), AfterValidator(no_hidden)] | None = None
     brief: Text
     at: Annotated[str, StringConstraints(min_length=5, max_length=16)]
     every: Literal["day", "week", "month"] | None = None
@@ -161,6 +163,11 @@ class ScheduleAdd(Action):
 
     @model_validator(mode="after")
     def shape(self):
+        if self.target == "new":
+            if self.key is not None or self.title is None or not self.title.strip():
+                raise ValueError("a new-ticket schedule needs a title and no ticket")
+        elif self.key is None:
+            raise ValueError("an existing-ticket schedule needs a ticket")
         if self.every is None:
             try:
                 if not ONCE_AT.fullmatch(self.at):
@@ -178,6 +185,12 @@ class ScheduleAdd(Action):
 
     def props(self) -> dict:
         out: dict = {"ref": self.key, "brief": self.brief, "at": self.at, "tz": self.tz}
+        if self.target == "new":
+            out.pop("ref")
+        if self.target is not None:
+            out["target"] = self.target
+        if self.title is not None:
+            out["title"] = self.title
         if self.every:
             out["every"] = self.every
         if self.weekdays is not None:

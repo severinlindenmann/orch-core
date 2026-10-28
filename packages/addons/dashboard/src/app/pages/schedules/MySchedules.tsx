@@ -5,6 +5,8 @@ import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { DEFAULT_MIN_LEAD_S, firstSlot, leadSentence, scheduleAddAction, scheduleKey, scheduleSummary, skippedText, startsTooSoon, useSchedules, type ScheduleForm, type ScheduleRepeat, type ScheduleRow } from '@/api/schedules'
+import { InfoDrawer } from '@/components/InfoDrawer'
+import { Raw } from '@/components/sign/visible'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { DatePicker } from '@/components/pickers/DatePicker'
 import { Dropdown } from '@/components/pickers/Dropdown'
@@ -79,6 +81,8 @@ export function nextRunText(row: ScheduleRow, now = new Date()): string | null {
 /** The form that would create this schedule again (Undo of a cancel). */
 const formOf = (row: ScheduleRow): ScheduleForm => ({
   ticket: row.ticket,
+  target: row.target,
+  title: row.title ?? undefined,
   brief: row.brief,
   repeat: row.rule.every ?? 'once',
   date: row.rule.date?.slice(0, 10),
@@ -117,7 +121,7 @@ function CancelButton({ row, ws }: { row: ScheduleRow; ws: string }) {
       {phase === 'undo' && (
         <SignPopover
           ws={ws}
-          title={`Restore the schedule on ${row.ticket}`}
+          title={row.target === 'new' ? 'Restore schedule: A new ticket each run' : `Restore the schedule on ${row.ticket}`}
           action={scheduleAddAction(formOf(row))}
           confirmLabel="Restore schedule"
           onSettled={(p) => p === 'done' && refresh()}
@@ -176,6 +180,8 @@ function NewScheduleDialog({ ws, tickets, maxHours, leadS, onClose }: { ws: stri
   })
   const options = tickets ?? found.data ?? []
   const [signing, setSigning] = useState(false)
+  const [target, setTarget] = useState<'new' | 'existing'>('new')
+  const [title, setTitle] = useState('')
   const [ticket, setTicket] = useState('')
   const [brief, setBrief] = useState('')
   const [repeat, setRepeat] = useState<ScheduleRepeat>('once')
@@ -192,31 +198,49 @@ function NewScheduleDialog({ ws, tickets, maxHours, leadS, onClose }: { ws: stri
     setDate(d)
     if (d === slot.date && time < slot.time) setTime(slot.time)
   }
-  const form: ScheduleForm = { ticket, brief: brief.trim(), repeat, date: repeat === 'once' ? date : undefined, time, weekdays, day, tz }
+  const form: ScheduleForm = { target, title, ticket, brief: brief.trim(), repeat, date: repeat === 'once' ? date : undefined, time, weekdays, day, tz }
   const summary = scheduleSummary({ every: repeat === 'once' ? undefined : repeat, at: time, tz, weekdays, day, date: repeat === 'once' ? date : undefined })
   const tooSoon = (repeat !== 'once' || /^\d{4}-\d\d-\d\d$/.test(date)) && (repeat !== 'week' || weekdays.length > 0) && startsTooSoon(form, now, leadS)
-  const valid = !!ticket && !!form.brief && brief.length <= MAX_BRIEF && (repeat !== 'once' || /^\d{4}-\d\d-\d\d$/.test(date)) && (repeat !== 'week' || weekdays.length > 0) && !tooSoon
+  const valid = (target === 'new' ? !!title.trim() && title.length <= 100 : !!ticket) && !!form.brief && brief.length <= MAX_BRIEF && (repeat !== 'once' || /^\d{4}-\d\d-\d\d$/.test(date)) && (repeat !== 'week' || weekdays.length > 0) && !tooSoon
   const label = 'text-[12px] font-medium text-text-muted'
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div role="dialog" aria-modal="true" aria-label="New schedule" className="max-h-full w-full max-w-lg space-y-4 overflow-y-auto rounded-lg border border-border bg-surface p-4">
         <h2 className="text-base font-semibold">New schedule</h2>
-        <div className="space-y-1">
-          <label htmlFor="sched-ticket" className={label}>
-            Ticket
-          </label>
-          {options.length ? (
-            <Dropdown
-              id="sched-ticket"
-              ariaLabel="Ticket"
-              value={ticket}
-              onChange={setTicket}
-              options={[{ value: '', label: 'Pick a ticket', disabled: true }, ...options.map((t) => ({ value: t.key, label: `${t.key} ${t.title}` }))]}
-            />
-          ) : (
-            <p className="text-[12px] text-text-faint">No open tickets.</p>
-          )}
-        </div>
+        <fieldset className="space-y-1">
+          <legend className={label}>What should each run work on?</legend>
+          <div className="flex flex-wrap gap-3 text-[13px]">
+            <label className="flex items-center gap-1"><input type="radio" name="schedule-target" checked={target === 'new'} onChange={() => setTarget('new')} />A new ticket each run</label>
+            <label className="flex items-center gap-1"><input type="radio" name="schedule-target" checked={target === 'existing'} onChange={() => setTarget('existing')} />An existing ticket</label>
+          </div>
+        </fieldset>
+        {target === 'new' ? (
+          <div className="space-y-1">
+            <label htmlFor="sched-title" className={label}>Ticket title</label>
+            <input id="sched-title" value={title} maxLength={100} placeholder="Check the shared mailbox" onChange={(e) => setTitle(e.target.value)} className="w-full rounded border border-border bg-transparent p-2 text-[13px]" />
+            <p className="text-[12px] text-text-faint">Each run starts a fresh ticket titled <Raw>{title || 'Check the shared mailbox'}</Raw> and today's date. The agent can close it if there is nothing to do.</p>
+            <InfoDrawer label="About new tickets" title="A new ticket each run">
+              <p>Each run uses the date in the schedule’s time zone. The agent can work on and close that run’s ticket. If the previous ticket is still open, the next run is skipped. Cancelling the schedule stops future runs; tickets already created stay as they are.</p>
+            </InfoDrawer>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <label htmlFor="sched-ticket" className={label}>
+              Ticket
+            </label>
+            {options.length ? (
+              <Dropdown
+                id="sched-ticket"
+                ariaLabel="Ticket"
+                value={ticket}
+                onChange={setTicket}
+                options={[{ value: '', label: 'Pick a ticket', disabled: true }, ...options.map((t) => ({ value: t.key, label: `${t.key} ${t.title}` }))]}
+              />
+            ) : (
+              <p className="text-[12px] text-text-faint">No open tickets.</p>
+            )}
+          </div>
+        )}
         <label className="block space-y-1">
           <span className={label}>What should the agent do</span>
           <textarea value={brief} maxLength={MAX_BRIEF} rows={3} onChange={(e) => setBrief(e.target.value)} className="w-full rounded border border-border bg-transparent p-2 text-[13px]" />
@@ -272,7 +296,7 @@ function NewScheduleDialog({ ws, tickets, maxHours, leadS, onClose }: { ws: stri
           {signing && (
             <SignPopover
               ws={ws}
-              title={`Schedule on ${ticket}`}
+              title={target === 'new' ? 'A new ticket each run' : `Schedule on ${ticket}`}
               action={scheduleAddAction(form)}
               confirmLabel="Create schedule"
               minLeadS={leadS}

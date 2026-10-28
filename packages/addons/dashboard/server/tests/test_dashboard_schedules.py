@@ -303,3 +303,36 @@ def test_plan_cancel_needs_the_schedule_on_that_ticket():
 def test_plan_add_has_no_base():
     planned = signing.plan(FakeGateway(), "w", signing.ScheduleAdd(**add()))
     assert planned.op == "schedule.add" and planned.base is None
+
+
+@pytest.mark.parametrize("target", [None, "existing"])
+def test_schedule_add_existing_target(target):
+    body = signing.ScheduleAdd(**add(target=target))
+    _, args = signing.host_call(body)
+    assert args["ref"] == KEY
+    assert "title" not in args
+    if target is None:
+        assert "target" not in args
+    else:
+        assert args["target"] == target
+
+
+def test_schedule_add_new_target():
+    data = add(target="new", title="Check the shared mailbox")
+    del data["key"]
+    body = signing.ScheduleAdd(**data)
+    _, args = signing.host_call(body)
+    assert args["target"] == "new"
+    assert args["title"] == data["title"]
+    assert "ref" not in args
+
+
+@pytest.mark.parametrize("over", [
+    {"target": "unknown"}, {"key": None}, {"target": "existing", "key": None},
+    {"target": "new", "title": "Mailbox"},
+    {"target": "new", "key": None},
+    *({"target": "new", "key": None, "title": title} for title in ["", "   ", "x" * 101, "mail\u200bbox"]),
+])
+def test_schedule_add_target_refusals(over):
+    with pytest.raises(ValidationError):
+        signing.ScheduleAdd(**add(**over))

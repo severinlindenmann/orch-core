@@ -30,7 +30,8 @@ export interface ScheduleRow {
   id: string
   /** The ticket key. */
   ticket: string
-  title: string | null
+  target?: 'existing' | 'new'
+  title?: string | null
   rule: ScheduleRule
   ends: string | null
   /** When it runs next, ISO UTC; null for one that is over. Absent only from a host that does not say. */
@@ -179,6 +180,8 @@ export type ScheduleRepeat = 'once' | 'day' | 'week' | 'month'
 
 /** What the "Schedule a run" form holds. `date` is YYYY-MM-DD (once only), `time` is HH:MM, weekdays are Monday = 0. */
 export interface ScheduleForm {
+  target?: 'existing' | 'new'
+  title?: string
   ticket: string
   brief: string
   repeat: ScheduleRepeat
@@ -197,7 +200,7 @@ export type ScheduleAddAction = Extract<HandoffAction, { action: 'schedule_add' 
 export function scheduleAddAction(form: ScheduleForm): ScheduleAddAction {
   const action: ScheduleAddAction = {
     action: 'schedule_add',
-    key: form.ticket,
+    ...(form.target === 'new' ? { target: 'new' as const, title: form.title ?? '' } : { key: form.ticket }),
     brief: form.brief,
     at: form.repeat === 'once' ? `${form.date ?? ''} ${form.time}` : form.time,
     tz: form.tz || 'UTC',

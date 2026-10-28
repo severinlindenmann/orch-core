@@ -91,6 +91,7 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
         "sections",
         "artifact_kinds",
         "runtime",
+        "staged",
     ),
     "addon.disabled": ("name",),
     "addon.purged": ("name",),

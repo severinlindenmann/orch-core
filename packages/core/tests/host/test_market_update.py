@@ -204,7 +204,7 @@ def test_a_stage_whose_class_is_gone_cannot_be_granted(served, human, net, v1):
     doc = f.read_stage(st["stage"])
     path.write_bytes(json.dumps({**doc, "class": "dev"}).encode())
     path.chmod(0o600)
-    assert err(human.submit_res(prepared["request"]["id"], human.sign(prepared).events)) == "market.staged_changed"
+    assert err(human.submit_res(prepared["request"]["id"], human.sign(prepared).events)) == "addon.stage_changed"
 
 
 def test_a_hub_joined_between_stage_and_submit_refuses_the_grant_and_changes_nothing(
@@ -229,7 +229,7 @@ def test_the_index_must_still_list_the_staged_bytes_at_submit(served, human, net
     prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
     signed = human.sign(prepared)
     publish(served, net, "1.2.0")  # the marketplace moved on: 1.1.0 is no longer what it lists
-    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.staged_changed"
+    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "addon.stage_changed"
     assert mfiles(served).installs()["addons"]["standup"]["version"] == "1.0.0"
 
 
@@ -243,4 +243,4 @@ def test_an_older_index_than_the_stage_saw_is_refused_at_submit(served, human, n
     path = f.dir / "staged" / f"{st['stage']}.json"
     path.write_bytes(json.dumps({**doc, "index_version": 99}).encode())
     path.chmod(0o600)
-    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.staged_changed"
+    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "addon.stage_changed"

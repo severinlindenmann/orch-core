@@ -2245,6 +2245,24 @@ process of the UID connects in tier A), and it would expose activity timing to e
 
 #### 0.8.6 Click-to-sign (convenience custody, H5c, D-P2-23)
 
+**D3 (28 Oct 2026): install and turn on.** `market.stage` remains unsigned and installs nothing.
+A staged `addon_enable` intent carries `{v:1, kind, name, staged, settings, grant}`. Its only steps are
+`settings.set` when the manifest has required fields, followed by `addon.grant {name, staged, digest, caps}`.
+The signed `addon.granted` event retains the existing names `package_sha256` and `capabilities` for digest and
+caps, and additionally signs `staged`. The stage ID is single-use and expires after 30 minutes. At submit, under
+the store lock, the host re-hashes the stage, compares the signed digest and capabilities, and journals the verified
+bytes with the submission. Installation uses that snapshot; it never substitutes a later read. Mismatch is
+`addon.stage_changed`; refusal consumes the stage. An already-on add-on is refused before the settings prefix,
+including at submit. A settings-only prefix installs nothing.
+
+Required settings are checked against the staged manifest. Defaults are displayed as explicit editable values and
+signed exactly as displayed; no secret schema fields are accepted. Tokens use the sealed `github_token` flow after
+installation. The signer-owned View shows name, version, publisher (labelled per host), and settings inline; the digest
+is in technical details. Capabilities use C3 risk lines and require the second trusted press after at least one second.
+The shared F1 signature vectors include a staged grant and stage/digest/capability tampering cases consumed by core,
+hub, relay and mobile. D3 introduces no signer hold or browser timer for submission.
+
+
 **0. The trust boundary (read this first).** The signer constructs and validates the review data and binds signing to
 the corresponding immutable signing bytes. **The dashboard HTTP process and its browser application are trusted to
 display that review and request signing only after confirmation.** The signer cannot verify display or human

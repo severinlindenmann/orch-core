@@ -67,7 +67,7 @@ def test_submit_refuses_when_the_index_now_names_another_publisher(served, human
     net.entries = [e]
     net.version += 1
     ok(person(served, "market.refresh"))
-    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.staged_changed"
+    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "addon.stage_changed"
     assert mfiles(served).installs()["keys"] == {}
 
 

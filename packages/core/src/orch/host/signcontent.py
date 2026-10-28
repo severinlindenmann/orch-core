@@ -68,7 +68,17 @@ SHOWN: dict[str, frozenset[str]] = {
     "addon.disabled": frozenset({"name"}),
     "addon.purged": frozenset({"name"}),
     "addon.granted": frozenset(
-        {"name", "version", "package_sha256", "capabilities", "artifact_kinds", "fields", "sections", "runtime"}
+        {
+            "name",
+            "version",
+            "package_sha256",
+            "capabilities",
+            "artifact_kinds",
+            "fields",
+            "sections",
+            "runtime",
+            "staged",
+        }
     ),
     "artifact.added": frozenset({"name", "kind", "label", "ac", "task", "ref", "addon", "bytes", "sha256"}),
     "artifact.replaced": frozenset({"name", "kind", "label", "ac", "task", "replaces", "bytes", "sha256"}),

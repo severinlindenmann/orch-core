@@ -473,7 +473,9 @@ def _stage(service: WorkspaceService, plan: dict[str, Any], call: Call | None = 
     body = {k: val for k, val in event.items() if k != "type"}
     return {
         "stage": stage, "expires_at": int(expires), "name": name, "version": entry["version"],
-        "package_sha256": pkg.digest, "grant": body, "review": review, "market": market, "update": change,
+        "package_sha256": pkg.digest, "grant": {**body, "staged": stage},
+        "settings_schema": (manifest.settings or {}).get("schema"), "review": review,
+        "market": market, "update": change,
         "deps": dep_view,
     }  # fmt: skip
 
@@ -535,7 +537,8 @@ def _dev_stage(service: WorkspaceService, plan: dict[str, Any]) -> dict[str, Any
     body = {k: val for k, val in event.items() if k != "type"}
     return {
         "stage": stage, "expires_at": int(expires), "name": name, "version": manifest.version, "commit": commit,
-        "package_sha256": pkg.digest, "grant": body, "review": review, "dev": True,
+        "package_sha256": pkg.digest, "grant": {**body, "staged": stage},
+        "settings_schema": (manifest.settings or {}).get("schema"), "review": review, "dev": True,
     }  # fmt: skip
 
 
@@ -547,7 +550,7 @@ def staged_package(files: MarketFiles, name: str, stage: str, now: float) -> Any
     doc = files.read_stage(stage)
     if doc is None or doc.get("name") != name or not isinstance(doc.get("expires_at"), (int, float)):
         raise MarketError("market.staged_changed")
-    if now > doc["expires_at"]:
+    if now >= doc["expires_at"]:
         raise MarketError("market.staged_changed")
     try:
         pkg = from_files({p: base64.b64decode(b, validate=True) for p, b in doc["files"].items()})
@@ -557,7 +560,7 @@ def staged_package(files: MarketFiles, name: str, stage: str, now: float) -> Any
             {**doc["entry"], "package_sha256": doc["digest"]}, doc["tofu"], doc["publisher_key"], None
         )  # the entry as it was when it passed steps 1 to 10
         manifest = mi.check_package(facts, pkg, CORE_VERSION)
-    except (PackageError, ValueError, KeyError, TypeError):
+    except (PackageError, MarketError, ValueError, KeyError, TypeError):
         raise MarketError("market.staged_changed") from None
     return doc, pkg, manifest
 
@@ -572,7 +575,10 @@ def recheck(service: WorkspaceService, record: dict[str, Any], events: list[dict
     try:
         _recheck(service, record, ev)
     except MarketError as exc:
-        raise HostError(exc.code, ERRORS[exc.code].message if exc.code in ERRORS else exc.code) from None
+        if record.get("staged"):
+            _files(service).drop_stage(record["staged"]["stage"])
+        code = "addon.stage_changed" if exc.code == "market.staged_changed" else exc.code
+        raise HostError(code, ERRORS[code].message if code in ERRORS else code) from None
 
 
 def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, Any]) -> None:
@@ -590,9 +596,21 @@ def _recheck(service: WorkspaceService, record: dict[str, Any], ev: dict[str, An
             )  # fmt: skip
             hubpolicy.check(service, pol, grant, files.installs()[ADDONS].get(ev.get("name")))
         return
-    doc, pkg, _ = staged_package(files, ev["name"], staged["stage"], service.clock())
-    if pkg.digest != ev["package_sha256"] or doc["version"] != ev["version"]:
+    if record.get("sequence"):
+        from orch.addons.settings_needs import is_on
+
+        if is_on(service.store.state.workspace.addons, ev["name"]):
+            raise MarketError("market.still_enabled")
+    doc, pkg, mf = staged_package(files, ev["name"], staged["stage"], service.clock())
+    expected = install.grant_event(mf, pkg)
+    if (
+        pkg.digest != ev["package_sha256"]
+        or doc["version"] != ev["version"]
+        or expected["capabilities"] != ev["capabilities"]
+        or ev.get("staged") != staged["stage"]
+    ):
         raise MarketError("market.staged_changed")
+    record["verified_stage"] = doc
     if doc.get("dev") is True:  # a dev folder: no index to re-read; the dev gate and the name, as they are now
         _recheck_dev(service, files, ev)
         return
@@ -678,7 +696,10 @@ def after_grant(service: WorkspaceService, record: dict[str, Any], signed: list[
     if record.get("op") != "addon.grant" or staged is None or not signed:
         return
     try:
-        _converge(service, staged["stage"], signed[0])
+        with service.store.locked():
+            _converge(service, staged["stage"], signed[0], verified=record.get("verified_stage"))
+            if _files(service).read_stage(staged["stage"]) is None:
+                record.pop("verified_stage", None)
     except Exception:  # noqa: BLE001 - fail closed: the digest check of the registry holds the add-on back
         LOG.exception("market install: finishing the swap of %s failed", staged.get("stage"))
 
@@ -698,12 +719,12 @@ def sweep_credentials(service: WorkspaceService) -> None:
         LOG.exception("add-on credential sweep failed")
 
 
-def _converge(service: WorkspaceService, stage: str, ev: dict[str, Any]) -> None:
+def _converge(service: WorkspaceService, stage: str, ev: dict[str, Any], *, verified: Any = None) -> None:
     files = _files(service)
     name, digest = ev["name"], ev["package_sha256"]
     root = _store_root(service)
     addons = root / install.ADDONS_DIR
-    doc = files.read_stage(stage)
+    doc = verified if verified is not None else files.read_stage(stage)
     pkg = None
     if doc is not None:
         with contextlib.suppress(PackageError, ValueError):
@@ -956,3 +977,13 @@ def _uninstall(service: WorkspaceService, name: str) -> dict[str, Any]:
             write(cur)
     credential.remove(service.state_dir, service.workspace_id, name)  # V3 G6 C4: the key goes with the package
     return {"name": name, "removed": True}
+
+
+def discard_request_stage(service: WorkspaceService, record: dict[str, Any]) -> None:
+    """Consume a refused/cancelled request's stage, never a submission pending crash recovery."""
+    if record.get("submit"):
+        return
+    stage = (record.get("staged") or {}).get("stage")
+    stage = stage or ((record.get("sequence") or {}).get("intent") or {}).get("staged")
+    if stage:
+        _files(service).drop_stage(stage)

@@ -44,9 +44,19 @@ export interface InstalledAddon {
   available: null | { version: string; package_sha256: string; capabilities_added: string[]; revoked: boolean; stale: boolean }
 }
 export type Changes = Record<'capabilities' | 'fields' | 'sections' | 'needs' | 'artifact_kinds', string[]>
+export interface InstallSettingSchema {
+  type: 'object' | 'string' | 'integer' | 'boolean' | 'array'
+  title?: string
+  default?: unknown
+  properties?: Record<string, InstallSettingSchema>
+  required?: string[]
+  enum?: string[]
+}
 export interface MarketStage {
+  grant: Record<string, unknown>
+  settings_schema?: InstallSettingSchema | null
   stage: string
-  expires_at: string
+  expires_at: number
   name: string
   version: string
   package_sha256: string

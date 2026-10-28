@@ -669,3 +669,9 @@ Tests were added for the lead to run; this task does not run Vitest or pytest.
 ## Try the hub pages (V3 A7)
 
 Open `/w/DEMO/settings/hub?hub=selective` (also `standalone`, `full`, `offline`, `nottold`): the chip in the top bar, the three Hub pages, "Choose what to share" with its live preview, the switch to full access (type "full access"), Leave, and the Terminal step with its copy box. Tickets shows the Hub column in selective mode only. Nothing is signed in the page.
+
+### D3 — install and turn on (28 Oct 2026)
+
+In Add-ons → Browse, press Install. Required fields appear inline with manifest defaults; edit them and press Install and turn on. The signer shows the exact settings and capability risks. Wait at least one second, then press again to sign the sequence. Without required fields, Install opens the signer directly. Cancelling consumes the stage; staging alone installs nothing. Tokens use the existing sealed login after installation.
+
+D3 validation: 479 core tests (marketplace, add-on sequence, click risk, identity vectors), 404 dashboard server tests, 70 touched Vitest tests, and one vector test each in hub, relay and mobile passed. TypeScript and Ruff passed. Core tests used isolated temporary HOME directories. CLI addon.grant snapshots were refreshed for digest/caps and addon.stage_changed. No commit or push.

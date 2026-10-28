@@ -195,7 +195,12 @@ def handle_settings(ctx: Context, args: dict[str, Any]) -> Result:
         if len(changes) != 1:
             raise OrchError("invalid.input", "add-on settings are changed on their own")
         with h.store.locked():
-            why = settings_value.check_granted(h.store, changes[ADDONS_KEY])
+            meta = ctx.prepare.sequence if ctx.prepare is not None else None
+            if meta and meta["intent"].get("staged"):
+                # human._sequence already checked these exact values against the stage.
+                why = None
+            else:
+                why = settings_value.check_granted(h.store, changes[ADDONS_KEY])
         if why is not None:
             raise OrchError("invalid.input", f"add-on settings: {why}")
     refusal = settings_needs.clear_refusal(changes, h.store.state.workspace.addons)  # AE4: never on without settings

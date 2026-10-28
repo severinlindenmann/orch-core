@@ -37,6 +37,7 @@ from .signing import (
     HubJoin,
     HubLeave,
     HubModeFull,
+    MarketGrant,
     NewTicketSequence,
     PrepareBody,
     QuickStart,
@@ -783,7 +784,10 @@ def register(app: FastAPI, gateway: Gateway):
         grant = isinstance(body, RunnerGrant)
         if isinstance(body, AgentAccess) and not signer.reveals():
             raise fail("click.contract", "Update orch-core: its signing helper cannot show a grant secret yet.", exit=9)
-        if isinstance(body, NewTicketSequence | EditTicket | QuickStart | AddonEnable) and not signer.sequences():
+        if (
+            isinstance(body, NewTicketSequence | EditTicket | QuickStart | AddonEnable | MarketGrant)
+            and not signer.sequences()
+        ):
             # an older signer would ignore `sequence` and sign the first step only
             raise fail(
                 "click.contract", "Update orch-core: its signing helper can't sign a ticket and its text yet.", exit=9

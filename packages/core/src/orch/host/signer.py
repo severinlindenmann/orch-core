@@ -547,9 +547,20 @@ def _hashes(prepared: Mapping[str, Any], workspace_id: str) -> None:
         _question(material, events[0], workspace_id, log)
     _before(material, events)
     _grants(material, events)
-    _market(material, events)
+    market_events = events
+    seq = material.get("sequence")
+    if isinstance(seq, Mapping) and (seq.get("intent") or {}).get("kind") == "addon_enable":
+        from . import sequence
+
+        try:
+            intent = sequence.validate_intent(seq["intent"])
+        except sequence.SequenceInvalid:
+            _refuse("invalid add-on sequence")
+        if intent.get("staged"):
+            market_events = [{"type": "addon.granted", **intent["grant"]}]
+    _market(material, market_events)
     _removed_device(material, events)
-    _deps(material, events)
+    _deps(material, market_events)
 
 
 def _gate(material: Mapping[str, Any], ev: Mapping[str, Any], workspace_id: str, log: str) -> None:

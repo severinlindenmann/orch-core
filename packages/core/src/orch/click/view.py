@@ -240,9 +240,18 @@ def build(
     shown_ticket = content.get("ticket") if content is not None else None
     view["headline"] = headline(str(prepared["op"]), ticket.get("key"))
     view["headline_detail"] = headline_detail(shown_ticket.get("title") if isinstance(shown_ticket, Mapping) else None)
+    seq = prepared.get("material", {}).get("sequence")
+    risk_prepared = prepared
+    if seq is not None and seq["intent"]["kind"] == "addon_enable":
+        from orch.host import sequence
+
+        risk_prepared = sequence.expand(prepared)
     view["risk_lines"] = risk_lines(
-        str(prepared["op"]), list(prepared.get("events") or []), deposit=deposit, reveal=reveal is not None
+        str(prepared["op"]), list(risk_prepared.get("events") or []), deposit=deposit, reveal=reveal is not None
     )
+    if seq and seq["intent"]["kind"] == "addon_enable":
+        view["headline"] = "Install and turn on add-on" if seq["intent"].get("staged") else "Turn on add-on"
+        view["risk_lines"] = risk_lines("addon.grant", list(risk_prepared["events"]))
     if prepared["op"] == "schedule.add":
         # run 13: the schedule's own risk is a line of the review (FIRST: the review shows `lines` in a short scroll
         # box and the consequence must be read before the rule's details); `risk` stays the convenience notice

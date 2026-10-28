@@ -260,11 +260,13 @@ def test_a_stage_that_was_edited_expired_or_is_another_name_is_staged_changed(se
         d["files"]["main.py"] = base64.b64encode(b"print('evil')\n").decode()
 
     stage_edit(served, st, edit)
-    assert err(human.prepare_res("addon.grant", {"name": "standup", "staged": st})) == "market.staged_changed"
+    assert err(human.prepare_res("addon.grant", {"name": "standup", "staged": st})) == "addon.stage_changed"
     st2 = ok(stage(served))["data"]["stage"]
-    assert err(human.prepare_res("addon.grant", {"name": "other", "staged": st2})) == "market.staged_changed"
+    assert err(human.prepare_res("addon.grant", {"name": "other", "staged": st2})) == "addon.stage_changed"
+    assert mfiles(served).read_stage(st2) is None
+    st2 = ok(stage(served))["data"]["stage"]
     stage_edit(served, st2, lambda d: d.update(expires_at=1))
-    assert err(human.prepare_res("addon.grant", {"name": "standup", "staged": st2})) == "market.staged_changed"
+    assert err(human.prepare_res("addon.grant", {"name": "standup", "staged": st2})) == "addon.stage_changed"
     nothing_changed_but_stage(served)
 
 
@@ -280,7 +282,7 @@ def test_a_stage_swapped_between_prepare_and_submit_is_refused_under_the_lock(se
     prepared = human.prepare("addon.grant", {"name": "standup", "staged": st})
     signed = human.sign(prepared)
     stage_edit(served, st, lambda d: d["files"].update(**{"main.py": base64.b64encode(b"x").decode()}))
-    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.staged_changed"
+    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "addon.stage_changed"
     nothing_changed_but_stage(served)
     log = served.lab.ws.workspace_events() if hasattr(served.lab.ws, "workspace_events") else None
     assert log is None or all(e["type"] != "addon.granted" for e in log)
@@ -303,6 +305,12 @@ def test_the_install_record_is_rechecked_at_submit(served, human, ready):
         cur["seen"] = {}
         cur["keys"][f"{H.OFFICIAL}|standup"] = "B" * 87  # a key this release does not pin (a retired one)
         write(cur)
+    # A refused stage is consumed: changing the floor does not revive it.
+    assert mfiles(served).read_stage(st) is None
+    assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "addon.stage_changed"
+    st = ok(stage(served))["data"]["stage"]
+    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st})
+    signed = human.sign(prepared)
     # official class (#1191): the staged key is pinned by this release, so a record on another key is a rotation; the
     # strict TOFU recheck of a key change is in test_market_update (pins changed) and test_rotation (other classes)
     ok(human.submit_res(prepared["request"]["id"], signed.events))

@@ -1,4 +1,60 @@
 {
+ "addon_event": {
+  "cert": {
+   "o": {
+    "created_ms": 1790000000000,
+    "device_id": "c65032f21d43401cc223b05723c1e5b4",
+    "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+    "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+    "expires_ms": null,
+    "kind": "device_cert",
+    "label_sealed": "bGFiZWwgc2V2MQ",
+    "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+    "scopes_max": [
+     "look",
+     "decide",
+     "operate",
+     "type"
+    ],
+    "suite": 2,
+    "v": 2
+   },
+   "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+  },
+  "event": {
+   "actor": {
+    "device": "d_c65032f21d43401cc223b05723c1e5b4",
+    "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+    "kind": "person"
+   },
+   "artifact_kinds": [],
+   "at": "2026-10-10T10:00:50Z",
+   "auth": "passphrase",
+   "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+   "capabilities": [
+    "network"
+   ],
+   "fields": {},
+   "hash_v": 1,
+   "host_sig": "idtZKBeYU7rnfvy9oIdGps2acgAngv1hYbkHGt8_mu2atEAW1ZHulUG74daSVxz36csNfzJTx_7KHfSoQIgQUA",
+   "id": "01J9ZK00000000000000000005",
+   "name": "standup",
+   "package_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+   "roster_v": 3,
+   "sections": [],
+   "seq": 4,
+   "sig": "pJhiT7BaPPSvSvPbx6lWYffioJz44qbHRTr01JXligOgnv9NcIZxRiT9jrTWg-IlvGsJ4fbp85UWxpw7juVRJw",
+   "staged": "st_11111111111111111111111111111111",
+   "type": "addon.granted",
+   "v": 2,
+   "version": "1.0.0"
+  },
+  "head": "sha256:42b48fc0a35f9cfac191e0c1f9b8ffce8a74b554f6b30b0326c5f0d9741f8aba",
+  "host_signing_hex": "6f7263682f76322f7369672f686f73742d6576656e747c7b22636f6e7472616374223a312c226576656e74223a7b226163746f72223a7b22646576696365223a22645f6336353033326632316434333430316363323233623035373233633165356234222c226964223a22705f3735626637356133626235306230633461633032663861373537623930653233222c226b696e64223a22706572736f6e227d2c2261727469666163745f6b696e6473223a5b5d2c226174223a22323032362d31302d31305431303a30303a35305a222c2261757468223a2270617373706872617365222c2262617365645f6f6e223a227368613235363a37303963303561386666376664666166613262316264303962656161366333666630393566656462623236363632653739373662386238303061386338393230222c226361706162696c6974696573223a5b226e6574776f726b225d2c226669656c6473223a7b7d2c22686173685f76223a312c226964223a2230314a395a4b3030303030303030303030303030303030303035222c226e616d65223a227374616e647570222c227061636b6167655f736861323536223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c2270726576223a227368613235363a37303963303561386666376664666166613262316264303962656161366333666630393566656462623236363632653739373662386238303061386338393230222c22726f737465725f76223a332c2273656374696f6e73223a5b5d2c22736571223a342c22736967223a22704a686954374261505053765376506278366c57596666696f4a7a343471624852547230314a586c69674f676e76394e63495a78526954396a725457672d496c7647734a3466627038355557787077376a7556524a77222c22737461676564223a2273745f3131313131313131313131313131313131313131313131313131313131313131222c2274797065223a226164646f6e2e6772616e746564222c2276223a322c2276657273696f6e223a22312e302e30227d2c226c6f67223a22776f726b7370616365222c227375697465223a322c22776f726b73706163655f6964223a223031323334353637383961626364656630313233343536373839616263646566227d",
+  "log": "workspace",
+  "person_signing_hex": "6f7263682f76322f7369672f77732d6576656e747c7b22636f6e7472616374223a312c226576656e74223a7b226163746f72223a7b22646576696365223a22645f6336353033326632316434333430316363323233623035373233633165356234222c226964223a22705f3735626637356133626235306230633461633032663861373537623930653233222c226b696e64223a22706572736f6e227d2c2261727469666163745f6b696e6473223a5b5d2c2261757468223a2270617373706872617365222c2262617365645f6f6e223a227368613235363a37303963303561386666376664666166613262316264303962656161366333666630393566656462623236363632653739373662386238303061386338393230222c226361706162696c6974696573223a5b226e6574776f726b225d2c226669656c6473223a7b7d2c22686173685f76223a312c226964223a2230314a395a4b3030303030303030303030303030303030303035222c226e616d65223a227374616e647570222c227061636b6167655f736861323536223a227368613235363a61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161222c22726f737465725f76223a332c2273656374696f6e73223a5b5d2c22737461676564223a2273745f3131313131313131313131313131313131313131313131313131313131313131222c2274797065223a226164646f6e2e6772616e746564222c2276223a322c2276657273696f6e223a22312e302e30227d2c226c6f67223a22776f726b7370616365222c227375697465223a322c22776f726b73706163655f6964223a223031323334353637383961626364656630313233343536373839616263646566227d"
+ },
  "host_refused": [
   {
    "desc": "host_sig replayed into another ticket log",
@@ -18,7 +74,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -46,7 +102,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -74,7 +130,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -102,7 +158,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -130,7 +186,7 @@
     "roster_v": 3,
     "seq": 99,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -158,7 +214,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -186,7 +242,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -214,7 +270,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 7
@@ -242,7 +298,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "BIOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -298,7 +354,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -324,7 +380,7 @@
   "roster_v": 3,
   "seq": 2,
   "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-  "text": "caf\u00e9 note",
+  "text": "café note",
   "type": "log.added",
   "v": 2,
   "ws_seq": 3
@@ -426,7 +482,7 @@
     "roster_v": 3,
     "seq": 99,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -474,7 +530,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -522,7 +578,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -570,7 +626,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 7
@@ -618,7 +674,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -629,6 +685,175 @@
   }
  ],
  "person_refused": [
+  {
+   "cert": {
+    "o": {
+     "created_ms": 1790000000000,
+     "device_id": "c65032f21d43401cc223b05723c1e5b4",
+     "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+     "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+     "expires_ms": null,
+     "kind": "device_cert",
+     "label_sealed": "bGFiZWwgc2V2MQ",
+     "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+     "scopes_max": [
+      "look",
+      "decide",
+      "operate",
+      "type"
+     ],
+     "suite": 2,
+     "v": 2
+    },
+    "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+   },
+   "desc": "D3 stage is signed",
+   "event": {
+    "actor": {
+     "device": "d_c65032f21d43401cc223b05723c1e5b4",
+     "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "kind": "person"
+    },
+    "artifact_kinds": [],
+    "at": "2026-10-10T10:00:50Z",
+    "auth": "passphrase",
+    "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+    "capabilities": [
+     "network"
+    ],
+    "fields": {},
+    "hash_v": 1,
+    "host_sig": "idtZKBeYU7rnfvy9oIdGps2acgAngv1hYbkHGt8_mu2atEAW1ZHulUG74daSVxz36csNfzJTx_7KHfSoQIgQUA",
+    "id": "01J9ZK00000000000000000005",
+    "name": "standup",
+    "package_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+    "roster_v": 3,
+    "sections": [],
+    "seq": 4,
+    "sig": "pJhiT7BaPPSvSvPbx6lWYffioJz44qbHRTr01JXligOgnv9NcIZxRiT9jrTWg-IlvGsJ4fbp85UWxpw7juVRJw",
+    "staged": "st_22222222222222222222222222222222",
+    "type": "addon.granted",
+    "v": 2,
+    "version": "1.0.0"
+   },
+   "log": "workspace",
+   "name": "addon_stage_swap",
+   "workspace_id": "0123456789abcdef0123456789abcdef"
+  },
+  {
+   "cert": {
+    "o": {
+     "created_ms": 1790000000000,
+     "device_id": "c65032f21d43401cc223b05723c1e5b4",
+     "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+     "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+     "expires_ms": null,
+     "kind": "device_cert",
+     "label_sealed": "bGFiZWwgc2V2MQ",
+     "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+     "scopes_max": [
+      "look",
+      "decide",
+      "operate",
+      "type"
+     ],
+     "suite": 2,
+     "v": 2
+    },
+    "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+   },
+   "desc": "D3 digest is signed",
+   "event": {
+    "actor": {
+     "device": "d_c65032f21d43401cc223b05723c1e5b4",
+     "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "kind": "person"
+    },
+    "artifact_kinds": [],
+    "at": "2026-10-10T10:00:50Z",
+    "auth": "passphrase",
+    "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+    "capabilities": [
+     "network"
+    ],
+    "fields": {},
+    "hash_v": 1,
+    "host_sig": "idtZKBeYU7rnfvy9oIdGps2acgAngv1hYbkHGt8_mu2atEAW1ZHulUG74daSVxz36csNfzJTx_7KHfSoQIgQUA",
+    "id": "01J9ZK00000000000000000005",
+    "name": "standup",
+    "package_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+    "roster_v": 3,
+    "sections": [],
+    "seq": 4,
+    "sig": "pJhiT7BaPPSvSvPbx6lWYffioJz44qbHRTr01JXligOgnv9NcIZxRiT9jrTWg-IlvGsJ4fbp85UWxpw7juVRJw",
+    "staged": "st_11111111111111111111111111111111",
+    "type": "addon.granted",
+    "v": 2,
+    "version": "1.0.0"
+   },
+   "log": "workspace",
+   "name": "addon_digest_swap",
+   "workspace_id": "0123456789abcdef0123456789abcdef"
+  },
+  {
+   "cert": {
+    "o": {
+     "created_ms": 1790000000000,
+     "device_id": "c65032f21d43401cc223b05723c1e5b4",
+     "dk_kx_pub": "BFeVKX_gphRxHCfh2Uw6UQVtj12_1v9LteaSfrwG6oH3QG8yDkYojB0rOpi7i-NDHC0PY47WHle_uYaQHjI534c",
+     "dk_sig_pub": "BEtUkscP1t-MK_B-LkrM8KwbVTJ2kwZBYo-4vnk4QSaltalieRixn4XJf8Z2jR5y10cpdvNZ1i-70-cvOz5Wlwo",
+     "expires_ms": null,
+     "kind": "device_cert",
+     "label_sealed": "bGFiZWwgc2V2MQ",
+     "person_id": "75bf75a3bb50b0c4ac02f8a757b90e23",
+     "scopes_max": [
+      "look",
+      "decide",
+      "operate",
+      "type"
+     ],
+     "suite": 2,
+     "v": 2
+    },
+    "sig": "GMFk6HGDHI919l9dSkUuvlioYdJz-QzNR-qUAQ4kPhZevsgiEZBTlZr2SAIfUiNASTIzsMW_c_8yTbnW8kuMfQ"
+   },
+   "desc": "D3 capabilities are signed",
+   "event": {
+    "actor": {
+     "device": "d_c65032f21d43401cc223b05723c1e5b4",
+     "id": "p_75bf75a3bb50b0c4ac02f8a757b90e23",
+     "kind": "person"
+    },
+    "artifact_kinds": [],
+    "at": "2026-10-10T10:00:50Z",
+    "auth": "passphrase",
+    "based_on": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+    "capabilities": [
+     "network",
+     "serve_http"
+    ],
+    "fields": {},
+    "hash_v": 1,
+    "host_sig": "idtZKBeYU7rnfvy9oIdGps2acgAngv1hYbkHGt8_mu2atEAW1ZHulUG74daSVxz36csNfzJTx_7KHfSoQIgQUA",
+    "id": "01J9ZK00000000000000000005",
+    "name": "standup",
+    "package_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "prev": "sha256:709c05a8ff7fdfafa2b1bd09beaa6c3ff095fedbb26662e7976b8b800a8c8920",
+    "roster_v": 3,
+    "sections": [],
+    "seq": 4,
+    "sig": "pJhiT7BaPPSvSvPbx6lWYffioJz44qbHRTr01JXligOgnv9NcIZxRiT9jrTWg-IlvGsJ4fbp85UWxpw7juVRJw",
+    "staged": "st_11111111111111111111111111111111",
+    "type": "addon.granted",
+    "v": 2,
+    "version": "1.0.0"
+   },
+   "log": "workspace",
+   "name": "addon_caps_swap",
+   "workspace_id": "0123456789abcdef0123456789abcdef"
+  },
   {
    "cert": {
     "o": {
@@ -668,7 +893,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -716,7 +941,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -764,7 +989,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -860,7 +1085,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "LgPcZQYsLOfNDubzdn3X5DYIkkmMq1up0iQJw9Xv4axeeFp7b-UwVjb-dZaLYzJLRVaYT0K0Jsf6XGHaERuBuA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -907,7 +1132,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "16XvmXWBAe5gYxTavFsU8oW1e_PqXShQoJ3HxYw1645zD-B8CdO0WFNQNNY6Fb7wAYMCwXYQMeQqYy6gcF-FqQ",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -954,7 +1179,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "eyz4pFDASS__qniMoA6acGx8XOJgudQlRw1rzioFuBNDnfrYiSIv9tkvL-ViaX8Bsq2fdqlaxnVRGb8gq_mdkA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1001,7 +1226,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "0a7LKO-z1TTtlfkhJp79myPqgtOq4wSPc2D5yGbVQYC3Wjaby3aULBANvd4ybL3QHdN2zkU3XlZUUmTpm9T-7Q",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1097,7 +1322,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "BIOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1145,7 +1370,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IV",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1193,7 +1418,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1241,7 +1466,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1289,7 +1514,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1337,7 +1562,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.removed",
     "v": 2,
     "ws_seq": 3
@@ -1385,7 +1610,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1433,7 +1658,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1481,7 +1706,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1529,7 +1754,7 @@
     "roster_v": 99,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1577,7 +1802,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1674,7 +1899,7 @@
     "roster_v": 3,
     "seq": 2,
     "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-    "text": "caf\u00e9 note",
+    "text": "café note",
     "type": "log.added",
     "v": 2,
     "ws_seq": 3
@@ -1723,7 +1948,7 @@
    "roster_v": 3,
    "seq": 2,
    "sig": "1IOPZGe56aEE9-LiN_h3B_4rRzw2EKkgxiAoZetX4NaRhYn6dQZiM-9Bod4Vv3ZhOuNhoHcEBVSBF4T6k8IVUA",
-   "text": "caf\u00e9 note",
+   "text": "café note",
    "type": "log.added",
    "v": 2,
    "ws_seq": 3

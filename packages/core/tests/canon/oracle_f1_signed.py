@@ -49,6 +49,22 @@ def signatures_vector() -> dict[str, Any]:
     w = base_world("sigs", "event signatures")
     note = w.ev(TICKET, "log.added", w.actor("mara"), {"text": "caf\u00e9 note"})
     ws_ev = w.ev("workspace", "settings.changed", w.actor("sev"), {"set": {"grant_hours": 4}})
+    aw = base_world("addon-stage", "D3 staged grant")
+    addon = aw.ev(
+        "workspace",
+        "addon.granted",
+        aw.actor("sev"),
+        {
+            "name": "standup",
+            "version": "1.0.0",
+            "package_sha256": "sha256:" + "a" * 64,
+            "capabilities": ["network"],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "staged": "st_" + "1" * 32,
+        },
+    )
     t_cert = ow.make_cert("mara", "mara1")
     s_cert = ow.make_cert("sev", "sev1")
 
@@ -71,6 +87,21 @@ def signatures_vector() -> dict[str, Any]:
         return {**copy.deepcopy(e), **kw}
 
     refusals = [
+        person_case("addon_stage_swap", "D3 stage is signed", mod(addon, staged="st_" + "2" * 32), s_cert, "workspace"),
+        person_case(
+            "addon_digest_swap",
+            "D3 digest is signed",
+            mod(addon, package_sha256="sha256:" + "b" * 64),
+            s_cert,
+            "workspace",
+        ),
+        person_case(
+            "addon_caps_swap",
+            "D3 capabilities are signed",
+            mod(addon, capabilities=["network", "serve_http"]),
+            s_cert,
+            "workspace",
+        ),
         person_case("other_ticket", "the same event verified as an event of another ticket", note, t_cert, TICKET2),
         person_case("other_workspace", "the same event under another workspace id", note, t_cert, TICKET, OTHER_W),
         person_case("ticket_event_read_as_workspace_log", "log is 'workspace'", note, t_cert, "workspace"),
@@ -159,6 +190,14 @@ def signatures_vector() -> dict[str, Any]:
             "person_signing_hex": ow.person_bytes(W, "workspace", ws_ev).hex(),
             "host_signing_hex": ow.host_bytes(W, "workspace", ws_ev).hex(),
             "head": head(ws_ev),
+        },
+        "addon_event": {
+            "event": addon,
+            "log": "workspace",
+            "cert": s_cert,
+            "person_signing_hex": ow.person_bytes(W, "workspace", addon).hex(),
+            "host_signing_hex": ow.host_bytes(W, "workspace", addon).hex(),
+            "head": head(addon),
         },
         "host_unsigned_ticket_event": host_note,
         "person_refused": refusals,

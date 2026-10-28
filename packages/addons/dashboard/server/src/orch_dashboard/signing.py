@@ -825,14 +825,34 @@ StageId = Annotated[str, StringConstraints(pattern=r"^st_[0-9a-f]{32}$")]
 
 
 class MarketGrant(Action):
-    """`addon.grant {name, staged}`: install or update the package the host staged and the person reviewed (A10).
-    Exactly these two keys (`extra="forbid"`). **One click** (V3-D38, owner 24 Oct: the signer shows the whole review,
-    the marketplace lines "per host, not signed" included). It has no agent route (the dashboard session is the
-    person's). The host re-reads the stage and judges it again when the signed request is submitted."""
+    """D3: the reviewed stage and required non-secret settings form one addon_enable sequence.
+    Settings land first; the exact staged grant is last. The host refuses an already-on add-on.
+    """
 
     action: Literal["market_grant"]
     name: MarketName
     staged: StageId
+    grant: dict[str, Any]
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def checked_intent(self):
+        self.intent()
+        return self
+
+    def intent(self) -> dict:
+        from orch.host import sequence
+
+        return sequence.validate_intent(
+            {
+                "v": 1,
+                "kind": "addon_enable",
+                "name": self.name,
+                "staged": self.staged,
+                "grant": self.grant,
+                "settings": {"addons": {self.name: self.settings}} if self.settings else {},
+            }
+        )
 
 
 class AddonDisable(Action):
@@ -1265,7 +1285,10 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
         case AddonGrant():
             return "addon.grant", {"name": action.name}
         case MarketGrant():
-            return "addon.grant", {"name": action.name, "staged": action.staged}
+            from orch.host import sequence
+
+            first = sequence.steps(action.intent())[0]
+            return first["op"], first["args"]
         case AddonDisable():
             return "addon.disable", {"name": action.name}
         case AddonPurge():
@@ -1441,13 +1464,17 @@ def expected(action: Action, person: str | None = None):
         case MemberRemove():
             return lambda ev: one(ev, "member.removed", person=action.person)
         case DeviceRemove():
-            return lambda ev: one(ev, "device.removed", device=action.device) and set(ev[0]) <= (
-                set(adapters.handoff.ENVELOPE) | {"device"}
+            return lambda ev: (
+                one(ev, "device.removed", device=action.device)
+                and set(ev[0]) <= (set(adapters.handoff.ENVELOPE) | {"device"})
             )
         case AddonGrant():
             return lambda ev: one(ev, "addon.granted", name=action.name)
         case MarketGrant():
-            return lambda ev: one(ev, "addon.granted", name=action.name)
+            from orch.host import seqaddon
+
+            payload = seqaddon.payload(action.intent(), 0)
+            return lambda ev: one(ev, payload["type"], **{k: v for k, v in payload.items() if k != "type"})
         case AddonDisable():
             return lambda ev: one(ev, "addon.disabled", name=action.name)
         case AddonPurge():
@@ -1617,7 +1644,7 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         base = {"addon": body.name, "staged": body.staged}
     person = link.welcome["peer"]["person"]
     meta = None
-    if isinstance(body, NewTicketSequence | QuickStart | EditTicket):
+    if isinstance(body, NewTicketSequence | QuickStart | EditTicket | MarketGrant):
         from orch.host import sequence
 
         intent = edit_intent if edit_intent is not None else body.intent()

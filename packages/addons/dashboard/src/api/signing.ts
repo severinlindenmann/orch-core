@@ -13,6 +13,7 @@ export interface SignContent {
   acceptance?: { id: string; text: string; checked?: boolean; manual?: string }[]
   tasks?: { n: number; id: string; title: string; verify?: string[] }[]
   fields_title?: string
+  fields_inline?: boolean
   fields_changed?: { field: string; before: string | null; after: string | null; before_note?: string }[]
   note?: string | string[]
   cancels?: { gate: string; people: string[]; complete: boolean }[]

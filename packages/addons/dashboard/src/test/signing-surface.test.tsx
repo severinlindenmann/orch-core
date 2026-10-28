@@ -877,3 +877,31 @@ it.each([
   if ('when' in action) expect(within(panel).getByText(action.when!, { exact: false })).toBeVisible()
   expect(sign).not.toHaveBeenCalled() // only the 1 s arm signs
 })
+
+it('D3: staged install shows exact settings inline and keeps capability risk on a second press', async () => {
+  const { CLICK_RISK } = await import('@/api/click')
+  const gesture = await import('@/components/sign/trustedPress')
+  const ws = 'a'.repeat(32)
+  clickWorkspace(ws)
+  const action = { action: 'market_grant' as const, name: 'calendar', staged: 'st_' + '1'.repeat(32),
+    grant: { name: 'calendar', version: '1.0.0', package_sha256: 'sha256:' + 'a'.repeat(64), capabilities: ['network'], fields: {}, sections: [], artifact_kinds: [], staged: 'st_' + '1'.repeat(32) }, settings: { channel: 'team channel' } }
+  const expires = new Date(Date.now() + 6e5).toISOString()
+  const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '2'.repeat(26), expires_at: expires, op: 'settings.set', confirm: 'click' })
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'e'.repeat(64), view: {
+    risk: CLICK_RISK, op: 'settings.set', headline: 'Install and turn on add-on', risk_lines: ['Connects to the internet'],
+    workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', lines: [], checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null,
+    content: { headline: 'Install and turn on add-on', fields_inline: true, fields_changed: [{ field: 'calendar: channel', before: null, after: '"team channel"' }] },
+  } })
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({} as Awaited<ReturnType<typeof api.getHostSettings>>)
+  const sign = vi.spyOn(api, 'signClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Install and turn on add-on" action={action} inline onClose={() => {}} /></QueryClientProvider>)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await userEvent.click(await screen.findByRole('button', { name: 'Install and turn on' }, T))
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  expect(within(panel).getByText('"team channel"')).toBeVisible()
+  expect(within(panel).getByTestId('sign-risk-lines')).toBeVisible()
+  expect(within(panel).getByTestId('sign-risk-lines')).toHaveTextContent('Connects to the internet')
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  expect(sign).not.toHaveBeenCalled()
+})

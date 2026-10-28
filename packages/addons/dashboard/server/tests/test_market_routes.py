@@ -158,10 +158,31 @@ def parse(body):
     return TypeAdapter(PrepareBody).validate_python(body)
 
 
+def market_action(stage=STAGE):
+    return {
+        "action": "market_grant",
+        "name": "echo",
+        "staged": stage,
+        "grant": {
+            "name": "echo",
+            "version": "1.0.0",
+            "package_sha256": "sha256:" + "a" * 64,
+            "capabilities": ["network"],
+            "fields": {},
+            "sections": [],
+            "artifact_kinds": [],
+            "staged": stage,
+        },
+    }
+
+
 def test_market_grant_is_addon_grant_with_exactly_name_and_staged():
-    body = parse({"action": "market_grant", "name": "echo", "staged": STAGE})
+    body = parse(market_action())
     assert isinstance(body, MarketGrant)
-    assert host_call(body) == ("addon.grant", {"name": "echo", "staged": STAGE})
+    assert host_call(body) == (
+        "addon.grant",
+        {"name": "echo", "staged": STAGE, "digest": "sha256:" + "a" * 64, "caps": ["network"]},
+    )
     for bad in (
         {"action": "market_grant", "name": "echo"},
         {"action": "market_grant", "staged": STAGE},
@@ -187,8 +208,8 @@ def test_the_shipped_addon_grant_still_takes_a_name_only():
 
 
 def test_the_prepared_event_must_be_one_grant_of_that_name():
-    check = expected(parse({"action": "market_grant", "name": "echo", "staged": STAGE}))
-    assert check([{"type": "addon.granted", "name": "echo"}])
+    check = expected(parse(market_action()))
+    assert check([{"type": "addon.granted", **market_action()["grant"]}])
     assert not check([{"type": "addon.granted", "name": "other"}])
     assert not check([{"type": "addon.disabled", "name": "echo"}])
     assert not check([{"type": "addon.granted", "name": "echo"}] * 2)
@@ -196,16 +217,18 @@ def test_the_prepared_event_must_be_one_grant_of_that_name():
 
 def test_plan_is_one_intent_per_stage_and_skips_the_switch_state_check():
     link = SimpleNamespace(welcome={"peer": {"person": "p_" + "1" * 32}, "ops": {"addon.grant": 1}})
-    link.call = lambda *a, **k: pytest.fail(
-        "a market grant reads no add-on state: an update is a grant of an active add-on"
-    )
+    link.call = lambda *a, **k: pytest.fail("the host checks the off-state under its store lock")
     gateway = SimpleNamespace(link=lambda ws: link, call=link.call)
     ws = "a" * 32
-    one = plan(gateway, ws, parse({"action": "market_grant", "name": "echo", "staged": STAGE}))
-    again = plan(gateway, ws, parse({"action": "market_grant", "name": "echo", "staged": STAGE}))
-    other = plan(gateway, ws, parse({"action": "market_grant", "name": "echo", "staged": "st_" + "1" * 32}))
-    assert (one.op, one.args) == ("addon.grant", {"name": "echo", "staged": STAGE})
+    one = plan(gateway, ws, parse(market_action()))
+    again = plan(gateway, ws, parse(market_action()))
+    other = plan(gateway, ws, parse(market_action("st_" + "1" * 32)))
+    assert (one.op, one.args) == (
+        "addon.grant",
+        {"name": "echo", "staged": STAGE, "digest": "sha256:" + "a" * 64, "caps": ["network"]},
+    )
     assert one.idem(ws) == again.idem(ws) != other.idem(ws)
+    assert one.sequence["intent"]["kind"] == "addon_enable"
 
 
 def test_c5_market_add_needs_a_full_session_and_installs_nothing(client, token, auth, stub, host):

@@ -218,7 +218,9 @@ def register(app: FastAPI, gateway: Gateway):
             approvals.reserve(token)
         try:
             planned = plan(gateway, ws, body)
-            if planned.op != "addon.grant" or planned.sequence is not None:
+            if planned.sequence is not None:
+                raise fail("op.unsupported", "Install and turn on uses the local signer sequence.", exit=1)
+            if planned.op != "addon.grant":
                 raise fail("internal", exit=1)
             # its own intent: the same add-on prepared for one click is another request (another binding at the host)
             planned = replace(planned, base={"via": "hub", "base": planned.base})

@@ -8,7 +8,6 @@ import {
   marketError,
   permissionEffect,
   publisherWording,
-  reviewLines,
   stateLabel,
   widened,
   type MarketStage,
@@ -22,7 +21,6 @@ import { LoadFailed } from '@/components/LoadFailed'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
@@ -32,141 +30,29 @@ import { RemoveSheet } from './RemoveSheet'
 import { AddMarketplace } from './AddMarketplace'
 import { SettingsSheet } from './SettingsSheet'
 
-const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
-function Review({
-  stage: s,
-  busy,
-  error,
-  cancel,
-  proceed,
-  again,
-}: {
-  stage: MarketStage
-  busy: boolean
-  error: string
-  cancel: () => void
-  proceed: () => void
-  again: () => void
-}) {
-  const [now, setNow] = useState(Date.now())
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [])
-  const expired = Date.parse(s.expires_at) <= now
-  // The host's review lines wrap manifest text (title, command, agents text, needs text): all of it is the add-on's, so
-  // the whole list sits in one frame (the provenance rule is about where the bytes come from, not who composed the line).
-  const full = (
-    <AddonFrame addon={s.name} title="From the add-on package (not verified)">
-      <ul aria-label="Full review" className="space-y-2">
-        {reviewLines(s).map((line, i) => (
-          <li key={i} className={line.added ? 'border-l-2 border-success pl-3 text-success' : ''}>
-            <Inline>{line.text}</Inline>
-          </li>
-        ))}
-      </ul>
-    </AddonFrame>
-  )
-  return (
-    <Dialog open onOpenChange={(open) => !open && !busy && cancel()}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto break-words border-border bg-surface">
-        <DialogHeader>
-          <DialogTitle>
-            {s.update ? 'Update' : 'Install'} <Inline>{s.name}</Inline> <Inline>{s.version}</Inline>?
-          </DialogTitle>
-          <DialogDescription>Approval applies to this exact package; changed code needs new approval.</DialogDescription>
-        </DialogHeader>
-        {widened(s) && <p role="alert" className="rounded border border-warning p-3 font-medium">This update asks for more than before.</p>}
-        {!s.update || widened(s) ? full : null}
-        {s.update && (
-          <section aria-label="Update changes">
-            <p>
-              <Inline>{s.update.from.version}</Inline> → <Inline>{s.version}</Inline>
-            </p>
-            <AddonFrame addon={s.name} title="From the addon" compact className="flex-col items-start">
-              {s.update.changes.filter((line) => !/^version\b/i.test(line)).map((line, i) => (
-                <p key={i}>
-                  <Inline>{line}</Inline>
-                </p>
-              ))}
-              {(['added', 'removed'] as const).map((kind) =>
-                Object.entries(s.update![kind]).map(([group, values]) =>
-                  values.map((value) => (
-                    <p key={`${kind}-${group}-${value}`} className={kind === 'added' ? 'text-success' : 'line-through text-text-muted'}>
-                      {kind === 'added' ? '+' : '-'} {group}: <Inline>{group === 'capabilities' ? permissionEffect(value) : value}</Inline>
-                    </p>
-                  )),
-                ),
-              )}
-            </AddonFrame>
-            <p>Publisher: {s.update.publisher === 'same' ? publisherWording('known') : s.update.publisher === 'first_use' ? publisherWording('new') : 'Unsigned'}</p>
-          </section>
-        )}
-        {s.update && !widened(s) && (
-          <details>
-            <summary>Show full review</summary>
-            {full}
-          </details>
-        )}
-        <p>
-          from <Inline>{s.market.url}</Inline> <span className="rounded border border-border px-2 text-xs">{s.market.class}</span>
-        </p>
-        {s.market.stale && <p className="text-warning">Out of date - refresh</p>}
-        {s.market.summary && (
-          <AddonFrame addon={s.name} title="From the addon">
-            <p className="text-xs text-text-muted">Marketplace details (shown by this computer, not signed)</p>
-            <Inline>{s.market.summary}</Inline>
-          </AddonFrame>
-        )}
-        {s.deps && (
-          <p>
-            Also installs {s.deps.count} required software {s.deps.count === 1 ? 'component' : 'components'}. {s.deps.verified ? 'Checked against the add-on\u2019s lock file.' : 'Not checked against a lock file.'}
-          </p>
-        )}
-        <p>
-          Package digest: <Inline>{s.package_sha256.slice(0, 12)}</Inline>… (full value behind the i)
-        </p>
-        <p>Publisher: {publisherWording(s.market.publisher.tofu)}</p>
-        <p>A signature does not prove the code is safe.</p>
-        <InfoDrawer>
-          <p>
-            Package digest <Raw>{s.package_sha256}</Raw>
-          </p>
-          <p>
-            Source commit <Raw>{s.market.commit}</Raw>
-          </p>
-          <p>
-            Publisher key <Raw>{s.market.publisher.fingerprint ?? 'unsigned'}</Raw>
-          </p>
-          <p>
-            Stage <Raw>{s.stage}</Raw>
-          </p>
-          <p>
-            Source note <Inline>{s.market.source_note}</Inline>
-          </p>
-        </InfoDrawer>
-        <p>{HELP}</p>
-        {error && <p role="alert">{error}</p>}
-        {expired && <p role="status">This review expired. Review again before approving.</p>}
-        <DialogFooter className="sticky -bottom-6 -mx-6 -mb-6 border-t border-border bg-surface px-6 py-4">
-          <Button variant="ghost" disabled={busy} onClick={cancel}>
-            Cancel
-          </Button>
-          {expired ? (
-            <Button disabled={busy} onClick={again}>
-              Review again
-            </Button>
-          ) : (
-            <Button disabled={busy} onClick={proceed}>
-              Review installation
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
+function InstallSetup({ stage, cancel, proceed }: { stage: MarketStage; cancel: () => void; proceed: (values: Record<string, unknown>) => void }) {
+  const required = stage.settings_schema?.required ?? []
+  const props = stage.settings_schema?.properties ?? {}
+  const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(required.filter(k => props[k]?.default !== undefined).map(k => [k, props[k].default])))
+  return <section aria-label="Install add-on" className="space-y-3 border-t border-border py-3">
+    <p><Inline>{stage.name}</Inline> · Version <Inline>{stage.version}</Inline> · Publisher <Inline>{stage.market.publisher.fingerprint ?? 'unsigned'}</Inline></p>
+    {required.map(key => <label key={key} className="block"><Inline>{key}</Inline>
+      {props[key]?.type === 'boolean'
+        ? <input type="checkbox" checked={values[key] === true} onChange={e => setValues(v => ({ ...v, [key]: e.target.checked }))} />
+        : <Input aria-label={key} value={typeof values[key] === 'object' ? JSON.stringify(values[key]) : String(values[key] ?? '')} onChange={e => {
+          const text = e.target.value
+          let value: unknown = text
+          if (props[key]?.type === 'integer') value = text === '' ? undefined : Number(text)
+          if (props[key]?.type === 'object' || props[key]?.type === 'array') { try { value = JSON.parse(text) } catch { value = text } }
+          setValues(v => ({ ...v, [key]: value }))
+        }} />}
+    </label>)}
+    <InfoDrawer><p>Package digest <Raw>{stage.package_sha256}</Raw></p></InfoDrawer>
+    <Button variant="ghost" onClick={cancel}>Cancel</Button>
+    <Button disabled={stage.expires_at * 1000 <= Date.now() || required.some(k => values[k] === undefined)} onClick={() => proceed(values)}>Install and turn on</Button>
+  </section>
 }
-/** The Built in group: switch, tag, no Remove. One accordion under a row opens for a switch at a time. */
+
 function BuiltInGroup({ ws }: { ws: NonNullable<ReturnType<typeof useWorkspace>['workspace']> }) {
   return (
     <section aria-labelledby="built-in-h" className="space-y-1">
@@ -197,7 +83,7 @@ function MarketWorkspace() {
   const [source, setSource] = useState('')
   const [permission, setPermission] = useState('')
   const [stage, setStage] = useState<MarketStage | null>(null)
-  const [intent, setIntent] = useState<StageInput | null>(null)
+  const [installSettings, setInstallSettings] = useState<Record<string, unknown>>({})
   const [handoff, setHandoff] = useState<MarketStage | null>(null)
   const [pending, setPending] = useState<string[]>([])
   const [message, setMessage] = useState('')
@@ -222,12 +108,15 @@ function MarketWorkspace() {
   const prepare = (input: StageInput) =>
     void write(async () => {
       const result = await api.marketStage(ws, input)
-      setIntent(input)
       if ('up_to_date' in result) {
         setMessage('Already up to date')
         setStage(null)
       } else {
         setStage(result)
+        if (!(result.settings_schema?.required?.length)) {
+          setInstallSettings({})
+          setHandoff(result)
+        }
         setPending((p) => [...p, result.name])
       }
     })
@@ -451,39 +340,20 @@ function MarketWorkspace() {
           )}
         </>
       )}
-      {mayWrite && stage && !handoff && (
-        <Review
-          stage={stage}
-          busy={busy}
-          error={message}
-          cancel={cancel}
-          again={() =>
-            intent &&
-            void write(async () => {
-              await api.marketUnstage(ws, stage.stage)
-              setStage(null)
-              const result = await api.marketStage(ws, intent)
-              if ('up_to_date' in result) setMessage('Already up to date')
-              else setStage(result)
-            })
-          }
-          proceed={() => {
-            setHandoff(stage)
-          }}
-        />
-      )}
+      {mayWrite && stage && !handoff && <InstallSetup key={stage.stage} stage={stage} cancel={cancel} proceed={values => { setInstallSettings(values); setHandoff(stage) }} />}
       {mayWrite && handoff && (
         <SignPopover
-          title="Approve add-on package"
+          title="Install and turn on add-on"
+          inline
           ws={ws}
-          anchor={null} // the review dialog is folded away while this one is open (Cancel here brings it back)
-          action={{ action: 'market_grant', name: handoff.name, staged: handoff.stage }}
+          action={{ action: 'market_grant', name: handoff.name, staged: handoff.stage, grant: handoff.grant, settings: installSettings }}
           lead={
             <div data-testid="install-summary" className="rounded border border-border p-3 text-sm">
               <p className="font-medium">
-                <Inline>{handoff.name}</Inline> · Version <Inline>{handoff.version}</Inline>
+                <Inline>{handoff.name}</Inline> · Version <Inline>{handoff.version}</Inline> · Publisher <Inline>{handoff.market.publisher.fingerprint ?? 'unsigned'}</Inline>
               </p>
-              <p>After installation: turned off. You turn it on later in Settings.</p>
+              <p>Installs and turns on after all signatures have landed.</p>
+              <InfoDrawer><p>Package digest <Raw>{handoff.package_sha256}</Raw></p></InfoDrawer>
               <p className="text-text-muted">The marketplace lines below are shown by this computer, are not signed and are not verified. Your approval does not cover them.</p>
               {widened(handoff) && <p role="alert" className="font-medium text-warning">This update asks for more than before.</p>}
               {handoff.market.stale && <p className="text-warning">This review is out of date: the marketplace may have changed. Cancel and review again.</p>}
@@ -491,7 +361,7 @@ function MarketWorkspace() {
             </div>
           }
           onClose={() => {
-            setPending((p) => p.filter((n) => n !== handoff.name))
+            void cancel()
             setHandoff(null)
           }}
           onSettled={(phase) => {

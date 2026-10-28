@@ -30,6 +30,7 @@ ACTIVITY_TYPES = (
     "channel.revoked",
     "pairing.issued",
     "pairing.used",
+    "change.cancelled",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(
@@ -42,8 +43,10 @@ DETAIL_FIELDS = frozenset(
         "requested_by_agent_session",
         "approved_by",
         "count",
+        "reason",  # an admin's written reason for an override (3-200 characters, see changes.service)
     }
 )
+REASON_MAX_BYTES = 800  # 200 characters of UTF-8
 FIELDS = [
     "seq",
     "ts_ms",
@@ -63,11 +66,11 @@ def canonical(row):
     return json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
 
 
-def bounded(value):
+def bounded(value, limit=256):
     if value is not None and (
         not isinstance(value, str)
         or not value
-        or len(value.encode("utf-8")) > 256
+        or len(value.encode("utf-8")) > limit
         or any(ord(c) < 32 or ord(c) == 127 for c in value)
     ):
         raise ValueError("invalid activity reference")
@@ -120,7 +123,7 @@ class ActivityLog:
                 if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value < 2**63:
                     raise ValueError("invalid count")
             else:
-                bounded(value)
+                bounded(value, REASON_MAX_BYTES if key == "reason" else 256)
         encoded = canonical(detail).decode()
         if len(encoded.encode()) > 2048:
             raise ValueError("activity detail too large")

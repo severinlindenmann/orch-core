@@ -28,6 +28,7 @@ WORDS = dict(
             "removed a device",
             "issued a pairing",
             "used a pairing",
+            "withdrew a change",
         ),
     )
 )

@@ -44,6 +44,7 @@ from .. import __version__ as hub_version
 from ..access import Access, AccessError
 from ..access.store import ADMIN_GROUP, check_name
 from ..activity.feed import feed as activity_feed
+from ..changes import ChangeError
 from ..channels import Channels
 from ..channels.service import MIN_PASSWORD, ChannelError
 from ..connect import LinkError, build_link
@@ -56,6 +57,7 @@ from ..contract.hub import HV, Refused
 from ..relay.client import RelayError
 from ..switch import SwitchError, clean_return_to, workspace_rows
 from ..versions import MIN_SUPPORTED_VERSION, workspace_status
+from .changes_api import ChangeHandlers, confirmed
 from .static import StaticSite
 
 MAX_BODY = 64 * 1024
@@ -74,6 +76,9 @@ MAX_PREPARED = 4096
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 _ID = r"[0-9a-f]{32}"
 _GRP = r"[a-z0-9][a-z0-9-]{0,39}"
+#: a change id is a ULID, not 32 hex: the path accepts one alphanumeric segment of that size and the handler holds it to the
+#: exact ULID shape (anything else is ``unknown_change``, as an id that does not exist)
+_PARAM = {"change_id": r"[0-9A-Za-z]{26,32}"}
 
 #: wire code -> HTTP status. Anything not listed is answered as ``internal`` (500), never echoed.
 STATUS = {
@@ -89,6 +94,15 @@ STATUS = {
     "conflict": 409,
     "stale_snapshot": 409,
     "unknown_snapshot": 409,
+    # access changes that wait for a workspace owner (changes/)
+    "owner_protected": 409,
+    "last_admin": 409,
+    "stale_change": 409,
+    "not_pending": 409,
+    "proposer_gone": 409,
+    "expired": 410,
+    "unknown_change": 404,
+    "no_channel": 403,
     "no_session": 401,
     "bad_credentials": 401,
     "unauthorized": 403,
@@ -216,6 +230,9 @@ class WebDeps:
     routes: Any = None
     delivery: Any = None  # custodial DeliveryQueue; None = no pending deliveries
     activity: Any = None  # hub-local admin history; None = no local events
+    changes: Any = (
+        None  # orch_hub.changes.Changes: access changes that need the owner; None = those routes answer ``unavailable``
+    )
 
 
 @dataclass(frozen=True)
@@ -228,7 +245,11 @@ class Route:
     rx: re.Pattern[str] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        pat = re.sub(r"\{(\w+)\}", lambda m: f"(?P<{m[1]}>{_ID if m[1].endswith('id') else _GRP})", self.path)
+        pat = re.sub(
+            r"\{(\w+)\}",
+            lambda m: f"(?P<{m[1]}>{_PARAM.get(m[1]) or (_ID if m[1].endswith('id') else _GRP)})",
+            self.path,
+        )
         object.__setattr__(self, "rx", re.compile(pat))
 
 
@@ -272,6 +293,34 @@ ROUTES: tuple[Route, ...] = (
         "GET", "/workspaces/{workspace_id}/items/{item_id}", "session", "item", "One ticket, question or needs-you item"
     ),
     _r("GET", "/me/channels", "session", "my_channels", "My registered channels (phone, browser)"),
+    _r(
+        "GET",
+        "/me/changes",
+        "session",
+        "my_changes",
+        "Access changes waiting for my approval, and overrides on my workspaces (session person only)",
+    ),
+    _r(
+        "POST",
+        "/me/changes/{change_id}/approve/prepare",
+        "session",
+        "change_prepare",
+        "What I would sign to approve an access change: ctx and digest (owner of the workspace only)",
+    ),
+    _r(
+        "POST",
+        "/me/changes/{change_id}/approve",
+        "session",
+        "change_approve",
+        "Approve an access change with my channel key's proof over its digest (single use)",
+    ),
+    _r(
+        "POST",
+        "/me/changes/{change_id}/reject",
+        "session",
+        "change_reject",
+        "Say no to an access change (session and a registered channel)",
+    ),
     # (c) signing
     _r("POST", "/sign/prepare", "session", "prepare", "Hub builds the event; returns ctx, digest and what to show"),
     _r(
@@ -335,6 +384,23 @@ ROUTES: tuple[Route, ...] = (
         "admin",
         "a_market_policy_set",
         "Replace the hub marketplace policy ({base_version, policy}); 409 conflict when base_version is stale",
+    ),
+    _r(
+        "GET", "/admin/changes", "admin", "a_changes", "Access changes waiting for an owner, and recently finished ones"
+    ),
+    _r(
+        "POST",
+        "/admin/changes/{change_id}/override",
+        "admin",
+        "a_change_override",
+        "Apply a waiting access change without its owner ({reason}, 3-200 characters); audited, the owner is told",
+    ),
+    _r(
+        "POST",
+        "/admin/changes/{change_id}/cancel",
+        "admin",
+        "a_change_cancel",
+        "Withdraw a waiting access change (its proposer or a hub admin)",
     ),
     _r("POST", "/admin/connect", "admin", "a_connect", "Mint a workspace invite and return the one connect link"),
     _r("POST", "/switch/ticket", "session", "switch_ticket", "A one-time ticket to open one of my workspaces"),
@@ -527,7 +593,7 @@ def _hex32(x: Any) -> str:
     return x
 
 
-class WebApi:
+class WebApi(ChangeHandlers):
     def __init__(self, deps: WebDeps) -> None:
         if deps.behind_edge and not deps.trusted_peers:
             raise ValueError("web API behind the edge needs trusted_peers (the edge's addresses)")
@@ -598,7 +664,7 @@ class WebApi:
             return self._handle(method, target, headers, body, self._source(headers, peer))
         except ApiError as e:
             return self._fail(e.code)
-        except (ChannelError, AccessError, Refused) as e:
+        except (ChannelError, AccessError, Refused, ChangeError) as e:
             return self._fail(WIRE.get(e.code, e.code))
         except Exception:  # noqa: BLE001 - unexpected: no detail leaves the process
             return self._fail("internal")
@@ -1307,7 +1373,8 @@ class WebApi:
         return 200, {"user_id": uid}
 
     def _h_a_user_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        self.d.channels.remove_user(p["user_id"], actor=c.user_id)  # revokes and purges the user's channels too
+        with self._chg().reducing("user_remove", confirm=confirmed(b), user_id=p["user_id"]):
+            self.d.channels.remove_user(p["user_id"], actor=c.user_id)  # revokes and purges the user's channels too
         return 200, {"ok": True}
 
     def _h_a_groups(self, c: Ctx, p: dict, q: dict, b: dict | None):
@@ -1318,15 +1385,17 @@ class WebApi:
         return 200, {"ok": True}
 
     def _h_a_group_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        self.d.access.remove_group(p["group"], actor=c.user_id)
+        with self._chg().reducing("group_remove", confirm=confirmed(b), group=p["group"]):
+            self.d.access.remove_group(p["group"], actor=c.user_id)
         return 200, {"ok": True}
 
     def _h_a_member_add(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        self.d.access.add_member(p["group"], p["user_id"], actor=c.user_id)
-        return 200, {"ok": True}
+        # an increase: a pending change (202) when a workspace owner must approve, else applied (changes/rules.py)
+        return self._increase_answer(self._chg().member_add(c.user_id, p["group"], p["user_id"]))
 
     def _h_a_member_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
-        self.d.access.remove_member(p["group"], p["user_id"], actor=c.user_id)
+        with self._chg().reducing("member_remove", confirm=confirmed(b), group=p["group"], user_id=p["user_id"]):
+            self.d.access.remove_member(p["group"], p["user_id"], actor=c.user_id)
         return 200, {"ok": True}
 
     def _h_a_grants(self, c: Ctx, p: dict, q: dict, b: dict | None):
@@ -1335,12 +1404,14 @@ class WebApi:
 
     def _h_a_grant(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, workspace_id=str, group=str, role=str)
-        self.d.access.grant(b["workspace_id"], b["group"], b["role"], actor=c.user_id)
-        return 200, {"ok": True}
+        return self._increase_answer(
+            self._chg().grant(c.user_id, b["workspace_id"], b["group"], b["role"], confirm=confirmed(b))
+        )
 
     def _h_a_grant_revoke(self, c: Ctx, p: dict, q: dict, b: dict | None):
         b = _need(b, workspace_id=str, group=str)
-        self.d.access.revoke(b["workspace_id"], b["group"], actor=c.user_id)
+        with self._chg().reducing("revoke", confirm=confirmed(b), workspace_id=b["workspace_id"], group=b["group"]):
+            self.d.access.revoke(b["workspace_id"], b["group"], actor=c.user_id)
         return 200, {"ok": True}
 
     def _h_a_workspace_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):

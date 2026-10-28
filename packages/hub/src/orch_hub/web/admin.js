@@ -1,5 +1,6 @@
 import { skeleton, replaceContent, toast } from "./feel.js";
 import { renderText } from "./render.js";
+import { sentence } from "./changes.js";
 
 let showLeft = false;
 
@@ -35,6 +36,7 @@ export function adminView(d) {
   const panels = h("div", {}, skeleton("admin"));
   const tabs = h("div", { class: "section-tabs", role: "tablist", "aria-label": "Admin sections" });
   let data, selected = 0, generation = 0;
+  const overriding = new Set(), reasons = {}; // changes whose override box is open, and the reason typed so far
   const names = ["People & groups", "Access", "Workspaces", "Marketplaces", "Audit"];
   const buttons = names.map((name, i) => h("button", {
     id: "admin-tab-" + i, role: "tab", text: name, "aria-controls": "admin-panel-" + i,
@@ -58,12 +60,13 @@ export function adminView(d) {
     if (!data) panels.replaceChildren(skeleton("admin"));
     try {
       const keys = ["users", "groups", "grants", "workspaces", "channels", "market-policy", "audit"];
-      const responses = await Promise.all(keys.map((key) => d.api("GET", "/admin/" + key)));
+      const [responses, waiting] = await Promise.all([Promise.all(keys.map((key) => d.api("GET", "/admin/" + key))), d.api("GET", "/admin/changes")]);
       if (current !== generation) return;
       const failed = responses.find((r) => r.status !== 200);
       if (failed) { error(failed.body?.error ?? "unavailable"); panels.replaceChildren(h("button", { text: "Try again", onclick: load })); return; }
       data = Object.fromEntries(keys.map((key, i) => [key, key === "audit" || key === "market-policy" ? responses[i].body : responses[i].body[key]]));
       data.policy = data["market-policy"];
+      data.changes = waiting?.status === 200 ? waiting.body?.changes ?? [] : []; // a failed list only hides the waiting changes
       syncMp();
       if (data.audit.head?.seq > Math.max(0, ...(data.audit.records ?? []).map((r) => r.seq))) {
         const recent = await d.api("GET", "/admin/audit?since=" + Math.max(0, data.audit.head.seq - 100));
@@ -74,7 +77,7 @@ export function adminView(d) {
       draw();
     } catch { if (current === generation) { error("unavailable"); panels.replaceChildren(h("button", { text: "Try again", onclick: load })); } }
   }
-  async function change(button, method, path, body, undoable = true) {
+  async function change(button, method, path, body, undoable = true, done = "Saved") {
     const membership = /^\/admin\/groups\/([^/]+)\/members\/([^/]+)$/.exec(path);
     const wasMember = membership && data.groups.find((g) => g.name === decodeURIComponent(membership[1]))?.members.includes(decodeURIComponent(membership[2]));
     const grantChange = path === "/admin/grants" || path === "/admin/grants/revoke";
@@ -82,8 +85,15 @@ export function adminView(d) {
     button.disabled = true;
     try {
       const r = await d.api(method, path, body);
+      if (r.status === 409 && r.body?.error === "last_admin" && !body?.confirm) { lastAdmin(button, method, path, body); return; }
       if (r.status < 200 || r.status >= 300) { error(r.body?.error ?? "unavailable"); return; }
-      message.replaceChildren(h("div", { class: "banner ok", role: "status", text: "Saved" }));
+      if (r.status === 202) { // an increase on a workspace someone else owns: nothing changed yet, the owner is asked
+        const owners = [...new Set((r.body?.waiting_for ?? []).map((x) => txt(x.owner_name ?? "the workspace owner")))].join(", ") || "the workspace owner";
+        message.replaceChildren(h("div", { class: "banner ok", role: "status", text: "Sent to " + owners + " for approval" }));
+        await load();
+        return;
+      }
+      message.replaceChildren(h("div", { class: "banner ok", role: "status", text: done }));
       await load();
       await d.refresh();
       if (undoable && membership && ((method === "PUT" && !wasMember) || (method === "DELETE" && wasMember))) {
@@ -94,6 +104,14 @@ export function adminView(d) {
       }
     } catch { error("unavailable"); }
     finally { button.disabled = false; }
+  }
+  // The hub refused because a workspace would be left with nobody who can administer it: say so and let the admin confirm.
+  function lastAdmin(button, method, path, body) {
+    const again = h("button", { type: "button", class: "danger", text: "Do it anyway", onclick: () => { message.replaceChildren(); void change(button, method, path, { ...(body ?? {}), confirm: true }, false); } });
+    message.replaceChildren(h("div", { class: "banner warn", role: "alert" },
+      h("div", { text: "This would leave a workspace with nobody who can administer it." }),
+      h("div", { class: "row" }, again, h("button", { type: "button", text: "Cancel", onclick: () => message.replaceChildren() }))));
+    again.focus();
   }
   function remove(label, method, path, body) {
     let armed = false;
@@ -146,6 +164,32 @@ export function adminView(d) {
           g.members.length ? g.members.map((id) => h("div", { class: "row top" }, h("span", { class: "grow", text: personName(id) }),
             remove("Remove from group", "DELETE", "/admin/groups/" + enc(g.name) + "/members/" + enc(id)))) : p("No members"))))];
   }
+  // Increases the owner has not answered yet: the admin can withdraw one, or (with a written reason) apply it anyway.
+  function waitingChanges() {
+    const list = (data.changes ?? []).filter((c) => c.state === "pending");
+    if (!list.length) return null;
+    return h("section", { class: "card", id: "waiting-changes" }, h("h3", { text: "Waiting for approval" }),
+      p("These are not in effect yet. The owner of the workspace has to approve them."),
+      list.map((c) => {
+        const owners = [...new Set(c.approvals.map((a) => txt(a.owner_name ?? "the workspace owner")))].join(", ");
+        const names = c.approvals.map((a) => a.workspace_name ?? "a workspace").join(" and ");
+        const open = overriding.has(c.id);
+        const reason = h("input", { id: "override-reason", maxlength: 200, autocomplete: "off", "aria-label": "Reason", value: reasons[c.id] ?? "",
+          oninput: (ev) => { reasons[c.id] = ev.target.value; apply.disabled = reasons[c.id].trim().length < 3; } });
+        const apply = h("button", { type: "button", class: "danger", text: "Apply without approval", disabled: (reasons[c.id] ?? "").trim().length < 3,
+          onclick: () => void change(apply, "POST", "/admin/changes/" + enc(c.id) + "/override", { reason: reasons[c.id].trim() }, false, "Applied without approval") });
+        const cancel = h("button", { type: "button", text: "Cancel", onclick: () => void change(cancel, "POST", "/admin/changes/" + enc(c.id) + "/cancel", {}, false, "Cancelled") });
+        return h("article", { class: "list-row change" },
+          h("b", { text: sentence(c, names) }),
+          p("Waiting for " + owners + (c.approvals.some((a) => a.stale) ? ". Access changed since it was asked, so it will be closed: ask again." : ".")),
+          h("div", { class: "row" }, cancel,
+            open ? null : h("button", { type: "button", text: "Override", onclick: () => { overriding.add(c.id); draw(); } })),
+          open ? h("div", { class: "banner warn", role: "group", "aria-label": "Override" },
+            p(owners + " will see that this was applied without their approval."),
+            field("Reason (required)", reason),
+            h("div", { class: "row" }, apply, h("button", { type: "button", text: "Keep waiting", onclick: () => { overriding.delete(c.id); draw(); } }))) : null);
+      }));
+  }
   function access() {
     const workspace = select(data.workspaces.filter((w) => w.mode === "full").map((w) => [w.workspace_id, w.name ?? w.workspace_id]));
     const group = select(data.groups.filter((g) => g.name !== "hub-admin").map((g) => [g.name, g.name]));
@@ -157,6 +201,7 @@ export function adminView(d) {
       h("section", { class: "card" }, h("h3", { text: "Grant access" }),
         form("Grant access", [field("Workspace", workspace), field("Group", group), field("Permission", role)], "PUT", "/admin/grants",
           () => ({ workspace_id: workspace.value, group: group.value, role: role.value }))),
+      waitingChanges(),
       ...data.workspaces.map((w) => h("section", { class: "workspace-detail" }, h("h3", { text: workspaceName(w.workspace_id) }),
         w.mode === "selective" ? p("Personal · owner only") : table(["Group", "Permission", "Members", "Action"],
           [...data.groups.filter((g) => g.name === "hub-admin").map((g) => [txt(g.name), "Admin", groupMembers(g.name), "Built in"]),

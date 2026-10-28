@@ -42,6 +42,6 @@ def describe(rule, ticket, ends, target="existing", title=None):
     if target == "new":
         return (
             f'Schedule creates a NEW ticket every run, titled "{title}", '
-            f'{when} at {rule["at"]} ({rule["tz"]}), until {ends}'
+            f"{when} at {rule['at']} ({rule['tz']}), until {ends}"
         )
     return f"Runs {when} at {rule['at']} ({rule['tz']}) on {ticket}, until {ends}"

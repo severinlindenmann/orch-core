@@ -11,7 +11,7 @@ import { adminView } from "./admin.js";
 import { servicesView } from "./services.js";
 import { workspacesView, workspaceDetailsView } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
-import { Refusal, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
+import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
 watchDialogs();
@@ -35,10 +35,11 @@ function h(tag, props = {}, ...kids) {
   if (props["data-sign"] !== undefined) { e.arm = () => arm(e); e.arm(); }
   return e;
 }
+let servicesTimer, viewRevision = 0;
 let frame = null;
 let railSnapshot = "";
 let paintedRoute = null;
-const show = (...nodes) => { frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
+const show = (...nodes) => { clearInterval(servicesTimer); viewRevision++; frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
 const field = (label, input) => h("div", {}, h("label", { text: label }), input);
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
@@ -137,6 +138,7 @@ function pageLoading(active, kind = active) {
 }
 
 function shell(active, ...nodes) {
+  if (active !== "services") { clearInterval(servicesTimer); viewRevision++; } // leave the Services page: stop its refresh
   const sameRoute = paintedRoute === location.hash;
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
   const name = renderText(state.user?.name ?? "");
@@ -332,19 +334,28 @@ async function copyText(t) {
   try { await navigator.clipboard.writeText(t); toast("Copied"); return true; } catch { toast("Copy failed: select the text by hand"); return false; }
 }
 
-async function services() {
-  const finishLoading = loading();
-  pageLoading("services");
+async function services(silent = false) {
+  const revision = viewRevision;
+  const finishLoading = silent ? () => {} : loading();
+  if (!silent) pageLoading("services");
   try {
     if (!(await refresh())) return loginView();
     state.menu = false;
     await loadRail();
     if (!state.user.is_admin) return home();
     if (state.user.needs_sign_in) return reauthView();
-    const r = await api("GET", "/admin/services");
+    const [r, ws] = await Promise.all([api("GET", "/admin/services"), api("GET", "/me/workspaces")]);
+    if (revision !== viewRevision) return;
     if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
     if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
-    shell("services", servicesView(r.body, { check: services, open: () => navigate("#/workspaces"), copy: copyText }));
+    shell("services", servicesView({ ...r.body, workspaces_list: ws.status === 200 ? ws.body.workspaces : undefined }, { check: () => services(), open: () => navigate("#/workspaces"), copy: copyText }));
+    clearInterval(servicesTimer);
+    let checking = false;
+    servicesTimer = setInterval(async () => {
+      if (document.hidden || checking) return;
+      checking = true;
+      try { await services(true); } finally { checking = false; }
+    }, 15000);
   } finally { finishLoading(); }
 }
 
@@ -517,6 +528,26 @@ function reviewDecision(it, c) {
 // Keep the wanted fragment while the sign-in form is showing.
 async function afterLogin() { return renderRoute(); }
 
+// Agent access terms are display and signing input; the host checks its pending record at landing.
+async function accessView(wsId, raw) {
+  let terms = null;
+  try {
+    const b = atob(raw.replaceAll("-", "+").replaceAll("_", "/"));
+    terms = parseStrict(new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(b, (c) => c.charCodeAt(0))));
+  } catch { terms = null; }
+  const back = h("p", { class: "small" }, h("a", { href: "#", text: "\u2190 Back to your list", onclick: (e) => { e.preventDefault(); location.hash = ""; home(); } }));
+  if (!(await refresh())) return loginView();
+  const ws = await api("GET", "/me/workspaces");
+  const mine = ws.status === 200 ? ws.body.workspaces.find((w) => w.workspace_id === wsId) : null;
+  if (!grantTermsOk(terms) || !mine || !["edit", "admin"].includes(mine.role)) return shell("home", h("div", {}, back, banner("bad", "This link cannot be used", "It does not describe an agent access request this page can show safely.")));
+  const action = { type: "grant.requested", log: "workspace", ...terms };
+  shell("home", h("div", {}, back,
+    h("h1", { text: "Approve agent access" }),
+    h("p", { class: "sentence", text: grantSentence(terms, mine.name ?? wsId.slice(0, 8)) }),
+    h("dl", { class: "facts" }, grantFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
+    h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
+}
+
 // FB15 (protocol 8.8b): the link a workspace's Mission Control builds, #/w/<workspace>/addon/<b64u(JSON terms)>. The terms
 // are parsed strictly and rendered from this page's own words; the signature still goes through the same prepare -> review
 // -> sign prompt, whose digest is recomputed here. A link that names a workspace this person does not hold is refused.
@@ -664,7 +695,7 @@ function promptView(me, p, digest, d) {
     }
   });
   dialog(
-    h("h1", { text: d.type === "addon.requested" ? "Approve an add-on" : d.type === "settings.changed" ? "Approve a settings change" : "Review your answer" }),
+    h("h1", { text: d.type === "grant.requested" ? "Approve agent access" : d.type === "addon.requested" ? "Approve an add-on" : d.type === "settings.changed" ? "Approve a settings change" : "Review your answer" }),
     h("p", { class: "sentence", text: signedMeaning(d.sentence, state.rail.rows.find((w) => w.id === p.ctx.workspace_id)?.name || "this workspace") }),
     h("details", {}, h("summary", { text: "What exactly is signed" }), h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.facts.length ? d.facts.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: k === "Content reference" ? "fp" : "", text: v })]) : d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
     factsList(d.fields)),
@@ -877,6 +908,7 @@ async function renderRoute() {
       const route = parseRoute(location.hash);
       if (route.kind === "ticket") await landFromTicket(route.token);
       else if (route.kind === "setup") setupView(route.token);
+      else if (route.kind === "access") await accessView(route.workspace, route.key);
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);

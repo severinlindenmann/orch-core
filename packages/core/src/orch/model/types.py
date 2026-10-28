@@ -177,7 +177,7 @@ class WsCore:
     hub: dict[str, Any] = field(default_factory=dict)
     unattended: list[tuple[int, str, int]] = field(default_factory=list)  # (at seconds, session, artifact bytes)
     #: C10 (hub protocol 8.8): the admitted ``grant.requested`` lines by event id: ``{person, role, scope, verbs, hours,
-    #: label?, at, hub_id, used}``. A host-actor ``grant.issued`` consumes one (``used``), once.
+    #: label?, handoff, at, hub_id, used}``. A host-actor ``grant.issued`` consumes one (``used``), once.
     requests: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: FB15 (hub protocol 8.8b): the admitted ``addon.requested`` lines by event id: ``{person, role, name, version,
     #: package_sha256, capabilities, runtime, at, hub_id, used}``. A host-actor ``addon.granted`` consumes one, once.

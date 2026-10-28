@@ -92,3 +92,24 @@ def test_handoffs_show_only_my_workspaces_by_name(w):
 
 def test_handoffs_without_a_queue_is_an_empty_list(w):
     assert w.call("GET", "/me/handoffs", token=w.login(w.ann))[1] == {"handoffs": []}
+
+
+@pytest.mark.parametrize(
+    ("behind_edge", "url", "expected"),
+    [
+        (False, None, {"state": "not_set_up", "url": None}),
+        (False, "https://hub.test", {"state": "not_set_up", "url": None}),
+        (True, None, {"state": "up", "url": None}),
+        (True, "https://hub.test", {"state": "up", "url": "https://hub.test"}),
+    ],
+)
+def test_services_edge_uses_configuration_without_a_probe(w, behind_edge, url, expected):
+    def no_probe(*args):
+        pytest.fail("Edge must not trigger a network call")
+
+    w.api.d.services = Services(relay_url=None, publish_url=None, behind_edge=behind_edge, edge_url=url, probe=no_probe)
+    status, body, _ = w.call("GET", "/admin/services", token=w.login(w.admin))
+    assert status == 200
+    assert body["edge"] == expected
+    assert body["hub"]["state"] == "up"
+    assert body["relay"]["state"] == body["publish"]["state"] == "not_set_up"

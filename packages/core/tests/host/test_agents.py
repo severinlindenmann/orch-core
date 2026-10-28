@@ -509,3 +509,19 @@ def test_stopping_the_parent_stops_its_live_human_children(ready):
     ok(c.call("run.stop", {"run": parent["run"]}))
     wait_for(lambda: record(w, child["run"])["state"] == "exited")
     assert record(w, parent["run"])["state"] == "exited"
+
+
+def test_a_runner_that_lost_the_grant_behind_the_hosts_back_gives_the_access_step(ready):
+    """Run 13: the host believes the grant is current, the runner holds none. The start says so in plain words and
+    the host forgets the grant, so the next view is the normal "give agent access" step, never a dead end."""
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="codex", mode="work")
+    assert pre["blocked"] is None
+    assert w.runner.grants.drop(gid_of(w.value))  # as a runner that restarted without the host seeing a hello
+    got = start(c, ticket=key, harness="codex", mode="work", spec=pre["spec"])
+    assert err(got) == "launch.no_grant"
+    assert "runner holds" not in str(got) and "Agent access" in str(got)
+    assert preview(c, ticket=key, harness="codex", mode="work")["blocked"]["detail"] == {"reason": "none"}
+    assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None

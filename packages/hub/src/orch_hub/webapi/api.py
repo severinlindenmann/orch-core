@@ -919,8 +919,6 @@ class WebApi(ChangeHandlers):
     def _h_setup(self, c: Ctx, p: dict, q: dict, b: dict | None):
         """Prototype: the installer's token file is the proof; a right token makes one hub-admin and is deleted."""
         b = _need(b, token=str, name=str, password=str)
-        if self.d.access.members(ADMIN_GROUP):
-            raise ApiError("not_allowed")  # first admin only: a leftover token file never makes a second one
         f = self.d.setup_token_file
         with self._plock:
             try:
@@ -928,7 +926,9 @@ class WebApi(ChangeHandlers):
             except OSError:
                 want = ""
             if not want or not hmac.compare_digest(want.encode(), b["token"].encode()):
-                raise ApiError("bad_credentials")
+                raise ApiError("bad_credentials")  # a wrong token answers as before, whoever is (not) an admin
+            if self.d.access.members(ADMIN_GROUP):
+                raise ApiError("not_allowed")  # first admin only: a leftover token file never makes a second one
             check_name(b["name"])
             if len(b["password"]) < MIN_PASSWORD:
                 raise ChannelError("weak_password", f"at least {MIN_PASSWORD} characters")

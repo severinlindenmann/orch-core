@@ -48,7 +48,11 @@ def runner(info):
     if not isinstance(info, dict) or any(type(info.get(k)) is not bool for k in ("connected", "enabled", "terminals")):
         return None
     out = {key: info[key] for key in ("connected", "enabled", "terminals")}
-    return {**out, "grant": runner_grant(info.get("grant"))}
+    return {
+        **out,
+        "grant": runner_grant(info.get("grant")),
+        **({"now": info["now"]} if isinstance(info.get("now"), str) and TIME.fullmatch(info["now"]) else {}),
+    }
 
 
 def runner_grant(grant):

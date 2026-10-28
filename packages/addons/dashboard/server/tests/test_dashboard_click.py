@@ -10,6 +10,7 @@ import re
 import secrets
 import threading
 import time
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -889,7 +890,7 @@ def test_c3_a_view_without_its_headline_or_risk_lines_is_not_shown(client, token
 
 def test_c3_the_view_and_its_risk_lines_are_passed_on_unchanged(client, token, stub, script):
     prepare(client, token, stub)
-    risk = []
+    risk = []  # approve is on the closed one-press allowlist
     view = {**script.view["view"], "risk_lines": risk, "headline_detail": "“Export does nothing”"}
     script.view = {"view": view, "view_digest": HASH}
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
@@ -3403,6 +3404,115 @@ def test_c2_cancelled_request_is_never_signable(client, token, stub, script):
     assert fresh.json()["request_id"] != request_id
 
 
+@pytest.mark.parametrize("minutes,expected_grant", [(None, True), (14, True), (15, False), (16, False)])
+def test_d2_host_clock_selects_last_grant(client, token, stub, script, monkeypatch, minutes, expected_grant):
+    from datetime import datetime, timedelta
+
+    from orch_dashboard.gateway import Gateway
+
+    script.features = ["custody", "sequence"]
+    real = Gateway.call
+    now = datetime(2026, 10, 28, 12, tzinfo=UTC)
+
+    def call(self, ws, op, *args, **kwargs):
+        if op == "whoami":
+            return {
+                "runner": {
+                    "now": now.isoformat(),
+                    "grant": (
+                        {"startable": True, "until": (now + timedelta(minutes=minutes)).isoformat()}
+                        if minutes is not None
+                        else None
+                    ),
+                }
+            }
+        return real(self, ws, op, *args, **kwargs)
+
+    monkeypatch.setattr(Gateway, "call", call)
+    res = prepare(
+        client, token, stub, {**SEQUENCE, "launch": {"harness": "codex", "mode": "refine"}, "agent": {"hours": 8}}
+    )
+    assert res.status_code == 200, res.text
+    args = next(args for op, args in script.clients[0].calls if op == "prepare")
+    intent = args["sequence"]["intent"]
+    assert intent["launch"] == {"harness": "codex", "mode": "refine"}
+    assert ("agent" in intent) is expected_grant
+    if expected_grant:
+        assert intent["agent"] == {"hours": 8, "scope": "workable"}
+
+
+def test_d2_valid_access_create_start_view_uses_stored_body(client, token, stub, script, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from orch_dashboard.gateway import Gateway
+
+    script.features = ["custody", "sequence"]
+    real = Gateway.call
+    now = datetime(2026, 10, 28, 12, tzinfo=UTC)
+
+    def call(self, ws, op, *args, **kwargs):
+        if op == "whoami":
+            return {
+                "runner": {
+                    "now": now.isoformat(),
+                    "grant": ({"startable": True, "until": (now + timedelta(minutes=16)).isoformat()}),
+                }
+            }
+        return real(self, ws, op, *args, **kwargs)
+
+    monkeypatch.setattr(Gateway, "call", call)
+    res = prepare(
+        client, token, stub, {**SEQUENCE, "launch": {"harness": "codex", "mode": "refine"}, "agent": {"hours": 8}}
+    )
+    assert res.status_code == 200, res.text
+    args = next(args for op, args in script.clients[0].calls if op == "prepare")
+    intent = args["sequence"]["intent"]
+    assert intent["launch"] == {"harness": "codex", "mode": "refine"}
+    assert "agent" not in intent
+
+    # /view must retrieve the body stored by /prepare, after agent was removed.
+    # The browser proposed a grant; the test never supplies a stripped body.
+    script.view["view"].update(
+        op="new",
+        headline="Create ticket and start agent",
+        risk_lines=[],
+        confirm={"kind": "click", "mode": "press"},
+    )
+    shown = client.post(url(stub, "view"), json={"request_id": res.json()["request_id"]}, headers=hdr(token))
+    assert shown.status_code == 200, shown.text
+    view = shown.json()["view"]
+    assert view["op"] == "new"
+    assert view["risk_lines"] == []
+    assert view["confirm"] == {"kind": "click", "mode": "press"}
+
+
+@pytest.mark.parametrize(
+    "op,risk,mode,ok",
+    [
+        ("grant", ["Agents can run as you for 8 hours"], "press", True),
+        ("new", ["Agents can run as you for 8 hours"], "press", False),
+        ("grant", [], "press", False),
+        ("grant", ["Agents can run as you for 8 hours"], "arm", False),
+    ],
+)
+def test_grant_sequence_requires_risk_view_in_press_mode(client, token, stub, script, op, risk, mode, ok):
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 8}})
+    assert res.status_code == 200, res.text
+    script.view["view"].update(op=op, risk_lines=risk, confirm={"kind": "click", "mode": mode})
+    res = client.post(url(stub, "view"), json={"request_id": res.json()["request_id"]}, headers=hdr(token))
+    assert res.status_code == (200 if ok else 409), res.text
+
+
+@pytest.mark.parametrize(
+    "op,risk,ok", [("new", [], True), ("new", ["risk"], False), ("grant", [], False), ("grant", ["risk"], True)]
+)
+def test_relay_preserves_one_press_allowlist(op, risk, ok):
+    from orch_dashboard.click import contract4_view_ok
+
+    assert contract4_view_ok({"op": op, "headline": "Review", "risk_lines": risk}) is ok
+
+
 @pytest.mark.parametrize("finish", ["cancelled", "not_sent", "unknown"])
 def test_d5_hold_relays_session_delay_and_preserves_cancel_and_reconnect(
     client, token, stub, script, auth, host_check, gateway, finish
@@ -3689,17 +3799,6 @@ def test_relay_caps_headline_at_sixty():
 
     assert contract4_view_ok({"op": "approve", "headline": "x" * 60, "risk_lines": []})
     assert not contract4_view_ok({"op": "approve", "headline": "x" * 61, "risk_lines": []})
-
-
-@pytest.mark.parametrize("action", ["new_sequence", "quick_start"])
-def test_agent_access_cannot_be_hidden_in_a_daily_sequence(client, token, stub, script, action):
-    body = {"action": action, "title": "Task", "agent": {"hours": 8}}
-    if action == "new_sequence":
-        body.update(type="feature", sections={})
-    res = prepare(client, token, stub, body)
-    assert res.status_code == 409, res.text
-    assert res.json()["error"]["reason"] == "terminal_only"
-    assert not [call for child in script.clients for call in child.calls if call[0] == "prepare"]
 
 
 def test_d5_logout_everywhere_continues_after_callback_failure(client, token, stub, script, auth):

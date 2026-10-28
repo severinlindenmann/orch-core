@@ -29,6 +29,7 @@ from .channels import Channels
 from .channels.pushkeys import PushKeyStore
 from .channels.service import CHANNELS_FILE
 from .config import HubConfig
+from .connections import ConnectionAuthz, Connections
 from .contract.hub import Refused
 from .custodial import CustodialEngine
 from .custodial.deliver import build_delivery
@@ -195,7 +196,10 @@ def serve(
     queue_path = state / ROUTE_QUEUE_FILE
     queue = RouteQueue(str(queue_path))
     wk_seals = WkSeals(str(state / WK_SEAL_FILE), hub_id=keys.hub_id, hxk_pub=keys.hxk_pub, exchange=keys.hxk_exchange)
-    router = Router(registry, queue, AccessAuthz(registry, access))
+    connections = Connections(str(state / "connections.db"))
+    access_authz = AccessAuthz(registry, access)
+    authz = ConnectionAuthz(connections, access_authz)  # a connection AND the access rule, fail closed
+    router = Router(registry, queue, authz, on_routed=connections.bump)
     audit = open_log(state, keys, dev_mode=cfg.dev)
     activity = ActivityLog(state / "activity.db")
     user_invites = Invites(state / INVITES_FILE)  # join / reset / recovery links of people (the token is never stored)
@@ -230,7 +234,13 @@ def serve(
         keys=keys,
         channels=channels,
         activity=activity,
+        connections=connections,
     )
+    # first start with connections: carry over what routing allowed before (audited once, as ``migrated``)
+    bound = [ws for ws in sorted(registry.pins()) if registry.mode(ws) is not None]
+    migrated = connections.backfill([(a, b) for a in bound for b in bound if a != b and access_authz.may_route(a, b)])
+    if migrated and activity is not None:
+        activity.record("connection.migrated", actor_kind="hub", detail={"count": migrated})
     notifier: PushNotifier | None = None
     try:
         client = RelayClient(keys, cfg.relay_url, dev=cfg.dev, transport=relay_transport)
@@ -291,6 +301,8 @@ def serve(
                     edge_url=cfg.resolved_api_origin(),
                 ),
                 routes=queue,
+                authz=authz,
+                connections=connections,
                 delivery=deliveries,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )
@@ -381,6 +393,7 @@ def serve(
         share_store.close()
         changes.close()
         activity.close()
+        connections.close()
         user_invites.close()
         audit.store.close()
         registry.close()

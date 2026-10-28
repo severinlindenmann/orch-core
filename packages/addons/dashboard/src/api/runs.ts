@@ -45,6 +45,7 @@ export interface Run {
 }
 
 export interface RunnerInfo {
+  now?: string
   connected: boolean
   enabled: boolean
   terminals: boolean

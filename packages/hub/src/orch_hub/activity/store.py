@@ -45,6 +45,7 @@ DETAIL_FIELDS = frozenset(
         "count",
         "reason",  # an admin's written reason for an override (3-200 characters, see changes.service)
         "groups_removed",
+        "direct",
     }
 )
 REASON_MAX_BYTES = 800  # 200 characters of UTF-8
@@ -125,6 +126,9 @@ class ActivityLog:
                     raise ValueError("invalid group list")
                 for name in value:
                     bounded(name)
+            elif key == "direct":  # an owner acted directly (no approver other than themselves existed)
+                if value is not True:
+                    raise ValueError("invalid direct flag")
             elif key == "count":
                 if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value < 2**63:
                     raise ValueError("invalid count")

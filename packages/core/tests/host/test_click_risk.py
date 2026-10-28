@@ -66,8 +66,18 @@ GRANT = {"type": "grant.issued", "label": "runner", "verbs": "agent", "hours": 8
 @pytest.mark.parametrize(
     ("op", "events", "flags", "lines"),
     [
-        ("grant", [GRANT], {"deposit": True}, [protocol.DEPOSIT_RISK, length("8 hours")]),
-        ("grant", [{**GRANT, "hours": 48}], {"deposit": True}, [protocol.DEPOSIT_RISK, length("2 days")]),
+        (
+            "grant",
+            [GRANT],
+            {"deposit": True},
+            [protocol.DEPOSIT_RISK, length("8 hours"), "Agents can run as you for 8 hours"],
+        ),
+        (
+            "grant",
+            [{**GRANT, "hours": 48}],
+            {"deposit": True},
+            [protocol.DEPOSIT_RISK, length("2 days"), "Agents can run as you for 48 hours"],
+        ),
         (
             "grant",
             [{**GRANT, "label": "codex", "hours": 2}],

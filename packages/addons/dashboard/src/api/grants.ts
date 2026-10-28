@@ -106,3 +106,14 @@ export function runnerLengths(cap: number, remainingMs = 0): Array<readonly [num
   const offered = within.length > 0 ? within : [[cap, `${cap} ${cap === 1 ? 'hour' : 'hours'}`] as const]
   return offered.filter(([h]) => h * 3_600_000 >= remainingMs)
 }
+
+/**
+ * D2: reuse only valid access with at least 15 minutes remaining, by HOST time. The host's `now` is as of the read; the
+ * time since the read (`elapsedMs`, the browser clock only used as a stopwatch, never as a date) is added, so a grant
+ * that is running out while the form is open is read as it is now.
+ */
+export function reusableAccess(runner: import('./runs').RunnerInfo | null | undefined, elapsedMs = 0) {
+  if (!runner?.now || !runner.grant || runner.grant.startable !== true) return null
+  const hostNow = Date.parse(runner.now) + Math.max(0, elapsedMs)
+  return Date.parse(runner.grant.until) - hostNow >= 900_000 ? runner.grant : null
+}

@@ -477,6 +477,12 @@ class HumanOps:
             check_device(
                 store, person, signer["device"], now, operate=_operate([c.event["type"] for c in capture.events])
             )
+        if meta and meta["step"] == 0 and meta["intent"].get("launch") and not meta["intent"].get("agent"):
+            from .runnergrants import reusable
+
+            current = reusable(service, person)
+            if current:
+                capture.agent_access_until = current["until"]
         prepared, extras = self._build(call, name, log, capture, store, now)
         if name in hubproof.OPS:  # #1198 C9: what the signer needs to make the owner proof (the host's own dev state)
             from . import hubops
@@ -640,7 +646,16 @@ class HumanOps:
             seq = store.log_seq(want["uid"]) if view is not None and view.uid == want["uid"] else None
             if seq is None or store.head_at(want["uid"], seq) != checked["intent"]["head"]:
                 raise HostError("human.request_mismatch", sequence.CHANGED)
-        agent = (checked.get("intent") or {}).get("agent") if checked["step"] == 0 else None
+        intent = checked.get("intent") or {}
+        if checked["step"] == 0 and intent.get("launch"):
+            from .runnergrants import reusable
+
+            current = reusable(call.service, person)
+            if current is None and not intent.get("agent"):
+                raise HostError("grant.short", "review again: agent access has less than 15 minutes left")
+            if current is not None and intent.get("agent"):
+                raise HostError("sequence.changed", "review again: current agent access needs no grant")
+        agent = intent.get("agent") if checked["step"] == 0 else None
         if (
             agent is not None
         ):  # a runner grant lasts at most the workspace's grant_hours (even for an owner): refuse at the review
@@ -808,6 +823,8 @@ class HumanOps:
             material["market"] = copy.deepcopy(capture.market)  # V3 G3: the host's word on the source, not signed
         if capture.deps is not None and "addon.granted" in types:
             material["deps"] = copy.deepcopy(capture.deps)  # V3 G4: the package list, from the checked lockfile
+        if getattr(capture, "agent_access_until", None):
+            material["agent_access_until"] = capture.agent_access_until
         seq = getattr(capture, "sequence", None)
         if seq is not None and seq["step"] == 0:  # the whole intent is in the material: bound by review_digest
             material["sequence"] = {"digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"])}

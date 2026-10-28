@@ -502,6 +502,7 @@ _MATERIAL_KEYS = {
             "market",
             "deps",
             "removed_device",
+            "agent_access_until",
         },
     ),
 }

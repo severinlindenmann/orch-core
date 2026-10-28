@@ -141,8 +141,12 @@ class Web:
             now_ms=self.clock,
             dev_mode=True,
         )
+        from orch_hub.connections import Connections
+
+        self.connections = Connections(str(tmp_path / "hub" / "connections.db"), now_ms=self.clock)
         self.changes = Changes(  # access changes that wait for a workspace owner (M2-8a)
             str(tmp_path / "hub" / "changes.db"),
+            connections=self.connections,
             access=e.acc,
             registry=self.reg,
             snapshots=e.snaps,
@@ -158,6 +162,7 @@ class Web:
                 registry=self.reg,
                 audit=e.audit,
                 changes=self.changes,
+                connections=self.connections,
                 engine=self.engine,
                 shares=self.shares,
                 view=self.view,
@@ -176,6 +181,7 @@ class Web:
 
     def close(self) -> None:
         self.changes.close()
+        self.connections.close()
         self.seals.close()
         self.env.close()
 

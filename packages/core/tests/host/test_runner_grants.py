@@ -612,3 +612,24 @@ def test_launch_reason_is_the_one_rule(entry, role, scope, person_ok, want):
     svc = _service(e, role=role, person_ok=person_ok)
     rg = RunnerGrants.__new__(RunnerGrants)
     assert rg.launch_reason(svc, "p_1", {"grant": "gr_1", "scope": scope}) == want
+
+
+def test_a_hello_before_the_workspace_is_served_keeps_the_grant_and_settles_later(ready):
+    """Run 13: the host restarts, the live runner's hello lands before the workspace is bound. The runner's grant must
+    not be dropped while the persisted table still reads valid ("the runner holds no such runner grant")."""
+    w = ready
+    c = w.conn()
+    value = issue(w)
+    ok(deposit(c, value))
+    hub = w.h.host.runners
+    services = w.h.host.services
+    service = services.pop(w.wid)  # as a host that has not served its workspaces yet
+    hub.drop_session(hub.session)  # the runner reconnects: hello
+    wait_for(
+        lambda: hub.grants._hello is not None and w.wid not in hub.grants._hello["served"] and hub.session is not None
+    )
+    assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(value)]  # not dropped
+    services[w.wid] = service
+    w.h.run(hub.grants.workspace_served(w.wid))
+    assert [g["grant"] for g in w.runner.grants.report()] == [gid_of(value)]
+    assert ok(c.call("whoami", {}))["data"]["runner"]["grant"]["id"] == gid_of(value)

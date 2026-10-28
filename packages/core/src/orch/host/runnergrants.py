@@ -147,6 +147,11 @@ class RunnerGrants:
         self.hub = hub
         self.tables: dict[str, GrantTable] = {}
         self._watching: asyncio.Task[None] | None = None
+        #: what the last hello reported, and which workspaces were served then: a workspace bound after it (a host that
+        #: has just started answers the runner's hello before it serves its workspaces) is settled in
+        #: :meth:`workspace_served`, never judged on a missing service (that dropped the runner's grant while the
+        #: persisted table still read "valid": "the runner holds no such runner grant")
+        self._hello: dict[str, Any] | None = None
         #: one deposit, forget or drop at a time per (workspace, person): a deposit in flight never undoes a forget
         #: or beats a newer replacement (#466 review, Opus M1)
         self._locks: dict[tuple[str, str], asyncio.Lock] = {}
@@ -292,17 +297,32 @@ class RunnerGrants:
         No await happens before the tables change (the drops are sent after every change is made), so this never
         interleaves with a deposit's or a forget's bookkeeping; if an await is ever added before a change, take the
         per-person lock (:meth:`lock`) around it."""
+        self._hello = {"reported": list(reported), "served": set(self.hub.host.services)}
+        await self._settle(reported, None)
+
+    async def workspace_served(self, wid: str) -> None:
+        """A workspace was bound after the runner's hello: settle it by what the runner reported then (a deposit needs
+        a served workspace, so nothing changed at the runner since)."""
+        hello = self._hello
+        if hello is None or wid in hello["served"] or self.hub.host.services.get(wid) is None:
+            return
+        hello["served"].add(wid)
+        await self._settle([r for r in hello["reported"] if r["workspace_id"] == wid], wid)
+
+    async def _settle(self, reported: list[dict[str, Any]], only: str | None) -> None:
         held = {(r["workspace_id"], r["person"]): r for r in reported}
         drops: list[str] = []
         for (wid, person), rep in held.items():
             service = self.hub.host.services.get(wid)
+            if service is None:
+                continue  # not served yet: workspace_served settles it
             table = self.table(wid) if service is not None else None
             if table is None or not self._allowed(service, table, person, rep["grant"]):
                 drops.append(rep["grant"])
         # every served workspace's persisted table, loaded or not: after a host restart nothing is loaded yet, and a
         # persisted ``current`` the runner does not hold must not read as available (Codex P2 #2)
         for wid in sorted(set(self.tables) | {w for w, _ in held} | set(self.hub.host.services)):
-            if self.hub.host.services.get(wid) is None:
+            if self.hub.host.services.get(wid) is None or (only is not None and wid != only):
                 continue
             table = self.table(wid)
             changed = False

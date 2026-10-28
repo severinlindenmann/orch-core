@@ -518,6 +518,7 @@ class Host:
 
             service.dev_ok = await service.call(lambda: dev_gate(service) is not None)
         self.services[entry.workspace_id] = service  # an unavailable workspace is still bound: ops name the cause
+        asyncio.get_running_loop().create_task(self.runners.grants.workspace_served(entry.workspace_id))
         await asyncio.to_thread(served_marker, entry.root, True, self.state_dir)
         try:
             if self.share_error is not None:

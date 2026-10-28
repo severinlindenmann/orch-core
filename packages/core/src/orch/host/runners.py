@@ -1024,6 +1024,20 @@ class RunnerHub:
             await self._save({**self.store.records[run], "state": "exited", "exit": _exit("spawn_failed", exc.code)})
             if audit:
                 self._audit("run.outcome", run=run, outcome="spawn_failed", code=exc.code)
+            if exc.code == "launch.no_grant" and payload.get("kind") == "agent" and not payload.get("run_grant"):
+                # the runner's word is the truth: it holds no grant the host believed current. Forget it, so the
+                # person sees the normal "give agent access" step instead of a dead end
+                person = self.store.records[run].get("person")
+                table = self.grants.table(workspace_id)
+                if person and self.grants._forget_current(table, person, "runner_lacks"):
+                    with contextlib.suppress(HostError):
+                        table.save()
+                raise HostError(
+                    "launch.no_grant",
+                    "Agent access on this computer was lost, for example after a restart. Give agent access again, "
+                    "then start.",
+                    detail={"reason": "none"},
+                ) from None
             raise
         cur = self.store.records[run]
         pid = res.get("pid") if isinstance(res.get("pid"), int) and not isinstance(res.get("pid"), bool) else None

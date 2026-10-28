@@ -1034,7 +1034,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin, activity , connections: () => connectionsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say }) }[route.kind] ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity , connections: () => connectionsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) }[route.kind] ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

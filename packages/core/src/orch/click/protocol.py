@@ -13,6 +13,7 @@ from orch.model.types import GRANT_MAX_HOURS
 
 __all__ = [
     "CLICK_OPS",
+    "HOLD_OPS",
     "DETAIL_FIELDS",
     "DETAIL_REASONS",
     "DEPOSIT_LINE",
@@ -243,6 +244,9 @@ CLICK_OPS = frozenset(
         "follow_up.cancel",  # run 12 (6.4): the Cancel button of a follow-up is one click, like the other daily ops
     }
 )
+#: D5: only log-only operations may wait unsigned. `set` is further restricted to labels/priority/size.
+HOLD_OPS = frozenset({"log", "set", "move", "section.set", "follow_up.reschedule"})
+
 #: every op not in :data:`CLICK_OPS` is terminal-only (fail closed for ops added later)
 
 #: contract 4: the signer-owned words of the View's ``headline`` (see :func:`headline`): one short line per op

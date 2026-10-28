@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import select
 import socket
 import sys
 import threading
@@ -27,6 +28,10 @@ def serve(sock: socket.socket, signer: Any) -> None:
     """Read requests until EOF; answer each one. A framing error closes the channel."""
     decoder = frames.Decoder()
     while True:
+        if hasattr(signer, "run_holds"):
+            signer.run_holds()
+        if not select.select([sock], [], [], 0.1)[0]:
+            continue
         data = sock.recv(65536)
         if not data:
             return

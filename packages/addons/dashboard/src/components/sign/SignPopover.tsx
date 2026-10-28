@@ -126,7 +126,7 @@ export function SignPopover(p: SignPopoverProps) {
   useEffect(() => { callbacks.current.onPending?.(['preparing', 'viewing', 'ready', 'signing', 'settling'].includes(click.phase)) }, [click.phase])
   useEffect(() => { callbacks.current.onSigning?.(click.phase === 'signing') }, [click.phase])
   useEffect(() => () => callbacks.current.onSigning?.(false), [])
-  useEffect(() => { if (click.phase === 'done' || click.switched || click.leftUnsettled) p.onClose() }, [click.phase, click.switched, click.leftUnsettled, p.onClose])
+  useEffect(() => { if (click.phase === 'done' || click.phase === 'held' || click.switched || click.leftUnsettled) p.onClose() }, [click.phase, click.switched, click.leftUnsettled, p.onClose])
   // The slot counts as seen only when it is in the page, in this open popover, beside the click review that can be signed.
   // A popover folded away never sets it.
   const folded = !!p.onSigning && click.phase === 'signing'

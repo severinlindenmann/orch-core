@@ -1,3 +1,5 @@
+import { toast } from 'sonner'
+import { requestReverse } from '@/components/sign/ReverseUndoHost'
 import { useState } from 'react'
 import type { Workspace } from '@/api/types'
 import type { AddOnRow } from '@/api/addOnSwitches'
@@ -29,7 +31,10 @@ export function AddonReview({ workspace, row, onBusy, onDone, onClose }: {
   const [signing, setSigning] = useState(false)
   if (viaHub) return <SignPopover workspace={workspace} ws={workspace.id} title={title} action={{ action: 'addon_grant', name: row.id }} inline forceHub onClose={onClose} onSettled={phase => { if (phase === 'done') onDone() }} />
   return <>
-    <SignPopover workspace={workspace} ws={workspace.id} title={title} action={{ action: turningOn ? 'addon_grant' : 'addon_disable', name: row.id }} inline onSigning={busy => { setSigning(busy); onBusy(busy) }} onClose={onClose} onSettled={phase => { if (phase === 'done') onDone() }} />
+    <SignPopover workspace={workspace} ws={workspace.id} title={title} action={{ action: turningOn ? 'addon_grant' : 'addon_disable', name: row.id }} inline onSigning={busy => { setSigning(busy); onBusy(busy) }} onClose={onClose} doneToast={turningOn ? undefined : ''} onSettled={phase => { if (phase === 'done') {
+      if (!turningOn) toast.success(`${row.title} is off`, { action: { label: 'Undo', onClick: () => requestReverse({ ws: workspace.id, action: { action: 'addon_grant', name: row.id } }) } })
+      onDone()
+    } }} />
     {hubOffered && <div className="flex justify-end"><Button variant="ghost" disabled={signing} onClick={() => setViaHub(true)}>Approve in the hub instead</Button></div>}
   </>
 }

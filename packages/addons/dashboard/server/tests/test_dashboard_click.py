@@ -404,7 +404,8 @@ def test_sign_sends_exactly_the_digest_and_answers_without_the_hosts_result(clie
     assert res.status_code == 200
     assert res.json() == {"state": "submitted", "duplicate": False, "key": "DEMO-0001", "seq": 7}
     sent = [c for c in script.clients[0].calls if c[0] == "sign"][0][1]
-    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH, "contract": 4}
+    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH, "contract": 4,
+                    "delay_s": 0, "session": token}
 
 
 @pytest.mark.parametrize(
@@ -3374,3 +3375,46 @@ def test_c2_cancelled_request_is_never_signable(client, token, stub, script):
     fresh = prepare(client, token, stub, {**approve(), "retry": 1})
     assert fresh.status_code == 200
     assert fresh.json()["request_id"] != request_id
+
+
+def test_d5_hold_relays_session_delay_and_preserves_cancel_and_reconnect(
+    client, token, stub, script, auth, host_check, gateway
+):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    outcome = {"state": "held", "deadline_ms": int(time.time() * 1000) + 10000}
+
+    def delayed(op, args):
+        if op == "sign":
+            assert args["delay_s"] == 10
+            assert args["session"] == token
+            return dict(outcome)
+        if op == "status" and args.get("request_id"):
+            assert args["session"] == token
+            return dict(outcome)
+        if op == "cancel":
+            assert args["session"] == token
+            outcome["state"] = "cancelled"
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    signed = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert signed.status_code == 200
+    assert signed.json() == {**outcome, "duplicate": False}
+    other = other_session(client, auth)
+    denied = client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(other))
+    assert denied.status_code == 404
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "held"
+    assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "cancelled"
+    outcome["state"] = "not_sent"  # a restarted signer has no unsigned intent
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "not_sent"
+    prepared = next(args for op, args in script.clients[0].calls if op == "prepare")
+    assert prepared["session"] == token
+    outcome["state"] = "unknown"
+    host_check.pending[REQ] = "submitted"
+    gateway.click.restarts += 1  # a stale signer epoch must not sweep a possibly signed hold
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
+    assert not host_check.cancelled

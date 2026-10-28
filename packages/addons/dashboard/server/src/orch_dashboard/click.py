@@ -11,15 +11,15 @@ the signer forwards it to `human.prepare`
 and the host answers every tab, retry and re-login with the SAME request (or its terminal state). The records below are
 a convenience (which ids this dashboard prepared, what a View is checked against, a settling display), never the guard.
 
-A request obtained through an intent belongs to the PERSON in that workspace: any session of that person may view, sign,
-poll and cancel it (the signer separately refuses anything it did not prepare itself, and signs a request once).
+A request obtained through an intent belongs to the PERSON in that workspace. D5 holds and cancellation are bound
+to the preparing session by the signer; other views retain the existing per-person read boundary.
 """
 
 import hashlib
 import re
 import threading
 from collections import OrderedDict
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -381,6 +381,7 @@ class RunnerBody(BaseModel):
 
 
 class Sign(Step):
+    delay_s: Literal[0, 10] = 0
     view_digest: ViewDigest
     #: a shown-secret grant only: the key the review was made for (the signer refuses any other)
     reveal_key: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{87}$")] | None = None
@@ -425,6 +426,7 @@ def verify(prepared: dict, ws: str, **expect) -> dict:
 def register(app: FastAPI, gateway: Gateway):
     clicks = app.state.clicks = Clicks()
     failed_bumps: dict[str, int] = {}
+    held: dict[str, tuple[str, str]] = {}  # request -> (workspace, preparing session); no signed bytes
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
     signer = gateway.click
     signer.unsettled = handoffs.any_unsettled  # a hung signer is not replaced while a signature may be mid-submit
@@ -798,7 +800,7 @@ def register(app: FastAPI, gateway: Gateway):
         files = planned.files
 
         def call(idem: str):
-            sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem}
+            sent = {"workspace_id": ws, "op": planned.op, "args": planned.args, "idem": idem, "session": token}
             if files:
                 sent["files"] = files
             if planned.sequence:
@@ -953,10 +955,17 @@ def register(app: FastAPI, gateway: Gateway):
             raise
 
     @app.post("/api/w/{ws}/click/state")
-    def state(body: Step, ws: str = Depends(workspace)):
+    def state(body: Step, request: Request, ws: str = Depends(workspace)):
         """Where a request stands at the host (read through our own link): the answer to an unknown outcome."""
         rid = body.request_id
-        mine(ws, rid)
+        if rid in held:
+            if held[rid] != (ws, request.state.token):
+                raise fail("not_found", exit=2)
+            got = signer.call("status", {"workspace_id": ws, "request_id": rid, "session": request.state.token})
+            if got["state"] != "unknown":
+                return {"id": rid, **got}
+        else:
+            mine(ws, rid)
         try:
             rows = human(ws, "human.pending", {"request_id": rid})["requests"]
         except HostError:
@@ -1003,7 +1012,8 @@ def register(app: FastAPI, gateway: Gateway):
         # the request is refused by the signer and the host, which are the ones that know.)
         handoffs.begin_sign(ws, rid, handoffs.clock() + TTL + 60)
         try:
-            sent = {**step, "workspace_id": ws, "request_id": rid, "view_digest": body.view_digest}
+            sent = {**step, "workspace_id": ws, "request_id": rid, "view_digest": body.view_digest,
+                    "delay_s": body.delay_s, "session": request.state.token}
             if isinstance(wanted, AgentAccess):
                 if body.reveal_key != wanted.reveal_key:  # the key of the review, nothing else (the signer checks too)
                     raise fail("invalid.input", "reveal_key is not the key this review was made for", exit=1)
@@ -1041,6 +1051,11 @@ def register(app: FastAPI, gateway: Gateway):
             # Anything else: nobody knows whether the signer signed.
             handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "uncertain")
             raise
+        if got.get("state") == "held":
+            held[rid] = (ws, request.state.token)
+            handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "definite")
+            handoffs.settle_all(rid)  # holds have their own signer-owned quota
+            return {**got, "duplicate": False}
         handoffs.end_sign(ws, rid, handoffs.clock() + TTL + 60, "ok")
         clicks.forget(rid)
         handoffs.settle_all(rid)
@@ -1071,13 +1086,18 @@ def register(app: FastAPI, gateway: Gateway):
         return out
 
     @app.post("/api/w/{ws}/click/cancel")
-    def cancel(body: Step, ws: str = Depends(workspace)):
-        mine(ws, body.request_id)
+    def cancel(body: Step, request: Request, ws: str = Depends(workspace)):
         rid = body.request_id
+        if rid in held:
+            if held[rid] != (ws, request.state.token):
+                raise fail("not_found", exit=2)
+            got = signer.call("cancel", {"workspace_id": ws, "request_id": rid, "session": request.state.token})
+            return {"id": rid, **got}
+        mine(ws, rid)
         if handoffs.is_unsettled(rid):
             raise refusal_check("A signature of this is settling; it cannot be cancelled now.")
         try:
-            got = _signer_call("cancel", ws, rid)
+            got = _signer_call("cancel", ws, rid, session=request.state.token)
         except HostError as exc:
             if (exc.error.get("reason") or exc.error["code"]) in ENDED | {"not_found"}:
                 ended(ws, rid)  # the signer forgot it: cancel it at the host ourselves
@@ -1097,7 +1117,7 @@ def register(app: FastAPI, gateway: Gateway):
                 handoffs.settle(token, rid)
                 continue
             try:
-                signer.call("cancel", {"workspace_id": ws, "request_id": rid})
+                signer.call("cancel", {"workspace_id": ws, "request_id": rid, "session": token})
             except Exception:  # noqa: BLE001 - one failed cancel must not stop the rest, nor the logout
                 pass
             clicks.forget(rid)

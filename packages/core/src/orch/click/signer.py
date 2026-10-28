@@ -17,6 +17,7 @@ import base64
 import binascii
 import os
 import re
+import threading
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -36,6 +37,7 @@ from .protocol import (
     DEPOSIT_REASONS,
     FEATURES,
     HASH,
+    HOLD_OPS,
     IDEM,
     OP_NAME,
     REASONS,
@@ -143,6 +145,8 @@ class Approval:
     deadline: float  # monotonic
     expires_at: str
     files: dict[str, Any] | None
+    session: str | None = None
+    hold_allowed: bool = False
     view_digest: str | None = None
     built_at: float | None = None
     signed: list[dict[str, Any]] | None = None  # exact signed events, kept until a terminal answer
@@ -220,6 +224,8 @@ class ClickSigner:
         self._rotations: dict[tuple[str, str], Rotation] = {}
         #: #1198 C16: (workspace, request id) -> (recipient, view digest, deadline) for one sealed GitHub token
         self._token_offers: dict[tuple[str, str], tuple[sealed.Recipient, str, float]] = {}
+        self.lock = threading.RLock()
+        self.holds: dict[tuple[str, str], dict[str, Any]] = {}
         self.busy = False
         #: page keys reserved at prepare, each for one approval (workspace, request): one key, one request, one seal
         #: (sealed-field contract §3)
@@ -522,9 +528,9 @@ class ClickSigner:
                 raise ClickError("invalid.input", "a hub step takes no sequence, files or deposit")
         elif op_class(op, args=inner) == "terminal":
             raise refused("terminal_only", f"{op} is signed in the terminal")
-        if len(self.approvals) >= MAX_APPROVALS:
+        if sum(k not in self.holds for k in self.approvals) >= MAX_APPROVALS:
             self._sweep()
-            if len(self.approvals) >= MAX_APPROVALS:
+            if sum(k not in self.holds for k in self.approvals) >= MAX_APPROVALS:
                 raise ClickError("rate.limited", "too many open sign requests", retry_after_ms=10_000, retryable=True)
         self.records.prune()
         _, sel = self._convenience(entry)
@@ -573,6 +579,17 @@ class ClickSigner:
                 deadline=self.mono() + left,
                 expires_at=expires_at,
                 files=files or None,
+                session=args.get("session"),
+                hold_allowed=op in HOLD_OPS
+                and seq is None
+                and not (prepared.get("material") or {}).get("sequence")
+                and (
+                    op != "set"
+                    or (
+                        bool(inner.get("pairs"))
+                        and all(pair.split("=", 1)[0] in {"priority", "size", "labels"} for pair in inner["pairs"])
+                    )
+                ),
                 deposit=deposit,
                 reveal=reveal,
                 reveal_pk=reveal_key,
@@ -760,7 +777,7 @@ class ClickSigner:
             artifacts = "checked" if approval.files else "unseen"
         elif approval.images:
             artifacts = "checked"  # the pasted screenshots of a sequence: this signer holds the bytes and compared them
-        return views.build(
+        built = views.build(
             prepared,
             self._names(entry),
             device=device,
@@ -772,15 +789,86 @@ class ClickSigner:
             if approval.seal is None or approval.vault
             else (approval.seal.public, SEALED_OPS[approval.op]),
         )
+        built["hold_allowed"] = approval.hold_allowed
+        return built
 
     def sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
-        if self.busy:
-            raise refused("busy", "another signature is in progress")
-        self.busy = True
-        try:
-            return self._sign(args)
-        finally:
-            self.busy = False
+        with self.lock:
+            delay = args.get("delay_s", 0)
+            if type(delay) is not int or delay not in (0, 10):
+                raise ClickError("invalid.input", "delay_s is 0 or 10")
+            key = (args.get("workspace_id"), args.get("request_id"))
+            if key in self.holds:
+                hold = self.holds[key]
+                if args.get("session") != hold["session"]:
+                    raise ClickError("hold.session", "only the preparing session may use this hold")
+                if args.get("view_digest") != hold["args"].get("view_digest"):
+                    raise refused("view_changed", "that is not the review held by this signer")
+                if hold["state"] == "submitted":
+                    return self._sign(args)
+                if hold["state"] != "held":
+                    raise ClickError("hold.ended", "this hold ended; it is never retried")
+                return self.hold_status(args)
+            if delay:
+                approval = self.approvals.get(key)
+                record = self._record(*key) if approval is None else None
+                if (approval is not None and not approval.hold_allowed) or (record and record["op"] not in HOLD_OPS):
+                    raise ClickError("hold.not_allowed", "this operation cannot be held")
+            if self.busy:
+                raise refused("busy", "another signature is in progress")
+            self.busy = True
+            try:
+                return self._sign(args, enqueue=bool(delay))
+            finally:
+                self.busy = False
+
+    def hold_status(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        key = (args.get("workspace_id"), args.get("request_id"))
+        hold = self.holds.get(key)
+        if hold is None:
+            # A restart loses unsigned holds, but never labels a durable sign claim as not sent.
+            rec = self._record(*key)
+            state = "submitted" if rec and rec.get("result") is not None else "unknown" if rec else "not_sent"
+            return {"state": state}
+        if args.get("session") != hold["session"]:
+            raise ClickError("hold.session", "only the preparing session may use this hold")
+        return {"state": hold["state"], "deadline_ms": int(hold["deadline"] * 1000)}
+
+    def run_holds(self) -> None:
+        """Called by the channel loop even with no browser connected. One FIFO per workspace.
+
+        Cancel and signing share the lock. A refusal is terminal; no delayed request is retried.
+        """
+        with self.lock:
+            blocked = set()
+            for key, hold in list(self.holds.items()):
+                if hold["state"] != "held" or key[0] in blocked:
+                    continue
+                if self.wall() < hold["deadline"]:
+                    blocked.add(key[0])
+                    continue
+                self.busy = True
+                try:
+                    if self.wall() - hold["deadline"] > 30:
+                        raise ClickError("hold.late", "not sent: deadline missed")
+                    self._sign(hold["args"])
+                    hold["state"] = "submitted"
+                except Exception:  # a claim may exist even if the host answer was lost
+                    try:
+                        claimed = key in self._attempted or self._record(*key) is not None
+                    except ClickError:
+                        claimed = True  # cannot read the durable record: never claim it was not sent
+                    hold["state"] = "unknown" if claimed else "not_sent"
+                    if hold["state"] == "not_sent":
+                        approval = self.approvals.get(key)
+                        if approval:
+                            self._drop(approval)
+                        try:
+                            self._call(self._entry(key[0]), "human.cancel", {"request_id": key[1]})
+                        except ClickError:
+                            pass  # the host expires it if offline; the unsigned intent is already gone
+                finally:
+                    self.busy = False
 
     def _record(self, workspace_id: str, request_id: str) -> dict[str, Any] | None:
         try:
@@ -788,7 +876,7 @@ class ClickSigner:
         except RecordError as exc:
             raise refused("record_unavailable", f"{exc}; this signer does not sign that request again") from None
 
-    def _sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
+    def _sign(self, args: Mapping[str, Any], *, enqueue: bool = False) -> dict[str, Any]:
         entry = self._entry(args.get("workspace_id"))
         rid = args.get("request_id")
         if type(rid) is not str or not REQ.fullmatch(rid):
@@ -803,6 +891,10 @@ class ClickSigner:
             held = self.approvals.get((entry["workspace_id"], rid))
             return res if held is None else self._revealed(held, reveal_key, res)
         entry, approval = self._approval(args)
+        if enqueue and not approval.hold_allowed:
+            raise ClickError("hold.not_allowed", "this operation cannot be held")
+        if enqueue and (not approval.session or args.get("session") != approval.session):
+            raise ClickError("hold.session", "only the preparing session may hold this request")
         if approval.signed is not None:  # the in-memory guard stays, also when the record was lost
             if vd != approval.view_digest:
                 raise refused("already_signed", "this request was already signed for another review")
@@ -840,6 +932,20 @@ class ClickSigner:
             raise refused("view_changed", "the review changed since it was shown (a check or the registry); view again")
         if approval.deposit and not self._execution(entry):  # switched off since prepare: nothing is claimed or signed
             raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+        if enqueue:
+            if _epoch(approval.expires_at) - self.wall() < 40:
+                raise ClickError("hold.expiring", "the host request must live for delay plus 30 seconds")
+            person = self._person(entry)
+            if sum(h["state"] == "held" and h["person"] == person for h in self.holds.values()) >= 20:
+                raise ClickError("hold.full", "at most 20 held intents per person")
+            self.holds[(approval.workspace_id, rid)] = {
+                "state": "held",
+                "deadline": self.wall() + 10,
+                "person": person,
+                "session": approval.session,
+                "args": dict(args),
+            }
+            return self.hold_status(args)
         self._key_ready(entry, backend)  # before every claim, on every sign path (single, sequence, deposit, reveal)
         stored = approval.prepared  # the immutable inputs validated at prepare (== prepared, checked above)
         proof = None
@@ -1367,13 +1473,35 @@ class ClickSigner:
         raise refused("uncertain", f"{exc.code}; the request is {state}") from None
 
     def cancel(self, args: Mapping[str, Any]) -> dict[str, Any]:
-        entry, approval = self._approval(args)
-        self._drop(approval)  # first: no sign can start on it any more
-        res = self._call(entry, "human.cancel", {"request_id": approval.request_id})
-        self._note("cancelled", workspace=approval.workspace_id, request=approval.request_id)
-        return {"state": res["data"]["state"]}
+        with self.lock:
+            key = (args.get("workspace_id"), args.get("request_id"))
+            hold = self.holds.get(key)
+            if hold is not None:
+                if args.get("session") != hold["session"]:
+                    raise ClickError("hold.session", "only the preparing session may cancel")
+                if hold["state"] in {"submitted", "unknown"}:
+                    return {"state": "already_signed"}
+                if hold["state"] != "held":
+                    return {"state": "cancelled"}
+                hold["state"] = "cancelled"
+            entry, approval = self._approval(args)
+            if approval.session and args.get("session") != approval.session:
+                raise ClickError("hold.session", "only the preparing session may cancel")
+            if approval.signed is not None or key in self._attempted:
+                return {"state": "already_signed"}
+            self._drop(approval)
+            try:
+                res = self._call(entry, "human.cancel", {"request_id": approval.request_id})
+            except ClickError:
+                if hold is None:
+                    raise
+                res = {"data": {"state": "cancelled"}}  # unsigned intent is gone even if host is offline
+            self._note("cancelled", workspace=approval.workspace_id, request=approval.request_id)
+            return {"state": res["data"]["state"]}
 
     def status(self, args: Mapping[str, Any]) -> dict[str, Any]:
+        if args.get("request_id"):
+            return self.hold_status(args)
         from orch import __version__ as core
         from orch.custody.select import status
 
@@ -2100,6 +2228,7 @@ class ClickSigner:
         # ``_attempted`` is deliberately not swept: it lives as long as the process (see its definition).
 
     def close(self) -> None:
+        self.holds.clear()
         for rec, _, _ in (*self._offers.values(), *self._token_offers.values()):
             rec.close()
         self._offers.clear()

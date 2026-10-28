@@ -133,6 +133,12 @@ def render_text(s: str) -> str:
     return "".join(c if c == "\n" or _char_ok(c) else f"<U+{ord(c):04X}>" for c in s)
 
 
+def strip_text(s: str) -> str:
+    """Display-only text from another workspace's profile: controls, bidi, zero-width and other refused characters
+    are removed (render_text keeps showing them escaped for approvals; a profile is never signed, so it is cleaned)."""
+    return "".join(c for c in s if c != "\n" and _char_ok(c))
+
+
 def _re(rx: re.Pattern[str]) -> Any:
     return lambda x: type(x) is str and rx.fullmatch(x) is not None
 
@@ -392,6 +398,7 @@ ACTIONS: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     # phase 5 (§8.8, C10 M6; owner V3-D29): grants, device exclusion, policy and settings
     "grant.requested": (
         {
+            "handoff": _re(re.compile(r"[0-7][0-9A-HJKMNP-TV-Z]{25}")),
             "scope": _enum("all", "workable"),
             "verbs": lambda x: x == "agent" or _sorted_unique(_re(_OPNAME), 1, 32)(x),
             "hours": lambda x: type(x) is int and 1 <= x <= 168,

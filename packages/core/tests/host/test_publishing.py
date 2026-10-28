@@ -131,7 +131,8 @@ class PublishHub:
         self.server, self.sent, self.error = server, [], None
 
     def ops(self):
-        return [m["o"]["op"] for m in self.sent]
+        skipped = ("status_put", "profile_put")  # display-only reports, not under test here
+        return [m["o"]["op"] for m in self.sent if m["o"]["op"] not in skipped]
 
     def send(self, message):
         self.sent.append(copy.deepcopy(message))

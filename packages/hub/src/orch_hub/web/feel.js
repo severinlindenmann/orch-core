@@ -18,6 +18,7 @@ export function emptyWords(kind) {
     handoffs: ["No hand-offs yet", "Send a hand-off from a workspace to see its progress here."],
     mcp: ["No tool servers yet", "Add one below to offer it to your workspaces."],
     skills: ["No company skills yet", "Write one below to offer it to your workspaces."],
+    spaces: ["No shared spaces yet", "A shared space is created from the command line for now: orch-hub spaces create."],
     "addon-requests": ["No requests", "When a workspace is refused an add-on, the request shows up here."],
     search: ["Nothing found", "Try another name or a shorter search."],
   })[kind] ?? ["Nothing here yet", "Check again later."];

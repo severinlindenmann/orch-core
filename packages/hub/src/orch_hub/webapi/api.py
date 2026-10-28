@@ -59,6 +59,7 @@ from ..contract.canon import CanonError, loads_strict, unb64u
 from ..contract.hub import HV, Refused, channel_proof_bytes
 from ..invites import Invite, InviteError, proof_digest
 from ..relay.client import RelayError
+from ..spaces.service import SpaceError
 from ..switch import SwitchError, clean_return_to, workspace_rows
 from ..versions import MIN_PHONE_VERSION, MIN_SUPPORTED_VERSION, version_state, workspace_status
 from .changes_api import ChangeHandlers, confirmed
@@ -105,6 +106,8 @@ STATUS = {
     "key_in_use": 409,
     "conflict": 409,
     "no_approver": 409,
+    "not_member": 404,
+    "unknown_space": 404,
     "unknown_request": 404,
     "blocked": 409,
     "stale_snapshot": 409,
@@ -249,6 +252,7 @@ class WebDeps:
     routes: Any = None
     authz: Any = None  # live routing authorization; None means no allowed edges
     connections: Any = None  # orch_hub.connections.Connections: the stored connections and the counts
+    spaces: Any = None  # orch_hub.spaces.SpaceService: the Shared spaces page (list, member modes, archive)
     delivery: Any = None  # custodial DeliveryQueue; None = no pending deliveries
     activity: Any = None  # hub-local admin history; None = no local events
     changes: Any = (
@@ -441,6 +445,21 @@ ROUTES: tuple[Route, ...] = (
         "Remove a workspace that has left (deletes the hub's record)",
     ),
     _r("GET", "/admin/connections", "admin", "a_connections", "Read current workspace connections"),
+    _r("GET", "/admin/spaces", "admin", "a_spaces", "Shared spaces: members, who reads or edits, archived or not"),
+    _r(
+        "PUT",
+        "/admin/spaces/{space_id}/members/{workspace_id}/mode",
+        "admin",
+        "a_space_mode",
+        "Let one member workspace only read a shared space, or edit it again",
+    ),
+    _r(
+        "POST",
+        "/admin/spaces/{space_id}/archive",
+        "admin",
+        "a_space_archive",
+        "Archive a space (no new puts) or bring it back",
+    ),
     _r(
         "GET",
         "/admin/addons",
@@ -770,7 +789,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
             return self._handle(method, target, headers, body, self._source(headers, peer))
         except ApiError as e:
             return self._fail(e.code)
-        except (ChannelError, AccessError, Refused, ChangeError, InviteError) as e:
+        except (ChannelError, AccessError, Refused, ChangeError, InviteError, SpaceError) as e:
             return self._fail(WIRE.get(e.code, e.code))
         except Exception:  # noqa: BLE001 - unexpected: no detail leaves the process
             return self._fail("internal")
@@ -1952,6 +1971,53 @@ class WebApi(ChangeHandlers, OrgHandlers):
             ],
             "traffic": traffic,
         }
+
+    def _spaces(self) -> Any:
+        if self.d.spaces is None:
+            raise ApiError("unavailable")
+        return self.d.spaces
+
+    def _h_a_spaces(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        reg, out = self.d.registry, []
+        for sp in self._spaces().list_all():
+            members = []
+            for ws in sp["members"]:
+                card = (reg.card(ws) or {}).get("name")
+                members.append(
+                    {
+                        "workspace_id": ws,
+                        "name": P4.render_text(card) if type(card) is str and card else None,
+                        "mode": sp["modes"].get(ws, "edits"),
+                        "workspace_mode": reg.mode(ws),
+                    }
+                )
+            out.append(
+                {
+                    **{k: sp[k] for k in ("space_id", "epoch", "items", "revoked", "archived_ms")},
+                    "name": P4.render_text(sp["name"] or ""),
+                    "members": members,
+                }
+            )
+        return 200, {"spaces": out}
+
+    def _h_a_space_mode(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, mode=str)
+        mode = self._spaces().set_member_mode(p["space_id"], p["workspace_id"], b["mode"], c.user_id)
+        self._record(
+            "space.mode_set",
+            actor_id=c.user_id,
+            workspace_id=p["workspace_id"],
+            detail={"mode": mode, "space": p["space_id"]},
+        )
+        return 200, {"mode": mode}
+
+    def _h_a_space_archive(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        b = _need(b, archived=bool)
+        got = self._spaces().set_archived(p["space_id"], b["archived"], c.user_id, self.d.now_ms())
+        self._record(
+            "space.archived" if got else "space.unarchived", actor_id=c.user_id, detail={"space": p["space_id"]}
+        )
+        return 200, {"archived": got}
 
     def _h_a_addons(self, c: Ctx, p: dict, q: dict, b: dict | None):
         reg, acc = self.d.registry, self.d.access

@@ -33,6 +33,12 @@ describe('WorkspaceNote', () => {
     expect(screen.getByRole('button', { name: 'More about this' })).toBeTruthy()
     expect(screen.queryByRole('switch')).toBeNull()
   })
+  it('never says trusted while Claude Code has no settings file yet', async () => {
+    fns.getClaudeTrust.mockResolvedValue({ available: true, on: false, config: 'missing', offered: true, why_not: '', parent_config: '' })
+    show()
+    expect(await screen.findByText(/Claude Code not set up yet/)).toBeTruthy()
+    expect(screen.queryByText(/trusts this folder/)).toBeNull()
+  })
   it('says when the history is off', async () => {
     fns.getRecords.mockResolvedValue(records(false))
     show()

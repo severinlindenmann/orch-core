@@ -22,7 +22,7 @@ import { useViewerRole } from './useViewerRole'
 import { useSettingsHandoff } from './useSettingsHandoff'
 import { ReposSection } from './Repos'
 import { RecordsBlock } from './Records'
-import { WorkspaceSwitches } from './Switches'
+import { WorkspaceNote } from './WorkspaceNote'
 import { TrustedBrowsers } from './TrustedBrowsers'
 import { WorkspaceIconFor } from '@/app/workspaceIcon'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -114,7 +114,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
           {why && <OwnerNote id="agents-why">{why}</OwnerNote>}
         </>}
       </Section>
-      <WorkspaceSwitches workspace={workspace} />
+      <WorkspaceNote workspace={workspace} />
       <ReposSection workspace={workspace} data={data} onSettled={() => void settings.refetch()} />
       <TrustedBrowsers />
       <details className="rounded-lg border border-border bg-surface text-[13px]">

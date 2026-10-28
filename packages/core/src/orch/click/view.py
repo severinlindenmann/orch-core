@@ -26,8 +26,11 @@ from .protocol import (
     RUNNER_LINE,
     RUNNER_OFF_LINE,
     SEALED_OPS,
+    headline,
+    headline_detail,
     op_class,
     refused,
+    risk_lines,
 )
 
 __all__ = [
@@ -190,7 +193,10 @@ def build(
     ``reveal_line``, which its ``lines`` end with; ``view_digest`` covers both.
     ``seal_in`` ``(pk, purposes)`` (#1198 C10):
     an op that asks for a typed secret (the hub backup key) carries ``seal`` with the signer's per-request public key
-    and exactly those purposes (sealed-field contract section 7), and ``backup_key_line`` in ``lines``."""
+    and exactly those purposes (sealed-field contract section 7), and ``backup_key_line`` in ``lines``.
+    Contract 4: every View has ``headline`` (the op's title and the ticket key: signer words only), ``headline_detail``
+    (the ticket's title, capped and quoted, or ``None``) and ``risk_lines`` (``[]`` only for
+    :data:`~orch.click.protocol.ONE_PRESS_OPS`, never empty otherwise); ``view_digest`` covers all three."""
     known = workspace(prepared["workspace_id"])
     if known is None:
         raise refused("check_failed", "this workspace is not in your own registry")
@@ -225,13 +231,30 @@ def build(
         "device": device,
         "artifacts": artifacts,
     }
+    # contract 4 (run 13 C3): the signer marks the risk lines itself, from its closed table and the signed events only;
+    # `risk` stays the generic convenience note of every View. Both new fields are in `view_digest`.
+    # the headline is the signer's words and the (format-checked) ticket key only; the ticket's title, free text, goes
+    # capped and quoted to `headline_detail` (never the plain view's own headline, which embeds that text)
+    ticket = prepared["material"].get("ticket") if isinstance(prepared.get("material"), Mapping) else None
+    ticket = ticket if isinstance(ticket, Mapping) else {}
+    shown_ticket = content.get("ticket") if content is not None else None
+    key = shown_ticket.get("key") if isinstance(shown_ticket, Mapping) else None
+    if key is not None and key != ticket.get("key"):
+        raise refused("check_failed", "the headline ticket differs from the verified content")
+    for event in prepared.get("events") or []:
+        if event.get("type") == "ticket.created":
+            if event.get("key") != ticket.get("key") or (key is not None and event.get("key") != key):
+                raise refused("check_failed", "the headline ticket differs from the signed event")
+            key = event.get("key")
+    view["headline"] = headline(str(prepared["op"]), key)
+    view["headline_detail"] = headline_detail(shown_ticket.get("title") if isinstance(shown_ticket, Mapping) else None)
+    view["risk_lines"] = risk_lines(
+        str(prepared["op"]), list(prepared.get("events") or []), deposit=deposit, reveal=reveal is not None
+    )
     if prepared["op"] == "schedule.add":
-        from orch.ops.schedule import RISK as SCHEDULE_RISK
-
-        # run 13: the schedule's own risk is a line of the review, never `risk`: that field is the convenience-signing
-        # notice of every click View, and the dashboard server refuses a View without it (check_failed). FIRST: the
-        # review shows `lines` in a short scroll box, and the consequence must be read before the rule's details
-        view["lines"] = [SCHEDULE_RISK, "No click or confirmation is required at firing time.", *view["lines"]]
+        # run 13: the schedule's own risk is a line of the review (FIRST: the review shows `lines` in a short scroll
+        # box and the consequence must be read before the rule's details); `risk` stays the convenience notice
+        view["lines"] = [*view["risk_lines"], "No click or confirmation is required at firing time.", *view["lines"]]
     if deposit:
         deposit_checks(prepared)
         view["lines"] = [*view["lines"], "", DEPOSIT_RISK, DEPOSIT_LINE]
@@ -255,7 +278,7 @@ def build(
         view["seal"] = {"v": sealed.VERSION, "alg": sealed.ALG, "pk": pk, "purposes": list(purposes)}
         view["backup_key_line"] = BACKUP_KEY_LINE
     if content is not None:
-        view["headline"], view["content"] = content["headline"], content
+        view["content"] = content
     if len(canon.dumps(view)) > MAX_VIEW_BYTES:
         raise refused("terminal_only", "the review is too large for the dashboard; use the terminal")
     return view
@@ -293,6 +316,9 @@ def rotation(*, workspace: Mapping[str, str], old: str, new: str, pk: str) -> di
         "old": old,
         "new": new,
         "lines": lines,
+        "headline": headline(ROTATE_OP),
+        "headline_detail": None,
+        "risk_lines": risk_lines(ROTATE_OP),  # contract 4: replacing the key is marked
         "confirm": {"kind": "click"},
         "seal": {"v": sealed.VERSION, "alg": sealed.ALG, "pk": pk, "purposes": list(ROTATE_PURPOSES)},
         "rotate_line": ROTATE_LINE,

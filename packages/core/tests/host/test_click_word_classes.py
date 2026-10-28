@@ -62,4 +62,4 @@ def test_the_word_class_and_refusal_are_gone():
     assert "word" not in REFUSALS
     assert not hasattr(protocol, "WORD_OPS") and not hasattr(protocol, "SETTINGS_WORD_KEYS")
     assert not hasattr(views, "word")
-    assert CONTRACT == 3
+    assert CONTRACT == 4  # 3 dropped the word class; 4 (run 13 C3) added headline and risk_lines, still no word

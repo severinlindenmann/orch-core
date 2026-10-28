@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { ARM_MS, CLICK_RISK } from '@/api/click'
 import { uuid8 } from '@/api/workspaces'
-import { DO, MARA, OWNER, READS, clickOn, prepareByClick, roster, show, useFakeHost, workspace } from '@/test/hostHarness'
+import * as gesture from '@/components/sign/trustedPress'
+import { DO, MARA, OWNER, READS, clickOn, prepareByClick, roster, show, trustedPresses, useFakeHost, workspace } from '@/test/hostHarness'
 
 // The production app on a fake server that speaks the click routes, as the build wires it (vite.config.ts alias).
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
@@ -47,7 +48,7 @@ it('no Sign button when the signer has nothing for the workspace; the review and
   expect(state.host.calls.filter((c) => c.path.includes('/click/') && !c.path.endsWith('/click/status'))).toEqual([])
 })
 
-it('click-to-sign end to end: the outcome button prepares, the signer’s View only, 1 s, Sign, Signed', async () => {
+it('click-to-sign end to end: the outcome press prepares, the signer’s View only, its risk lines, the second press signs, Signed', async () => {
   clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
@@ -59,13 +60,34 @@ it('click-to-sign end to end: the outcome button prepares, the signer’s View o
   expect(panel).toHaveTextContent('FROM-THE-SIGNER settings.set')
   expect(panel).not.toHaveTextContent(/HOST-BEFORE-VALUE|Preview|orch sign/)
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 24 }])
-  const sign = within(dialog).getByRole('button', { name: /^Sign( |$)/ })
-  expect(sign).toBeDisabled()
+  // C3: settings.set is not a daily op, so its View carries risk lines: no arm, the lines under the button, a second press
+  expect(within(dialog).getByTestId('sign-risk-lines')).toHaveTextContent('FROM-THE-SIGNER risk: not a daily action')
+  expect(within(dialog).queryByTestId('sign-progress')).toBeNull()
+  expect(within(panel).getByTestId('sign-workspace')).toHaveTextContent(`Workspace DEMO · ${uuid8(A)}`) // one workspace, still named
+  await new Promise((r) => setTimeout(r, ARM_MS + 200))
+  expect(state.host.clickSigned).toEqual([]) // the press that prepared never signs a marked View
+  const sign = within(dialog).getByTestId('sign-button')
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  trustedPresses()
   press(sign)
   await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T) // closes by itself; one toast says it
   expect(state.host.clickSigned).toEqual([{ request_id: 'hr_' + '1'.padStart(26, '0'), view_digest: 'sha256:' + '9'.repeat(64) }])
+  expect(state.host.clickCancelled).toEqual([])
+})
+
+it('C3: a marked View is never signed by the press that prepared it nor by an untrusted press', async () => {
+  clickOn(state.host.workspaces[0])
+  const user = userEvent.setup()
+  show('/w/DEMO/settings/general')
+  const dialog = await save(user)
+  await prepareByClick(dialog, 'Change the workspace settings')
+  const sign = within(dialog).getByTestId('sign-button')
+  await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  vi.mocked(gesture.trustedPress).mockReturnValue(false) // clickOn stood in for real presses: this one is not
+  press(sign)
+  await new Promise((r) => setTimeout(r, ARM_MS + 200))
+  expect(state.host.clickSigned).toEqual([])
   expect(state.host.clickCancelled).toEqual([])
 })
 

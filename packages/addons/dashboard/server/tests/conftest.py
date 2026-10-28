@@ -130,7 +130,9 @@ def client(gateway, auth, tmp_path):
     (static / "assets").mkdir(parents=True)
     (static / "index.html").write_text('<html><head><script src="/assets/main-hash.js"></script></head></html>')
     (static / "assets/main-hash.js").write_text('console.log("public bundle")')
-    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+    with TestClient(
+        create_app(PORT, gateway, auth, static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+    ) as client:
         yield client
 
 
@@ -292,7 +294,9 @@ def worlds(p1, tmp_path, monkeypatch):
         static = tmp_path / f"static-{len(routes)}"
         (static / "assets").mkdir(parents=True)
         (static / "index.html").write_text("<html></html>")
-        app_client = TestClient(create_app(PORT, gateway, Auth(), static), base_url=ORIGIN)
+        app_client = TestClient(
+            create_app(PORT, gateway, Auth(), static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+        )
         app_client.__enter__()
         stack.append((app_client, gateway))
         launch = app_client.app.state.auth.launch(PORT)

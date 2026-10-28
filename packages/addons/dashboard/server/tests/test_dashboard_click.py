@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from conftest import ORIGIN
-from orch.click.protocol import ClickError
+from orch.click.protocol import HUB_SELECTIVE_RISK, ClickError
 
 from orch_dashboard import click_signer
 
@@ -44,14 +44,23 @@ class Fake:
 
 class Script:
     def __init__(self, ws):
-        self.ws, self.enabled, self.available, self.contract = ws, True, True, 3
+        self.ws, self.enabled, self.available, self.contract = ws, True, True, 4
         self.features: list | None = None  # `status.features`: ["custody"] for a signer with the switch
         self.refuse: dict[str, ClickError] = {}
         self.offer: dict = {}  # the answer to `custody_off {begin}`
         self.rotation: dict = {}  # the answer to `rotate {begin}`
         self.github: dict = {}  # the answer to `github_token {begin}` (#1198 C16)
         self.runner_on = False  # dashboard execution, as the fake signer holds it (#1198 C14)
-        self.view = {"view": {"risk": RISK, "lines": [CANARY], "op": "approve"}, "view_digest": HASH}
+        self.view = {
+            "view": {
+                "risk": RISK,
+                "lines": [CANARY],
+                "op": "approve",
+                "headline": "Approve DEMO-0001",
+                "risk_lines": [],
+            },
+            "view_digest": HASH,
+        }
         self.prepared = 0
         self.intents: dict[str, dict] = {}  # the host's idem record: idem -> {binding, request id, state}
         self.states: dict[str, str] = {}  # request id -> state at the (faked) host
@@ -270,9 +279,9 @@ def test_no_click_feature_unless_the_flag_is_on_and_the_signer_can_sign(
     assert ws["click"]["problem"] == "disabled"
 
 
-@pytest.mark.parametrize("contract", [1, 2, 4, 0, True, "3", None, 3.0])
+@pytest.mark.parametrize("contract", [1, 2, 3, 5, 0, True, "4", None, 4.0])
 def test_a_signer_of_another_contract_is_refused(client, token, stub, script, contract):
-    script.contract = contract  # strict: only the int 3 (3.0 == 3 in Python must not pass)
+    script.contract = contract  # strict: only the int 4 (4.0 == 4 in Python must not pass)
     ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
     assert "click" not in ws["features"] and ws["click"] is None
     assert script.clients[0].closed  # that child is stopped
@@ -282,13 +291,13 @@ def test_a_signer_of_another_contract_is_refused(client, token, stub, script, co
     assert [c for c in script.clients[0].calls if c[0] == "prepare"] == []
 
 
-def test_a_contract_3_signer_is_accepted_and_remembered(client, token, stub, script, gateway):
-    script.contract = 3
+def test_a_contract_4_signer_is_accepted_and_remembered(client, token, stub, script, gateway):
+    script.contract = 4
     ws = client.get("/api/workspaces", headers=hdr(token, False)).json()[0]
     assert "click" in ws["features"] and ws["click"]["available"] is True
     res = prepare(client, token, stub)
     assert res.status_code == 200, res.text
-    assert gateway.click.contract == 3
+    assert gateway.click.contract == 4
 
 
 def test_prepare_chooses_the_op_here_and_derives_the_idem_from_the_action(client, token, stub, script, auth):
@@ -385,7 +394,7 @@ def test_view_is_the_signers_view_unchanged(client, token, stub, script):
     assert res.json() == script.view  # nothing added, hidden or re-rendered
     assert res.headers["cache-control"] == "no-store"
     call = [c for c in script.clients[0].calls if c[0] == "view"][0]
-    assert call[1] == {"workspace_id": stub.ws, "request_id": REQ}
+    assert call[1] == {"workspace_id": stub.ws, "request_id": REQ, "contract": 4}  # run 13 C3: announced
 
 
 def test_sign_sends_exactly_the_digest_and_answers_without_the_hosts_result(client, token, stub, script):
@@ -395,7 +404,7 @@ def test_sign_sends_exactly_the_digest_and_answers_without_the_hosts_result(clie
     assert res.status_code == 200
     assert res.json() == {"state": "submitted", "duplicate": False, "key": "DEMO-0001", "seq": 7}
     sent = [c for c in script.clients[0].calls if c[0] == "sign"][0][1]
-    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH}
+    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH, "contract": 4}
 
 
 @pytest.mark.parametrize(
@@ -837,6 +846,63 @@ def test_l3_a_view_without_the_verbatim_risk_line_is_not_shown(client, token, st
     script.view = {"view": {**script.view["view"], "risk": "Convenience signing is fine."}, "view_digest": HASH}
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
     assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"headline": None},
+        {"headline": ""},
+        {"headline": "two\nlines"},
+        {"headline": 3},
+        {"risk_lines": None},
+        {"risk_lines": "one line"},
+        {"risk_lines": [3]},
+        {"risk_lines": [""]},
+        {"risk_lines": ["a\nb"]},
+        {"risk_lines": ["x"] * 65},
+        {"headline_detail": ""},
+        {"headline_detail": "“two\nlines”"},
+        {"headline_detail": 3},
+    ],
+)
+def test_c3_a_view_without_its_headline_or_risk_lines_is_not_shown(client, token, stub, script, bad):
+    """Contract 4 (run 13 C3): `headline` (one line) and `risk_lines` (lines, maybe none) are the signer's; a View that
+    lacks them, or carries another shape, is not passed on."""
+    prepare(client, token, stub)
+    view = {**script.view["view"], **bad}
+    script.view = {"view": {k: v for k, v in view.items() if v is not None}, "view_digest": HASH}
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "check_failed"
+    assert CANARY not in res.text
+
+
+def test_c3_the_view_and_its_risk_lines_are_passed_on_unchanged(client, token, stub, script):
+    prepare(client, token, stub)
+    risk = []
+    view = {**script.view["view"], "risk_lines": risk, "headline_detail": "“Export does nothing”"}
+    script.view = {"view": view, "view_digest": HASH}
+    res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
+    assert res.status_code == 200, res.text
+    assert res.json() == script.view  # nothing added, hidden or re-rendered
+
+
+def test_c3_this_server_announces_its_contract_on_prepare_view_and_sign_only(client, token, stub, script):
+    prepare(client, token, stub)
+    assert client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200
+    signed = client.post(url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH}, headers=hdr(token))
+    assert signed.status_code == 200, signed.text
+    calls = script.clients[0].calls
+    announced = {op for op, args in calls if "contract" in args}
+    assert announced == {"prepare", "view", "sign"}
+    assert all(args["contract"] == 4 and type(args["contract"]) is int for op, args in calls if op in announced)
+
+
+def test_c3_a_signer_refusing_the_announced_contract_is_click_contract(client, token, stub, script):
+    script.refuse["prepare"] = ClickError("contract.mismatch", "this signer speaks click contract 5")
+    res = prepare(client, token, stub)
+    assert res.status_code == 501 and res.json()["error"]["code"] == "click.contract"
+    assert "orch-core" in res.json()["error"]["message"]
 
 
 def test_the_risk_constant_is_core_s(script):
@@ -1638,6 +1704,8 @@ def grant_view(**over):
         "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
         "fingerprint": "0123456789ab",
         "lines": ["grant for Demo Owner", "", DEPOSIT_RISK, DEPOSIT_LINE],
+        "headline": "Give your orch runner agent access for 8 hours",
+        "risk_lines": [DEPOSIT_RISK, "Agents get this authority for 8 hours, until it ends or you stop it."],
         "deposit": True,
         "deposit_line": DEPOSIT_LINE,
         "confirm": {"kind": "click"},
@@ -1647,7 +1715,7 @@ def grant_view(**over):
 
 @pytest.fixture
 def deposits(script, monkeypatch, host_check):
-    """A contract-3 signer whose `sign` of a grant answers like core's: the deposit fields, plus things that must never
+    """A contract-4 signer whose `sign` of a grant answers like core's: the deposit fields, plus things that must never
     leave this server (the host's `result` with a secret in it, and an unknown field)."""
     global GRANT_WS
     GRANT_WS = script.ws
@@ -2168,12 +2236,29 @@ def test_a_market_install_for_publish_is_a_click_too(client, token, stub, script
     assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
 
 
+def legacy_agent_sequence(client, token, stub):
+    """Retained pre-upgrade request: these relay tests still check progress/result sanitization.
+
+    New requests with agent access are refused; the real signer also refuses signing a retained one.
+    """
+    from orch_dashboard.signing import NewTicketSequence
+
+    res = prepare(client, token, stub, SEQUENCE)
+    assert res.status_code == 200, res.text
+    rid = res.json()["request_id"]
+    ws, op, _, epoch = client.app.state.clicks.get(rid)
+    body = NewTicketSequence.model_validate({**SEQUENCE, "agent": {"hours": 24}})
+    client.app.state.clicks.add(ws, rid, op, body, epoch)
+    client.app.state.handoffs.note_intent(client.app.state.person_of(ws), rid, body.intent())
+    return res
+
+
 def test_a_stopped_sequence_says_which_ticket_exists_and_that_the_agent_access_is_last(
     client, token, stub, script, host_check, rich, monkeypatch
 ):
     """U4: the server (never error text) says the ticket landed and only the access is missing."""
     script.features = ["custody", "sequence"]
-    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    res = legacy_agent_sequence(client, token, stub)
     assert res.status_code == 200, res.text
     rid = res.json()["request_id"]
     seen = {}
@@ -2197,7 +2282,7 @@ def test_a_sequence_that_ends_in_the_agent_access_still_answers_its_ticket_key(c
     """The page starts the agent for exactly the ticket this signature created: its key must reach it when the sequence
     ends in a deposit (the access), as it does when there is none. The deposit fields stay the closed set."""
     script.features = ["custody", "sequence"]
-    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}})
+    res = legacy_agent_sequence(client, token, stub)
     assert res.status_code == 200, res.text
     rid = res.json()["request_id"]
     base = script.handler
@@ -2225,7 +2310,7 @@ def test_a_sequence_that_ends_in_the_agent_access_still_answers_its_ticket_key(c
 def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(client, token, stub, script, host_check):
     """The deposit's result is the grant's: it carries no ticket key. The host's own row of the request does."""
     script.features = ["custody", "sequence"]
-    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    rid = legacy_agent_sequence(client, token, stub).json()["request_id"]
     base = script.clients[0].handler
 
     def handler(op, args):
@@ -2250,7 +2335,7 @@ def test_the_key_comes_from_the_hosts_row_when_the_last_steps_result_has_none(cl
 def test_an_odd_ticket_key_or_seq_is_not_passed_on(client, token, stub, script, host_check):
     """The key must be a ticket key (from the result and from the host's row alike); seq must be a real integer."""
     script.features = ["custody", "sequence"]
-    rid = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 24}}).json()["request_id"]
+    rid = legacy_agent_sequence(client, token, stub).json()["request_id"]
     base = script.clients[0].handler
     answer = {}
 
@@ -2383,6 +2468,8 @@ def reveal_view(**over):
         "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
         "fingerprint": "0123456789ab",
         "lines": ["grant for Demo Owner", "", REVEAL_RISK, REVEAL_LINE],
+        "headline": "Give agents access for 2 hours",
+        "risk_lines": [REVEAL_RISK, "Agents get this authority for 2 hours, until it ends or you stop it."],
         "seal": seal,
         "confirm": {"kind": "click"},
     }
@@ -2663,6 +2750,8 @@ def backup_view(**over):
         "workspace": {"id": GRANT_WS, "name": "billing", "prefix": "DEMO"},
         "fingerprint": "0123456789ab",
         "lines": ["join the hub", "", BACKUP_LINE],
+        "headline": "Join a hub",
+        "risk_lines": [HUB_SELECTIVE_RISK],
         "seal": seal,
         "backup_key_line": BACKUP_LINE,
         "confirm": {"kind": "click"},
@@ -3302,3 +3391,49 @@ def test_c2_cancelled_request_is_never_signable(client, token, stub, script):
     fresh = prepare(client, token, stub, {**approve(), "retry": 1})
     assert fresh.status_code == 200
     assert fresh.json()["request_id"] != request_id
+
+
+@pytest.mark.parametrize("header", [None, "3", "4"])
+def test_every_click_route_requires_current_page_contract(client, token, stub, header):
+    from fastapi.routing import APIRoute
+
+    client.headers.pop("X-Orch-Click-Contract", None)
+    headers = hdr(token)
+    if header is not None:
+        headers["X-Orch-Click-Contract"] = header
+    routes = [r for r in client.app.routes if isinstance(r, APIRoute) and "/click/" in r.path]
+    assert len(routes) == 17
+    for route in routes:
+        path = route.path.replace("{ws}", stub.ws)
+        res = client.request(next(iter(route.methods)), path, json={}, headers=headers)
+        error = res.json().get("error", {})
+        if header != "4":
+            assert error.get("code") == "click.contract", (path, res.text)
+            assert error["message"] == "Reload the page: this page is out of date."
+        else:
+            assert error.get("message") != "Reload the page: this page is out of date.", path
+
+
+@pytest.mark.parametrize("op,risk", [("approve", ["risk"]), ("member.role", [])])
+def test_relay_refuses_risk_allowlist_mismatch(op, risk):
+    from orch_dashboard.click import contract4_view_ok
+
+    assert not contract4_view_ok({"op": op, "headline": "Review", "risk_lines": risk})
+
+
+def test_relay_caps_headline_at_sixty():
+    from orch_dashboard.click import contract4_view_ok
+
+    assert contract4_view_ok({"op": "approve", "headline": "x" * 60, "risk_lines": []})
+    assert not contract4_view_ok({"op": "approve", "headline": "x" * 61, "risk_lines": []})
+
+
+@pytest.mark.parametrize("action", ["new_sequence", "quick_start"])
+def test_agent_access_cannot_be_hidden_in_a_daily_sequence(client, token, stub, script, action):
+    body = {"action": action, "title": "Task", "agent": {"hours": 8}}
+    if action == "new_sequence":
+        body.update(type="feature", sections={})
+    res = prepare(client, token, stub, body)
+    assert res.status_code == 409, res.text
+    assert res.json()["error"]["reason"] == "terminal_only"
+    assert not [call for child in script.clients for call in child.calls if call[0] == "prepare"]

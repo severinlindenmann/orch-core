@@ -88,7 +88,9 @@ def two(tmp_path, monkeypatch):
     static = tmp_path / "static"
     (static / "assets").mkdir(parents=True)
     (static / "index.html").write_text("<html></html>")
-    with TestClient(create_app(PORT, gateway, Auth(), static), base_url=ORIGIN) as client:
+    with TestClient(
+        create_app(PORT, gateway, Auth(), static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+    ) as client:
         auth = client.app.state.auth
         res = client.post("/auth/session", json={"code": auth.launch(PORT)["code"]}, headers={"Origin": ORIGIN})
         token = res.json()["token"]

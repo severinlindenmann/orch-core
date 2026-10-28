@@ -1,0 +1,114 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createLoadingController, emptyWords, focusIndex, skeletonPlan, PROGRESS_DELAY, TOAST_DURATION } from "../../src/orch_hub/web/feel.js";
+
+test("skeletons follow the page's column structure", () => {
+  assert.deepEqual(skeletonPlan("home"), { grid: "home-grid", sections: [4, 2, 2] });
+  assert.equal(skeletonPlan("workspaces").grid, "work-grid");
+  assert.deepEqual(skeletonPlan("services").sections, [3]);
+  assert.deepEqual(skeletonPlan("workspace"), skeletonPlan("unknown"));
+});
+test("empty states explain the next step without technical errors", () => {
+  assert.equal(emptyWords("home")[0], "Nothing needs you");
+  assert.match(emptyWords("workspaces")[1], /Settings › Hub › Connect/);
+  assert.match(emptyWords("services")[1], /check again/);
+  assert.deepEqual(emptyWords("search"), ["Nothing found", "Try another name or a shorter search."]);
+  assert.equal(emptyWords("unknown").length, 2);
+});
+test("quick loads cancel the delayed bar; overlapping loads keep it visible", () => {
+  let callback, delay, visible = false, cancelled = false;
+  const begin = createLoadingController(() => { visible = true; }, () => { visible = false; },
+    (fn, ms) => { callback = fn; delay = ms; cancelled = false; return 7; },
+    (id) => { assert.equal(id, 7); cancelled = true; });
+  const quick = begin();
+  assert.equal(delay, 120);
+  assert.equal(PROGRESS_DELAY, delay);
+  assert.equal(visible, false);
+  quick();
+  assert.equal(cancelled, true);
+  const first = begin(), second = begin();
+  callback();
+  first(); first();
+  assert.equal(visible, true);
+  assert.equal(cancelled, false);
+  second();
+  assert.equal(visible, false);
+  assert.equal(cancelled, true);
+  begin()();
+  assert.equal(visible, false);
+});
+test("focus wraps in both directions, including empty and single-control dialogs", () => {
+  assert.equal(focusIndex(2, 3, false), 0);
+  assert.equal(focusIndex(0, 3, true), 2);
+  assert.equal(focusIndex(0, 1, false), 0);
+  assert.equal(focusIndex(0, 0, true), -1);
+  assert.equal(TOAST_DURATION, 4000);
+});
+
+test("dialog traps Tab, contains outside focus, closes on Escape and restores its opener", async () => {
+  const { trapDialog } = await import("../../src/orch_hub/web/feel.js");
+  const listeners = {};
+  const previous = globalThis.document;
+  const doc = { addEventListener: (key, fn) => { listeners[key] = fn; }, removeEventListener: (key) => { delete listeners[key]; } };
+  globalThis.document = doc;
+  const control = () => ({ tabIndex: 0, isConnected: true, closest: () => null, getClientRects: () => [1], focus() { doc.activeElement = this; } });
+  const opener = control(), first = control(), last = control(), disabled = { ...control(), disabled: true };
+  const events = {};
+  const dialog = {
+    querySelectorAll: () => [first, disabled, last], querySelector: () => null,
+    contains: (target) => [first, last].includes(target),
+    addEventListener: (key, fn) => { events[key] = fn; }, removeEventListener: (key) => { delete events[key]; },
+    remove() { this.removed = true; }, focus() { doc.activeElement = this; },
+  };
+  try {
+    const release = trapDialog(dialog, opener);
+    assert.equal(doc.activeElement, first);
+    const key = (key, shiftKey = false) => events.keydown({ key, shiftKey, preventDefault() {} });
+    key("Tab", true); assert.equal(doc.activeElement, last);
+    key("Tab"); assert.equal(doc.activeElement, first);
+    listeners.focusin({ target: opener }); assert.equal(doc.activeElement, first);
+    key("Escape"); assert.equal(dialog.removed, true);
+    release(); assert.equal(doc.activeElement, opener);
+    assert.equal(listeners.focusin, undefined);
+  } finally { globalThis.document = previous; }
+});
+
+test("toast announces text, replaces previous messages, supports Undo and expires", async () => {
+  const { toast } = await import("../../src/orch_hub/web/feel.js");
+  const saved = { document: globalThis.document, setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout };
+  const nodes = [], timers = new Map();
+  let sequence = 0, undone = 0;
+  class Node {
+    constructor() { this.nodeType = 1; this.children = []; this.attrs = {}; this.events = {}; }
+    setAttribute(key, value) { this.attrs[key] = value; }
+    addEventListener(key, fn) { this.events[key] = fn; }
+    append(...children) { this.children.push(...children); }
+    remove() { this.removed = true; }
+  }
+  globalThis.document = {
+    body: new Node(), getElementById: (id) => nodes.find((node) => node.attrs.id === id),
+    createElement: () => { const node = new Node(); nodes.push(node); return node; },
+    createTextNode: (text) => ({ nodeType: 3, textContent: text }),
+  };
+  globalThis.setTimeout = (fn, ms) => { timers.set(++sequence, { fn, ms }); return sequence; };
+  globalThis.clearTimeout = (id) => timers.delete(id);
+  try {
+    toast("<b>Copied</b>");
+    const region = document.getElementById("toast-region"), first = region.children[0];
+    assert.equal(region.attrs["aria-live"], "polite");
+    assert.equal(first.children[0].textContent, "<b>Copied</b>");
+    toast("Removed", { undo: () => { undone++; } });
+    assert.equal(first.removed, true);
+    assert.equal(timers.size, 1);
+    const second = region.children[1];
+    second.children[1].events.click();
+    assert.equal(undone, 1);
+    assert.equal(second.removed, true);
+    assert.equal(timers.size, 0);
+    toast("Done");
+    const timer = [...timers.values()][0];
+    assert.equal(timer.ms, 4000);
+    timer.fn();
+    assert.equal(region.children[2].removed, true);
+  } finally { Object.assign(globalThis, saved); }
+});

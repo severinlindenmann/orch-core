@@ -1,3 +1,4 @@
+import { emptyState } from "./feel.js";
 import { renderText } from "./render.js";
 
 function h(tag, props = {}, ...kids) {
@@ -54,7 +55,7 @@ export function homeView(d) {
         note([text(it.key), workspaceName(it.workspace_id)].filter(Boolean).join(" · ")),
         note(summary(it) ? "Summary only, answer on your Mac" : "Shared with the hub, you can sign here")),
       !summary(it) ? h("button", { text: "Review", onclick: () => d.actions.review(it) }) : null))))
-      : h("p", { class: "empty", text: "Nothing is waiting for you." }),
+      : emptyState("home"),
     [...offline].map((id) => h("div", { class: "list-row row" },
       h("div", { class: "grow" }, h("b", { text: workspaceName(id) }), note("Workspace is offline")), chip("Waiting", "warn"))));
   const spaces = h("section", { class: "card health-strip", "aria-labelledby": "workspaces-heading" },
@@ -65,7 +66,7 @@ export function homeView(d) {
           ? health.items.filter((it) => it.workspace_id === w.workspace_id).length + " things need you"
           : "Hand-offs and approvals wait until it is back"))),
       d.actions.open ? h("button", { text: "Open", onclick: () => d.actions.open(w.workspace_id) }) : null))
-      : note("No workspaces yet."));
+      : emptyState("workspaces"));
   const browser = d.thisBrowser;
   const active = browser?.state === "active";
   const local = h("div", { class: "browser-card" },

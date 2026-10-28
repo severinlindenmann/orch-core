@@ -1,3 +1,4 @@
+import { skeleton } from "./feel.js";
 import { renderText } from "./render.js";
 
 let showLeft = false;
@@ -31,7 +32,7 @@ function table(headers, rows, label) {
 export function adminView(d) {
   const message = h("div", { "aria-live": "polite" });
   if (d.notice) message.append(d.notice.nodeType ? d.notice : p(txt(d.notice)));
-  const panels = h("div", {}, p("Loading admin data…"));
+  const panels = h("div", {}, skeleton("admin"));
   const tabs = h("div", { class: "section-tabs", role: "tablist", "aria-label": "Admin sections" });
   let data, selected = 0, generation = 0;
   const names = ["People & groups", "Access", "Workspaces", "Marketplaces", "Audit"];
@@ -54,6 +55,7 @@ export function adminView(d) {
   }
   async function load() {
     const current = ++generation;
+    panels.replaceChildren(skeleton("admin"));
     try {
       const keys = ["users", "groups", "grants", "workspaces", "channels", "market-policy", "audit"];
       const responses = await Promise.all(keys.map((key) => d.api("GET", "/admin/" + key)));

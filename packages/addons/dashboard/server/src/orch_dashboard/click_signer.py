@@ -18,7 +18,12 @@ from pathlib import Path
 
 from .errors import HostError, fail
 
-CONTRACTS = (3,)  # 3: click-only confirmation (no typed word); the signer hands a runner grant to the runner
+#: 4 (run 13 C3): the View carries `headline` and `risk_lines` (the signer's own risk lines); 3 was click-only
+#: confirmation (no typed word). This server announces the contract it speaks on `prepare`, `view` and `sign`, and the
+#: signer refuses another one (`contract.mismatch`, answered as `click.contract` here).
+CONTRACTS = (4,)
+#: the ops whose answer is read under the contract (the View and what is signed after it)
+ANNOUNCED = frozenset({"prepare", "view", "sign"})
 #: `ORCH_DASHBOARD_CLICK=off` never starts a signer (a kill switch; the tests use it unless they test the signer).
 SWITCH = "ORCH_DASHBOARD_CLICK"
 RESTART_AFTER = 1.0  # seconds: a signer that dies at once is not respawned in a tight loop
@@ -82,7 +87,7 @@ class Signer:
         self.unsettled: Callable[[], bool] = lambda: False  # set by the routes: is a signature's outcome unknown?
         self.client = None
         self.core: str | None = None
-        self.contract: int | None = None  # the running signer's contract (3), once started
+        self.contract: int | None = None  # the running signer's contract (4), once started
         self.features: frozenset[str] = frozenset()  # the running signer's `status.features` (strings only)
         self.last_spawn = -1e9
         self.refused: tuple[float, HostError] | None = None  # a signer of another contract: until this time
@@ -116,7 +121,7 @@ class Signer:
                 pass
 
     def _ensure(self):
-        """The running signer, started (or restarted) if needed, and checked: its status must say `contract` 3."""
+        """The running signer, started (or restarted) if needed, and checked: its status must say `contract` 4."""
         if self.off:
             raise unavailable("Click-to-sign is switched off for this server.")
         if self.refused and self.clock() < self.refused[0]:
@@ -143,7 +148,7 @@ class Signer:
                 pass
             raise unavailable() from None
         contract = status.get("contract")
-        if type(contract) is not int or contract not in CONTRACTS:  # strict: True is not 1, "3" is not 3
+        if type(contract) is not int or contract not in CONTRACTS:  # strict: True is not 1, "4" is not 4
             try:
                 client.close()
             except Exception:  # noqa: BLE001
@@ -286,6 +291,8 @@ class Signer:
                 raise
             except Exception:  # noqa: BLE001 - local failure before the sign request reaches the channel
                 raise unavailable() from None
+            if op in ANNOUNCED:  # the contract this server reads the answer under (run 13 C3)
+                args = {**args, "contract": self.contract}
         try:
             result = client.call(op, args, timeout=TIMEOUT[op])
         except ClickError as exc:
@@ -333,7 +340,10 @@ class Signer:
 
 def refusal(exc) -> HostError:
     """The signer's `ClickError` as the server's error: `code`, `reason` and `retry_after_ms` are kept (the UI
-    branches on them); the message is the signer's display text."""
+    branches on them); the message is the signer's display text. The signer's `contract.mismatch` (this server
+    announced another contract than the signer speaks) is `click.contract`, like a status of another contract."""
+    if exc.code == "contract.mismatch":
+        return fail("click.contract", "Update orch-core: its signing helper speaks another contract.", exit=9)
     error = {"code": exc.code, "message": exc.message, "retryable": bool(exc.retryable)}
     if exc.reason is not None:
         error["reason"] = exc.reason

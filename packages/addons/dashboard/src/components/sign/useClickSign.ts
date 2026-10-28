@@ -4,7 +4,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
-import { CLICK_RISK, clickProblem, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
+import { CLICK_RISK, clickProblem, contractViewOk, unknownOutcome, type ClickAction, type ClickPrepared, type ClickProblem, type ClickSigned, type ClickViewAnswer } from '@/api/click'
 import { ApiError } from '@/api/types'
 import { type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { fmtClock } from '@/lib/time'
@@ -29,6 +29,11 @@ export interface ClickRun {
   phase: ClickPhase
   prepared: ClickPrepared | null
   view: ClickViewAnswer | null
+  /**
+   * C3: the View is the first one read for a request this hook prepared (`start`, `again`: callers start only on a
+   * trusted press) and is of contract 4. Only such a View may run the one-press arm; a re-read (`review`) never does.
+   */
+  fresh: boolean
   problem: ClickProblem | null
   signed: ClickSigned | null
   start: (action: ClickAction, retryFloor?: number) => Promise<void>
@@ -81,6 +86,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const [leftUnsettled, setLeftUnsettled] = useState(false)
   const [settleNote, setSettleNote] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
+  const [fresh, setFresh] = useState(false)
   const live = useRef({ phase: 'idle' as ClickPhase, prepared: null as ClickPrepared | null, ws: undefined as string | undefined })
   const attempt = useRef<{ sig: string; retry: number; lost: boolean } | null>(null)
   const busy = useRef(false)
@@ -109,12 +115,14 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   )
 
   const read = useCallback(
-    async (where: string, id: string) => {
+    async (where: string, id: string, first = false) => {
       setPhase('viewing')
       const got = await api.viewClick(where, id)
       if (!mounted.current || live.current.phase === 'cancelled' || live.current.prepared?.request_id !== id) return
       // Fail closed: the owner-mandated risk line must be exactly what the card says, or nothing is shown.
       if (got.view.risk !== CLICK_RISK) throw new ApiError(409, { code: 'human.click_refused', message: 'The review lacks the risk line.', retryable: false, reason: 'check_failed' })
+      // C3: only a contract-4 View (headline and risk lines) of a request prepared here may run the one-press arm.
+      setFresh(first && contractViewOk(got.view))
       setView(got)
       setProblem(null)
       setPhase('ready')
@@ -147,7 +155,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         live.current.prepared = got
         live.current.ws = ws
         setPrepared(got)
-        await read(ws, got.request_id)
+        await read(ws, got.request_id, true)
       } catch (e) {
         if (!mounted.current) return
         // The answer may have been lost: only then does "Try again" repeat the same intent. A definite answer (the
@@ -309,6 +317,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     setSettleNote(null)
     setPrepared(null)
     setView(null)
+    setFresh(false)
     setProblem(null)
     setError(null)
     setSigned(null)
@@ -345,5 +354,5 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     }
   }, [])
 
-  return { retry: attempt.current?.retry ?? 0, phase, prepared, view, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, error }
+  return { retry: attempt.current?.retry ?? 0, phase, prepared, view, fresh, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, error }
 }

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { enter, replaceContent } from "../../src/orch_hub/web/feel.js";
 import { parseRoute } from "../../src/orch_hub/web/route.js";
 
 class Element {
@@ -23,7 +24,7 @@ test("switching sections preserves rail, buttons, top bar and updates selected t
   const root = new Element("main");
   const state = { user: { name: "Ann", is_admin: true }, rail: { hubName: "Company", rows: [{ id: "ab".repeat(16), name: "Legal", online: false }] }, menu: false };
   const location = { hash: "#/home" };
-  const context = vm.createContext({ root, state, location, parseRoute, renderText: String, initials: (s) => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: (t) => new Element(t), createTextNode: (text) => Object.assign(new Element("#text"), { textContent: text }) } });
+  const context = vm.createContext({ root, state, location, parseRoute, enter, replaceContent: (el, nodes) => el.replaceChildren(...nodes), renderText: String, initials: (s) => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: (t) => new Element(t), createTextNode: (text) => Object.assign(new Element("#text"), { textContent: text }) } });
   vm.runInContext(source.slice(source.indexOf("function h("), source.indexOf("const field =")) + source.slice(source.indexOf("function shell("), source.indexOf("async function loadRail(")), context);
   context.shell("home", new Element("h1"));
   const rail = root.querySelector(".rail"), top = root.querySelector(".topbar"), button = rail.childNodes[0];
@@ -60,7 +61,7 @@ test("hash changes and sign-in continuation dispatch the wanted view", async () 
 test("offline workspace stays inside the shell and never requests a switch ticket", async () => {
   const ws = "ab".repeat(16), calls = [];
   let output;
-  const context = vm.createContext({ state: { rail: { rows: [{ id: ws, name: "Legal", online: false, badge: 3 }] } },
+  const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, skeleton: () => ({}), show() {}, state: { rail: { rows: [{ id: ws, name: "Legal", online: false, badge: 3 }] } },
     refresh: async () => true, loadRail: async () => {}, renderText: String,
     workspaceStatus: () => "offline since yesterday", h: (tag, props) => ({ tag, ...props }),
     shell: (active, ...nodes) => { output = { active, nodes }; },
@@ -71,4 +72,27 @@ test("offline workspace stays inside the shell and never requests a switch ticke
   assert.equal(output.nodes[0].text, "Legal is offline since yesterday");
   assert.match(output.nodes[2].text, /3 things need you/);
   assert.deepEqual(calls, ["/me/needs-you"]);
+});
+
+test("sign out clears all person data before the login screen", async () => {
+  const state = { user: { name: "Ann" }, rail: { hubName: "Private", rows: [1] }, me: {}, channels: [1], adminPage: [1], notice: {}, menu: true };
+  const context = vm.createContext({ state, api: async () => ({}), loginView() { assert.equal(state.user, null); assert.equal(state.rail.hubName, "Hub"); assert.equal(state.rail.rows.length, 0); } });
+  vm.runInContext(source.slice(source.indexOf("function clearSession()"), source.indexOf("function registerView(")), context);
+  await context.signOut();
+  assert.equal(state.me, null);
+  assert.equal(state.adminPage, null);
+  assert.equal(state.channels.length, 0);
+  assert.equal(state.notice, null);
+  assert.equal(state.menu, false);
+});
+test("only first paint and route changes show skeletons", () => {
+  const calls = [];
+  const context = vm.createContext({ frame: null, paintedRoute: null, location: { hash: "#/home" }, state: { user: {} }, skeleton: k => k, shell: (...args) => calls.push(args), show() {} });
+  vm.runInContext(source.slice(source.indexOf("function pageLoading("), source.indexOf("function shell(")), context);
+  context.pageLoading("home");
+  context.frame = {}; context.paintedRoute = "#/home";
+  context.pageLoading("home");
+  context.location.hash = "#/services";
+  context.pageLoading("services");
+  assert.deepEqual(calls, [["home", "home"], ["services", "services"]]);
 });

@@ -25,7 +25,10 @@ def ready(served, net):
 
 def test_a_market_install_is_one_click_with_the_whole_review(click, served, ready):
     st = ok(stage(served))["data"]
-    p = click.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    p = click.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     v = click.view(p["request_id"])
     assert v["view"]["confirm"] == {"kind": "click"}  # no typed word, though it asks for network and spawn_agent
     text = "\n".join(v["view"]["lines"])

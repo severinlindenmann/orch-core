@@ -7,7 +7,7 @@
     "cli": "orch addon grant",
     "summary": "Grant an addon its capabilities (owner only); also enables it.",
     "who": "human",
-    "usage": "orch addon grant NAME [--staged STAGE] [--dry-run]",
+    "usage": "orch addon grant NAME [--digest DIGEST] [--caps CAPS] [--staged STAGE] [--dry-run]",
     "pre": [
       "workspace_exists",
       "addon_exists",
@@ -25,6 +25,19 @@
           "type": "string",
           "description": "addon name",
           "x-metavar": "NAME"
+        },
+        "digest": {
+          "type": "string",
+          "description": "digest",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "caps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "description": "caps"
         },
         "staged": {
           "type": "string",
@@ -64,6 +77,17 @@
         "hint": "orch list",
         "fix": [
           "orch",
+          "list"
+        ]
+      },
+      {
+        "code": "addon.stage_changed",
+        "exit": 3,
+        "retryable": false,
+        "hint": "stage and review again",
+        "fix": [
+          "orch",
+          "market",
           "list"
         ]
       },
@@ -201,17 +225,6 @@
         "exit": 3,
         "retryable": false,
         "hint": "an older index or entry is refused",
-        "fix": [
-          "orch",
-          "market",
-          "list"
-        ]
-      },
-      {
-        "code": "market.staged_changed",
-        "exit": 3,
-        "retryable": false,
-        "hint": "start again",
         "fix": [
           "orch",
           "market",

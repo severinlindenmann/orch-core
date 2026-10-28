@@ -61,6 +61,16 @@ jobs:
           ORCH_TEST_SHARD: ${{ matrix.shard }}/3
           # The runtime must have Unicode 16.0, so the canon comparison tests can never skip silently.
           ORCH_REQUIRE_UNICODE16: "1"
+      - name: Root tests on the runner (real useradd / systemd), serial, after the parallel run
+        # They create real system users and units; run alone so they never compete with the parallel workers. (The
+        # useradd hang of 28 Oct was /etc/skel being copied per user, fixed in osusers by --skel /dev/null.) A slice
+        # without one of these modules collects nothing (exit 5), which is fine.
+        run: |
+          rc=0
+          uv run pytest -q -m "linux_root and not slow" -p no:xdist || rc=$?
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 5 ]
+        env:
+          ORCH_TEST_SHARD: ${{ matrix.shard }}/3
   standalone:
     # D79: orch core always works standalone. No hub code imported anywhere in core or add-ons, and a fresh workspace
     # works with the network down. Runs on drafts too (cheap, a few seconds); needs no secret and no network.

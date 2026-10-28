@@ -248,11 +248,20 @@ def build(
             key = event.get("key")
     view["headline"] = headline(str(prepared["op"]), key)
     view["headline_detail"] = headline_detail(shown_ticket.get("title") if isinstance(shown_ticket, Mapping) else None)
+    seq = prepared.get("material", {}).get("sequence")
+    risk_prepared = prepared
+    if seq is not None and seq["intent"]["kind"] == "addon_enable":
+        from orch.host import sequence
+
+        risk_prepared = sequence.expand(prepared)
     view["risk_lines"] = risk_lines(
-        str(prepared["op"]), list(prepared.get("events") or []), deposit=deposit, reveal=reveal is not None
+        str(prepared["op"]), list(risk_prepared.get("events") or []), deposit=deposit, reveal=reveal is not None
     )
-    meta = (prepared.get("material") or {}).get("sequence")
-    if meta:
+    if seq and seq["intent"]["kind"] == "addon_enable":
+        view["headline"] = "Install and turn on add-on" if seq["intent"].get("staged") else "Turn on add-on"
+        view["risk_lines"] = risk_lines("addon.grant", list(risk_prepared["events"]))
+    meta = seq  # (D3 reads it above, with the expanded events)
+    if meta and meta["intent"]["kind"] != "addon_enable":
         from orch.host import sequence
 
         intent = sequence.validate_intent(meta["intent"])

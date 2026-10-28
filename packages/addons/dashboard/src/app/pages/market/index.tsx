@@ -6,6 +6,7 @@ import { canAct, hasFeature } from '@/api/features'
 import { queries } from '@/api/queries'
 import {
   marketError,
+  isEnabled,
   permissionEffect,
   publisherWording,
   reviewLines,
@@ -21,8 +22,8 @@ import { SignPopover } from '@/components/sign/SignPopover'
 import { LoadFailed } from '@/components/LoadFailed'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
@@ -32,7 +33,7 @@ import { RemoveSheet } from './RemoveSheet'
 import { AddMarketplace } from './AddMarketplace'
 import { SettingsSheet } from './SettingsSheet'
 
-const HELP = 'Next, review and approve the installation with one click. The add-on will be installed turned off.'
+const HELP = 'Next, review and approve this update. New permissions need a second press.'
 function Review({
   stage: s,
   busy,
@@ -53,7 +54,7 @@ function Review({
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [])
-  const expired = Date.parse(s.expires_at) <= now
+  const expired = s.expires_at * 1000 <= now
   // The host's review lines wrap manifest text (title, command, agents text, needs text): all of it is the add-on's, so
   // the whole list sits in one frame (the provenance rule is about where the bytes come from, not who composed the line).
   const full = (
@@ -158,7 +159,7 @@ function Review({
             </Button>
           ) : (
             <Button disabled={busy} onClick={proceed}>
-              Review installation
+              Review update
             </Button>
           )}
         </DialogFooter>
@@ -166,7 +167,30 @@ function Review({
     </Dialog>
   )
 }
-/** The Built in group: switch, tag, no Remove. One accordion under a row opens for a switch at a time. */
+
+function InstallSetup({ stage, cancel, proceed }: { stage: MarketStage; cancel: () => void; proceed: (values: Record<string, unknown>) => void }) {
+  const required = stage.settings_schema?.required ?? []
+  const props = stage.settings_schema?.properties ?? {}
+  const [values, setValues] = useState<Record<string, unknown>>(() => Object.fromEntries(required.filter(k => props[k]?.default !== undefined).map(k => [k, props[k].default])))
+  return <section aria-label="Install add-on" className="space-y-3 border-t border-border py-3">
+    <p><Inline>{stage.name}</Inline> · Version <Inline>{stage.version}</Inline> · Publisher <Inline>{stage.market.publisher.fingerprint ?? 'unsigned'}</Inline></p>
+    {required.map(key => <label key={key} className="block"><Inline>{key}</Inline>
+      {props[key]?.type === 'boolean'
+        ? <input type="checkbox" checked={values[key] === true} onChange={e => setValues(v => ({ ...v, [key]: e.target.checked }))} />
+        : <Input aria-label={key} value={typeof values[key] === 'object' ? JSON.stringify(values[key]) : String(values[key] ?? '')} onChange={e => {
+          const text = e.target.value
+          let value: unknown = text
+          if (props[key]?.type === 'integer') value = text === '' ? undefined : Number(text)
+          if (props[key]?.type === 'object' || props[key]?.type === 'array') { try { value = JSON.parse(text) } catch { value = text } }
+          setValues(v => ({ ...v, [key]: value }))
+        }} />}
+    </label>)}
+    <InfoDrawer><p>Package digest <Raw>{stage.package_sha256}</Raw></p></InfoDrawer>
+    <Button variant="ghost" onClick={cancel}>Cancel</Button>
+    <Button disabled={stage.expires_at * 1000 <= Date.now() || required.some(k => values[k] === undefined)} onClick={() => proceed(values)}>Install and turn on</Button>
+  </section>
+}
+
 function BuiltInGroup({ ws }: { ws: NonNullable<ReturnType<typeof useWorkspace>['workspace']> }) {
   return (
     <section aria-labelledby="built-in-h" className="space-y-1">
@@ -197,7 +221,9 @@ function MarketWorkspace() {
   const [source, setSource] = useState('')
   const [permission, setPermission] = useState('')
   const [stage, setStage] = useState<MarketStage | null>(null)
+  const [updating, setUpdating] = useState(false)
   const [intent, setIntent] = useState<StageInput | null>(null)
+  const [installSettings, setInstallSettings] = useState<Record<string, unknown>>({})
   const [handoff, setHandoff] = useState<MarketStage | null>(null)
   const [pending, setPending] = useState<string[]>([])
   const [message, setMessage] = useState('')
@@ -219,15 +245,20 @@ function MarketWorkspace() {
       setBusy(false)
     }
   }
-  const prepare = (input: StageInput) =>
+  const prepare = (input: StageInput, enabledUpdate = false) =>
     void write(async () => {
-      const result = await api.marketStage(ws, input)
+      setUpdating(enabledUpdate)
       setIntent(input)
+      const result = await api.marketStage(ws, input)
       if ('up_to_date' in result) {
         setMessage('Already up to date')
         setStage(null)
       } else {
         setStage(result)
+        if (!enabledUpdate && !(result.settings_schema?.required?.length)) {
+          setInstallSettings({})
+          setHandoff(result)
+        }
         setPending((p) => [...p, result.name])
       }
     })
@@ -365,10 +396,10 @@ function MarketWorkspace() {
                   summaryOf={(name) => entries.find(({ a }) => a.id === name)?.a.from_marketplace.summary}
                   mayWrite={mayWrite}
                   busy={busy}
-                  onUpdate={(a) => prepare({ id: a.name, update: true })}
+                  onUpdate={(a) => prepare({ id: a.name, update: true }, isEnabled(a.state))}
                   onSettings={(a) => setSettingsOf(a.name)}
                   onRemove={a => {
-                    if (a.state === 'active') { setRemove(a); return }
+                    if (isEnabled(a.state)) { setRemove(a); return }
                     void write(async () => { await api.marketUninstall(ws, a.name); await refresh(); setMessage(`${a.name} removed. Install it again from Browse.`) })
                   }}
                 />
@@ -451,39 +482,37 @@ function MarketWorkspace() {
           )}
         </>
       )}
-      {mayWrite && stage && !handoff && (
+      {mayWrite && stage && !handoff && updating && (
         <Review
           stage={stage}
           busy={busy}
           error={message}
           cancel={cancel}
-          again={() =>
-            intent &&
-            void write(async () => {
-              await api.marketUnstage(ws, stage.stage)
-              setStage(null)
-              const result = await api.marketStage(ws, intent)
-              if ('up_to_date' in result) setMessage('Already up to date')
-              else setStage(result)
-            })
-          }
-          proceed={() => {
-            setHandoff(stage)
-          }}
+          proceed={() => setHandoff(stage)}
+          again={() => intent && void write(async () => {
+            await api.marketUnstage(ws, stage.stage)
+            setStage(null)
+            const result = await api.marketStage(ws, intent)
+            if ('up_to_date' in result) setMessage('Already up to date')
+            else setStage(result)
+          })}
         />
       )}
+      {mayWrite && stage && !handoff && !updating && <InstallSetup key={stage.stage} stage={stage} cancel={cancel} proceed={values => { setInstallSettings(values); setHandoff(stage) }} />}
       {mayWrite && handoff && (
         <SignPopover
-          title="Approve add-on package"
+          title={updating ? "Approve add-on update" : "Install and turn on add-on"}
+          inline={!updating}
+          anchor={null}
           ws={ws}
-          anchor={null} // the review dialog is folded away while this one is open (Cancel here brings it back)
-          action={{ action: 'market_grant', name: handoff.name, staged: handoff.stage }}
+          action={updating ? { action: 'market_update', name: handoff.name, staged: handoff.stage, digest: handoff.package_sha256, caps: handoff.grant.capabilities as string[] } : { action: 'market_grant', name: handoff.name, staged: handoff.stage, grant: handoff.grant, settings: installSettings }}
           lead={
             <div data-testid="install-summary" className="rounded border border-border p-3 text-sm">
               <p className="font-medium">
-                <Inline>{handoff.name}</Inline> · Version <Inline>{handoff.version}</Inline>
+                <Inline>{handoff.name}</Inline> · Version <Inline>{handoff.version}</Inline> · Publisher <Inline>{handoff.market.publisher.fingerprint ?? 'unsigned'}</Inline>
               </p>
-              <p>After installation: turned off. You turn it on later in Settings.</p>
+              <p>{updating ? "Updates the enabled add-on after approval." : "Installs and turns on after all signatures have landed."}</p>
+              <InfoDrawer><p>Package digest <Raw>{handoff.package_sha256}</Raw></p></InfoDrawer>
               <p className="text-text-muted">The marketplace lines below are shown by this computer, are not signed and are not verified. Your approval does not cover them.</p>
               {widened(handoff) && <p role="alert" className="font-medium text-warning">This update asks for more than before.</p>}
               {handoff.market.stale && <p className="text-warning">This review is out of date: the marketplace may have changed. Cancel and review again.</p>}
@@ -491,7 +520,7 @@ function MarketWorkspace() {
             </div>
           }
           onClose={() => {
-            setPending((p) => p.filter((n) => n !== handoff.name))
+            void cancel()
             setHandoff(null)
           }}
           onSettled={(phase) => {

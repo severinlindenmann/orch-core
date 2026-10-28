@@ -204,8 +204,11 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
     case 'publish_share':
       return workspaceRequest('publish.share', { type: 'log.added', text: `Publish approval: share files outside this computer\nStaged copy: ${String(body.staged_id)}` })
+    case 'market_update':
+      return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name, staged: body.staged, package_sha256: body.digest, capabilities: body.caps })
     case 'market_grant':
-      return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name, staged: body.staged })
+      if (body.settings && Object.keys(body.settings).length) return workspaceRequest('settings.set', { type: 'settings.changed', set: { addons: { [String(body.name)]: body.settings } } })
+      return workspaceRequest('addon.grant', { ...(body.grant as Record<string, unknown>), type: 'addon.granted', name: body.name, staged: body.staged })
     case 'addon_grant':
       return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
     case 'addon_disable':
@@ -229,7 +232,8 @@ export const ONE_PRESS_OPS: ReadonlySet<string> = new Set(onePressOps)
  * the 1 s arm); every other op has at least one (its specific words, else the fail-closed line), so it needs the
  * second press.
  */
-export function riskLinesFor(request: Pick<HandoffRequest, 'op' | 'material'>): string[] {
+export function riskLinesFor(request: Pick<HandoffRequest, 'op' | 'material'>, body: Record<string, unknown> = {}): string[] {
+  if (body.agent) return ['FROM-THE-SIGNER risk: agents can act for you on tickets'] // a task started with agent access
   if (ONE_PRESS_OPS.has(request.op)) return []
   const payload = (request.material as unknown as { review?: { payload?: Record<string, unknown> }[] } | undefined)?.review?.[0]?.payload ?? {}
   const set = (payload.set ?? {}) as Record<string, unknown>

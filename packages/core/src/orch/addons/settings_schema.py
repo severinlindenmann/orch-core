@@ -19,7 +19,7 @@ MAX_DEPTH = 4  # nesting of schema nodes, the root is depth 1
 _MAX_ENTRIES = 64  # properties, enum values, maxItems, maxProperties
 _KEY = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}(?![\s\S])")
 _TYPES = ("object", "string", "integer", "boolean", "array")
-_COMMON = {"type", "title"}
+_COMMON = {"type", "title", "default"}
 _KEYS = {
     "object": _COMMON | {"properties", "additionalProperties", "required", "maxProperties"},
     "string": _COMMON | {"enum", "maxLength"},
@@ -81,6 +81,20 @@ def _node(node: Any, path: list[str | int], depth: int) -> None:
     {"object": _object, "string": _string, "integer": _integer, "array": _array}.get(typ, lambda *_: None)(
         node, path, depth
     )
+
+    if "default" in node:
+        from jsonschema import Draft202012Validator
+
+        from orch.addons import settings_value
+        from orch.tokenshape import GITHUB_TOKEN_SHAPE
+
+        value = node["default"]
+        if (
+            settings_value.check_shape({"value": value})
+            or any(GITHUB_TOKEN_SHAPE.search(s) for s in settings_value._strings(value))
+            or next(Draft202012Validator(node).iter_errors(value), None) is not None
+        ):
+            raise SettingsSchemaError([*path, "default"], "invalid non-secret default")
 
 
 def _object(node: dict[str, Any], path: list[str | int], depth: int) -> None:

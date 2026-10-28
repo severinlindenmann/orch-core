@@ -111,9 +111,9 @@ describe('a ticket and its text on one review (terminal)', () => {
     await within(dialog).findByTestId('handoff-command', {}, T)
     await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 2)))
     expect(await within(dialog).findByTestId('sequence-progress', {}, T)).toHaveTextContent('1 of 4 steps')
-    expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
+    expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything(), expect.anything())
     await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 3)))
-    await waitFor(() => expect(onSettled).toHaveBeenCalledWith('done', expect.objectContaining({ op: 'new', key: 'DEMO-0044' }), expect.anything()), T)
+    await waitFor(() => expect(onSettled).toHaveBeenCalledWith('done', expect.objectContaining({ op: 'new', key: 'DEMO-0044' }), expect.anything(), { via: 'terminal', unsignedShown: false }), T)
   })
 
   it('a run that stops says what landed and that the ticket stays a draft', async () => {
@@ -128,7 +128,7 @@ describe('a ticket and its text on one review (terminal)', () => {
     await act(async () => void (await vi.advanceTimersByTimeAsync(SEQUENCE_STALL_MS + POLL_MS * 2)))
     expect(await within(dialog).findByText(/Signing stopped after 2 of 4 signatures/, {}, T)).toBeInTheDocument()
     expect(dialog).toHaveTextContent('stays a draft')
-    expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
+    expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything(), expect.anything())
   })
 })
 
@@ -174,7 +174,7 @@ describe('a quick task with agent access (terminal)', () => {
     expect(await within(dialog).findByText(/Ticket created; agent access not confirmed yet/, {}, T)).toBeInTheDocument()
     expect(dialog).toHaveTextContent('DEMO-0044 was created. Agent access is not confirmed yet: the last signature has not arrived')
     expect(within(dialog).queryByRole('button', { name: 'Start again' })).toBeNull() // another Start would make a second task
-    expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
+    expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything(), expect.anything())
   })
 
   it('F-712-4: asks once more before saying the last signature has not arrived, and does not fail when it lands meanwhile', async () => {
@@ -198,7 +198,7 @@ describe('a quick task with agent access (terminal)', () => {
     await act(async () => void (await vi.advanceTimersByTimeAsync(POLL_MS * 2)))
     await act(async () => void (await vi.advanceTimersByTimeAsync(GRANT_STALL_MS + POLL_MS * 6)))
     expect(dialog).not.toHaveTextContent(/not confirmed yet/)
-    expect(onSettled).not.toHaveBeenCalledWith('failed', expect.anything(), expect.anything())
+    expect(onSettled).not.toHaveBeenCalledWith('failed', expect.anything(), expect.anything(), expect.anything())
   })
 
   it('for a quick task: says the task exists and is approved, and the agent access is not confirmed when the last signature never follows', async () => {
@@ -214,7 +214,7 @@ describe('a quick task with agent access (terminal)', () => {
     expect(await within(dialog).findByText(/Task created; agent access not confirmed yet/, {}, T)).toBeInTheDocument()
     expect(dialog).toHaveTextContent('agent access is not confirmed yet: the last signature has not arrived')
     expect(within(dialog).queryByRole('button', { name: 'Start again' })).toBeNull() // another Start would make a second task
-    expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything())
+    expect(onSettled).not.toHaveBeenCalledWith('done', expect.anything(), expect.anything(), expect.anything())
   })
 })
 

@@ -136,6 +136,25 @@ describe('the action dialog with click-to-sign', () => {
     expect(s.prepare).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['with the unsigned slot on screen beside the review', true],
+    ['without an unsigned slot', false],
+  ] as const)('a one-click signature says how it was made: %s', async (_n, withSlot) => {
+    flag(true)
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { SignPopover } = await import('./SignPopover')
+    const { render } = await import('@testing-library/react')
+    vi.spyOn(api, 'getHostSettings').mockResolvedValue({ sign_methods: null } as Awaited<ReturnType<typeof api.getHostSettings>>)
+    vi.spyOn(api, 'getSignDefault').mockResolvedValue({ method: 'click', is_default: false, allowed: ['terminal', 'click'] })
+    const ws = (await api.getWorkspaces())[0]!.id
+    const onSettled = vi.fn()
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Change allowed ways to approve" action={{ action: 'settings_set', sign_methods: ['terminal', 'click'] }} autoStart unsigned={withSlot ? <p>Not part of what you sign</p> : undefined} onSettled={onSettled} onClose={() => {}} /></QueryClientProvider>)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    await within(dialog).findByTestId('click-panel', {}, T)
+    press(await armed(dialog))
+    await waitFor(() => expect(onSettled).toHaveBeenCalledWith('done', expect.anything(), expect.anything(), { via: 'click', unsignedShown: withSlot }), T)
+  })
+
   it('a network failure is a retry, not a crash', () => {
     expect(clickProblem(new Error('boom')).next).toBe('retry')
   })

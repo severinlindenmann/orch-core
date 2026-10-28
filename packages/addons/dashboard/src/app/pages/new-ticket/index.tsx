@@ -11,7 +11,7 @@ import { handoffMode } from '@/api/features'
 import { MAX_IMAGES, missingPasted, pastedIn } from '@/api/pasteImage'
 import { MAX_CRITERIA, MAX_SECTION_BYTES, MAX_SEQUENCE_STEPS, type HandoffAction, type HandoffRequest, type HandoffState } from '@/api/handoff'
 import { can, roleOf } from '@/api/permissions'
-import { SignPopover } from '@/components/sign/SignPopover'
+import { SignPopover, type SignedHow } from '@/components/sign/SignPopover'
 import { Inline } from '@/components/sign/visible'
 import { SignButton } from '@/components/sign/SignButton'
 import { AccessSelect } from '@/components/sign/AccessSelect'
@@ -365,7 +365,9 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
 
   // "Create and start agent": what the review shows about the start, kept with the request so the start afterwards is
   // compared with exactly that (never with whatever the form says by then). One idem per review.
-  interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; withAccess: boolean }
+  // `notice`: the review shows the full "runs as you" notice (not read yet). Signing counts as reading it only when the
+  // one-click review showed it (see `noticeSeen`); signed any other way, the start is refused and the pill offers Start agent.
+  interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; withAccess: boolean; notice: boolean }
   const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; draft: Draft; another: boolean; start: StartSnapshot | null; anchor: HTMLElement | null; n: number } | null>(null)
   const [signing, setSigning] = useState(false)
   const primaryRef = useRef<HTMLButtonElement>(null)
@@ -416,7 +418,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       const made = handoffNewTicket(full, me.person, withAccess ? plan.hours : null)
       if ('problem' in made) return setServerError(made.problem)
       const start: StartSnapshot | null = startNow
-        ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess }
+        ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess, notice: plan.noticeUnread }
         : null
       return setHandoffNew((old) => ({ action: made.action, draft: full, another, start, anchor, n: (old?.n ?? 0) + 1 }))
     }
@@ -473,7 +475,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
     onDirtyChange?.(false)
   }
   /** The signer's event is in the log: the ticket exists. */
-  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null, deposit?: string) => {
+  const handoffDone = (another: boolean, ticketKey: string | null, start: StartSnapshot | null, deposit?: string, how?: SignedHow) => {
     ticketExists()
     setHandoffNew(null)
     // One click signed the agent access too: only a confirmed hand-over to the runner counts as access given.
@@ -482,13 +484,16 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       return afterCreate(false, ticketKey)
     }
     // Only the key of this form's own `new` request starts anything; without it the ticket is just created.
-    if (start && ticketKey) return void beginStart(ticketKey, start)
+    if (start && ticketKey) return void beginStart(ticketKey, start, noticeSeen(start, how))
     afterCreate(another, ticketKey)
   }
+  /** The notice counts as read only when the person saw it: the review's slot showed it next to the one-click review
+   * they signed from in that same popover. The terminal, the hub, or a review where the slot was not on screen: not read. */
+  const noticeSeen = (snap: StartSnapshot, how?: SignedHow) => snap.notice && how?.via === 'click' && how.unsignedShown
   const initialOf = (snap: StartSnapshot): StartInitial => ({ harness: snap.reviewed.choice.harness, mode: snap.reviewed.choice.mode, ...(snap.reviewed.choice.model ? { model: snap.reviewed.choice.model } : {}) })
   /** Every signature landed: the start runs in the background and the ticket page opens at once with "Getting started…". */
-  const beginStart = (ticketKey: string, snap: StartSnapshot) => {
-    void startInBackground(qc, { ws: workspace.id, key: ticketKey, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds })
+  const beginStart = (ticketKey: string, snap: StartSnapshot, noticeRead: boolean) => {
+    void startInBackground(qc, { ws: workspace.id, key: ticketKey, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds, noticeRead })
     afterCreate(false, ticketKey)
   }
   const afterCreate = (another: boolean, ticketKey: string | null) => {
@@ -681,7 +686,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           controls={handoffNew.start?.withAccess ? <AccessSelect hours={plan.hours} onHours={plan.setHours} lengths={plan.lengths} prefix={workspace.prefix} agentName={harnessName(handoffNew.start.reviewed.choice.harness)} /> : undefined}
           doneToast={handoffNew.start ? '' : 'Ticket created'}
           onSigning={setSigning}
-          unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} /> : undefined}
+          unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} notice={handoffNew.start.notice} /> : undefined}
           onClose={() => {
             // The ticket landed but its agent access did not: say so, and offer the Start agent dialog (which has the access card).
             const landed = partialKey.current
@@ -689,9 +694,9 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
             setHandoffNew(null)
             if (landed) { ticketExists(); failMark(workspace.id, landed.key, NO_ACCESS, landed.initial); afterCreate(false, landed.key) }
           }}
-          onSettled={(phase, state, request) => {
+          onSettled={(phase, state, request, how) => {
             const ticketKey = ownKey(state, request)
-            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start, state?.deposit)
+            if (phase === 'done') return handoffDone(handoffNew.another, ticketKey, handoffNew.start, state?.deposit, how)
             const p = state?.progress
             if (handoffNew.start && ticketKey && p?.last === 'grant' && p.done === p.of - 1) {
               partialKey.current = { key: ticketKey, initial: initialOf(handoffNew.start) }

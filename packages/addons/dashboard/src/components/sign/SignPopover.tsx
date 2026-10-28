@@ -75,6 +75,16 @@ function isBareContent(c: SignContent | null | undefined): boolean {
   return !!c && !c.summary && !c.sections?.length && !c.acceptance?.length && !c.tasks?.length && !c.fields_changed?.length && !c.note?.length && !c.notes?.length && !c.ticket
 }
 
+/**
+ * How a settled signature was made. `unsignedShown` is true only on the one-click path, when the `unsigned` slot was
+ * rendered in this very popover, open and next to the click review the person signed from. The terminal, the hub and a
+ * review where the slot was never on screen (folded, minimized, a reopened instance) say false.
+ */
+export interface SignedHow {
+  via: 'click' | 'terminal' | 'hub'
+  unsignedShown: boolean
+}
+
 export interface SignPopoverProps {
   /** Core's title: "Approve plan", "Comment", "Close DEMO-0043". */
   title: string
@@ -101,8 +111,9 @@ export interface SignPopoverProps {
   warning?: (request: HandoffRequest) => string | null
   /** Said under the review and outside the signed content: what happens next that this signature does NOT cover. */
   unsigned?: ReactNode
-  /** The signer's event is in the log. The review closes by itself right after. */
-  onSettled?: (phase: HandoffPhase, state: HandoffState | null, request: HandoffRequest | null) => void
+  /** The signer's event is in the log. The review closes by itself right after. `how`: which path signed, and whether the
+   * `unsigned` slot was on screen next to the one-click review of THIS instance before its signature (see `SignedHow`). */
+  onSettled?: (phase: HandoffPhase, state: HandoffState | null, request: HandoffRequest | null, how?: SignedHow) => void
   onPending?: (pending: boolean) => void
   /** True while the signature itself is being made. With this set the review folds into the anchor button, which says "Signing…". */
   onSigning?: (signing: boolean) => void
@@ -135,8 +146,12 @@ export function SignPopover(p: SignPopoverProps) {
   const [anchor] = useState<HTMLElement | null>(() => (p.anchor !== undefined ? p.anchor : lastTrigger()))
   const run = useHandoff(p.ws, (phase, state, request) => {
     if (phase === 'done' && p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
-    p.onSettled?.(phase, state, request)
+    p.onSettled?.(phase, state, request, { via: 'terminal', unsignedShown: false })
   })
+  // The `unsigned` slot was on screen in THIS instance with the click review the person signs from (set below, never reset).
+  const unsignedShown = useRef(false)
+  const unsignedEl = useRef<HTMLDivElement>(null)
+  const hub: SignedHow = { via: 'hub', unsignedShown: false }
   const { phase } = run
   // run 13: a schedule refused as too soon says the host's own lead (the server's min_lead_s), not always "1 hour"
   const qc = useQueryClient()
@@ -153,7 +168,7 @@ export function SignPopover(p: SignPopoverProps) {
   // Click-to-sign (H5c): offered where the signer says the flag is on and it can sign, for the actions it serves.
   const click = useClickSign(p.ws, (_phase, state, request) => {
     if (p.doneToast !== '') toast.success(p.doneToast ?? `${p.title}: signed`)
-    p.onSettled?.('done', state, request)
+    p.onSettled?.('done', state, request, { via: 'click', unsignedShown: unsignedShown.current })
   }, leadS)
   const methods = useSignMethods(p.ws)
   const me = useMe(p.ws).data
@@ -182,7 +197,7 @@ export function SignPopover(p: SignPopoverProps) {
       if (!got.key || !got.progress) return
       const state: HandoffState = { id: prepared.request_id, state: 'submitted', op: prepared.op, key: got.key, expires_at: prepared.expires_at, event_ids: [], seq: null, progress: got.progress }
       const request = { id: prepared.request_id, code: null, expires_at: prepared.expires_at, state: 'submitted', op: prepared.op, key: got.key } as unknown as HandoffRequest
-      p.onSettled?.('failed', state, request)
+      p.onSettled?.('failed', state, request, { via: 'click', unsignedShown: unsignedShown.current })
     }, () => {})
   }, [click.phase, click.problem, click.prepared, p.ws, p.onSettled])
   const clickOpen = click.phase !== 'idle'
@@ -257,6 +272,15 @@ export function SignPopover(p: SignPopoverProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signing])
   useEffect(() => () => p.onSigning?.(false), [])  // eslint-disable-line react-hooks/exhaustive-deps
+  // The slot counts as seen only when it is in the page, in this open popover, beside the click review that can be signed.
+  // A slot shown with the terminal panel, or a popover folded away, never sets it.
+  useEffect(() => {
+    const el = unsignedEl.current
+    if (method !== 'click' || click.phase !== 'ready' || (p.onSigning && signing) || !el?.isConnected) return
+    if (el.closest('[hidden]') || document.visibilityState === 'hidden') return
+    unsignedShown.current = true
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [method, click.phase, signing])
 
   useEffect(() => {
     if (click.problem?.waitMs) setWaitUntil(Date.now() + click.problem.waitMs)
@@ -299,7 +323,7 @@ export function SignPopover(p: SignPopoverProps) {
   if (viaHub) {
     return (
       <SignShell inline={p.inline} anchor={anchor} open onDismiss={p.onClose} title={<Inline>{p.title}</Inline>} description={null} showClose onOpenAutoFocus={(e) => e.preventDefault()}>
-        {isAddonGrant(p.action) && p.ws ? <HubAddonPanel ws={p.ws} action={p.action} onDone={() => p.onSettled?.('done', null, null)} /> : hubSettingsSplit(p.action) && p.ws ? <HubSettingsPanel ws={p.ws} action={p.action as Extract<HandoffAction, { action: 'settings_set' }>} onDone={() => p.onSettled?.('done', null, null)} /> : null}
+        {isAddonGrant(p.action) && p.ws ? <HubAddonPanel ws={p.ws} action={p.action} onDone={() => p.onSettled?.('done', null, null, hub)} /> : hubSettingsSplit(p.action) && p.ws ? <HubSettingsPanel ws={p.ws} action={p.action as Extract<HandoffAction, { action: 'settings_set' }>} onDone={() => p.onSettled?.('done', null, null, hub)} /> : null}
         <div className="flex justify-end gap-2">
           <Button variant="outline" ref={cancelRef} onClick={p.onClose}>
             Close
@@ -442,7 +466,7 @@ export function SignPopover(p: SignPopoverProps) {
         </div>
       )}
 
-      {p.unsigned && !end && click.phase !== 'done' && <div data-testid="handoff-unsigned">{p.unsigned}</div>}
+      {p.unsigned && !end && click.phase !== 'done' && <div ref={unsignedEl} data-testid="handoff-unsigned">{p.unsigned}</div>}
 
       {phase === 'waiting' && story && <WhatNext story={story} />}
       {footerShown && <SignFooter><div className={`${STICKY_FOOTER} flex flex-wrap items-center gap-2 sm:justify-between`} data-testid="sign-footer-row">

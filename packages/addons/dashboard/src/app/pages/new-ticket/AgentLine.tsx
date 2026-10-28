@@ -1,6 +1,7 @@
 // The notes of the New ticket form about the agent (no agent can start here, too many parts to sign with access), the
 // dialog to choose the agent, and the "not signed" block of the review.
 import { modelLabel } from '@/api/modelRouting'
+import { EXECUTION_LINE } from '@/app/terminal/real/executionLine'
 import { AgentPick, harnessName, MODE_LABEL, ModelPick } from '@/components/agents/AgentChoice'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -53,11 +54,20 @@ export function ChangeDialog({ plan, onClose }: { plan: StartPlan; onClose: () =
  * Under the review, outside the signed content: the start is NOT part of what the person signs. It uses their agent
  * access and happens in the dashboard once the ticket exists.
  */
-export function NotSignedBlock({ plan }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** Kept for callers: the steps above now say what is and is not approved. */ coreSaysSo?: boolean }) {
+export function NotSignedBlock({ plan, notice = false }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** Kept for callers: the steps above now say what is and is not approved. */ coreSaysSo?: boolean; /** The "runs as you" notice is not read yet: shown in full here, as the Start agent dialog would, and signing counts as reading it. */ notice?: boolean }) {
   const { choice } = plan
   return (
-    <p data-testid="not-signed-start" className="border-t border-border pt-3 text-[13px] text-text-muted">
-      Not part of what you sign: after the ticket exists, {harnessName(choice.harness)} starts ({MODE_LABEL[choice.mode].toLowerCase()}, model {modelText(plan)}). Agent access is checked again first.
-    </p>
+    <>
+      <p data-testid="not-signed-start" className="border-t border-border pt-3 text-[13px] text-text-muted">
+        Not part of what you sign: after the ticket exists, {harnessName(choice.harness)} starts ({MODE_LABEL[choice.mode].toLowerCase()}, model {modelText(plan)}). Agent access is checked again first.
+      </p>
+      {notice && (
+        <div role="note" data-testid="not-signed-notice" className="mt-2 space-y-1 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-xs leading-5 text-warning">
+          {/* The same constant the Start agent dialog shows (and acknowledges as `start_agent`): never a copy of its words. */}
+          <p data-testid="not-signed-execution-line">{EXECUTION_LINE}</p>
+          <p>Signing and starting the agent confirms you have read this.</p>
+        </div>
+      )}
+    </>
   )
 }

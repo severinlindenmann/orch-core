@@ -37,7 +37,7 @@ markers = [
     "needs_os_users: requires root and ORCH_TEST_OS_USERS=1 to exercise a second real OS user",
     "slow: takes more than ~2 s (builds wheels, property sweeps); a quick loop skips it with -m 'not slow'",
     "linux_root: creates real system users/units as root on a CI Linux runner; CI runs it alone, serially, after the parallel run",
-    "linux_root: creates real system users/units as root on a CI Linux runner; not run in PR CI (orch-core-root.yml, nightly)",
+    "linux_root: creates real system users/units as root on a CI Linux runner; CI runs it serially after the parallel run, and in orch-core-root.yml",
     "windows_smoke: part of the Windows smoke job (pure unit, runs on every OS)",
     "t2_long: a T2 test with its own longer real-time budget, t2_long(seconds); runs once, on the default cap",
 ]

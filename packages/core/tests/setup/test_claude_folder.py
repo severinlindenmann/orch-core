@@ -37,7 +37,13 @@ def test_no_config_file_or_a_broken_one_is_left_alone(tmp_path):
     root = tmp_path / "work" / "ws"
     root.mkdir(parents=True)
     _, env = _home(tmp_path, None)
-    assert claude_folder.trust_folder(env, root) is False and not Path(env["HOME"], ".claude.json").exists()
+    assert claude_folder.config_state(env) == "missing"
+    # Claude Code has not run yet: the smallest valid file is made, with only this folder
+    assert claude_folder.trust_folder(env, root) is True
+    cfg = Path(env["HOME"], ".claude.json")
+    assert json.loads(cfg.read_text()) == {"projects": {os.path.realpath(root): {"hasTrustDialogAccepted": True}}}
+    assert (cfg.stat().st_mode & 0o777) == 0o600 and claude_folder.config_state(env) == "ready"
+    cfg.unlink()
     (Path(env["HOME"]) / ".claude.json").write_text("{not json")
     assert claude_folder.trust_folder(env, root) is False
     assert (Path(env["HOME"]) / ".claude.json").read_text() == "{not json"
@@ -240,3 +246,12 @@ def test_a_failed_row_is_never_ready_a_macos_block_is_named_and_try_again_works(
     f.thread.join(10)
     p2 = progress(f, out["run_id"])
     assert p2["error"] is None and p2["done"] is True and f.phase == "done"
+
+
+def test_a_missing_home_folder_makes_no_file_and_state_says_missing_or_odd(tmp_path):
+    root = tmp_path / "work" / "ws"
+    root.mkdir(parents=True)
+    env = {"HOME": str(tmp_path / "nohome"), "PATH": os.environ.get("PATH", "")}
+    assert claude_folder.trust_folder(env, root) is False and claude_folder.config_state(env) == "missing"
+    _, env = _home(tmp_path, [1])
+    assert claude_folder.config_state(env) == "odd"

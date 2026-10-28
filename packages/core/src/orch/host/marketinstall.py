@@ -353,6 +353,11 @@ def run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         out = _dev_stage(service, plan) if op == "market.dev_stage" else _stage(service, plan, call)
     except MarketError as exc:
         _audit(call, f"{op}.refused", id=plan["id"], code=exc.code)
+        if exc.code == "market.addon_not_allowed":  # the hub admin may allow it: tell the hub (best effort)
+            from . import hubops
+
+            who = "agent" if str(call.principal).startswith("g:") else "person"  # a verified grant is an agent
+            hubops.report_addon_request(service, str(plan["id"]), actor=who)
         raise _refuse(op, exc.code, exc.reason) from None
     if op == "market.dev_stage":
         _audit(call, op, id=out["name"], stage=out["stage"])

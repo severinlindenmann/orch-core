@@ -303,6 +303,7 @@ def serve(
                 routes=queue,
                 authz=authz,
                 connections=connections,
+                spaces=spaces,
                 delivery=deliveries,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie
             )

@@ -23,11 +23,11 @@ const data = {
 };
 test("directional matrix is text only, with safe names and honest explanation", () => {
   const view = connectionsView(data), all = view.all();
-  assert.deepEqual(all.filter((n) => n.tag === "td").map((n) => n.textContent), ["no", "allowed", "no", "no", "no", "no", "allowed", "no", "no"]);
+  assert.deepEqual(all.filter((n) => n.tag === "td").map((n) => n.textContent), ["–", "allowed", "no", "no", "–", "no", "allowed", "no", "–"]);
   assert.equal(all.filter((n) => n.tag === "button" || n.tag === "img").length, 0);
   assert.match(view.textContent, /<img onerror=bad>/);
-  assert.match(view.textContent, /Changing connections comes later/);
-  assert.doesNotMatch(view.textContent.replace(/An arrow from A[^]*later\./, ""), /online|offline/i); // no presence claim; the legend sits behind the i
+  assert.match(view.textContent, /Ask to allow waits for an owner or admin/);
+  assert.doesNotMatch(view.textContent.replace(/An arrow from A[^]*approve\./, ""), /online|offline/i); // no presence claim; the legend sits behind the i
   assert.ok(all.some((n) => n.tag === "summary" && n.textContent === "i"));
   assert.equal(all.filter((n) => n.tag === "path").length, 2);
 });
@@ -63,4 +63,25 @@ test("empty state, route, admin tab and narrow-screen matrix", () => {
   assert.match(app, /connections: \(\) => connectionsPage/);
   const css = readFileSync(new URL("../../src/orch_hub/web/app.css", import.meta.url), "utf8");
   assert.match(css, /@media \(max-width:639px\) \{ \.connections-map \{ display:none; \}/);
+});
+
+test("cells offer Ask to allow and a confirmed Close; pending, stored-only and counts are said in words", () => {
+  const calls = [];
+  const d = { ...data, connections: [{ from: "a", to: "b", via: "approved" }, { from: "b", to: "c", via: "override" }],
+    pending: [{ id: "x", from: "c", to: "b", proposer: "Root" }], traffic: [{ from: "a", to: "b", n: 7 }] };
+  const view = connectionsView(d, { set: (...args) => calls.push(args) }), all = view.all();
+  const cells = all.filter((n) => n.tag === "td").map((n) => n.textContent);
+  assert.match(cells[1], /allowed7 in 30 daysClose/);       // a -> b: allowed, counted, can be closed
+  assert.match(cells[5], /connected, no accessClose/);        // b -> c: connected but access says no
+  assert.match(cells[7], /waiting for approval/);             // c -> b: asked, nothing to click
+  assert.doesNotMatch(cells[7], /Ask to allow|Close/);
+  const button = (label) => all.find((n) => n.tag === "button" && n.attrs["aria-label"] === label);
+  button("Ask to allow Alpha to <img onerror=bad>").listeners.click();
+  assert.deepEqual(calls, [["a", "c", true]]);
+  const close = button("Close Alpha to Beta");
+  close.listeners.click();                                      // the first click only asks "Sure?"
+  assert.equal(calls.length, 1);
+  assert.equal(close.textContent, "Sure? Close it");
+  close.listeners.click();
+  assert.deepEqual(calls[1], ["a", "b", false]);
 });

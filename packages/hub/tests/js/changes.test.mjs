@@ -187,3 +187,8 @@ test("last_admin is a plain warning and only a confirm sends the change again; o
   assert.equal(b.message.textContent, "say:owner_protected");
   assert.equal(button([b.message], "Do it anyway").length, 0);
 });
+
+test("a connection ask is said in plain words", () => {
+  const ask = { kind: "connection_allow", proposer: { name: "Ada" }, from_name: "Marketing", body: {} };
+  assert.equal(sentence(ask, "Product"), "Ada wants to let Marketing send hand-offs to Product");
+});

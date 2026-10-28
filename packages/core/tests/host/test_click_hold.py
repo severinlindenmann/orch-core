@@ -471,4 +471,19 @@ def test_a_suspend_never_signs_a_hold(click, human, served):
     served.lab.ws.clock[0] += 3600  # wall only
     click.signer.run_holds()
     assert click.signatures == 0
-    assert pending(served, rid)["state"] != "submitted"
+    held = click.signer.holds[(served.wid, rid)]
+    assert (held["state"], held["reason"]) == ("cancelled", "session")  # the stale lease dropped it
+
+
+def test_a_suspend_with_a_renewal_on_wake_is_not_sent(click, human, served):
+    """The renewer runs again on wake, so the lease is fresh on BOTH clocks; the hold's own wall deadline is an hour
+    off, which makes it late: it is reported not sent and nothing is signed (the ``deadline_wall`` branch)."""
+    rid, digest = hold(click, human)
+    assert sign(click, rid, digest)["state"] == "held"
+    assert click.signer.holds[(served.wid, rid)]["deadline_wall"] > 0  # set when the hold is created
+    advance(click, 10)
+    served.lab.ws.clock[0] += 3600  # wall only: the lid was closed
+    click.signer.session_alive({"session": "session-a"})  # the renewer on wake
+    click.signer.run_holds()
+    assert click.signatures == 0
+    assert click.signer.holds[(served.wid, rid)]["state"] == "not_sent"

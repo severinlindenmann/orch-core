@@ -934,3 +934,54 @@ def test_only_the_childs_own_run_may_close_it():
     )
     assert result.code == Code.SCHEDULE_DENIED
     assert refused(w, fired["child"], "ticket.closed", agent, resolution="nothing_to_do") is None
+
+
+def test_child_creation_is_an_allowlist_and_no_other_ingress_can_carry_it():
+    import pathlib
+
+    from orch.model import authz
+    from orch.model.schedules_wire import child_creation
+
+    w, uid, event, due = setup_new()
+    w.clock = due
+    fired, _ = fire_new(w, uid, event, due)
+    good, _ = create_child(w, uid, event, fired)
+    core = w.state()._core
+    for extra in (
+        {"sig": "x"},
+        {"auth": "device"},
+        {"roster_v": 1},
+        {"schedule": "sc_x"},
+        {"labels": ["x"]},
+        {"priority": "p0"},
+    ):
+        assert child_creation(core, fired["child"], {**good, **extra}) is not None, extra
+    # a hub-signed ticket.created (actor.via, auth hub) is refused: the actor must be exactly the person
+    hub_actor = {**good["actor"], "via": "ch_x"}
+    assert child_creation(core, fired["child"], {**good, "actor": hub_actor, "auth": "hub"}) is not None
+    assert child_creation(core, fired["child"], {**good, "actor": hub_actor}) is not None
+    # structural guard: only the runner, the model and the schema know the via shape
+    src = pathlib.Path(authz.__file__).parents[1]
+    users = {
+        p.relative_to(src).as_posix()
+        for p in src.rglob("*")
+        if p.suffix in (".py", ".json") and "set_sig_hash" in p.read_text()
+    }
+    assert users == {
+        "host/schedules.py",
+        "model/schedules_wire.py",
+        "model/types.py",
+        "schema/schemas/event.ticket.created.json",
+    }
+
+
+def test_child_creation_replay_needs_a_verified_host_sig():
+    w, uid, event, due = setup_new()
+    w.clock = due
+    fired, _ = fire_new(w, uid, event, due)
+    before = w.state()
+    child_event, result = create_child(w, uid, event, fired)
+    assert not hasattr(result, "code"), result
+    assert not advance(before, child_event, log=fired["child"])._core.logs[fired["child"]].broken
+    unsigned = {k: v for k, v in child_event.items() if k != "host_sig"}
+    assert advance(before, unsigned, log=fired["child"])._core.logs[fired["child"]].broken_code == "chain.broken"

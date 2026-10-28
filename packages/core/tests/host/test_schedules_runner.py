@@ -628,6 +628,10 @@ def test_new_child_real_host_scoped_run_and_nothing_to_do(env, exit_code):  # no
     assert err(conn.call("new", {"title": "Agent text"}, **args)) == "grant.expired"
     ok(conn.call("claim", {"ref": view.key}, **args))
     ok(conn.call("log", {"ref": view.key, "text": "Checked mail"}, **args))
+    # the hosted close goes through child_run and the model's scope check: the run cannot close the anchor
+    anchor_key = store.state._core.tickets[uid].key
+    assert err(conn.call("close", {"ref": anchor_key, "resolution": "other"}, **args))
+    assert store.state._core.tickets[uid].status != "closed"
     ok(conn.call("close", {"ref": view.key, "resolution": "nothing_to_do"}, **args))
     record = env.hub.store.records[spawn["run"]]
     record.update(state="exited", session=SESSION, exit={"code": exit_code})

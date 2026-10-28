@@ -65,6 +65,7 @@ class Changes:
         self,
         path: str = ":memory:",
         *,
+        connections: Any = None,  # orch_hub.connections.Connections: only connection changes need it
         access: Access,
         registry: Any,
         snapshots: Any,  # AccessSnapshots: the version a proposal is based on
@@ -78,6 +79,7 @@ class Changes:
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._access, self._reg, self._snaps = access, registry, snapshots
         self._keys, self._channels, self._activity = keys, channels, activity
+        self._conns = connections
         self._db = ChangesDB(path)
 
     def close(self) -> None:
@@ -256,7 +258,128 @@ class Changes:
             ],
         }
 
+    # --- connections between workspaces (M2-8b, #1414-#1417) -------------------------------------------------------------
+
+    def _ws_hex(self, x: object) -> str:
+        if type(x) is not str or not re.fullmatch(r"[0-9a-f]{32}", x):
+            raise ChangeError("malformed")
+        return x
+
+    def propose_connection(self, actor: str, from_ws: object, to_ws: object) -> dict[str, Any]:
+        """Ask that ``from_ws`` may send hand-offs to ``to_ws``. The proposer is a hub admin or the sender's owner alias; an
+        eligible approver of the receiving workspace (never the proposer) must approve with a channel proof."""
+        a, b = self._ws_hex(from_ws), self._ws_hex(to_ws)
+        if a == b or self._conns is None or self._reg.mode(a) is None or self._reg.mode(b) is None:
+            raise ChangeError("malformed")
+        if not self._access.is_live(actor) or not (
+            self._access.is_hub_admin(actor) or R.owner_of(self._reg, a) == actor
+        ):
+            raise ChangeError("forbidden_role")
+        if self._conns.allowed(a, b):
+            raise ChangeError("conflict")
+        eligible = self.eligible_approvers(b, exclude=actor)
+        # the normal single-owner case: the proposer owns the receiving workspace and nobody else could approve for it (or
+        # they own both ends): they are the approver, so it applies at once as "the owner acting directly" (checked live,
+        # right here at apply), audited, with no pending change
+        if R.owner_of(self._reg, b) == actor and (R.owner_of(self._reg, a) == actor or not eligible):
+            self._conns.add(a, b, approved_by=actor, via="approved")
+            if self._activity is not None:
+                self._activity.record("connection.allowed", actor_id=actor, workspace_id=b, detail={"direct": True})
+            return {"direct": True}
+        if not eligible:
+            raise ChangeError("no_approver")  # nobody can approve: only a hub admin's override can allow it
+        self.sweep()
+        body = {"from": a, "op": "connection.allow", "to": b}
+        text, now = cj(body).decode(), self._now()
+        for ch in self._db.changes(
+            "state='pending' AND kind='connection_allow' AND proposer=? AND expires_ms>?", (actor, now)
+        ):
+            if ch["body"] == text:
+                return self._propose_view(ch)
+        cid = new_id(now)
+        with self._db.tx() as db:
+            db.execute(
+                "INSERT INTO change(id, kind, body, proposer, created_ms, expires_ms, state, reach) "
+                "VALUES (?,?,?,?,?,?,'pending','{}')",
+                (cid, "connection_allow", text, actor, now, now + TTL_MS),
+            )
+            db.execute(
+                "INSERT INTO approval(change_id, workspace_id, approver_user, base_snapshot_version, state, delta) "
+                "VALUES (?,?,?,0,'pending','[]')",
+                (cid, b, eligible[0]),
+            )
+        ch = self._db.change(cid)
+        assert ch is not None
+        self._log("change.proposed", ch, [b], actor=actor)
+        return self._propose_view(ch)
+
+    def deny_connection(self, actor: str, from_ws: object, to_ws: object) -> bool:
+        """Close ``from_ws -> to_ws`` at once (closing is always allowed): a hub admin, the sender's owner alias or an eligible
+        approver of the receiving workspace. Pending proposals for the pair are withdrawn. True when a connection was removed."""
+        a, b = self._ws_hex(from_ws), self._ws_hex(to_ws)
+        if self._conns is None:
+            raise ChangeError("unavailable")
+        if not self._access.is_live(actor) or not (
+            self._access.is_hub_admin(actor) or R.owner_of(self._reg, a) == actor or actor in self.eligible_approvers(b)
+        ):
+            raise ChangeError("forbidden_role")
+        removed = self._conns.remove(a, b)
+        text = cj({"from": a, "op": "connection.allow", "to": b}).decode()
+        for ch in self._db.changes("state='pending' AND kind='connection_allow'"):
+            if ch["body"] == text:
+                self._cancel_row(ch, actor)
+        if removed and self._activity is not None:
+            self._activity.record("connection.denied", actor_id=actor, workspace_id=b)
+        return removed
+
+    def traffic_for(self, user_id: str) -> list[dict[str, Any]]:
+        """Hand-off COUNTS per pair, last 30 days (Opus condition 13): a hub admin sees every pair; anyone else only pairs
+        with a workspace they own or may approve for. Counts only: no content, no ticket, no person."""
+        if self._conns is None:
+            return []
+        rows = self._conns.traffic()
+        if self._access.is_hub_admin(user_id):
+            mine = None
+        else:
+            mine = {
+                ws
+                for ws in self._reg.pins()
+                if R.owner_of(self._reg, ws) == user_id or user_id in self.eligible_approvers(ws)
+            }
+        return [r for r in rows if mine is None or r["from"] in mine or r["to"] in mine]
+
+    def _cancel_row(self, ch: dict[str, Any], actor: str) -> None:
+        with self._db.tx() as db:
+            db.execute(
+                "UPDATE change SET state='cancelled', decided_ms=?, decided_by=? WHERE id=? AND state='pending'",
+                (self._now(), actor, ch["id"]),
+            )
+        self._log("change.cancelled", ch, self._ws_of(ch["id"]), actor=actor)
+
     # --- views -------------------------------------------------------------------------------------------------------
+
+    def eligible_approvers(self, to_ws: str, *, exclude: str | None = None) -> list[str]:
+        """Who may approve a connection INTO ``to_ws`` (Opus condition 11): its owner alias, or a person holding an EXPLICIT
+        workspace-level admin grant on it (a group granted role admin there). Membership of the hub-admin group alone does
+        not count. A SELECTIVE recipient: only its owner alias. The proposer is never eligible for their own proposal."""
+        out: set[str] = set()
+        owner = R.owner_of(self._reg, to_ws)
+        if owner is not None:
+            out.add(owner)
+        if R.is_full(self._reg, to_ws):
+            for g in self._access.grants(to_ws):
+                if g["role"] == "admin":
+                    out.update(self._access.members(g["group"]))
+        if exclude is not None:
+            out.discard(exclude)
+        return sorted(u for u in out if self._access.is_active(u))
+
+    def _may_decide(self, ch: dict[str, Any], ap: dict[str, Any], user_id: str) -> bool:
+        """May this person decide this approval row NOW? An access change: the workspace's current owner alias. A connection
+        change: an eligible approver of the receiving workspace who is not the proposer."""
+        if ch["kind"] == "connection_allow":
+            return user_id in self.eligible_approvers(ap["workspace_id"], exclude=ch["proposer"])
+        return R.owner_of(self._reg, ap["workspace_id"]) == user_id
 
     def _view(self, ch: dict[str, Any], names: dict[str, str], *, only_owner: str | None = None) -> dict[str, Any]:
         """One change as plain data. With ``only_owner`` the view holds just the approvals of workspaces that person owns
@@ -265,7 +388,7 @@ class Changes:
         rows = []
         for a in self._db.approvals(ch["id"]):
             owner = R.owner_of(self._reg, a["workspace_id"])
-            if only_owner is not None and owner != only_owner:
+            if only_owner is not None and not self._may_decide(ch, a, only_owner):
                 continue
             stale = False
             if ch["state"] == "pending" and a["state"] == "pending":
@@ -293,6 +416,8 @@ class Changes:
             "body": body,
             "group": body.get("group"),
             "role": body.get("role"),
+            "from_name": self._ws_name(body["from"]) if "from" in body else None,  # connections: who may send to whom
+            "to_name": self._ws_name(body["to"]) if "to" in body else None,
             "person_name": names.get(body["user_id"]) if "user_id" in body else None,
             "proposer": {"user_id": ch["proposer"], "name": names.get(ch["proposer"])},
             "created_ms": ch["created_ms"],
@@ -309,10 +434,7 @@ class Changes:
         names, now = self._names(), self._now()
         pending, notices = [], []
         for ch in self._db.changes("state='pending'"):
-            if any(
-                a["state"] == "pending" and R.owner_of(self._reg, a["workspace_id"]) == user_id
-                for a in self._db.approvals(ch["id"])
-            ):
+            if any(a["state"] == "pending" and self._may_decide(ch, a, user_id) for a in self._db.approvals(ch["id"])):
                 pending.append(self._view(ch, names, only_owner=user_id))
         for ch in self._db.changes("state='overridden' AND decided_ms>?", (now - NOTICE_MS,)):
             view = self._view(ch, names, only_owner=user_id)
@@ -336,7 +458,7 @@ class Changes:
         ch = self._db.change(change_id) if type(change_id) is str and ULID.fullmatch(change_id) else None
         if ch is None:
             raise ChangeError("unknown_change")
-        mine = [a for a in self._db.approvals(ch["id"]) if R.owner_of(self._reg, a["workspace_id"]) == user_id]
+        mine = [a for a in self._db.approvals(ch["id"]) if self._may_decide(ch, a, user_id)]
         if workspace_id is not None:
             if type(workspace_id) is not str:
                 raise ChangeError("malformed")
@@ -372,8 +494,33 @@ class Changes:
         now = R.reach_delta(self._access, self._reg, ch["kind"], json.loads(ch["body"])).get(ap["workspace_id"], [])
         return cj(_canon(now)) == cj(_canon(json.loads(ap["delta"])))
 
+    def _proposer_stands(self, ch: dict[str, Any]) -> bool:
+        """The proposer is still a live person with the standing that let them propose: a hub admin for an access change; a
+        hub admin or the SENDER workspace's owner alias for a connection."""
+        p = ch["proposer"]
+        if not self._access.has_user(p) or not self._access.is_live(p):
+            return False
+        if self._access.is_hub_admin(p):
+            return True
+        if ch["kind"] == "connection_allow":
+            return R.owner_of(self._reg, json.loads(ch["body"])["from"]) == p
+        return False
+
+    def _moved(self, ch: dict[str, Any], ap: dict[str, Any]) -> bool:
+        """Has what the approver was shown moved? An access change: the workspace's snapshot version or the people it
+        reaches. A connection: either end left the hub, or it already exists (nothing is left to approve)."""
+        if ch["kind"] == "connection_allow":
+            b = json.loads(ch["body"])
+            return (
+                self._conns is None
+                or self._reg.mode(b["from"]) is None
+                or self._reg.mode(b["to"]) is None
+                or self._conns.allowed(b["from"], b["to"])
+            )
+        return self._version(ap["workspace_id"]) != ap["base_snapshot_version"] or not self._delta_same(ch, ap)
+
     def _check_fresh(self, ch: dict[str, Any], ap: dict[str, Any]) -> None:
-        if self._version(ap["workspace_id"]) != ap["base_snapshot_version"] or not self._delta_same(ch, ap):
+        if self._moved(ch, ap):
             self._stale(ch["id"], ap["workspace_id"])
             raise ChangeError("stale_change")
 
@@ -456,9 +603,9 @@ class Changes:
                 )
                 logged.append(("change.expired", ch, self._ws_of(ch["id"]), {}))
                 failure = "expired"
-            elif R.owner_of(self._reg, ws) != user_id:
+            elif not self._may_decide(ch, ap, user_id):
                 raise ChangeError("unknown_change")
-            elif self._version(ws) != ap["base_snapshot_version"] or not self._delta_same(ch, ap):
+            elif self._moved(ch, ap):
                 self._stale(ch["id"], ws, db)
                 logged.append(("change.rejected", ch, [ws], {"reason": "stale_change"}))
                 failure = "stale_change"
@@ -507,7 +654,7 @@ class Changes:
         # the access to every affected workspace is exactly what each owner saw (a later approval does not cover an
         # earlier one that went stale), and nobody else needs to approve now that did not have to when it was proposed
         for a in aps:
-            if self._version(a["workspace_id"]) != a["base_snapshot_version"] or not self._delta_same(ch, a):
+            if self._moved(ch, a):
                 db.execute(
                     "UPDATE approval SET state='stale' WHERE change_id=? AND workspace_id=?",
                     (ch["id"], a["workspace_id"]),
@@ -516,11 +663,7 @@ class Changes:
         # the proposer must still stand where they stood when they proposed: a live hub admin (a disabled, unrecovered or
         # demoted proposer voids the change)
         proposer = ch["proposer"]
-        if (
-            not self._access.has_user(proposer)
-            or not self._access.is_live(proposer)
-            or not self._access.is_hub_admin(proposer)
-        ):
+        if not self._proposer_stands(ch):
             return reject("proposer_gone")
         approved = {a["workspace_id"]: a["approver_user"] for a in aps if a["state"] == "approved"}
         try:
@@ -564,6 +707,9 @@ class Changes:
         if self._now() >= ch["expires_ms"]:
             raise ChangeError("expired")
         kind = ch["kind"]
+        if kind == "connection_allow":
+            self._apply_connection(ch, body, actor, approved)
+            return
         self._check_reach(ch, body, actor, approved)  # new reach and orphan workspaces, judged now
         if kind == "grant":
             self._guard_owner(R.Edit(set_grant=(body["group"], body["role"])), [body["workspace_id"]])
@@ -572,6 +718,32 @@ class Changes:
             self._access.add_member(body["group"], body["user_id"], actor=actor)
         else:
             raise ChangeError("malformed")
+
+    def _apply_connection(
+        self, ch: dict[str, Any], body: dict[str, Any], actor: str, approved: dict[str, str] | None
+    ) -> None:
+        """Make the connection. An owner approval: the approver must be an eligible approver of the receiving workspace NOW
+        and not the proposer. An override (``approved`` is None): a hub admin, audited by the caller."""
+        if self._conns is None:
+            raise ChangeError("unavailable")
+        a, b = body["from"], body["to"]
+        approver = None
+        if approved is not None:
+            approver = approved.get(b)
+            if (
+                approver is None
+                or approver == ch["proposer"]
+                or approver not in self.eligible_approvers(b, exclude=ch["proposer"])
+            ):
+                raise ChangeError("stale_change")
+        self._conns.add(a, b, approved_by=approver or actor, via="approved" if approved is not None else "override")
+        if self._activity is not None:
+            self._activity.record(
+                "connection.allowed",
+                actor_id=approver or actor,
+                workspace_id=b,
+                detail={"approved_by": approver} if approver else None,
+            )
 
     def _guard_owner(self, e: R.Edit, workspaces: list[str]) -> None:
         R.check_owner_protected(self._access, self._reg, e, workspaces)
@@ -620,13 +792,16 @@ class Changes:
             if ch["kind"] == "grant":
                 self._guard_owner(R.Edit(set_grant=(body["group"], body["role"])), [body["workspace_id"]])
                 self._validate_grant(body["workspace_id"], body["group"], body["role"])
+            elif ch["kind"] == "connection_allow":
+                if self._conns is None or self._reg.mode(body["from"]) is None or self._reg.mode(body["to"]) is None:
+                    raise ChangeError("stale_change")
             elif not self._access.has_user(body["user_id"]):
                 raise AccessError("unknown_user")
             # what the change does to access NOW, not what it did when it was proposed: workspaces bound or granted since
             # then are reached too, and every owner it reaches is told (condition 9). Everything below happens under
             # Access.lock, after the audit record (an extra record is possible, a missing one never), inside ONE
             # transaction with the compare-and-swap: a lost race leaves no notice behind.
-            reached = R.reach_delta(self._access, self._reg, ch["kind"], body)
+            reached = self._reach_now(ch, body)
             self._log(
                 "change.overridden",
                 ch,
@@ -646,10 +821,16 @@ class Changes:
                     raise ChangeError("not_pending")
                 # the notice is computed from the reach NOW, inside this transaction and right before the apply (all under
                 # Access.lock), so what the owners are told is exactly what is applied
-                for ws, delta in R.reach_delta(self._access, self._reg, ch["kind"], body).items():
+                for ws, delta in self._reach_now(ch, body).items():
                     self._owner_notice_row(db, ch["id"], ws, delta)
                 db.execute("UPDATE approval SET state='overridden' WHERE change_id=? AND state='pending'", (ch["id"],))
                 self._apply(ch, body, actor=admin, approved=None)
+
+    def _reach_now(self, ch: dict[str, Any], body: dict[str, Any]) -> dict[str, list[dict[str, str]]]:
+        """Who an access change would add or raise, per workspace, NOW. A connection change reaches no one's access."""
+        if ch["kind"] == "connection_allow":
+            return {}
+        return R.reach_delta(self._access, self._reg, ch["kind"], body)
 
     def _owner_notice_row(self, db: Any, change_id: str, ws: str, delta: list[dict[str, str]]) -> None:
         """Make sure the owner of ``ws`` has an approval row on this change that carries the people who REALLY gain access

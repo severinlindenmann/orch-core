@@ -38,7 +38,11 @@ CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts_ms INTEGER NOT NULL, action TEXT NOT NULL, user_id TEXT NOT NULL,
   channel_id TEXT, actor TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS pending_totp (user_id TEXT PRIMARY KEY, secret BLOB NOT NULL, expires_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS relay_purged (channel_id TEXT PRIMARY KEY, ts_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS announcements (
+  channel_id TEXT PRIMARY KEY, user_id TEXT NOT NULL, ts_ms INTEGER NOT NULL, seen INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -67,6 +71,13 @@ class ChannelsDB:
             if "session" not in {r[1] for r in self.db.execute("PRAGMA table_info(challenges)")}:
                 self.db.execute("DROP TABLE challenges")  # open challenges live 120 s: drop, do not migrate
                 self.db.executescript(SCHEMA)
+            for table, name, decl in (
+                ("pairing", "source", "TEXT NOT NULL DEFAULT 'cli'"),  # 'cli' (operator) | 'console' (a person, M2-10)
+                ("channels", "app_version", "TEXT"),  # what the phone says it is (display only, sanitised)
+                ("challenges", "app_version", "TEXT"),
+            ):
+                if name not in {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}:
+                    self.db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
         except PrivateFileError as e:
             raise StoreError(f"bad_private_file: {e}") from None
         except (sqlite3.Error, OSError) as e:

@@ -3,6 +3,7 @@ rules the section 0.8.6 item 7 puts on this process. The signer is faked here (a
 runs in test_realhost_click.py."""
 
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -87,6 +88,8 @@ class Script:
             if self.features is not None:
                 out["features"] = self.features
             return out
+        if op == "cancel_holds":
+            return {"state": "cancelled"}
         if op == "stash":
             return {"state": "complete"}
         if op == "stepup":  # #1198 R1-6: the signer's one-use nonce for a passkey step-up
@@ -404,7 +407,14 @@ def test_sign_sends_exactly_the_digest_and_answers_without_the_hosts_result(clie
     assert res.status_code == 200
     assert res.json() == {"state": "submitted", "duplicate": False, "key": "DEMO-0001", "seq": 7}
     sent = [c for c in script.clients[0].calls if c[0] == "sign"][0][1]
-    assert sent == {"workspace_id": stub.ws, "request_id": REQ, "view_digest": HASH, "contract": 4}
+    assert sent == {
+        "workspace_id": stub.ws,
+        "request_id": REQ,
+        "view_digest": HASH,
+        "contract": 4,
+        "delay_s": 0,
+        "session": hashlib.sha256(token.encode()).hexdigest(),
+    }
 
 
 @pytest.mark.parametrize(
@@ -3393,6 +3403,259 @@ def test_c2_cancelled_request_is_never_signable(client, token, stub, script):
     assert fresh.json()["request_id"] != request_id
 
 
+@pytest.mark.parametrize("finish", ["cancelled", "not_sent", "unknown"])
+def test_d5_hold_relays_session_delay_and_preserves_cancel_and_reconnect(
+    client, token, stub, script, auth, host_check, gateway, finish
+):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    outcome = {"state": "held", "deadline_ms": int(time.time() * 1000) + 10000}
+
+    def delayed(op, args):
+        if op == "sign":
+            assert args["delay_s"] == 10
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            return dict(outcome)
+        if op == "status" and args.get("request_id"):
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            return dict(outcome)
+        if op == "cancel":
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            outcome["state"] = "cancelled"
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    signed = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert signed.status_code == 200
+    assert signed.json() == {**outcome, "duplicate": False}
+    other = other_session(client, auth)
+    denied = client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(other))
+    assert denied.status_code == 404
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "held"
+    prepared = next(args for op, args in script.clients[0].calls if op == "prepare")
+    assert prepared["session"] == hashlib.sha256(token.encode()).hexdigest()
+    if finish != "unknown":
+        outcome["state"] = finish
+        route = "cancel" if finish == "cancelled" else "state"
+        assert client.post(url(stub, route), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == finish
+        host_check.pending[REQ] = "cancelled"
+        before = len(script.clients[0].calls)
+        client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token))
+        assert not any(op == "status" for op, _ in script.clients[0].calls[before:])  # held was pruned
+        return
+    outcome["state"] = "unknown"
+    host_check.pending[REQ] = "submitted"
+    gateway.click.restarts += 1  # a stale signer epoch must not sweep a possibly signed hold
+    assert client.post(url(stub, "state"), json={"request_id": REQ}, headers=hdr(token)).json()["state"] == "submitted"
+    assert not host_check.cancelled
+
+
+@pytest.mark.parametrize("everywhere", [False, True])
+def test_d5_logout_cancels_session_holds(client, token, stub, script, auth, everywhere):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    pending = set()
+
+    def delayed(op, args):
+        if op == "sign":
+            pending.add(args["request_id"])
+            return {"state": "held", "deadline_ms": 10000}
+        if op == "cancel_holds":
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            pending.clear()
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code == 200
+    assert pending == {REQ}
+    if everywhere:
+        auth.logout_everywhere(kind=auth.login_kind(token))
+    else:
+        assert client.post("/auth/logout", headers=hdr(token)).status_code == 200
+    assert not pending  # the signer's deadline queue has no intent left to sign
+    client.app.state.cancel_clicks(token)
+    assert not pending  # cancellation by session is idempotent
+    assert (
+        client.post(
+            url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+        ).status_code
+        == 401
+    )
+
+
+def test_d5_session_ending_after_authentication_cannot_enqueue(client, token, stub, script, auth, monkeypatch):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = auth.valid
+
+    def end_before_send(value, touch=True):
+        if not touch:
+            auth.logout(value)
+        return original(value, touch=touch)
+
+    monkeypatch.setattr(auth, "valid", end_before_send)
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code == 409
+    assert result.json()["error"]["code"] == "session.ended"
+    assert not any(op == "sign" for op, _ in script.clients[0].calls)
+
+
+@pytest.mark.parametrize("cancel_failure", [False, True, "timeout"])
+def test_d5_lost_sign_reply_logout_destroys_unsigned_queue(client, token, stub, script, auth, gateway, cancel_failure):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    channel = script.clients[0]
+    original = channel.handler
+    pending = set()
+    close = channel.close
+
+    def destroy():
+        pending.clear()  # the process's in-memory unsigned queue dies with it
+        close()
+
+    channel.close = destroy
+    if cancel_failure == "timeout":
+
+        class LiveProcess:
+            killed = False
+
+            def poll(self):
+                return 0 if self.killed else None
+
+            def kill(self):
+                self.killed = True
+
+        channel.proc = LiveProcess()  # timeout leaves a live signer, even with an unsettled sign
+
+    def delayed(op, args):
+        if op == "sign":
+            pending.add(args["request_id"])
+            raise ClickError("internal", "lost held reply")
+        if op == "cancel_holds":
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            if cancel_failure == "timeout":
+                raise TimeoutError("cancel timed out")
+            if cancel_failure:
+                raise ClickError("internal", "cancel failed")
+            pending.clear()
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    channel.handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code != 200
+    assert pending == {REQ}
+    # Lost replies must retain the hold routing, including its session check.
+    other = other_session(client, auth)
+    assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(other)).status_code == 404
+    epoch = gateway.click.restarts
+    auth.logout(token)
+    assert not pending  # advancing the deadline can no longer sign anything
+    assert gateway.click.restarts == epoch + int(bool(cancel_failure))
+    assert channel.closed == bool(cancel_failure)
+    if cancel_failure == "timeout":
+        assert channel.proc.killed
+
+
+def test_d5_hung_cancel_does_not_hold_auth_lock(client, token, stub, script, auth, gateway):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    other = other_session(client, auth)
+    channel = script.clients[0]
+    original = channel.handler
+    entered, release, validated = threading.Event(), threading.Event(), threading.Event()
+
+    def hung(op, args):
+        if op == "cancel_holds":
+            entered.set()
+            assert release.wait(3)
+            raise TimeoutError("IPC deadline")
+        return original(op, args)
+
+    channel.handler = hung
+    logout = threading.Thread(target=auth.logout, args=(token,))
+    logout.start()
+    try:
+        assert entered.wait(2)
+        assert token in auth.ending
+
+        def validate():
+            assert auth.valid(other)
+            validated.set()
+
+        reader = threading.Thread(target=validate)
+        reader.start()
+        assert validated.wait(1)  # completes even BEFORE the blocked IPC times out
+    finally:
+        release.set()
+        logout.join(3)
+    reader.join(2)
+    assert not logout.is_alive()
+    assert channel.closed
+    assert gateway.click.restarts >= 1
+
+
+def test_d5_logout_waits_for_inflight_hold_outside_auth_lock(client, token, stub, script, auth):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    other = other_session(client, auth)
+    channel = script.clients[0]
+    original = channel.handler
+    sending, release, ending = threading.Event(), threading.Event(), threading.Event()
+    pending = set()
+    cleanup = auth.on_session_end
+
+    def end(value):
+        ending.set()
+        cleanup(value)
+
+    auth.on_session_end = end
+
+    def delayed(op, args):
+        if op == "sign":
+            sending.set()
+            assert release.wait(3)
+            pending.add(args["request_id"])
+            return {"state": "held", "deadline_ms": 10000}
+        if op == "cancel_holds":
+            pending.clear()
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    channel.handler = delayed
+    results = []
+    sender = threading.Thread(
+        target=lambda: results.append(
+            client.post(
+                url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+            )
+        )
+    )
+    sender.start()
+    logout = threading.Thread(target=auth.logout, args=(token,))
+    try:
+        assert sending.wait(2)
+        logout.start()
+        assert ending.wait(2)
+        assert token in auth.ending
+        assert auth.valid(other)
+        assert not auth.valid(token)
+    finally:
+        release.set()
+        sender.join(3)
+        logout.join(3)
+    assert not sender.is_alive() and not logout.is_alive()
+    assert results[0].status_code == 200
+    assert not pending
+
+
 @pytest.mark.parametrize("header", [None, "3", "4"])
 def test_every_click_route_requires_current_page_contract(client, token, stub, header):
     from fastapi.routing import APIRoute
@@ -3437,3 +3700,66 @@ def test_agent_access_cannot_be_hidden_in_a_daily_sequence(client, token, stub, 
     assert res.status_code == 409, res.text
     assert res.json()["error"]["reason"] == "terminal_only"
     assert not [call for child in script.clients for call in child.calls if call[0] == "prepare"]
+
+
+def test_d5_logout_everywhere_continues_after_callback_failure(client, token, stub, script, auth):
+    other = other_session(client, auth)
+    prepare(client, other, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    pending = set()
+
+    def delayed(op, args):
+        if op == "sign":
+            pending.add(args["session"])
+            return {"state": "held", "deadline_ms": 10000}
+        if op == "cancel_holds":
+            pending.discard(args["session"])
+            return {"state": "cancelled"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(other)
+    )
+    assert result.status_code == 200
+    cleanup = auth.on_session_end
+    seen = []
+
+    def end(value):
+        seen.append(value)
+        if value == token:
+            raise RuntimeError("first cleanup failed")
+        cleanup(value)
+
+    auth.on_session_end = end
+    auth.logout_everywhere(kind=auth.login_kind(token))
+    assert seen == [token, other]
+    assert not pending
+    assert not auth.ending
+
+
+def test_d5_background_renews_only_live_holds(client, token, stub, script, auth):
+    prepare(client, token, stub, {"action": "comment", "key": "DEMO-0001", "message": "hello"})
+    original = script.clients[0].handler
+    renewed = threading.Event()
+    finished = threading.Event()
+
+    def delayed(op, args):
+        if op == "sign" or (op == "status" and args.get("request_id")):
+            return {"state": "submitted" if finished.is_set() else "held", "deadline_ms": 10000}
+        if op == "session_alive":
+            assert args["session"] == hashlib.sha256(token.encode()).hexdigest()
+            renewed.set()
+            return {"state": "alive"}
+        return original(op, args)
+
+    script.clients[0].handler = delayed
+    result = client.post(
+        url(stub, "sign"), json={"request_id": REQ, "view_digest": HASH, "delay_s": 10}, headers=hdr(token)
+    )
+    assert result.status_code == 200
+    assert renewed.wait(3)
+    finished.set()
+    renewed.clear()
+    assert not renewed.wait(2.5)
+    auth.logout(token)

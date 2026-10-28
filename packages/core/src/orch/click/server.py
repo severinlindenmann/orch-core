@@ -12,6 +12,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from orch import fdwait
 from orch.host import frames
 
 from .protocol import FRAME_ID, OPS, ClickError
@@ -27,34 +28,50 @@ def serve(sock: socket.socket, signer: Any) -> None:
     """Read requests until EOF; answer each one. A framing error closes the channel."""
     decoder = frames.Decoder()
     while True:
-        data = sock.recv(65536)
-        if not data:
-            return
-        try:
-            got = decoder.feed(data)
-        except frames.FrameError:
-            return
-        for req in got:
-            if isinstance(req, frames.FrameError):
+        # Give queued cancellation a turn before deadlines; idle holds still run without browser traffic.
+        if not fdwait.readable(sock, 0.1):
+            if hasattr(signer, "run_holds"):
+                signer.run_holds()
+            continue
+        while True:
+            data = sock.recv(65536)
+            if not data:
                 return
-            rid = req.get("id") if isinstance(req, dict) else None
-            if not isinstance(rid, str) or not FRAME_ID.fullmatch(rid):
-                return  # an unreadable request id closes the channel
             try:
-                if req.get("t") != "req" or req.get("op") not in OPS or not isinstance(req.get("args"), Mapping):
-                    raise ClickError("invalid.input", "a request is {t:req, id, op, args}")
-                result = signer.handle(req["op"], req["args"])
-                out = {"t": "res", "id": rid, "ok": True, "result": result}
-            except ClickError as exc:
-                out = {"t": "res", "id": rid, "ok": False, "error": exc.error()}
-            except Exception as exc:  # noqa: BLE001 - never a traceback or a key on the channel
-                out = {"t": "res", "id": rid, "ok": False, "error": ClickError("internal", type(exc).__name__).error()}
-            try:
-                _answer(sock, out)
+                got = decoder.feed(data)
             except frames.FrameError:
-                _answer(
-                    sock, {"t": "res", "id": rid, "ok": False, "error": ClickError("internal", "too large").error()}
-                )
+                return
+            for req in got:
+                if isinstance(req, frames.FrameError):
+                    return
+                rid = req.get("id") if isinstance(req, dict) else None
+                if not isinstance(rid, str) or not FRAME_ID.fullmatch(rid):
+                    return  # an unreadable request id closes the channel
+                try:
+                    if req.get("t") != "req" or req.get("op") not in OPS or not isinstance(req.get("args"), Mapping):
+                        raise ClickError("invalid.input", "a request is {t:req, id, op, args}")
+                    result = signer.handle(req["op"], req["args"])
+                    out = {"t": "res", "id": rid, "ok": True, "result": result}
+                except ClickError as exc:
+                    out = {"t": "res", "id": rid, "ok": False, "error": exc.error()}
+                except Exception as exc:  # noqa: BLE001 - never a traceback or a key on the channel
+                    out = {
+                        "t": "res",
+                        "id": rid,
+                        "ok": False,
+                        "error": ClickError("internal", type(exc).__name__).error(),
+                    }
+                try:
+                    _answer(sock, out)
+                except frames.FrameError:
+                    _answer(
+                        sock, {"t": "res", "id": rid, "ok": False, "error": ClickError("internal", "too large").error()}
+                    )
+            if not fdwait.readable(sock, 0):
+                break
+
+        if hasattr(signer, "run_holds"):
+            signer.run_holds()
 
 
 def _watch_parent(parent: int) -> None:

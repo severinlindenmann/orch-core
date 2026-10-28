@@ -15,6 +15,7 @@ const role = (r) => ROLE[r] ?? text(r);
 /** The plain-words sentence for one change and the workspace it is about. */
 export function sentence(change, workspaceName) {
   const who = text(change.proposer?.name || "An administrator"), ws = text(workspaceName || "a workspace");
+  if (change.kind === "connection_allow") return who + " wants to let " + text(change.from_name || "a workspace") + " send hand-offs to " + ws;
   if (change.kind === "member_add") return who + " wants to add " + text(change.person_name || "someone") + " to " + text(change.group) + ", which can open " + ws;
   return who + " wants to give " + text(change.group) + " " + role(change.role) + " access to " + ws;
 }

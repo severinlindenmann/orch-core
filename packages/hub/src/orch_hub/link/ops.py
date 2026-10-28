@@ -527,7 +527,7 @@ def directory_get(c: OpContext) -> dict[str, Any]:
                 continue
             if not authz.may_route(c.workspace_id, ws):
                 continue
-            name = render_text((c.registry.card(ws) or {}).get("name", "") or "")
+            name = render_text(c.registry.display_name(ws) or "")
             haystack = [name, profile["description"], *profile["tags"], *profile["handles"]]
             if query and not any(query in value.casefold() for value in haystack):
                 continue

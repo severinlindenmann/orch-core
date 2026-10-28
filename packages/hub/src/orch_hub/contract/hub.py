@@ -1387,6 +1387,7 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "version": lambda x: type(x) is str and len(x) <= 32 and re.fullmatch(r"[0-9A-Za-z.+-]+", x) is not None,
             "commit": lambda x: type(x) is str and len(x) <= 40 and re.fullmatch(r"[0-9a-fA-F]*", x) is not None,
             "host": lambda x: type(x) is str and len(x) <= 80,
+            "name": lambda x: type(x) is str and len(x) <= 80,  # the workspace's display name; kept in full mode only
         },
     ),
     "owner_get": ("w2h", None, {}),  # FB15: the hub user the hub names as the workspace owner (no argument)

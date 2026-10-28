@@ -343,7 +343,7 @@ def test_hub_snapshot_status_once_per_service_and_hub(monkeypatch, fail):
     service = SimpleNamespace(workspace_id="ws", clock=lambda: 0)
     for _ in range(2):
         assert hubops._snapshot_link(service, state, b"", None, True)[1] is transport
-    assert calls == [("status_put", {"version": orch.__version__, "commit": "", "host": "h" * 80})]
+    assert calls == [("status_put", {"version": orch.__version__, "commit": "", "host": "h" * 80, "name": ""})]
     state.hub_id = "two"
     hubops._snapshot_link(service, state, b"", None, True)
     assert len(calls) == 2

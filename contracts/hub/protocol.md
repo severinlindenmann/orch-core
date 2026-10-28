@@ -1293,7 +1293,7 @@ unknown `op` is `unknown_op`.
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
 | `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
 | `directory_get` | w2h | both | `{query?: string}` | `{entries: [...]}` (at most 50) |
-| `status_put` | w2h | both | `{"version", "commit", "host"}` | `{}` |
+| `status_put` | w2h | both | `{"version", "commit", "host", "name"}` | `{}` |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
 
@@ -1317,7 +1317,7 @@ Selective mode does not imply listing or bypass routing authorization.
 
 `status_put` reports display-only workspace metadata over its authenticated WSK link, once per host process/hub.
 Its exact body has a version matching `[0-9A-Za-z.+-]+` (at most 32 characters), a hex commit (at most 40,
-possibly empty), and a host string (at most 80); bad shapes are `malformed`, unknown pins `unknown_workspace`.
+possibly empty), a host string (at most 80) and the workspace display name `name` (at most 80, from `config.json`); a selective-mode workspace sends `host` and `name` empty and the hub stores them empty (the hub console then shows a friendly fallback, never an id); bad shapes are `malformed`, unknown pins `unknown_workspace`.
 The hub sanitizes these fields and records its own last-seen clock and socket peer address. These values never
 influence authorization, routing, signing or mode, and are not written to the workspace log.
 

@@ -1870,7 +1870,7 @@ class WebApi(ChangeHandlers):
         reg, out = self.d.registry, []
         for ws in sorted(reg.pins()):
             st = reg.binding_state(ws)
-            card_name = (reg.card(ws) or {}).get("name")
+            card_name = reg.display_name(ws)
             out.append(
                 {
                     "workspace_id": ws,
@@ -1893,7 +1893,7 @@ class WebApi(ChangeHandlers):
         for ws in sorted(reg.pins()):
             if reg.mode(ws) is None:
                 continue
-            name = (reg.card(ws) or {}).get("name")
+            name = reg.display_name(ws)
             workspaces.append(
                 {
                     "workspace_id": ws,

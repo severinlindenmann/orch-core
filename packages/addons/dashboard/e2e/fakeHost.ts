@@ -1,3 +1,4 @@
+import onePressOps from '../../../../contracts/core/click_one_press_ops.json'
 // A fake dashboard server for the browser spec of the Add-ons page (A10): it serves the production build (`dist/`) and answers
 // the dashboard server's /api routes from plain data, including the marketplace host ops (mocked: the Python side is G3's).
 // Every request is recorded in `calls`, so the spec can prove what the page asked for (the staged id in the hand-off) and that
@@ -75,7 +76,7 @@ function clickView(name: string) {
   return {
     // Contract 4 (C3): the signer's headline, and its risk line for the add-on's capability (a second press signs).
     headline: `Install the add-on ${name}`,
-    risk_lines: [`The add-on ${name} can reach the network`],
+    risk_lines: onePressOps.includes('addon.grant') ? [] : [`The add-on ${name} can reach the network`],
     risk: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.', op: 'addon.grant',
     workspace: { id: WS, name: 'Dev workspace', prefix: 'DEMO' }, fingerprint: '5b9f4bcf5cca',
     lines: [

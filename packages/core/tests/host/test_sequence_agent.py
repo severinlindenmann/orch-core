@@ -151,11 +151,10 @@ def test_i2_a_grant_asked_for_other_hours_than_the_reviewed_ones_is_never_signed
     assert "grant.issued" not in [e["type"] for _, ev, _ in rig.submitted for e in ev]
 
 
-def test_i3_agent_access_is_a_click_and_a_runner_grant_needs_dashboard_execution(click, served, human):  # noqa: F811
-    """#1198 C1: no typed word. The rule that a grant to the runner needs dashboard execution on this machine stands on
-    its own: at prepare, and again at sign (it may have been switched off in between)."""
+def test_agent_access_requires_a_separate_grant_confirmation(click, served, human):  # noqa: F811
     from tests.host.test_click import refused
 
+    click.signer._execution = lambda entry: True
     intent = sequence.validate_intent(intent_of(agent=AGENT))
     assert sequence.confirm_kind(intent) == "click" and sequence.has_grant(intent)
     plain = sequence.validate_intent(intent_of())
@@ -169,16 +168,7 @@ def test_i3_agent_access_is_a_click_and_a_runner_grant_needs_dashboard_execution
     v = click.view(p["request_id"])
     assert v["view"]["confirm"] == {"kind": "click", "mode": "press"}
     assert v["view"]["op"] == "grant" and v["view"]["risk_lines"]
-    click.mono.t += 2
-    click.signer._execution = lambda entry: False  # switched off after the review: the click is refused, nothing signed
-    refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")
     assert click.signatures == 0
-    click.signer._execution = lambda entry: True
-    p = click_prepare(click, intent_of(agent=AGENT))  # a refused request is spent; a fresh one signs
-    v = click.view(p["request_id"])
-    click.mono.t += 2
-    out = click.sign(p["request_id"], v["view_digest"])
-    assert click.signatures == 5 and out["grant"].startswith("gr_")  # new, set, two sections, the grant
 
 
 def test_i5_the_review_says_the_start_is_not_signed_and_names_the_grant(human, tmp_path):

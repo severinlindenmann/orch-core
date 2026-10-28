@@ -52,6 +52,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('the sign panel shows only the signer’s View', () => {
@@ -256,6 +257,46 @@ describe('C3: one press (a contract-4 View of a request prepared by a trusted pr
     return { onDisarm, ...mount(a, { pressed: true, onDisarm, ...props }) }
   }
   const headline = () => screen.getByRole('button', { name: HEADLINE })
+
+  it('expires an arm blocked at elapse even if the caller becomes ready later', () => {
+    const props = { pressed: true, ready: false, onSign: vi.fn(), onCancel: vi.fn(), onDisarm: vi.fn() }
+    const a = v4()
+    const { rerender } = render(<ClickSignPanel answer={a} problem={null} signing={false} {...props} />)
+    arm()
+    expect(props.onDisarm).toHaveBeenCalledTimes(1)
+    rerender(<ClickSignPanel answer={a} problem={null} signing={false} {...props} ready />)
+    arm()
+    expect(props.onSign).not.toHaveBeenCalled()
+  })
+
+  it('requires every risk line to intersect the viewport for a full dwell', () => {
+    let notify: IntersectionObserverCallback = () => {}
+    const observed: Element[] = []
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: IntersectionObserverCallback) { notify = callback }
+      observe(el: Element) { observed.push(el) }
+      disconnect() {}
+    })
+    trusted()
+    const { onSign } = armed(v4(['Risk one', 'Risk two']))
+    const visibility = (shown: boolean) => act(() => notify(observed.map(target => ({
+      target, isIntersecting: shown, intersectionRatio: shown ? 1 : 0,
+    } as IntersectionObserverEntry)), {} as IntersectionObserver))
+    arm()
+    press(sign())
+    expect(onSign).not.toHaveBeenCalled()
+    visibility(true)
+    wait(500)
+    visibility(false)
+    arm()
+    visibility(true)
+    wait(990)
+    press(sign())
+    expect(onSign).not.toHaveBeenCalled()
+    wait(20)
+    press(sign())
+    expect(onSign).toHaveBeenCalledTimes(1)
+  })
 
   it('the button shows the signer’s headline with a progress fill; the signature is asked for at 1.0 s, never at 0.99 s, once', () => {
     const { onSign, onDisarm } = armed()

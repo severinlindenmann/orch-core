@@ -21,7 +21,9 @@ The host never prompts and holds no device key (D-P2-15). A person op is prepare
 * **pending** lists the caller's requests (or the one named by ``request_id``), each with ``error: {code}`` after a
   refused submit (the catalog code only).
 
-Unbound requests are reserved for hub-mediated operations; no terminal code is issued.
+Unbound requests are reserved for hub-mediated operations: ``human.prepare {handoff: true}`` (no signer) stores one only
+for :data:`HUB_HANDOFF_OPS` (the add-on grant the hub answers, FB15); every other request is bound at prepare (a dry
+run stores nothing either way). No terminal code is issued.
 """
 
 from __future__ import annotations
@@ -90,6 +92,7 @@ _SCHEMAS = {
             "op": {"type": "string", "minLength": 1, "maxLength": 64},
             "args": {"type": "object"},
             "signer": _SIGNER,
+            # FB15: true (without signer) stores an unbound request for HUB_HANDOFF_OPS only (_check_binding)
             "handoff": {"type": "boolean"},
             "sequence": {"type": "object"},
         },
@@ -248,6 +251,26 @@ def _person_operation(name: str) -> Any:
 #: the first line of a dry run's result in both modes (``orch.ops.runtime.Call.result``)
 DRY_RUN_NOTE = "dry-run: nothing was written"
 
+#: FB15: the only ops ``human.prepare {handoff: true}`` stores, unbound, for the hub to answer (``hub_handoff``)
+HUB_HANDOFF_OPS = frozenset({"addon.grant"})
+
+
+def _check_binding(name: str, signer: Any, handoff: bool, dry_run: bool) -> None:
+    """``human.prepare`` takes ``signer`` (bound at prepare), or ``handoff: true`` without a signer for a hub hand-off
+    op only (:data:`HUB_HANDOFF_OPS`): every other request is bound at prepare. A dry run binds and stores nothing: it
+    may take neither (the dashboard's folder check), or a hand-off of any op, never both."""
+    if handoff and signer is not None:
+        raise HostError("invalid.input", "human.prepare takes signer, or handoff:true without a signer")
+    if dry_run:
+        return
+    if handoff and name not in HUB_HANDOFF_OPS:
+        raise HostError(
+            "invalid.input",
+            f"human.prepare: handoff:true is for the hub's add-on grant only, not {name}; prepare it with a signer",
+        )
+    if not handoff and signer is None:
+        raise HostError("invalid.input", "human.prepare takes signer, or handoff:true without a signer")
+
 
 class HumanOps:
     """``human.*`` of one request, on the workspace worker thread (the dispatcher calls :meth:`serve`)."""
@@ -292,10 +315,7 @@ class HumanOps:
 
         if types is None or name in NOT_SERVED:
             raise HostError("op.not_allowed", f"{name} is not an op a person runs through human.prepare")
-        signer, handoff = args.get("signer"), bool(args.get("handoff", False))
-        # a dry run binds nothing and stores nothing: it may take neither (the dashboard's folder check)
-        if (handoff and signer is not None) or (not handoff and signer is None and not dry_run):
-            raise HostError("invalid.input", "human.prepare takes signer, or handoff:true without a signer")
+        _check_binding(name, args.get("signer"), bool(args.get("handoff", False)), dry_run)
         self.backend._state(service, True)  # the request prepares a write
         intent: Any = None
         idem = (call.frame.get("opts") or {}).get("idem")
@@ -418,7 +438,7 @@ class HumanOps:
             dry_run=dry_run,
         )
         capture.dry_run = dry_run
-        capture.hub_handoff = name == "addon.grant" and handoff and signer is None  # FB15
+        capture.hub_handoff = name in HUB_HANDOFF_OPS and handoff and signer is None  # FB15
         capture.market_files = marketinstall.files_of(service)
         if args.get("sequence") is not None and name == "artifact.add":
             self._check_pasted_image(inner, files)
@@ -833,6 +853,10 @@ class HumanOps:
             raise HostError("human.request_expired", _expired(record))
         if state in ("submitted", "cancelled"):
             raise HostError("human.request_state", f"the request is {state}")
+        if state != "bound" and record.get("hub_handoff") is not True:
+            # the only request stored unbound is the hub's add-on grant hand-off (FB15); every other request is bound
+            # at prepare, so an unbound one that is not a hand-off was not prepared here: never bound (no legacy path)
+            raise HostError("invalid.input", "the request was not prepared here for a hub hand-off; prepare it again")
         call.service.store.refresh()
         convenience.refuse_reader_op(  # §0.8.6: fails early, before binding (H12d-2: the declaration, rechecked)
             call.service,

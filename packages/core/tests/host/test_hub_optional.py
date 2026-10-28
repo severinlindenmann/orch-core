@@ -74,8 +74,9 @@ def test_signing_mode_a_workspace_that_never_joined_is_standalone_even_with_corr
     assert hubops.signing_mode(served.service) == "standalone"
     # and it still signs locally: nothing is refused
     key = served.ticket()[1]
+    signer = {"device": served.lab.ws.owner.device, "auth": "passphrase"}
     assert human_helpers.ok(
-        served.client().req("human.prepare", {"op": "log", "args": {"ref": key, "text": "x"}, "handoff": True})
+        served.client().req("human.prepare", {"op": "log", "args": {"ref": key, "text": "x"}, "signer": signer})
     )
 
 
@@ -149,7 +150,7 @@ def test_the_prepare_and_the_hand_off_are_both_open_in_full_mode(human, served):
     key = served.ticket()[1]
     full_joined(human, served)
     assert human.prepare_res("log", {"ref": key, "text": "x"})["ok"] is True
-    assert human.prepare_res("log", {"ref": key, "text": "x"}, handoff=True)["ok"] is True
+    assert human.prepare_res("addon.grant", {"name": "wiki"}, handoff=True)["ok"] is True  # the hub's add-on grant
 
 
 def test_leave_works_in_full_mode_and_unknown(human, served, stub, keystore):

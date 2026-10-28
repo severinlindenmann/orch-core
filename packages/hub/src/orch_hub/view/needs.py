@@ -162,6 +162,7 @@ class StoreViewReader:
             row = {
                 "item_id": item_id,
                 "kind": kind,
+                "gate": gate,
                 "type": kind,
                 "key": _one_line(t.key),
                 "title": _one_line(t.title),

@@ -22,10 +22,14 @@ export const ARM_INSIDE = 'data-arm-inside'
 /** The attribute every rendered risk line carries (counted before any press is accepted). */
 export const RISK_LINE = 'data-risk-line'
 
+const visibleRisks = new WeakSet<Element>()
+
 /** The risk lines are in the page: the box is in the document and holds one rendered line per signer's line. */
 export function riskShown(box: HTMLElement | null, lines: readonly string[]): boolean {
   if (lines.length === 0) return true
-  return !!box && box.isConnected && box.querySelectorAll(`[${RISK_LINE}]`).length === lines.length
+  const rendered = box?.querySelectorAll(`[${RISK_LINE}]`)
+  return !!box && box.isConnected && rendered?.length === lines.length
+    && (typeof IntersectionObserver !== 'function' || Array.from(rendered).every(el => visibleRisks.has(el)))
 }
 
 /**
@@ -69,11 +73,30 @@ function useDwell(active: boolean, key: string, ms: number, gate: () => boolean)
     }
     const onVisibility = () => (document.visibilityState === 'visible' ? start() : stop())
     // The risk lines left the page: never ready until they are back for a full `ms` again.
-    const watch = typeof MutationObserver === 'function' ? new MutationObserver(() => {
+    const update = () => {
       const shown = gateRef.current()
       if (!shown && (on || timer)) stop()
       else if (shown && !on && !timer) start()
-    }) : null
+    }
+    const observed = new Set<Element>()
+    const intersection = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (entry.isIntersecting && entry.intersectionRatio >= 1) visibleRisks.add(entry.target)
+        else visibleRisks.delete(entry.target)
+      }
+      update()
+    }, { threshold: 1 }) : null
+    const observe = () => {
+      document.querySelectorAll(`[${RISK_LINE}]`).forEach(el => {
+        if (!observed.has(el)) {
+          observed.add(el)
+          intersection?.observe(el)
+        }
+      })
+      update()
+    }
+    const watch = typeof MutationObserver === 'function' ? new MutationObserver(observe) : null
+    observe()
     watch?.observe(document.body, { childList: true, subtree: true })
     window.addEventListener('blur', onBlur)
     window.addEventListener('focus', onFocus)
@@ -82,6 +105,8 @@ function useDwell(active: boolean, key: string, ms: number, gate: () => boolean)
     return () => {
       clearTimeout(timer)
       watch?.disconnect()
+      intersection?.disconnect()
+      observed.forEach(el => visibleRisks.delete(el))
       window.removeEventListener('blur', onBlur)
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibility)
@@ -173,7 +198,6 @@ export function usePressSign({ key, riskLines, pressed, can, onSign, onCancel, m
     setModeState(m)
   }, [])
   const [round, setRound] = useState(0)
-  const [elapsed, setElapsed] = useState(false)
   const rootEl = useRef<HTMLElement | null>(null)
   const riskEl = useRef<HTMLElement | null>(null)
   const lines = useRef(riskLines)
@@ -182,7 +206,7 @@ export function usePressSign({ key, riskLines, pressed, can, onSign, onCancel, m
   latest.current = { onSign, onCancel, can }
   const gate = useCallback(() => riskShown(riskEl.current, lines.current), [])
   const ready = useDwell(mode === 'press', key, ms, gate)
-  const activation = useActivation(ready)
+  const activation = useActivation(ready && can)
 
   const cancelArm = useCallback(() => {
     if (modeRef.current !== 'arm') return
@@ -193,12 +217,18 @@ export function usePressSign({ key, riskLines, pressed, can, onSign, onCancel, m
   // The arm: 1 s of visible, focused View; every cancel trigger is live while it runs.
   useEffect(() => {
     if (mode !== 'arm') return
-    setElapsed(false)
     if (risky || document.visibilityState !== 'visible' || !focusedNow()) {
       cancelArm() // not on screen at the start: nothing is signed
       return
     }
-    const timer = setTimeout(() => setElapsed(true), ms)
+    const timer = setTimeout(() => {
+      if (modeRef.current !== 'arm') return
+      if (!latest.current.can || document.visibilityState !== 'visible' || !focusedNow()) cancelArm()
+      else {
+        setMode('press')
+        latest.current.onSign()
+      }
+    }, ms)
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') cancelArm()
     }
@@ -224,15 +254,7 @@ export function usePressSign({ key, riskLines, pressed, can, onSign, onCancel, m
       document.removeEventListener('mousedown', onDown, true)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [mode, round, ms, risky, cancelArm])
-
-  // The end of the arm: the signature is asked for once (as soon as the caller allows it, if it did not yet).
-  useEffect(() => {
-    if (mode !== 'arm' || !elapsed || !can || risky) return
-    setElapsed(false)
-    setMode('press') // a refusal that leaves the View open needs a new press
-    latest.current.onSign()
-  }, [mode, elapsed, can, risky, setMode])
+  }, [mode, round, ms, risky, cancelArm, setMode])
 
   const info = useCallback((open: boolean) => {
     if (open && modeRef.current === 'arm') setMode('held')

@@ -44,9 +44,12 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         "/cj.js",
         "/render.js",
         "/home.js",
+        "/inbox.js",
+        "/route.js",
         "/admin.js",
         "/switch.js",
         "/ui.js",
+        "/feel.js",
         "/services.js",
         "/workspaces.js",
     }

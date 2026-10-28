@@ -2087,3 +2087,11 @@ Decision: New-ticket launch choices (harness, mode, optional model) belong to th
 Why: The browser must not select another ticket or launch after a partially landed sequence. `agents/start {after_request}` resolves the committed chain, checks its signer, uses its launch choices, and retains one run per request. Signer and launch retries retain the original request.
 
 Revert: Remove the composite launch option and require separate ticket creation and agent-start review; do not restore browser-authoritative automatic start.
+
+### 2026-10-28 — C3 review hardening
+
+Decision: Require click contract 4 on every click route; validate the relay's risk allowlist against core. Generate the fake hosts' one-press allowlist from core. Refuse combined click sequences that include agent access until the UI can request a separate grant confirmation (terminal sequences still work). Gate risky confirmations on viewport intersection when supported, expire blocked arms, and prefer signer headlines.
+
+Why: Stale pages must not sign without the risk review; fixtures must reflect the real signer's operation classes. Risk lines must stay on screen throughout the dwell.
+
+Revert: Restore the prior gate only together with a coordinated click contract change in core, server, and client.

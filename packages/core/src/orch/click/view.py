@@ -238,7 +238,15 @@ def build(
     ticket = prepared["material"].get("ticket") if isinstance(prepared.get("material"), Mapping) else None
     ticket = ticket if isinstance(ticket, Mapping) else {}
     shown_ticket = content.get("ticket") if content is not None else None
-    view["headline"] = headline(str(prepared["op"]), ticket.get("key"))
+    key = shown_ticket.get("key") if isinstance(shown_ticket, Mapping) else None
+    if key is not None and key != ticket.get("key"):
+        raise refused("check_failed", "the headline ticket differs from the verified content")
+    for event in prepared.get("events") or []:
+        if event.get("type") == "ticket.created":
+            if event.get("key") != ticket.get("key") or (key is not None and event.get("key") != key):
+                raise refused("check_failed", "the headline ticket differs from the signed event")
+            key = event.get("key")
+    view["headline"] = headline(str(prepared["op"]), key)
     view["headline_detail"] = headline_detail(shown_ticket.get("title") if isinstance(shown_ticket, Mapping) else None)
     view["risk_lines"] = risk_lines(
         str(prepared["op"]), list(prepared.get("events") or []), deposit=deposit, reveal=reveal is not None

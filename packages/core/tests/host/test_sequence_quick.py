@@ -322,7 +322,8 @@ def test_the_grant_is_only_ever_the_last_step():
     assert kinds.index("grant") == len(kinds) - 1 and kinds.count("grant") == 1  # the grant is only ever last
 
 
-def test_a_grant_is_one_click_and_goes_to_the_runner_last(click, served, human):  # noqa: F811
+def test_a_quick_task_cannot_hide_a_grant_in_its_daily_confirmation(click, served, human):  # noqa: F811
+
     click.signer._execution = lambda entry: True
     p = click_prepare(click, quick(agent={"hours": 8, "scope": "workable"}))
     v = click.view(p["request_id"])

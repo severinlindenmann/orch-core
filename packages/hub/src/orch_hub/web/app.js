@@ -1,16 +1,23 @@
+import { skeleton, loading, enter, toast, watchDialogs, replaceContent, retryDelay, searchEntries, filterSearch, shortcut, focusIndex, busyButton, reconcileRows, shouldPoll } from "./feel.js";
 // The hub console, minimum for the browser sign flow (design-a8): sign in, register this browser, see what needs me,
 // review one decision and sign it. The DOM is built with createElement and textContent only (lint: tests/web_lint),
 // every string from the workspace goes through renderText first, and nothing here calls a signer except the prompt.
 import { CanonError, parseStrict } from "./cj.js";
 import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, signProof, signRegistration } from "./channel.js";
-import { homeView } from "./home.js";
+import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
+import { parseRoute } from "./route.js";
+import { homeView, workspaceStatus } from "./home.js";
 import { adminView } from "./admin.js";
 import { servicesView } from "./services.js";
-import { workspacesView } from "./workspaces.js";
-import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl, ticketFromHash } from "./switch.js";
-import { Refusal, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
+import { workspacesView, workspaceDetailsView } from "./workspaces.js";
+import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
+import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
+watchDialogs();
+const skip = h("a", { class: "skip-link", href: "#main-content", text: "Skip to main content", onclick: (event) => { event.preventDefault(); (document.getElementById("main-content") ?? root).focus(); } });
+root.tabIndex = -1;
+document.body.prepend(skip);
 const state = { user: null, me: null, channels: [], notice: null, rail: { hubName: "Hub", rows: [] }, menu: false };
 
 // --- DOM helpers (no HTML strings anywhere) ----------------------------------------------------------------------------
@@ -19,14 +26,20 @@ function h(tag, props = {}, ...kids) {
   for (const [k, v] of Object.entries(props)) {
     if (k === "class") e.className = v;
     else if (k === "text") e.textContent = v;
+    else if (k === "onclick" && props["data-sign"] !== undefined) e.addEventListener("click", (event) => busyButton(e, () => v(event)));
     else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
     else if (v === true) e.setAttribute(k, "");
     else if (v !== false && v != null) e.setAttribute(k, String(v));
   }
   for (const c of kids.flat()) if (c != null && c !== false) e.append(c.nodeType ? c : document.createTextNode(String(c)));
+  if (props["data-sign"] !== undefined) { e.arm = () => arm(e); e.arm(); }
   return e;
 }
-const show = (...nodes) => { root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
+let servicesTimer, viewRevision = 0;
+let frame = null;
+let railSnapshot = "";
+let paintedRoute = null;
+const show = (...nodes) => { clearInterval(servicesTimer); viewRevision++; frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
 const field = (label, input) => h("div", {}, h("label", { text: label }), input);
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
@@ -38,10 +51,12 @@ async function api(method, path, body) {
   try {
     res = await fetch("/api/v1" + path, { method, headers, credentials: "same-origin", cache: "no-store", body: body === undefined ? undefined : JSON.stringify(body) });
   } catch {
+    connectionFailed();
     return { status: 0, body: { error: "unavailable" } };
   }
   try {
     const text = new TextDecoder("utf-8", { fatal: true }).decode(await res.arrayBuffer());
+    if (res.status >= 500) connectionFailed();
     return { status: res.status, body: parseStrict(text) };
   } catch {
     return { status: res.status, body: { error: "malformed" } };
@@ -68,6 +83,7 @@ const say = (code) => WORDS[code] ?? "Refused (" + renderText(code) + ").";
 
 // --- views -------------------------------------------------------------------------------------------------------------
 function loginView(err) {
+  clearSession();
   const id = h("input", { id: "user", autocomplete: "username", required: true });
   const pw = h("input", { id: "pw", type: "password", autocomplete: "current-password", required: true });
   const code = h("input", { id: "code", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 6, required: true });
@@ -107,35 +123,74 @@ function setupView(token, err) {
 
 async function refresh() {
   const [who, chans] = await Promise.all([api("GET", "/session"), api("GET", "/me/channels")]);
-  if (who.status !== 200) return false;
+  if (who.status !== 200) { clearSession(); return false; }
+  if (state.user?.user_id !== who.body.user_id) clearSession();
   state.user = who.body;
   state.channels = chans.status === 200 ? chans.body.channels : [];
   state.me = await loadChannel();
   return true;
 }
 
+function pageLoading(active, kind = active) {
+  if (frame && paintedRoute === location.hash) return;
+  if (state.user) shell(active, skeleton(kind));
+  else show(skeleton(kind));
+}
+
 function shell(active, ...nodes) {
-  const tab = (id, label, go, cls) => h("a", { href: "#", class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); go(); } });
+  if (active !== "services") { clearInterval(servicesTimer); viewRevision++; } // leave the Services page: stop its refresh
+  const sameRoute = paintedRoute === location.hash;
+  const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
   const name = renderText(state.user?.name ?? "");
   const hubName = renderText(state.rail.hubName);
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", home, "nv"), tab("workspaces", "Workspaces", workspaces, "nv"), state.user?.is_admin ? tab("services", "Services", services, "nv") : null, state.user?.is_admin ? tab("admin", "Admin", admin, "nv") : null,
+    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
-  const top = h("header", { class: "topbar" }, h("span", { class: "t", text: hubName }),
-    h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", home, "nav"), tab("workspaces", "Workspaces", workspaces, "nav"), state.user?.is_admin ? tab("services", "Services", services, "nav") : null, state.user?.is_admin ? tab("admin", "Admin", admin, "nav") : null),
-    h("span", { class: "grow" }), h("span", { class: "small muted", text: name }), signOutMenu());
-  show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content" }, nodes.flat(2)))));
-  root.classList.add("shelled");
+  if (!frame) {
+    const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
+      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
+      h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
+    show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
+    root.classList.add("shelled");
+    frame = root.querySelector(".app");
+    railSnapshot = JSON.stringify(state.rail);
+  } else {
+    if (!sameRoute || railSnapshot !== JSON.stringify(state.rail)) frame.querySelector(".side").replaceWith(side);
+    replaceContent(frame.querySelector(".content"), nodes.flat(2).filter(Boolean), sameRoute);
+    if (railSnapshot !== JSON.stringify(state.rail)) {
+      frame.querySelector(".rail").replaceChildren(...railView().childNodes);
+      railSnapshot = JSON.stringify(state.rail);
+    }
+  }
+  for (const link of frame.querySelectorAll("[data-tab]")) {
+    const selected = link.getAttribute("data-tab") === active;
+    link.classList.toggle("on", selected);
+    if (selected) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  if (!sameRoute) enter(frame.querySelector(".content"));
+  paintedRoute = location.hash;
+  const route = parseRoute(location.hash);
+  for (const button of frame.querySelectorAll("[data-workspace]")) {
+    const selected = button.getAttribute("data-workspace") === (route.workspace ?? "");
+    button.classList.toggle("on", selected);
+    if (selected) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  }
+  const menu = frame.querySelector(".menu");
+  if (menu) menu.hidden = !state.menu;
+  const workspace = state.rail.rows.find((w) => w.id === route.workspace);
+  frame.querySelector(".breadcrumb").textContent = hubName + (workspace ? " › " + renderText(workspace.name) : "");
 }
 
 // --- the company rail: this hub, then every workspace of mine (GET /rail); one click switches, no second sign-in ----------
 function railView() {
-  const hub = h("button", { class: "ra hub on", title: renderText(state.rail.hubName), "aria-label": "Hub " + renderText(state.rail.hubName), "aria-current": "page", text: initials(state.rail.hubName), onclick: home });
+  const hub = h("button", { class: "ra hub" + (parseRoute(location.hash).workspace ? "" : " on"), "data-workspace": "", "data-live-key": "hub", title: renderText(state.rail.hubName), "aria-label": "Hub " + renderText(state.rail.hubName), "aria-current": parseRoute(location.hash).workspace ? null : "page", text: initials(state.rail.hubName), onclick: () => navigate("#/home") });
   const items = state.rail.rows.map((w) => {
-    const b = h("button", { class: "ra " + colour(w.id), "aria-label": "Open " + renderText(w.name) + (w.online ? "" : " (offline)"), disabled: !w.canOpen,
-      title: w.canOpen ? renderText(w.name) : renderText(w.name) + ": " + OPEN_FIRST, onclick: () => openWorkspace(w) },
+    const b = h("button", { "data-workspace": w.id, "data-live-key": w.id, class: "ra " + colour(w.id) + (w.online ? "" : " offline") + (parseRoute(location.hash).workspace === w.id ? " on" : ""), "aria-label": "Open " + renderText(w.name) + (w.online ? "" : " (offline)"),
+      title: renderText(w.name), onclick: () => navigate("#/w/" + w.id) },
       initials(w.name, w.id), w.badge ? h("span", { class: "bd", text: String(w.badge) }) : null);
     return b;
   });
@@ -143,8 +198,10 @@ function railView() {
 }
 
 async function loadRail() {
+  const user = state.user;
   let r = await api("GET", "/rail");
   if (r.status !== 200) r = await api("GET", "/me/workspaces"); // older hub without the rail: the plain list, nothing openable
+  if (!user || state.user !== user) return;
   state.rail.rows = r.status === 200 ? railRows(r.body) : [];
   const n = r.status === 200 ? r.body.hub?.name : null;
   state.rail.hubName = typeof n === "string" && n ? n : "Hub";
@@ -181,7 +238,7 @@ const expiredView = () => plain(h("h1", { text: "This link expired" }), h("p", {
 async function redeemTicket(t, replace) {
   const r = await api("POST", "/switch/redeem", replace ? { t, replace: true } : { t });
   const l = landing(r.status, r.body);
-  if (l.kind === "signout") { state.user = null; return plain(h("h1", { text: "You are signed out" }), h("p", { class: "muted", text: "Your hub session ended." }), h("button", { class: "pri", text: "Sign in again", onclick: () => loginView() })); }
+  if (l.kind === "signout") { clearSession(); return plain(h("h1", { text: "You are signed out" }), h("p", { class: "muted", text: "Your hub session ended." }), h("button", { class: "pri", text: "Sign in again", onclick: () => loginView() })); }
   if (l.kind === "expired") return expiredView();
   if (l.kind === "path") return location.replace(l.path);
   if (l.kind === "forward") {
@@ -209,65 +266,135 @@ async function landFromTicket(t) {
 // A session that came from a workspace ticket cannot use admin tools until a real password sign-in.
 function reauthView() {
   show(h("div", { class: "plain" }, h("h1", { text: "Sign in again to use admin tools" }), h("p", { class: "muted", text: "You arrived from a workspace. Admin tools need your password and code." }),
-    h("button", { class: "pri", text: "Sign in again", onclick: async () => { await api("DELETE", "/session"); state.user = null; loginView(); } })));
+    h("button", { class: "pri", text: "Sign in again", onclick: async () => { await api("DELETE", "/session"); clearSession(); loginView(); } })));
 }
 
 async function admin() {
-  if (!(await refresh())) return loginView();
-  state.menu = false;
-  await loadRail();
-  if (!state.user.is_admin) return home();
-  if (state.user.needs_sign_in) return reauthView();
-  const notice = state.notice;
-  state.notice = null;
-  const adminApi = async (m, path, body) => { const r = await api(m, path, body); if (r.status === 403 && r.body.error === "reauth_required") reauthView(); return r; };
-  shell("admin", adminView({ api: adminApi, say, notice, refresh }));
+  const finishLoading = loading();
+  pageLoading("admin");
+  try {
+    if (!(await refresh())) return loginView();
+    state.menu = false;
+    await loadRail();
+    if (!state.user.is_admin) return home();
+    if (state.user.needs_sign_in) return reauthView();
+    const notice = state.notice;
+    state.notice = null;
+    const adminApi = async (m, path, body) => {
+      const done = loading();
+      try { const r = await api(m, path, body); if (r.status === 403 && r.body.error === "reauth_required") reauthView(); return r; }
+      finally { done(); }
+    };
+    if (state.adminPage && frame && paintedRoute === location.hash && !frame.querySelector(".skeleton")) {
+      await state.adminPage.reload();
+      shell("admin", state.adminPage);
+    } else {
+      state.adminPage = adminView({ api: adminApi, say, notice, refresh });
+      shell("admin", state.adminPage);
+    }
+  } finally { finishLoading(); }
 }
 
 async function workspaces() {
-  if (!(await refresh())) return loginView();
-  state.menu = false;
-  await loadRail();
-  const [ws, ho] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs")]);
-  shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces : [], handoffs: ho.status === 200 ? ho.body.handoffs : [] }));
+  const finishLoading = loading();
+  pageLoading("workspaces");
+  try {
+      if (!(await refresh())) return loginView();
+      state.menu = false;
+      await loadRail();
+      const [ws, ho, admin] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs"), api("GET", "/admin/workspaces")]);
+      const adminRows = admin.status === 200 ? admin.body.workspaces ?? [] : null;
+      const hub = ws.body?.hub;
+      const actions = {
+        open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
+        copy: copyText,
+        connect: async () => {
+          const r = await api("POST", "/admin/connect", {});
+          if (r.status < 200 || r.status >= 300 || typeof r.body.link !== "string" || !Number.isFinite(r.body.expires_ms)) throw new Error("connect failed");
+          return r.body;
+        },
+        remove: async (w) => {
+          const r = await api("DELETE", "/admin/workspaces/" + encodeURIComponent(w.workspace_id));
+          if (r.status < 200 || r.status >= 300) throw new Error("remove failed");
+          await workspaces();
+        },
+        details: async (w) => {
+          const r = await api("GET", "/workspaces/" + encodeURIComponent(w.workspace_id) + "/roles");
+          dialog(...workspaceDetailsView(w, { hub, actions, roles: r.status === 200 ? r.body : null,
+            owner: adminRows?.find((row) => row.workspace_id === w.workspace_id)?.owner_alias }),
+            h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
+        },
+      };
+      shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces ?? [] : [],
+        handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions }));
+  } finally { finishLoading(); }
 }
 
 async function copyText(t) {
-  try { await navigator.clipboard.writeText(t); return true; } catch { return false; }
+  try { await navigator.clipboard.writeText(t); toast("Copied"); return true; } catch { toast("Copy failed: select the text by hand"); return false; }
 }
 
-async function services() {
+async function services(silent = false) {
+  const revision = viewRevision;
+  const finishLoading = silent ? () => {} : loading();
+  if (!silent) pageLoading("services");
+  try {
+    if (!(await refresh())) return loginView();
+    state.menu = false;
+    await loadRail();
+    if (!state.user.is_admin) return home();
+    if (state.user.needs_sign_in) return reauthView();
+    const [r, ws] = await Promise.all([api("GET", "/admin/services"), api("GET", "/me/workspaces")]);
+    if (revision !== viewRevision) return;
+    if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
+    if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
+    shell("services", servicesView({ ...r.body, workspaces_list: ws.status === 200 ? ws.body.workspaces : undefined }, { check: () => services(), open: () => navigate("#/workspaces"), copy: copyText }));
+    clearInterval(servicesTimer);
+    let checking = false;
+    servicesTimer = setInterval(async () => {
+      if (document.hidden || checking) return;
+      checking = true;
+      try { await services(true); } finally { checking = false; }
+    }, 15000);
+  } finally { finishLoading(); }
+}
+
+async function approvals(filter = {}) {
   if (!(await refresh())) return loginView();
-  state.menu = false;
   await loadRail();
-  if (!state.user.is_admin) return home();
-  if (state.user.needs_sign_in) return reauthView();
-  const r = await api("GET", "/admin/services");
-  if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
-  if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
-  shell("services", servicesView(r.body, { check: services, open: workspaces, copy: copyText }));
+  const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
+  if (ws.status !== 200 || needs.status !== 200) return shell("approvals", banner("bad", "Cannot read approvals", "Please try again."));
+  shell("approvals", inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals }));
 }
 
 async function home() {
-  if (!(await refresh())) return loginView();
-  state.menu = false;
-  await loadRail();
-  const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
-  const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
-  const workspaces = ws.status === 200 ? ws.body.workspaces : [];
-  const dead = !mine && (state.me || state.channels.some((c) => c.status === "active" && c.kind === "browser"));
-  const view = homeView({
-    user: state.user,
-    items: needs.status === 200 ? needs.body.items : [],
-    offline: needs.status === 200 ? needs.body.offline : [],
-    workspaces,
-    channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
-    thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
-    notice: state.notice,
-    actions: { review: reviewItem, register: () => registerView(), removeChannel, forgetLocal },
-  });
-  shell("home", view, advancedForm(workspaces));
-  state.notice = null;
+  const finishLoading = loading();
+  pageLoading("home");
+  try {
+    if (!(await refresh())) return loginView();
+    state.menu = false;
+    await loadRail();
+    const user = state.user;
+    const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
+    if (!user || state.user !== user) return;
+    const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
+    const workspaces = ws.status === 200 ? ws.body.workspaces : [];
+    const dead = !mine && (state.me || state.channels.some((c) => c.status === "active" && c.kind === "browser"));
+    homeData = {
+      user_id: user.user_id,
+      user: state.user,
+      items: needs.status === 200 ? needs.body.items : [],
+      offline: needs.status === 200 ? needs.body.offline : [],
+      workspaces,
+      channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
+      thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
+      notice: state.notice,
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), register: () => registerView(), removeChannel, forgetLocal },
+    };
+    liveItems = { user_id: user.user_id, items: homeData.items };
+    shell("home", homeView(homeData), advancedForm(workspaces));
+    state.notice = null;
+  } finally { finishLoading(); }
 }
 
 async function forgetLocal() {
@@ -285,10 +412,21 @@ async function removeChannel(id) {
   await home();
 }
 
+function clearSession() {
+  homeData = null;
+  liveItems = { user_id: null, items: [] };
+  state.user = null;
+  state.rail = { hubName: "Hub", rows: [] };
+  state.me = null;
+  state.channels = [];
+  state.adminPage = null;
+  state.notice = null;
+  state.menu = false;
+}
+
 async function signOut() {
   await api("DELETE", "/session");
-  state.user = null;
-  state.menu = false;
+  clearSession();
   loginView();
 }
 
@@ -299,13 +437,15 @@ function registerView(err) {
   const form = h("form", {
     onsubmit: async (ev) => {
       ev.preventDefault();
-      const out = await registerBrowser(label.value.trim() || "This browser", pw.value, code.value.trim());
+      const button = form.querySelector("[type=submit]");
+      if (offline || button.disabled) return;
+      const out = await busyButton(button, () => registerBrowser(label.value.trim() || "This browser", pw.value, code.value.trim()));
       pw.value = code.value = "";
       if (out) return registerView(out);
       state.notice = banner("ok", "This browser is ready", "It holds a signing key for you. You can remove it any time.");
       await home();
     },
-  }, h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: home }), h("button", { class: "pri", type: "submit", text: "Register this browser" })));
+  }, h("p", { class: "muted small", text: "Type your password and a new 6-digit code. Each code works only once, so wait for the next one if you just signed in." }), field("Browser name", label), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { type: "button", text: "Cancel", onclick: home }), h("button", { class: "pri", type: "submit", "data-sign": "", text: "Register this browser" })));
   show(h("h1", { text: "Register this browser" }), err ? banner("bad", "Browser not registered. Nothing was kept.", err) : null, form);
 }
 
@@ -338,7 +478,7 @@ async function reviewItem(it) {
   // #1123: the question is hashed HERE from exactly what the hub sent; no Answer button for one we cannot verify or render
   if (r.body.hash !== it.hash) { state.notice = banner("warn", "This question changed", "Reload your list and review it again."); return home(); }
   const qv = await verifyQuestion(it, c);
-  const head = [h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Question") }), h("p", { class: "sentence", text: renderMulti(c.text ?? it.title ?? "") })];
+  const head = [h("p", { class: "sentence", text: reviewMeaning(it, state.rail.rows.find((w) => w.id === it.workspace_id)?.name || "this workspace") }), h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Question") }), h("p", { class: "sentence", text: renderMulti(c.text ?? it.title ?? "") })];
   const back = h("button", { text: "Back", onclick: home });
   if (!qv) return show(...head, h("p", { class: "small muted", text: "This question cannot be shown or checked here. Answer it on your Mac." }), back);
   const spec = qv.spec;
@@ -352,7 +492,7 @@ async function reviewItem(it) {
       o.text ? h("div", { class: "small", text: renderText(o.text) }) : null,
       (o.facts ?? []).map(([l, v]) => h("div", { class: "small muted", text: renderText(l) + ": " + renderText(v) })),
       o.cost ? h("div", { class: "small muted", text: "Cost: " + renderText(o.cost) }) : null),
-    h("button", { text: "Answer", onclick: () => startSign(it.workspace_id, { type: "question.answered", log: it.log, question: c.question, hash: it.hash, option: o.key }, qv) })));
+    h("button", { "data-sign": "", text: "Answer", onclick: () => startSign(it.workspace_id, { type: "question.answered", log: it.log, question: c.question, hash: it.hash, option: o.key }, qv) })));
   show(...head, ...more, qv.options.map(card),
     spec.allow_other ? h("p", { class: "small muted", text: "To answer with something else, use your Mac." }) : null,
     back);
@@ -370,9 +510,9 @@ function reviewDecision(it, c) {
     h("p", { class: "small" }, h("a", { href: "#", text: "\u2190 Back to your list", onclick: (e) => { e.preventDefault(); home(); } })),
     h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Review") }),
     it.key ? h("p", { class: "small muted", text: renderText(it.key) }) : null,
-    h("p", { class: "sentence", text: verdict ? "Give your verdict on this ticket." : "Review the " + renderText(c.gate ?? "") + " gate." }),
+    h("p", { class: "sentence", text: reviewMeaning(it, state.rail.rows.find((w) => w.id === it.workspace_id)?.name || "this workspace", c.gate) }),
     h("p", { class: "small muted", text: "The content itself is not shown here. Check it where it lives; the reference below is what you are deciding on." }),
-    h("details", { open: true }, h("summary", { text: "Review details" }), h("dl", { class: "facts" },
+    h("details", {}, h("summary", { text: "What exactly is signed" }), h("dl", { class: "facts" },
       h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: renderText(shortHash(it.hash) || String(it.hash ?? "")) }),
       h("dt", { text: "Generation" }), h("dd", { text: renderText(String(c.gate_gen ?? "")) }),
       sources.flatMap((e) => [h("dt", { text: "Code to check" }), h("dd", { text: renderText(e.repo) + " " + renderText(e.sha) })]))),
@@ -380,17 +520,32 @@ function reviewDecision(it, c) {
     note,
     h("p", { class: "small muted", text: verdict ? "Needed only if you choose Fail." : "Needed only if you ask for changes." }),
     verdict
-      ? h("div", { class: "row" }, h("button", { class: "pri", text: "Pass", onclick: () => act({ type: "verdict.given", outcome: "pass" }) }), h("button", { text: "Fail", onclick: () => withText({ type: "verdict.given", outcome: "fail" }) }))
-      : h("div", { class: "row" }, h("button", { class: "pri", text: "Approve", onclick: () => act({ type: "gate.approved", gate: c.gate }) }), h("button", { text: "Ask for changes", onclick: () => withText({ type: "gate.changes_requested", gate: c.gate }) })),
+      ? h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Pass", onclick: () => act({ type: "verdict.given", outcome: "pass" }) }), h("button", { "data-sign": "", text: "Fail", onclick: () => withText({ type: "verdict.given", outcome: "fail" }) }))
+      : h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Approve", onclick: () => act({ type: "gate.approved", gate: c.gate }) }), h("button", { "data-sign": "", text: "Ask for changes", onclick: () => withText({ type: "gate.changes_requested", gate: c.gate }) })),
   );
 }
 
-// After a sign-in: an add-on approval link keeps its fragment, everything else goes Home.
-async function afterLogin() {
-  const a = /^#\/w\/([0-9a-f]{32})\/addon\/([\w-]+)$/.exec(location.hash);
-  if (a) return addonView(a[1], a[2]);
-  const st = /^#\/w\/([0-9a-f]{32})\/settings\/([\w-]+)$/.exec(location.hash);
-  return st ? settingsView(st[1], st[2]) : home();
+// Keep the wanted fragment while the sign-in form is showing.
+async function afterLogin() { return renderRoute(); }
+
+// Agent access terms are display and signing input; the host checks its pending record at landing.
+async function accessView(wsId, raw) {
+  let terms = null;
+  try {
+    const b = atob(raw.replaceAll("-", "+").replaceAll("_", "/"));
+    terms = parseStrict(new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(b, (c) => c.charCodeAt(0))));
+  } catch { terms = null; }
+  const back = h("p", { class: "small" }, h("a", { href: "#", text: "\u2190 Back to your list", onclick: (e) => { e.preventDefault(); location.hash = ""; home(); } }));
+  if (!(await refresh())) return loginView();
+  const ws = await api("GET", "/me/workspaces");
+  const mine = ws.status === 200 ? ws.body.workspaces.find((w) => w.workspace_id === wsId) : null;
+  if (!grantTermsOk(terms) || !mine || !["edit", "admin"].includes(mine.role)) return shell("home", h("div", {}, back, banner("bad", "This link cannot be used", "It does not describe an agent access request this page can show safely.")));
+  const action = { type: "grant.requested", log: "workspace", ...terms };
+  shell("home", h("div", {}, back,
+    h("h1", { text: "Approve agent access" }),
+    h("p", { class: "sentence", text: grantSentence(terms, mine.name ?? wsId.slice(0, 8)) }),
+    h("dl", { class: "facts" }, grantFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
+    h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
 
 // FB15 (protocol 8.8b): the link a workspace's Mission Control builds, #/w/<workspace>/addon/<b64u(JSON terms)>. The terms
@@ -413,7 +568,7 @@ async function addonView(wsId, raw) {
     h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? wsId.slice(0, 8)) + " asks to install and turn on " + renderText(terms.name) + "." }),
     h("dl", { class: "facts" }, addonFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("p", { class: "small muted", text: "Approving here lets the workspace's computer install exactly this package. You can check the fingerprint against the one shown in the workspace." }),
-    h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
+    h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
 
 // A settings change (protocol 8.8): the link a workspace's Mission Control builds, #/w/<workspace>/settings/<b64u(JSON set)>.
@@ -439,17 +594,17 @@ async function settingsView(wsId, raw) {
     h("h1", { text: "Change workspace settings" }),
     h("p", { class: "sentence", text: "This link asks to change how long things are held in " + renderText(mine.name ?? wsId.slice(0, 8)) + ". Check the change below; nothing happens until you approve." }),
     h("dl", { class: "facts" }, settingsFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
-    h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
+    h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
 
 function advancedForm(workspaces) {
   const ws = h("select", {}, workspaces.filter((w) => w.can_start).map((w) => h("option", { value: w.workspace_id, text: renderText(w.name ?? w.workspace_id.slice(0, 8)) })));
   const type = h("select", {}, Object.keys(DECISIONS).filter((t) => t !== "question.answered").map((t) => h("option", { value: t, text: t })));
   const inputs = Object.fromEntries(["log", "question", "gate", "outcome", "hash", "option", "text"].map((k) => [k, h("input", { id: "f-" + k })]));
-  const go = h("button", { class: "pri", text: "Review", onclick: () => {
+  const go = h("button", { class: "pri", "data-sign": "", text: "Review", onclick: () => {
     const action = { type: type.value, log: inputs.log.value.trim() };
     for (const k of DECISIONS[type.value].filter((k) => k in inputs)) if (inputs[k].value.trim()) action[k] = inputs[k].value.trim();
-    startSign(ws.value, action);
+    return startSign(ws.value, action);
   } });
   return h("details", {}, h("summary", { text: "Start a decision by hand" }), field("Workspace", ws), field("Decision", type), ...Object.entries(inputs).map(([k, el]) => field(k === "log" ? "Ticket (id)" : k, el)), h("div", { class: "row top" }, go));
 }
@@ -516,15 +671,16 @@ function factsList(rows) {
 }
 
 function promptView(me, p, digest, d) {
-  const sign = h("button", { class: "pri", id: "sign", disabled: true, text: "Please review…" });
-  const arm = () => { sign.disabled = true; sign.textContent = "Please review…"; setTimeout(() => { if (document.visibilityState === "visible") { sign.disabled = false; sign.textContent = "Sign and send"; } }, 1000); };
-  const onVis = () => arm();
+  const sign = h("button", { class: "pri", id: "sign", "data-sign": "", disabled: true, text: "Please review…" });
+  sign.arm = () => arm(sign, "Sign and send");
+  const onVis = () => sign.arm();
   document.addEventListener("visibilitychange", onVis);
   window.addEventListener("focus", onVis);
   const done = () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", onVis); closeDialog(); };
   sign.addEventListener("click", async (ev) => {
-    if (!ev.isTrusted || sign.disabled) return; // a script's .click() never signs
+    if (!ev.isTrusted || sign.disabled || offline || sign.getAttribute("aria-busy") === "true") return; // a script's .click() never signs
     sign.disabled = true;
+    sign.setAttribute("aria-busy", "true");
     try {
       const proof = await signProof(me.pair.privateKey, digest);
       const r = await api("POST", "/sign/sign", { prepared_id: p.prepared_id, channel_id: me.channelId, channel_proof: proof });
@@ -539,25 +695,227 @@ function promptView(me, p, digest, d) {
     }
   });
   dialog(
-    h("h1", { text: d.type === "addon.requested" ? "Approve an add-on" : d.type === "settings.changed" ? "Approve a settings change" : "Review your answer" }),
-    h("p", { class: "sentence", text: d.sentence }),
-    h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.facts.length ? d.facts.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: k === "Content reference" ? "fp" : "", text: v })]) : d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
-    h("details", {}, h("summary", { text: "Signed details" }), factsList(d.fields)),
+    h("h1", { text: d.type === "grant.requested" ? "Approve agent access" : d.type === "addon.requested" ? "Approve an add-on" : d.type === "settings.changed" ? "Approve a settings change" : "Review your answer" }),
+    h("p", { class: "sentence", text: signedMeaning(d.sentence, state.rail.rows.find((w) => w.id === p.ctx.workspace_id)?.name || "this workspace") }),
+    h("details", {}, h("summary", { text: "What exactly is signed" }), h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.facts.length ? d.facts.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: k === "Content reference" ? "fp" : "", text: v })]) : d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
+    factsList(d.fields)),
     h("p", { class: "small muted who-signs", text: "You confirm with the key held by this browser. " + "The hub" + " signs this approval for you." }),
     h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign),
   );
-  arm();
+  sign.arm();
 }
 
-// --- start -------------------------------------------------------------------------------------------------------------
-(async () => {
-  const t = ticketFromHash(location.hash);
-  if (t) return landFromTicket(t);
-  const m = /^#setup=([\w-]+)$/.exec(location.hash);
-  if (m) return setupView(m[1]);
-  const a = /^#\/w\/([0-9a-f]{32})\/addon\/([\w-]+)$/.exec(location.hash);
-  if (a) return addonView(a[1], a[2]);
-  const st = /^#\/w\/([0-9a-f]{32})\/settings\/([\w-]+)$/.exec(location.hash);
-  if (st) return settingsView(st[1], st[2]);
-  try { if (!(await refresh())) return loginView(); await home(); } catch { loginView("Something went wrong."); }
-})();
+// Presentation-only live state; never refresh the page or a signing prompt on a timer.
+let homeData = null, liveItems = { user_id: null, items: [] }, offline = false, failures = 0, nextPoll = Date.now() + 15000, polling = false;
+const offlineText = h("span");
+const retry = h("button", { text: "Try now", onclick: () => pollLive() });
+const offbar = h("div", { id: "offbar", class: "offbar", role: "status", hidden: true }, offlineText, retry);
+document.body.prepend(offbar);
+function connectionFailed() {
+  if (!offline) { offline = true; nextPoll = Date.now() + retryDelay(0); }
+  updateOffline();
+}
+function updateOffline() {
+  offbar.hidden = !offline;
+  document.body.classList.toggle("hub-offline", offline);
+  offlineText.textContent = "No connection to the hub. What you see may be out of date; approving is paused. Trying again in " + Math.max(0, Math.ceil((nextPoll - Date.now()) / 1000)) + " s";
+  retry.disabled = polling;
+  syncSignButtons();
+}
+function arm(button, label = button.textContent) {
+  clearTimeout(button.armTimer);
+  button.disabled = true;
+  button.armTimer = setTimeout(() => {
+    if (document.visibilityState === "visible" && button.getAttribute("aria-busy") !== "true" && !offline) {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }, 1000);
+}
+function syncSignButtons() {
+  for (const button of document.querySelectorAll("[data-sign]")) {
+    if (offline) { button.dataset.offlineDisabled = "true"; button.disabled = true; }
+    else if (button.dataset.offlineDisabled) { delete button.dataset.offlineDisabled; button.arm?.(); }
+  }
+}
+new MutationObserver(() => { if (offline) syncSignButtons(); }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["disabled"] });
+document.addEventListener("click", (event) => {
+  if (offline && event.target.closest("[data-sign]")) { event.preventDefault(); event.stopImmediatePropagation(); }
+}, true);
+async function pollLive() {
+  if (polling || document.visibilityState !== "visible") return;
+  polling = true;
+  updateOffline();
+  const user = state.user, retrying = offline;
+  try {
+    const [needs, rail] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail")]);
+    if (user !== state.user) return;
+    if ([needs.status, rail.status].some((s) => s === 401 || s === 403)) {
+      offline = false; failures = 0; nextPoll = Date.now() + 15000;
+      return loginView();
+    }
+    if (needs.status !== 200 || rail.status !== 200 || !Array.isArray(needs.body.items) || !Array.isArray(rail.body.workspaces)) {
+      if ([needs.status, rail.status].some((s) => s === 0 || s >= 500)) {
+        offline = true;
+        failures = retrying ? failures + 1 : 0;
+        nextPoll = Date.now() + retryDelay(failures);
+      } else { offline = false; failures = 0; nextPoll = Date.now() + 15000; }
+      return;
+    }
+    offline = false; failures = 0; nextPoll = Date.now() + 15000;
+    if (!user || user !== state.user) return;
+    liveItems = { user_id: user.user_id, items: needs.body.items ?? [] };
+    state.rail.rows = railRows(rail.body);
+    state.rail.hubName = rail.body.hub?.name || "Hub";
+    if (frame?.isConnected) {
+      reconcileRows(frame.querySelector(".rail"), railView());
+      railSnapshot = JSON.stringify(state.rail);
+    }
+    const current = frame?.isConnected && parseRoute(location.hash).kind === "home" ? frame.querySelector(".needs-you") : null;
+    if (current && homeData?.user_id === user.user_id) {
+      homeData.items = liveItems.items;
+      homeData.offline = needs.body.offline ?? [];
+      homeData.workspaces = state.rail.rows.map((w) => ({ ...homeData.workspaces.find((old) => old.workspace_id === w.id), ...w, workspace_id: w.id }));
+      const fresh = h("div", {}, homeView(homeData));
+      const anchor = [...current.querySelectorAll("article")].find((el) => el.getBoundingClientRect().top >= 0);
+      const top = anchor?.getBoundingClientRect().top;
+      reconcileRows(current, fresh.querySelector(".needs-you"));
+      reconcileRows(frame.querySelector(".health-strip"), fresh.querySelector(".health-strip"));
+      const summary = frame.querySelector(".company-summary");
+      if (summary) summary.textContent = fresh.querySelector(".company-summary").textContent;
+      if (anchor?.isConnected) window.scrollBy(0, anchor.getBoundingClientRect().top - top);
+    }
+  } finally { polling = false; updateOffline(); }
+}
+setInterval(() => {
+  if (offline) updateOffline();
+  if (shouldPoll({ now: Date.now(), due: nextPoll, visible: document.visibilityState === "visible", active: !!state.user || offline, busy: polling })) void pollLive();
+}, 1000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && (state.user || offline)) void pollLive();
+});
+
+function openShortcuts() {
+  dialog(h("h1", { text: "Keyboard shortcuts" }), factsList([
+    ["g h", "Home"], ["g w", "Workspaces"], ...(state.user?.is_admin ? [["g s", "Services"], ["g a", "Admin"]] : []),
+    ["/ or ⌘K / Ctrl+K", "Search"], ["↑ / ↓, Enter", "Choose a search result"], ["Esc", "Close dialog"], ["?", "Keyboard shortcuts"],
+  ]), h("button", { text: "Close", onclick: closeDialog }));
+}
+async function openSearch() {
+  if (!state.user || document.querySelector('[role="dialog"]')) return;
+  const user = state.user;
+  let people = [], index = 0, matches = [];
+  const results = h("div", { id: "search-results", role: "listbox", "aria-label": "Search results" });
+  const input = h("input", { type: "search", placeholder: "Search pages, workspaces, tickets…", "aria-label": "Search everything", role: "combobox", "aria-controls": "search-results", "aria-expanded": "true", "aria-autocomplete": "list" });
+  const choose = () => {
+    if (state.user !== user) return;
+    const entry = matches[index];
+    if (!entry) return;
+    closeDialog();
+    if (entry.action === "connect") pendingConnect = true;
+    navigate(entry.hash);
+  };
+  const draw = () => {
+    if (state.user !== user) { results.replaceChildren(); return; }
+    matches = filterSearch(searchEntries({ admin: user.is_admin, workspaces: state.rail.rows, items: liveItems.user_id === user.user_id ? liveItems.items : [], people }), input.value);
+    index = Math.max(0, Math.min(index, matches.length - 1));
+    results.replaceChildren();
+    let group;
+    matches.forEach((entry, i) => {
+      if (entry.group !== group) { group = entry.group; results.append(h("div", { class: "search-group", role: "presentation", text: group })); }
+      results.append(h("div", { id: "search-result-" + i, role: "option", "aria-selected": String(i === index), class: "search-result" + (i === index ? " selected" : ""), text: renderText(entry.label), onclick: () => { index = i; choose(); } }));
+    });
+    if (!matches.length) results.append(h("p", { text: "Nothing found. Try another name or a shorter search." }));
+    if (matches.length) input.setAttribute("aria-activedescendant", "search-result-" + index);
+    else input.removeAttribute("aria-activedescendant");
+  };
+  input.addEventListener("input", () => { index = 0; draw(); });
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault(); index = focusIndex(index, matches.length, event.key === "ArrowUp"); draw();
+      results.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter") { event.preventDefault(); choose(); }
+  });
+  const layer = dialog(h("h1", { text: "Search everything" }), input, results, h("button", { text: "Close", onclick: closeDialog }));
+  layer.classList.add("search-layer");
+  draw(); input.focus();
+  const [needs, rail, users] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail"), user.is_admin ? api("GET", "/admin/users") : Promise.resolve(null)]);
+  if (!layer.isConnected || state.user !== user) return;
+  liveItems = { user_id: user.user_id, items: needs.status === 200 ? needs.body.items ?? [] : [] };
+  if (rail.status === 200) state.rail.rows = railRows(rail.body);
+  if (users?.status === 200) people = users.body.users ?? [];
+  draw();
+}
+let prefixUntil = 0, pendingConnect = false;
+document.addEventListener("keydown", (event) => {
+  if (!state.user || event.defaultPrevented || event.isComposing || document.querySelector('[role="dialog"]')) return;
+  const typing = !!event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])');
+  const action = shortcut(event.key, { typing, meta: event.metaKey, ctrl: event.ctrlKey, alt: event.altKey, prefix: Date.now() < prefixUntil, admin: state.user.is_admin });
+  prefixUntil = 0;
+  if (!action) return;
+  event.preventDefault();
+  if (action === "prefix") prefixUntil = Date.now() + 1000;
+  else if (action === "search") void openSearch();
+  else if (action === "shortcuts") openShortcuts();
+  else navigate("#/" + action);
+});
+// The action opens the existing Connect UI; it does not mint an invite automatically.
+new MutationObserver(() => {
+  if (!pendingConnect) return;
+  const button = document.getElementById("connect-workspace");
+  if (button) { pendingConnect = false; document.getElementById("admin-tab-2")?.click(); button.focus(); }
+}).observe(root, { childList: true, subtree: true });
+
+// --- fragment navigation ----------------------------------------------------------------------------------------------
+function navigate(hash) {
+  if (location.hash === hash) return renderRoute();
+  location.hash = hash;
+}
+
+async function workspacePage(route) {
+  const finishLoading = loading();
+  pageLoading("workspaces", "workspace");
+  try {
+    if (!(await refresh())) return loginView();
+    await loadRail();
+    const w = state.rail.rows.find((row) => row.id === route.workspace);
+    if (!w) return shell("workspaces", h("h1", { text: "Workspace unavailable" }), h("p", { text: "This workspace is not in your list." }));
+    const needs = await api("GET", "/me/needs-you");
+    const items = needs.status === 200 ? needs.body.items.filter((it) => it.workspace_id === w.id) : [];
+    if (route.kind === "item" && w.online) {
+      const item = items.find((it) => it.key === route.key || it.item_id === route.key);
+      if (item) return reviewItem(item);
+      return shell("workspaces", h("h1", { text: "This item is no longer waiting for you" }));
+    }
+    shell("workspaces", h("h1", { text: renderText(w.name) + (w.online ? "" : " is " + workspaceStatus(w)) }),
+      h("p", { text: w.online ? "Online" : "Hand-offs and approvals wait until this workspace is back." }),
+      h("p", { text: needs.status === 200 && w.online ? items.length + " things need you" : w.badge ? w.badge + " things need you. They wait until the workspace is back." : "Waiting items will be shown when the workspace is back." }),
+      w.online ? h("button", { text: "Open workspace", disabled: !w.canOpen, onclick: () => openWorkspace(w) }) : null,
+      w.online && !w.canOpen ? h("p", { text: OPEN_FIRST }) : null);
+  } finally { finishLoading(); }
+}
+
+// Serialize renders so an earlier slow read cannot overwrite the final route.
+let routing = false;
+let pendingRoute = false;
+async function renderRoute() {
+  pendingRoute = true;
+  if (routing) return;
+  routing = true;
+  try {
+    while (pendingRoute) {
+      pendingRoute = false;
+      const route = parseRoute(location.hash);
+      if (route.kind === "ticket") await landFromTicket(route.token);
+      else if (route.kind === "setup") setupView(route.token);
+      else if (route.kind === "access") await accessView(route.workspace, route.key);
+      else if (route.kind === "addon") await addonView(route.workspace, route.key);
+      else if (route.kind === "settings") await settingsView(route.workspace, route.key);
+      else if (route.workspace) await workspacePage(route);
+      else await ({ home, approvals, workspaces, services, admin }[route.kind] ?? home)();
+    }
+  } catch { loginView("Something went wrong. Please sign in again."); }
+  finally { routing = false; }
+}
+window.addEventListener("hashchange", renderRoute);
+renderRoute();

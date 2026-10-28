@@ -10,6 +10,7 @@ import { homeView, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { adminView } from "./admin.js";
 import { servicesView } from "./services.js";
+import { phonesView } from "./phones.js";
 import { workspacesView, workspaceDetailsView } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
@@ -19,7 +20,7 @@ watchDialogs();
 const skip = h("a", { class: "skip-link", href: "#main-content", text: "Skip to main content", onclick: (event) => { event.preventDefault(); (document.getElementById("main-content") ?? root).focus(); } });
 root.tabIndex = -1;
 document.body.prepend(skip);
-const state = { user: null, me: null, channels: [], notice: null, rail: { hubName: "Hub", rows: [] }, menu: false };
+const state = { user: null, me: null, channels: [], newChannels: [], notice: null, rail: { hubName: "Hub", rows: [] }, menu: false };
 
 // --- DOM helpers (no HTML strings anywhere) ----------------------------------------------------------------------------
 function h(tag, props = {}, ...kids) {
@@ -128,6 +129,7 @@ async function refresh() {
   if (state.user?.user_id !== who.body.user_id) clearSession();
   state.user = who.body;
   state.channels = chans.status === 200 ? chans.body.channels : [];
+  state.newChannels = chans.status === 200 ? chans.body.new_channels ?? [] : [];
   state.me = await loadChannel();
   return true;
 }
@@ -147,11 +149,11 @@ function shell(active, ...nodes) {
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
+    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), tab("phones", "Phones & browsers", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
-      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
+      h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), tab("phones", "Phones & browsers", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
       h("span", { class: "grow" }), h("button", { text: "Search ⌘K", onclick: () => openSearch() }), h("button", { text: "?", "aria-label": "Keyboard shortcuts", onclick: () => openShortcuts() }), h("span", { class: "small muted", text: name }), signOutMenu());
     show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
@@ -358,6 +360,46 @@ async function copyText(t) {
   try { await navigator.clipboard.writeText(t); toast("Copied"); return true; } catch { toast("Copy failed: select the text by hand"); return false; }
 }
 
+async function dismissNew() {
+  await api("POST", "/me/channels/seen", {});
+  await (parseRoute(location.hash).kind === "phones" ? phones() : home());
+}
+
+// Phones & browsers: an admin reads every person's channels (grouped by person); anyone else reads their own. The hub
+// decides which by the session; nothing sent from here names a person for the list.
+async function phones() {
+  const finishLoading = loading();
+  pageLoading("phones");
+  try {
+    if (!(await refresh())) return loginView();
+    state.menu = false;
+    await loadRail();
+    if (state.user.needs_sign_in) return reauthView();
+    const me = state.user;
+    const [all, users] = me.is_admin ? await Promise.all([api("GET", "/admin/channels"), api("GET", "/admin/users")]) : [null, null];
+    const everyone = all?.status === 200 && users?.status === 200;
+    const guard = (r) => { if (r.status === 403 && r.body.error === "reauth_required") reauthView(); return r; };
+    const actions = {
+      copy: copyText,
+      dismiss: dismissNew,
+      remove: async (c) => {
+        const own = c.user_id === undefined || c.user_id === me.user_id;
+        const r = guard(await api("POST", (own ? "/channels/" : "/admin/channels/") + encodeURIComponent(c.channel_id) + "/revoke", {}));
+        if (r.status !== 200) throw new Error("remove failed");
+        if (state.me?.channelId === c.channel_id) await deleteChannel().catch(() => {}); // revoke first, then delete (A8-5)
+        await phones();
+      },
+      pair: async ({ password, totp }) => {
+        const r = guard(await api("POST", "/me/pairing", { password, totp }));
+        if (r.status !== 200) return { ok: false, error: say(r.body.error === "malformed" ? "bad_credentials" : r.body.error) };
+        return { ok: true, ...r.body };
+      },
+    };
+    shell("phones", phonesView({ admin: everyone, user_id: me.user_id, channels: everyone ? all.body.channels : state.channels,
+      users: everyone ? users.body.users : [], newChannels: state.newChannels, thisChannelId: state.me?.channelId }, actions));
+  } finally { finishLoading(); }
+}
+
 async function services(silent = false) {
   const revision = viewRevision;
   const finishLoading = silent ? () => {} : loading();
@@ -411,9 +453,10 @@ async function home() {
       offline: needs.status === 200 ? needs.body.offline : [],
       workspaces,
       channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
+      newChannels: state.newChannels,
       thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
-      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), register: () => registerView(), removeChannel, forgetLocal },
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
     };
     liveItems = { user_id: user.user_id, items: homeData.items };
     shell("home", homeView(homeData), advancedForm(workspaces));
@@ -443,6 +486,7 @@ function clearSession() {
   state.rail = { hubName: "Hub", rows: [] };
   state.me = null;
   state.channels = [];
+  state.newChannels = [];
   state.adminPage = null;
   state.notice = null;
   state.menu = false;
@@ -936,7 +980,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin, activity }[route.kind] ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity, phones }[route.kind] ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

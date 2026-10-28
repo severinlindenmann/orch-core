@@ -31,7 +31,9 @@ export function HostDevices({ workspace }: { workspace: Workspace }) {
     <div className="space-y-6">
       <div className="space-y-3">
         <h2 className="text-base font-semibold">Phones</h2>
-        {hub.isPending && hub.fetchStatus !== 'idle' ? null : joined ? (
+        {hub.isPending && hub.fetchStatus !== 'idle' ? null : hub.isError ? (
+          <p data-testid="devices-hub-error" className="text-[13px] text-text-muted">Can&apos;t reach the hub right now.</p>
+        ) : joined ? (
           <AddPhone ws={workspace.id} />
         ) : (
           <p data-testid="devices-needs-hub" className="flex items-center gap-1.5 text-[13px] text-text-muted">

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Workspace } from '@/api/types'
 import { HostDevices } from './Devices'
 
-const hub = vi.hoisted(() => ({ data: undefined as unknown, isPending: false, fetchStatus: 'idle' }))
+const hub = vi.hoisted(() => ({ data: undefined as unknown, isPending: false, isError: false, fetchStatus: 'idle' }))
 vi.mock('../hub/shared', () => ({ useHub: () => hub }))
 vi.mock('./Readers', () => ({ ReaderLevels: () => null }))
 vi.mock('./ReplaceKey', () => ({ ReplaceKey: () => null }))
@@ -15,6 +15,7 @@ const ws = { id: 'w1', prefix: 'T', name: 'Test' } as unknown as Workspace
 const assign = vi.fn()
 
 beforeEach(() => {
+  hub.isError = false
   hubUrl.mockReset().mockResolvedValue('https://hub.example/#t=abc')
   assign.mockReset()
   Object.defineProperty(window, 'location', { value: { assign }, writable: true, configurable: true })
@@ -38,6 +39,15 @@ describe('Settings > Devices: phones connect through the hub', () => {
     expect(screen.queryByTestId('add-phone')).toBeNull()
     expect(screen.queryByRole('button', { name: /pair/i })).toBeNull()
     expect(document.body.textContent).not.toMatch(/terminal|comes later|relay|QR/i)
+  })
+
+  it('the hub query failed: a neutral line, not the no-hub text and no button', () => {
+    hub.data = undefined
+    hub.isError = true
+    render(<HostDevices workspace={ws} />)
+    expect(screen.getByTestId('devices-hub-error')).toHaveTextContent("Can't reach the hub")
+    expect(screen.queryByTestId('devices-needs-hub')).toBeNull()
+    expect(screen.queryByTestId('add-phone')).toBeNull()
   })
 
   it('the hub could not be reached: the button comes back, nothing navigates', async () => {

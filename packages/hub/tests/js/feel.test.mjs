@@ -55,10 +55,10 @@ test("dialog traps Tab, contains outside focus, closes on Escape and restores it
   const opener = control(), first = control(), last = control(), disabled = { ...control(), disabled: true };
   const events = {};
   const dialog = {
-    querySelectorAll: () => [first, disabled, last], querySelector: () => null,
+    querySelectorAll: (selector) => selector === "button" ? [] : [first, disabled, last], querySelector: () => null,
     contains: (target) => [first, last].includes(target),
     addEventListener: (key, fn) => { events[key] = fn; }, removeEventListener: (key) => { delete events[key]; },
-    remove() { this.removed = true; }, focus() { doc.activeElement = this; },
+    dispatchEvent: () => true, remove() { this.removed = true; }, focus() { doc.activeElement = this; },
   };
   try {
     const release = trapDialog(dialog, opener);
@@ -111,4 +111,56 @@ test("toast announces text, replaces previous messages, supports Undo and expire
     timer.fn();
     assert.equal(region.children[2].removed, true);
   } finally { Object.assign(globalThis, saved); }
+});
+
+test("Escape uses Cancel to settle a prompt, respects cancel prevention, and closes native dialogs", async () => {
+  const { trapDialog } = await import("../../src/orch_hub/web/feel.js");
+  const previous = globalThis.document;
+  globalThis.document = { addEventListener() {}, removeEventListener() {} };
+  try {
+    for (const mode of ["button", "prevent", "close", "remove"]) {
+      let key, settled = false, dispatched = false, closed = false;
+      const promise = new Promise(resolve => {
+        const button = { textContent: "Cancel", hasAttribute: () => false, click: () => { settled = true; resolve(); } };
+        const dialog = {
+          querySelectorAll: s => s === "button" && mode === "button" ? [button] : [], querySelector: () => null,
+          addEventListener: (s, fn) => { key = fn; }, removeEventListener() {}, focus() {},
+          dispatchEvent(event) { dispatched = true; assert.equal(event.type, "cancel"); assert.equal(event.cancelable, true); if (mode === "prevent") event.preventDefault(); return !event.defaultPrevented; },
+          remove() { closed = true; }, ...(mode === "close" ? { close() { closed = true; } } : {}),
+        };
+        const release = trapDialog(dialog);
+        key({ key: "Escape", preventDefault() {} });
+        release();
+        if (mode !== "button") resolve();
+      });
+      await promise;
+      assert.equal(settled, mode === "button");
+      assert.equal(dispatched, mode !== "button");
+      assert.equal(closed, mode === "close" || mode === "remove");
+    }
+  } finally { globalThis.document = previous; }
+});
+
+test("background replacement preserves fields, expanded forms, focus and selection", async () => {
+  const { replaceContent } = await import("../../src/orch_hub/web/feel.js");
+  const previous = globalThis.document;
+  const doc = globalThis.document = {};
+  const field = (tagName, id, value) => ({ tagName, id, value, checked: true, open: true,
+    getAttribute: () => null, focus() { doc.activeElement = this; },
+    setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; } });
+  const old = [field("INPUT", "answer", "draft"), field("SELECT", "workspace", "legal"), field("DETAILS", "manual")];
+  old[0].selectionStart = 1; old[0].selectionEnd = 3;
+  const fresh = [field("INPUT", "answer", ""), field("SELECT", "workspace", "product"), field("DETAILS", "manual")];
+  fresh[2].open = false;
+  const container = { nodes: old, querySelectorAll() { return this.nodes; }, replaceChildren(...nodes) { this.nodes = nodes; } };
+  try {
+    doc.activeElement = old[0];
+    replaceContent(container, fresh);
+    assert.equal(fresh[0].value, "draft"); assert.equal(fresh[0].checked, true);
+    assert.equal(fresh[1].value, "legal"); assert.equal(fresh[2].open, true);
+    assert.equal(doc.activeElement, fresh[0]); assert.equal(fresh[0].selectionStart, 1); assert.equal(fresh[0].selectionEnd, 3);
+    const routeField = field("INPUT", "answer", "new route");
+    replaceContent(container, [routeField], false);
+    assert.equal(routeField.value, "new route");
+  } finally { globalThis.document = previous; }
 });

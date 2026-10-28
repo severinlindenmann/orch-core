@@ -1,4 +1,4 @@
-import { skeleton, loading, enter, toast, watchDialogs } from "./feel.js";
+import { skeleton, loading, enter, toast, watchDialogs, replaceContent } from "./feel.js";
 // The hub console, minimum for the browser sign flow (design-a8): sign in, register this browser, see what needs me,
 // review one decision and sign it. The DOM is built with createElement and textContent only (lint: tests/web_lint),
 // every string from the workspace goes through renderText first, and nothing here calls a signer except the prompt.
@@ -34,7 +34,8 @@ function h(tag, props = {}, ...kids) {
 }
 let frame = null;
 let railSnapshot = "";
-const show = (...nodes) => { frame = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
+let paintedRoute = null;
+const show = (...nodes) => { frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
 const field = (label, input) => h("div", {}, h("label", { text: label }), input);
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
@@ -76,6 +77,7 @@ const say = (code) => WORDS[code] ?? "Refused (" + renderText(code) + ").";
 
 // --- views -------------------------------------------------------------------------------------------------------------
 function loginView(err) {
+  clearSession();
   const id = h("input", { id: "user", autocomplete: "username", required: true });
   const pw = h("input", { id: "pw", type: "password", autocomplete: "current-password", required: true });
   const code = h("input", { id: "code", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 6, required: true });
@@ -122,7 +124,14 @@ async function refresh() {
   return true;
 }
 
+function pageLoading(active, kind = active) {
+  if (frame && paintedRoute === location.hash) return;
+  if (state.user) shell(active, skeleton(kind));
+  else show(skeleton(kind));
+}
+
 function shell(active, ...nodes) {
+  const sameRoute = paintedRoute === location.hash;
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
   const name = renderText(state.user?.name ?? "");
   const hubName = renderText(state.rail.hubName);
@@ -140,8 +149,8 @@ function shell(active, ...nodes) {
     frame = root.querySelector(".app");
     railSnapshot = JSON.stringify(state.rail);
   } else {
-    frame.querySelector(".side").replaceWith(side);
-    frame.querySelector(".content").replaceChildren(...nodes.flat(2).filter(Boolean));
+    if (!sameRoute || railSnapshot !== JSON.stringify(state.rail)) frame.querySelector(".side").replaceWith(side);
+    replaceContent(frame.querySelector(".content"), nodes.flat(2).filter(Boolean), sameRoute);
     if (railSnapshot !== JSON.stringify(state.rail)) {
       frame.querySelector(".rail").replaceChildren(...railView().childNodes);
       railSnapshot = JSON.stringify(state.rail);
@@ -153,7 +162,8 @@ function shell(active, ...nodes) {
     if (selected) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
-  enter(frame.querySelector(".content"));
+  if (!sameRoute) enter(frame.querySelector(".content"));
+  paintedRoute = location.hash;
   const route = parseRoute(location.hash);
   for (const button of frame.querySelectorAll("[data-workspace]")) {
     const selected = button.getAttribute("data-workspace") === (route.workspace ?? "");
@@ -218,7 +228,7 @@ const expiredView = () => plain(h("h1", { text: "This link expired" }), h("p", {
 async function redeemTicket(t, replace) {
   const r = await api("POST", "/switch/redeem", replace ? { t, replace: true } : { t });
   const l = landing(r.status, r.body);
-  if (l.kind === "signout") { state.user = null; return plain(h("h1", { text: "You are signed out" }), h("p", { class: "muted", text: "Your hub session ended." }), h("button", { class: "pri", text: "Sign in again", onclick: () => loginView() })); }
+  if (l.kind === "signout") { clearSession(); return plain(h("h1", { text: "You are signed out" }), h("p", { class: "muted", text: "Your hub session ended." }), h("button", { class: "pri", text: "Sign in again", onclick: () => loginView() })); }
   if (l.kind === "expired") return expiredView();
   if (l.kind === "path") return location.replace(l.path);
   if (l.kind === "forward") {
@@ -251,8 +261,7 @@ function reauthView() {
 
 async function admin() {
   const finishLoading = loading();
-  if (state.user) shell("admin", skeleton("admin"));
-  else show(skeleton("admin"));
+  pageLoading("admin");
   try {
     if (!(await refresh())) return loginView();
     state.menu = false;
@@ -266,14 +275,19 @@ async function admin() {
       try { const r = await api(m, path, body); if (r.status === 403 && r.body.error === "reauth_required") reauthView(); return r; }
       finally { done(); }
     };
-    shell("admin", adminView({ api: adminApi, say, notice, refresh }));
+    if (state.adminPage && frame && paintedRoute === location.hash && !frame.querySelector(".skeleton")) {
+      await state.adminPage.reload();
+      shell("admin", state.adminPage);
+    } else {
+      state.adminPage = adminView({ api: adminApi, say, notice, refresh });
+      shell("admin", state.adminPage);
+    }
   } finally { finishLoading(); }
 }
 
 async function workspaces() {
   const finishLoading = loading();
-  if (state.user) shell("workspaces", skeleton("workspaces"));
-  else show(skeleton("workspaces"));
+  pageLoading("workspaces");
   try {
     if (!(await refresh())) return loginView();
     state.menu = false;
@@ -289,8 +303,7 @@ async function copyText(t) {
 
 async function services() {
   const finishLoading = loading();
-  if (state.user) shell("services", skeleton("services"));
-  else show(skeleton("services"));
+  pageLoading("services");
   try {
     if (!(await refresh())) return loginView();
     state.menu = false;
@@ -306,8 +319,7 @@ async function services() {
 
 async function home() {
   const finishLoading = loading();
-  if (state.user) shell("home", skeleton("home"));
-  else show(skeleton("home"));
+  pageLoading("home");
   try {
     if (!(await refresh())) return loginView();
     state.menu = false;
@@ -346,10 +358,19 @@ async function removeChannel(id) {
   await home();
 }
 
+function clearSession() {
+  state.user = null;
+  state.rail = { hubName: "Hub", rows: [] };
+  state.me = null;
+  state.channels = [];
+  state.adminPage = null;
+  state.notice = null;
+  state.menu = false;
+}
+
 async function signOut() {
   await api("DELETE", "/session");
-  state.user = null;
-  state.menu = false;
+  clearSession();
   loginView();
 }
 
@@ -613,8 +634,7 @@ function navigate(hash) {
 
 async function workspacePage(route) {
   const finishLoading = loading();
-  if (state.user) shell("workspaces", skeleton("workspace"));
-  else show(skeleton("workspace"));
+  pageLoading("workspaces", "workspace");
   try {
     if (!(await refresh())) return loginView();
     await loadRail();

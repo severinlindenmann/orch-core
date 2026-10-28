@@ -1,4 +1,4 @@
-import { skeleton } from "./feel.js";
+import { skeleton, replaceContent } from "./feel.js";
 import { renderText } from "./render.js";
 
 let showLeft = false;
@@ -55,7 +55,7 @@ export function adminView(d) {
   }
   async function load() {
     const current = ++generation;
-    panels.replaceChildren(skeleton("admin"));
+    if (!data) panels.replaceChildren(skeleton("admin"));
     try {
       const keys = ["users", "groups", "grants", "workspaces", "channels", "market-policy", "audit"];
       const responses = await Promise.all(keys.map((key) => d.api("GET", "/admin/" + key)));
@@ -415,10 +415,12 @@ export function adminView(d) {
       }), "Recent access changes"), !records.length ? p("No access changes recorded.") : null];
   }
   function draw() {
-    panels.replaceChildren(...[people, access, workspaces, marketplaces, audit].map((view, i) => h("section", {
+    replaceContent(panels, [people, access, workspaces, marketplaces, audit].map((view, i) => h("section", {
       id: "admin-panel-" + i, role: "tabpanel", "aria-labelledby": "admin-tab-" + i, hidden: i !== selected,
     }, view())));
   }
   void load();
-  return [h("h1", { text: "Admin" }), message, tabs, panels];
+  const view = [h("h1", { text: "Admin" }), message, tabs, panels];
+  view.reload = load;
+  return view;
 }

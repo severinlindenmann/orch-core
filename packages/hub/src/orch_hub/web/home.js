@@ -21,8 +21,12 @@ const note = (label) => h("p", { class: "small muted", text: label });
 export function homeSummary(workspaces, items = [], offline = []) {
   const down = new Set(offline);
   const rows = workspaces.map((w) => ({ ...w, online: w.online !== false && !down.has(w.workspace_id) }));
-  const ids = new Set(rows.map((w) => w.workspace_id));
-  const mine = items.filter((it) => ids.has(it.workspace_id));
+  const byId = new Map(rows.map((w) => [w.workspace_id, w]));
+  // Offline waiting items are notices, not actionable Needs-you rows or totals.
+  const mine = items.filter((it) => {
+    const w = byId.get(it.workspace_id);
+    return w?.online && it.online !== false && (it.signable || it.summary_only || (it.mode ?? w.mode) === "selective");
+  });
   return { rows, items: mine, online: rows.filter((w) => w.online).length, offline: rows.filter((w) => !w.online).length, waiting: mine.length };
 }
 
@@ -30,7 +34,7 @@ export function workspaceStatus(w) {
   if (w.online) return "online";
   const seen = w.last_seen;
   if (seen == null) return "offline since an unknown time";
-  const date = new Date(seen);
+  const date = new Date(typeof seen === "number" ? seen * 1000 : NaN);
   return "offline since " + (Number.isNaN(date.getTime()) ? "an unknown time" : date.toLocaleString());
 }
 
@@ -43,7 +47,7 @@ export function homeView(d) {
   for (const w of workspaces) if (w.online === false) offline.add(w.workspace_id);
   const mode = (it) => it.mode ?? byId.get(it.workspace_id)?.mode;
   const summary = (it) => it.summary_only || (!it.signable && mode(it) === "selective");
-  const items = health.items.filter((it) => !offline.has(it.workspace_id) && it.online !== false && (it.signable || summary(it)));
+  const items = health.items;
   const shortName = (w, id) => text(w?.name ?? "Workspace " + String(id).slice(0, 8));
   const workspaceName = (id) => shortName(byId.get(id), id);
   const needs = h("section", { class: "card needs-you", "aria-labelledby": "needs-heading" },

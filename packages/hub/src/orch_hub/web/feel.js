@@ -93,7 +93,16 @@ export function trapDialog(dialog, restore = document.activeElement) {
   }
   const focus = () => (controls()[0] ?? dialog).focus();
   const key = (event) => {
-    if (event.key === "Escape") { event.preventDefault(); dialog.remove(); }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      const cancel = [...dialog.querySelectorAll("button")].find((button) =>
+        !button.disabled && (button.hasAttribute("data-cancel") || button.textContent.trim() === "Cancel"));
+      if (cancel) cancel.click();
+      else if (dialog.dispatchEvent(new Event("cancel", { cancelable: true }))) {
+        if (typeof dialog.close === "function") dialog.close();
+        else dialog.remove();
+      }
+    }
     if (event.key === "Tab") {
       event.preventDefault();
       const items = controls(), index = items.indexOf(document.activeElement);
@@ -122,4 +131,35 @@ export function watchDialogs() {
   });
   observer.observe(document.body, { childList: true, subtree: true });
   return () => { observer.disconnect(); release?.(); };
+}
+
+// Preserve editing state across a refresh of the same view, without retaining old handlers.
+export function replaceContent(container, nodes, preserve = true) {
+  const selector = "input, select, textarea, button, a[href], summary, details, [tabindex]";
+  const keyed = () => {
+    const counts = new Map();
+    return new Map([...container.querySelectorAll(selector)].map((el) => {
+      const base = [el.tagName, el.id, el.getAttribute("name"), el.getAttribute("type"),
+        el.getAttribute("href"), el.tagName === "BUTTON" ? el.textContent : ""].join("|");
+      const n = counts.get(base) ?? 0;
+      counts.set(base, n + 1);
+      return [base + "|" + n, el];
+    }));
+  };
+  const previous = preserve ? keyed() : new Map();
+  const focused = document.activeElement;
+  container.replaceChildren(...nodes);
+  for (const [key, el] of keyed()) {
+    const old = previous.get(key);
+    if (!old) continue;
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(el.tagName)) {
+      el.value = old.value;
+      if (el.tagName === "INPUT") el.checked = old.checked;
+    }
+    if (el.tagName === "DETAILS") el.open = old.open;
+    if (old === focused) {
+      el.focus();
+      if (typeof old.selectionStart === "number") el.setSelectionRange?.(old.selectionStart, old.selectionEnd, old.selectionDirection);
+    }
+  }
 }

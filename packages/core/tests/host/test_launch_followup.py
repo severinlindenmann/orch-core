@@ -68,3 +68,31 @@ def test_plan_followup_and_ordinary_plan(monkeypatch, tmp_path):
     assert ordinary == agents.plan(call, {**args, "mode": "work"}, hub, agent=True, fu=None)
     assert ordinary["blocked"] is None and "run_grant" not in ordinary["_launch"]
     assert "followup" not in agents._PREVIEW["mode"]["enum"]
+    # Mode followup without the host's own follow-up or schedule is refused, whatever a caller sends.
+    for task_args in ({}, {"brief": f"sc_{'0' * 26}", "label": "sc"}):
+        blocked = agents.plan(call, {**args, **task_args}, hub, agent=True)["blocked"]
+        assert blocked["code"] == "launch.invalid"
+    sc = {**fu, "id": SC}
+    assert agents.plan(call, args, hub, agent=False, fu=sc)["blocked"]["code"] == "launch.invalid"
+    assert agents.plan(call, args, hub, agent=True, fu=sc)["blocked"] is None
+
+
+SC = "sc_" + "0" * 26
+
+
+def test_schedule_prompt_and_only_the_host_reaches_mode_followup():
+    from orch.host import terms
+
+    text = prompt("followup", "ABC-1", task={"followup": SC})
+    assert f"started by schedule {SC} on ticket ABC-1" in text
+    for op in ("agent.preview", "agent.start"):
+        body = {"ticket": "ABC-1", "harness": "codex", "mode": "followup", "spec": "0" * 64}
+        if op == "agent.preview":
+            body.pop("spec")
+        with pytest.raises(HostError) as exc:
+            agents._validate(op, body)
+        assert exc.value.code == "invalid.input"
+    assert terms._PREVIEW["mode"]["enum"] == ["context"]
+    for bad in ("sc_" + "8" * 26, SC + "\n", SC + " x", "sc_" + "0" * 25):
+        with pytest.raises(HostError):
+            prompt("followup", "ABC-1", task={"followup": bad})

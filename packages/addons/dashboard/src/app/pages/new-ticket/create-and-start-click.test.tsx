@@ -63,7 +63,7 @@ async function signed() {
   const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
   await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
   await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
-  await r.user.click(await within(sheet).findByRole('button', { name: 'Review and start agent' }, T))
+  await r.user.click(await within(sheet).findByRole('button', { name: 'Create and start' }, T))
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
   expect(api.prepareClick).not.toHaveBeenCalled() // opening the dialog prepares nothing

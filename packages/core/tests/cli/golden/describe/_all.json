@@ -117,6 +117,34 @@
         "summary": "List pending follow-ups across visible tickets."
       },
       {
+        "name": "schedule.add",
+        "cli": "schedule add",
+        "group": "Lifecycle",
+        "who": "human",
+        "summary": "Schedule automatic agent sessions on this ticket for up to 30 days."
+      },
+      {
+        "name": "schedule.cancel",
+        "cli": "schedule cancel",
+        "group": "Lifecycle",
+        "who": "human",
+        "summary": "Cancel a schedule and end its run grants."
+      },
+      {
+        "name": "schedule.list",
+        "cli": "schedule list",
+        "group": "Read",
+        "who": "read",
+        "summary": "List manual schedules across visible tickets."
+      },
+      {
+        "name": "schedule.show",
+        "cli": "schedule show",
+        "group": "Read",
+        "who": "read",
+        "summary": "Show a schedule and its signed brief."
+      },
+      {
         "name": "webhook.new",
         "cli": "webhook new",
         "group": "Lifecycle",

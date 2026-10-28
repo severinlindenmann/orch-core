@@ -126,7 +126,7 @@ describe('Send answer in the card, one click (C2: prepare only on a trusted pres
     press()
     const strip = await screen.findByTestId('answer-strip', {}, T)
     expect(prepare).toHaveBeenCalledTimes(1)
-    expect(within(strip).getByRole('heading', { name: 'You are answering' })).toBeInTheDocument()
+    expect(strip).toHaveAccessibleName('Your answer')
     expect(screen.getByTestId('sign-choice')).toHaveTextContent('DATE')
     expect(screen.getByTestId('strip-workspace')).toHaveTextContent(`DEMO · ${WS_ID.slice(-8)}`)
     expect(screen.getByTestId('strip-technical')).toBeInTheDocument() // the technical facts sit behind the small "i"

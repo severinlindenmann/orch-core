@@ -14,6 +14,7 @@ from orch.ops.workflows import WORKFLOWS
 SECTION_10_3 = [
     *"status describe help show list search next inbox new claim release handoff submit ask wait set".split(),
     "follow-up", "follow-up cancel", "follow-up reschedule", "follow-up undo", "follow-up show", "follow-up list",
+    "schedule add", "schedule cancel", "schedule list", "schedule show",
     "webhook new",
     "section set", "ac add", "ac edit",
     *(f"task {v}" for v in "list next add edit start done skip block reopen".split()),

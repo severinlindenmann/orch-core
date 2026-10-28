@@ -220,6 +220,8 @@ CLICK_OPS = frozenset(
         "addon.purge",
         "policy.set",
         "people.set",  # B12D: who owns, works on or reviews a ticket decides who may act on it
+        "schedule.add",  # emits schedule.set
+        "schedule.cancel",  # emits schedule.cancelled
         "follow_up.reschedule",
         "follow_up.undo",
         "follow_up.cancel",  # run 12 (6.4): the Cancel button of a follow-up is one click, like the other daily ops

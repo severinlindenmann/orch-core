@@ -225,6 +225,11 @@ def build(
         "device": device,
         "artifacts": artifacts,
     }
+    if prepared["op"] == "schedule.add":
+        from orch.ops.schedule import RISK as SCHEDULE_RISK
+
+        view["risk"] = SCHEDULE_RISK
+        view["lines"] += [SCHEDULE_RISK, "No click or confirmation is required at firing time."]
     if deposit:
         deposit_checks(prepared)
         view["lines"] = [*view["lines"], "", DEPOSIT_RISK, DEPOSIT_LINE]

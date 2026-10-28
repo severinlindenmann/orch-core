@@ -2073,3 +2073,12 @@ Revert: remove Wiki route registration and feature advertisement; repository pag
 - **Decision:** Schedules gets a Follow-ups tab (grouped: needs a person, waiting, finished in 7 days). The ticket page shows a quiet card in the right column while the agent waits and a full-width banner only when a person is needed; the board card gets a clock chip ("Resumes Tue 09:00", local time); Today gets a card only for failed, did not run, a chain stopped by orch, or a deadline wake-up (never for success). Run now is "Run now as me", a plain click without a dialog (the label says whose rights); "Hide for me" hides only the card for this person and does not move the ticket. Agents > Grants shows a follow-up run's grant with the access it came from. Real data is the host's `follow_up.list` through `GET /api/w/:ws/followups`; Cancel is the signed `followup_cancel` hand-off (`follow_up.cancel`). Reschedule and the Undo of a Cancel need host events that do not exist yet: the server says `can.reschedule` / `can.undo` false and the page does not draw them (the mock does).
 - **Why:** owner 27 Oct "take the recommended routes"; Opus API and Codex agreed on the quiet card and on hide-only; they disagreed on Run now (confirm vs undo countdown), so the simpler plain click was taken (mockups/followups-ui/README.md "Decisions (27 Oct)").
 - **Revert:** remove `src/app/pages/schedules`, the `followups` node, the chip, the Today cards, the rail card and banner, `server/.../followups.py` and the `followup_cancel` action.
+
+
+### 2026-10-28 — C3 review hardening
+
+Decision: Require click contract 4 on every click route; validate the relay's risk allowlist against core. Generate the fake hosts' one-press allowlist from core. Refuse combined click sequences that include agent access until the UI can request a separate grant confirmation (terminal sequences still work). Gate risky confirmations on viewport intersection when supported, expire blocked arms, and prefer signer headlines.
+
+Why: Stale pages must not sign without the risk review; fixtures must reflect the real signer's operation classes. Risk lines must stay on screen throughout the dwell.
+
+Revert: Restore the prior gate only together with a coordinated click contract change in core, server, and client.

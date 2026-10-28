@@ -22,6 +22,7 @@ from collections import OrderedDict
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
+from orch.click.protocol import ONE_PRESS_OPS
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import adapters
@@ -136,6 +137,29 @@ class SealBegin(BaseModel):
 ClickBody = PrepareBody
 
 
+#: contract 4 (run 13 C3): a View's `risk_lines` is at most this many lines of at most this many characters
+RISK_LINES_MAX, RISK_LINE_CHARS, HEADLINE_CHARS = 64, 400, 60
+
+
+def contract4_view_ok(view: dict) -> bool:
+    """Contract 4's View fields: `headline`, one line of text (not empty), and `risk_lines`, a list of lines of text
+    (maybe empty), and `headline_detail`, null or one line of text (the capped, quoted free text beside the headline),
+    all the signer's and in its `view_digest`. Passed on unchanged; only their shape is checked here."""
+    head, risk, detail = view.get("headline"), view.get("risk_lines"), view.get("headline_detail")
+    return (
+        isinstance(head, str)
+        and 0 < len(head) <= HEADLINE_CHARS
+        and "\n" not in head
+        and (
+            detail is None or (isinstance(detail, str) and 0 < len(detail) <= HEADLINE_CHARS + 3 and "\n" not in detail)
+        )
+        and isinstance(risk, list)
+        and (risk == []) == (view.get("op") in ONE_PRESS_OPS)
+        and len(risk) <= RISK_LINES_MAX
+        and all(isinstance(x, str) and 0 < len(x) <= RISK_LINE_CHARS and "\n" not in x for x in risk)
+    )
+
+
 def deposit_view_ok(view: dict, ws: str) -> bool:
     """A deposit grant's View (section 0.8.6 item 6): `deposit:true`, core's deposit line in `deposit_line` and in
     `lines`, the owner's risk sentence in `lines`, this workspace and a plain click
@@ -152,6 +176,8 @@ def deposit_view_ok(view: dict, ws: str) -> bool:
         and isinstance(lines, list)
         and DEPOSIT_LINE in lines
         and DEPOSIT_RISK in lines
+        and isinstance(view.get("risk_lines"), list)
+        and view["risk_lines"][:1] == [DEPOSIT_RISK]  # contract 4: the signer marks it as the risk
         and confirm == {"kind": "click"}
     )
 
@@ -178,6 +204,8 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
         and isinstance(lines, list)
         and REVEAL_LINE in lines
         and REVEAL_RISK in lines
+        and isinstance(view.get("risk_lines"), list)
+        and view["risk_lines"][:1] == [REVEAL_RISK]  # contract 4: the signer marks it as the risk
         and view.get("confirm") == {"kind": "click"}
     )
 
@@ -399,6 +427,10 @@ def verify(prepared: dict, ws: str, **expect) -> dict:
 
 
 def register(app: FastAPI, gateway: Gateway):
+    def contract(request: Request):
+        if request.headers.get("X-Orch-Click-Contract") != "4":
+            raise fail("click.contract", "Reload the page: this page is out of date.", exit=9)
+
     clicks = app.state.clicks = Clicks()
     failed_bumps: dict[str, int] = {}
     handoffs = app.state.handoffs  # the quota of open requests is one per session, shared with the hand-off
@@ -437,7 +469,7 @@ def register(app: FastAPI, gateway: Gateway):
         if not handoffs.owns(app.state.person_of(ws), ws, request_id):
             raise fail("not_found", exit=2)
 
-    @app.get("/api/w/{ws}/click/status")
+    @app.get("/api/w/{ws}/click/status", dependencies=[Depends(contract)])
     def status(ws: str = Depends(workspace)):
         gateway.enabled(ws)
         card = adapters.click_card(signer.status().get(ws)) or {
@@ -475,7 +507,7 @@ def register(app: FastAPI, gateway: Gateway):
         me = app.state.person_of(ws)
         return any(m.person == me and m.role == "owner" for m in adapters.members(gateway.call(ws, "member.list")))
 
-    @app.post("/api/w/{ws}/click/custody/seal")
+    @app.post("/api/w/{ws}/click/custody/seal", dependencies=[Depends(contract)])
     def custody_seal(_body: SealBegin, request: Request, ws: str = Depends(workspace)):
         """The signer's one-use key for the NEW passphrase of "One click off" (#1198 C12): request id, review digest
         and the public key. Owners. Nothing secret passes here."""
@@ -538,7 +570,7 @@ def register(app: FastAPI, gateway: Gateway):
         if not signer.rotations():
             raise fail("click.contract", "Update orch-core: its signing helper cannot replace a key yet.", exit=9)
 
-    @app.post("/api/w/{ws}/click/rotate/seal")
+    @app.post("/api/w/{ws}/click/rotate/seal", dependencies=[Depends(contract)])
     def rotate_seal(_body: SealBegin, request: Request, ws: str = Depends(workspace)):
         """The review of "Replace this device's key" with the signer's one-use key for the recovery code and the new
         passphrase (#1198 C13). Nothing secret passes here; the signer refuses while One click is on."""
@@ -552,7 +584,7 @@ def register(app: FastAPI, gateway: Gateway):
             )
         return got
 
-    @app.post("/api/w/{ws}/click/rotate")
+    @app.post("/api/w/{ws}/click/rotate", dependencies=[Depends(contract)])
     def rotate(body: RotateBody, request: Request, ws: str = Depends(workspace)):
         """Replace this computer's device key: ciphertext only, relayed and never opened here (#1198 C13)."""
         step = refuse_step_up(app.state.auth, request, "rotate", body, ws)
@@ -581,7 +613,7 @@ def register(app: FastAPI, gateway: Gateway):
         if not signer.github_tokens():
             raise fail("click.contract", "This dashboard needs an update before it can save a GitHub token.", exit=9)
 
-    @app.get("/api/w/{ws}/click/github")
+    @app.get("/api/w/{ws}/click/github", dependencies=[Depends(contract)])
     def github_state(ws: str = Depends(workspace)):
         """Is a GitHub token saved? `stored`, `missing`, or `null` when the GitHub add-on is off or asks for no key.
         Read from `addon.list`; the token itself is never read here. Owners only, like the other GitHub routes."""
@@ -595,7 +627,7 @@ def register(app: FastAPI, gateway: Gateway):
         state = None if row is None else row.get("credential")
         return {"credential": state if state in ("stored", "missing") else None}
 
-    @app.post("/api/w/{ws}/click/github/seal")
+    @app.post("/api/w/{ws}/click/github/seal", dependencies=[Depends(contract)])
     def github_seal(_body: SealBegin, ws: str = Depends(workspace)):
         """The signer's one-use key for the GitHub token (#1198 C16). Owners. Nothing secret passes here; the signer
         refuses when the GitHub add-on is off."""
@@ -607,7 +639,7 @@ def register(app: FastAPI, gateway: Gateway):
             )
         return got
 
-    @app.post("/api/w/{ws}/click/github")
+    @app.post("/api/w/{ws}/click/github", dependencies=[Depends(contract)])
     def github_token(body: GithubBody, request: Request, ws: str = Depends(workspace)):
         """Save the GitHub token: ciphertext only, relayed and never opened here (#1198 C16). On a remote session
         this needs the passkey step-up (`stepup.py`)."""
@@ -628,7 +660,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("internal", "The signing helper answered something unexpected.", exit=9)
         return {"credential": "stored"}
 
-    @app.post("/api/w/{ws}/click/github/remove")
+    @app.post("/api/w/{ws}/click/github/remove", dependencies=[Depends(contract)])
     def github_remove(_body: SealBegin, ws: str = Depends(workspace)):
         """Delete the stored GitHub token. It only takes authority away, so it is a plain click everywhere."""
         github_gate(ws)
@@ -637,7 +669,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("internal", "The signing helper answered something unexpected.", exit=9)
         return {"credential": "missing"}
 
-    @app.post("/api/w/{ws}/click/custody")
+    @app.post("/api/w/{ws}/click/custody", dependencies=[Depends(contract)])
     def custody(body: CustodyBody, request: Request, ws: str = Depends(workspace)):
         """Switch signing in the dashboard on or off (section 0.8.6 item 3a): owners only; the signer does the work
         (this process never opens a key) and answers the workspace's card. No route here changes a credential."""
@@ -703,7 +735,7 @@ def register(app: FastAPI, gateway: Gateway):
             and (view.get("terminals") is body.terminals if body.on else True)
         )
 
-    @app.post("/api/w/{ws}/click/runner/review")
+    @app.post("/api/w/{ws}/click/runner/review", dependencies=[Depends(contract)])
     def runner_review(body: RunnerBody, request: Request, ws: str = Depends(workspace)):
         """The review of turning dashboard execution on or off: core's own words, relayed after a check."""
         runner_gate(request, ws, body)
@@ -714,7 +746,7 @@ def register(app: FastAPI, gateway: Gateway):
             )
         return got
 
-    @app.post("/api/w/{ws}/click/runner")
+    @app.post("/api/w/{ws}/click/runner", dependencies=[Depends(contract)])
     def runner_switch(body: RunnerBody, request: Request, ws: str = Depends(workspace)):
         """Turn dashboard execution on or off after the review (#1198 C14): the signer does what `orch runner enable` or
         `disable` does. This process starts no service and writes no switch."""
@@ -732,7 +764,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("internal", "The signing helper answered something unexpected.", exit=9)
         return {"enabled": enabled, "terminals": terminals}
 
-    @app.post("/api/w/{ws}/click/images")
+    @app.post("/api/w/{ws}/click/images", dependencies=[Depends(contract)])
     def images(body: ImageChunk, ws: str = Depends(workspace)):
         """R3 part B: one chunk of a pasted screenshot, relayed to the signer, which holds the bytes and checks them
         against the digest of the intent the person reviews. This server keeps nothing of them."""
@@ -741,7 +773,7 @@ def register(app: FastAPI, gateway: Gateway):
             raise fail("click.contract", "Update orch-core: its signing helper cannot take pictures yet.", exit=9)
         return signer.call("stash", {"workspace_id": ws, **body.model_dump()})
 
-    @app.post("/api/w/{ws}/click/prepare")
+    @app.post("/api/w/{ws}/click/prepare", dependencies=[Depends(contract)])
     def prepare(body: ClickBody, request: Request, ws: str = Depends(workspace)):
         token = request.state.token
         if app.state.auth.login_kind(token) == "switch":
@@ -756,6 +788,16 @@ def register(app: FastAPI, gateway: Gateway):
             raise
 
     def _prepare(body, token, ws):
+        if isinstance(body, NewTicketSequence | QuickStart) and body.agent is not None:
+            raise HostError(
+                {
+                    "code": "human.click_refused",
+                    "reason": "terminal_only",
+                    "retryable": False,
+                    "message": "Agent access needs its own grant confirmation. Create without starting first.",
+                },
+                exit=3,
+            )
         grant = isinstance(body, RunnerGrant)
         if isinstance(body, AgentAccess) and not signer.reveals():
             raise fail("click.contract", "Update orch-core: its signing helper cannot show a grant secret yet.", exit=9)
@@ -843,7 +885,7 @@ def register(app: FastAPI, gateway: Gateway):
         handoffs.commit(token, ws, rid, until=handoffs.clock() + TTL, kind="click")
         return {k: got[k] for k in ("request_id", "expires_at", "op", "confirm") if k in got}
 
-    @app.post("/api/w/{ws}/click/view")
+    @app.post("/api/w/{ws}/click/view", dependencies=[Depends(contract)])
     def view(body: Step, ws: str = Depends(workspace)):
         mine(ws, body.request_id)
         rid = body.request_id
@@ -872,6 +914,8 @@ def register(app: FastAPI, gateway: Gateway):
         shown = got.get("view") if isinstance(got, dict) else None
         if not isinstance(shown, dict) or shown.get("op") != op or shown.get("risk") != RISK:
             raise refusal_check("The review is not what was asked for, or lacks the risk line. Cancel it.")
+        if not contract4_view_ok(shown):  # run 13 C3: the headline and the signer's own risk lines
+            raise refusal_check("The review lacks its headline or its risk lines. Nothing was shown. Cancel it.")
         # The runner grant asked for `deposit:true`; its View must say so (and carry the deposit and risk lines), and
         # no other View may claim a deposit: the two must agree, or nothing is shown (no Sign button).
         if isinstance(wanted, RunnerGrant) != (shown.get("deposit") is True) or (
@@ -926,7 +970,7 @@ def register(app: FastAPI, gateway: Gateway):
             sweep()  # a restart may have happened inside this call
             raise
 
-    @app.post("/api/w/{ws}/click/state")
+    @app.post("/api/w/{ws}/click/state", dependencies=[Depends(contract)])
     def state(body: Step, ws: str = Depends(workspace)):
         """Where a request stands at the host (read through our own link): the answer to an unknown outcome."""
         rid = body.request_id
@@ -965,7 +1009,7 @@ def register(app: FastAPI, gateway: Gateway):
                 out |= {"key": key, "progress": progress}
         return out
 
-    @app.post("/api/w/{ws}/click/sign")
+    @app.post("/api/w/{ws}/click/sign", dependencies=[Depends(contract)])
     def sign(body: Sign, request: Request, ws: str = Depends(workspace)):
         step = refuse_step_up(app.state.auth, request, "sign", body, ws)  # where a typed key arrives: fail closed
         step = ready(step)
@@ -1044,7 +1088,7 @@ def register(app: FastAPI, gateway: Gateway):
             return out | deposit_answer(got, rid)
         return out
 
-    @app.post("/api/w/{ws}/click/cancel")
+    @app.post("/api/w/{ws}/click/cancel", dependencies=[Depends(contract)])
     def cancel(body: Step, ws: str = Depends(workspace)):
         mine(ws, body.request_id)
         rid = body.request_id

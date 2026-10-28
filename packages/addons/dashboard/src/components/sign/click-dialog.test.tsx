@@ -178,6 +178,68 @@ describe('the action dialog with click-to-sign', () => {
 
 
 
+describe('C3: the outcome press, with a contract-4 View', () => {
+  const HEADLINE = 'Approve the plan of DEMO-0044'
+  const v4 = (risk: string[] = []) => viewAnswer({ headline: HEADLINE, risk_lines: risk, content: { title: "Unsigned lure", headline: HEADLINE, ticket: { key: 'DEMO-0044', uid_tail: 'abcd1234' } } } as never)
+
+  it('runs the 1 s arm on the signer’s headline and signs once at its end; the workspace and the ticket are named', async () => {
+    c.view.mockResolvedValue(v4())
+    const { dialog } = await toPanel()
+    expect(within(dialog).getByRole('button', { name: HEADLINE })).toBeEnabled()
+    expect(within(dialog).getByRole('heading', { name: HEADLINE })).toBeInTheDocument()
+    expect(within(dialog).queryByText('Unsigned lure')).toBeNull()
+    expect(within(dialog).getByTestId('sign-progress')).toBeInTheDocument()
+    expect(within(dialog).getByTestId('sign-workspace')).toHaveTextContent('Workspace DEMO')
+    expect(within(dialog).getByTestId('sign-workspace-target')).toHaveTextContent('DEMO-0044')
+    expect(c.sign).not.toHaveBeenCalled()
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(1), { timeout: ARM_MS + 2000 })
+    expect(c.sign.mock.calls[0][2]).toBe(DIGEST)
+    expect(c.prepare).toHaveBeenCalledTimes(1) // one press: one request, one signature
+  })
+
+  it('Esc during the arm cancels it: the request is cancelled and nothing is signed', async () => {
+    c.view.mockResolvedValue(v4())
+    await toPanel()
+    await new Promise((r) => setTimeout(r, ARM_MS / 2))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(c.cancel).toHaveBeenCalledTimes(1), T)
+    expect(c.cancel.mock.calls[0][1]).toBe(REQ)
+    await new Promise((r) => setTimeout(r, ARM_MS))
+    expect(c.sign).not.toHaveBeenCalled()
+  })
+
+  it('a second press during the arm cancels it and says nothing was signed', async () => {
+    c.view.mockResolvedValue(v4())
+    const { dialog } = await toPanel()
+    press(within(dialog).getByRole('button', { name: HEADLINE }))
+    await waitFor(() => expect(c.cancel).toHaveBeenCalledTimes(1), T)
+    expect(await within(dialog).findByText('Nothing was signed.', {}, T)).toBeInTheDocument()
+    await new Promise((r) => setTimeout(r, ARM_MS + 200))
+    expect(c.sign).not.toHaveBeenCalled()
+  })
+
+  it('risk lines: shown under the button, never signed by the arm; the second press 1 s after they show signs once', async () => {
+    c.view.mockResolvedValue(v4(['Agents can act for you on tickets for 7 days']))
+    const { dialog } = await toPanel()
+    expect(within(dialog).getByTestId('sign-risk-lines')).toHaveTextContent('Agents can act for you on tickets for 7 days')
+    expect(within(dialog).queryByTestId('sign-progress')).toBeNull()
+    const b = await armed(dialog)
+    await new Promise((r) => setTimeout(r, 300))
+    expect(c.sign).not.toHaveBeenCalled()
+    press(b)
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(1), T)
+    expect(c.sign.mock.calls[0][2]).toBe(DIGEST)
+  })
+
+  it('a contract.mismatch refusal is one plain line', async () => {
+    c.prepare.mockRejectedValue(new ApiError(409, { code: 'contract.mismatch', message: 'contract 3 != 4', retryable: false }))
+    const { dialog } = await open()
+    expect(await within(dialog).findByText('This page and the signing helper are different versions. Nothing was signed. Reload the page; if it stays, update orch-core.', {}, T)).toBeInTheDocument()
+    expect(dialog).not.toHaveTextContent('contract 3 != 4')
+    expect(within(dialog).queryByRole('button', { name: 'Try again' })).toBeNull()
+  })
+})
+
 describe('[rev818] adversarial: the switch moving never re-binds or signs an open request', () => {
   it('a stale-method event while the click review is open: the review stays, nothing is signed, cancelled or re-prepared', async () => {
     const { dialog } = await toPanel()

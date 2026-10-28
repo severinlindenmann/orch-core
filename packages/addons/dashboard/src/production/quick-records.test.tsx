@@ -172,7 +172,9 @@ it('with an agent runner and no access the review carries the access length as a
   expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
   expect(state.host.clickPrepares()).toEqual([]) // nothing is prepared until the choice is made and the outcome pressed
   await user.selectOptions(select, '24')
-  await prepareByClick(screen.getByRole('dialog'), 'Sign and start task')
+  await user.click(within(dialog).getByRole('button', { name: 'Sign and start task' }))
+  await waitFor(() => expect(state.host.clickPrepares()).toHaveLength(1), T)
+  expect(state.host.calls.filter(c => c.path.endsWith('/click/sign'))).toEqual([])
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'quick_start', title: 'Water the plants', agent: { hours: 24 } }])
 }, 30000)
 

@@ -81,6 +81,10 @@ def test_a_click_grant_goes_to_the_runner_and_never_to_the_dashboard(world):
     assert view["deposit_line"] == "The secret goes to your orch runner on this machine and is never shown"
     assert view["confirm"] == {"kind": "click"}
     assert view["deposit_line"] in view["lines"]
+    from orch.click.protocol import DEPOSIT_RISK
+
+    # run 13 C3: the signer marks the risk of agent access, with the length the person chose
+    assert view["risk_lines"] == [DEPOSIT_RISK, "Agents get this authority for 8 hours, until it ends or you stop it."]
     res = click.sign(p["request_id"], v["view_digest"])
     assert res["deposit"] == "confirmed" and res["deposit_id"] == p["request_id"][3:]
     gid = res["grant"]
@@ -282,10 +286,10 @@ def test_the_status_fallback_maps_a_reason_to_the_closed_set(world, host_reason,
     assert again["deposit"] == "rejected" and again["deposit_reason"] == expected
 
 
-def test_the_contract_rule_is_three_and_documented():
+def test_the_contract_rule_is_four_and_documented():
     from orch.click.protocol import CONTRACT, DEPOSIT_REASONS
 
-    assert CONTRACT == 3
+    assert CONTRACT == 4
     assert DEPOSIT_REASONS == {"grant.forgotten", "grant.not_runner", "grant.verbs", "grant.expiring", "rate.limited",
                                "runner.unavailable", "other"}  # fmt: skip
 
@@ -334,6 +338,11 @@ def test_reveal_a_grant_secret_is_sealed_to_the_page_and_nowhere_else(world):
     fp = cview.key_fingerprint(page.public)
     assert view["seal"] == {"v": 1, "alg": "P256-HKDF-SHA256-A256GCM", "purposes": ["grant.secret"], "for": fp}
     assert protocol.REVEAL_RISK in view["lines"] and protocol.REVEAL_LINE in view["lines"] and "deposit" not in view
+    # run 13 C3: the signer marks the risk, with the length of the grant
+    assert view["risk_lines"] == [
+        protocol.REVEAL_RISK,
+        "Agents get this authority for 2 hours, until it ends or you stop it.",
+    ]
     res = click.sign(p["request_id"], v["view_digest"], reveal_key=page.public)
     secret = page.open(res, v["view_digest"])
     gid, _, tail = secret.partition(".")

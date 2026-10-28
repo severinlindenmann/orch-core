@@ -439,7 +439,7 @@ def test_the_budget_counts_event_signatures_on_monotonic_time():
 
 def test_status_reads_metadata_without_loading_a_key(click, served):
     out = click.signer.status({})
-    assert out["contract"] == 3 and out["core"]
+    assert out["contract"] == 4 and out["core"]
     (row,) = out["workspaces"]
     assert row["workspace_id"] == served.wid and row["enabled"] is True
     assert click.store.gets == 0
@@ -480,7 +480,12 @@ def test_the_real_child_answers_status_and_exits_when_the_channel_closes(tmp_pat
     client = spawn.start(env)
     try:
         out = client.call("status", {}, timeout=60)
-        assert out["contract"] == 3 and out["workspaces"] == []
+        assert out["contract"] == 4 and out["workspaces"] == []
+        # run 13 C3: a client announcing another contract is refused over the real channel, before anything else
+        with pytest.raises(ClickError) as info:
+            client.call("status", {"contract": 3}, timeout=60)
+        assert info.value.code == "contract.mismatch"
+        assert client.call("status", {"contract": 4}, timeout=60)["contract"] == 4
         with pytest.raises(ClickError) as info:
             client.call("view", {"workspace_id": "0" * 32, "request_id": "hr_" + "0" * 26}, timeout=60)
         assert info.value.code == "not_found"
@@ -902,7 +907,7 @@ def test_the_signer_exits_when_its_parent_goes(tmp_path):
     b.close()
     pid = int(mid.stdout.readline().strip())
     try:
-        assert ClickClient(a).call("status", {}, timeout=60)["contract"] == 3  # running, its parent watch started
+        assert ClickClient(a).call("status", {}, timeout=60)["contract"] == 4  # running, its parent watch started
         mid.stdin.write("go\n")
         mid.stdin.flush()
         mid.wait(30)

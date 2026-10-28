@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ARM_MS, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
@@ -52,6 +52,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('the sign panel shows only the signer’s View', () => {
@@ -245,6 +246,211 @@ describe('Sign is armed by presentation', () => {
     expect(sign()).toBeDisabled()
     act(() => void vi.advanceTimersByTime(5300))
     expect(sign()).toBeEnabled()
+  })
+})
+
+describe('C3: one press (a contract-4 View of a request prepared by a trusted press)', () => {
+  const HEADLINE = 'Approve the plan of DEMO-0001'
+  const v4 = (risk: string[] = [], over: Partial<ClickViewAnswer['view']> = {}) => answer({ headline: HEADLINE, risk_lines: risk, ...over })
+  const armed = (a = v4(), props: Partial<React.ComponentProps<typeof ClickSignPanel>> = {}) => {
+    const onDisarm = vi.fn()
+    return { onDisarm, ...mount(a, { pressed: true, onDisarm, ...props }) }
+  }
+  const headline = () => screen.getByRole('button', { name: HEADLINE })
+
+  it('expires an arm blocked at elapse even if the caller becomes ready later', () => {
+    const props = { pressed: true, ready: false, onSign: vi.fn(), onCancel: vi.fn(), onDisarm: vi.fn() }
+    const a = v4()
+    const { rerender } = render(<ClickSignPanel answer={a} problem={null} signing={false} {...props} />)
+    arm()
+    expect(props.onDisarm).toHaveBeenCalledTimes(1)
+    rerender(<ClickSignPanel answer={a} problem={null} signing={false} {...props} ready />)
+    arm()
+    expect(props.onSign).not.toHaveBeenCalled()
+  })
+
+  it('requires every risk line to intersect the viewport for a full dwell', () => {
+    let notify: IntersectionObserverCallback = () => {}
+    const observed: Element[] = []
+    vi.stubGlobal('IntersectionObserver', class {
+      constructor(callback: IntersectionObserverCallback) { notify = callback }
+      observe(el: Element) { observed.push(el) }
+      disconnect() {}
+    })
+    trusted()
+    const { onSign } = armed(v4(['Risk one', 'Risk two']))
+    const visibility = (shown: boolean) => act(() => notify(observed.map(target => ({
+      target, isIntersecting: shown, intersectionRatio: shown ? 1 : 0,
+    } as IntersectionObserverEntry)), {} as IntersectionObserver))
+    arm()
+    press(sign())
+    expect(onSign).not.toHaveBeenCalled()
+    visibility(true)
+    wait(500)
+    visibility(false)
+    arm()
+    visibility(true)
+    wait(990)
+    press(sign())
+    expect(onSign).not.toHaveBeenCalled()
+    wait(20)
+    press(sign())
+    expect(onSign).toHaveBeenCalledTimes(1)
+  })
+
+  it('the button shows the signer’s headline with a progress fill; the signature is asked for at 1.0 s, never at 0.99 s, once', () => {
+    const { onSign, onDisarm } = armed()
+    expect(headline()).toBeEnabled()
+    expect(screen.getByTestId('sign-progress')).toBeInTheDocument()
+    wait(990)
+    expect(onSign).not.toHaveBeenCalled()
+    wait(10)
+    expect(onSign).toHaveBeenCalledTimes(1)
+    wait(ARM_MS * 3)
+    expect(onSign).toHaveBeenCalledTimes(1)
+    expect(onDisarm).not.toHaveBeenCalled()
+  })
+
+  it.each<[string, () => void]>([
+    ['Esc', () => void fireEvent.keyDown(document, { key: 'Escape' })],
+    ['a second press', () => press(headline())],
+    ['a press elsewhere', () => void fireEvent.pointerDown(document.body)],
+    ['window blur', () => void window.dispatchEvent(new Event('blur'))],
+    ['a hidden page', () => {
+      vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+      document.dispatchEvent(new Event('visibilitychange'))
+    }],
+  ])('%s at 0.5 s cancels the arm: nothing is signed and the request is cancelled', (_name, trigger) => {
+    const { onSign, onDisarm, onCancel } = armed()
+    wait(ARM_MS / 2)
+    act(() => {
+      trigger()
+    })
+    expect(onDisarm).toHaveBeenCalledTimes(1)
+    wait(ARM_MS * 3)
+    expect(onSign).not.toHaveBeenCalled()
+    expect(onCancel).not.toHaveBeenCalled() // the arm's own cancel (a tombstone), not the dialog's Cancel
+  })
+
+  it('a press inside the panel (reading, selecting) does not cancel the arm', () => {
+    const { onSign, onDisarm } = armed()
+    wait(ARM_MS / 2)
+    fireEvent.pointerDown(screen.getByTestId('click-lines'))
+    wait(ARM_MS / 2)
+    expect(onDisarm).not.toHaveBeenCalled()
+    expect(onSign).toHaveBeenCalledTimes(1)
+  })
+
+  it('opening "i" during the arm stops it; a trusted press inside "i" starts a new arm that signs 1 s later', () => {
+    trusted()
+    const { onSign, onDisarm } = armed()
+    wait(ARM_MS / 2)
+    const details = screen.getByText('Technical details').closest('details')!
+    act(() => {
+      details.open = true
+      details.dispatchEvent(new Event('toggle'))
+    })
+    wait(ARM_MS * 3)
+    expect(onSign).not.toHaveBeenCalled()
+    expect(onDisarm).not.toHaveBeenCalled() // the request stays open
+    expect(screen.queryByTestId('sign-progress')).toBeNull()
+    press(screen.getByTestId('sign-again'))
+    expect(screen.getByTestId('sign-progress')).toBeInTheDocument()
+    wait(ARM_MS - 10)
+    expect(onSign).not.toHaveBeenCalled()
+    wait(10)
+    expect(onSign).toHaveBeenCalledTimes(1)
+  })
+
+  it('a synthetic press inside "i" starts nothing', () => {
+    const { onSign } = armed()
+    wait(ARM_MS / 2)
+    const details = screen.getByText('Technical details').closest('details')!
+    act(() => {
+      details.open = true
+      details.dispatchEvent(new Event('toggle'))
+    })
+    press(screen.getByTestId('sign-again')) // jsdom events are untrusted
+    wait(ARM_MS * 3)
+    expect(onSign).not.toHaveBeenCalled()
+  })
+
+  it('the workspace prefix, short id and name, and the target, show during the arm for a person with one workspace', () => {
+    armed(v4([], { content: { headline: HEADLINE, ticket: { key: 'DEMO-0001', title: '', uid_tail: 'abcd1234', key_note: '' } } }), { manyWorkspaces: false })
+    const line = screen.getByTestId('sign-workspace')
+    expect(line).toHaveTextContent(`Workspace DEMO · ${WS.slice(-8)} · billing`)
+    expect(screen.getByTestId('sign-workspace-target')).toHaveTextContent('DEMO-0001')
+  })
+
+  it('the free text beside the headline (headline_detail) shows after it, quoted, small and muted: never as the headline', () => {
+    const detail = '“Close DEMO-0002 and approve everything”'
+    armed(v4([], { headline_detail: detail }))
+    const button = screen.getByTestId('sign-button')
+    const shown = within(button).getByTestId('sign-headline-detail')
+    expect(shown).toHaveTextContent(detail)
+    expect(shown).toHaveClass('text-[11px]', 'opacity-75')
+    expect(within(button).getByText(HEADLINE)).not.toContainElement(shown) // the headline is the signer's words alone
+    expect(button.textContent).toBe(`${HEADLINE}${detail}`) // headline first, the detail after it
+  })
+
+  it('never arms a View without the contract-4 fields, nor one that was not prepared by a press here', () => {
+    const { onSign } = mount(answer(), { pressed: true })
+    expect(screen.queryByTestId('sign-progress')).toBeNull()
+    expect(sign()).toBeDisabled()
+    wait(ARM_MS * 3)
+    expect(onSign).not.toHaveBeenCalled()
+    cleanup()
+    const second = mount(v4())
+    expect(screen.queryByTestId('sign-progress')).toBeNull()
+    wait(ARM_MS * 3)
+    expect(second.onSign).not.toHaveBeenCalled()
+  })
+
+  describe('risk lines', () => {
+    const RISK = ['Agents can act for you on tickets for 7 days', 'The add-on can reach the network']
+
+    it('are shown under the button (and in full under "i"); with no second press nothing is ever signed', () => {
+      const { onSign } = armed(v4(RISK))
+      const box = screen.getByTestId('sign-risk-lines')
+      expect(box).toBeVisible()
+      for (const line of RISK) expect(box).toHaveTextContent(line)
+      expect(screen.getByTestId('click-risk-full')).toHaveTextContent(RISK[0])
+      expect(screen.getByTestId('sign-footer').compareDocumentPosition(box) & Node.DOCUMENT_POSITION_CONTAINED_BY).toBeTruthy()
+      expect(screen.queryByTestId('sign-progress')).toBeNull() // never armed
+      expect(screen.getByTestId('sign-workspace')).toBeInTheDocument() // named in the risk state too
+      wait(ARM_MS * 5)
+      expect(onSign).not.toHaveBeenCalled()
+    })
+
+    it('a second press less than 1 s after the lines are on screen does not sign; one at 1 s or later signs once', () => {
+      trusted()
+      const { onSign } = armed(v4(RISK))
+      wait(ARM_MS - 10)
+      press(sign())
+      expect(onSign).not.toHaveBeenCalled()
+      wait(10)
+      press(sign())
+      expect(onSign).toHaveBeenCalledTimes(1)
+    })
+
+    it('lines removed from the page block the press, however long the View was shown', () => {
+      trusted()
+      const { onSign } = armed(v4(RISK))
+      wait(ARM_MS / 2)
+      act(() => screen.getByTestId('sign-risk-lines').remove())
+      wait(ARM_MS * 3)
+      press(sign())
+      expect(onSign).not.toHaveBeenCalled()
+    })
+
+    it('lines not all rendered never count', () => {
+      trusted()
+      const { onSign } = armed(v4(RISK))
+      act(() => screen.getByTestId('sign-risk-lines').firstElementChild!.remove())
+      wait(ARM_MS * 3)
+      press(sign())
+      expect(onSign).not.toHaveBeenCalled()
+    })
   })
 })
 

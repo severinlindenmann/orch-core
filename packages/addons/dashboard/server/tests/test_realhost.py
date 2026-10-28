@@ -55,7 +55,9 @@ def world(tmp_path_factory):
     (static / "assets/main-hash.js").write_text("console.log(1)")
     gateway = Gateway(ws.state, click=Signer(ws.state, start=ws.click_start()))
     auth = Auth()
-    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+    with TestClient(
+        create_app(PORT, gateway, auth, static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+    ) as client:
         yield type(
             "World", (), {"ws": ws, "keys": keys, "gateway": gateway, "auth": auth, "client": client, "root": root}
         )
@@ -468,7 +470,9 @@ def pair(tmp_path_factory):
     (static / "index.html").write_text("<html></html>")
     gateway = Gateway(a.state)
     auth = Auth()
-    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+    with TestClient(
+        create_app(PORT, gateway, auth, static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+    ) as client:
         launch = auth.launch(PORT)
         token = client.post("/auth/session", json={"code": launch["code"]}, headers={"Origin": ORIGIN}).json()["token"]
         yield type("Pair", (), {"a": a, "b": b, "client": client, "token": token, "gateway": gateway})

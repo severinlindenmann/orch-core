@@ -53,6 +53,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/hub/share/preview",
         "/api/w/{ws}/hub/share/revoke",  # one click: stop sharing a ticket (owner, full session)
         "/api/w/{ws}/hub/share/rule-remove",  # one click: stop sharing by a rule (owner, full session)
+        "/api/w/{ws}/hub/share/rule-add",  # one click: share more (owner, full LOCAL session, a plan shown here)
+        "/api/w/{ws}/hub/share/sync",  # one click: confirm the shown selection (same rules)
         "/api/w/{ws}/hub/switch",
         "/api/w/{ws}/hub/rail",
         "/auth/switch",

@@ -276,9 +276,23 @@ def test_gate_row_from_P_keeps_the_hash_it_was_listed_with(kit):
 def test_verdict_row_only_while_testing_with_sources(kit):
     push_proj(kit, "testing")
     rows = {r["kind"]: r for r in kit.r.needs_you(WS, USER)}
-    assert set(rows) == {"gate", "verdict"} and rows["verdict"]["hash"] == H_VER
+    assert set(rows) == {"verdict"} and rows["verdict"]["hash"] == H_VER  # plan was passed long before testing
     c = kit.r.item(WS, USER, rows["verdict"]["item_id"])["content"]
     assert c["gate"] == "verify" and c["sources"] == [{"repo": "github.com/acme/app", "sha": "c0c0c0c0"}]
+
+
+def test_gates_count_only_when_they_can_be_waiting_like_mission_control(kit):
+    kit.push()
+    every = {g: kit.host.gate(1, "sha256:" + f"{i:02x}" * 32) for i, g in enumerate(("requirements", "plan"), 1)}
+    every["code"] = kit.host.gate(1, "sha256:" + "c3" * 32, SRC)
+    every["verify"] = kit.host.gate(1, H_VER, SRC)
+    n = len(kit.host.logs[LOG])
+    seen = {}
+    for status in ("open", "in_progress", "testing", "done"):
+        kit.vs.service.accept(WS, WSK_PUB, kit.host.page(LOG, n, 1, proj=kit.host.proj(LOG, status, every)))
+        seen[status] = sorted(r["gate"] for r in kit.r.needs_you(WS, USER))
+        n = len(kit.host.logs[LOG])
+    assert seen == {"open": ["plan", "requirements"], "in_progress": [], "testing": ["code", "verify"], "done": []}
 
 
 def test_a_new_hash_is_a_new_row(kit):

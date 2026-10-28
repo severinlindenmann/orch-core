@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Layers, ServerOff } from 'lucide-react'
 import type { Workspace } from '@/api/types'
 import { uuid8 } from '@/api/workspaces'
@@ -40,10 +41,31 @@ export function WorkspaceChoice({ prefix, choices }: { prefix: string; choices: 
   )
 }
 
+/** How often, and how many times, the page asks again by itself while a workspace is not ready (right after a join the
+ *  dashboard is switched on within seconds): the page then opens without a click on "Try again". */
+export const RECHECK_MS = 2500
+export const RECHECK_MAX = 24
+
+/** Refresh the workspace list now and then while `active`; stops when the page is left, or after `RECHECK_MAX` tries. */
+export function useRecheck(active: boolean) {
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    if (!active) return
+    let tries = 0
+    const timer = window.setInterval(() => {
+      tries += 1
+      void queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+      if (tries >= RECHECK_MAX) window.clearInterval(timer)
+    }, RECHECK_MS)
+    return () => window.clearInterval(timer)
+  }, [active, queryClient])
+}
+
 /** An address that names (by `?ws=`) a workspace whose host is not running. The others keep working. */
 export function WorkspaceStopped({ workspace }: { workspace: Workspace }) {
   const unsafe = workspace.host_state === 'workspace.name_invalid'
   const [checking, setChecking] = useState(false)
+  useRecheck(!unsafe && !workspace.host_message)
   usePageHeader(unsafe ? 'Workspace not shown' : workspace.host_state === 'addon.disabled' ? 'Dashboard setup' : workspace.host_message ? 'Workspace can\'t be opened' : 'Host not running')
   if (unsafe)
     return (

@@ -42,6 +42,7 @@ class Registry:
             ("version", "TEXT"),
             ("commit", "TEXT"),
             ("host", "TEXT"),
+            ("name", "TEXT"),
             ("last_seen_ms", "INTEGER"),
             ("peer_addr", "TEXT"),
         ):
@@ -164,7 +165,7 @@ class Registry:
             if state.get("status") != "bound":
                 self._db.execute("UPDATE workspace SET profile=NULL WHERE workspace_id=?", (ws,))
             if self._mode_locked(ws):
-                self._db.execute("UPDATE workspace SET host='' WHERE workspace_id=?", (ws,))
+                self._db.execute("UPDATE workspace SET host='', name='' WHERE workspace_id=?", (ws,))
             if owner_alias is None:
                 self._db.execute("DELETE FROM owner_alias WHERE workspace_id=?", (ws,))
             else:
@@ -191,7 +192,7 @@ class Registry:
             if state.get("status") != "bound":
                 self._db.execute("UPDATE workspace SET profile=NULL WHERE workspace_id=?", (ws,))
             if self._mode_locked(ws):
-                self._db.execute("UPDATE workspace SET host='' WHERE workspace_id=?", (ws,))
+                self._db.execute("UPDATE workspace SET host='', name='' WHERE workspace_id=?", (ws,))
 
     def profile(self, ws: str) -> dict[str, Any] | None:
         with self.lock:
@@ -223,11 +224,12 @@ class Registry:
 
         with self.lock, self._db:
             self._db.execute(
-                'UPDATE workspace SET version=?, "commit"=?, host=? WHERE workspace_id=?',
+                'UPDATE workspace SET version=?, "commit"=?, host=?, name=? WHERE workspace_id=?',
                 (
                     render_text(body["version"])[:32],
                     render_text(body["commit"])[:40],
                     "" if self._mode_locked(ws) else render_text(body["host"])[:80],
+                    "" if self._mode_locked(ws) else render_text(body["name"])[:80],
                     ws,
                 ),
             )
@@ -245,6 +247,13 @@ class Registry:
                 )
         except Exception:  # noqa: BLE001, S110  # display telemetry must never fail the real op
             pass
+
+    def display_name(self, ws: str) -> str | None:
+        """The name the workspace reported with ``status_put``: only a full-mode workspace shares it (selective keeps
+        it private, like ``host``). ``None`` when there is none: callers show a friendly fallback, never an id."""
+        with self.lock:
+            row = self._db.execute("SELECT name FROM workspace WHERE workspace_id=?", (ws,)).fetchone()
+        return row[0] if row and isinstance(row[0], str) and row[0] else None
 
     def status(self, ws: str) -> dict[str, Any]:
         with self.lock:

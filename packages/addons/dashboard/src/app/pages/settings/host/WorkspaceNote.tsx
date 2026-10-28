@@ -9,6 +9,7 @@ import { useViewerRole } from './useViewerRole'
 
 const TRUST_ON = "Claude Code asks you to trust every folder it works in. Orch's agents start in this workspace's ticket folders without that question, only in folders orch makes."
 const TRUST_OFF = 'Claude Code asks you to trust each ticket folder before an agent can work in it. Setup turns this off for the folders orch makes.'
+const TRUST_MISSING = 'Claude Code has not been started on this computer yet. Start it once; then orch can let its agents work without the trust question.'
 const HISTORY_ON = 'Orch saves your tickets and their history on this computer every 15 minutes, in the background. It is not sent anywhere.'
 const HISTORY_OFF = 'Your tickets and their history are not being saved for you. Setup turns this on.'
 
@@ -23,8 +24,9 @@ export function WorkspaceNote({ workspace }: { workspace: Workspace }) {
   const parts: string[] = []
   const more: string[] = []
   if (mayRecord && t?.available) {
-    parts.push(t.on ? 'Claude Code trusts this folder' : 'Claude Code asks about each folder')
-    more.push(t.on ? TRUST_ON : TRUST_OFF)
+    const missing = t.config === 'missing'
+    parts.push(missing ? 'Claude Code not set up yet' : t.on ? 'Claude Code trusts this folder' : 'Claude Code asks about each folder')
+    more.push(missing ? TRUST_MISSING : t.on ? TRUST_ON : TRUST_OFF)
   }
   if (mayRecord && r?.available && r.configured !== false && r.repo) {
     const on = r.auto?.on === true

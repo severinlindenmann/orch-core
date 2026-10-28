@@ -58,7 +58,7 @@ function connections(data) {
   const ws = data.workspaces ?? { count: 0, online: 0 };
   const list = data.workspaces_list;
   const workspaces = Array.isArray(list) && list.length ? list.slice(0, 8).map((w) =>
-    node(w.name ?? "Workspace " + String(w.workspace_id ?? "").slice(0, 8), w.online ? "online" : "offline", w.online ? "ok" : "muted")) :
+    node(w.name || "A workspace", w.online ? "online" : "offline", w.online ? "ok" : "muted")) :
     [node("Workspaces", Array.isArray(list) ? "0 workspaces, 0 online" : ws.count + " workspaces, " + ws.online + " online", "muted")];
   if (list?.length > 8) workspaces.push(h("li", { class: "small muted", text: "+" + (list.length - 8) + " more" }));
   const arrow = (label) => h("div", { class: "arrow" }, label,

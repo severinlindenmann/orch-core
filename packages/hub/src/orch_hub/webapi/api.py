@@ -356,7 +356,6 @@ _CHAN = frozenset(
         "whoami",
         "sign_out",
         "my_workspaces",
-        "workspace_roles",
         "needs_you",
         "item",
         "my_channels",
@@ -386,7 +385,6 @@ SWITCH_HANDLERS = frozenset(
         "whoami",
         "sign_out",
         "my_workspaces",
-        "workspace_roles",
         "my_handoffs",
         "needs_you",
         "item",
@@ -1056,8 +1054,13 @@ class WebApi:
         rows = []
         for w in self._workspaces(c.user_id):
             st = workspace_status(self.d.registry, w["workspace_id"])
-            # host name, address and last seen only for the workspace owner and hub admins, never to a phone session
-            if not (w["role"] in ("admin", "owner") and c.scope != "channel"):
+            # Private telemetry belongs to hub admins and this workspace's owner, never phone sessions.
+            private = c.scope != "channel" and (
+                self.d.access.is_hub_admin(c.user_id)
+                or w["role"] == "owner"
+                or self.d.registry.owner_alias(w["workspace_id"]) == c.user_id
+            )
+            if not private:
                 st = {k: v for k, v in st.items() if k not in ("host", "address", "last_seen_ms")}
             rows.append({**w, **st})
         return 200, {
@@ -1082,7 +1085,7 @@ class WebApi:
                         "members": [names[u] for u in self.d.access.members(grant["group"]) if u in names],
                     }
                 )
-        return 200, {"owner": owner, "groups": groups}
+        return 200, {"owner": owner, "groups": groups, "profile": self.d.registry.profile(ws)}
 
     @staticmethod
     def _shared_signable(o: dict[str, Any]) -> bool:

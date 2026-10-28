@@ -1493,6 +1493,14 @@ class WebApi(ChangeHandlers):
         if (self.d.api_origin or c.origin) is None:
             raise ApiError("unavailable")
         prior = self.d.access.has_user(uid) and self.d.access.must_recover(uid)
+        if self.d.access.has_user(uid) and self.d.access.is_active(uid):
+            raise ApiError("conflict")  # not disabled: nothing to enable (and nothing to strip)
+        # no group (hub-admin included) survives an enabling: a flag-only or interrupted disable left them. They go BEFORE
+        # the flag clears, so there is no instant at which an enabled person holds the old reach; it is re-granted through
+        # the normal path
+        groups = list(self.d.access.groups_of(uid))
+        for group in groups:
+            self.d.access.remove_member(group, uid)
         # clears ``disabled`` AND sets ``must_recover`` in one transaction: from this instant the old password and TOTP
         # are useless, whatever happens next; only the recovery link below (or none: the person stays locked out) opens it
         if not self.d.access.set_disabled(uid, False, actor=c.user_id):
@@ -1502,11 +1510,6 @@ class WebApi(ChangeHandlers):
             self.d.channels.revoke_all(uid)
             self.d.channels.end_sessions(uid)
             self._void_prepared(uid)
-            # and no group (hub-admin included): a flag-only or interrupted disable left them, an enabling must not bring
-            # their reach back; it is re-granted through the normal path
-            groups = list(self.d.access.groups_of(uid))
-            for group in groups:
-                self.d.access.remove_member(group, uid)
             token, iid, expires = inv.create("recovery", created_by=c.user_id, for_user=uid)
             link = self._invite_link(c, token)
         except BaseException:  # no link, no enabling: back to disabled, ``must_recover`` as it was

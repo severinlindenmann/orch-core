@@ -137,6 +137,11 @@ def test_signer_view_has_inline_values_identity_and_capability_risk(served, net)
         # A prepared settings prefix with signed capability risk never signs merely by dwelling.
         assert op == "settings.set"
         assert view["risk_lines"] == ["It may use the internet."]
+        # the relay/dashboard contract 4 check: risk lines are empty exactly for the one-press allowlist, so this staged
+        # sequence (first step settings.set, capability risk) is a press-mode View that never arms and never auto-signs
+        from orch.click import protocol
+
+        assert (view["risk_lines"] == []) == (view["op"] in protocol.ONE_PRESS_OPS) and view["risk_lines"]
         c.mono.t += 5
         assert c.view(prepared["request_id"])["view"]["risk_lines"] == view["risk_lines"]
         assert c.signatures == 0 and not M.addon_dir(served).exists()

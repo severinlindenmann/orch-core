@@ -159,7 +159,7 @@ function Review({
             </Button>
           ) : (
             <Button disabled={busy} onClick={proceed}>
-              Review installation
+              Review update
             </Button>
           )}
         </DialogFooter>

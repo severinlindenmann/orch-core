@@ -269,3 +269,27 @@ def test_enabled_update_is_a_separate_grant_with_required_digest_and_caps():
     for required in ("digest", "caps"):
         with pytest.raises(ValidationError):
             parse({k: v for k, v in data.items() if k != required})
+
+
+@pytest.mark.parametrize("state", ["active", "disabled", "not_granted", "purged", "broken"])
+def test_market_update_requires_enabled_addon_at_prepare(state):
+    body = parse({
+        "action": "market_update", "name": "echo", "staged": STAGE,
+        "digest": "sha256:" + "a" * 64, "caps": ["network"],
+    })
+    calls = []
+
+    def call(op):
+        calls.append(op)
+        return {"addons": [{"name": "echo", "state": state}]}
+
+    link = SimpleNamespace(welcome={"peer": {"person": "p_" + "1" * 32}, "ops": {"addon.grant": 1}}, call=call)
+    gateway = SimpleNamespace(link=lambda ws: link)
+    if state == "active":
+        prepared = plan(gateway, "a" * 32, body)
+        assert prepared.op == "addon.grant" and prepared.sequence is None
+    else:
+        with pytest.raises(HostError) as exc:
+            plan(gateway, "a" * 32, body)
+        assert exc.value.error["code"] == "addon.disabled"
+    assert calls == ["addon.list"]

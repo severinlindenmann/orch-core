@@ -322,7 +322,7 @@ it('with One click on, stale, dev and widened warnings stay visible above the si
   ws().marketStage = { ...base, market: { ...base.market, stale: true, class: 'dev' }, update: { ...base.update!, widened: true } }
   const d = await openReview('installed')
   trusted()
-  await userEvent.click(within(d).getByRole('button', { name: 'Review installation' }))
+  await userEvent.click(within(d).getByRole('button', { name: 'Review update' }))
   const panel = await screen.findByTestId('click-panel', {}, T)
   const lead = screen.getByTestId('install-summary')
   expect(lead.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
@@ -346,7 +346,7 @@ it.each(['enabled', 'active'])('%s updates use the separate grant review and req
   const d = await openReview('installed', status)
   expect(within(d).getByText('This update asks for more than before.')).toBeInTheDocument()
   trusted()
-  await userEvent.click(within(d).getByRole('button', { name: 'Review installation' }))
+  await userEvent.click(within(d).getByRole('button', { name: 'Review update' }))
   await screen.findByTestId('click-panel', {}, T)
   expect(state.host.clickPrepares().map(c => c.body)).toEqual([{
     action: 'market_update', name: 'calendar', staged: 'demo-stage',
@@ -363,10 +363,10 @@ it.each(['enabled', 'active'])('%s updates use the separate grant review and req
 it('expired update reviews discard the old stage before reviewing again', async () => {
   ws().marketStage = { ...updateStage(true), expires_at: 1 }
   const d = await openReview()
-  expect(within(d).queryByRole('button', { name: 'Review installation' })).toBeNull()
+  expect(within(d).queryByRole('button', { name: 'Review update' })).toBeNull()
   ws().marketStage = { ...updateStage(true), stage: 'demo-stage-new' }
   await userEvent.click(within(d).getByRole('button', { name: 'Review again' }))
-  await screen.findByRole('button', { name: 'Review installation' }, T)
+  await screen.findByRole('button', { name: 'Review update' }, T)
   expect(state.host.calls.some(c => c.method === 'DELETE' && c.path.endsWith('/market/stage/demo-stage'))).toBe(true)
   expect(state.host.calls.filter(c => c.method === 'POST' && c.path.endsWith('/market/stage'))).toHaveLength(2)
   expect(state.host.clickPrepares()).toHaveLength(0)

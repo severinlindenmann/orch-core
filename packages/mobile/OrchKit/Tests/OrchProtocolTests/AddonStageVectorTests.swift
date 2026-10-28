@@ -14,7 +14,7 @@ import Testing
             #expect(event["staged"].str.hasPrefix("st_"))
             #expect(event["package_sha256"].str.hasPrefix("sha256:"))
             #expect(event.object?["capabilities"] != nil)
-            #expect(throws: (any Error).self) {
+            #expect(throws: PhoneEvents.Failure.badTicketUID) {
                 try PhoneEvents.signingBytes(event: event.object!, log: "workspace",
                                              workspace: ID16(hex: vectors["workspace_id"].str)!)
             }

@@ -234,7 +234,6 @@ export const ONE_PRESS_OPS: ReadonlySet<string> = new Set(onePressOps)
  */
 export function riskLinesFor(request: Pick<HandoffRequest, 'op' | 'material'>, body: Record<string, unknown> = {}): string[] {
   if (body.agent) return ['FROM-THE-SIGNER risk: agents can act for you on tickets'] // a task started with agent access
-  if (body.action === 'market_grant') return ['FROM-THE-SIGNER risk: the staged add-on gets its signed capabilities']
   if (ONE_PRESS_OPS.has(request.op)) return []
   const payload = (request.material as unknown as { review?: { payload?: Record<string, unknown> }[] } | undefined)?.review?.[0]?.payload ?? {}
   const set = (payload.set ?? {}) as Record<string, unknown>

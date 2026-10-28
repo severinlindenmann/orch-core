@@ -271,3 +271,48 @@ def test_an_older_index_than_the_stage_saw_is_refused_at_submit(served, human, n
     path.write_bytes(json.dumps({**doc, "index_version": 99}).encode())
     path.chmod(0o600)
     assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "addon.stage_changed"
+
+
+def _update_view(served, human):
+    """The REAL signer's View of the update's ``addon.grant`` (a plain grant: an update is no install sequence)."""
+    from tests.host.test_click import Click
+
+    st = ok(stage(served, update=True))["data"]
+    c = Click(served)
+    try:
+        p = c.prepare(
+            "addon.grant",
+            {
+                "name": "standup",
+                "staged": st["stage"],
+                "digest": st["package_sha256"],
+                "caps": st["grant"]["capabilities"],
+            },
+        )
+        view = c.view(p["request_id"])["view"]
+        assert c.signatures == 0
+        return st, view
+    finally:
+        c.close()
+
+
+def test_a_widened_update_review_lists_every_signed_capability_as_risk_and_needs_the_second_press(
+    served, human, net, v1
+):
+    """D3 (decision: no new field in the signed event): the signer lists ALL capabilities the grant signs as risk
+    lines, computed from the signed events, so an update is never a one-press View."""
+    from orch.click import protocol
+
+    publish(served, net, "1.1.0", ("network", "pty"))
+    _, view = _update_view(served, human)
+    assert view["op"] == "addon.grant"
+    assert view["risk_lines"], "a risky View: the dashboard starts it in press mode and never arms it"
+    assert "addon.grant" not in protocol.ONE_PRESS_OPS
+    assert len(view["risk_lines"]) >= 2  # network and pty both named, not only what is new
+
+
+def test_a_non_widened_update_review_is_still_a_risk_view(served, human, net, v1):
+    """The conservative control: no new capability, the update is still reviewed with risk lines (second press)."""
+    publish(served, net, "1.0.1")
+    _, view = _update_view(served, human)
+    assert view["risk_lines"] and view["op"] == "addon.grant"

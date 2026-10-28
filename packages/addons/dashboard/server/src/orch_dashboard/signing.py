@@ -1642,6 +1642,10 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         op, args = host_call(body, labels)  # the only place an op name is chosen
     if isinstance(body, Details) and body.via == "estimate" and not gateway.addon_on(link, "estimate"):
         raise fail("addon.disabled", "Estimate is switched off here. Switch it on in Settings, Add-ons.", exit=3)
+    if isinstance(body, MarketUpdate):
+        rows = link.call("addon.list")["addons"]
+        if not any(isinstance(a, dict) and a.get("name") == body.name and a.get("state") == "active" for a in rows):
+            raise fail("addon.disabled", "Turn this add-on on before reviewing an update.", exit=3)
     addon_base_ = None
     if isinstance(body, AddonDisable | AddonGrant):
         from .addon_switches import addon_base, check_off

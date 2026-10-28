@@ -284,8 +284,9 @@ class Signer:
 
     # -- calls -----------------------------------------------------------------------------------------------------
     def session_alive(self, session: str, live: Callable[[], bool]) -> None:
-        """Never queue a renewal behind IPC; recheck session liveness after taking the channel."""
-        if not self.chan.acquire(blocking=False):
+        """Wait for the channel at most 1 s (a renewal skipped for a busy channel would let the 5 s lease lapse and
+        cancel a live hold); recheck session liveness after taking it."""
+        if not self.chan.acquire(timeout=1.0):
             return
         try:
             if live():

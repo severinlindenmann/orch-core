@@ -60,6 +60,7 @@ KEY_ID = "dk"
 STEPUP_OPS = frozenset({"custody_on", "custody_off", "rotate", "runner", "sign", "github_token"})
 STEPUP_REQUEST_OPS = frozenset({"custody_off", "rotate", "sign", "github_token"})
 MAX_APPROVALS = 16
+LEASE_S = 5.0  # the hold lease: a 2 s renewal plus the longest signer IPC (fail closed, never late)
 DWELL_SECONDS = 1.0
 PER_MINUTE = 30
 PER_HOUR = 600
@@ -226,7 +227,7 @@ class ClickSigner:
         self._token_offers: dict[tuple[str, str], tuple[sealed.Recipient, str, float]] = {}
         self.lock = threading.RLock()
         self.holds: dict[tuple[str, str], dict[str, Any]] = {}
-        self.leases: dict[str, float] = {}
+        self.leases: dict[str, tuple[float, float]] = {}  # session -> (monotonic until, wall set)
         self.busy = False
         #: page keys reserved at prepare, each for one approval (workspace, request): one key, one request, one seal
         #: (sealed-field contract §3)
@@ -863,7 +864,7 @@ class ClickSigner:
                     continue
                 self.busy = True
                 try:
-                    if self.mono() - hold["deadline"] > 30:
+                    if self.mono() - hold["deadline"] > 30 or abs(self.wall() - hold["deadline_wall"]) > 30:
                         raise ClickError("hold.late", "not sent: deadline missed")
                     self._sign(hold["args"])
                     hold["state"] = "submitted"
@@ -1495,12 +1496,15 @@ class ClickSigner:
         if not isinstance(session, str) or not session:
             raise ClickError("invalid.input", "session is required")
         with self.lock:
-            self.leases = {s: until for s, until in self.leases.items() if until > self.mono()}
-            self.leases[session] = self.mono() + 3
+            self.leases = {s: v for s, v in self.leases.items() if v[0] > self.mono()}
+            self.leases[session] = (self.mono() + LEASE_S, self.wall())
         return {"state": "alive"}
 
     def lease_fresh(self, session: str) -> bool:
-        return self.mono() < self.leases.get(session, float("-inf"))
+        """Fresh only if BOTH clocks agree: the monotonic clock stops during a suspend, the wall clock does not, so a
+        lid closed with a hold pending never makes the lease look alive on wake (fail closed on any clock jump)."""
+        got = self.leases.get(session)
+        return got is not None and self.mono() < got[0] and abs(self.wall() - got[1]) < LEASE_S
 
     def cancel_holds(self, args: Mapping[str, Any]) -> dict[str, Any]:
         """Forget every unsigned hold of a session, without waiting on the host."""

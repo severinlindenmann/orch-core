@@ -454,8 +454,9 @@ def register(app: FastAPI, gateway: Gateway):
                     and any(owner == token for _, owner in list(held.values()))
                 )
 
+        stop = threading.Event()  # one Event for this renewer thread; nothing sets it, the wait is its timer
         try:
-            while not threading.Event().wait(2):
+            while not stop.wait(2):
                 if not auth.valid(token, touch=False):
                     return
                 with auth.lock:

@@ -459,3 +459,16 @@ def test_blocked_cancel_cannot_keep_session_hold_alive(click, human):
     finally:
         release.set()
         thread.join(2)
+
+
+def test_a_suspend_never_signs_a_hold(click, human, served):
+    """The monotonic clock stops in sleep, the wall clock does not: mono stays put while wall jumps an hour between
+    the lease renewal and run_holds, so neither the lease nor the deadline may look fresh (fail closed)."""
+    rid, digest = hold(click, human)
+    assert sign(click, rid, digest)["state"] == "held"
+    advance(click, 10)
+    click.signer.session_alive({"session": "session-a"})
+    served.lab.ws.clock[0] += 3600  # wall only
+    click.signer.run_holds()
+    assert click.signatures == 0
+    assert pending(served, rid)["state"] != "submitted"

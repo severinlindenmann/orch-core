@@ -180,13 +180,6 @@ def test_i3_agent_access_is_a_click_and_a_runner_grant_needs_dashboard_execution
     assert click.signatures == 5 and out["grant"].startswith("gr_")  # new, set, two sections, the grant
 
 
-def test_i3_the_terminal_word_is_grant(human, tmp_path):
-    rig = Rig(human, tmp_path, intent_of(agent=AGENT))
-    first = rig.first()
-    human.check(first)
-    assert signer.confirm_word(first) == "GRANT"
-
-
 def test_i5_the_review_says_the_start_is_not_signed_and_names_the_grant(human, tmp_path):
     rig = Rig(human, tmp_path, intent_of(agent=AGENT))
     first = rig.first()

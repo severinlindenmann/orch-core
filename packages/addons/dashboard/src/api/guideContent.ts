@@ -111,17 +111,13 @@ Anything that changes a ticket or gives an agent power needs your approval, call
 
 Before you approve, the dashboard shows exactly what you are approving, in plain words. Read it. If it does not look like what you meant, cancel. Nothing changes until you approve.
 
-## Ways to approve
+## One click
 
-- **In the terminal**: always works. The dashboard prepares the request and shows a short code and a command, such as \`orch sign CODE\`. Copy it, paste it into your terminal, check the code matches, and type your secret words. The dashboard follows along and shows when it is signed. Only sign a code you created yourself.
-- **One click on this computer**: if you switched it on, you approve with a button in the dashboard. It is convenient and a little less safe, because this computer holds your key. A notice explains the risk once.
-- **Phone**: coming later, with the relay add-on.
-
-An owner picks which ways are allowed under **Settings, Gates**. You pick your own default there too, from the allowed ones.
+You approve in the dashboard with one click. Read the review, press Approve, then press the button again after a second (it waits that long on purpose). If One click is off, turn it on in Settings.
 
 ## If it will not sign
 
-A code belongs to one request. If it no longer works, start the action again and use the new code.
+The dashboard explains what needs attention. Cancelling ends that attempt; pressing the action again creates a fresh request.
 `,
   },
   {
@@ -252,7 +248,7 @@ On a ticket, in the **Shares** box, press **Share files**. Tick the files, choos
 
 **Shares** lists every link you made: its kind, when it ends, how often it was opened and its state (Live, Used up, Expired or Revoked). **Revoke** stops a link at once.
 
-An agent can only prepare a share. A person always signs it in the terminal.
+An agent can only prepare a share. A person always approves it in the dashboard.
 `,
   },
   {

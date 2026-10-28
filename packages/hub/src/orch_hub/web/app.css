@@ -213,3 +213,9 @@ main#app.shelled { max-width:none; padding:0; margin:0; }
 .ws-segment > .small { flex-basis:100%; }
 .ws-segment [aria-pressed="true"] { background:var(--brand-soft); color:var(--brand); border-color:var(--brand); }
 .ws-connect input { min-width:180px; }
+/* Workspace health stays readable even when its dashboard is unavailable. */
+.ra.offline { opacity: .5; }
+.ra.offline.on, .ra.offline:hover, .ra.offline:focus-visible { opacity: .85; }
+.company-summary { color: var(--muted); }
+.workspace-needs > h3 { padding: 12px 16px 0; }
+.breadcrumb { overflow-wrap: anywhere; }

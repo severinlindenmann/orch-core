@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import { ARM_MS, CLICK_RISK } from '@/api/click'
 import { uuid8 } from '@/api/workspaces'
-import { DO, MARA, OWNER, READS, roster, show, useFakeHost, workspace } from '@/test/hostHarness'
+import { DO, MARA, OWNER, READS, clickOn, prepareByClick, roster, show, useFakeHost, workspace } from '@/test/hostHarness'
 
 // The production app on a fake server that speaks the click routes, as the build wires it (vite.config.ts alias).
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
@@ -32,30 +32,33 @@ it('the workspace card shows the risk line when the key is in convenience custod
   expect(await screen.findByTestId('workspace-card-signing', {}, T)).toHaveTextContent(CLICK_RISK)
 })
 
-it('no Sign button when the signer has nothing for the workspace; the card offers to switch it on', async () => {
+it('no Sign button when the signer has nothing for the workspace; the review and the card offer to switch it on', async () => {
   state.host.workspaces[0].click = { custody: 'none', enabled: false, available: false, problem: 'disabled' }
   state.host.workspaces[0].features = [...READS, ...DO, 'actions']
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
   const dialog = await save(user)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(screen.getByTestId('signing-state')).toHaveTextContent(/^Off/)
-  expect(within(dialog).queryByRole('button', { name: /^Sign( |$)/ })).toBeNull()
+  expect(await within(dialog).findByText('One click is not ready on this computer.', {}, T)).toBeInTheDocument()
+  expect(within(dialog).getByRole('link', { name: 'Turn on One click' })).toBeInTheDocument()
+  expect(within(dialog).queryByTestId('handoff-command')).toBeNull() // no terminal path either
+  expect(screen.getByTestId('signing-state')).toHaveTextContent(/^One click is off\.$/)
+  expect(within(dialog).queryByRole('button', { name: /^(Sign( |$)|Change the workspace settings)/ })).toBeNull()
   // the card reads the signer's status; nothing is prepared, viewed or signed
   expect(state.host.calls.filter((c) => c.path.includes('/click/') && !c.path.endsWith('/click/status'))).toEqual([])
 })
 
-it('click-to-sign end to end: Sign, the signer’s View only, 500 ms, Sign, Signed', async () => {
+it('click-to-sign end to end: the outcome button prepares, the signer’s View only, 1 s, Sign, Signed', async () => {
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
   const dialog = await save(user)
   expect(state.host.calls.filter((c) => c.path.endsWith('/handoff') && c.method === 'POST')).toEqual([]) // nothing yet
-  await user.click(await within(dialog).findByRole('button', { name: /^Sign( |$)/ }, T))
-  const panel = await within(dialog).findByTestId('click-panel', {}, T)
+  expect(state.host.clickPrepares()).toEqual([])
+  const panel = await prepareByClick(dialog, 'Change the workspace settings')
   expect(within(panel).queryByRole('button', { name: 'One-click' })).toBeNull()
   expect(panel).toHaveTextContent('FROM-THE-SIGNER settings.set')
   expect(panel).not.toHaveTextContent(/HOST-BEFORE-VALUE|Preview|orch sign/)
-  expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'settings_set', grant_hours: 24 })
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'settings_set', grant_hours: 24 }])
   const sign = within(dialog).getByRole('button', { name: /^Sign( |$)/ })
   expect(sign).toBeDisabled()
   await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
@@ -66,14 +69,15 @@ it('click-to-sign end to end: Sign, the signer’s View only, 500 ms, Sign, Sign
   expect(state.host.clickCancelled).toEqual([])
 })
 
-it('a click workspace offers only Sign: no terminal path, and no hand-off is ever prepared', async () => {
+it('a click workspace offers only One click: no terminal path, and no hand-off is ever prepared', async () => {
+  clickOn(state.host.workspaces[0])
   const user = userEvent.setup()
   show('/w/DEMO/settings/general')
   const dialog = await save(user)
   expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
-  await user.click(await within(dialog).findByRole('button', { name: /^Sign( |$)/ }, T))
-  await within(dialog).findByTestId('click-panel', {}, T)
+  await prepareByClick(dialog, 'Change the workspace settings')
   expect(within(dialog).queryByRole('button', { name: 'Sign in the terminal instead' })).toBeNull()
+  expect(within(dialog).queryByTestId('handoff-command')).toBeNull()
   expect(state.host.posts().length).toBe(0)
 })
 

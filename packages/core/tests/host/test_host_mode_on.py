@@ -237,7 +237,7 @@ def world(tmp_path, monkeypatch, fake):
     monkeypatch.setattr(wi, "open_backend", backend)
     monkeypatch.setattr(human, "open_backend", backend)
     reviews: list[str] = []
-    monkeypatch.setattr(human, "review_prompt", lambda text, word: reviews.append(text) or True)
+    monkeypatch.setattr(human, "review_prompt", lambda text: reviews.append(text) or True)
     secrets: list[str] = []
     monkeypatch.setattr(human, "show_secret", secrets.append)
     monkeypatch.chdir(root)

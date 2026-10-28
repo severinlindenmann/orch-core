@@ -127,16 +127,6 @@ def test_digest_includes_the_manifest_hashes(tmp):
     assert digest(builtin.manifest_bytes("terminals")) != digest(other)
 
 
-def test_click_path_review_has_settings_and_the_risk(tmp):
-    f = SetupFlow(make_env(tmp))
-    f.launch(str(tmp.work))
-    out = to_review(f, {**PROFILE, "method": "click"})
-    assert out["risk"]["once"] is True and "Convenience signing" in out["risk"]["text"]
-    settings = out["items"][0]
-    assert settings["id"] == "settings" and any("sign_methods" in line for line in settings["lines"])
-    assert {"id": "custody", "text": "Approvals on this machine need one click, with no passphrase."} in out["flags"]
-
-
 def test_a_new_review_has_a_new_id_and_a_profile_post_voids_it(flow):
     a = to_review(flow, PROFILE)
     b = post(flow, "review")[1]

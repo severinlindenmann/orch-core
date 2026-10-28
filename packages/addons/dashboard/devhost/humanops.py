@@ -19,7 +19,6 @@ import dataclasses
 import json
 import os
 import re
-import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -38,9 +37,7 @@ from . import review, settingsops
 TTL = 600
 KEPT = 24 * 3600  # an ended request and its idem record are kept this long
 MAX_PENDING = 20
-CODE_CHARS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 REQUEST_ID = re.compile(r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
-CODE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$")
 IDEM = re.compile(r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$")
 DEVICE = re.compile(r"^d_[0-9a-f]{8,64}$")
 KEY = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,15}-[0-9]{1,9}$")
@@ -67,11 +64,6 @@ def stamp(epoch: float) -> str:
 
 def invalid(message: str):
     return fail("invalid.input", message, exit=5)
-
-
-def new_code() -> str:
-    chars = [secrets.choice(CODE_CHARS) for _ in range(8)]
-    return "".join(chars[:4]) + "-" + "".join(chars[4:])
 
 
 class _AcceptAll:
@@ -169,7 +161,6 @@ class Requests:
         return {
             "request": {
                 "id": request["id"],
-                "code": request["code"],
                 "expires_at": stamp(request["expires"]),
                 "state": self.state(request),
                 "submitted_at": request.get("submitted_at"),
@@ -201,11 +192,11 @@ class Requests:
         if type(handoff) is not bool:
             raise invalid("handoff must be true or false")
         signer = args.get("signer")
-        if (signer is None) == (not handoff):
+        dry = opts.get("dry_run") is True
+        if (signer is not None and handoff) or (signer is None and not handoff and not dry):
             raise invalid("name a signer, or ask for a hand-off, not both and not neither")
         if signer is not None:
             self.check_signer(store, signer)
-        dry = opts.get("dry_run") is True
         idem = None if dry else opts.get("idem")
         binding = None
         if idem is not None:
@@ -263,7 +254,6 @@ class Requests:
         now = self.clock()
         request = {
             "id": "hr_" + new_ulid(),
-            "code": new_code(),
             "op": op,
             "workspace_id": self.host.ws,
             "log": log,
@@ -335,35 +325,17 @@ class Requests:
         self.save()
         return self.view(request)
 
-    def pending(self, args: dict[str, Any], lookups: list[float] | None = None) -> dict[str, Any]:
-        """A code resolves only while the request is prepared or bound, in this workspace, for this person (one stub
-        person). A lookup that finds nothing is a failed lookup; 5 within 60 s on one connection answer
-        `rate.limited` with `retry_after_ms`, the right code included (H5b). `request_id` lookups are not counted."""
-        if set(args) - {"code", "request_id"} or len(args) > 1:
-            raise invalid("human.pending takes code or request_id, not both")
+    def pending(self, args: dict[str, Any]) -> dict[str, Any]:
+        """This person's requests (one stub person), or the one named by `request_id`."""
+        if set(args) - {"request_id"}:
+            raise invalid("human.pending takes request_id only")
         rows = list(self.table.values())
-        lookups = [] if lookups is None else lookups
-        if "code" in args:
-            now = self.clock()
-            lookups[:] = [t for t in lookups if now - t < 60]
-            if len(lookups) >= 5:
-                error = fail("rate.limited", "too many lookups", exit=9)
-                error.error["retryable"] = True
-                error.error["retry_after_ms"] = max(1, int((lookups[0] + 60 - now) * 1000))
-                raise error
-            code = args["code"]
-            if not isinstance(code, str) or not CODE.fullmatch(code):
-                raise invalid("a code looks like 7F3K-Q2MA")
-            rows = [r for r in rows if r["code"] == code and self.state(r) in ("prepared", "bound")]
-            if not rows:
-                lookups.append(now)
-        elif "request_id" in args:
+        if "request_id" in args:
             rows = [self.find(args["request_id"])]
         return {
             "requests": [
                 {
                     "id": r["id"],
-                    "code": r["code"] if self.state(r) in ("prepared", "bound") else None,
                     "op": r["op"],
                     "key": r["key"],
                     "created_at": stamp(r["created"]),

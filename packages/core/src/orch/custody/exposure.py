@@ -129,7 +129,7 @@ def mark_before_move(
             person=person,
             device=device,
             workspace=lambda w: (name, str(entry.get("prefix"))) if w == workspace_id else None,
-            confirm=lambda _text, _word: True,  # the person just typed the passphrase to move this key
+            confirm=lambda _text: True,  # the person just typed the passphrase to move this key
             show_secret=lambda _s: None,
             idem=idem,
         )

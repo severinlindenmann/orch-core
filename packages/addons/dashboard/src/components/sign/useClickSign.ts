@@ -55,6 +55,9 @@ export interface ClickRun {
   error: unknown
 }
 
+/** A cancel that failed: the request stays open until it expires, so it is never shown as cancelled. */
+export const CANCEL_FAILED = 'Could not cancel. It will expire by itself.'
+
 const refetchKeys = ['ticket', 'tickets', 'board', 'today', 'workspaces', 'events', 'settings', 'members', 'settings-grants', 'identity']
 
 /** The `onSettled` arguments of the hand-off dialog, for a signed click request (callers read `key` of a signed `new`). */
@@ -109,7 +112,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     async (where: string, id: string) => {
       setPhase('viewing')
       const got = await api.viewClick(where, id)
-      if (!mounted.current) return
+      if (!mounted.current || live.current.phase === 'cancelled' || live.current.prepared?.request_id !== id) return
       // Fail closed: the owner-mandated risk line must be exactly what the card says, or nothing is shown.
       if (got.view.risk !== CLICK_RISK) throw new ApiError(409, { code: 'human.click_refused', message: 'The review lacks the risk line.', retryable: false, reason: 'check_failed' })
       setView(got)
@@ -266,10 +269,17 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const cancel = useCallback(async () => {
     const { prepared: open, ws: where, phase: last } = live.current
     if (!open || !where || last === 'done' || last === 'cancelled' || last === 'idle' || last === 'settling') return // never cancel while a signature may be in flight
+    setPhase('cancelled') // Tombstone immediately, before the cancellation round trip.
     try {
       await api.cancelClick(where, open.request_id)
     } catch {
-      /* the signer and the host expire it anyway */
+      // The request is still open (the signer and the host expire it): never say "cancelled" for it.
+      if (mounted.current) {
+        setProblem({ title: CANCEL_FAILED, body: '', next: 'unavailable' }) // one plain line, no Try again
+
+        setPhase('failed')
+      }
+      return
     }
     if (mounted.current) {
       setPhase('cancelled')

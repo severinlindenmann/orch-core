@@ -21,6 +21,8 @@ errors:
   followup.too_soon (exit 3): wait inside the session | fix: orch wait
   grant.expired (exit 3): ask the person for a new grant | fix: orch status
   grant.required (exit 3): ask the person to run orch grant, then set ORCH_GRANT | fix: orch status
+  sign.cancelled (exit 3): run it again to review | fix: orch help
+  tty.required (exit 3): run it in your terminal | fix: orch help
   lock.busy (exit 4 retry): retry in a moment | fix: orch status
   parse.text (exit 6): orch describe follow_up
 out: ok {key} followup.set {id} due={due} state={state} / next: {next}

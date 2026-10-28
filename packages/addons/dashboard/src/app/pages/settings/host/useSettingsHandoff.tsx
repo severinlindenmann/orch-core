@@ -9,7 +9,6 @@ export interface HandoffSpec {
   title: string
   action: HandoffAction | null
   /** Prepare as the dialog opens (the page already holds the whole choice). Without it the dialog shows `form` first. */
-  autoStart?: boolean
   confirmLabel?: string
   hint?: string | null
   form?: ReactNode
@@ -24,7 +23,6 @@ export interface HandoffSpec {
   /** Show the review under the row (an accordion) instead of a popover. */
   inline?: boolean
   /** The press was the deliberate gesture: with One click on, sign directly. */
-  autoSign?: boolean
 }
 
 export function useSettingsHandoff(ws: string | undefined, onSettled?: () => void | Promise<unknown>): { ask: (spec: HandoffSpec) => void; dialog: ReactNode; inline: boolean } {
@@ -36,12 +34,10 @@ export function useSettingsHandoff(ws: string | undefined, onSettled?: () => voi
       title={spec.title}
       ws={ws}
       action={spec.action}
-      autoStart={spec.autoStart}
       confirmLabel={spec.confirmLabel}
       hint={spec.hint}
       summary={spec.summary}
       inline={spec.inline}
-      autoSign={spec.autoSign}
       doneToast={spec.doneToast}
       onSigning={spec.onSigning}
       onSettled={(phase) => {

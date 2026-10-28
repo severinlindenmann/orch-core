@@ -26,6 +26,21 @@ export interface HubSignInfo {
   other_url?: string
 }
 
+/** FB15: an add-on grant prepared for the hub (`POST /hub/approve/prepare`): the request and what the hub panel shows. */
+export interface HubApproval extends HubSignInfo {
+  id: string
+  state: string
+  expires_at: string
+}
+
+/** Where that request is now (`GET /hub/approve/<id>`). */
+export interface HubApprovalState {
+  id: string
+  state: 'prepared' | 'bound' | 'submitted' | 'cancelled' | 'expired'
+  expires_at: string
+  error: { code: string } | null
+}
+
 const SHORT = /^[0-9a-f]{4} [0-9a-f]{4} [0-9a-f]{4}$/
 const URL_OK = /^https:\/\/(?:[A-Za-z0-9][A-Za-z0-9.-]*|\[[0-9a-fA-F:.]+\])(?::[0-9]{1,5})?\/#\/w\/[0-9a-f]{32}\/t\/[0-7][0-9A-HJKMNP-TV-Z]{25}(?:\/g\/(?:requirements|plan|code|verify))?$/
 

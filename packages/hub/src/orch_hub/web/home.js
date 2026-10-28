@@ -15,35 +15,56 @@ function h(tag, props = {}, ...kids) {
 const text = (v) => renderText(String(v ?? ""));
 const chip = (label, kind = "") => h("span", { class: "chip " + kind, text: label });
 const note = (label) => h("p", { class: "small muted", text: label });
-const readLine = (w) => w.mode === "full" ? "Hub can read everything" : "Hub can read shared items and summaries";
+
+/** Health and totals use only this person's workspace list. */
+export function homeSummary(workspaces, items = [], offline = []) {
+  const down = new Set(offline);
+  const rows = workspaces.map((w) => ({ ...w, online: w.online !== false && !down.has(w.workspace_id) }));
+  const ids = new Set(rows.map((w) => w.workspace_id));
+  const mine = items.filter((it) => ids.has(it.workspace_id));
+  return { rows, items: mine, online: rows.filter((w) => w.online).length, offline: rows.filter((w) => !w.online).length, waiting: mine.length };
+}
+
+export function workspaceStatus(w) {
+  if (w.online) return "online";
+  const seen = w.last_seen;
+  if (seen == null) return "offline since an unknown time";
+  const date = new Date(seen);
+  return "offline since " + (Number.isNaN(date.getTime()) ? "an unknown time" : date.toLocaleString());
+}
 
 /** Person home only; the driver owns navigation and the manual decision form. */
 export function homeView(d) {
-  const workspaces = d.workspaces ?? [];
+  const health = homeSummary(d.workspaces ?? [], d.items ?? [], d.offline ?? []);
+  const workspaces = health.rows;
   const byId = new Map(workspaces.map((w) => [w.workspace_id, w]));
   const offline = new Set(d.offline ?? []);
   for (const w of workspaces) if (w.online === false) offline.add(w.workspace_id);
   const mode = (it) => it.mode ?? byId.get(it.workspace_id)?.mode;
   const summary = (it) => it.summary_only || (!it.signable && mode(it) === "selective");
-  const items = (d.items ?? []).filter((it) => !offline.has(it.workspace_id) && it.online !== false && (it.signable || summary(it)));
+  const items = health.items.filter((it) => !offline.has(it.workspace_id) && it.online !== false && (it.signable || summary(it)));
   const shortName = (w, id) => text(w?.name ?? "Workspace " + String(id).slice(0, 8));
   const workspaceName = (id) => shortName(byId.get(id), id);
   const needs = h("section", { class: "card needs-you", "aria-labelledby": "needs-heading" },
     h("div", { class: "section-head row" }, h("h2", { id: "needs-heading", class: "grow", text: "Needs you" }), chip(String(items.length))),
-    items.length ? items.map((it) => h("article", { class: "list-row row" },
+    items.length ? workspaces.filter((w) => items.some((it) => it.workspace_id === w.workspace_id)).map((w) => h("section", { class: "workspace-needs" },
+      h("h3", { text: workspaceName(w.workspace_id) }),
+      items.filter((it) => it.workspace_id === w.workspace_id).map((it) => h("article", { class: "list-row row" },
       h("div", { class: "grow" }, h("h3", { text: text(it.title ?? it.kind) }),
         note([text(it.key), workspaceName(it.workspace_id)].filter(Boolean).join(" · ")),
         note(summary(it) ? "Summary only, answer on your Mac" : "Shared with the hub, you can sign here")),
-      !summary(it) ? h("button", { text: "Review", onclick: () => d.actions.review(it) }) : null))
+      !summary(it) ? h("button", { text: "Review", onclick: () => d.actions.review(it) }) : null))))
       : h("p", { class: "empty", text: "Nothing is waiting for you." }),
     [...offline].map((id) => h("div", { class: "list-row row" },
       h("div", { class: "grow" }, h("b", { text: workspaceName(id) }), note("Workspace is offline")), chip("Waiting", "warn"))));
-  const spaces = h("section", { class: "card", "aria-labelledby": "workspaces-heading" },
+  const spaces = h("section", { class: "card health-strip", "aria-labelledby": "workspaces-heading" },
     h("h2", { id: "workspaces-heading", text: "My workspaces" }),
-    workspaces.length ? workspaces.map((w) => h("article", { class: "list-row" },
-      h("div", { class: "row" }, h("h3", { class: "grow", text: shortName(w, w.workspace_id) }),
-        chip(w.mode === "full" ? "Full" : "Selective", w.mode === "full" ? "full" : "sel")),
-      note(readLine(w)), chip(offline.has(w.workspace_id) ? "Offline" : "Online", offline.has(w.workspace_id) ? "warn" : "ok")))
+    workspaces.length ? workspaces.map((w) => h("article", { class: "list-row row" },
+      h("div", { class: "grow" }, h("b", { text: shortName(w, w.workspace_id) }),
+        note(workspaceStatus(w) + " · " + (w.online
+          ? health.items.filter((it) => it.workspace_id === w.workspace_id).length + " things need you"
+          : "Hand-offs and approvals wait until it is back"))),
+      d.actions.open ? h("button", { text: "Open", onclick: () => d.actions.open(w.workspace_id) }) : null))
       : note("No workspaces yet."));
   const browser = d.thisBrowser;
   const active = browser?.state === "active";
@@ -62,5 +83,6 @@ export function homeView(d) {
     note("You confirm with a key held by this browser or your iPhone. The hub signs this approval for you."));
   const notice = d.notice?.nodeType ? d.notice : d.notice ? h("div", { class: "banner", role: "status", text: text(d.notice) }) : null;
   return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice,
+    h("p", { class: "company-summary", text: health.online + " workspaces online, " + health.offline + " offline, " + health.waiting + " things need you" }),
     h("div", { class: "home-grid" }, needs, h("div", { class: "home-side" }, spaces, signing))].filter(Boolean);
 }

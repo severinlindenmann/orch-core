@@ -10,8 +10,7 @@ import { atLeast } from '@/api/permissions'
 import type { TicketDocument } from '@/api/types'
 import { folderSummary, newIdem, workdirApi, workdirError, workdirQueries } from '@/api/workdir'
 import { Inline } from '@/components/sign/visible'
-import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { PressAgainDelete } from '@/components/PressAgainDelete'
 import { useRole } from '@/app/useRole'
 import { useWorkspace } from '@/app/workspace'
 
@@ -20,7 +19,6 @@ export function WorkFolder({ ticket }: { ticket: TicketDocument }) {
   const ws = workspace?.id
   const role = useRole()
   const qc = useQueryClient()
-  const [asking, setAsking] = useState(false)
   const served = isRealHost() && !!ws
   const q = useQuery({ ...workdirQueries.ofTicket(ws ?? '', ticket.key), enabled: served })
   if (!served || !ws || !q.data?.available || q.data.codebase || !q.data.exists) return null
@@ -44,25 +42,14 @@ export function WorkFolder({ ticket }: { ticket: TicketDocument }) {
           )}
         </span>
         {atLeast(role, 'member') && (
-          <Button size="sm" variant="ghost" className="h-7 text-[12px]" onClick={() => setAsking(true)}>
-            Delete work folder
-          </Button>
+          <DeleteWorkFolder key={`${ws}:${ticket.key}`} ws={ws} ticket={ticket.key} onDone={() => qc.invalidateQueries({ queryKey: ['workdir', ws, ticket.key] })} />
         )}
       </div>
-      {asking && (
-        <DeleteWorkFolder
-          ws={ws}
-          ticket={ticket.key}
-          summary={folderSummary(f)}
-          onClose={() => setAsking(false)}
-          onDone={() => qc.invalidateQueries({ queryKey: ['workdir', ws, ticket.key] })}
-        />
-      )}
     </section>
   )
 }
 
-function DeleteWorkFolder({ ws, ticket, summary, onClose, onDone }: { ws: string; ticket: string; summary: string; onClose: () => void; onDone: () => Promise<unknown> }) {
+function DeleteWorkFolder({ ws, ticket, onDone }: { ws: string; ticket: string; onDone: () => Promise<unknown> }) {
   const [idem] = useState(newIdem)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -73,36 +60,11 @@ function DeleteWorkFolder({ ws, ticket, summary, onClose, onDone }: { ws: string
     try {
       await workdirApi.remove(ws, ticket, idem)
       await onDone()
-      onClose()
     } catch (e) {
       setError(workdirError(e))
     } finally {
       setBusy(false)
     }
   }
-  return (
-    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent className="max-w-md gap-3 border-border bg-surface">
-        <DialogHeader>
-          <DialogTitle>Delete this work folder?</DialogTitle>
-          <DialogDescription>
-            All the files in the work folder of <Inline>{ticket}</Inline> ({summary}) are deleted from this computer. This cannot be undone. Files that were added to the ticket as artifacts stay, and nothing else in your project is touched.
-          </DialogDescription>
-        </DialogHeader>
-        {error && (
-          <p role="alert" className="text-[13px] text-danger">
-            {error}
-          </p>
-        )}
-        <DialogFooter>
-          <Button variant="ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button variant="destructive" onClick={() => void go()} disabled={busy}>
-            {busy ? 'Deleting…' : 'Delete work folder'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
+  return <div><PressAgainDelete disabled={busy} onDelete={() => void go()}>{busy ? 'Deleting…' : 'Delete work folder'}</PressAgainDelete>{error && <p role="alert" className="text-danger">{error}</p>}</div>
 }

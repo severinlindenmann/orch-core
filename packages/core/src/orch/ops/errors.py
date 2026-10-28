@@ -51,6 +51,24 @@ def _e(code: str, exit_: int, retryable: bool, message: str, hint: str, fix: lis
 
 _SPECS = [
     _e(
+        "tty.required",
+        3,
+        False,
+        "signing requires a controlling terminal",
+        "run it in your terminal",
+        ["orch", "help"],
+        "No controlling terminal; nothing signed.",
+    ),
+    _e(
+        "sign.cancelled",
+        3,
+        False,
+        "nothing was signed",
+        "run it again to review",
+        ["orch", "help"],
+        "The signing review was cancelled.",
+    ),
+    _e(
         "followup.too_soon",
         3,
         False,
@@ -613,8 +631,8 @@ _SPECS = [
         3,
         False,
         "the hub step is not backed by your backup key",
-        "sign it again with your backup key at the terminal: orch sign",
-        ["orch", "sign"],
+        "repeat the hub step and enter your backup key",
+        ["orch", "hub", "status"],
         "A hub step (join, switch to full, leave) needs the owner proof, signed with the person key derived from the "
         "backup key (hub contract 9.6). Detail reason: proof_invalid, proof_expired, proof_missing, dev_mismatch or "
         "dev_refused.",

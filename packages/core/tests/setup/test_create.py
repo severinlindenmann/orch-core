@@ -20,6 +20,9 @@ GRANT_SECRET = "gr_01ARZ3NDEKTSV4RRFFQ69G5FAV.SECRETSECRETSECRETSECRETSECRETSECR
 
 @pytest.fixture(autouse=True)
 def fake_signer(monkeypatch):
+    from orch.ops import human
+
+    monkeypatch.setattr(human, "review_prompt", lambda text: True)
     monkeypatch.setattr(host_signer, "check", lambda *a, **k: None)
 
     def sign(prepared, *, backend, key_id, workspace_id):
@@ -127,7 +130,11 @@ def test_r1_an_extra_event_in_a_prepared_request_aborts(tmp):
     assert p["error"]["code"] == "review.mismatch" and ports.unlocks == 0
 
 
-def test_r3_the_tty_fingerprint_must_match(tmp):
+def test_r3_the_tty_fingerprint_must_match(tmp, monkeypatch):
+    from orch.ops import human
+
+    shown = []
+    monkeypatch.setattr(human, "review_prompt", lambda text: shown.append(text) or False)
     ports = FakePorts(FakeTerminal(["not the words"]))
     f = setup_flow(tmp, ports)
     f.dispatch("POST", "profile", {}, AGENT)
@@ -138,9 +145,9 @@ def test_r3_the_tty_fingerprint_must_match(tmp):
     out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
     f.thread.join(10)
     p = progress(f, out["run_id"])
-    assert p["error"]["code"] == "tty.declined" and p["error"]["finishable"] is False
+    assert p["error"]["code"] == "sign.cancelled" and p["error"]["finishable"] is False
     assert names(ports) == []  # nothing happened on the machine
-    assert " ".join(rv["fingerprint"]) in ports.terminal.shown[0]
+    assert " ".join(rv["fingerprint"]) in shown[0]
 
 
 def test_r2_create_needs_the_bound_digest_and_no_typed_word(tmp):
@@ -220,7 +227,7 @@ CLICK = {**PROFILE, "method": "click", "addons": ["dashboard", "worktrees"]}
 def test_click_path_settings_then_conversion_then_flag_last(tmp):
     f, ports, p, rv = run_ok(tmp, CLICK)
     n = names(ports)
-    assert p["done"] is True and ports.submits == ["settings.changed", "addon.granted", "addon.granted"]
+    assert p["done"] is True and ports.submits == ["addon.granted", "addon.granted"]
     assert n.index("human.submit") < n.index("stage") < n.index("finish_conversion") < n.index("convenience_on")
     assert n[-1] == "convenience_on" and "lock" in n and n.index("lock") < n.index("stage")
     assert [s["id"] for s in p["steps"]][-2:] == ["custody", "flags"]

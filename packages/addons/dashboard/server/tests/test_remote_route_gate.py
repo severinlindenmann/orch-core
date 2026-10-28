@@ -130,7 +130,7 @@ NAMED = [
     ("POST", "/api/w/{ws}/runs/{run}/attach", TERMINALS),
     ("POST", "/api/w/{ws}/terminals/open", TERMINALS),
     ("POST", "/api/w/{ws}/terminals/preview", TERMINALS),
-    ("POST", "/api/w/{ws}/handoff", ALLOWED),
+    ("POST", "/api/w/{ws}/click/prepare", ALLOWED),
     ("POST", "/api/w/{ws}/click/custody/seal", ALLOWED),
     ("POST", "/api/w/{ws}/click/rotate/seal", ALLOWED),
     ("POST", "/api/passkeys/enroll-link", STEP_UP),
@@ -148,6 +148,14 @@ NAMED = [
 def test_the_named_routes_have_the_decided_rule(front, remote, method, template, rule):
     assert TABLE[(method, template)][0] == rule
     assert answered_no(call(front, method, template, remote), (method, template)) == (rule not in (ALLOWED, STEP_UP))
+
+
+def test_click_prepare_is_the_only_prepare_route():
+    """The terminal hand-off (unbound requests) is gone: no table row and no app route prepares anything else."""
+    assert not [k for k in TABLE if "/handoff" in k[1] or k[1].endswith("/hub/command")]
+    assert [k for k in TABLE if k[1].endswith("/prepare") and "/click/" in k[1]] == [
+        ("POST", "/api/w/{ws}/click/prepare")
+    ]
 
 
 def test_terminals_come_back_with_the_policy_switch(gateway, auth, tmp_path, stub, remote):

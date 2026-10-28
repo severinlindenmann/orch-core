@@ -214,7 +214,7 @@ class StubHost:
             },
         }
 
-    def call(self, op, args, opts=None, lookups=None, files=None):
+    def call(self, op, args, opts=None, files=None):
         with self.lock:
             # Direct-mode files (core #375): a same-user dev process. Files.host belongs to the real host.
             runtime = HostWorkspace(self.env, files=Files.direct())
@@ -241,7 +241,7 @@ class StubHost:
                         raise fail("invalid.input", exit=5) from None
                     return asdict(decl.handler(ctx, args))
                 if op in HUMAN_OPS:
-                    return asdict(self.human(op, store, views, args, opts or {}, lookups, files))
+                    return asdict(self.human(op, store, views, args, opts or {}, files))
                 if (op not in OPS and op != "reader.list") or (op == "workspace.settings" and not self.settings_cap):
                     raise fail("unknown_command", exit=2)
                 if args and op not in reads.TAKES_ARGS:
@@ -316,7 +316,7 @@ class StubHost:
                 if runtime._store:
                     runtime.store.close()
 
-    def human(self, op, store, views, args, opts, lookups=None, files=None):
+    def human(self, op, store, views, args, opts, files=None):
         """`human.*` (v1.4 section 0.8.1): the stub plays the host and holds no key, so a signer submits."""
         if op != "human.prepare" and opts.get("dry_run") is not None:
             raise fail("invalid.input", exit=5)
@@ -325,7 +325,7 @@ class StubHost:
         if op == "human.get":
             return Result(data=self.requests.get(store, views, args))
         if op == "human.pending":
-            return Result(data=self.requests.pending(args, lookups))
+            return Result(data=self.requests.pending(args))
         if op == "human.cancel":
             return Result(data=self.requests.cancel(args))
         done = self.requests.submit(store, args, opts)
@@ -359,7 +359,6 @@ class StubHost:
 
     def serve_connection(self, sock, control=False):
         subscriptions = {}
-        lookups: list[float] = []  # failed code lookups of this connection (host contract 0.8.1, H5b)
         try:
             check_uid(sock, os.getuid())
             sock.settimeout(2)
@@ -483,7 +482,7 @@ class StubHost:
                         subscriptions.pop(args["sub"], None)
                         result = asdict(Result(data={}))
                     else:
-                        result = self.call(op, args, opts, lookups, files)
+                        result = self.call(op, args, opts, files)
                     sock.sendall(encode({"t": "res", "id": rid, "ok": True, "result": result}))
                     if op == "sub.close":
                         sock.sendall(

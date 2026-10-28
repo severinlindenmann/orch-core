@@ -38,7 +38,6 @@ class Code(StrEnum):
     DEVICE_INVALID = "device.invalid"
     DEVICE_SCOPE = "device.scope"
     DEVICE_LOCKOUT = "device.lockout"  # #1198 C15: the last working device of an owner stays
-    SIGN_METHOD = "sign.method"
     DEVICE_CERT = "device.cert"
     GRANT_INVALID = "grant.invalid"
     GRANT_SCOPE = "grant.scope"

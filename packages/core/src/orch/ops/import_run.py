@@ -409,8 +409,8 @@ def run_import(ctx: Context, args: dict[str, Any]) -> Result:
     if unlock is None:
         raise OrchError("custody.no_batch", f"the {backend.name} key backend cannot sign a reviewed batch")
     review = _review(plan, v1, imp)
-    if not human.review_prompt("\n".join(review), f"IMPORT {count}"):
-        raise OrchError("invalid.input", "not confirmed: nothing was signed")
+    if not human.review_prompt("\n".join(review)):
+        raise OrchError("sign.cancelled", "nothing was signed")
     digest = plan.digest().split(":")[1][:32]
     fields = (
         ("signatures", f"{plan.events} events of {count} tickets, all person events of import v1"),

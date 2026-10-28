@@ -36,7 +36,7 @@ describe('every reason is a plain sentence', () => {
     expect(p.body).toContain(UNAVAILABLE_SENTENCE[reason])
     expect(p.body).not.toContain(reason)
     expect(p.devices).toEqual([LAPTOP])
-    expect(p.next).toBe(reason === 'disabled' ? 'retry' : 'terminal') // disabled: the switch moved, Try again follows it
+    expect(p.next).toBe('unavailable') // no terminal path; disabled: the body points to Settings to turn One click on
   })
 
   it.each(READERS_REASONS)('sign.convenience_readers · %s', (reason) => {
@@ -54,7 +54,7 @@ describe('every reason is a plain sentence', () => {
 
   it('the sentences say what the spec says', () => {
     expect(UNAVAILABLE_SENTENCE.relay_paired).toMatch(/relay’s side of this workspace has not declared/)
-    expect(READERS_SENTENCE.reader_too_old).toBe('A device’s orch app is too old to show what click-to-sign changes: update it, or sign in the terminal.')
+    expect(READERS_SENTENCE.reader_too_old).toBe('A device’s orch app is too old to show what click-to-sign changes: update it.')
     for (const s of [...Object.values(UNAVAILABLE_SENTENCE), ...Object.values(READERS_SENTENCE), DECL_INVALID_SENTENCE]) expect(s).toMatch(/^[A-Z].*\.$/)
   })
 

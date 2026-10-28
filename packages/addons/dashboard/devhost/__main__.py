@@ -3,7 +3,6 @@ import json
 import os
 import signal
 import socket
-import sys
 import threading
 from pathlib import Path
 
@@ -42,13 +41,6 @@ def dev_directories():
 
 
 def main():
-    if sys.argv[1:2] == ["sign"]:
-        # DEV ONLY, never shipped: the stub signer (`orch sign CODE` until H5b exists).
-        parser = argparse.ArgumentParser(prog="python -m devhost sign", description="Dev stub signer, never shipped")
-        parser.add_argument("code", help="the hand-off code, for example 7F3K-Q2MA")
-        from . import sign
-
-        raise SystemExit(sign.main(parser.parse_args(sys.argv[2:]).code))
     parser = argparse.ArgumentParser(
         description="P1 dev stub (reads, and human.* for the hand-off): dev-marked workspaces only"
     )

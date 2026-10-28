@@ -1364,17 +1364,6 @@ capture, and independently rebuilt and hashed by the signer; missing or unknown 
 (the ticket owner, workspace owners and maintainers, F1 §5.4.2), the people `needs` sends a `no_eligible` item to. Each emits one
 existing F1 event, so no format change is needed. H0 records them as ops.
 
-```
-policy.set   {ref?:Ref, gates:{Gate: Policy}{1..4}}          → policy.changed {gates}   (ticket log with ref, else workspace log)
-settings.set {set:{grant_hours?:int 1..24, claim_ttl_min?:int 15..1440, lease_ttl_min?:int 5..1440,
-                   sign_methods?:["terminal"|"click"|"phone"]{1..3, unique, contains "terminal"},   // B6: "touchid" is reserved
-                   repos?:{str/[a-z0-9][a-z0-9._-]{0,63}/: {path:str{1..1024}, remote?:str{1..512},
-                                                           default_branch?:str{1..255}} | null}{1..32}}}
-                                                              → settings.changed {set}
-Policy = {approvers:[str{1..32}]{1..8}, count:int 1..9, not:[str{1..32}]{0..8}, applies:"all"|"off"|[str{1..32}]{1..16},
-          independent:bool}                                   (F1 §5.7; code: not ⊇ ["assignees"], independent:true)
-```
-
 **Reserved, not served:** `comment`, `ticket.discard`, `artifact.search`, `view.save`, `view.delete`. Saved views are
 the dashboard addon's own data. (`artifact.query`, v1.5, lists the manifests' metadata; it is not `artifact.search`, which
 would search content.)
@@ -1382,7 +1371,7 @@ would search content.)
 #### 0.8.1 Human ops (D-P2-15, D-P2-21, D-P2-22)
 
 The host never prompts and holds no device key. Every person event is prepared by the host, signed by a signing client
-(the CLI, `orch sign`, or the H9 helper), and submitted.
+(the CLI, the CLI signer, or the H9 helper), and submitted.
 
 ```
 human.prepare  {op:OpName, args:object, signer?:Signer, handoff?:bool = false}   + req.files for the inner op (R9)
@@ -1478,7 +1467,7 @@ fingerprint   = "d8de03967462"            (the same with op "set": "37cf21ef169c
 ```
 
 It covers the op, its outcome and every payload field, so `verdict pass` and `verdict fail` differ. The dashboard,
-`orch sign` and H9 show it, and each signer recomputes it from what it received (R8).
+the CLI signer and H9 show it, and each signer recomputes it from what it received (R8).
 
 **States.**
 
@@ -1553,7 +1542,6 @@ It covers the op, its outcome and every payload field, so `verdict pass` and `ve
   2. Render its own review from `material` and the events, never from host text. It opens with the header below and
      lists **every event, one block each**. For `payload` material the blocks are the events' review fields, which are
      their signing bytes. `checks` are shown as **attested by the worker, best effort**.
-  3. Get the op-specific confirmation word: the ticket key for decisions, `GRANT` for grants, the person id for member
      ops; for the host person ops (H6b) `KEY/FRAG` for `move` and a ticket `policy.set`, `<PREFIX>~<WS8>/POLICY` for a
      workspace `policy.set` and `<PREFIX>~<WS8>/SETTINGS` for `settings.set`, `PREFIX` being the workspace prefix and
      `WS8` the last eight characters of the workspace id, both from the signer's **own** registry (a workspace not in it
@@ -1606,57 +1594,12 @@ It covers the op, its outcome and every payload field, so `verdict pass` and `ve
   digits; it takes them from `Prepared.events`, never from `ticket.get`. **The signer distinguishes recomputation from
   consistency checks and host attestations**, and refuses any failed check before any prompt.
 
-  | Event type | Field | What it binds | The signer's check | Kind |
-  |---|---|---|---|---|
-  | `gate.approved`, `gate.changes_requested`, `verdict.given` | `policy_hash` | the effective policy of the gate | computes `H("orch/v2/policy\|" \|\| cj({"gate": material.gate, "policy": material.policy}))` and requires equality with both `material.input.policy_hash` and the event's `policy_hash` | recomputation |
-  | the same | `hash` | the gate hash `H("orch/v2/gate\|" \|\| cj(G))` (F1 §5.6, §5.7) | recomputed from `material.input` (= `G`, which holds `policy_hash`, not the policy) | recomputation |
-  | `verdict.given`; `gate.approved` on `code` | `source_sha` | the source list, D58/D59 | must equal `material.input.source_sha` and is displayed exactly as signed; the host observes git and revalidates the source list at submit | consistency check; host attestation |
-  | `gate.approved`, `gate.changes_requested`, `verdict.given` | `gate_gen` | the gate's generation | displayed; checked by the host at submit (`gate.stale`), not recomputed by the signer | host attestation |
-  | `question.answered` | `hash` | the question hash `H("orch/v2/question\|" \|\| cj({question_id: qid, ticket: uid, text, options}))` | recomputed from `material.question`, the `qid` derived from the workspace id, `material.ticket.uid` and the question id (F1 §5.6) | recomputation |
-  | `ticket.updated`, `ticket.created`, `question.asked` | section hashes | each referenced section's text | `derived.sections` (above) | recomputation |
-  | `ticket.updated` | `base_rev` | the prior values | `before` (above) | consistency check |
-  | `gate.*`, `question.answered`, `verdict.given` | the gate's section texts | each section in `material.input.sections` | `section_hash(material.texts[sid]) == input.sections[sid]` for every section, and shown (H5a) | recomputation |
-  | every ticket op | (none: the key is in no signed field) | `material.ticket.key` | displayed as "ticket key per host" next to the full uid of the signed log; the confirmation word is `KEY/FRAG`, `FRAG` from that uid (H5a, item 7 below) | host attestation |
-
   This table describes decision bindings and section-edit checks; it is not an exhaustive list of hashes in all prepared
   event types. Hashes without supplied preimages (artifact and package digests, event references and others) are
   displayed as signed commitments, not described as independently recomputed.
 
-  `ticket.get` (v1.5, `read_ext/2`) also returns the current `GateView.hash`, `GateView.policy_hash`, `Decision.hash` and
-  `Question.hash` (§0.8.5) for display and comparison. When a value there differs from the prepared event's, the dashboard
-  says the ticket changed since it was read; it never substitutes one for the other. `hash12` stays the first 12 hex digits
-  of the gate hash.
-- **Hand-off (F5).**
-  - The 8-character code (40 bits) **names** the request. It is not a secret and authorises nothing.
-  - `human.pending {code}` finds only the same person's requests. Failed lookups are limited to 5 per minute **per
-    connection**.
-  - `orch sign CODE` resolves the code with `human.pending`, then fetches and binds with `human.get`. It never calls
-    `human.prepare` a second time.
-  - **In tier A any process of the person's UID can create a request**, so `orch sign` says "only sign a code you
-    created yourself" every time it runs.
-
 **As built in H5a** (resolutions of points the text above leaves open, and the #391 review round; the wire schemas
 change only where marked: gate `material.texts`, and `op` in the fingerprint input):
-
-1. `human.cancel` on an `expired` request answers `{state:"cancelled"}`; the stored state stays `expired`.
-2. A prepared `grant.issued` keeps `"secret_hash": null` in every answer (the host's redaction drops a secret-named key
-   only when its value is not `null`).
-3. A person's `new` emits `ticket.created` only (`EMITS_V1["new"]`; F1's `ticket.created` is closed): only the key,
-   `ticket_type`, `title` and the owner (the person) travel. `priority`, `size`, `label`, `parent` and `message`/`file`
-   (the description) answer `invalid.input` on `new`; they are never dropped silently. A client sets them in a separate
-   `set` or `section.set` request after the creation (a second hand-off). The key is the one the store would allocate
-   at prepare; a key taken before the submit answers `ticket.exists`.
-4. "One `log`": the events carry no log of their own, so the signer checks that the request's `log` is the ticket of
-   `material.ticket` (or `workspace` with no ticket).
-5. `material.before` keys are the `base_rev` paths (`ticket.<field>`, `body.<section>`) for `set` and `section.set`, and
-   the keys of `set` for `settings.changed`.
-6. Number and order of events: one for a `who: human` op, one `ticket.created` for `new`, 1 to 16 events of the op's
-   `EMITS_V1` types otherwise. **The op is bound:** it is in the fingerprint input, shown in the header, and the signer
-   checks what each op's `ticket.updated` may touch (`ac.add`/`ac.edit`: `ticket.acceptance` only; `task.add`/`task.edit`: `ticket.tasks` only; `section.set`: one
-   section and no `set`; `set`: the fields of `set` only).
-7. **The confirmation word.** A ticket op's word is `KEY/FRAG`: the key as the host gives it, and `FRAG`, the **last
-   eight characters** of the ticket uid in the request's `log` (the log the signature names; the signer takes it from
-   there, never from host text). Example: `DEMO-0042/2W0KFDM3`. The header the signer prints, in this order:
 
    ```
    workspace: <name> (<prefix>) <workspace_id>              name and prefix from the signer's own registry
@@ -1673,7 +1616,6 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    person, device, section, addon, question id, `before` path, origin) is checked against its F1 format before
    rendering, every other host string is escaped (control and bidi characters become visible markers), and a review
    that would still carry a control character is refused.
-8. Hand-off codes and `orch sign CODE` are H5b (see "As built in H5b" below); `human.get` with `signer` binds a
    hand-off request (device checks included). `human.pending` is served: without arguments it lists the caller's
    requests (any state, within retention); `{request_id}` gives that one (or an empty list); `{code}` the pending
    request the code names (H5b). A failed submit shows `error:{code}` (the catalog code only).
@@ -1720,7 +1662,6 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    connection answers `rate.limited` (retryable, `retry_after_ms` until the oldest failure leaves the window), the right
    code included. The count belongs to the connection: another connection of the same person is not affected, and
    `{request_id}` lookups are not counted (an id carries 80 random bits).
-4. **`orch sign CODE [--workspace ID|PREFIX] [--file NAME=PATH]…`** (`orch.host.handoff`): prints the notice "only
    sign a code you created yourself" on every run (stderr, and first in the review on `/dev/tty`); refuses when
    `ORCH_GRANT` is set (`human_only`); asks `human.pending {code}` on the socket of each workspace of the person's own
    registry (`<state>/host/workspaces.json`, the entries mapping the caller's UID to a person), or only the one named;
@@ -1728,7 +1669,6 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    shares (`orch.host.signer.finish`: the signer's `check`, the review (notice, header, content), the confirmation
    word, the passphrase, `human.submit`, a grant's secret on the terminal after the commit). A refusal, a declined
    review or a failed passphrase cancels the request, so the preparer sees `cancelled`. The header's workspace name is
-   the last path component of the registry entry's `root`, its prefix the entry's `prefix`. `orch sign` and
    `orch host` are host-client commands routed before the registry ops: they are not registry ops, so `orch help` and
    `orch describe` do not list them.
    - **The search fails closed.** Nothing is signed unless exactly one workspace answered with the request. A pin
@@ -1743,8 +1683,6 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
      H4b's base: H4b adds a per-call timeout (now one socket timeout for every call) and subscription frames (now
      skipped).
 5. **Artifact digests in a hand-off.** A hand-off request's artifact events (`artifact.added`, `artifact.replaced`)
-   carry digests of bytes `orch sign` did not upload. Without `--file` the review labels their `sha256` and `bytes`
-   "signed commitment: orch sign has not seen these bytes; compare with the file you meant". With
    `--file NAME=PATH` for every artifact of the request, each is compared with the local file (name, digest, size;
    then `check_uploads`) before the review, a mismatch or an artifact without a file is refused (and cancels), and the
    label reads "checked against your local file". The composite (`orch.host.signer.run`) checks the bytes it uploaded
@@ -1754,7 +1692,6 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    F5 asks. If the lookup is ever widened beyond the same principal (for example to the same person across
    principals), the limit becomes the only control and needs a per-person bucket as well. The "own registry" is the
    host registry read as the caller (owner-checked, no symlinks); once the host runs under its own service UID that
-   file is the host's, and `orch sign` needs a person-side registry (follow-up).
 
 **As built in H4b** (the thin CLI, `orch.hostclient`; no wire schema changes):
 
@@ -1848,7 +1785,7 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    `start`/`restart`). The unit goes where the user's systemd manager searches: `~/.config` of the account, not the
    CLI's `XDG_CONFIG_HOME` (a dev kit that sets one would put it where `systemctl --user` never looks). Windows and other platforms get no service: `mode: "direct"`, nothing installed. The unit runs
    `python -I <release>/current/bin/orch-host run --state <state> --run <state>/run`: in tier A the run directory is
-   `<state>/run`, where the CLI, `orch sign` and the dashboard look; the root-owned tier-B directories come with H3c
+   `<state>/run`, where the CLI, the CLI signer and the dashboard look; the root-owned tier-B directories come with H3c
    (phase 3). On macOS the host's output goes to `<state>/host/host.log` (`<state>/host` is created 0700 before the
    bootstrap: launchd opens the log before exec); on Linux it goes to the journal (`journalctl --user -u
    orch-host.service`). `enable` then waits up to 20 s for the control socket and answers `host.unavailable` naming
@@ -1878,11 +1815,11 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    `state`, `run`); a service for another state or run dir is a problem, but status never proposes replacing it (that
    is the person's decision, `enable --replace`), and an interpreter that differs alone is no problem. Every printed
    value has its control characters escaped. It changes nothing. Exit 0 without problems, else 1.
-   **Run directory, tier A:** `orch host`, the thin CLI and `orch sign` all use `--run`, else `ORCH_HOST_RUN_DIR`, else
+   **Run directory, tier A:** `orch host`, the thin CLI and the CLI signer all use `--run`, else `ORCH_HOST_RUN_DIR`, else
    `<state>/run` (`enable.run_dir_for`). A path that merely exists under the tier-B `/Users/Shared/orch/run/<uid>` is
    no longer preferred: any local account can create it (H4b preferred it). **`ORCH_HOST_RUN_DIR` is the only
    environment name for the run directory**: core reads it in `enable.run_dir_for` alone (host, runner, thin CLI,
-   `orch sign`, the runner unit's environment) and never reads `ORCH_RUN_DIR`; a client in another package (the
+   the CLI signer, the runner unit's environment) and never reads `ORCH_RUN_DIR`; a client in another package (the
    dashboard server) uses the same name and the same fallback to `<state>/run`.
    **`orch host disable`** is the reverse of `enable`, through the same unit plan and `Manager`: it stops and unloads the
    service (`launchctl bootout gui/<uid>/io.orch.host`; `systemctl --user disable --now orch-host.service`, then a
@@ -1918,24 +1855,6 @@ change only where marked: gate `material.texts`, and `op` in the fingerprint inp
    session's notes (cursor, claims) are keyed by session alone in direct mode and by (principal, session) in host mode
    (F4); the host does not adopt the old ones, because a session label is public. A running agent session sees no
    current claim after registration and claims again (`orch claim KEY`). Register before starting agents.
-
-**Sequences: one review, N signatures (batch 11, finding 9).** `human.prepare` takes an optional `sequence` object, a
-*composite op* built from ordinary person ops and ordinary events (no new event type). The first step is `new` and carries
-`{step: 0, of, digest, intent}`: the whole intent (title, type, priority/size/labels/parent, written sections) is in
-`material.sequence` and so inside `review_digest` and the fingerprint. A signer that knows sequences builds the expected
-payload of every later event from the intent alone (`orch.host.sequence`), reviews them once, confirms once, and signs
-`ticket.created`, one `ticket.updated` for the fields and one per section (`set`, `section.set`), preparing each step after the
-previous one landed with `{step: k, of, digest, prev}` (`prev` = the id of the event it signed before). Only the chain
-fields stay open (event ids, `based_on`, the new ticket's `key`); any other difference between a prepared step and the
-intent aborts with "the ticket changed while signing, review again" before that step is signed. The host re-checks the chain
-at prepare and again under the store lock at submit: the last event of the log must be `prev` and `based_on` the log head
-(`human.request_mismatch` otherwise). The signer keeps a durable session record (10 minutes, keyed by the intent digest, in its
-custody root): a step is claimed, signed, then landed; on a resume it resends only the bytes it already signed (same idem) and
-goes on only if the head is its own last event; a claim without signed bytes is never signed again. Every prefix is a valid
-ticket (a draft with less text). The confirmation is the strongest of all steps. Custody: the terminal opens its key once for
-the batch (`orch sign CODE`), one-click checks and signs in the click signer's process (`status.features` lists `sequence`;
-an older signer is never asked), and the phone is excluded (it keeps separate signatures; a sequence is refused for any
-`signer.auth` other than `passphrase` or `convenience`).
 
 An `edit_ticket` intent optionally carries `tasks: {was, edit, add}` alongside acceptance edits; task steps follow
 criteria and precede links/people, with each full task list and its `base_rev` derived solely from the reviewed intent.
@@ -2051,20 +1970,6 @@ A client must not call an op or send an argument whose cap it did not see (§0.4
 `read_ext/2` and `sub_ext/1` without the H6c caps.
 
 **`workspace.settings {limit?:int 1..32 = 32, page?:str{1..512}}`** (read, cap `settings/1`) →
-
-```
-{settings:{grant_hours:int 1..24, claim_ttl_min:int 15..1440, lease_ttl_min:int 5..1440,
-           repos:{RepoName: RepoSetting}{0..32}},
- next_page:str | null,
- gates:{Gate: Policy},
- defaults:["grant_hours"|"claim_ttl_min"|"lease_ttl_min"]{0..3},
- sign_methods:["terminal"|"click"|"phone"] | null,    // B6, additive: the signed setting; null: never set (every way allowed)
- models:{Harness:{Mode:Model}} | null,                // Model routing, additive: the signed setting; null: none set (harness default)
- settings_at?:{seq:int, at:Time, by:Person} | null,
- policy_at?:{seq:int, at:Time, by:Person} | null,
- sub_cursor:Cursor}
-RepoSetting = {default_branch:str | null, path?:str, remote?:str | null}      // path, remote: owners and maintainers (P)
-```
 
 - **What it returns.** The workspace settings and default gate policies as the verified workspace log defines them at
   `sub_cursor` (F1 §2 `config.json` mirrors the same events, F1 §5.4.2). A duration that no `settings.changed` has set has
@@ -2340,20 +2245,6 @@ process of the UID connects in tier A), and it would expose activity timing to e
 
 #### 0.8.6 Click-to-sign (convenience custody, H5c, D-P2-23)
 
-**Status: built in H5c, off by default** (12 Oct 2026; design challenged by Codex and Opus, amendments adopted by
-orch-52). Owner decisions of 12 Oct 2026 (coordination log "OWNER RE-PLAN P2" and "D65 amendment", #264 comment
-6121460551, and the orch-d6 decisions on the card text and the per-workspace condition): in phase 1 the dashboard signs
-with one click. The person's device key sits in a store that needs no user presence (the `convenience` backend), and a
-separate **person-class signer process** next to the dashboard holds it. The host still holds no device key and never
-prompts (D-P2-15); the prepare → check and recompute → sign → submit contract of §0.8.1, the review, `review_digest`
-and the fingerprint are unchanged; `orch sign CODE` (H5b) stays available **whether the flag is on or off** (item 8: the terminal hand-off keeps working while the flag is on).
-**Accepted risk, shown when click-to-sign is switched on, in the workspace settings and in the docs (amended 16 Oct 2026,
-"As built in B6": no longer on every sign panel): "Convenience signing: agents running as you, or anything that takes
-over this dashboard, could sign."** This supersedes D41's per-signature presence for phase 1. **Tier B (§13.7, owner decision of 24 Oct 2026):** one click
-stays allowed when agents run as their own OS user, and is on by default only where `isolation.detect()` finds that;
-elsewhere it is off by default and the line reads "Agents run as you. Anything an agent runs can sign with One click and
-read your files."
-
 **0. The trust boundary (read this first).** The signer constructs and validates the review data and binds signing to
 the corresponding immutable signing bytes. **The dashboard HTTP process and its browser application are trusted to
 display that review and request signing only after confirmation.** The signer cannot verify display or human
@@ -2385,7 +2276,6 @@ dashboard.** This is a separate exposure from the same-UID agent risk, which is 
   | `phone_device` | the signer's person has a valid device other than the signing device (the host cannot tell a phone from a second machine, so every other device counts as an outside reader) |
   | `reader_version` | the host's own model does not accept `auth: "convenience"` (an old install behind a new client) |
 
-  `orch sign CODE` with a passphrase key stays available whatever the reason.
 - **Upgrade path (owner decision of 13 Oct 2026):** a reader-version handshake is planned for phase 2, with the relay/phone integration. A reader (phone, relay link, member's core) that declares and proves it understands `auth:"convenience"` may then be added; older readers stay refused. Until it exists, use click-to-sign only on workspaces that won't get a phone, relay link or other member yet.
 - **Adding a reader to a workspace that has convenience events is blocked** (owner decision): `member.add` (and, when
   they exist, relay pairing and any op that adds a device: one list, `orch.ops.readers.READER_OPS`) is refused with
@@ -2460,8 +2350,8 @@ imported by `orch.custody`'s package init, the host or the dashboard's HTTP proc
 - **The selection.** `<person state>/person/<workspace_id>/custody.json` (0600):
   `{"v":1, "custody":"convenience"|"passphrase", "device":"d_…", "pub":"<b64u>", "gen":int, "transition":null|{…}}`.
   No file means the P1 default: the passphrase key at `<state>/hosts/<ws>/person/dk.key.json` (H5b's location, kept so
-  existing keys and `orch sign` keep working). One resolver (`orch.custody.select.device_backend(state, ws)`) is used by
-  `orch sign` (reconciling H5b's lookup), the click signer and `orch keys`. `gen` increases at every transition.
+  existing keys and the CLI signer keep working). One resolver (`orch.custody.select.device_backend(state, ws)`) is used by
+  the CLI signer (reconciling H5b's lookup), the click signer and `orch keys`. `gen` increases at every transition.
 - **The host boundary.** Host and HTTP code do not intentionally access person keys; import and audit tests enforce
   this implementation invariant: in host mode the H3a audit hook refuses an open or path event of a path with a
   `person/<ws>/devices/` or `hosts/<ws>/person/` component (the latter is H5b's passphrase device key) or under
@@ -2590,7 +2480,7 @@ by proving the passphrase of a key that is in passphrase custody now, and it nev
   page or any addon-driven path must not be able to make the dashboard call the signer's `prepare`.
 - **It alone holds the custody handle**; the key never crosses the socketpair or the workspace socket. It talks to the
   host itself, as the person, with its own pinned `orch.host.client.Connection` per workspace (H5b's client), and reads
-  the person's own registry for the header, as `orch sign` does.
+  the person's own registry for the header, as the CLI signer does.
 - **Starting and stopping (normative).** The dashboard server calls `orch.click.spawn.start(env=None) -> ClickClient`.
   It creates `socket.socketpair(AF_UNIX, SOCK_STREAM)` (both ends close-on-exec), spawns
   `[sys.executable, "-I", "-m", "orch.click", "--fd", "<n>"]` with `pass_fds=(n,)` for the child's end only,
@@ -2653,7 +2543,7 @@ status  {} → {core:str, contract:3, features:[str], workspaces:[{workspace_id:
 View = {risk:"Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.",
         op:OpName, workspace:{id:WsId, name:str, prefix:str}, fingerprint:str/[0-9a-f]{12}/,
         headline:str, content:SignContent,                 // B6: the plain view (additive), derived from the same events and material
-        lines:[str],                                       // the terminal review of orch sign, line for line, escaped
+        lines:[str],                                       // the terminal review of CLI signing, line for line, escaped
         checks:[{repo:str, clean:true, attested_by:"worker", at:Time}],   // shown; `at` is not in view_digest
         confirm:{kind:"click"}, expires_at:Time, auth:"convenience", device:Device,
         artifacts:"checked"|"unseen"|null,
@@ -2684,14 +2574,13 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
   | `check_failed` | a §0.8.1 signer check refused the host's answer (the message names the check) |
   | `uncertain` | a submit's outcome is unknown and could not be recovered; `human.pending` shows the request |
   | `already_signed` | `sign` names another `view_digest` than the one this request was signed for (the durable sign record, below): a request is signed at most once, also after a restart |
-  | `record_unavailable` | the durable sign record of the request cannot be written (nothing is submitted, the signatures are dropped) or exists but cannot be read or validated (fail closed: this signer does not sign that request again; `orch sign` cannot either, the request is bound to `convenience`, so prepare a new one) |
+  | `record_unavailable` | the durable sign record of the request cannot be written (nothing is submitted, the signatures are dropped) or exists but cannot be read or validated (fail closed: this signer does not sign that request again; the CLI signer cannot either, the request is bound to `convenience`, so prepare a new one) |
 
 - **`prepare`** is the only way a request becomes click-eligible. The signer forwards it on its **own** host
   connection as `human.prepare {op, args, signer:{device, auth:"convenience"}}` with the dashboard's idem (#402: a
   retry returns the same request), so the host checks the flag and the readers condition there; it validates the
   answer (all §0.8.1 checks, below, and that the host prepared the op it was asked for) and records the request id, workspace and immutable binding in its local registry.
   **`view` and `sign` refuse anything not in that set** (`human.click_refused`). Requests prepared elsewhere (the CLI,
-  an agent, an older dashboard session) stay terminal-only: `orch sign CODE` for a hand-off request. `origin.uid` and
   `origin.pid` are host-attested provenance for display and diagnostics, not authorization evidence. This prevents
   accidental adoption of old or foreign requests; it does not protect against a compromised dashboard invoking
   `prepare` itself.
@@ -2767,8 +2656,6 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
   as safe to bypass.
 - **Binding** selects both device and auth. A click request is bound to `{device, auth:"convenience"}` at prepare; it
   has no hand-off code. The terminal path is a separate hand-off request (`human.prepare {handoff:true}`, shown as
-  `orch sign XXXX-XXXX`), which `orch sign` binds with the custody the selection names (with a convenience selection,
-  `orch sign` binds `convenience` and the readers condition applies).
 - **`status`** reads custody metadata (the selection and the flag) for validated registry workspaces without loading a
   private key, prompting or connecting, and distinguishes unavailable custody from absent custody: `problem` is an
   unfinished transition, `not_convenience`, `disabled`, or the last problem this signer met on that workspace
@@ -2819,18 +2706,8 @@ operations and future additions fail closed (terminal-only). There is one confir
 
 | Class | Ops |
 |---|---|
-| **Click** | `approve`, `request_changes`, `verdict`, `answer`, `close`, `reopen`, `new`, `set`, `section.set`, `ac.add`, `ac.edit`, `task.add`, `task.edit`, `task.block`, `task.done`, `task.reopen`, `task.skip`, `task.start`, `ac.accept`, `ac.unaccept`, `task.mark_done`, `log`, `ask`, `claim`, `release`, `handoff`, `submit`, `move`, `artifact.add`, `artifact.replace`, `apply`, `people.set`, `follow_up.cancel`, `grant.revoke`, `addon.disable`, `addon.grant` (every add-on, `publish` included; V3-D38: the review shows the capabilities and the marketplace block), `addon.purge`, `publish.share`, `member.add`, `member.role`, `member.remove`, `policy.set`, `settings.set` (every key: `repos`, `sign_methods`, `grant_hours`, `publish`, `addons`, `icon`) |
 | **Click, grant** | `grant` as a deposit grant or a reveal grant (above) |
 | **Terminal only** | any other `grant`, and every op not listed above (the hub ops among them until the owner proof is enforced, below) |
-
-The ops that were "click + typed word" up to contract 2 (member, `people.set`, addon purge, workspace policy,
-`settings.set` with `repos`, `sign_methods` or `grant_hours`, the deposit grant's `<PREFIX>~<WS8>/GRANT`) and the
-terminal-only Publish ops (`publish.share`, `addon.grant` of `publish`, `settings.set` of `publish`) are plain clicks
-since #1212. The typed word reduced accidental confirmation only; it was never an authentication factor nor a defence
-against script-driven signing (the word was in the View), so dropping it changes no threat answer (item 8). The
-review the person reads is the protection; Publish's View names both servers in words. Framing defences address
-clickjacking separately. The terminal signer (`orch sign`, the CLI backup) keeps its `/dev/tty` confirmation word
-(§0.8.1 step 3).
 
 **The grant secret and F1 / D-P2-16 (amended by #1198 C7).** The secret is still drawn by the signing client, never
 by the preparer, and never crosses the dashboard in plain text: a terminal `grant` shows it only on the terminal, a
@@ -2899,28 +2776,6 @@ is `hub_too_old`. Contract and vectors: `contracts/hub/protocol.md` §5 and §9.
 | A reader that does not know `convenience` | The per-workspace flag, the readers condition (`sign.convenience_unavailable`) and the block on adding readers (`sign.convenience_readers`). |
 | A same-UID process pre-claims a click idem | `idem.conflict`; the signer reports the request state and signs nothing again. A denial of service by an already accepted attacker. |
 | Signer crash or restart mid-sign; a dashboard retry or a second View after it | The durable sign record is synced before the signature leaves: a retry resends the identical events and idem, another View is `already_signed`. A same-UID process can delete or corrupt the record (accepted: it can sign anyway); corruption fails closed. A record can also be lost without an attacker (a cleanup of the state directory, a backup restore, a wall-clock jump of more than 24 h before a prune, file-system loss): the live signer's in-memory guard still never signs again; only after the signer has also restarted can a lost record allow one fresh signature, and the host still commits a request once. |
-
-**8. The Terminal hand-off while click-to-sign is on (#1170, owner decision of 24 Oct 2026; withdraws the "one signing
-path per workspace" rule of 12 Oct 2026).** While the key has no passphrase, any program running as the person can
-already sign with it, so closing the hand-off protected nothing and only blocked the owner. The hand-off (a request
-with a code, `human.prepare {handoff:true}`, signed with `orch sign CODE`) works with the flag on:
-
-- `auth` names the custody, not the path. A hand-off signed with the One-click key binds `auth: "convenience"` and
-  passes the same checks as a click: `convenience.check` (flag and readers condition) at the binding and at submit,
-  `refuse_reader_op`, and `refuse_excluded_click_custody` at the append.
-- A hub op (`HUB_OPS`) is refused at the **binding** with `sign.convenience_unavailable` when the signer is the
-  One-click key, and again at submit; the hint says to move the key back to a passphrase first.
-- `orch host convenience on` and the dashboard's custody switch are no longer refused by pending hand-offs; those
-  hand-offs still land. The click signer signs only requests it prepared itself, so a hand-off request is never
-  click-eligible (`not_prepared_here`), and a terminal-class op is never signed by a click.
-- `orch sign` prints "This key has no passphrase (One click is on)" when the key is in convenience custody. The typed
-  confirmation on `/dev/tty` stays.
-- `orch.host.convenience.workspace_lock` (`<state>/host/convenience-<ws>.lock`, 2 s wait, then `lock.busy`) stays for
-  custody and flag transitions. There is no catalog code `sign.click_only`.
-- Threat model: a taken-over dashboard can prepare a hand-off but cannot sign it; the person must run `orch sign CODE`
-  and read the review. A same-UID agent can already use the key (accepted risk, item 8 of the risk notice). `orch sign`
-  stays `human_only` under `ORCH_GRANT`.
-- Direct mode has no host and no convenience flag, and is unaffected.
 
 **9. Reader-version handshake (H12d, design draft).**
 
@@ -3591,11 +3446,10 @@ methods).** Presentation only: the signed events, `material`, `review_digest` an
    show the full review and send no `headline`/`content`. Every single-line value goes through one helper that makes a
    line break visible (` ⏎ `), a section's text is a block with every line under a `| ` mark, and every string goes through
    `canon.clean`.
-2. **Terminal.** The review has three layers: the headline and the content (`signer.plain`), then `Type KEY/FRAG to
-   continue (d = details): `; `d` prints today's full review (`signer.render`: the header with uid/pid/"self-declared,
-   unverified", the fingerprint, the hashes, the policy JSON and the gate input), `orch sign CODE --details` or
+2. **Terminal.** The review has three layers: the headline and the content (`signer.plain`), then the prompt of "CLI
+   signing review (C1)" below (`d` = details); `d` prints today's full review (`signer.render`: the header with uid/pid/"self-declared,
    `ORCH_SIGN_DETAILS=1` print it first. The full review is still built (and every refusal of it raised) before the
-   prompt. `confirm(text, word)` receives a `str` subclass `signer.Review` whose `.details` is the full review; a
+   prompt. `review_prompt(text)` receives a `str` subclass `signer.Review` whose `.details` is the full review; a
    confirm that does not know it shows the plain view. A relay pairing (`relay.pair_device`) keeps the full review as its
    only view (the code the person compared is part of what it binds). Other prompts (import, genesis pin) are unchanged.
 3. **Dashboard.** `human.prepare` answers are unchanged. The dashboard server adds `headline` and `content` as siblings
@@ -3607,29 +3461,7 @@ methods).** Presentation only: the signed events, `material`, `review_digest` an
    always show it. Every enable records `risk_ack` (the time) next to `enabled` in `convenience.json`, and the click
    signer's `status` reports it per workspace; a workspace enabled before B6 reports `risk_ack: null` until it is
    switched on again.
-5. **Sign methods.** The workspace setting `settings.sign_methods` (a signed `settings.changed`, owner only) lists the
-   ways a signature may be made in this workspace: `terminal` (always present, always allowed), `click` (one click on
-   this computer, convenience custody), `phone` (the paired phone), `touchid` (reserved: refused until it is built). When the
-   setting was never set it reads as `null` ("not set"): the model then judges no way and every way is allowed; a reader must
-   not invent a narrower default. **The model enforces it** (`orch.model.authz.method_refusal`, new refusal code `sign.method`, F1 §5.11 table):
-   a person event whose `auth` is `convenience` (the way `click`) or `secure-enclave-unlocked` (the iPhone app, the way
-   `phone`) is refused on append and invalid on replay when the workspace state *at that event's position* has a
-   `sign_methods` that leaves the way out; events before the setting, or before a change of it, stay valid (no
-   retroactive invalidation). The terminal (`passphrase`) is never judged; the reserved labels are not judged yet. **The model rule covers honest labels
-   only:** `auth` is the signer's own declaration, so an agent holding the convenience key can write another label. The real
-   controls are the host's, by custody and by device, not by label: (1) while click-to-sign is on (the key is in convenience
-   custody; the terminal path is closed by item 8) and `click` is left out, `append_signed` refuses every event of this
-   machine's person path whatever its label (`sign.convenience_unavailable`, reason `disabled`); (2) a `settings.set` that
-   leaves `click` out is refused (`invalid.input`, hint `orch host convenience off` and `orch keys custody passphrase
-   --in-place`) while click-to-sign is on, so the honest signer is never locked out; (3) every column R device is a paired
-   phone, so `relay.submit` refuses (`op.not_allowed`) while `phone` is left out, by device, not by label. With the flag off
-   a key left in convenience custody is protected by that custody alone (§0.8.6 item 0). No format change. The
-   relay path needs no copy of the rule: `append_relay` goes through `append_signed` and the store's append, i.e. the
-   model. Early, for a friendly error, a convenience prepare, bind or submit is also refused with
-   `sign.convenience_unavailable` reason `disabled` while the setting exists and does not list `click`. The person's own default (`sign_default`: `{method, fallback?}`) is host-local, not
-   signed and not a rule: it only chooses which button is primary in the dashboard. The dashboard server keeps it in
-   `<state>/dashboard/sign_default.json` (0600, per person and workspace; `GET`/`PUT /api/w/{ws}/me/sign_default`); a default
-   the workspace no longer allows reads back as `terminal`. A `sign_methods` change is a plain click after its review (contract 3, §0.8.6 item 6; it had a typed word before #1198).
+5. Phone signing follows device pairing. One click has no workspace method-list policy.
 
 6. **Not built: one signature for "New quick task (1 of 2)".** A quick task is `ticket.created` then a labelling
    `ticket.updated`. One request cannot carry both: every event of a request shares one `based_on`, and the second event
@@ -4113,8 +3945,6 @@ hand-off:
    "created_at":"2026-10-11T15:04:00Z"},"checks":[{"repo":"acme-energy-dbt","clean":true,"attested_by":"worker","at":"2026-10-11T15:04:00Z"}]},…}}
 ```
 
-Then the person runs `orch sign 7F3K-Q2MA`. Its connection:
-
 ```
 → {"t":"req","id":"c1","op":"human.pending","args":{"code":"7F3K-Q2MA"}}
 → {"t":"req","id":"c2","op":"human.get","args":{"request_id":"hr_01J9ZT…","signer":{"device":"d_7Q…","auth":"passphrase"}}}
@@ -4164,8 +3994,6 @@ The dashboard sees `seq` 20 through its subscription, or polls `human.pending {r
    duplicates wait; retryable failures are not stored; `pending` records are reconciled from the log after a crash.
 5. **Human ops** (§0.8.1): `event` is now `events` (1..16, multi-event ops). `signer` is optional and a hand-off binds
    its device in the new op **`human.get`** (R7, F5). The grant secret is drawn by the signer, and the prepared grant
-   event has `secret_hash: null` (F1). `origin`, an op-specific header and confirmation word, and a 12-hex
-   `fingerprint` shared by the dashboard, `orch sign` and H9 (R8). `human.prepare` accepts `files` (R9). `human.pending
    {request_id}` reports `prepared`/`submitted`/`cancelled`/`expired` with event id and seq (R6). The lookup limit is
    per connection. Host-prepared event ids. `dry_run` moves to `opts`, with `request: null`.
 6. **New ops:** `ticket.get` (structured ticket data: log summaries, question states, evidence digests per criterion;
@@ -4317,7 +4145,7 @@ Additive: new ops under new caps, optional keys under `read_ext/2`, new argument
     arguments are `idem.conflict`, a terminal request answers as for other idems, no idem is unchanged and `dry_run`
     never stores (§0.8.1 item 8a).
 11. **Click-to-sign (H5c, additive):** `Signer.auth` gains `"convenience"` (§0.8.6, D-P2-23). No new op and no new
-    frame on the workspace socket: the click signer is a client like `orch sign`. New host codes
+    frame on the workspace socket: the click signer is a client like the CLI signer. New host codes
     `sign.convenience_unavailable` (with a reason) and `sign.convenience_readers` (§0.6). `human.click_refused` is a
     client-side code of the click signer, never sent by the host.
 12. **Fixes (RH-1, RH-3):** `welcome.caps` lists `human/1` (it was in §0.4's table but missing from the welcome), and
@@ -4493,7 +4321,6 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     `grant.deposit_status` and `grant.forget` (P only); `whoami.runner.grant` and `run.list.runner.grant` carry the
     caller person's runner grant; `term.preview`/`term.open` take `harness:"claude-code"|"codex"` (person-run, kind
     `shell`) and `cwd`; `GrantView` gains `label` and `issued_at`; the click signer's `prepare {deposit:true}` and the
-    `sign` answer's `deposit`, `deposit_id`, `grant` (§0.8.6 item 6); `orch grant --runner`; `orch sign CODE` asks
     show or hand to the runner; the runner commands `grant.put`, `grant.drop` and the `spawn` fields `grant`,
     `session`, `person`; `<state>/runner.json` (`login_shell`, `programs`, `pass_env`); first-party manifest
     `addons/start-agent`. No F1 log or certificate change ("As built in H11c", §12.4).
@@ -4756,14 +4583,6 @@ oversized relay answer reuses `frame.too_large`). It adds **new internal contrac
     (b) `worktrees` add-on manifest, and the manifests of start-agent, terminals and worktrees ship in the package:
     `orch addon manifest <name> [--write WORKSPACE] [--force]`; (c) the workspace `welcome` carries `release` (12 hex of the
     host's code digest) and the CLI warns on stderr when it differs or is absent. No hash, F1 or error-code change.
-
-70. **B6: plain signing view, sign methods, risk notice once (owner decisions E and F of 16 Oct 2026; §0.8.6 "As built in
-    B6"):** the terminal review shows a headline and the content first and the full review behind `d` / `--details`;
-    `View` and the dashboard `HandoffRequest` carry `headline` and `content` (additive; `lines`, `risk`, `material` and
-    all hashes unchanged); the one-click risk notice is required at enable time and in Settings instead of on every
-    sign panel (amends §0.8.6 item 7 and the status paragraph); `settings.changed` may set `sign_methods`
-    (F1 `settings.sign_methods`, optional; `terminal` required, `touchid` reserved), and the model refuses a person event
-    made a way it excludes (`sign.method`, by the state at the event's position).
 
 71. **B7: skills in `.agents/skills`, `AGENTS.md` block, `CLAUDE.md` imports, structured `AGENTS.orch.md` (owner decisions
     A and B of 16 Oct 2026; ticket format §10.2 "Files written", harnesses §2):** `orch setup` and `orch instructions sync`
@@ -5126,40 +4945,8 @@ header and the shared fingerprint. A host bug must not be able to make the perso
 **D-P2-22 (manager ruling, orch-89). The Touch ID signer H9 is in P2 and must land before the cutover (D44).**
 *Re-planned by the owner on 12 Oct 2026: H9 moves to phase 3; phase 1 signs with D-P2-23.*
 
-**D-P2-23 (owner decisions, 12 Oct 2026; coordination log "OWNER RE-PLAN P2" and "D65 amendment", #264 comment
-6121460551, and the orch-d6 decisions). Phase 1 signs from the dashboard with one click** (§0.8.6, group H5c): the
-device key is held by the `convenience` custody backend (the traditional login keychain on macOS, a 0600 file in the
-person's own state dir on other Unix platforms, unsupported on Windows), with no user presence, by a separate
-person-class signer process beside the dashboard (`python -I -m orch.click`, a child of the dashboard server over a
-socketpair). The signer prepares click requests itself, runs every §0.8.1 check, renders the View the dashboard shows,
-and signs the stored immutable signing inputs of requests it prepared; events carry `auth: "convenience"` (F1
-amended). The host still never prompts and holds no device key. **The dashboard (its HTTP process and browser app) is
-trusted with signing authority**: the separation protects the key against passive disclosure, not against an active
-compromise, an XSS or a stolen bearer driving prepare, view and sign, and code execution in the HTTP process can read
-the key. **Accepted risk, on the workspace card and in the docs: "Convenience signing: agents running as you, or anything
-that takes over this dashboard, could sign."** The flag is **per workspace** and off until switched on; the host allows
-`auth: "convenience"` only while every reader of the workspace is local and updated (no relay pairing, no other
-device, no other member, a model that knows the value: `sign.convenience_unavailable`), and refuses adding a reader to
-a workspace whose history has convenience events (`sign.convenience_readers`), because switching back to terminal
-signing would not help: the new reader must still parse the old events. `orch sign CODE` stays available, and `grant`
-stays terminal-only (amended: a deposit grant, v1.6, and a reveal grant, #1198 C7, are clicks; §0.8.6 item 6). Supersedes D41's per-signature presence for phase 1 and amends the dashboard's D65 rule ("the
-browser never handles a factor" stays true; "signing only in the terminal or H9" does not). Reason: the owner wants
-phase 1 usable every day in tier A, where an agent of the same UID can already read a passphrase typed into a terminal
-it can see (D65's stated limit); presence returns with H9 and tier B in phase 3.
-
-- **Order:**
-  1. the `human.prepare` → sign → `human.submit` contract (H5a);
-  2. the terminal hand-off `orch sign CODE` as the first signing path (H5b);
-  3. H9 as its own group.
-- H9 blocks neither the socket core nor the dashboard's early milestones. The invariant stays: the host never prompts
-  and holds no device key.
-- The dashboard calls `human.prepare {handoff:true}`, previews from `material` with the fingerprint, and hands the
-  request to a signer.
-
 | Signer | Fetch | Review | Prompt |
 |---|---|---|---|
-| CLI (`orch approve`) | `human.prepare` with `signer` | `/dev/tty`: header, then review from `material`, confirmation word, `tcflush` (C7) | passphrase, fields from the signing bytes |
-| CLI (`orch sign CODE`) | `human.pending` + `human.get` (binds the device) | the same | the same |
 | H5c click signer (`python -I -m orch.click`, beside the dashboard, auth `convenience`, phase 1) | its own `human.prepare` with `signer` (bound at prepare), then `human.get` | the dashboard's sign panel shows the signer's View (the terminal review line for line, the risk line), §0.8.6 | a click for every click-eligible op (#1198: no typed word; the click review lists every line and, for `addon.grant`, the marketplace block "per host, not signed"; §0.8.6 item 6); none on the key |
 | H9 `orch-signer` (macOS, Swift, Secure Enclave P-256, auth `secure-enclave`) | `human.get` (binds the device) | its own native window: header, then review from `material` after recomputing the hashes | Touch ID; the LocalAuthentication reason is built from the signing bytes; non-person labels refused |
 
@@ -5217,7 +5004,6 @@ UID. P2 adds no keychain.**
 | Workspace code run by the host | Never. The only spawn is the launcher (D-P2-9), enforced by the audit hook. |
 | Client-named paths, env, cwd | Never used, except the two control ops from the host UID (D-P2-11). |
 | A grant secret leaked to the preparer | The secret is drawn by the signer; the prepared event has `secret_hash: null` (F1). |
-| A forged hand-off (tier A) | The signer's own header: workspace from its registry, op and decisive fields, origin, fingerprint, an op-specific confirmation word, and the "only sign a code you created" notice (F5). |
 | Grant id reuse | The principal comes only from a verified grant (F4). |
 | Malicious addon or escalation into the worker | Runs under the worker UID. The worker role is one connection per UID, with leases bound to that connection (F3). The clean-tree check runs no git process (F2). Proposals are rechecked. |
 | Socket hijack, planted socket, path replacement | Host-owned `<run>` under helper-created root directories (F12), ancestor checks every 60 s, bind through a checked fd, trusted pins. |
@@ -5467,7 +5253,6 @@ dispatch is turned on.
 | **H4a2 Files and blobs** | `files`, `blob.*`, `artifact.get`, quotas | chunk retry with the same bytes accepted, with different bytes refused; a wrong final digest refused; use across principals and workspaces gives `blob.invalid`; the per-UID quota and the person reserve (F9); consumed on commit, kept after a refusal or dry run, expired after 10 min; `x-file` without `files` refused; a lost first-chunk response is recovered with the same `upload_key`; a zero-byte blob; a repeated final chunk returns the same result | Opus |
 | **H4b Thin CLI** | `orch.hostclient`, mode by registration, rendering from `result` | goldens byte-identical in both modes for all non-human ops except `wait` | Codex |
 | **H5a Human contract** | `human.prepare`/`get`/`submit`/`cancel`, multi-event requests, material, signer recomputation and header, CLI composites, person versions of agent ops, `opts.dry_run` | mismatch, expiry, single use, tombstone; stale between prepare and submit; prompt fields equal `describe_payload`; a grant prepared with a non-null `secret_hash` is refused, and the preparer cannot obtain the secret (F1); `human.get` returns every invariant byte (§0.8.1) identical to `human.prepare`'s, and differs only in `actor.device` and `auth` after binding (F5); `verdict pass` and `verdict fail` on one gate have different fingerprints (N2); a prepared request with an event type outside `EMITS_V1[op]`, a second `log`, another `based_on` or a foreign `actor.id` is refused by the signer before any prompt (N4); `secret_hash` is set aside only on `grant.issued`; replay precedence (identical signed events give the stored result, other events give `human.request_state`); every state transition of the table; the `Review` (payload and derived) recomputed by the signer for every person event type; an unknown payload key is shown (L2); a section text whose `section_hash` differs from the event is refused; a `settings.set` `before` key outside `set` is refused; a crash between two appends of a multi-event submit is rolled forward at start and ends `committed`; human `submit` replay precedence against missing, conflicting, expired and fresh idems, with the fresh idem getting its own record; submit from another workspace's socket gives `not_found`; a multi-event request is all or nothing; **v1.5 "Bound hashes":** gate material always carries `policy`; the signer recomputes `policy_hash` from `material.policy` and the gate hash from `material.input`, and refuses a `policy_hash` that differs from either `material.input.policy_hash` or the event's; `source_sha` is checked only against `material.input.source_sha`; `gate_gen` is only displayed and checked by the host (`gate.stale`) | Opus |
-| **H5b Hand-off** | codes, `human.pending` (by code and by request id), device binding in `human.get`, `orch sign CODE` | a successful hand-off sign end to end; `orch sign` shows the workspace from its own registry, the op header and the fingerprint before content; binding to a second device is refused; failed lookups on one connection do not lock out another (F5); the `pending` states `prepared`, `submitted`, `cancelled` and `expired` (R6) | Opus |
 | **H6a Live updates** | journal, `jpos`, `sub.*`, revalidation, cursors, end reasons, `wait` on the bus, foreign-append rebuild | a revoked grant and a removed person stop delivery, queued items included; resume with no gap after a host restart; overflow, then snapshot, then cursor; a write's `res` before its `evt`; the journal is rebuilt after a foreign append (F11); one `jpos` yields up to three distinct ids, `.e` and `.n` to a viewer who still sees the ticket and `.g` and `.n` to one who lost it (two subscriptions, one `evt` each), never `.e` with `.g`; a fully filtered `jpos` still advances the cursor; `gone` is sent only to a viewer who saw the ticket; **v1.5:** `topics:["workspace"]` gives `no-person` no workspace-log item and a non-owner no `grant.*` item of another person, rechecked at delivery after a role change, and the withheld positions still advance the cursor | Opus |
 | **H6b Dashboard reads** | `ticket.query`, `ticket.get`, `needs`, `activity.list`, `workspace.show`, `member.list`, `session.list`, `grant.list`, `move`, `policy.set`, `settings.set`; v1.5: `workspace.settings`, `ticket.text`, `sub.open {detail}`, the `read_ext/2` fields | paging stays consistent under appends (no repeat, no gap); restricted rows hidden; `needs` equals `model.needs`; `ticket.get` evidence digests match the manifest; `grant.list` hides `secret_hash`; `move` allowed and refused per its rules; **v1.4:** `restricted`, the task and criteria counts, `blocking_questions`, `claim` and `closed` on rows are absent or never counted for a restricted ticket the viewer cannot see (`total` unchanged by it); `restricted` is `true` exactly for non-`workspace` rows the viewer may see; the new `needs` fields for `question`, `approve`, `no_eligible`, `acknowledge` and `addon` equal `model.needs` (with `who` limited as above) and the question or rule text, and `since` follows the table in §0.8; every new `ticket.get` field equals the model view (a question's options and answer, a receipt's `evidence`, gate `approved_by` and `decisions`, `verdict.current`, the manifest against `artifact.get` digests, `claim.live`, `source` against the latest `branch.pushed`), and `LogItem.data` holds only the fields in its type table (no `sig`, `host_sig`, secret or text beyond `Snip`); `sections` holds hashes only; a closed ticket: `ticket.get`, `diff`, `artifact.get` and `sub.open {ticket}` succeed for a viewer who may see it and give `not_found` for one who may not, `ticket.query` leaves it out without a `status` and returns it with `["closed"]`, `needs` has no `approve` for it, and a reopened ticket loses `closed`; `activity.list`: every item filtered on its own (an agent grant or `no-person` never gets a restricted ticket's events; `no-person` gets no workspace-log event; G gets its own person's `grant.*` and the person-type events per the op text; a non-owner gets only their own `grant.*` events and none of another person's), `next_page` and page fullness without holes, no `total`, a token with other arguments is `invalid.input`, an expired token is `page.expired`, a ticket that becomes visible between pages adds nothing to the snapshot, and one that becomes invisible is dropped from later pages; a revoked grant or a removed person on page 2 is filtered as the new viewer (H6b: answered `page.expired`, a change of the principal's viewer); a forged, altered or other-principal `page` token (also for `ticket.query`) is `page.expired`, and a token with other arguments is `invalid.input`; workspace-log `data` holds only the fields of its table; a `viewer`-role person gets member, role, device, policy and settings items with the table's fields only, and no `grant.*` item; `needs {person: X}` by an owner who is not on a restricted ticket's list returns none of X's items on it; `who` and `eligible` never name a person who cannot see the ticket, and a gate whose approver tokens no visible person holds is `no_eligible` with `cause:"no_visible_person"`, a gate with no token has `cause:"no_token"`, and `blocked` stays F1's token test; `duplicate_of` naming a ticket the viewer cannot see is returned as the key only, in `closed`, `LogItem.data` and the feed, and `ticket.get` on it is `not_found`; the `_more` flags and `_cut` siblings are set exactly when something was cut, the first page's `sub_cursor` joined to `sub.open` loses and repeats nothing, `settings.changed` shows key names only; `read_ext/1` and `activity/1` listed in `welcome.caps`; **v1.5:** `workspace.settings` gives N no `path`, `remote`, `settings_at` or `policy_at`, and marks defaults; `ticket.text` returns the exact stored text in chunks that never split a scalar value, `not_found` for a restricted ticket, a field the event lacks, or a workspace-log event; the `read_ext/2` hashes equal the model's (`hash12` is a prefix of `GateView.hash`) and `Decision.hash` equals the signed event; `grant.list` `revoked.by` is the `grant.revoked` signer and `session_ids` follow the `grant.list` rule; a `detail` subscription item equals the `activity.list` item of the same event for the same viewer; `settings/1`, `text/1`, `read_ext/2` and `sub_ext/1` appear in `welcome.caps`, and `read_ext/2` also lists `read_ext/1`; `detail` without `sub_ext/1` answers `invalid.input`; `workspace.settings` pages 32 repos per page on a stable snapshot, with `page.expired` and `invalid.input` for a token with other arguments; `path` and `remote` only for a person-class owner or maintainer (not for G acting for one), and an unparseable `remote` is omitted; N's `repos` hold only repos linked by a visible ticket, with `default_branch` only; `ticket.text` gives `not_found` for an `event_id` that is not the event at `seq` (a restore-abandoned event), byte offsets with nonempty progress at `length` 4 on 4-byte scalars, `invalid.input` for an offset inside a scalar value and for `offset > 0` without `event_id`; `Closed.seq`/`event_id`, `ClaimFull.idle_until`, `Question.qid`/`hash`/`answer.auth` and `sessions_more` match the model | Codex, Opus (visibility of the new fields) |
 | **H6c v1.5 listings** (v1.5) | `session.refusals` and the dispatcher's refusal records, `artifact.query`, `diff {head, base}`, `commit.list` | refusal records hold no args, message, hint or secret, only for column G with a session, and follow the `grant.list` person rule (an N caller gets `op.not_allowed`, a non-owner none of another person's), with a restricted ticket's refusal left out; `artifact.query` rows equal the union of visible manifests (`total` unchanged by a restricted ticket); `diff` and `commit.list` refuse with `not_found` a `head` or `base` outside the authorized ranges; **a repo identity change** (an old push with another `repo_id`, a `before` with another identity or ref) authorizes nothing; **merged history** (a visible ticket that merged another ticket's branch) discloses only what the documented boundary says; a caller-chosen endpoint never enlarges a range; **bounded continuation**: a range over 10 000 commits either resumes from host state or ends with `walk_cut:true` and `next_page:null`, never rescanning a prefix; `parents_more` and `pushed_more` set exactly when cut; subjects and author names cleaned; refusal records: complete ticket association or none, static catalog hint only, ingestion budget never blocks dispatch; `session.refusals`: `not_found` for a `session` or `ticket` the viewer may not see, epoch-bound tokens (`page.expired` after a restore), no `total`; `artifact.query` `counts` sum to `total`, appear on the first page only, and `counts:true` with a `page` token is `invalid.input`; `diff {head, base}`: `since` with either is `invalid.input`, and `repo` is required; `commit.list`: the author is the name only (no email), and `base_source:"pushed"` for a pushed base | Opus |
@@ -5958,7 +5743,7 @@ through purpose-specific methods.
 - Epoch keys are used only through `BridgeKeys`, which opens a request and seals a response and returns only
   plaintext or envelopes.
 - Device and person signatures are made only on the person path: the click signer subprocess (`orch.click`) or the
-  terminal signer (`orch sign`, `host/signer.py`). The host holds no device key (D-P2-15).
+  terminal signer (the CLI signer, `host/signer.py`). The host holds no device key (D-P2-15).
 
 **What this is not.** It is not key isolation. `BackendSigner` keeps its backend as a Python attribute and
 `FileBackend._load` (`custody/file.py`) returns the private key, so same-process code can reach the WSK; the key file is
@@ -8844,7 +8629,6 @@ set.
 | 7c | **The primary's challenge.** On a `notices.cert_requests` wake (fallback: `GET /v2/cert-requests/{id}` at most every 10 s, 5 s deadline, never blocking the pair thread) R6 reads the request. It verifies the PK-signed challenge with H12c `check_cert_challenge(signed, pk_pub, request_o)` (under the pinned `PK` and against the stored request's binding; the phone verifies again, §8.4 step 5) and relays it **unchanged** in `cert_pending`. Unverifiable relay data is dropped and alarmed `relay_misbehaving` | the challenge bytes, in the record, **before** the first answer that carries them; never replaced | a relay that withholds the challenge only delays: the phone's deadline gives `expired` |
 | 7d | **The primary signs or rejects** (owner client, 11A.15.9): it uploads the certificate (`PUT /v2/devices/{device}`) and the relay marks the request `signed`; or it posts a `cert_rejection`. The inline CLI also hands the certificate it signed (or the rejection) straight to R6 through the control op `relay.pair_cert` (Opus L4): the relay keeps a request only until `expires_ms + 60 s`, and a workspace session cannot `GET devices/{id}` before the device is in `ever_devices` (`directory.py`), so a host down at that moment would otherwise lose a signed cert. R6 still verifies it itself (step 8) | — | `rejected` with a rejection verified by `check_cert_rejection(signed, pk_pub, request_o)`: R6 relays the long form `{state, wsk_pub, pk_pub, rejection}` unchanged (§8.3 G3b). `expired`: `expired` |
 | 8 | **Certificate in hand** (from 7a, from `relay.pair_cert`, or from `GET cert-requests/{id}` `state:"signed"`). R6 verifies it itself, never trusting the relay's state: `check_cert` under the pinned owner `PK`; the keys equal the pending keys; `person_id` is the owner's; `verify_cert` at now; no revocation known (relay feed and `HostPins`); for 7b `scopes_max` equals what was requested, for 7a it covers the offer's scopes. The offer must still be `cert_pending`/`confirmed` (a cancelled offer's cert is refused here) | the cert, in the record; `outstanding.json` cleared | any failure ends the offer `failed` (short `rejected`, alarm `pairing_cert_invalid`) |
-| 9 | **The R6 allocation (the authoritative gate).** Refused when the phone's deadline is near (above). The CLI drives the person path: `human.prepare` of the material kind `relay.pair_device` (H12c item 12) renders `device.added {device, cert}` with the device id, the label (the cleaned label as `clean_label` returned it, shown for review only; there is no F1 copy of the label and no NFC step, 11A.15.13), scopes, `cert_code` (7b) or SAS (7a), and the cert digest. the Mac signs `device.added` with the workspace device key: at a terminal with its passphrase (the hand-off `orch sign CODE` or the attached CLI's inline signer), or, when the key is in convenience custody and the flag is on (B10, 17 Oct 2026: JUDGEMENT CALL reversing N4, 11A.15.6), with `auth:"convenience"` after the typed word (WORD class, history: gone with the relay client, V3 R4c, and #1198; in the dashboard, or in the attached CLI's TTY confirmation after the SAS and certificate steps, never a bare click). With the click-to-sign flag on the hand-off still works (it binds `auth:"convenience"`); the attached CLI may also use its inline signer with the convenience key; `pair.preview` does not block (11A.15.9A), then `human.submit`. The submit's append job, **under the store lock**, in one critical section: (i) the record is `confirmed`/`cert_pending` with this cert and within its deadline; (ii) **the allocation intent** `{offer_id, attempt, event digest (the reviewed prepared material), decl_digest, device_id}` is written into the offer record (Codex 2); (iii) the authoritative reader check (`refuse_reader_op`, later `check_readers` over the event, §0.8.6 item 9.4); (iv) `append_signed(...)` of `device.added`; (v) the reader record (§9.10, `source:"pair"`); (vi) `membership/devices/<id>.json`; (vii) the offer state `allocated` with the event id | the intent before the append; the F1 log line is the commit; then the reader record, devices and offer, under the same lock before it is released | **crash recovery** (at open, before either R6 thread starts, before anything is served): an offer whose intent's event digest matches a `device.added` in the log is rolled forward by recovering **all** derived records: the reader record, `devices/<id>` and `allocated`. Matching is by the intent (offer, attempt, reviewed event, declaration), never by "same cert, same device". A `device.added` without an intent is a plain F1 device (not relay-reachable). The gate refusal ends the offer `failed`: nothing appended, short `rejected`. **Already in F1** (orch-f1 S3): if F1 already holds this exact device with the same keys and certificate and it is valid, the allocation is idempotent (no second append; the intent names the existing event), and if the device is in `excluded` the same critical section clears it (re-admission, N2, 11A.15.4); if the id was removed or revoked, refuse `revoked` |
 | 10 | **Publication.** `PUT /v2/devices/{device} {cert}` (idempotent: an identical `cj(o)` is a free 200; `cert_conflict` is alarmed `pairing_cert_conflict` and fails the offer), then the pair thread asks the membership thread for the body that **adds** the device (11A.15.4; a rotation if the gate is up). **No WK is sealed before steps 8 and 9** (§8.3 step 5) | H1/H2 `head.json` write-ahead | as 11A.15.4. A content refusal of the add ends the offer `failed`, puts the device in `excluded` and forces the rotation (holder invariant). The device stays an F1 device: R6 raises the `needs` item "pairing of <label> failed after it was added: remove the device" and never appends `device.removed` itself (Q13) |
 | 11 | **The baseline.** After the add committed: R1's verified `GET checkpoint` gives the held `{n, hash}`. `POST /v2/workspaces/{ws}/baselines {hash, offer_id}` (W(g), 7 days). **JUDGEMENT CALL:** a linked workspace always has a held checkpoint, so a missing one while `published.jsonl` has an accepted entry is `relay_rolled_back` (11A.5): R6 does not approve with `baseline: null` and retries until the phone's deadline | `published` with the acknowledged publication `{epoch, list_seq, list_hash}`, the current accepted `card_seq`, and the baseline | `404 not_found` or `410 checkpoint_gone`: reread H and pin the new one. `quota_exceeded` (16 pins): alarm, retry every 30 s until the deadline. A baseline is never downgraded |
 | 12 | **Approved.** Every later `pair_status` gets `{state:"approved", scopes, cert, pk_pub, epoch, list_seq, card_seq, baseline, wsk_pub}` from the record. `scopes` are **byte-equal to the accepted list entry's** (orch-f1 S7: else the phone refuses `scopes_mismatch`); `epoch` and `list_seq` name the exact locally persisted publication the relay acknowledged | `approved` | the pin is released (`DELETE baselines/{hash}?offer_id`) on the device's first verified column-R request, but only if no other non-tombstoned offer names the same hash (Opus L5: the relay keys pins by `(ws, hash)`); else left to expire. The record becomes a tombstone after 7 days |
@@ -9086,17 +8870,6 @@ grant).**
 - `pair.cancel`: calls `cancel`;
 - a `pair` sub topic with offer states and no secrets.
 
-The cert and primary step (7b to 7d) stays with the CLI or the owner client; the dashboard does not hold `PK`.
-**Entry points for the two acts outside the dashboard (N3b, 15 Oct 2026).** Otherwise a dashboard pairing of a new
-phone stalls at `cert_pending` until the phone's deadline:
-- **the primary step** (path 7b: the recovery code and `cert_code`): `orch host relay pair --workspace W --resume
-  --offer O`, which attaches to the dashboard-created offer and runs the inline primary mode (11A.15.9). The dashboard
-  shows this command once the offer is `confirmed` on path 7b;
-- **the `relay.pair_device` signature** (step 9, `device.added`): no click or convenience path; the terminal hand-off,
-  `orch sign CODE`, or an inline terminal passphrase signer (convenience is refused). The dashboard shows the hand-off code once the request is prepared; the attached CLI of the
-  previous bullet signs it inline instead when it is running.
-**JUDGEMENT CALL:** the HTTPS fallback link is shown with the same label as in the CLI, and the same rules apply to it.
-
 #### 11A.15.10 H12c builders R6 needs, in dependency order (for orch-52)
 
 Pure functions are in `orch.identity` (no I/O, no keys held). Person-path pieces are in the owner client and custody,
@@ -9297,7 +9070,6 @@ S1/S2 (N6, 15 Oct 2026; 11A.15.15).**
   reaches this op: R6 names the existing event in its intent itself, since the model refuses a second
   `device.added` with `device.exists`.
 - **JUDGEMENT CALLS.** The material also binds `offer_id` and `attempt` (shown as host attestations), so a review of
-  one pairing cannot allocate another; the confirmation word is the device id's last eight hex (shown in the review);
   a phone certificate whose `scopes_max` exceeds `look, decide` is refused by the facts and by the signer (N1 made
   structural at the signature); no source is `op.unsupported` (R6 not running here), not a new code.
 - Tests: `tests/identity/test_pairdevice.py` (every binding, positive and negative), `tests/host/test_pair_device.py`
@@ -9780,7 +9552,6 @@ The Simulator uses `relay.dev.severin.io`; `--relay local` stays for the Python 
 | orch-f1 phone review | 3 blockers, 8 should-fix | B1 answers table; B2 deadlines; B3 Simulator on `relay.dev`; S1 scheme hijack and D-3 amendment; S2 cert ceiling and no expiry; S3 idempotent allocation, `revoked`; S4 first declaration wins, `via:"pair"` only; S5 refusal codes; S6 cancelled open offer `expired`; S7 scopes and origin equality; S8 re-pinned vectors; nice: `primary_label` source, `simctl` argv | S6 was applied to `open` offers; a cancelled **consumed** offer answers short `rejected` (JUDGEMENT CALL: the human refused it) |
 | Owner (through orch-d6) | — | Q5 yes with orch-f1's mitigations; the accelerated order (11A.15.15) | Q1 was open; decided B on 15 Oct 2026 (below) |
 | Decided amendments (15 Oct 2026) | docs only | Q1 = B (owner, via orch-d6); Q16 = no (owner); C7 narrowed in 9.4 (orch-52 with orch-29); Q15 = no relay change now, pre-public item; dashboard pairing and the internal API (orch-52 with orch-fa, contract v1.9; 11A.15.9A); one `clean_label` (#476); notes from #476's review | none |
-| orch-52 re-check of `beafc6c8` (15 Oct 2026) | CHANGES, docs only (20 items: 15 covered; 11, 13, 20 partly or regressed) | H1 meta v2 = six fields plus the optional `reader_decl` (item 4, step 3, #476 notes; #476 fixed before merge); D1 label rule = §2.5 as #476, no NFC in `clean_label`, order verify-original → `clean_label` → `label_sealed` carries the cleaned output unchanged, "empty → phone" display-only (11A.15.13, items 4 and 12, steps 3 and 9; the NFC step in an "F1 copy" was a mistake and is corrected in 11A.15.13: neither `device.added` nor a member-list entry carries a label); N1 cert ceiling = first offer's scopes, no `operate` for phones in v1.7 (11A.15.6, Q4, the 11A.14 consistency line); N2 re-admission through a new approved offer (11A.15.4, step 9); N3a `pair.preview` blocks on the flag or convenience custody, history is a warning; N3b entry points `orch host relay pair --resume --offer O` and `orch sign CODE`; N3c 3 SAS attempts per offer (JUDGEMENT CALL taken by orch-52); N4 step 9 terminal hand-off only; N5 nothing in the snapshot takes the store lock; N6 H12c 9 to 11 into S1/S2, shared owner-client code, S4 reruns T2 with the product primary; N7 journal path, `flock`, same-id check, retention; N8 passphrase forcing (narrowing-only env rule) and `pair.json` in the redaction scan; N9 import-light test | N8a's `ORCH_NO_CONVENIENCE` narrowing variable was a JUDGEMENT CALL of this revision, ACCEPTED by orch-52 (15 Oct 2026) on the four conditions in 11A.15.11 (any non-empty value refuses; checked inside the core functions with `sign.convenience_unavailable` reason `env`; never blocks `convenience off` or `custody passphrase`; test that every other op is unchanged) |
 
 **Consistency with 11A.14.** Phone person events need `decide` (F1 §5.3): the default list scopes include it.
 `operate` stays out of both the list entry **and the phone certificate's `scopes_max`** (N1: the ceiling is the first
@@ -10593,7 +10364,6 @@ Wire contract of record: the phone (orch-mobile) and the dashboard code against 
 - **Ops for the person at the Mac** (column P only; `person_write` / `person_read`, so a grant (ORCH_GRANT) and no-person
   get `op.not_allowed`). `phone.request {ref, gate, gate_gen}` (an idem, as every host write): `gate` is `requirements` or
   `plan` (`invalid.input`), the ticket is visible, the gate applies, the caller may decide it (`gate.not_eligible`),
-  `gate_gen` is current (`gate.stale`), `sign_methods` allows `phone` (`op.not_allowed`), fewer than 5 other open hints
   (`rate.limited`); one open hint per (ticket, gate, person): the same generation answers the existing hint with
   `duplicate: true`, another generation makes the old one `stale` and a new one. Result: `{id, ref, uid, gate, gate_gen,
   created_at, expires_at, state, duplicate, phones}`; `phones` counts the person's current devices whose certificate is
@@ -11259,7 +11029,7 @@ registry reads. A G call can never claim, retire or bind.
 **The terminal hand-off (DECIDED (orch-52, Codex), item 10, as refined).**
 - **The flow.** A claim of someone else's inbox content, a retire of someone else's upload, and every `drop.bind` go
   through `human.prepare`, with new **non-event** material kinds `drop.claim`, `drop.retire` and `drop.bind`. These are
-  reviewed and confirmed **only by the terminal signer** (`orch sign`). The click signer refuses them (`terminal_only`),
+  reviewed and confirmed **only by the terminal signer** (the CLI signer). The click signer refuses them (`terminal_only`),
   as for `relay.pair_device`.
 - **What is bound.** The material binds:
   - the workspace id, the object id and the head token;
@@ -11271,7 +11041,7 @@ registry reads. A G call can never claim, retire or bind.
 
   `host/signer.check` recomputes all of them and refuses any extra field and any cross-kind substitution.
 - **The signature (DECIDED (orch-52, 15 Oct 2026), O1).** The hand-off is **signed** by the person's terminal signer,
-  the same machinery as `orch sign` and `human.prepare`, so it is a bound, auditable person gesture. Its label is a new
+  the same machinery as the CLI signer and `human.prepare`, so it is a bound, auditable person gesture. Its label is a new
   device label, `sig_drop_handoff` = `orch/v2/sig/drop-handoff|`. It is added to the planned labels in
   `orch.crypto.labels` (H13-0) and to `DEVICE_KEY_LABELS` (H13b-4). The signed bytes are
   `"orch/v2/sig/drop-handoff|" ‖ cj(material)`, where the material carries `kind` (`drop.claim`, `drop.retire` or
@@ -11429,7 +11199,7 @@ The catalogs to update in the PR that serves these codes:
   and head only;
 - quarantined objects are invisible, except a count in status;
 - claims and retires that need a hand-off show "confirm in a terminal" (`drop.handoff_required`), with the
-  `orch sign` request id.
+  the CLI signer request id.
 
 **The phone:**
 - the three push kinds, with no push for unclaimed inbox items;
@@ -12115,7 +11885,6 @@ Records tool (python -I -m orch.records, one shot, person UID): from `orch recor
 | **D-P2-24** | **A separate per-UID runner service** (`python -I -m orch.runner`) supervises agent runs, terminals and worktree git; never the host (its only spawn stays `orch.gitread`, D-P2-9) and never the dashboard server. Tier A: LaunchAgent `io.orch.runner` / systemd user unit `orch-runner.service`, person UID, installed by `orch runner enable` like H7's unit. Tier B: one system service per agent UID. **Same-UID separation is not containment: runner reports are untrusted and cannot establish authorization; reports are accepted only for runs assigned to that runner.** The runner accepts commands (and `grant.put`) only after checking that the peer UID of `<run>/runner/host.sock` is the host UID (`getpeereid`/`SO_PEERCRED`); one runner connection per runner UID, bound to the runner unit's main PID and to the runner's generation (§12.4). The runner concentrates every deposited grant: compromising it (or, in tier A, any agent) yields all of them; tier B confines this per agent UID. | Sessions outlive host and dashboard restarts; the key-holding host never parents workspace code; tier B needs the spawner to be the agent UID. | **SC** |
 | **D-P2-25** | **Control through the host, terminal bytes direct.** Clients call host ops (§12.3). The host mints an attach capability, registers it at the runner over the command stream (`attach.allow`) and can end it (`attach.end`); the dashboard server connects to the runner's term socket and presents the ticket once (§12.6). The host relays no terminal byte and has no stream router. | Keeps terminal floods out of the failure domain of signing, revocation and the D58 precommit; the dashboard server is already trusted (it can click-sign); the enforcement point does not move. | **SC** |
 | **D-P2-26** | **Columns** (§12.3.1): start, stop, open, attach, write, resize are **P only**, attach/write/resize only for the run's own person; **G never** (F1 §8: `pty` is never granted to agents); **N never**. `run.list`/`run.sub`: P sees its own person's runs; G sees only `kind:"agent"` runs on tickets inside its grant's scope, never shells; owners and maintainers do not see other persons' runs; viewers see none. Worktrees: P on a visible ticket; G only on the ticket its session holds the live claim on, rechecked when the runner executes. Records: owners and maintainers. Authorization is rechecked at execution and before every delivery of queued data. Recovery without the host or membership: `orch runner stop RUN\|--all` (terminal, local). | Typing into a PTY is code execution; agents must not drive each other or the person's shell; a removed person must still be able to stop their own processes. | **SC** |
-| **D-P2-27** | **The runner grant** (**owner decision, 12 Oct 2026: click-issued agent grants allowed**, at most the workspace `grant_hours` setting (1 to 168 h), **amended 16 Oct 2026 (owner decision D, B8): was a fixed 12 h**; a plain click since #1198 (it had the typed word `<PREFIX>~<WS8>/GRANT`), handed straight to the runner, never shown in the browser). *Extend* (the dashboard's "Agents can work for you until … · Extend · Stop") is the runner grant only: one prepared request of `grant.issued` (new) then `grant.revoked` (the replaced one), the same click, judged together by `judge_events` so either both land or neither; the log commit comes before the secret deposit (`deposit_id`, idempotent), a failed deposit leaves the runner without a live grant (retry the deposit only, never re-sign). A future phone/relay Extend uses the same click class. The cap is host admission only (`min(grant_hours, 168)`, read at prepare and again at `grant.deposit` on the state then); the model accepts an owner's 168 h grant regardless. The runner holds at most one runner grant per (workspace, person), in memory only, and reuses it for every agent it starts (F1 A3 standing grants). It gets it only through `grant.deposit`, a person-class op that also carries the secret in `auth.grant` (**amended in H11c review, owner decision of 15 Oct 2026:** at the permission matrix it is column G, a verified `auth.grant`; the op itself then requires a person-class peer whose UID maps to a valid member and a grant that is that same person's `label:"runner"` grant, which is equivalent to "P-class plus `auth.grant`"), sent by the process that drew the secret: the click signer in **deposit-only grant mode** (amends §0.8.6 item 6), `orch grant --runner`, or `orch sign CODE` (it asks "show or hand to the runner"). Only a grant whose `grant.issued` has `label:"runner"` can be deposited; a forgotten or replaced runner grant id cannot be deposited again (`grant.forgotten`). Every deposit has a `deposit_id` with outcome `confirmed`, `rejected` or `unknown`. Owner's plain-language risk: *"Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."* | Start-from-dashboard as one daily flow, while the secret stays out of the HTTP process and the browser; an agent cannot re-point the runner to its own grant. | **SC** |
 | **D-P2-28** | **Launch specs are computed by core** from a closed harness registry (`claude-code`, `codex`, `shell`; the F1 `actor.id` values) and validated values (ticket, mode, model, subagent model). Argv only; the prompt is one element ("data to the OS, instructions to the harness"). `agent.preview` returns a `spec` digest; `agent.start {…, spec}` recomputes it and refuses `launch.changed` on any difference; preview has no side effects. **Agents start through the person's login shell** in exec form `[$SHELL, "-l", "-c", 'exec "$0" "$@"', argv…]` (a POSIX shell is required, else `harness.shell_unsupported`); the preview says "the program is found and started through your login shell; your shell profile runs first and can change what runs". Opt-out: `runner.json {login_shell:false, programs:{…absolute paths…}}`. Environment allow-list (§12.5.3) with a `pass_env` deny-list. | The client chooses values, never a command; without the login shell launchd-started harnesses are not found on a normal Mac. | **SC** |
 | **D-P2-29** | **Supervision.** Every child starts through a fixed trampoline (`python -I -m orch.runner.exec`). Linux: each run enters its own cgroup **before** `exec` and stops with `cgroup.kill` until `populated=0`. macOS: process group plus a sweep of the run's session id, **best-effort cleanup, not containment** (a `setsid()` descendant escapes). `run.stop` answers `cleanup:"complete"\|"incomplete"\|"unknown"`. Every signal targets a (pid, birth time) pair re-read right before `kill`; the runner kills only its own runs, never by name, never UID-wide. **No CPU, memory or process-count limits in phase 2** (agents are the person's own programs; revisit with tier B). | Honest claims; "kill only own PIDs" on a shared machine. | **SC** |
 | **D-P2-30** | **Terminal transport.** The runner reads every PTY continuously into a 1 MiB ring; a slow or absent viewer never blocks an agent. **Attach is read-only by default**; the write lease is taken only when the capability is consumed, only if nobody holds it, or with explicit `take:true`; a reconnect or remount never takes it implicitly. Writes and resizes carry the **lease generation** and an **input id**, both checked at the runner; replay never generates input; a `gap` resets the client's parser. Control frames are never dropped. xterm.js runs with the hardened configuration of §12.6.7 (no links in phase 2). A separate restricted origin for terminal rendering is **deferred to phase 3** (accepted risk, owner FYI). | Fixes double input, lease ping-pong and answerback injection. | **SC** |
@@ -12554,9 +12323,7 @@ reviewed code change, never configuration. The dashboard's `harnesses.ts` keeps 
   `{result, duplicate, deposit, deposit_id}` and **never holds the secret**. On `unknown` the signer asks
   `grant.deposit_status` once; if still unknown the panel says "The grant may or may not be with your runner. Revoke it
   to be sure." (click `grant.revoke`).
-- **Terminal:** `orch grant --runner [--hours N]` (label `runner`, deposits instead of printing); `orch sign CODE` for a
   grant request asks `[r] hand to the orch runner  [s] show ORCH_GRANT here`. The dashboard's fallback when click is
-  off: `human.prepare {op:"grant", handoff:true}` and "Sign in your terminal: `orch sign XXXX-XXXX`".
 - `grant.deposit` refuses: a grant without `label:"runner"`, `verbs` other than `"agent"`, under 15 minutes left, a
   forgotten or replaced id (`grant.forgotten`), the runner not connected or not enabled. The host forwards the secret
   once (`grant.put`), keeps no copy and redacts it (D-P2-10). A newer runner grant replaces the older one for new
@@ -12673,7 +12440,7 @@ Where the code differs from or adds to §12.3, §12.4 and §0.8.6 item 6, the co
   `rejected`). Any failure of the hand-over after the commit (a host error, a broken or garbled connection) is
   `unknown`, never a failed `sign`.
 - **Terminal.** `orch grant --runner` (host mode only; direct mode is `invalid.input`) prepares a grant with
-  `runner:true` (label `runner`, at most `grant_hours`, verbs `agent`; `--extend GRANT` revokes your replaced runner grant in the same request) and hands the secret over after the commit; `orch sign
+  `runner:true` (label `runner`, at most `grant_hours`, verbs `agent`; `--extend GRANT` revokes your replaced runner grant in the same request) and hands the secret over after the commit; `CLI signing
   CODE` asks `[r] hand to the orch runner  [s] show ORCH_GRANT here` on `/dev/tty` only for a grant whose
   `grant.issued` says `label:"runner"` (any other grant is shown as before; no terminal to ask on shows it).
 - **Runner side.** One grant per (workspace, person) in memory (at most 64), replaced by a newer `grant.put`; an
@@ -13468,7 +13235,7 @@ Limits are in §0.11 (rows marked v1.6) and errors in the v1.6 table of §0.6.
 | **H11a Runner core** | `orch.runner`, `orch runner enable/disable/status/stop/restart`, units, the runner socket and class `runner` (main-PID, generation, the host peer-UID check by the runner), `runner.hello/report/exit` and commands, trampoline, PTY, ring, stop and sweep with birth identity, cgroup before exec, fd closing, bounded drain, persisted run table and crash sweep, spawn dedupe, env allow-list and `pass_env` deny-list, the machine switch (D-P2-31), the term socket listener and `attach.allow/end`, the first-party manifests | a second runner connection and a non-main-PID runner are `peer.denied`; the runner refuses commands from a socket whose peer is not the host UID; the child env equals §12.4.3 (property test); a swapped cwd is `launch.cwd_changed`; a `setsid` escapee on macOS yields `cleanup:"incomplete"`, Linux `cgroup.kill` empties the cgroup; a reused pid is never signalled; a process outside the run is never signalled; a lost spawn ack yields one process; the ring never blocks 50 MiB of output with no viewer; host restart keeps runs and ends attachments; runner crash marks `lost`/`unknown` and sweeps; `restart` refuses with live runs; `orch runner stop RUN` and
 `--all` work from the person's terminal with the host down and for a person no longer a member (no host call needed). T0 `tests/runner/test_trampoline.py`, `tests/runner/test_supervise.py`, `tests/host/test_runner_socket.py` | Opus |
 | **H11b Terminals** | `term.preview`, `term.open/attach`, `attach.cancel`, `run.list/sub` with `rev`/`gone`, `run.stop`, capabilities, lease generation, input ids, gaps, resize rules; the dashboard server's WebSocket `Security` path (S1/S2) and the xterm list, as joint acceptance with orch-fa | only the run's person attaches (G, N, another person refused); an unused ticket never takes the lease and expires in 10 s; a replayed or other-generation ticket ends with `ticket_invalid`; `take` is needed against a holder; a retried input id types once; unacked input is not replayed after reconnect; replayed `ESC[6n` produces no input; a read viewer's resize is ignored and the writer's applies to all; a slow viewer gets `gap` and control frames still arrive; `attach.end` closes on person removal while the run continues; the host stays responsive (`human.prepare` round trip under 50 ms p99) while 8 runs flood output; WebSocket without Origin, with `Origin: null`, wrong Host, ticket after logout, slow or oversize first message, binary before the ticket are all refused; the canary corpus of §12.6.7 leaves clipboard, `window.open` and `document.title` untouched and the forwarded replies stay within the CPR/DA1 allow-list; the browser ticket is lazy (no host call before the WebSocket), a closed writer connection releases the lease at once, replay chunks (offset below `ready.offset`) produce no input, every end reason maps to its close code, `throttle` pauses without dropping input, and the dashboard server logs no terminal bytes or tickets. e2e `terminal_attach.spec` | Opus |
-| **H11c Start agent and runner grant** | harness registry, `agent.preview/start` with `spec`, `context` mode, `subagent_model`, `term.preview` and `term.open {harness}`, POSIX-shell check, `grant.deposit` (P + secret, `label:"runner"`, `deposit_id`, forgotten ids), `grant.deposit_status/forget`, the click signer's deposit-only grant (`check_prepared` exception, word, View line, ≤ 168 h), `orch grant --runner`, `orch sign` show-or-runner | preview argv equals the spawned argv; a changed value between preview and start is `launch.changed`; a model starting with `-` or with a space is `launch.invalid`; a live claim refuses; a canary secret appears in no dashboard frame, host or runner log or result, only in the agent's environment; an agent depositing its own non-runner grant is refused; a forgotten id is `grant.forgotten`; a lost deposit ack yields `unknown`, never a false failure; the click signer refuses `grant` without `deposit:true`; a person-run harness (`term.preview`/`term.open`) has no `ORCH_GRANT`, no claim precheck and kind `shell`; the View's `deposit` field is set only for a deposit grant; idem retry of `agent.start` starts one process; fish as `$SHELL` is `harness.shell_unsupported`. e2e `start_agent.spec` (grant by click, start a stub harness that runs `orch status` and claims) | Opus |
+| **H11c Start agent and runner grant** | harness registry, `agent.preview/start` with `spec`, `context` mode, `subagent_model`, `term.preview` and `term.open {harness}`, POSIX-shell check, `grant.deposit` (P + secret, `label:"runner"`, `deposit_id`, forgotten ids), `grant.deposit_status/forget`, the click signer's deposit-only grant (`check_prepared` exception, word, View line, ≤ 168 h), `orch grant --runner`, the CLI signer show-or-runner | preview argv equals the spawned argv; a changed value between preview and start is `launch.changed`; a model starting with `-` or with a space is `launch.invalid`; a live claim refuses; a canary secret appears in no dashboard frame, host or runner log or result, only in the agent's environment; an agent depositing its own non-runner grant is refused; a forgotten id is `grant.forgotten`; a lost deposit ack yields `unknown`, never a false failure; the click signer refuses `grant` without `deposit:true`; a person-run harness (`term.preview`/`term.open`) has no `ORCH_GRANT`, no claim precheck and kind `shell`; the View's `deposit` field is set only for a deposit grant; idem retry of `agent.start` starts one process; fish as `$SHELL` is `harness.shell_unsupported`. e2e `start_agent.spec` (grant by click, start a stub harness that runs `orch status` and claims) | Opus |
 | **H11d Worktrees** | `worktree.*`, runner git under the per-repo lock, host pins and generations, D58 and `tree.check` on the registered worktree, `orch worktree` in POSIX direct mode | create on the linked branch at `<repo>.worktrees/<WS8>-<KEY>`; no branch is `worktree.no_branch`; a branch checked out elsewhere is `worktree.branch_in_use`; re-registration between prepare and binding invalidates the request; a re-pointed `.git` file, a moved worktree or a relinked branch is `observe.unavailable` and never falls back; a verdict on a ticket worked in its worktree passes; dirty remove refuses without `force` and G cannot force; the branch survives removal; a planted `post-checkout` never runs; G only on its own claimed ticket, rechecked at execution; direct-mode tools refuse while a host serves. T0 `tests/host/test_worktrees.py` | Opus |
 | **H11e Records** | `records.status/snapshot/export_check/note`, `orch.records` (commit, push, init, sync-index, auto, remote private), timer units, the dashboard child contract | a snapshot during appends commits only whole lines; `.state/` never committed, and a historical `.state/` file blocks push until fresh history; the written tree equals the manifest; the person's index is untouched unless it equalled HEAD; local `url.*.insteadOf`, `credential.helper`, `filter.*`, `core.sshCommand` or two URLs refuse and name the key; `ext::`/`file://` refused; a non-records commit in `tip..HEAD` refuses; divergence refuses without rebase or force; `MERGE_HEAD` refuses; push with convenience events and no private mark is `sign.convenience_readers`; a changed push URL after a private mark refuses; G gets `op.not_allowed`; auto mode commits only when pending and due. T0 `tests/test_records_sync.py`, `tests/host/test_records_ops.py` | Opus |
 | **H11f Quick tasks** | `quick.list`, `orch quick add/list`, the manifest | `quick.list` equals `ticket.query {label:["quick"]}` for every viewer; counts `null` when unreadable; a failed label `set` is retried on the created ticket. T0 `tests/host/test_quick.py` | Codex |
@@ -13560,7 +13327,6 @@ The add-on `publish` ships inside orch-core (capability `network`); `addon.grant
   written to `/dev/tty` only.
 * **Signing class** (#1198 C2, §0.8.6 item 6). `publish.share`, `addon.grant` of `publish` and a
   `settings.set` that touches `publish` are plain clicks after the review (they were terminal-only); the View names both
-  servers in words, and the staged copy's own words are the share's review. `orch sign CODE` stays the backup.
   `click/protocol.op_class` still classes `settings.set` by key (`SETTINGS_TERMINAL_KEYS`, now empty) from the
   request's `set` before prepare and from the prepared events at sign time; the sign-time class wins.
 
@@ -13586,7 +13352,7 @@ the host; a separate host UID stays possible later and nothing here blocks it.
 
 | OS user | Runs | Holds |
 |---|---|---|
-| the person, e.g. `sev` (= host UID) | host, dashboard server, click signer, CLI, `orch sign` | One-click key, passphrase key, WSK, host state, add-on credentials, the person's checkouts |
+| the person, e.g. `sev` (= host UID) | host, dashboard server, click signer, CLI, the CLI signer | One-click key, passphrase key, WSK, host state, add-on credentials, the person's checkouts |
 | `orch-agent-<user>` (system user, password locked, shell `/bin/bash`) | the runner (system unit), every agent run, every dashboard terminal | its own HOME, its Claude/Codex login, its clones and worktrees, the grants deposited to it |
 | `orch-addon-1` … `orch-addon-8` (system users, `nologin`) | one add-on slot runner each and the calls assigned to it | nothing persistent; a per-call work dir |
 
@@ -13812,26 +13578,6 @@ first failed fact named.
 
 ### 13.7 One click in tier B (reverses §9 item 11 "click-to-sign ends after migration")
 
-- **One click is allowed in tier B.** With host = person, the click signer keeps running as the person next to the
-  dashboard (§0.8.6 item 5); the signer needs no change. Agents cannot read the key file and cannot reach the signer
-  (a `socketpair` child of the dashboard server, no path to connect to).
-- **Default.** On by default where `isolation.detect()` says agents are `isolated`. Off by default elsewhere (no admin
-  step, Windows, macOS before M1, `broken`): turning it on is one click after the red line **"Agents run as you.
-  Anything an agent runs can sign with One click and read your files."** (plus the step-up of §0.8.6 10.5 on a remote session).
-  If isolation later turns `broken` while One click is on: an **exposure fact** (13.6) **pauses click signing**. The
-  signer refuses each sign with the failed fact named; custody, the key and the person's setting do not change, and
-  signing resumes by itself once the check passes again. An **availability fact** leaves One click on, with the red line
-  and the doctor. Pausing rather than switching off means an agent that breaks something (for example kills its own
-  runner) gains no lever over the person's custody; `orch sign CODE` in the terminal keeps working throughout.
-- **§0.8.6 item 3a works in tier B.** The host-state flag file is the person's (host = person), so the dashboard's custody
-  switch is offered in both tiers.
-- **The dashboard port (L8, Linux).** The dashboard server drops loopback TCP connections whose socket owner UID
-  (`sock_diag` or `/proc/net/tcp{,6}`) is not the person. The SSH tunnel's forwarding runs as the person, so the VPS path
-  keeps working; an agent does not even reach the login. macOS has no equivalent; there the bearer remains the gate.
-- Memory: another UID cannot `ptrace` the person's processes or read their `/proc/<pid>/environ` or `mem`. `argv` is
-  world-readable unless `/proc` is mounted `hidepid=invisible` (doctor hint), so secrets stay out of `argv` (tested
-  invariant).
-
 ### 13.8 Add-ons under slot users (#287)
 
 - **Slots, not per-install users.** Making a user needs root; an install must not. The helper makes
@@ -13919,3 +13665,24 @@ person-side ACLs; L6 agent clone and worktrees; L7 agent CLI (served mode only, 
 dashboard peer-UID check; L9 terminals as the agent; L10 agent sign-in; L11 `isolation.detect()`; L12 the setup step;
 L13 doctor; A1–A4 slots, ACLs, credentials per call, #929; E1 e2e `vps-agent-uid` on the dev VPS; M1–M3 macOS. Real
 cross-UID tests run in a CI job with root (`needs_root`, `tests/osusers/`); locally they skip.
+
+
+### CLI signing review (C1)
+
+Every CLI signature uses `review_prompt(text)` on `/dev/tty`: “Press Enter to sign, d for details, any other key
+cancels.” (a text without details, such as setup's or the importer's, says “Press Enter to sign, any other key
+cancels.”). After rendering, the prompt flushes input, discards input for one second, flushes again, then reads one
+raw byte. CR or LF signs; `d` (a `signer.Review` only) prints the full review (`.details`: ids and hashes, what
+`ORCH_SIGN_DETAILS=1` shows first) and waits again with a new one-second dead time, after which Enter signs and any
+other key cancels; every other byte, EOF, interrupt or read error cancels. Terminal settings are restored on exit.
+A repeat stream crossing the deadline cancels. No terminal returns `tty.required`; cancellation returns
+`sign.cancelled`. Flags, environment variables and piped input cannot authorize a signature.
+
+Confirmations that sign nothing use the same gesture with `review_prompt(text, verb="continue")`: “Press Enter to
+continue, any other key cancels.” (`orch remote`, `orch publish revoke`, `orch prune`, `orch records`, the share rule
+and sync confirmations of `orch hub share`). The one-second dead time and the held-key rule are the same.
+
+CLI sequences prepare directly and use one review before signing their steps. Dashboard actions use One click.
+Phone authority comes from device pairing. Hub join/mode/leave retain their sealed backup-key flow, and the
+six-character phone pairing code remains. Passphrases authenticate keys on `/dev/tty`; click signing never prompts
+for one. Setup retains its three-word channel-binding comparison and uses the same Enter review.

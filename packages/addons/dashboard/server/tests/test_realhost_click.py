@@ -11,18 +11,14 @@ import itertools
 import os
 import re
 import shutil
-import socket
 import subprocess
-import sys
 import time
 import uuid
-from pathlib import Path
 
 import pytest
 from conftest import ORIGIN, PORT
 from fastapi.testclient import TestClient
-from orch.click.client import ClickClient
-from realhost_kit import Pty, Workspace, key_of, ready_requirements, short_run_root
+from realhost_kit import Workspace, key_of, ready_requirements, short_run_root
 
 from orch_dashboard.app import create_app
 from orch_dashboard.auth import Auth
@@ -33,7 +29,6 @@ pytestmark = [
     pytest.mark.realhost,
     pytest.mark.skipif(os.name != "posix", reason="a real host needs unix sockets and a pty"),
 ]
-CHILD = str(Path(__file__).with_name("click_child.py"))
 RISK = "Convenience signing: agents running as you, or anything that takes over this dashboard, could sign."
 ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 RETRIES = itertools.count(1)  # one counter for the whole module: every "fresh" prepare is its own intent
@@ -62,36 +57,13 @@ def world(tmp_path_factory):
         keys = ws.bring_up(seeding)
         # The real `orch host convenience on`, in a pty: since #1304 it moves the key into the One click key file in
         # one step (the passphrase is typed once on the terminal) and then switches the flag on.
-        convert = Pty(
-            ws.orch("host", "convenience", "on", "--workspace", ws.ws_id, "--state", str(ws.state)),
-            ws.env(),
-            ws.root,
-            ws.rules(),
-            90,
-        ).run()
-        assert convert.code == 0, convert.output[-1500:]
+        ws.convenience_on()
     except (RuntimeError, TimeoutError, OSError, AssertionError) as exc:
         ws.stop_host()
         shutil.rmtree(root, ignore_errors=True)
         pytest.skip(f"the real host cannot start here: {str(exc)[:400]}")
     children = []
-
-    def start(env):
-        parent, child = socket.socketpair()
-        n = child.fileno()
-        own = {**env, "HOME": str(ws.home), "XDG_CONFIG_HOME": str(ws.home / ".config")}
-        own["ORCH_HOST_RUN_DIR"] = str(ws.run)
-        proc = subprocess.Popen(
-            [sys.executable, "-I", CHILD, "signer", "--fd", str(n)],
-            pass_fds=(n,),
-            close_fds=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            env=own,
-        )
-        child.close()
-        children.append(proc)
-        return ClickClient(parent, proc)
+    start = ws.click_start(children)
 
     os.environ.pop("ORCH_DASHBOARD_CLICK", None)
     static = tmp_path_factory.mktemp("static")
@@ -267,15 +239,6 @@ def test_cancel_cancels_on_the_host(world, click):
     assert click.post("view", {"request_id": got["request_id"]}).status_code == 404
 
 
-def test_a_click_workspace_still_prepares_a_terminal_handoff(world, click):
-    """#1170: with the flag on, /handoff works (the code for `orch sign`)."""
-    res = world.client.post(f"/api/w/{world.ws.ws_id}/handoff", json=approve(world, "three"), headers=click.headers())
-    assert res.status_code == 200, res.text
-    world.client.delete(
-        f"/api/w/{world.ws.ws_id}/handoff/{res.json()['id']}", headers=click.headers()
-    )  # leave none open
-
-
 def test_with_the_flag_off_the_host_refuses_and_the_card_says_so(world, click):
     ws = world.ws
     run(ws, "host", "convenience", "off", "--workspace", ws.ws_id, "--state", str(ws.state))
@@ -286,12 +249,6 @@ def test_with_the_flag_off_the_host_refuses_and_the_card_says_so(world, click):
         assert res.json()["error"]["reason"] == "disabled"
         card = click.workspace()
         assert "click" not in card["features"] and card["click"]["enabled"] is False
-        # Flag off: the terminal hand-off is the one path, and it works (the same action, the same intent function).
-        hand = world.client.post(
-            f"/api/w/{world.ws.ws_id}/handoff", json=approve(world, "three"), headers=click.headers()
-        )
-        assert hand.status_code == 200 and re.fullmatch(r"[0-9A-Z]{4}-[0-9A-Z]{4}", hand.json()["code"]), hand.text
-        world.client.delete(f"/api/w/{world.ws.ws_id}/handoff/{hand.json()['id']}", headers=click.headers())
     finally:
         run(ws, "host", "convenience", "on", "--workspace", ws.ws_id, "--state", str(ws.state))
     assert "click" in click.workspace()["features"]
@@ -305,7 +262,7 @@ def test_a_signer_that_dies_is_restarted_and_its_open_approvals_are_gone(world, 
     old.wait(5)
     world.gateway.click.last_spawn -= 10  # the respawn guard is for tight loops, not for this test
     res = click.post("view", {"request_id": got["request_id"]})
-    assert res.status_code == 409 and res.json()["error"]["reason"] == "not_prepared_here"  # terminal-only now
+    assert res.status_code == 409 and res.json()["error"]["reason"] == "not_prepared_here"  # new signer
     assert world.gateway.click.client.proc.pid != pid and world.gateway.click.restarts == 1
     # And a new request works with the new signer.
     assert click.prepare(approve(world, "three")).status_code == 200

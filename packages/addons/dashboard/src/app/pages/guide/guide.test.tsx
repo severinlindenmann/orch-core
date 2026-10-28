@@ -18,7 +18,10 @@ describe('guide on a real host', () => {
     real()
     const { user } = renderApp('/guide?page=approving', { viewer: 'p_sev' })
     expect(await screen.findByRole('heading', { name: 'Approving things' }, T)).toBeInTheDocument()
-    expect(screen.getByText(/orch sign CODE/)).toBeInTheDocument()
+    // one click is the only way to sign: the guide never sends people to a terminal signing step
+    expect(screen.getByRole('heading', { name: 'One click' })).toBeInTheDocument()
+    expect(screen.getByText(/You approve in the dashboard with one click/)).toBeInTheDocument()
+    expect(document.body).not.toHaveTextContent(/orch sign/)
     await user.click(within(screen.getByRole('navigation', { name: 'Guide pages' })).getByRole('link', { name: 'Coming later' }))
     expect(await screen.findByRole('heading', { name: 'Coming later' }, T)).toBeInTheDocument()
   })

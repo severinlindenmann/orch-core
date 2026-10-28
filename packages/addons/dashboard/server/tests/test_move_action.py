@@ -3,7 +3,7 @@
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from orch_dashboard.handoff import Move, PrepareBody, expected, host_call
+from orch_dashboard.signing import Move, PrepareBody, expected, host_call
 
 
 def parse(body):

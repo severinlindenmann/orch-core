@@ -80,7 +80,6 @@ decision 19 Oct: no migration, start fresh). Decisions and the migration are in
     "verify": {"approvers": ["reviewers"], "count": 1, "not": ["assignees"], "applies": "all", "independent": false},
     "code": {"approvers": ["maintainer", "owner"], "count": 1, "not": ["assignees"], "applies": "off", "independent": true}
   },
-  "settings": {"grant_hours": 8, "claim_ttl_min": 120, "lease_ttl_min": 60,   // "sign_methods": ["terminal", "click"] only when set (B6)
                "repos": {"acme-energy-dbt": {"path": "../acme-energy-dbt"}}},
   "agents": {"run_for": ["owner", "maintainer", "member"]},
   "addons": {"dashboard": {"enabled": true}, "estimate": {"enabled": true}, "publish": {"enabled": false}}
@@ -537,7 +536,7 @@ agent; **D** an addon; **H** the host only. Types marked D58–D60 are new with 
 | `device.exposed` | P | `device`; `reason`: `convenience` | #1097. Signed by that device itself (a device of the signer's own person; the hub, a relay and an agent never can). The mark that this device key was in convenience custody, so a process of the owner's UID may hold a copy. It only removes authority: from here on `signer_kind` of that device is `exposed` and no break-glass row allows it (`sign.key_exposed`). Monotonic: nothing clears it, only a new key (`device.rotated`). The mark is the only evidence, and is read from the roster before the `auth` label. A key with no mark counts as clean. |
 | `device.rotated` | P | `old`: device id; `device`: device id; `cert`: signed object; `rotation`: signed object | #1097. Signed by the **new** device itself, which the roster does not know yet. `cert` is its certificate (protocol §6.1) signed by the person key, `rotation` is a fresh person-key signature (label `orch/v2/sig/device-rotate\|`) over `{workspace_id, person_id, old, new, roster_v}`, so it cannot be replayed in another workspace or at another roster version. `old` must be a device of the same person; the new device is added and `old` is removed in the same event. A break-glass row (`pk`): it works in full hub mode with the hub down. |
 | `policy.changed` | P | `gates`: {gate: policy} | The workspace defaults. |
-| `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `sign_methods?`: array of `terminal`, `click`, `phone`, `hub` (1–4, unique, contains `terminal`; `touchid` is reserved and refused; `hub` is C3b, §15.4), `models?`: {`claude-code?`/`codex?`: {`work?`/`refine?`/`fix?`/`continue?`/`context?`: a model name of that harness's closed list} or null} (Model routing: the model a Start agent mode uses; unnamed = harness default; `null` clears; typed word, owner only), `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path or declare the same identity (ignoring ASCII case), or a `local:` remote names another repo. **B6** (`sign_methods`, owner decision F of 16 Oct 2026): the ways a signature may be made in this workspace; absent means not set: every way is allowed (the model judges none). The model enforces it for honest `auth` labels only (the label is the signer's own word); custody and host admission are the real control (HOST §0.8.6 B6 item 5). |
+| `settings.changed` | P | `set`: {`grant_hours?`: int 1–24, `claim_ttl_min?`: int 15–1440, `lease_ttl_min?`: int 5–1440, `models?`: {`claude-code?`/`codex?`: {`work?`/`refine?`/`fix?`/`continue?`/`context?`: a model name of that harness's closed list} or null} (Model routing: the model a Start agent mode uses; unnamed = harness default; `null` clears; owner only), `repos?`: {repo name: {`path`: str, `remote?`: canonical repo identity, `default_branch?`: branch name} or null}} | **D60** (`grant_hours`). Existing grants keep their end time. `null` removes a repo. Refused when two repos resolve to the same path or declare the same identity (ignoring ASCII case), or a `local:` remote names another repo. **Accepted and ignored:** `sign_methods?` (any list of strings; B6, retired): every One click workspace created since #1442 carries it in its genesis `settings.changed`, so the schema still accepts it and those logs replay; it has no effect (no state, no enforcement, not in `config.json`, where an old `sign_methods` under `settings` is likewise accepted and dropped on the next write) and nothing writes it any more (the owner's settings op does not take it). A hub may not set it (§15, channel settings). Vector: `refusal_order.json` `settings_legacy_sign_methods`. |
 | `grant.issued` | P, H | `grant`: grant id; `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `issued_at`: timestamp; `hours`: int; `expires_at`: timestamp; `secret_hash`: hash; `label?`: str; `request?`: event id | **D60** terms in §10.1 A3. Always for the signer. Readers check `\|at − issued_at\| ≤ 300 s`, `expires_at == issued_at + 3600·hours` (seconds, no leap seconds) and the role terms at the event's position. **C10 (hub protocol §8.8):** the host (H) also appends it, and only with `request` naming an admitted `grant.requested` of the same terms (`scope`, `verbs`, `hours`, `label`), not answered before, with `0 ≤ at − request.at ≤ 300 s` and `issued_at = min(request.at, at)`. The grant is then for the request's canonical signer, with that signer's role at the request, no device, and `Grant.hub_id` = the request's hub (leaving the hub ends it, C8). A person never writes `request`. |
 | `grant.requested` | P (hub) | `scope`: `all` or `workable`; `verbs`: `"agent"` or [operation name]; `hours`: int 1–168; `label?`: str | C10 (hub protocol §8.8, V3-D29). Hub-signed only (`auth: "hub"`; a device-signed one is refused). A request for an agent grant: it changes no grant by itself; the host answers with a host-actor `grant.issued` naming it. The signer must be a member (an aliased hub user). Terms by the signer's role as `grant.issued` (D60). The event carries no grant id, secret hash or times. |
 | `grant.revoked` | P | `grant`; `reason?`: str | **D60.** Owners revoke any grant; others their own, compared as the signer's **canonical** person (a hub user aliased to the grantee revokes it, C10). |
@@ -1908,7 +1907,6 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `device.invalid` | §5.3 the device was removed, revoked, or its certificate expired |
 | `device.scope` | §5.3 the certificate lacks `decide` (or `operate`), or has a `drop:` scope |
 | `device.lockout` | a `device.removed` of an owner's last device that can sign now (not removed or revoked, certificate not expired at the event's `at`, with `decide`, held by a member) |
-| `sign.method` | B6: the person event's `auth` is a way (`convenience` is `click`, `secure-enclave-unlocked` is `phone`) that the workspace's `settings.sign_methods` leaves out, judged by the state at the event's own position; honest labels only |
 | `device.cert` | §5.3 an embedded certificate or revocation is not signed by the person key, or is for another person |
 | `grant.invalid` | §10.1 the grant is unknown, expired, revoked, ended, another person's, or its person may not run agents |
 | `grant.scope` | §10.1 the grant's scope does not cover the ticket, or the person can't see it |
@@ -2981,7 +2979,6 @@ The consumers:
 | claims | a hub actor may append `claim.released` (`released`) under the same rule as a person: ticket owner (canonical compare), owner or maintainer by `role_of`. It never takes a claim (agent-only). |
 | `questions` | `may_answer` compares canonical ids and uses `role_of` (L2P4-C2: today it compares the raw id). |
 | `lifecycle`, `workspace`, `engine` | every `ws.members[e["actor"]["id"]]` (L2P4-C2 list: `engine.py` ~192, `lifecycle.py` ~48/171, `workspace.py` ~43/173/320) goes through `signer`/`role_of`. A hub actor never signs a workspace-log type outside §8.5 (`addon.disabled`, `addon.purged`), so the member, device, grant, settings and policy paths refuse it at the custodial table already. |
-| `policies.sign_methods` (B6, C3b-6) | `sign_methods` gains the value `hub`, and `AUTH_METHOD["hub"] = "hub"`: when the workspace sets `sign_methods` without `hub`, every `auth: "hub"` event is refused (`sign.method`), whatever its factor. Not set: every way is allowed, as before. So an owner policy "decisions need a device key" (`[terminal]`) is never bypassed by a `password+totp` channel. |
 | D66 factor floor (L2-C3-3 carry-over) | one model function `policies.factor_floor(ws, t, type)` gives the `min_factor` for a hub event from the effective gate policy's optional `factor` key (D66: `secure-enclave` → only `passkey`; `secure-enclave-unlocked` → `se-unlocked` or `passkey`; absent → `password+totp`, the weakest, returned by the function). The host passes its result to `verify_custodial` (the parameter is required there since C3 round 2) and **never a literal**; replay applies the same function at the line's position (`hub.denied` `factor_too_weak`). The `factor` key is additive and owner-set like every policy field. |
 | views, `orch show`, `orch log` | the actor renders as the alias's member name when aliased, else `hub user <first 8 hex>`, then `via hub · <factor>` (`phone, unlocked` for `se-unlocked`, `browser, password + code` for `password+totp`, `passkey`). Technical details (folded): hub id, channel id, snapshot version, op cert id. The signed certificate blobs are never printed. `readmodel` adds `via` to the actor keys and `channel_factor`, `hub_id` to the event row; `hub.pinned` lines render as "hub key/roles updated" in the workspace log view, with the kind and version. |
 | dashboard | the same strings as the views, from `readmodel`; a hub-signed decision shows its short hash next to the decision (L2P4-2c). Display only: no new action, no signing path. |
@@ -3156,11 +3153,9 @@ regenerated and declared per op (orch-core rule); `event_deliver` is not a CLI o
 
 ### 15.11 Open points
 
-- **Owner:** the default when `sign_methods` is set without `hub` is "refuse hub events" (fail closed, §15.4); the
-  owner adds `hub` to allow them. The D66 `factor` key on gate policies is owner-set; until set, the floor is
-  `password+totp` (B6 `sign_methods` is then the owner's switch).
-- **Opus pass on #1031 (l2-c14): PASS-after-fixes**; C3b-1 to C3b-6 are folded in above (roles, channel voiding, ledger
-  bound, join refusal, type and item, `sign_methods`). Settled: admission-only item check; dedup before verification.
+- **Owner:** the D66 `factor` key on gate policies is owner-set; until set, the floor is `password+totp`.
+- **Opus pass on #1031 (l2-c14): PASS-after-fixes**; C3b-1 to C3b-5 are folded in above (roles, channel voiding, ledger
+  bound, join refusal, type and item). Settled: admission-only item check; dedup before verification.
 - **Hub contract** (addendum `v3-p4-addendum`): `foreign_user` (§9.1, §14), the `event_deliver` ack table (§8.7; the
   same as §15.5), the `share.item` `f1` block and the selective build (§8.6, §10.2b), `ticket.updated` `base_rev` in
   the object form `{path: hash}` keyed exactly by `set` (§8.5 event side; core drops C3's string branch in task 5).
@@ -3199,7 +3194,7 @@ Each task gets a new test for its behaviour; the model runner of `tests/hub/test
 drives the same `replay` cases through a built log and `Store` replay) is added in task 3 and must agree with the
 reference from then on.
 
-1. **Schemas** (`schema/schemas/common.json`: `auth` + `hub`, `hubUserId`, `personRef`, `sign_methods` + `hub`;
+1. **Schemas** (`schema/schemas/common.json`: `auth` + `hub`, `hubUserId`, `personRef`;
    `event.json` and `event.<type>.json` of every §8.5 type, `people.changed`, `visibility.changed`, `question.asked`;
    new `event.hub.pinned.json`; `ticket.updated` `base_rev` object form only for hub events): §15.1.
    T0 `uv run pytest tests/schema -x -q` + new `tests/model/test_hub_actor_schema.py`.
@@ -3211,7 +3206,7 @@ reference from then on.
    §15.3, §15.6, §15.10. T0 `tests/hub/test_c3b_vectors.py` (both runners) + `tests/model -k "alias or canonical or hub"`.
    Tasks 1–3 = PR A (the format), Opus pass.
 4. **Consumers** (`gates.py` signer column; `generations.py` `void_signer` at the channel-revoking pin; `policies.py`
-   `role_of`, `factor_floor`, `sign_methods` `hub`; `questions.py`, `lifecycle.py`, `workspace.py`, `claims.py`,
+   `role_of`, `factor_floor`; `questions.py`, `lifecycle.py`, `workspace.py`, `claims.py`,
    `engine.py` member lookups, L2P4-C2): §15.4. T0 `tests/model -k "gate or question or claim or generation"` + a D59
    test (worker `u_x` aliased to `p_x`, `p_x` approves → `gate.not_eligible`).
 5. **Host admission** (`hubclient/custodial.py`: `accept_event_deliver` = dedup, pre-check, scratch admit of pins +

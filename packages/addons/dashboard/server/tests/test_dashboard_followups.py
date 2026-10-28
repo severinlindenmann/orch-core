@@ -4,7 +4,7 @@ import pytest
 from conftest import ORIGIN
 
 from orch_dashboard import followups
-from orch_dashboard.handoff import FollowupCancel, FollowupReschedule, FollowupUndo, expected, host_call
+from orch_dashboard.signing import FollowupCancel, FollowupReschedule, FollowupUndo, expected, host_call
 
 FU = "fu_" + "0" * 26
 
@@ -125,7 +125,7 @@ def test_a_follow_up_grant_is_listed_with_its_parent():
 def test_cancel_names_the_ticket_the_follow_up_is_on(gateway, stub, monkeypatch, cls, action, extra, args):
     import pytest
 
-    from orch_dashboard import handoff
+    from orch_dashboard import signing as handoff
     from orch_dashboard.errors import HostError
 
     seen = []
@@ -146,7 +146,7 @@ def test_cancel_names_the_ticket_the_follow_up_is_on(gateway, stub, monkeypatch,
 
 
 def test_only_a_revoke_may_name_a_follow_up_grant():
-    from orch_dashboard import handoff
+    from orch_dashboard import signing as handoff
 
     fgr = "fgr_" + "0" * 26
     assert handoff.GrantRevoke(action="grant_revoke", grant=fgr).grant == fgr
@@ -157,7 +157,7 @@ def test_only_a_revoke_may_name_a_follow_up_grant():
 
 @pytest.mark.parametrize("field", ["due", "deadline"])
 def test_reschedule_is_one_fixed_op_and_exact_event(field):
-    from orch_dashboard.handoff import FollowupReschedule
+    from orch_dashboard.signing import FollowupReschedule
 
     when = "2026-10-28T09:00:00.123Z"
     action = FollowupReschedule(action="followup_reschedule", key="DEMO-0001", id=FU, when=when)
@@ -181,14 +181,14 @@ def test_reschedule_is_one_fixed_op_and_exact_event(field):
 def test_reschedule_requires_utc_instant(when):
     from pydantic import ValidationError
 
-    from orch_dashboard.handoff import FollowupReschedule
+    from orch_dashboard.signing import FollowupReschedule
 
     with pytest.raises(ValidationError):
         FollowupReschedule(action="followup_reschedule", key="DEMO-0001", id=FU, when=when)
 
 
 def test_undo_is_one_fixed_op_and_exact_event():
-    from orch_dashboard.handoff import FollowupUndo
+    from orch_dashboard.signing import FollowupUndo
 
     action = FollowupUndo(action="followup_undo", key="DEMO-0001", id=FU)
     assert host_call(action) == ("follow_up.undo", {"id": FU})

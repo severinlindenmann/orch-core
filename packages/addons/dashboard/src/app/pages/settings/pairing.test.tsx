@@ -1,8 +1,10 @@
 // Settings → Devices, "Pair a phone" (proposed pair/1, fixtures only): the gate, the blocked reasons, the link's
 // secrecy and lifetime, the typed SAS with Reject as the default, untrusted labels and the paired devices from member.list (removal is CLI only).
-import { act, cleanup, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
+import * as clickApi from '@/api/click'
+import * as gesture from '@/components/sign/trustedPress'
 import { setFeatures } from '@/api/features'
 import { checkSas, pairingApi, pairServed, realPairingApi } from '@/api/pairing'
 import { MAC_DEVICE, pairPreviewForTests, resetLayoutPreview } from '@/dev/layoutPreview'
@@ -300,24 +302,37 @@ describe('compare the code', () => {
 })
 
 describe('after the code', () => {
-  it('cert_pending shows the two terminal steps with copyable commands and the cert code', async () => {
-    open('pair-cert')
-    expect(await screen.findByTestId('pair-cert-code', {}, T)).toHaveTextContent('H4WZ7P')
+  it('cert_pending: one plain line and the copyable command; the details are behind the i', async () => {
+    const { user } = open('pair-cert')
+    const card = await screen.findByTestId('pair-cert', {}, T)
+    expect(screen.getByTestId('pair-add-line')).toHaveTextContent('On this computer, run this command and type the 6 characters your phone shows.')
     expect(screen.getByTestId('pair-primary-command').textContent).toBe('orch host relay pair --resume --offer ' + '7'.repeat(32))
-    expect(screen.getByTestId('pair-sign-command').textContent).toBe('orch sign <CODE>')
-    expect(screen.getByTestId('pair-cert')).toHaveTextContent('refuses click-to-sign')
-    for (const id of ['pair-primary-command', 'pair-sign-command']) expect(screen.getByTestId(id).closest('a')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Get the signing code' })).toBeNull()
+    expect(screen.getByTestId('pair-primary-command').closest('a')).toBeNull()
+    // no jargon, no two-step list, no code from the host to copy: the person types what the phone shows
+    expect(card).not.toHaveTextContent(/Two steps|primary|certificate|click-to-sign/)
+    expect(card).not.toHaveTextContent('H4WZ7P')
+    expect(screen.queryByTestId('pair-cert-code')).toBeNull()
+    expect(document.body).not.toHaveTextContent('orch sign')
+    // details: hidden by default, there on press
+    expect(screen.queryByTestId('info-drawer-content')).toBeNull()
+    await user.click(screen.getByTestId('pair-add-details'))
+    const details = await screen.findByTestId('info-drawer-content', {}, T)
+    expect(details).toHaveTextContent('recovery code')
+    expect(details).toHaveTextContent('does not accept One click')
   })
 
-  it('with the certificate in, Get the signing code opens the hand-off for relay.pair_device', async () => {
-    const { user } = open('pair-cert', { offers: [{ offer_id: 'of_c', state: 'cert_pending', created_ms: 0, expires_ms: Date.now() + 60_000, scopes: ['look'], cert_ready: true }] })
-    const add = await screen.findByRole('button', { name: 'Get the signing code' }, T)
-    const spy = vi.spyOn(api, 'prepareHandoff')
-    await user.click(add)
-    await screen.findByRole('dialog', {}, T)
-    expect(spy.mock.calls[0][1]).toEqual({ action: 'pair_device', offer: 'of_c' })
-    spy.mockRestore()
+  it('with the certificate in, adding the phone stays in the terminal: no button, nothing is prepared', async () => {
+    const click = vi.spyOn(api, 'prepareClick')
+    const { user } = open('pair-cert', { offers: [{ offer_id: '7'.repeat(32), state: 'cert_pending', created_ms: 0, expires_ms: Date.now() + 60_000, scopes: ['look'], cert_ready: true }] })
+    expect(await screen.findByTestId('pair-primary-command', {}, T)).toHaveTextContent('orch host relay pair --resume --offer ' + '7'.repeat(32))
+    expect(screen.queryByRole('button', { name: 'Add the phone' })).toBeNull()
+    await user.click(screen.getByTestId('pair-add-details'))
+    const details = await screen.findByTestId('info-drawer-content', {}, T)
+    expect(details).toHaveTextContent('the command finishes adding it')
+    // the open details drawer is the only dialog: no sign or prepare dialog, no review panel
+    expect(screen.queryAllByRole('dialog').filter((d) => !d.contains(details))).toEqual([])
+    expect(screen.queryByTestId('click-panel')).toBeNull()
+    expect(click).not.toHaveBeenCalled()
   })
 
   it('failed shows the reason and the remove-the-device text', async () => {
@@ -359,16 +374,21 @@ describe('paired devices', () => {
     expect(pairPreviewForTests.fixture()!.calls.map((c) => c.op)).toContain('members')
   })
 
-  it('removal is one click after a review (#1198 C15): the hand-off is prepared for exactly that device, no command is shown', async () => {
+  it('removal is one click after a review (#1198 C15): the trusted press prepares exactly that device, no command is shown', async () => {
     const { user } = open('pair-devices')
     const rows = await screen.findAllByTestId('device-row', {}, T)
-    const spy = vi.spyOn(api, 'prepareHandoff')
+    const spy = vi.spyOn(api, 'prepareClick')
+    vi.spyOn(clickApi, 'clickReady').mockReturnValue(true) // the fixture workspace carries no click card
     expect(within(rows[1]).queryByTestId('device-remove-command')).toBeNull()
     await user.click(within(rows[1]).getByRole('button', { name: 'Remove' }))
-    await screen.findByRole('dialog', {}, T)
-    expect(spy.mock.calls[0][1]).toEqual({ action: 'device_remove', device: 'd_' + '2'.repeat(32) })
+    const dialog = await screen.findByRole('dialog', {}, T)
     expect(await screen.findByTestId('device-remove-summary', {}, T)).toHaveTextContent('Severin') // whose device it is
-    spy.mockRestore()
+    expect(spy).not.toHaveBeenCalled() // opening the review grants no intent
+    vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Remove device' }))
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1), T)
+    expect(spy.mock.calls[0][1]).toEqual({ action: 'device_remove', device: 'd_' + '2'.repeat(32) })
+    expect(dialog).not.toHaveTextContent('orch ')
   })
 
   it('a label with an LF shows a line break inside the isolated text, never markup; an empty label shows "phone"', async () => {

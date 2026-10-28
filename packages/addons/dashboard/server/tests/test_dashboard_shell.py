@@ -42,21 +42,22 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/tickets/{key}/events",
         "/api/w/{ws}/tickets/{key}/changes",
         "/api/w/{ws}/tickets/{key}/artifacts/{name}",
-        "/api/w/{ws}/handoff",
         "/api/w/{ws}/repos/check",
-        "/api/w/{ws}/handoff/{request_id}",
         "/api/w/{ws}/click/status",
         "/api/w/{ws}/hubsign",
+        "/api/w/{ws}/hub/approve/prepare",  # FB15: the one hand-off route, an add-on grant for the hub (owner, full)
+        "/api/w/{ws}/hub/approve/{request_id}",  # FB15: polls a request that route prepared
         "/api/w/{ws}/hub",
         "/api/w/{ws}/hub/link",
         "/api/w/{ws}/hub/share",
         "/api/w/{ws}/hub/share/preview",
+        "/api/w/{ws}/hub/share/revoke",  # one click: stop sharing a ticket (owner, full session)
+        "/api/w/{ws}/hub/share/rule-remove",  # one click: stop sharing by a rule (owner, full session)
         "/api/w/{ws}/hub/switch",
         "/api/w/{ws}/hub/rail",
         "/auth/switch",
         "/auth/switch/challenge",
         "/api/w/{ws}/hub/connect",
-        "/api/w/{ws}/hub/command",
         "/api/w/{ws}/click/prepare",
         "/api/w/{ws}/click/view",
         "/api/w/{ws}/click/state",
@@ -75,7 +76,6 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/settings",
         "/api/w/{ws}/add-ons",
         "/api/w/{ws}/versions",
-        "/api/w/{ws}/me/sign_default",
         "/api/w/{ws}/me/risk_notices",
         "/api/w/{ws}/phone/available",
         "/api/w/{ws}/phone/request",
@@ -218,7 +218,8 @@ def test_shell_p1_reads(client, token, stub):
     for path in [
         "/api/dev/reset",
         "/api/raw",
-        "/api/w/" + stub.ws + "/handoff",
+        "/api/w/" + stub.ws + "/handoff",  # the terminal hand-off is gone: no route answers it
+        "/api/w/" + stub.ws + "/hub/command",
         "/auth/unknown",
         "/docs",
         "/openapi.json",

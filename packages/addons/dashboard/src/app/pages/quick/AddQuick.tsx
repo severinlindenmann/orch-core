@@ -214,7 +214,6 @@ export function AddQuick({ ws, onCreated, onStartFailed, onStartDone }: { ws: st
           title={pending.startNow ? 'Start task' : 'Create task'}
           ws={ws}
           action={pending.withAccess ? quickAction(pending.text, pending.details, pending.steps, hoursNow) ?? pending.action : pending.action}
-          autoStart
           startsAgent={pending.startNow}
           anchor={anchor}
           controls={pending.withAccess ? <AccessSelect hours={hoursNow} onHours={setHours} lengths={lengths} agentName={HARNESSES.find((h) => h.id === pending.reviewed.choice.harness)?.name} prefix={workspace?.prefix} /> : undefined}

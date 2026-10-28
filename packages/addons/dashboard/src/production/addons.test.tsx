@@ -1,8 +1,10 @@
-import { screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { expect, it, vi } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import type { AddOnRow, AddOnsData } from '@/api/addOnSwitches'
-import { useFakeHost, workspace, show, MARA } from '@/test/hostHarness'
+import { ARM_MS } from '@/api/click'
+import * as gesture from '@/components/sign/trustedPress'
+import { useFakeHost, workspace, show, trustedPresses, MARA } from '@/test/hostHarness'
 
 vi.mock('@/api/client', async () => await import('@/api/client.prod'))
 vi.mock('@/api/bootstrap', () => ({ getToken: () => 'demo-not-a-real-token', clearSession: vi.fn(), onSessionChange: () => () => {} }))
@@ -25,6 +27,20 @@ const state = useFakeHost(() => [workspace({ id: ID, addOns: data(ROWS) })])
 const open = async () => {
   show('/w/DEMO/addons')
   return await screen.findByRole('list', { name: 'Add-ons' }, T)
+}
+afterEach(() => vi.restoreAllMocks())
+const clickOn = () => {
+  const ws = state.host.workspaces[0]
+  ws.click = { custody: 'convenience', enabled: true, available: true }
+  ws.features = [...ws.features, 'click']
+}
+/** The switch opens the review under its row; its outcome button prepares on a real press (fireEvent is untrusted: trustedPress stands in). */
+const turn = async (user: ReturnType<typeof userEvent.setup>, id: string, title: string, outcome: string) => {
+  await user.click(screen.getByRole('switch', { name: title }))
+  const accordion = await screen.findByTestId(`addon-${id}-accordion`, {}, T)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  fireEvent.click(within(accordion).getByRole('button', { name: outcome }))
+  return accordion
 }
 
 it('lists every add-on with its description and On or Off; the dashboard is always on and has no switch', async () => {
@@ -55,33 +71,56 @@ it('C14: what is missing is dashboard execution: a button turns it on here, no t
   expect(within(screen.getByTestId('addon-worktrees')).queryByTestId('addon-worktrees-runner')).toBeNull()
 })
 
-it('turning one on is a signed hand-off: the typed action opens the review, nothing is written by the page', async () => {
+it('turning one on is a One click signature: the switch opens the review under the row, the outcome press prepares the typed action, nothing is written by the page', async () => {
+  clickOn()
+  const user = userEvent.setup()
+  await open()
+  const accordion = await turn(user, 'worktrees', 'Worktrees', 'Turn on Worktrees')
+  await within(accordion).findByTestId('click-panel', {}, T)
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'worktrees' }])
+  expect(state.host.posts()).toEqual([]) // no hand-off is ever prepared
+  expect(accordion).toHaveTextContent('Turn on Worktrees')
+})
+
+it('the synthetic switch press grants no intent: the review waits for the outcome press, nothing is prepared', async () => {
+  clickOn()
   const user = userEvent.setup()
   await open()
   await user.click(screen.getByRole('switch', { name: 'Worktrees' }))
-  const dialog = await screen.findByTestId('addon-worktrees-accordion', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'worktrees' }])
-  expect(dialog).toHaveTextContent('Turn on')
+  const accordion = await screen.findByTestId('addon-worktrees-accordion', {}, T)
+  expect(within(accordion).getByRole('button', { name: 'Turn on Worktrees' })).toBeEnabled()
+  expect(state.host.clickPrepares()).toEqual([])
+})
+
+it('with One click off, the switch says One click is not ready and links to turning it on; nothing is prepared', async () => {
+  const user = userEvent.setup()
+  await open()
+  await user.click(screen.getByRole('switch', { name: 'Worktrees' }))
+  const accordion = await screen.findByTestId('addon-worktrees-accordion', {}, T)
+  expect(accordion).toHaveTextContent('One click is not ready on this computer.')
+  expect(within(accordion).getByRole('link', { name: 'Turn on One click' })).toBeInTheDocument()
+  expect(accordion).not.toHaveTextContent(/orch sign|terminal/i)
+  expect(state.host.clickPrepares()).toEqual([])
+  expect(state.host.posts()).toEqual([])
 })
 
 it('feedback 3.3: the Wiki switch opens the sign step (it was missing from the page list)', async () => {
+  clickOn()
   const user = userEvent.setup()
   await open()
-  await user.click(screen.getByRole('switch', { name: 'Wiki' }))
-  const dialog = await screen.findByTestId('addon-wiki-accordion', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'wiki' }])
+  const accordion = await turn(user, 'wiki', 'Wiki', 'Turn on Wiki')
+  await within(accordion).findByTestId('click-panel', {}, T)
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'wiki' }])
 })
 
-it('turning one off is a signed hand-off too', async () => {
+it('turning one off is a One click signature too', async () => {
+  clickOn()
   const user = userEvent.setup()
   await open()
-  await user.click(screen.getByRole('switch', { name: 'Start agents' }))
-  const dialog = await screen.findByTestId('addon-start-agent-accordion', {}, T)
-  await within(dialog).findByTestId('handoff-command', {}, T)
-  expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_disable', name: 'start-agent' }])
-  expect(dialog).toHaveTextContent('Turn off an add-on')
+  const accordion = await turn(user, 'start-agent', 'Start agents', 'Turn off Start agents')
+  await within(accordion).findByTestId('click-panel', {}, T)
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_disable', name: 'start-agent' }])
+  expect(accordion).toHaveTextContent('Turn off Start agents')
 })
 
 it('an add-on with running work cannot be switched off and says why', async () => {
@@ -105,31 +144,37 @@ it('only an owner can change a switch', async () => {
 
 it('an add-on with settings says what it needs while Off; the toggle still opens the normal review (no two-step flow yet)', async () => {
   state.host.workspaces[0].addOns = data([row({ id: 'publish', title: 'Publish' }), row({ id: 'model-routing', title: 'Model routing' }), row({ id: 'worktrees', title: 'Worktrees' })])
+  clickOn()
   await open()
   expect(screen.queryByTestId('addon-publish-needs')).toBeNull() // no "Needs" line: only an amber "Needs setup" once it is on
   expect(screen.queryByTestId('addon-publish-expand')).toBeNull() // nothing to open while Off
-  await userEvent.setup().click(screen.getByRole('switch', { name: 'Publish' }))
-  await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'publish' }]), T)
+  await turn(userEvent.setup(), 'publish', 'Publish', 'Turn on Publish')
+  await waitFor(() => expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'publish' }]), T)
 })
 
-it.each([['quick', 'Quick tasks', 'addon_disable'], ['focus', 'Focus mode', 'addon_grant']])('run 9: %s uses the Built in tag and inline switch review (no popup)', async (name, title, action) => {
+it.each([['quick', 'Quick tasks', 'addon_disable', 'Turn off Quick tasks'], ['focus', 'Focus mode', 'addon_grant', 'Turn on Focus mode']])('run 9: %s uses the Built in tag and inline switch review (no popup)', async (name, title, action, outcome) => {
+  clickOn()
   const user = userEvent.setup()
   await open()
   expect(within(screen.getByTestId(`addon-${name}`)).queryByText('Built in')).toBeNull() // the group title says it
-  await user.click(screen.getByRole('switch', { name: title }))
-  const accordion = await screen.findByTestId(`addon-${name}-accordion`, {}, T)
+  const accordion = await turn(user, name, title, outcome)
   expect(screen.getByTestId(`addon-${name}`)).toContainElement(accordion)
   expect(screen.queryByRole('dialog')).toBeNull()
-  await waitFor(() => expect(state.host.posts().map((c) => c.body)).toEqual([{ action, name }]), T)
+  await waitFor(() => expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action, name }]), T)
 })
 
-it('run 9: with One click on, pressing the switch signs directly, the review shows under the row (no popup)', async () => {
-  const ws = state.host.workspaces[0]
-  ws.click = { custody: 'convenience', enabled: true, available: true }
-  ws.features = [...ws.features, 'click']
+it('run 9: with One click on, the trusted switch press prepares directly; after the 1 s arm one Sign press signs, under the row (no popup)', async () => {
+  clickOn()
+  vi.spyOn(gesture, 'takeTrustedPress').mockReturnValue(true) // the switch press was a real one (jsdom events are untrusted)
   await open()
   const user = userEvent.setup()
   await user.click(screen.getByRole('switch', { name: 'Worktrees' }))
+  const accordion = await screen.findByTestId('addon-worktrees-accordion', {}, T)
+  const sign = await within(accordion).findByRole('button', { name: /^Sign( |$)/ }, T)
+  expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'worktrees' }])
+  await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  trustedPresses() // the armed Sign signs only on a trusted press
+  await user.click(sign)
   await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
   expect(screen.queryByRole('dialog')).toBeNull()
 })

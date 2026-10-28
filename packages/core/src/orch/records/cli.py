@@ -131,9 +131,9 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _tty_confirm(text: str) -> bool:
-    from orch.prune.safe import tty_ask
+    from orch.ops.human import review_prompt
 
-    return tty_ask(text + "\nContinue? [y/N] ").lower() in ("y", "yes")
+    return review_prompt(text, verb="continue")  # git commits and timers: nothing is signed
 
 
 def _flat(res: dict[str, Any]) -> dict[str, Any]:
@@ -172,13 +172,13 @@ class _Run:
         self.args, self.env, self.seams = args, env, seams
         self.deadline = _monotonic() + RUN_BUDGET
         self.protocols = seams.get("protocols")
-        self._confirm: Confirm = seams.get("confirm") or _tty_confirm
+        self._approve: Confirm = seams.get("confirm") or _tty_confirm
         self.repos: list[Any] = []
 
     def confirm(self, text: str) -> bool:
         """Ask the person; the time spent answering never counts against the run (Sonnet #433 B): the budget
         restarts after the answer, for the host link and for every repo of this run."""
-        answer = self._confirm(text)
+        answer = self._approve(text)
         self.deadline = _monotonic() + RUN_BUDGET
         for repo in self.repos:
             repo.deadline = self.deadline

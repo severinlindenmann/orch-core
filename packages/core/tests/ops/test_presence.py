@@ -103,7 +103,7 @@ def test_the_binary_without_a_terminal_refuses_and_never_reads_a_passphrase_from
     for stdin in (None, PASSPHRASE + "\n"):
         for session in (True, False):
             p = binary(ws, "approve", "requirements", "--ref", key, "--json", env=leaks, stdin=stdin, session=session)
-            assert p.returncode == 3 and '"custody.no_prompt"' in p.stdout, (p.stdout, p.stderr)
+            assert p.returncode == 3 and '"tty.required"' in p.stdout, (p.stdout, p.stderr)
             assert PASSPHRASE not in p.stdout + p.stderr
     assert count(ws) == n
 

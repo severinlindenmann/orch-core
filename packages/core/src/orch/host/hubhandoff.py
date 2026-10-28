@@ -216,7 +216,6 @@ def build_settings_url(addr: str, workspace_id: str, change: dict[str, int], exp
 
 def _settings(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str, Any]:
     """``kind: settings``: Mission Control's Save of a setting in a full-mode workspace. Only the three keys the hub's
-    channel may set (hub protocol 8.8); ``sign_methods``, ``repos``, ``models``, the icon and the like are off the
     channel and refused here (the dashboard says so before it asks). A pure read: nothing is prepared or logged."""
     from .workspace import ok_result
 

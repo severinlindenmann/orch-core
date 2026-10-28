@@ -1,7 +1,7 @@
 # Real-host helper for followups-real.spec.ts: a dev sandbox workspace (prefix SBX, Schedules ON, the dashboard add-on installed,
 # a runner whose harness writes nothing) with one ticket whose agent set a follow-up two days ahead (pending) and one whose follow-up falls due in about a
 # minute and whose run writes nothing (the host records `failed`). Reuses core's own follow-up e2e environment.
-# Run it with: <server venv python> -I e2e/followups-real-env.py up|link|sign|cli|state|down BASE   (ORCH_CORE_DIR = this checkout)
+# Run it with: <server venv python> -I e2e/followups-real-env.py up|link|cli|state|down BASE   (ORCH_CORE_DIR = this checkout)
 import json, os, re, signal, subprocess, sys, time
 from pathlib import Path
 
@@ -79,8 +79,6 @@ def main():
     if cmd == "link":
         run = Pty([sys.executable, "-m", "orch_dashboard", "open", *sys.argv[3:4], "--print-url"], denv(ws), ws.root, [], 40).run()
         print(next((l.strip() for l in run.output.splitlines() if l.startswith("http://")), run.output)); return
-    if cmd == "sign":
-        print(ws.sign(sys.argv[3])[-600:]); return
     if cmd == "state":
         print((Path(base) / "followups.json").read_text()); return
     if cmd == "cli":

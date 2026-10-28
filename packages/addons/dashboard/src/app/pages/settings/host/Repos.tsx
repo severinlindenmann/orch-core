@@ -112,11 +112,11 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
     ask({
       title: form?.editing ? `Change repository ${d.name}` : `Add repository ${d.name}`,
       action: { action: 'repo_set', name: d.name, path: d.path, ...(d.remote ? { remote: d.remote } : {}), ...(d.branch ? { default_branch: d.branch } : {}) },
-      autoStart: true,
+
     })
   }
 
-  const removeRepo = (name: string) => ask({ title: `Remove repository ${name}`, action: { action: 'repo_remove', name }, autoStart: true })
+  const removeRepo = (name: string) => ask({ title: `Remove repository ${name}`, action: { action: 'repo_remove', name },  })
 
   return (
     <Section title="Repositories">

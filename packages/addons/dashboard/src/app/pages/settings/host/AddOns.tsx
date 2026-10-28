@@ -162,7 +162,7 @@ export function BuiltInAddOns({ workspace, rows, tag, actions, empty, label = 'A
           </ul>
         )
       }
-      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action, autoStart: true }) }} />}
+      {setup && <AddonSetup name={setup.name} enabling={setup.enabling} close={() => setSetup(null)} submit={(title, action) => { setSetup(null); ask({ title, action,  }) }} />}
       {dialog}
     </div>
   )

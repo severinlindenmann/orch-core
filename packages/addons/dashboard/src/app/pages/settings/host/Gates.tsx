@@ -121,7 +121,7 @@ function GateForm({ gate, current, canEdit, why, ask, alone }: { alone?: boolean
             ask({
               title: `Change the ${label.toLowerCase()} gate`,
               action: { action: 'policy_set', gate, policy: canonicalPolicy(p) },
-              autoStart: true,
+
               form: null,
             })
           }
@@ -166,7 +166,7 @@ function ApprovalStep({ gate, current, members, viewer, mayChange, why, ask }: {
         disabled={!mayChange}
         onChange={(e) => {
           const next = e.target.value as ApprovalPreset
-          ask({ title: `Change who approves: ${label.toLowerCase()}`, action: { action: 'policy_set', gate, policy: presetPolicy(next, current) }, autoStart: true, form: null })
+          ask({ title: `Change who approves: ${label.toLowerCase()}`, action: { action: 'policy_set', gate, policy: presetPolicy(next, current) },  form: null })
         }}
         className="mt-2 h-9 w-full rounded-md border border-border bg-bg px-2 text-[13px] disabled:cursor-not-allowed disabled:opacity-60"
         aria-describedby={why ? `${id}-why` : undefined}
@@ -197,7 +197,7 @@ function CodeReviewSwitch({ current, mayChange, ask }: { current: HostPolicy; ma
     ask({
       title: on ? 'Turn the code review off' : 'Require a code review before changes are added',
       action: { action: 'policy_set', gate: 'code', policy: canonicalPolicy({ ...current, applies: on ? 'off' : 'all', not: current.not.includes('assignees') ? current.not : [...current.not, 'assignees'], independent: true }) },
-      autoStart: true,
+
       form: null,
     })
   return (

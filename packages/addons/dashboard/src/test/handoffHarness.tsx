@@ -1,6 +1,6 @@
-// Test harness for the terminal hand-off (M3): the real-host mode of core's signing dialog, with the three hand-off
-// api calls replaced by spies. The ticket comes from the mock store, so a test can prove the preview is NOT built from
-// it: the host's `material` says other things than the cached ticket does.
+// Test harness for core's signing dialog in real-host mode: request fixtures whose hashes recompute, and a spy on the
+// one write the dashboard must never make itself. The ticket comes from the mock store, so a test can prove the preview
+// is NOT built from it: the host's `material` says other things than the cached ticket does.
 import { useSigningMethodRefresh } from '@/api/signingRefresh'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createMemoryHistory, createRootRoute, createRouter, RouterProvider } from '@tanstack/react-router'
@@ -77,10 +77,7 @@ export const refusal = (code: string, status = 409, retryable = false) => new Ap
 
 export function spies() {
   return {
-    prepare: vi.spyOn(api, 'prepareHandoff'),
-    get: vi.spyOn(api, 'getHandoff'),
-    cancel: vi.spyOn(api, 'cancelHandoff').mockResolvedValue({ id: 'x', state: 'cancelled' }),
-    // The dashboard has no way to sign or to post a signed action: any of these being called is a bug.
+    // The dashboard has no way to sign or to post a signed action: this being called is a bug.
     postAction: vi.spyOn(api, 'postAction'),
   }
 }

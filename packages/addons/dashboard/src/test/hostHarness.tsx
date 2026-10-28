@@ -2,9 +2,10 @@
 // test reads exactly what the page asked for and what it posted. The hand-off requests it returns have hashes that
 // recompute, like the real server's (`api/handoff.ts`), so the app accepts them.
 import { QueryClientProvider } from '@tanstack/react-query'
-import { render } from '@testing-library/react'
-import { afterEach, beforeEach, vi } from 'vitest'
+import { fireEvent, render, within } from '@testing-library/react'
+import { afterEach, beforeEach, onTestFinished, vi } from 'vitest'
 import { setFeatures } from '@/api/features'
+import * as gesture from '@/components/sign/trustedPress'
 import { fingerprintOf, reviewDigestOf, type HandoffEvent, type HandoffRequest } from '@/api/handoff'
 import type { HostGrant, HostSettings, RosterMember } from '@/api/settings'
 import type { Role } from '@/api/types'
@@ -198,6 +199,8 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
       return workspaceRequest('member.remove', { type: 'member.removed', person: body.person })
     case 'publish_setup':
       return workspaceRequest('settings.set', { type: 'settings.changed', set: { publish: { server: body.server, share: body.share } } })
+    case 'addon_enable':
+      return workspaceRequest('addon.grant', { type: 'addon.granted', name: body.name })
     case 'publish_share':
       return workspaceRequest('publish.share', { type: 'log.added', text: `Publish approval: share files outside this computer\nStaged copy: ${String(body.staged_id)}` })
     case 'market_grant':
@@ -311,6 +314,9 @@ export class FakeHost {
       return json(request)
     }
     if (rest === 'click/prepare' && method === 'POST') {
+      // Core: a One click workspace admits a new reader only with its declaration (H12d, `sign.convenience_readers`).
+      if (body?.action === 'member_add' && ws.click?.enabled && typeof body.reader_decl !== 'string')
+        return json({ ok: false, exit: 3, error: { code: 'sign.convenience_readers', message: 'd_x would read a workspace with convenience signatures and has not declared that it understands them', retryable: false, hint: 'orch keys reader declare --enrol', fix: 'orch member add --reader-decl PATH', detail: { reason: 'no_declaration', devices: [] } } }, 409)
       const request = prepare(body!)
       const id = 'hr_' + String(++this.clickCount).padStart(26, '0')
       const confirm = 'click'
@@ -359,6 +365,8 @@ export class FakeHost {
   }
 
   posts = () => this.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/handoff'))
+  /** What the page asked the signer to prepare (the One click path). */
+  clickPrepares = () => this.calls.filter((c) => c.method === 'POST' && c.path.endsWith('/click/prepare'))
   deletes = () => this.calls.filter((c) => c.method === 'DELETE')
 }
 
@@ -376,6 +384,31 @@ export function useFakeHost(make: () => FakeWs[]) {
     vi.unstubAllGlobals()
   })
   return state
+}
+
+/** One click on for this workspace, and fireEvent standing in for a real press of the outcome button (call before `show`). */
+export function clickOn(ws: FakeWs) {
+  const spy = vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  onTestFinished(() => spy.mockRestore())
+  ws.click = { custody: 'convenience', enabled: true, available: true }
+  if (!ws.features.includes('click')) ws.features = [...ws.features, 'click']
+}
+
+/**
+ * From here on, every press stands in for a trusted one (jsdom and userEvent events are untrusted), judged by the
+ * real rule: a key auto-repeat still blocks it. The armed Sign signs only on a trusted press.
+ */
+const realTrusted = gesture.trustedPress // captured before any test spies on it
+export function trustedPresses() {
+  const spy = vi.spyOn(gesture, 'trustedPress').mockImplementation((e) => realTrusted({ isTrusted: true, repeat: e.repeat }))
+  onTestFinished(() => spy.mockRestore())
+  return spy
+}
+
+/** Presses the review's outcome button: the signer prepares and its View shows (no terminal hand-off). */
+export async function prepareByClick(scope: HTMLElement, name: string | RegExp) {
+  fireEvent.click(await within(scope).findByRole('button', { name }, { timeout: 5000 }))
+  return within(scope).findByTestId('click-panel', {}, { timeout: 5000 })
 }
 
 export function show(path: string) {

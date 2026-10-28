@@ -11,7 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 from orch_dashboard import gateway as gateway_module
 from orch_dashboard import hostlink
 from orch_dashboard.errors import HostError
-from orch_dashboard.handoff import AddonGrant, MarketGrant, PrepareBody, expected, host_call, plan
+from orch_dashboard.signing import AddonGrant, MarketGrant, PrepareBody, expected, host_call, plan
 
 STAGE = "st_" + "0123456789abcdef" * 2
 IDEM_SHAPE = r"^a_[0-7][0-9A-HJKMNP-TV-Z]{25}$"
@@ -206,3 +206,16 @@ def test_plan_is_one_intent_per_stage_and_skips_the_switch_state_check():
     other = plan(gateway, ws, parse({"action": "market_grant", "name": "echo", "staged": "st_" + "1" * 32}))
     assert (one.op, one.args) == ("addon.grant", {"name": "echo", "staged": STAGE})
     assert one.idem(ws) == again.idem(ws) != other.idem(ws)
+
+
+def test_c5_market_add_needs_a_full_session_and_installs_nothing(client, token, auth, stub, host):
+    from orch_dashboard.policy import LOOPBACK
+
+    switched = auth.open_switch(LOOPBACK, stub.ws)["token"]
+    denied = client.post(url(stub, "/add"), json={"url": "https://market.example.test/source"}, headers=hdr(switched))
+    assert denied.status_code == 403
+    assert denied.json()["error"]["code"] == "session.readonly"
+    assert not host.calls
+    added = client.post(url(stub, "/add"), json={"url": "https://market.example.test/source"}, headers=hdr(token))
+    assert added.status_code == 200
+    assert [op for op, *_ in host.calls] == ["market.add"]

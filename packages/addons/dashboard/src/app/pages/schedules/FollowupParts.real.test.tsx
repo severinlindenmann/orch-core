@@ -34,7 +34,7 @@ it('a real-host reschedule opens the one-click signing popover with the exact pi
   expect(screen.getByTestId('sign-popover')).toBeInTheDocument()
   expect(props()).toMatchObject({
     ws, action: { action: 'followup_reschedule', key: row.ticket, id: row.id, when: pick.at.toISOString() },
-    autoStart: true, autoSign: true,
+
     doneToast: `Moved the follow-up on ${row.ticket} to ${fmtExact(pick.at.toISOString())}.`,
   })
   expect(mocks.addon).not.toHaveBeenCalled()
@@ -58,7 +58,7 @@ it('a successful cancel offers Undo after the card unmounts and refreshes the sh
   act(() => undo.onClick())
   expect(props()).toMatchObject({
     ws, action: { action: 'followup_undo', key: row.ticket, id: row.id },
-    autoStart: true, autoSign: true, doneToast: 'Follow-up restored.',
+      doneToast: 'Follow-up restored.',
   })
   invalidate.mockClear()
   act(() => props().onSettled?.('done', null, null))

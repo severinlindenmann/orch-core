@@ -92,7 +92,7 @@ def test_a_moved_base_is_a_new_intent(client, token, stub, script, rich, monkeyp
     from orch_dashboard import intent
 
     real = intent.gate_base
-    monkeypatch.setattr("orch_dashboard.handoff.gate_base", lambda data, gate: {**real(data, gate), "gen": 99})
+    monkeypatch.setattr("orch_dashboard.signing.gate_base", lambda data, gate: {**real(data, gate), "gen": 99})
     second = client.post(url(stub, "prepare"), json=approve, headers=hdr(token)).json()
     assert first["request_id"] != second["request_id"] and script.prepared == 2
 
@@ -157,7 +157,7 @@ def test_logout_and_login_then_retry_never_makes_a_second_request(client, token,
 
 def test_send_prepare_expiry_does_not_renew_a_baseless_intent():
     from orch_dashboard.errors import HostError, fail
-    from orch_dashboard.handoff import Plan, send_prepare
+    from orch_dashboard.signing import Plan, send_prepare
 
     plan = Plan("new", {"title": "A ticket"}, None, None, P)
     calls = []
@@ -178,7 +178,6 @@ def test_send_prepare_expiry_does_not_renew_a_baseless_intent():
     assert calls == [plan.idem(WS), plan.idem(WS, retry=1)]
 
 
-@pytest.mark.parametrize("click", [True, False])
 @pytest.mark.parametrize(
     "action",
     [
@@ -187,11 +186,10 @@ def test_send_prepare_expiry_does_not_renew_a_baseless_intent():
         {"action": "answer", "question": "Q2", "option": "csv"},
     ],
 )
-def test_agent_edits_between_tabs_keep_one_request(client, token, stub, script, rich, auth, click, action):
+def test_agent_edits_between_tabs_keep_one_request(client, token, stub, script, rich, auth, action):
     env, _ = rich
-    script.enabled = click
     body = {"key": "DEMO-0001", **action}
-    endpoint = url(stub, "prepare") if click else f"/api/w/{stub.ws}/handoff"
+    endpoint = url(stub, "prepare")
     one = client.post(endpoint, json=body, headers=hdr(token))
     assert one.status_code == 200, one.json()
     uid = next(t.uid for t in env.store.state.tickets.values() if t.key == "DEMO-0001")
@@ -201,10 +199,8 @@ def test_agent_edits_between_tabs_keep_one_request(client, token, stub, script, 
     env.update(uid, {"ticket.priority": "low"})
     two = client.post(endpoint, json=body, headers=hdr(other_session(client, auth)))
     assert two.status_code == 200, two.json()
-    field = "request_id" if click else "id"
-    assert one.json()[field] == two.json()[field]
-    if click:
-        assert script.prepared == 1
+    assert one.json()["request_id"] == two.json()["request_id"]
+    assert script.prepared == 1
 
 
 def test_reprepare_after_signer_restart_adopts_request_before_sweep(client, token, stub, script, gateway, host_check):
@@ -228,10 +224,12 @@ def test_new_dashboard_link_keeps_same_host_request_without_auth_session(
 ):
     from conftest import ORIGIN, PORT
     from fastapi.testclient import TestClient
+    from pydantic import TypeAdapter
 
     from orch_dashboard.app import create_app
     from orch_dashboard.auth import Auth
     from orch_dashboard.hostlink import HostLink
+    from orch_dashboard.signing import PrepareBody, plan
 
     sent = []
     send = HostLink.send
@@ -241,19 +239,19 @@ def test_new_dashboard_link_keeps_same_host_request_without_auth_session(
         return send(self, frame)
 
     monkeypatch.setattr(HostLink, "send", capture)
-    script.enabled = False
-    endpoint = f"/api/w/{stub.ws}/handoff"
-    one = client.post(endpoint, json=comment(1), headers=hdr(token))
-    assert one.status_code == 200
+    env, _ = rich
+    # The prepare the one-click path makes through our own link (the "Already done" replay): a signer-bound request.
+    planned = plan(gateway, stub.ws, TypeAdapter(PrepareBody).validate_python(comment(1)))
+    args = {"op": planned.op, "args": planned.args, "signer": {"device": env.owner.device, "auth": "convenience"}}
+    one = gateway.link(stub.ws).call("human.prepare", args, write=True, idem=planned.idem(stub.ws, 0))
     gateway.links.pop(stub.ws).close()
     # A fresh app, authentication and all request tracking; only the host keeps the idem record.
     auth = Auth()
     restarted = TestClient(create_app(PORT, gateway, auth), base_url=ORIGIN)
     try:
-        new_token = other_session(restarted, auth)
-        two = restarted.post(endpoint, json=comment(1), headers=hdr(new_token))
-        assert two.status_code == 200, two.json()
-        assert two.json()["id"] == one.json()["id"]
+        other_session(restarted, auth)
+        two = restarted.app.state.human(stub.ws, "human.prepare", args, idem=planned.idem(stub.ws, 0))
+        assert two["request"]["id"] == one["request"]["id"]
         prepares = [f for f in sent if f.get("op") == "human.prepare"]
         assert len(prepares) == 2
         assert all("session" not in (f.get("auth") or {}) for f in prepares)
@@ -264,7 +262,7 @@ def test_new_dashboard_link_keeps_same_host_request_without_auth_session(
 @pytest.mark.parametrize("submitted_at", [None, "2026-10-13T15:20:00Z"])
 @pytest.mark.parametrize("source", ["request", "row"])
 def test_done_time_requires_committed_pending_sequence(submitted_at, source):
-    from orch_dashboard.handoff import done_error
+    from orch_dashboard.signing import done_error
 
     prepared = {"request": {"state": "submitted"}, "op": "log"}
     row = {"state": "submitted", "seq": 7}

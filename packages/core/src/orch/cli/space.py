@@ -25,7 +25,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, TextIO
 
-from orch.cli.publish import PubError, _call, _confirm
+from orch.cli.publish import PubError, _call
+from orch.ops.human import review_prompt
 
 __all__ = ["main"]
 
@@ -144,7 +145,7 @@ def main(
             got = _call(target, "space.revoke", {"space_id": a.rest[0], "item_id": a.rest[1]}, env)
             emit(got, "ok revoked (what was already read stays read)")
         elif a.cmd == "share":
-            # always: look at the hub's verified member list, show it, and take the owner's typed word for it
+            # always: look at the hub's verified member list, show it, and have the owner confirm it on the terminal
             row = next(
                 (s for s in _call(target, "space.list", {}, env).get("spaces", []) if s["space_id"] == a.rest[0]), None
             )
@@ -155,12 +156,11 @@ def main(
                 raise PubError(
                     "invalid.input", "those are not the members the hub lists now; look again: orch space list", 5
                 )
-            if not _confirm(
+            if not review_prompt(
                 f"Share files into space {a.rest[0]} (epoch {row['epoch']}) with exactly these workspaces:\n"
-                + "".join(f"  {m}\n" for m in members) + "Type 'share' to approve: ",
-                "share",
+                + "".join(f"  {m}\n" for m in members) ,
             ):  # fmt: skip
-                raise PubError("invalid.input", "not approved; nothing changed", 5)
+                raise PubError("sign.cancelled", "not approved; nothing changed", 3)
             got = _call(target, "space.share", {"space_id": a.rest[0], "members": members}, env)
             emit(got, f"ok approved {len(got['members'])} members for space {a.rest[0]}")
         else:  # accept: always on the owner's terminal, never skippable
@@ -178,10 +178,9 @@ def main(
                 + "Compare the epoch and hashes with what the hub admin showed you: a workspace that is not a member\n"
                 "cannot see the space, so these come from the admin, not from the hub's signed record.\n"
                 "Everyone in the space can read what this workspace puts there, and the hub holds the key.\n"
-                "Type 'accept' to agree: "
             )
-            if not _confirm(prompt, "accept"):
-                raise PubError("invalid.input", "not accepted; nothing was sent", 5)
+            if not review_prompt(prompt):
+                raise PubError("sign.cancelled", "not accepted; nothing was sent", 3)
             got = _call(
                 target, "space.accept",
                 {"space_id": a.rest[0], "epoch": a.epoch, "prev_members": prev, "members": now_members}, env,

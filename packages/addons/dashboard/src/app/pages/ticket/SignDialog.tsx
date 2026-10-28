@@ -377,8 +377,8 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
 type Props = Parameters<typeof SimulatedSignDialog>[0]
 
 /**
- * A ticket's human action. On a real host it is the terminal hand-off (HandoffSignDialog: the dashboard prepares the
- * request and the person signs with `orch sign CODE`); the mockup keeps its simulated Touch ID dialog above.
+ * A ticket's human action. On a real host the host prepares the request and the person signs it with one click
+ * (HandoffSignDialog); the mockup keeps its simulated Touch ID dialog above.
  */
 export function SignDialog(props: Props) {
   const workspaces = useQuery(queries.workspaces())

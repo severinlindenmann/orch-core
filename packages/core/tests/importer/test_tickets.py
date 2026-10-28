@@ -113,7 +113,7 @@ def test_the_import_asks_once_and_names_the_plan(hws, me, v1):  # noqa: F811
     assert len(hws.provider.requests) == 1  # one passphrase for 39 signatures
     shown = hws.provider.shown[0]
     assert "signatures: 39 events of 8 tickets" in shown and "plan digest: " in shown
-    assert hws.expects == ["IMPORT 8"]  # typed on the terminal first
+    assert len(hws.reviews) == 1  # one review on the terminal first
     review = hws.reviews[0]
     assert (
         "v1 status: backlog 1, done 3" in review
@@ -127,7 +127,7 @@ def test_not_confirmed_signs_and_writes_nothing(hws, me, v1):  # noqa: F811
     hws.confirm = False
     before = snapshot(hws.root)
     r = me("import", "v1", str(v1))
-    assert r.code == 5 and "not confirmed" in r.err
+    assert r.code == 3 and "sign.cancelled" in r.err and "nothing was signed" in r.err
     assert snapshot(hws.root) == before and hws.provider.requests == []
 
 

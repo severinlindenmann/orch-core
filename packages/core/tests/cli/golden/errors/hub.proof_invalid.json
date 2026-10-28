@@ -3,11 +3,12 @@
   "error": {
     "code": "hub.proof_invalid",
     "message": "the hub step is not backed by your backup key",
-    "hint": "sign it again with your backup key at the terminal: orch sign",
+    "hint": "repeat the hub step and enter your backup key",
     "fix": {
       "argv": [
         "orch",
-        "sign"
+        "hub",
+        "status"
       ]
     },
     "retryable": false

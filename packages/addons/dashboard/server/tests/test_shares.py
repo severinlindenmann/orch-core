@@ -8,7 +8,8 @@ import pytest
 from conftest import ORIGIN
 from pydantic import ValidationError
 
-from orch_dashboard import handoff, hostlink
+from orch_dashboard import hostlink
+from orch_dashboard import signing as handoff
 from orch_dashboard.errors import HostError, allowed_error
 from orch_dashboard.shares import listing, sent, share_row
 

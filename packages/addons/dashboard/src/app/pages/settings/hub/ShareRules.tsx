@@ -6,8 +6,7 @@ import { hubQueries, type HubRule, type HubPreview, type HubShare } from '@/api/
 import { Raw } from '@/components/sign/visible'
 import { Badge } from '@/components/ui/badge'
 import { Action, Field, Flow, Panel, caveat } from './shared'
-import { TerminalStep } from './TerminalStep'
-import { StopSharing } from './StopSharing'
+import { StopRule, StopSharing, type HubWorkspace } from './StopSharing'
 
 type Change = { add: HubRule; remove?: never } | { remove: HubRule; add?: never }
 export function AlwaysShared({ share }: { share: HubShare }) {
@@ -18,7 +17,7 @@ export function AlwaysShared({ share }: { share: HubShare }) {
     <p className="text-xs text-text-muted">Counts from the hub, not signed. Notes include type, one-line title and deadline. Questions include the full question.</p>
   </div>
 }
-export function ShareRules({ ws, onBack }: { ws: string; onBack: () => void }) {
+export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: HubWorkspace; onBack: () => void }) {
   const share = useQuery(hubQueries.share(ws))
   const [adding, setAdding] = useState(false)
   const [kind, setKind] = useState<'type' | 'tag' | 'ticket'>('type')
@@ -83,12 +82,13 @@ export function ShareRules({ ws, onBack }: { ws: string; onBack: () => void }) {
         </li>)}</ul>
       </Panel>}
     </>}
-    {review && <Flow title="Review sharing change" onClose={() => setReview(undefined)}><TerminalStep ws={ws} request={review.add ? { kind: 'share_add', rule: review.add } : { kind: 'share_remove', rule: review.remove }}>
-      <p>{review.add ? 'Add this sharing rule. Matching items, including future matches, become visible to the hub.' : 'Remove this sharing rule. Items covered by other rules remain shared.'}</p>
-      <p>Rule: {(review.add ?? review.remove).kind === 'ticket' ? 'single ticket (exact key behind the i)' : <><Raw>{(review.add ?? review.remove).kind}</Raw> · <Raw>{(review.add ?? review.remove).value ?? ''}</Raw></>}</p>
+    {review && <Flow title="Review sharing change" onClose={() => { setReview(undefined); if (review.remove) setRemove(undefined) }}>{review.add ? <div>
+      <p>Add this sharing rule. Matching items, including future matches, would become visible to the hub.</p>
+      <p>Rule: {review.add.kind === 'ticket' ? 'single ticket (exact key behind the i)' : <><Raw>{review.add.kind}</Raw> · <Raw>{review.add.value ?? ''}</Raw></>}</p>
       {current && <p>{current.count} items after saving · {current.new} now visible · {current.revoked} no longer shared. Preview from the hub, not signed.</p>}
       <p className="text-danger">{caveat}</p>
-    </TerminalStep></Flow>}
-    {revoke && <StopSharing ws={ws} ticket={revoke} onClose={() => setRevoke(undefined)} />}
+      <p data-testid="hub-rule-add-unavailable">Adding a sharing rule is not available in the dashboard yet.</p>
+    </div> : <StopRule ws={ws} workspace={workspace} rule={review.remove} after={current} />}</Flow>}
+    {revoke && <StopSharing ws={ws} workspace={workspace} ticket={revoke} onClose={() => setRevoke(undefined)} />}
   </div>
 }

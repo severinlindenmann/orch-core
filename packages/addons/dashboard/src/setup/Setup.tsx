@@ -89,8 +89,7 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
     else if (item.type === 'settings.changed' && only('set') && f?.set && typeof f.set === 'object' && !Array.isArray(f.set)) {
       const set = f.set as Record<string, unknown>
       const okHours = !('grant_hours' in set) || typeof set.grant_hours === 'number'
-      const okMethods = !('sign_methods' in set) || (Array.isArray(set.sign_methods) && set.sign_methods.every((m) => typeof m === 'string'))
-      if (!Object.keys(set).every((k) => k === 'grant_hours' || k === 'sign_methods') || !okHours || !okMethods) odd(item.title)
+      if (!Object.keys(set).every((k) => k === 'grant_hours') || !okHours) odd(item.title)
       else {
         if (typeof set.grant_hours === 'number') lines.push(`Agents may work for you for up to ${duration(set.grant_hours)}`)
       }

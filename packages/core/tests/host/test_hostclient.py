@@ -271,7 +271,7 @@ def test_an_addon_grant_finds_the_device_key_where_init_put_it(lab, monkeypatch,
                 return owner.sig_pub
 
         monkeypatch.setattr(ops_human, "open_backend", lambda directory: Backend(owner))
-        monkeypatch.setattr(ops_human, "review_prompt", lambda text, word: True)
+        monkeypatch.setattr(ops_human, "review_prompt", lambda text: True)
         keys = ops_human.keys_dir(lab.state, served.wid)
         keys.mkdir(parents=True)
         (keys / ops_human.KEY_FILE).write_text("{}")
@@ -288,6 +288,7 @@ def test_an_addon_grant_finds_the_device_key_where_init_put_it(lab, monkeypatch,
 
 
 def test_a_person_command_runs_the_signer_composite_at_the_terminal(lab, monkeypatch, tmp_path):
+    real_prompt = ops_human.review_prompt
     served = hosted(lab)
     try:
         out = hcli(lab)
@@ -300,19 +301,31 @@ def test_a_person_command_runs_the_signer_composite_at_the_terminal(lab, monkeyp
 
         shown = []
         monkeypatch.setattr(ops_human, "open_backend", lambda directory: Backend(owner))
-        monkeypatch.setattr(ops_human, "review_prompt", lambda text, word: shown.append((text, word)) or True)
+        monkeypatch.setattr(ops_human, "review_prompt", lambda text: shown.append(text) or True)
         keys = ops_human.keys_dir(lab.state, served.wid)
         keys.mkdir(parents=True)
         (keys / ops_human.KEY_FILE).write_text("{}")
         r = hcli(lab, grant=False).j("close", "1", "--resolution", "wont_do")
         assert r.code == 0, r.out
-        assert shown and shown[0][1].startswith("DEMO-0001/") and "close" in shown[0][0].lower()
+        assert shown and "DEMO-0001" in shown[0] and "close" in shown[0].lower()
         assert "ticket.closed" in hcli(lab, grant=False)("show", "1").out
         # declined: nothing is signed
-        monkeypatch.setattr(ops_human, "review_prompt", lambda text, word: False)
+        monkeypatch.setattr(ops_human, "review_prompt", lambda text: False)
         out("new", "Second")
         r = hcli(lab, grant=False).j("close", "2")
-        assert (r.code, r.err_code) == (5, "invalid.input") and "nothing was signed" in r.doc["error"]["message"]
+        assert (r.code, r.err_code) == (3, "sign.cancelled") and "nothing was signed" in r.doc["error"]["message"]
+
+        # A real terminal refusal leaves the event log unchanged.
+        def missing_tty(flags):
+            raise OSError("no terminal")
+
+        monkeypatch.setattr(ops_human, "review_prompt", real_prompt)
+        monkeypatch.setattr(ops_human, "open_backend", lambda directory: Backend(owner))
+        monkeypatch.setattr(ops_human, "open_tty", missing_tty)
+        before = lab.ws.read_events(lab.ws.uid("2"))
+        r = hcli(lab, grant=False).j("close", "2")
+        assert (r.code, r.err_code) == (3, "tty.required")
+        assert lab.ws.read_events(lab.ws.uid("2")) == before
         # an agent never gets there
         r = hcli(lab).j("close", "2")
         assert (r.code, r.err_code) == (3, "human_only")
@@ -538,7 +551,7 @@ def test_a_lost_submit_is_sent_again_with_the_same_idem_and_a_grant_exists_once(
 
         shown, secrets = [], []
         monkeypatch.setattr(ops_human, "open_backend", lambda directory: Backend(owner))
-        monkeypatch.setattr(ops_human, "review_prompt", lambda text, word: shown.append(word) or True)
+        monkeypatch.setattr(ops_human, "review_prompt", lambda text: shown.append(text) or True)
         monkeypatch.setattr(ops_human, "show_secret", lambda text: secrets.append(text))
         keys = ops_human.keys_dir(lab.state, served.wid)
         keys.mkdir(parents=True)

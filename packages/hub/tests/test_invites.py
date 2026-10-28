@@ -873,3 +873,16 @@ def test_disable_is_on_record_before_the_clean_up(w, monkeypatch):
     monkeypatch.setattr(w.env.svc, "revoke_all", boom)
     assert w.call("POST", f"/admin/users/{w.ann}/disable", token=atok)[0] >= 500  # the clean-up failed half way
     assert "user.disabled" in [e["type"] for e in w.api.d.activity.list(limit=50)]
+
+
+def test_reauth_refuses_a_disabled_or_unrecovered_person(w):
+    from orch_hub.channels import ChannelError
+
+    w.env.acc.set_disabled(w.ann, True)
+    with pytest.raises(ChannelError) as e:
+        w.env.svc.reauth(w.ann, "correct horse battery", w.env.next_code(w.ann))
+    assert e.value.code == "bad_credentials"
+    w.env.acc.set_disabled(w.ann, False)  # enabled but not recovered: still refused
+    with pytest.raises(ChannelError) as e:
+        w.env.svc.reauth(w.ann, "correct horse battery", w.env.next_code(w.ann))
+    assert e.value.code == "bad_credentials"

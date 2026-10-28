@@ -5,7 +5,7 @@ import { api } from '@/api/client'
 import { hubQueries, type HubRule, type HubPreview, type HubShare } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
 import { Badge } from '@/components/ui/badge'
-import { Action, Field, Flow, Panel, caveat } from './shared'
+import { Action, Field, Flow, Panel } from './shared'
 import { AddRuleReview } from './AddRule'
 import { StopRule, StopSharing, type HubWorkspace } from './StopSharing'
 

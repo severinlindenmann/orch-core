@@ -193,7 +193,8 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       busy.current = true
       setPhase('signing')
       try {
-        const got = await api.signClick(where, open.request_id, view.view_digest, revealKey, sealed, view.view.hold_allowed ? 10 : undefined)
+        const delay = view.view.hold_allowed ? 10 : undefined // only a held action carries the delay; every other call keeps its old shape
+        const got = await (delay ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed, delay) : sealed ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed) : api.signClick(where, open.request_id, view.view_digest, revealKey))
         if (got.state === 'held' && got.deadline_ms) {
           trackHold(where, open.request_id, got.deadline_ms / 1000, () => {
             refetch()

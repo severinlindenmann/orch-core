@@ -268,8 +268,10 @@ def serve(
                 setup_token_file=state / SETUP_TOKEN_FILE,
                 switch=switch,
                 services=Services(
-                    relay_url=cfg.relay_url, publish_url=publish_url,
-                    behind_edge=cfg.behind_edge, edge_url=cfg.resolved_api_origin(),
+                    relay_url=cfg.relay_url,
+                    publish_url=publish_url,
+                    behind_edge=cfg.behind_edge,
+                    edge_url=cfg.resolved_api_origin(),
                 ),
                 routes=queue,
                 secure_cookies=cfg.behind_edge,  # plain http on loopback (dev) cannot carry a Secure cookie

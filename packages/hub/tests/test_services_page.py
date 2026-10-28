@@ -107,9 +107,7 @@ def test_services_edge_uses_configuration_without_a_probe(w, behind_edge, url, e
     def no_probe(*args):
         pytest.fail("Edge must not trigger a network call")
 
-    w.api.d.services = Services(
-        relay_url=None, publish_url=None, behind_edge=behind_edge, edge_url=url, probe=no_probe
-    )
+    w.api.d.services = Services(relay_url=None, publish_url=None, behind_edge=behind_edge, edge_url=url, probe=no_probe)
     status, body, _ = w.call("GET", "/admin/services", token=w.login(w.admin))
     assert status == 200
     assert body["edge"] == expected

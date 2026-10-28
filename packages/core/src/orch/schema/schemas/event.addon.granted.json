@@ -638,7 +638,7 @@
     },
     "staged": {
       "type": "string",
-      "pattern": "^st_[0-9a-f]{32}$",
+      "pattern": "^st_[0-9a-f]{32}(?![\\s\\S])",
       "description": "Single-use stage bound to the signed package digest and capabilities."
     }
   },

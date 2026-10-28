@@ -1,3 +1,4 @@
+import { skeleton, loading, enter, toast, watchDialogs, replaceContent } from "./feel.js";
 // The hub console, minimum for the browser sign flow (design-a8): sign in, register this browser, see what needs me,
 // review one decision and sign it. The DOM is built with createElement and textContent only (lint: tests/web_lint),
 // every string from the workspace goes through renderText first, and nothing here calls a signer except the prompt.
@@ -13,6 +14,10 @@ import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl }
 import { Refusal, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
 const root = document.getElementById("app");
+watchDialogs();
+const skip = h("a", { class: "skip-link", href: "#main-content", text: "Skip to main content", onclick: (event) => { event.preventDefault(); (document.getElementById("main-content") ?? root).focus(); } });
+root.tabIndex = -1;
+document.body.prepend(skip);
 const state = { user: null, me: null, channels: [], notice: null, rail: { hubName: "Hub", rows: [] }, menu: false };
 
 // --- DOM helpers (no HTML strings anywhere) ----------------------------------------------------------------------------
@@ -30,7 +35,8 @@ function h(tag, props = {}, ...kids) {
 }
 let frame = null;
 let railSnapshot = "";
-const show = (...nodes) => { frame = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
+let paintedRoute = null;
+const show = (...nodes) => { frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
 const field = (label, input) => h("div", {}, h("label", { text: label }), input);
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
@@ -72,6 +78,7 @@ const say = (code) => WORDS[code] ?? "Refused (" + renderText(code) + ").";
 
 // --- views -------------------------------------------------------------------------------------------------------------
 function loginView(err) {
+  clearSession();
   const id = h("input", { id: "user", autocomplete: "username", required: true });
   const pw = h("input", { id: "pw", type: "password", autocomplete: "current-password", required: true });
   const code = h("input", { id: "code", inputmode: "numeric", autocomplete: "one-time-code", maxlength: 6, required: true });
@@ -118,7 +125,14 @@ async function refresh() {
   return true;
 }
 
+function pageLoading(active, kind = active) {
+  if (frame && paintedRoute === location.hash) return;
+  if (state.user) shell(active, skeleton(kind));
+  else show(skeleton(kind));
+}
+
 function shell(active, ...nodes) {
+  const sameRoute = paintedRoute === location.hash;
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
   const name = renderText(state.user?.name ?? "");
   const hubName = renderText(state.rail.hubName);
@@ -131,13 +145,13 @@ function shell(active, ...nodes) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
       h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", "nav"), tab("approvals", "Approvals", "nav"), tab("workspaces", "Workspaces", "nav"), state.user?.is_admin ? tab("services", "Services", "nav") : null, state.user?.is_admin ? tab("admin", "Admin", "nav") : null),
       h("span", { class: "grow" }), h("span", { class: "small muted", text: name }), signOutMenu());
-    show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content" }, nodes.flat(2)))));
+    show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content", id: "main-content", tabindex: "-1" }, nodes.flat(2)))));
     root.classList.add("shelled");
     frame = root.querySelector(".app");
     railSnapshot = JSON.stringify(state.rail);
   } else {
-    frame.querySelector(".side").replaceWith(side);
-    frame.querySelector(".content").replaceChildren(...nodes.flat(2).filter(Boolean));
+    if (!sameRoute || railSnapshot !== JSON.stringify(state.rail)) frame.querySelector(".side").replaceWith(side);
+    replaceContent(frame.querySelector(".content"), nodes.flat(2).filter(Boolean), sameRoute);
     if (railSnapshot !== JSON.stringify(state.rail)) {
       frame.querySelector(".rail").replaceChildren(...railView().childNodes);
       railSnapshot = JSON.stringify(state.rail);
@@ -149,6 +163,8 @@ function shell(active, ...nodes) {
     if (selected) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
+  if (!sameRoute) enter(frame.querySelector(".content"));
+  paintedRoute = location.hash;
   const route = parseRoute(location.hash);
   for (const button of frame.querySelectorAll("[data-workspace]")) {
     const selected = button.getAttribute("data-workspace") === (route.workspace ?? "");
@@ -213,7 +229,7 @@ const expiredView = () => plain(h("h1", { text: "This link expired" }), h("p", {
 async function redeemTicket(t, replace) {
   const r = await api("POST", "/switch/redeem", replace ? { t, replace: true } : { t });
   const l = landing(r.status, r.body);
-  if (l.kind === "signout") { state.user = null; return plain(h("h1", { text: "You are signed out" }), h("p", { class: "muted", text: "Your hub session ended." }), h("button", { class: "pri", text: "Sign in again", onclick: () => loginView() })); }
+  if (l.kind === "signout") { clearSession(); return plain(h("h1", { text: "You are signed out" }), h("p", { class: "muted", text: "Your hub session ended." }), h("button", { class: "pri", text: "Sign in again", onclick: () => loginView() })); }
   if (l.kind === "expired") return expiredView();
   if (l.kind === "path") return location.replace(l.path);
   if (l.kind === "forward") {
@@ -245,39 +261,61 @@ function reauthView() {
 }
 
 async function admin() {
-  if (!(await refresh())) return loginView();
-  state.menu = false;
-  await loadRail();
-  if (!state.user.is_admin) return home();
-  if (state.user.needs_sign_in) return reauthView();
-  const notice = state.notice;
-  state.notice = null;
-  const adminApi = async (m, path, body) => { const r = await api(m, path, body); if (r.status === 403 && r.body.error === "reauth_required") reauthView(); return r; };
-  shell("admin", adminView({ api: adminApi, say, notice, refresh }));
+  const finishLoading = loading();
+  pageLoading("admin");
+  try {
+    if (!(await refresh())) return loginView();
+    state.menu = false;
+    await loadRail();
+    if (!state.user.is_admin) return home();
+    if (state.user.needs_sign_in) return reauthView();
+    const notice = state.notice;
+    state.notice = null;
+    const adminApi = async (m, path, body) => {
+      const done = loading();
+      try { const r = await api(m, path, body); if (r.status === 403 && r.body.error === "reauth_required") reauthView(); return r; }
+      finally { done(); }
+    };
+    if (state.adminPage && frame && paintedRoute === location.hash && !frame.querySelector(".skeleton")) {
+      await state.adminPage.reload();
+      shell("admin", state.adminPage);
+    } else {
+      state.adminPage = adminView({ api: adminApi, say, notice, refresh });
+      shell("admin", state.adminPage);
+    }
+  } finally { finishLoading(); }
 }
 
 async function workspaces() {
-  if (!(await refresh())) return loginView();
-  state.menu = false;
-  await loadRail();
-  const [ws, ho] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs")]);
-  shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces : [], handoffs: ho.status === 200 ? ho.body.handoffs : [] }));
+  const finishLoading = loading();
+  pageLoading("workspaces");
+  try {
+    if (!(await refresh())) return loginView();
+    state.menu = false;
+    await loadRail();
+    const [ws, ho] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs")]);
+    shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces : [], handoffs: ho.status === 200 ? ho.body.handoffs : [] }));
+  } finally { finishLoading(); }
 }
 
 async function copyText(t) {
-  try { await navigator.clipboard.writeText(t); return true; } catch { return false; }
+  try { await navigator.clipboard.writeText(t); toast("Copied"); return true; } catch { toast("Copy failed: select the text by hand"); return false; }
 }
 
 async function services() {
-  if (!(await refresh())) return loginView();
-  state.menu = false;
-  await loadRail();
-  if (!state.user.is_admin) return home();
-  if (state.user.needs_sign_in) return reauthView();
-  const r = await api("GET", "/admin/services");
-  if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
-  if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
-  shell("services", servicesView(r.body, { check: services, open: () => navigate("#/workspaces"), copy: copyText }));
+  const finishLoading = loading();
+  pageLoading("services");
+  try {
+    if (!(await refresh())) return loginView();
+    state.menu = false;
+    await loadRail();
+    if (!state.user.is_admin) return home();
+    if (state.user.needs_sign_in) return reauthView();
+    const r = await api("GET", "/admin/services");
+    if (r.status === 403 && r.body.error === "reauth_required") return reauthView();
+    if (r.status !== 200) return shell("services", h("h1", { text: "Services" }), banner("bad", "Cannot read the services", say(r.body.error)));
+    shell("services", servicesView(r.body, { check: services, open: () => navigate("#/workspaces"), copy: copyText }));
+  } finally { finishLoading(); }
 }
 
 async function approvals(filter = {}) {
@@ -289,25 +327,29 @@ async function approvals(filter = {}) {
 }
 
 async function home() {
-  if (!(await refresh())) return loginView();
-  state.menu = false;
-  await loadRail();
-  const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
-  const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
-  const workspaces = ws.status === 200 ? ws.body.workspaces : [];
-  const dead = !mine && (state.me || state.channels.some((c) => c.status === "active" && c.kind === "browser"));
-  const view = homeView({
-    user: state.user,
-    items: needs.status === 200 ? needs.body.items : [],
-    offline: needs.status === 200 ? needs.body.offline : [],
-    workspaces,
-    channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
-    thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
-    notice: state.notice,
-    actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), register: () => registerView(), removeChannel, forgetLocal },
-  });
-  shell("home", view, advancedForm(workspaces));
-  state.notice = null;
+  const finishLoading = loading();
+  pageLoading("home");
+  try {
+    if (!(await refresh())) return loginView();
+    state.menu = false;
+    await loadRail();
+    const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
+    const mine = state.me && state.channels.find((c) => c.channel_id === state.me.channelId && c.status === "active");
+    const workspaces = ws.status === 200 ? ws.body.workspaces : [];
+    const dead = !mine && (state.me || state.channels.some((c) => c.status === "active" && c.kind === "browser"));
+    const view = homeView({
+      user: state.user,
+      items: needs.status === 200 ? needs.body.items : [],
+      offline: needs.status === 200 ? needs.body.offline : [],
+      workspaces,
+      channels: state.channels.map((c) => ({ ...c, status: c.status + (state.me?.channelId === c.channel_id ? " (this browser)" : "") })),
+      thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
+      notice: state.notice,
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), register: () => registerView(), removeChannel, forgetLocal },
+    });
+    shell("home", view, advancedForm(workspaces));
+    state.notice = null;
+  } finally { finishLoading(); }
 }
 
 async function forgetLocal() {
@@ -325,10 +367,19 @@ async function removeChannel(id) {
   await home();
 }
 
+function clearSession() {
+  state.user = null;
+  state.rail = { hubName: "Hub", rows: [] };
+  state.me = null;
+  state.channels = [];
+  state.adminPage = null;
+  state.notice = null;
+  state.menu = false;
+}
+
 async function signOut() {
   await api("DELETE", "/session");
-  state.user = null;
-  state.menu = false;
+  clearSession();
   loginView();
 }
 
@@ -591,22 +642,26 @@ function navigate(hash) {
 }
 
 async function workspacePage(route) {
-  if (!(await refresh())) return loginView();
-  await loadRail();
-  const w = state.rail.rows.find((row) => row.id === route.workspace);
-  if (!w) return shell("workspaces", h("h1", { text: "Workspace unavailable" }), h("p", { text: "This workspace is not in your list." }));
-  const needs = await api("GET", "/me/needs-you");
-  const items = needs.status === 200 ? needs.body.items.filter((it) => it.workspace_id === w.id) : [];
-  if (route.kind === "item" && w.online) {
-    const item = items.find((it) => it.key === route.key || it.item_id === route.key);
-    if (item) return reviewItem(item);
-    return shell("workspaces", h("h1", { text: "This item is no longer waiting for you" }));
-  }
-  shell("workspaces", h("h1", { text: renderText(w.name) + (w.online ? "" : " is " + workspaceStatus(w)) }),
-    h("p", { text: w.online ? "Online" : "Hand-offs and approvals wait until this workspace is back." }),
-    h("p", { text: needs.status === 200 && w.online ? items.length + " things need you" : w.badge ? w.badge + " things need you. They wait until the workspace is back." : "Waiting items will be shown when the workspace is back." }),
-    w.online ? h("button", { text: "Open workspace", disabled: !w.canOpen, onclick: () => openWorkspace(w) }) : null,
-    w.online && !w.canOpen ? h("p", { text: OPEN_FIRST }) : null);
+  const finishLoading = loading();
+  pageLoading("workspaces", "workspace");
+  try {
+    if (!(await refresh())) return loginView();
+    await loadRail();
+    const w = state.rail.rows.find((row) => row.id === route.workspace);
+    if (!w) return shell("workspaces", h("h1", { text: "Workspace unavailable" }), h("p", { text: "This workspace is not in your list." }));
+    const needs = await api("GET", "/me/needs-you");
+    const items = needs.status === 200 ? needs.body.items.filter((it) => it.workspace_id === w.id) : [];
+    if (route.kind === "item" && w.online) {
+      const item = items.find((it) => it.key === route.key || it.item_id === route.key);
+      if (item) return reviewItem(item);
+      return shell("workspaces", h("h1", { text: "This item is no longer waiting for you" }));
+    }
+    shell("workspaces", h("h1", { text: renderText(w.name) + (w.online ? "" : " is " + workspaceStatus(w)) }),
+      h("p", { text: w.online ? "Online" : "Hand-offs and approvals wait until this workspace is back." }),
+      h("p", { text: needs.status === 200 && w.online ? items.length + " things need you" : w.badge ? w.badge + " things need you. They wait until the workspace is back." : "Waiting items will be shown when the workspace is back." }),
+      w.online ? h("button", { text: "Open workspace", disabled: !w.canOpen, onclick: () => openWorkspace(w) }) : null,
+      w.online && !w.canOpen ? h("p", { text: OPEN_FIRST }) : null);
+  } finally { finishLoading(); }
 }
 
 // Serialize renders so an earlier slow read cannot overwrite the final route.

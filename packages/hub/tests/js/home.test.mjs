@@ -14,7 +14,7 @@ globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) 
 const { homeView, homeSummary, workspaceStatus } = await import("../../src/orch_hub/web/home.js");
 const spaces = [{ workspace_id: "a", name: "Product", online: true }, { workspace_id: "b", name: "Legal", online: false }];
 test("summary excludes another person's workspace", () => {
-  const out = homeSummary(spaces, [{ workspace_id: "a" }, { workspace_id: "secret" }]);
+  const out = homeSummary(spaces, [{ workspace_id: "a", signable: true }, { workspace_id: "secret" }]);
   assert.equal(out.waiting, 1);
   assert.equal(out.online, 1);
   assert.equal(out.offline, 1);
@@ -39,5 +39,19 @@ test("offline time is honest and formats available last-seen data", () => {
   assert.equal(workspaceStatus({ online: true }), "online");
   assert.equal(workspaceStatus({ online: false }), "offline since an unknown time");
   assert.equal(workspaceStatus({ last_seen: "bad" }), "offline since an unknown time");
-  assert.equal(workspaceStatus({ last_seen: 1700000000000 }), "offline since " + new Date(1700000000000).toLocaleString());
+  assert.equal(workspaceStatus({ last_seen: 1700000000 }), "offline since " + new Date(1700000000000).toLocaleString());
+});
+
+test("summary and chip share the actionable list, excluding offline and hidden items", () => {
+  const items = [
+    { workspace_id: "a", signable: true }, { workspace_id: "a", summary_only: true },
+    { workspace_id: "a", mode: "selective" }, { workspace_id: "a" },
+    { workspace_id: "b", signable: true }, { workspace_id: "a", online: false, signable: true },
+    { workspace_id: "secret", signable: true },
+  ];
+  const out = homeView({ workspaces: spaces, items, actions: {} });
+  assert.match(out.map(n => n.textContent).join(" "), /3 things need you/);
+  const needs = out.flatMap(n => n.all()).find(n => n.className === "card needs-you");
+  assert.equal(needs.all().find(n => n.className === "chip ").textContent, "3");
+  assert.equal(homeSummary(spaces, items, ["a"]).waiting, 0);
 });

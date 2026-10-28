@@ -12,10 +12,34 @@ const label = (w) => text(w.name || "Unnamed workspace");
 export function connectionsView(data, actions = {}) {
   const workspaces = data.workspaces ?? [], edges = data.edges ?? [];
   const has = (a, b) => edges.some((e) => e.from === a && e.to === b);
+  const stored = (a, b) => (data.connections ?? []).some((e) => e.from === a && e.to === b);
+  const pending = (a, b) => (data.pending ?? []).some((e) => e.from === a && e.to === b);
+  const count = (a, b) => (data.traffic ?? []).find((e) => e.from === a && e.to === b)?.n ?? 0;
+  const button = (name, onclick, props = {}) => h("button", { type: "button", text: name, onclick, ...props });
+  // One cell: what is true now, then at most one action. Closing asks once more; asking to allow waits for an approver.
+  function cell(a, b) {
+    if (a.workspace_id === b.workspace_id) return h("td", { class: "faint", text: "–" });
+    const from = a.workspace_id, to = b.workspace_id;
+    const state = has(from, to) ? "allowed" : stored(from, to) ? "connected, no access" : pending(from, to) ? "waiting for approval" : "no";
+    const note = has(from, to) && count(from, to) ? h("div", { class: "small muted", text: count(from, to) + " in 30 days" }) : null;
+    const td = h("td", {}, h("div", { text: state }), note);
+    if (!actions.set) return td;
+    if (stored(from, to) || has(from, to)) {
+      let sure = false;
+      const close = button("Close", () => {
+        if (!sure) { sure = true; close.textContent = "Sure? Close it"; return; }
+        actions.set(from, to, false);
+      }, { "aria-label": "Close " + label(a) + " to " + label(b) });
+      td.append(close);
+    } else if (!pending(from, to)) {
+      td.append(button("Ask to allow", () => actions.set(from, to, true), { "aria-label": "Ask to allow " + label(a) + " to " + label(b) }));
+    }
+    return td;
+  }
   const root = h("div", { class: "connections" }, h("h1", { text: "Connections" }),
     h("div", { class: "row" }, h("p", { class: "lead grow", text: "Who can send to whom, right now." }),
       h("details", { class: "info" }, h("summary", { "aria-label": "About this map", text: "i" }),
-        h("p", { class: "small muted", text: "An arrow from A to B means A can send hand-offs to B. A return arrow means B can send to A too. Choose a workspace to highlight its connections. Changing connections comes later." }))));
+        h("p", { class: "small muted", text: "An arrow from A to B means A can send hand-offs to B. A return arrow means B can send to A too. Choose a workspace to highlight its connections. Close ends a connection at once; Ask to allow waits for an owner or admin of the other workspace to approve." }))));
   if (!workspaces.length) { root.append(emptyState("workspaces")); return root; }
   const details = h("div", { class: "connection-details", "aria-live": "polite", text: "Choose a workspace to see who it can reach and who can reach it." });
   const map = svg("svg", { viewBox: "0 0 640 480", "aria-label": "Connections between workspaces" });
@@ -64,7 +88,7 @@ export function connectionsView(data, actions = {}) {
   root.append(h("section", { class: "card connection-matrix" }, h("h2", { text: "Who may reach whom" }),
     h("table", {}, h("caption", { text: "Read from a row to a column." }),
       h("thead", {}, h("tr", {}, h("th", { scope: "col", text: "From / to" }), workspaces.map((w) => h("th", { scope: "col", text: label(w) })))),
-      h("tbody", {}, workspaces.map((a) => h("tr", {}, h("th", { scope: "row", text: label(a) }), workspaces.map((b) => h("td", { text: has(a.workspace_id, b.workspace_id) ? "allowed" : "no" }))))))));
+      h("tbody", {}, workspaces.map((a) => h("tr", {}, h("th", { scope: "row", text: label(a) }), workspaces.map((b) => cell(a, b))))))));
   return root;
 }
 
@@ -79,6 +103,15 @@ export async function connectionsPage(d) {
     const response = await d.api("GET", "/admin/connections");
     if (response.status === 403 && response.body.error === "reauth_required") return d.reauthView();
     if (response.status !== 200) return d.shell("connections", h("h1", { text: "Connections" }), h("p", { role: "alert", text: "Cannot read connections. " + d.say(response.body.error) }));
-    d.shell("connections", connectionsView(response.body));
+    const set = async (from, to, allow) => {
+      const r = await d.api("POST", "/me/connections", { from, to, allow });
+      const words = { forbidden_role: "You cannot change this connection.", no_approver: "Nobody can approve for that workspace yet.", conflict: "It is already connected.", stale_change: "Something changed. Try again." };
+      d.state.notice = r.status === 200 || r.status === 202
+        ? d.banner("ok", allow ? "Asked. It waits for approval." : "Closed", allow ? "The other workspace's owner or admin approves it in Approvals." : null)
+        : d.banner("bad", "Not changed", words[r.body.error] ?? d.say(r.body.error));
+      await connectionsPage(d);
+    };
+    d.shell("connections", d.state.notice, connectionsView(response.body, { set }));
+    d.state.notice = null;
   } finally { finish(); }
 }

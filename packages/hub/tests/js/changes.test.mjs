@@ -204,3 +204,8 @@ test("the Access tab shows access by workspace or by group, one click apart", as
   toggle("By workspace").listeners.click();
   assert.match(panelText(), /Workspace permissions/);
 });
+
+test("a connection ask is said in plain words", () => {
+  const ask = { kind: "connection_allow", proposer: { name: "Ada" }, from_name: "Marketing", body: {} };
+  assert.equal(sentence(ask, "Product"), "Ada wants to let Marketing send hand-offs to Product");
+});

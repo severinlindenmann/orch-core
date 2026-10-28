@@ -68,7 +68,7 @@ def test_serve_wires_the_real_authz_into_the_web_deps():
 
 def test_empty_registry(w):
     w.reg.ws.clear()
-    assert read(w) == {"workspaces": [], "edges": []}
+    assert read(w) == {"workspaces": [], "edges": [], "connections": [], "pending": [], "traffic": []}
 
 
 def test_non_admin_refused_and_route_registration(w):

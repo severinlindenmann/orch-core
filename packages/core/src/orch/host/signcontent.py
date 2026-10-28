@@ -115,6 +115,9 @@ SHOWN: dict[str, frozenset[str]] = {
 DETAILS_ONLY: dict[str, frozenset[str]] = {
     "grant.issued": frozenset({"grant", "scope", "verbs", "issued_at", "expires_at"}),
     "grant.revoked": frozenset({"grant"}),
+    "addon.granted": frozenset(
+        {"staged"}
+    ),  # D3: the stage id is an opaque handle; the digest and capabilities are shown
 }
 
 #: the keys of a gate input the plain view shows, and the ones that are hashes; of its ``fields``, a task, an

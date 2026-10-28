@@ -103,7 +103,9 @@ def mutate(fn):
         lambda s: s["properties"]["claude"]["properties"]["work"].update(format="uri"),
         lambda s: s["properties"]["claude"]["properties"]["work"].update(pattern="^a+$"),
         lambda s: s["properties"]["claude"]["properties"]["work"].update(description="x"),
-        lambda s: s["properties"]["claude"]["properties"]["work"].update(default="opus"),
+        lambda s: s["properties"]["claude"]["properties"]["work"].update(
+            default="not-in-enum"
+        ),  # D3: a default is allowed, an invalid one is not
         lambda s: s.pop("additionalProperties"),
         lambda s: s.update(additionalProperties=True),
         lambda s: s.update(additionalProperties={"type": "string"}),

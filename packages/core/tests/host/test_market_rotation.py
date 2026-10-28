@@ -44,7 +44,10 @@ def test_A_submit_refuses_a_staged_key_that_is_no_longer_pinned(served, human, n
     net.add("standup", "1.0.0", key=x)
     add_market(served, net)
     st = ok(stage(served))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     signed = human.sign(prepared)
     monkeypatch.setattr(constants, "OFFICIAL_KEYS", (H.KEY_B64,))  # X retired between stage and submit
     assert err(human.submit_res(prepared["request"]["id"], signed.events)) == "market.official_unsigned"
@@ -59,7 +62,10 @@ def test_submit_refuses_when_the_index_now_names_another_publisher(served, human
     net.add("standup", "1.0.0")
     add_market(served, net)
     st = ok(stage(served))["data"]
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     signed = human.sign(prepared)
     e = dict(net.entries[0])  # the same id, version, commit and digest, re-keyed to X
     e["publisher"] = {"key": x[1], "sig": "A" * 86}
@@ -97,7 +103,10 @@ def test_B_up_to_date_host_across_rekey_then_new_pins(served, human, net, monkey
     ok(person(served, "market.refresh"))
     st = ok(stage(served, update=True))["data"]
     assert st["update"]["publisher"] == "first_use"  # install record still says CUR
-    prepared = human.prepare("addon.grant", {"name": "standup", "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     ok(human.submit_res(prepared["request"]["id"], human.sign(prepared).events))
     assert mfiles(served).installs()["keys"] == {f"{H.OFFICIAL}|standup": nxt[1]}
 

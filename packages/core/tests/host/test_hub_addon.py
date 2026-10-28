@@ -41,7 +41,16 @@ def env(served, human, stub, net):
 
 def prepare_handoff(env: Env, name: str = "standup") -> tuple[dict[str, Any], dict[str, Any]]:
     """Stage the package, prepare the grant as a hand-off. Returns (the host's prepared answer, its grant event)."""
-    res = env.human.prepare_res("addon.grant", {"name": name, "staged": env.st["stage"]}, handoff=True)
+    res = env.human.prepare_res(
+        "addon.grant",
+        {
+            "name": name,
+            "staged": env.st["stage"],
+            "digest": env.st["package_sha256"],
+            "caps": env.st["grant"]["capabilities"],
+        },
+        handoff=True,
+    )
     prepared = ok(res)["data"]
     return prepared, prepared["events"][0]
 
@@ -202,10 +211,27 @@ def test_only_an_unsigned_add_on_grant_hand_off_is_marked_for_the_hub_and_never_
     rid = other["request"]["id"]
     assert record(rid)["hub_handoff"] is False
     assert err(env.served.client().req("hub.handoff", {"kind": "addon", "request": rid})) == "not_found"
-    signed = env.human.prepare_res("addon.grant", {"name": "standup", "staged": env.st["stage"]})
+    signed = env.human.prepare_res(
+        "addon.grant",
+        {
+            "name": "standup",
+            "staged": env.st["stage"],
+            "digest": env.st["package_sha256"],
+            "caps": env.st["grant"]["capabilities"],
+        },
+    )
     if signed.get("ok"):  # a local signature stays valid in every mode (A1): it is bound, never a hub hand-off
         assert record(ok(signed)["data"]["request"]["id"])["hub_handoff"] is False
-    body = {"op": "addon.grant", "args": {"name": "standup", "staged": env.st["stage"]}, "handoff": True}
+    body = {
+        "op": "addon.grant",
+        "args": {
+            "name": "standup",
+            "staged": env.st["stage"],
+            "digest": env.st["package_sha256"],
+            "caps": env.st["grant"]["capabilities"],
+        },
+        "handoff": True,
+    }
     assert err(env.human.c.req("human.prepare", {**body, "hub_handoff": True})) == "invalid.input"
     assert err(env.human.c.req("human.prepare", {**body, "signer": env.human.signer})) == "invalid.input"
     prepared, _ = prepare_handoff(env)
@@ -277,7 +303,11 @@ def test_an_unaliased_hub_user_who_is_not_an_admin_is_refused(served, human, stu
     e = Env(served, human, role="edit")  # hub role edit = member
     e.state.addr = "hub.example.test:4443"
     e.service.submit(hubops._save_state, e.service, e.state).result()  # noqa: SLF001
-    res = human.prepare_res("addon.grant", {"name": "standup", "staged": st["stage"]}, handoff=True)
+    res = human.prepare_res(
+        "addon.grant",
+        {"name": "standup", "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+        handoff=True,
+    )
     prepared = ok(res)["data"]
     assert e.deliver(request(e, terms_of(prepared["events"][0], prepared["request"]["id"])), "workspace") is not None
     assert granted(e) == []

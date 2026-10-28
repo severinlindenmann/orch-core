@@ -630,7 +630,8 @@ def test_new_child_real_host_scoped_run_and_nothing_to_do(env, exit_code):  # no
     ok(conn.call("log", {"ref": view.key, "text": "Checked mail"}, **args))
     # the hosted close goes through child_run and the model's scope check: the run cannot close the anchor
     anchor_key = store.state._core.tickets[uid].key
-    assert err(conn.call("close", {"ref": anchor_key, "resolution": "other"}, **args))
+    refused_close = conn.call("close", {"ref": anchor_key, "resolution": "other"}, **args)
+    assert err(refused_close) == "invalid.input" and refused_close["error"]["message"].startswith("grant.scope:")
     assert store.state._core.tickets[uid].status != "closed"
     ok(conn.call("close", {"ref": view.key, "resolution": "nothing_to_do"}, **args))
     record = env.hub.store.records[spawn["run"]]
@@ -639,6 +640,11 @@ def test_new_child_real_host_scoped_run_and_nothing_to_do(env, exit_code):  # no
     row = store.state._core.tickets[uid].schedules[sid].occurrences[ts(due)]
     assert row["outcome"] == "ran_nothing"
     assert store.state._core.tickets[child].status == "closed"
+    # the real store's stamped child event is exactly the model's allowlist (envelope + the child's own fields)
+    from orch.model.schedules_wire import CHILD_ENVELOPE, CHILD_FIELDS
+
+    created = [e for e, _ in store.events_after(child, 0, 1 << 30) if e["type"] == "ticket.created"]
+    assert len(created) == 1 and set(created[0]) == CHILD_ENVELOPE | CHILD_FIELDS
     # Reload all logs with real signatures, including the child whose authority references the anchor.
     from contextlib import closing
 

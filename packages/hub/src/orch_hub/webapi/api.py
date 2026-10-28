@@ -63,6 +63,7 @@ from ..spaces.service import SpaceError
 from ..switch import SwitchError, clean_return_to, workspace_rows
 from ..versions import MIN_PHONE_VERSION, MIN_SUPPORTED_VERSION, version_state, workspace_status
 from .changes_api import ChangeHandlers, confirmed
+from .org_api import OrgHandlers
 from .static import StaticSite
 
 MAX_BODY = 64 * 1024
@@ -88,6 +89,9 @@ _PARAM = {"change_id": r"[0-9A-Za-z]{26,32}"}
 #: wire code -> HTTP status. Anything not listed is answered as ``internal`` (500), never echoed.
 STATUS = {
     "malformed": 400,
+    "unknown_skill": 404,
+    "unknown_server": 404,
+    "too_many": 409,
     "bad_pairing_code": 400,
     "weak_password": 400,
     "same_password": 400,
@@ -519,6 +523,14 @@ ROUTES: tuple[Route, ...] = (
     _r("GET", "/rail", "session", "rail", "The hub and my workspaces, for the switcher"),
     _r("GET", "/admin/activity", "admin", "a_activity", "Read company activity"),
     _r("GET", "/admin/audit", "admin", "a_audit", "Read the audit chain (?since=N, up to 100 records)"),
+    _r("GET", "/admin/skills", "admin", "a_skills", "Company skills and the workspaces they are offered to"),
+    _r("PUT", "/admin/skills/{name}", "admin", "a_skill_put", "Create or replace a company skill (new digest)"),
+    _r("DELETE", "/admin/skills/{name}", "admin", "a_skill_delete", "Remove a company skill"),
+    _r("PUT", "/admin/skills/{name}/offers", "admin", "a_skill_offer", "Set the workspaces a skill is offered to"),
+    _r("GET", "/admin/mcp-servers", "admin", "a_mcp", "Remote MCP servers and the workspaces they are offered to"),
+    _r("PUT", "/admin/mcp-servers/{name}", "admin", "a_mcp_put", "Create or replace a remote MCP server (new digest)"),
+    _r("DELETE", "/admin/mcp-servers/{name}", "admin", "a_mcp_delete", "Remove a remote MCP server"),
+    _r("PUT", "/admin/mcp-servers/{name}/offers", "admin", "a_mcp_offer", "Set the workspaces a server is offered to"),
 )
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
 #: (password + TOTP from the app) may only read the card, register a phone, bind and sign out; ``channel`` is bound to
@@ -706,7 +718,7 @@ def _groups_detail(groups: list[str]) -> dict[str, Any]:
     return out
 
 
-class WebApi(ChangeHandlers):
+class WebApi(ChangeHandlers, OrgHandlers):
     def __init__(self, deps: WebDeps) -> None:
         if deps.behind_edge and not deps.trusted_peers:
             raise ValueError("web API behind the edge needs trusted_peers (the edge's addresses)")
@@ -1906,7 +1918,7 @@ class WebApi(ChangeHandlers):
         reg, out = self.d.registry, []
         for ws in sorted(reg.pins()):
             st = reg.binding_state(ws)
-            card_name = (reg.card(ws) or {}).get("name")
+            card_name = reg.display_name(ws)
             out.append(
                 {
                     "workspace_id": ws,
@@ -1929,7 +1941,7 @@ class WebApi(ChangeHandlers):
         for ws in sorted(reg.pins()):
             if reg.mode(ws) is None:
                 continue
-            name = (reg.card(ws) or {}).get("name")
+            name = reg.display_name(ws)
             workspaces.append(
                 {
                     "workspace_id": ws,

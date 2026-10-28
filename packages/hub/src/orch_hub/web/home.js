@@ -49,7 +49,7 @@ export function homeView(d) {
   const mode = (it) => it.mode ?? byId.get(it.workspace_id)?.mode;
   const summary = (it) => it.summary_only || (!it.signable && mode(it) === "selective");
   const items = health.items;
-  const shortName = (w, id) => text(w?.name ?? "Workspace " + String(id).slice(0, 8));
+  const shortName = (w, id) => text(w?.name || "A workspace");
   const workspaceName = (id) => shortName(byId.get(id), id);
   const needs = h("section", { class: "card needs-you", "aria-labelledby": "needs-heading" },
     h("div", { class: "section-head row" }, h("h2", { id: "needs-heading", class: "grow", text: "Needs you" }), chip(String(items.length))),

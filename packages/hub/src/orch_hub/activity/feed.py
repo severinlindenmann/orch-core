@@ -20,6 +20,12 @@ WORDS = {
     "change.expired": "an access change lapsed",
     "change.rejected": "rejected an access change",
     "change.cancelled": "withdrew an access change",
+    "skill.saved": "saved a company skill",
+    "skill.removed": "removed a company skill",
+    "skill.offered": "changed which workspaces get a company skill",
+    "mcp.saved": "saved a company tool server",
+    "mcp.removed": "removed a company tool server",
+    "mcp.offered": "changed which workspaces get a company tool server",
     "space.mode_set": "changed whether a workspace edits a shared space",
     "space.archived": "archived a shared space",
     "space.unarchived": "brought a shared space back",
@@ -95,7 +101,7 @@ def feed(deps, query):
             raise ValueError("invalid cursor")
         before = (int(parts[0]), parts[1], int(parts[2]))
     names = {u["user_id"]: render_text(u["name"]) for u in deps.access.users()}
-    workspaces = {ws: render_text((deps.registry.card(ws) or {}).get("name") or ws) for ws in deps.registry.pins()}
+    workspaces = {ws: render_text(deps.registry.display_name(ws) or ws) for ws in deps.registry.pins()}
 
     def actor(kind, ident=None, session=None):
         if kind == "agent":

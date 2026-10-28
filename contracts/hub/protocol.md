@@ -161,6 +161,8 @@ literal `orch/v2/hub-…|` names.
 | `sig_hub_channel_auth` | `orch/v2/hub-channel-auth\|` | channel key | `cj(o)` of `hub.channel_auth` (binds a pairing session to the channel) | 6.4 |
 | `sig_hub_channel_push` | `orch/v2/hub-channel-push\|` | channel key | `cj(o)` of `hub.channel_push` (names the channel's push key) | 6.4 |
 | `sig_hub_channel_relay_req` | `orch/v2/hub-channel-relay-req\|` | channel key | the bytes of a channel → relay request | 10.8.4 |
+| `sig_hub_org_skills` | `orch/v2/hub-org-skills\|` | `HK_op` | `cj(o)` of `hub.org_skills` | 7.3 |
+| `sig_hub_mcp_servers` | `orch/v2/hub-mcp-servers\|` | `HK_op` | `cj(o)` of `hub.mcp_servers` | 7.4 |
 | `h_hub_session_ref` | `orch/v2/hub-session-ref\|` | hash | names a pairing session inside `hub.channel_auth` | 6.4 |
 | `sig_hub_space_proposal` | `orch/v2/hub-space-proposal\|` | `HK_op` | `cj(o)` of `hub.space_proposal` | 10.4 |
 | `sig_hub_relay_request` | `orch/v2/hub-relay-req\|` | `HK_op` | the bytes of a hub → relay request | 10.8 |
@@ -579,6 +581,51 @@ the aliased owner, spec §8a). `revoked_channels` still applies.
 
 **Phase 3 (V3-D3).** Until custodial signing exists (phase 4), the host uses roles for hub-side reads, routes and
 shared spaces only; human signatures stay local.
+
+### 7.3 Company skills `hub.org_skills` (M3, #1430)
+
+```
+hub.org_skills {v, suite, kind: "hub.org_skills", hv, hub_id, op_cert_id, workspace_id, version: int >= 1, issued_ms,
+                skills: [{name, text, digest}] (0..20, sorted by name, unique), dev}     signed by HK_op, label sig_hub_org_skills
+```
+
+One bundle per workspace, fetched with `org_skills_get` and verified like a snapshot: under the verified card, `hub_id` and
+`op_cert_id` match, `workspace_id` is the host's own (`other_workspace`), `version` never goes down (`stale_bundle`), the same
+version with other bytes is `bundle_conflict`. Each skill: `name` `[a-z][a-z0-9-]{1,39}` and not starting with `orch` (the
+prefix of orch's own skills, so a company skill never shadows a builtin), `text` 1..2400 characters of visible text only: an ALLOWLIST of Unicode categories `L*`, `N*`, `P*`, `S*` and `Zs`, plus newline
+and tab. Everything else is refused, never stripped (marks, format characters such as bidi, zero-width, variation selectors and
+the tag block, `Zl`/`Zp`, control, private use, unassigned) as are the letters and symbols that draw nothing (`U+115F U+1160
+U+17B4 U+17B5 U+2800 U+3164 U+FFA0`); no front matter (it does not start with `---`). The hub applies NFC and `\n` line ends on
+save and nothing else. The host runs the same rule (`orch.hubclient.orgtext`); `text_cases` of the vectors file are replayed by both. `digest` = `"sha256:" + hex(sha256(cj({"name","text"})))`.
+Anything else in a bundle is `malformed`; a save that has a forbidden character is refused (`malformed`).
+
+A skill is offered, never enabled: the host shows the full text to its owner and keeps it Off until the owner accepts that
+exact digest (human-only). Any change of text is a new digest and needs a new accept; withdrawing a skill narrows and applies
+at the next sync. Accepted skills reach agents as labelled company skills below orch's rules and cannot widen permissions or
+override the guard. Unbind or leave removes them at the host. Vectors: `vectors_org_skills.json` (both sides replay them).
+
+### 7.4 Remote MCP servers `hub.mcp_servers` (M3, #1435 #1436)
+
+```
+hub.mcp_servers {v, suite, kind: "hub.mcp_servers", hv, hub_id, op_cert_id, workspace_id, version: int >= 1, issued_ms,
+                 servers: [{name, url, auth, secret, description, digest}] (0..20, sorted by name, unique), dev}
+                                                                  signed by HK_op, label sig_hub_mcp_servers
+```
+
+Verified exactly like 7.3 (`verify_org_mcp`: `other_workspace`, `stale_bundle`, `bundle_conflict`; a skills bundle is not a servers
+bundle: another kind, another label). **Remote only in v1:** an entry has no field for a command, arguments, an environment or
+headers, and any other member makes the bundle `malformed`. `name` as a skill name (`[a-z][a-z0-9-]{1,39}`, not `orch*`); `url` an
+`https` address of at most 200 printable ASCII characters with no space, no user or password, no query, no fragment, a valid port,
+and remote: an address literal must be globally routable (`is_global`: so not 10/8, 172.16/12, 192.168/16, 100.64/10 (VPN), documentation, loopback, link-local such as the cloud metadata address, `fd00::/8`, or `::ffff:` mapped private addresses), a name needs a dot and its last label must start with a letter (so `127.1`, `0x7f.0.0.1`, `0177.0.0.1` and `2130706433` are refused), and `localhost`, `*.localhost`, `*.local`, `*.internal`, `*.lan`, `*.home`, `*.corp` are refused. This is a check of what is written: the host proxy MUST resolve the name at connect time, check that every address is global, pin the one it connects to, and refuse redirects (an Opus condition of the proxy PR); `auth` `none` | `hub_secret`; `secret` the NAME of a company secret (`[a-z][a-z0-9-]{0,39}`)
+exactly when `auth` is `hub_secret`, else `null` (a value is never in a bundle); `description` at most 200 characters of the visible-text
+allowlist of 7.3 and no newline; `digest` = `"sha256:" + hex(sha256(cj({name,url,auth,secret,description})))`. Per-person sign-in
+(`auth.person`) and tool lists are not in v1: the server's own tool list is untrusted and the host starts every tool Off.
+
+A server is offered, never enabled. The host shows the owner the exact address and which secret goes where, keeps the server Off
+until the owner accepts that digest (human-only), and an agent reaches it only through a host-side proxy under the host's UID that adds
+the credential, filters `tools/list` and refuses `tools/call` for an Off tool; the agent's `--mcp-config` holds only the proxy's local
+address and a per-session capability. Any change of address, sign-in or secret is a new digest and a new accept; withdrawing applies at
+the next sync; unbind removes the cached bundle. Vectors: `vectors_org_skills.json` (`mcp_cases`, `mcp_bundle_cases`).
 
 ## 8. Custodial events
 
@@ -1270,6 +1317,8 @@ unknown `op` is `unknown_op`.
 | `op` | Request direction | Mode | Request body (exact) | Reply body |
 |---|---|---|---|---|
 | `snapshot_get` | w2h | both | `{}` | `{"snapshot": <hub.snapshot>}` |
+| `mcp_servers_get` | w2h | both | `{}` | `{"bundle": <hub.mcp_servers>}`: the remote MCP servers offered to the link's workspace (M3 #1435, 7.4) |
+| `org_skills_get` | w2h | both | `{}` | `{"bundle": <hub.org_skills>}`: the company skills offered to the link's workspace (M3 #1430, 7.3) |
 | `event_deliver` | h2w | both | `{"log", "event"}`: a custodial event (§8) | `{}` or `{"error"}` |
 | `route_out` | w2h | both | `{"envelope": b64u}`: a v2 §11 ws→ws envelope, as is | `{}` |
 | `route_in` | h2w | both | `{"envelope": b64u}` | `{}` |
@@ -1293,7 +1342,7 @@ unknown `op` is `unknown_op`.
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
 | `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
 | `directory_get` | w2h | both | `{query?: string}` | `{entries: [...]}` (at most 50) |
-| `status_put` | w2h | both | `{"version", "commit", "host"}` | `{}` |
+| `status_put` | w2h | both | `{"version", "commit", "host", "name"}` | `{}` |
 | `addon_request` | w2h | both | `{"name", "version", "actor"}` | `{}` (M3 #1450) |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
@@ -1316,11 +1365,14 @@ fields except `listed`. Only other bound, explicitly listed workspaces for which
 `Authz.may_route(caller, other)` allows access appear; authorization is evaluated on every request.
 Selective mode does not imply listing or bypass routing authorization.
 
+`org_skills_get` (M3, #1430): the bundle of the LINK's workspace only (never a caller-named one); an unpinned or unbound workspace is refused like `snapshot_get`. See 7.3.
 `addon_request` (M3, #1450): a host says an add-on install was refused by the hub policy (`market.addon_not_allowed`): `name` `[a-z][a-z0-9-]{0,39}`, `version` `[0-9A-Za-z.+-]{0,32}` or empty, `actor` `person` | `agent` (known at the host, shown, never trusted). Display data only: one row per (workspace, add-on) with a counter, at most 50 add-ons per workspace. It grants nothing; an admin's approval is an audited policy change and the owner's local grant is still needed. The per-workspace allow list narrows the hub-wide policy in that workspace's snapshot (intersection; `block` and `ceiling` never change).
+
+`mcp_servers_get` (M3, #1435): the same rules as `org_skills_get` for `hub.mcp_servers`. See 7.4.
 
 `status_put` reports display-only workspace metadata over its authenticated WSK link, once per host process/hub.
 Its exact body has a version matching `[0-9A-Za-z.+-]+` (at most 32 characters), a hex commit (at most 40,
-possibly empty), and a host string (at most 80); bad shapes are `malformed`, unknown pins `unknown_workspace`.
+possibly empty), a host string (at most 80) and the workspace display name `name` (at most 80, from `config.json`); a selective-mode workspace sends `host` and `name` empty and the hub stores them empty (the hub console then shows a friendly fallback, never an id); bad shapes are `malformed`, unknown pins `unknown_workspace`.
 The hub sanitizes these fields and records its own last-seen clock and socket peer address. These values never
 influence authorization, routing, signing or mode, and are not written to the workspace log.
 

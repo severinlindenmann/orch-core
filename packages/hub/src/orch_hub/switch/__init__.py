@@ -67,8 +67,7 @@ def workspace_rows(registry: Any, access: Any, user: str) -> list[dict[str, Any]
             role = access.role_of(user, ws)
             if role is None:
                 continue
-        card = registry.card(ws) or {}
-        name = card.get("name") if type(card.get("name")) is str else None
+        name = registry.display_name(ws)
         out.append(
             {
                 "workspace_id": ws,

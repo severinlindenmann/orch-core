@@ -13,7 +13,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { addonsView, parseIds } = await import("../../src/orch_hub/web/addons.js");
+const { addonsView, pickable, alreadyAllowed } = await import("../../src/orch_hub/web/addons.js");
 const NOW = 1_800_000_000_000;
 const find = (n, pred) => n.all().filter(pred);
 const data = {
@@ -22,9 +22,18 @@ const data = {
   requests: [{ workspace_id: "b", workspace_name: "Legal", name: "wiki", version: "1.2.0", last_ms: NOW - 60_000, count: 3, actor: "agent" }],
 };
 
-test("ids are parsed leniently and what is not understood is reported", () => {
-  assert.deepEqual(parseIds("beta, alpha  alpha\nwiki-2"), { ids: ["alpha", "beta", "wiki-2"], bad: [] });
-  assert.deepEqual(parseIds("Alpha, a b, x"), { ids: ["a", "b", "x"], bad: ["Alpha"] });
+test("the picker offers the common list, what the workspace has and what it asked for, never a blocked one", () => {
+  assert.deepEqual(pickable(data, data.workspaces[0]), ["alpha", "beta"]);
+  assert.deepEqual(pickable(data, data.workspaces[1]), ["alpha", "beta", "wiki"]);   // wiki: asked for by Legal
+  assert.deepEqual(pickable({ ...data, block: ["beta", "wiki"] }, data.workspaces[1]), ["alpha"]);
+  assert.deepEqual(pickable({ ...data, allow: null }, data.workspaces[1]), ["alpha", "wiki"]); // no common list: only what is known
+});
+
+test("an approval changes nothing when there is no common list and no limit, and the page says so", () => {
+  const open = { allow: null, workspaces: [{ workspace_id: "a", allow: null }, { workspace_id: "b", allow: ["x"] }] };
+  assert.equal(alreadyAllowed(open, "a"), true);
+  assert.equal(alreadyAllowed(open, "b"), false);
+  assert.equal(alreadyAllowed(data, "a"), false);                                   // a common list exists
 });
 
 test("the page says what is allowed everywhere, lists requests with the actor, and limits a workspace without widening", async () => {
@@ -39,15 +48,18 @@ test("the page says what is allowed everywhere, lists requests with the actor, a
   buttons("Allow for everyone")[0].listeners.click();
   buttons("Turn down")[0].listeners.click();
   assert.deepEqual(calls, [["decide", "wiki", true], ["decide", "wiki", false]]);
-  const inputs = find(view, (n) => n.tag === "input" && n.attrs.type === "text");
-  inputs[0].value = "alpha, beta"; // the Product row: not limited, so Save with the box unticked clears the limit
-  await buttons("Save")[0].listeners.click();
+  assert.equal(find(view, (n) => n.tag === "input" && n.attrs.type === "text").length, 0);   // nobody types a name
+  const picks = (ws) => find(view, (n) => n.tag === "input" && n.attrs["data-addon"]);
+  const boxes = find(view, (n) => n.tag === "input" && n.attrs.type === "checkbox" && !n.attrs["data-addon"]);
+  await buttons("Save")[0].listeners.click();                                      // Product: not limited, so Save clears the limit
   assert.deepEqual(calls.at(-1), ["save", "a", null]);
-  const boxes = find(view, (n) => n.tag === "input" && n.attrs.type === "checkbox");
-  boxes[0].checked = true; inputs[0].value = "alpha, beta"; await buttons("Save")[0].listeners.click();
-  assert.deepEqual(calls.at(-1), ["save", "a", ["alpha", "beta"]]);
-  inputs[1].value = "Alpha!"; boxes[1].checked = true; await buttons("Save")[1].listeners.click();
-  assert.match(view.textContent, /Not understood: Alpha!/); assert.equal(calls.length, 4); // nothing was sent
+  boxes[0].checked = true; boxes[0].listeners.change?.();
+  const product = picks().filter((n) => ["alpha", "beta"].includes(n.attrs["data-addon"])).slice(0, 2);
+  product[1].checked = true;                                                        // tick beta only
+  await buttons("Save")[0].listeners.click();
+  assert.deepEqual(calls.at(-1), ["save", "a", ["beta"]]);
+  await buttons("Save")[1].listeners.click();                                      // Legal keeps its limit: alpha is ticked
+  assert.deepEqual(calls.at(-1), ["save", "b", ["alpha"]]);
 });
 
 test("with no hub-wide list everything is allowed and the empty request state reads plainly", () => {

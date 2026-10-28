@@ -1,6 +1,6 @@
 """M3 host H-3: which launches carry company skills (Opus conditions 12 to 14 and decision 7). Only a Claude Code
 agent in a ticket work folder has the appended rules file, so only it gets the accepted skills; Codex, worktree,
-repo, root and shell launches get none (the host does not even ask), and any doubt in reading the accepted set is none."""
+repo, root and shell launches get none (the host does not even ask), and any doubt reading the accepted set is none."""
 
 from __future__ import annotations
 

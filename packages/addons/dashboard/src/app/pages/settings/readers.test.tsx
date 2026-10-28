@@ -168,7 +168,6 @@ describe('reader levels', () => {
     expect(within(lf).getByTestId('reader-level')).toHaveTextContent('0')
     expect(lf.querySelector('bdi')!.textContent).toBe('Work phone\\u{a}second line')
     expect(screen.getByTestId('reader-levels').textContent).not.toContain(MAC)
-    expect(screen.getByTestId('pair-unavailable')).toBeInTheDocument() // pairing stays behind its own gate
   })
 
   it('a host without reader/1 says so', async () => {

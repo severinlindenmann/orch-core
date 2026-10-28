@@ -62,8 +62,9 @@ def _staged(h: Human, ctx: Context, name: str, stage: str) -> tuple[Any, Any, An
         raise OrchError("invalid.input", "a staged package is signed through the host: orch addon install NAME")
     try:
         doc, package, manifest = marketinstall.staged_package(_market_files(h), name, stage, ctx.now())
-    except MarketError as e:
-        raise _market_refusal(e) from None
+    except MarketError:
+        _market_files(h).drop_stage(stage)
+        raise OrchError("addon.stage_changed", "the staged package changed after review") from None
     ctx.prepare.staged = {"stage": stage, "name": name}
     if doc.get("dev") is True:  # V3 G5: a local folder at a commit: the block says so, labelled "per host, not signed"
         ctx.prepare.market = {
@@ -116,6 +117,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
     root = h.store.layout.store  # addons/ lives in the store
     stage = args.get("staged")
     stage_doc = None
+    if stage is not None and not {"digest", "caps"} <= args.keys():
+        raise OrchError("invalid.input", "a staged grant requires digest and caps")
     if stage is not None:
         stage_doc, package, manifest = _staged(h, ctx, name, stage)
     else:
@@ -135,6 +138,20 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         event = install.grant_event(manifest, package)
     except MarketError as e:
         raise _market_refusal(e) from None
+    if stage is not None:
+        from orch.addons.settings_value import KEY
+        from orch.host.seqaddon import required_settings
+        from orch.store.render import thaw
+
+        try:
+            required_settings(manifest, thaw(h.store.state.workspace.settings.get(KEY, {}).get(name)))
+        except ValueError as exc:
+            _market_files(h).drop_stage(stage)
+            raise OrchError("invalid.input", str(exc)) from None
+        event["staged"] = stage
+        if args["digest"] != package.digest or args["caps"] != event["capabilities"]:
+            _market_files(h).drop_stage(stage)
+            raise OrchError("addon.stage_changed", "the staged package changed after review")
     if manifest.runtime is not None:
         _dependencies(ctx, manifest, package, stage_doc)
     if stage is None:  # C1: a folder is signed only when it is built in or the bytes the install record holds
@@ -170,6 +187,13 @@ OP = operation(
     who="human",
     props={
         "name": S("addon name", **{"x-metavar": "NAME"}),
+        "digest": S("digest", pattern="^sha256:[0-9a-f]{64}$"),
+        "caps": {
+            "type": "array",
+            "items": {"type": "string"},
+            "uniqueItems": True,
+            "description": "caps",
+        },
         "staged": S(
             "the stage id that `orch addon install` or `update` made (the package comes from it, not from addons/)",
             **{"x-metavar": "STAGE", "pattern": "^st_[0-9a-f]{32}$"},
@@ -185,7 +209,7 @@ OP = operation(
         err("role.denied"),
         err("not_found"),
         err("market.not_installed"),
-        err("market.staged_changed"),
+        err("addon.stage_changed"),
         err("market.origin_changed"),
         err("market.version_reused"),
         err("market.rollback"),

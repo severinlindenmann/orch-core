@@ -844,14 +844,44 @@ StageId = Annotated[str, StringConstraints(pattern=r"^st_[0-9a-f]{32}$")]
 
 
 class MarketGrant(Action):
-    """`addon.grant {name, staged}`: install or update the package the host staged and the person reviewed (A10).
-    Exactly these two keys (`extra="forbid"`). **One click** (V3-D38, owner 24 Oct: the signer shows the whole review,
-    the marketplace lines "per host, not signed" included). It has no agent route (the dashboard session is the
-    person's). The host re-reads the stage and judges it again when the signed request is submitted."""
+    """D3: the reviewed stage and required non-secret settings form one addon_enable sequence.
+    Settings land first; the exact staged grant is last. The host refuses an already-on add-on.
+    """
 
     action: Literal["market_grant"]
     name: MarketName
     staged: StageId
+    grant: dict[str, Any]
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def checked_intent(self):
+        self.intent()
+        return self
+
+    def intent(self) -> dict:
+        from orch.host import sequence
+
+        return sequence.validate_intent(
+            {
+                "v": 1,
+                "kind": "addon_enable",
+                "name": self.name,
+                "staged": self.staged,
+                "grant": self.grant,
+                "settings": {"addons": {self.name: self.settings}} if self.settings else {},
+            }
+        )
+
+
+class MarketUpdate(Action):
+    """Update an enabled package through its own reviewed grant, without an enable sequence."""
+
+    action: Literal["market_update"]
+    name: MarketName
+    staged: StageId
+    digest: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
+    caps: list[str]
 
 
 class AddonDisable(Action):
@@ -1096,6 +1126,7 @@ PrepareBody = Annotated[
     | DeviceRemove
     | AddonGrant
     | MarketGrant
+    | MarketUpdate
     | AddonDisable
     | AddonPurge
     | AddonSettings
@@ -1283,8 +1314,18 @@ def host_call(action: Action, current_labels: list[str] | None = None) -> tuple[
             return "device.remove", {"device": action.device}
         case AddonGrant():
             return "addon.grant", {"name": action.name}
+        case MarketUpdate():
+            return "addon.grant", {
+                "name": action.name,
+                "staged": action.staged,
+                "digest": action.digest,
+                "caps": action.caps,
+            }
         case MarketGrant():
-            return "addon.grant", {"name": action.name, "staged": action.staged}
+            from orch.host import sequence
+
+            first = sequence.steps(action.intent())[0]
+            return first["op"], first["args"]
         case AddonDisable():
             return "addon.disable", {"name": action.name}
         case AddonPurge():
@@ -1489,8 +1530,20 @@ def expected(action: Action, person: str | None = None):
             )
         case AddonGrant():
             return lambda ev: one(ev, "addon.granted", name=action.name)
+        case MarketUpdate():
+            return lambda ev: one(
+                ev,
+                "addon.granted",
+                name=action.name,
+                staged=action.staged,
+                package_sha256=action.digest,
+                capabilities=action.caps,
+            )
         case MarketGrant():
-            return lambda ev: one(ev, "addon.granted", name=action.name)
+            from orch.host import seqaddon
+
+            payload = seqaddon.payload(action.intent(), 0)
+            return lambda ev: one(ev, payload["type"], **{k: v for k, v in payload.items() if k != "type"})
         case AddonDisable():
             return lambda ev: one(ev, "addon.disabled", name=action.name)
         case AddonPurge():
@@ -1631,6 +1684,10 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
         op, args = host_call(body, labels)  # the only place an op name is chosen
     if isinstance(body, Details) and body.via == "estimate" and not gateway.addon_on(link, "estimate"):
         raise fail("addon.disabled", "Estimate is switched off here. Switch it on in Settings, Add-ons.", exit=3)
+    if isinstance(body, MarketUpdate):
+        rows = link.call("addon.list")["addons"]
+        if not any(isinstance(a, dict) and a.get("name") == body.name and a.get("state") == "active" for a in rows):
+            raise fail("addon.disabled", "Turn this add-on on before reviewing an update.", exit=3)
     addon_base_ = None
     if isinstance(body, AddonDisable | AddonGrant):
         from .addon_switches import addon_base, check_off
@@ -1655,12 +1712,12 @@ def plan(gateway: Gateway, ws: str, body: Action) -> Plan:
             base = question_base(data, body.question)
     if addon_base_ is not None:
         base = addon_base_
-    if isinstance(body, MarketGrant):
+    if isinstance(body, MarketGrant | MarketUpdate):
         # one intent per stage: a new stage (a new review) is a new request, the same stage is one
         base = {"addon": body.name, "staged": body.staged}
     person = link.welcome["peer"]["person"]
     meta = None
-    if isinstance(body, NewTicketSequence | QuickStart | EditTicket):
+    if isinstance(body, NewTicketSequence | QuickStart | EditTicket | MarketGrant):
         from orch.host import sequence
 
         intent = edit_intent if edit_intent is not None else body.intent()

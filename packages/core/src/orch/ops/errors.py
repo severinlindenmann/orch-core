@@ -806,6 +806,7 @@ _MARKET = (
     ("market.manifest_mismatch", 3, False, "the manifest and the index entry disagree", "the entry is refused"),
     ("market.lock_missing", 5, False, "the lockfile named by the manifest is missing", "fix the package"),
     ("market.lock_invalid", 5, False, "the lockfile breaks the lockfile rules", "fix the package"),
+    ("addon.stage_changed", 3, False, "the staged package changed after review", "stage and review again"),
     ("market.staged_changed", 3, False, "the staged package changed after review", "start again"),
     ("market.env_failed", 5, False, "the dependency environment could not be built", "see the add-on's lockfile"),
     ("market.env_changed", 3, False, "the dependency environment no longer matches its stamp", "reinstall the add-on"),

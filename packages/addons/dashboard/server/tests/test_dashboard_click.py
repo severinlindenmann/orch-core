@@ -2215,7 +2215,21 @@ def test_publish_setup_and_share_are_one_click(client, token, stub, script, host
     assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
 
 
-MARKET = {"action": "market_grant", "name": "echo", "staged": "st_" + "0" * 32}
+MARKET = {
+    "action": "market_grant",
+    "name": "echo",
+    "staged": "st_" + "0" * 32,
+    "grant": {
+        "name": "echo",
+        "version": "1.0.0",
+        "package_sha256": "sha256:" + "a" * 64,
+        "capabilities": ["network"],
+        "fields": {},
+        "sections": [],
+        "artifact_kinds": [],
+        "staged": "st_" + "0" * 32,
+    },
+}
 
 
 @pytest.fixture
@@ -2231,19 +2245,30 @@ def test_a_market_install_is_one_click_and_the_signer_gets_the_host_review_mater
 ):
     """V3-D38: the grant of a staged marketplace package goes to the signer like any other action. The server names
     the op and its two arguments; the review (capabilities, marketplace block) is the host's and the signer's."""
+    script.features = ["custody", "sequence"]
     res = prepare(client, token, stub, MARKET)
     assert res.status_code == 200, res.text
     (op, args) = [c for c in script.clients[0].calls if c[0] == "prepare"][0]
-    assert args["op"] == "addon.grant" and args["args"] == {"name": "echo", "staged": MARKET["staged"]}
-    assert "sequence" not in args and "files" not in args
+    assert args["op"] == "addon.grant" and args["args"] == {
+        "name": "echo",
+        "staged": MARKET["staged"],
+        "digest": "sha256:" + "a" * 64,
+        "caps": ["network"],
+    }
+    assert args["sequence"]["intent"]["kind"] == "addon_enable" and "files" not in args
     again = prepare(client, token, stub, MARKET)  # the same stage is the same request
     assert again.json()["request_id"] == res.json()["request_id"] and script.prepared == 1
-    other = prepare(client, token, stub, {**MARKET, "staged": "st_" + "1" * 32})  # a new review is a new request
+    other = prepare(
+        client,
+        token,
+        stub,
+        {**MARKET, "staged": "st_" + "1" * 32, "grant": {**MARKET["grant"], "staged": "st_" + "1" * 32}},
+    )  # a new review is a new request
     assert other.status_code == 200 and script.prepared == 2
 
 
 def test_a_market_install_for_publish_is_a_click_too(client, token, stub, script, rich, host_serves_grant):
-    res = prepare(client, token, stub, {**MARKET, "name": "publish"})
+    res = prepare(client, token, stub, {**MARKET, "name": "publish", "grant": {**MARKET["grant"], "name": "publish"}})
     assert res.json().get("error", {}).get("reason") != "terminal_only", res.text
 
 

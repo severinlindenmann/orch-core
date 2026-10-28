@@ -46,7 +46,10 @@ def registry_state(served, name="standup"):
 
 def sign_and_submit(served, human, name="standup"):
     st = ok(stage(served, name))["data"]
-    prepared = human.prepare("addon.grant", {"name": name, "staged": st["stage"]})
+    prepared = human.prepare(
+        "addon.grant",
+        {"name": name, "staged": st["stage"], "digest": st["package_sha256"], "caps": st["grant"]["capabilities"]},
+    )
     signed = human.sign(prepared)
     return st, prepared, signed
 
@@ -131,7 +134,15 @@ def test_an_update_crashed_between_the_renames_keeps_no_old_code_running(served,
     ready.version = 2
     ok(person(served, "market.refresh"))
     st2 = ok(stage(served, "standup", update=True))["data"]
-    p2 = human.prepare("addon.grant", {"name": "standup", "staged": st2["stage"]})
+    p2 = human.prepare(
+        "addon.grant",
+        {
+            "name": "standup",
+            "staged": st2["stage"],
+            "digest": st2["package_sha256"],
+            "caps": st2["grant"]["capabilities"],
+        },
+    )
     s2 = human.sign(p2)
     real = os.rename
     seen = []

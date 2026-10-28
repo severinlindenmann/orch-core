@@ -281,7 +281,17 @@ def test_an_addon_grant_finds_the_device_key_where_init_put_it(lab, monkeypatch,
         n = Net()
         n.add("lint", "1.0.0")
         seed_market(files, n.entries)  # what `orch addon install` leaves
-        r = hcli(lab, grant=False).j("addon", "grant", "lint", "--staged", stage)
+        r = hcli(lab, grant=False).j(
+            "addon",
+            "grant",
+            "lint",
+            "--staged",
+            stage,
+            "--digest",
+            files.read_stage(stage)["digest"],
+            "--caps",
+            "network",
+        )
         assert r.code == 0, r.out
     finally:
         served.close()

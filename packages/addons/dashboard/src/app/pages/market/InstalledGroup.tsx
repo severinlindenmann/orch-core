@@ -1,7 +1,7 @@
 // "From marketplaces" on the Installed tab: the add-ons installed from a marketplace, in the same rows as the built-in
 // ones (switch under the same inline accordion). Install lands them Off; the row switch turns them on.
 import { Button } from '@/components/ui/button'
-import { stateLabel, type InstalledAddon } from '@/api/market'
+import { stateLabel, isEnabled, type InstalledAddon } from '@/api/market'
 import type { AddOnRow } from '@/api/addOnSwitches'
 import type { Workspace } from '@/api/types'
 import { BuiltInAddOns } from '../settings/host/AddOns'
@@ -12,7 +12,7 @@ export function asRow(a: InstalledAddon, summary: string | undefined): AddOnRow 
     id: a.name,
     title: a.name,
     desc: summary ?? '',
-    state: a.state === 'active' ? 'on' : 'off',
+    state: isEnabled(a.state) ? 'on' : 'off',
     locked: null,
     blocked: null,
     version: a.version,
@@ -51,13 +51,13 @@ export function InstalledGroup({
         if (!mayWrite) return null
         return (
           <div className="flex flex-wrap items-center gap-1">
-            {a.state !== 'active' && <span className="text-[11px] text-text-faint">{stateLabel(a.state)}</span>}
+            {!isEnabled(a.state) && <span className="text-[11px] text-text-faint">{stateLabel(a.state)}</span>}
             {a.available && !a.available.revoked && (
               <Button size="sm" variant="secondary" disabled={busy} onClick={() => onUpdate(a)}>
                 Update...
               </Button>
             )}
-            {onSettings && a.state === 'active' && (
+            {onSettings && isEnabled(a.state) && (
               <Button size="sm" variant="ghost" disabled={busy} onClick={() => onSettings(a)}>
                 Settings
               </Button>

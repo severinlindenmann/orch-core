@@ -84,6 +84,6 @@ export function hubSettingsSplit(a: HandoffAction | null | undefined): { set: Re
 }
 
 /** The add-on actions that a full-mode workspace approves in the hub (FB15). */
-export const isAddonGrant = (a: HandoffAction | null | undefined): a is Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' }> => a?.action === 'addon_grant' || a?.action === 'market_grant'
+export const isAddonGrant = (a: HandoffAction | null | undefined): a is Extract<HandoffAction, { action: 'addon_grant' | 'market_grant' | 'market_update' }> => a?.action === 'addon_grant' || a?.action === 'market_grant' || a?.action === 'market_update'
 
 /** What the host is asked to describe for an action the hub can build (approve, request changes, verdict, answer); null otherwise. */

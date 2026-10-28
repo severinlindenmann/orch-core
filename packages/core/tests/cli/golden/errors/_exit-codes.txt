@@ -113,6 +113,7 @@ market.digest_mismatch 3 retry:false
 market.manifest_mismatch 3 retry:false
 market.lock_missing 5 retry:false
 market.lock_invalid 5 retry:false
+addon.stage_changed 3 retry:false
 market.staged_changed 3 retry:false
 market.env_failed 5 retry:false
 market.env_changed 3 retry:false

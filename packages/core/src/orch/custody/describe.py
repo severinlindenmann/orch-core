@@ -54,11 +54,11 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     # a person cancels a follow-up (Schedules, #720): which one and why; `follow_up.cancel` through human.prepare
     "followup.rescheduled": ("followup", "due", "deadline"),
     "followup.restored": ("followup",),
-    "schedule.set": ("schedule", "brief", "label", "rule", "starts", "ends", "run_hours"),
+    "schedule.set": ("schedule", "brief", "label", "rule", "starts", "ends", "run_hours", "target", "title"),
     "schedule.cancelled": ("schedule",),
     "followup.cancelled": ("followup", "reason"),
     # ticket log, actor A or AU, signed by a person through human.prepare (H5a: person versions of agent ops)
-    "ticket.created": ("key", "ticket_type", "title", "owner"),
+    "ticket.created": ("key", "ticket_type", "title", "owner", "schedule", "via"),
     "ticket.updated": ("base_rev", "set", "sections"),
     "log.added": ("text",),
     # R3: a person marks a task done without a receipt (task.mark_done); the signer allows only {task}
@@ -230,6 +230,11 @@ def _event_lines(body: Any) -> list[tuple[str, str]]:
     extra = set(ev) - ENVELOPE - set(EVENT_FIELDS[etype])
     if extra:
         _refuse(f"{etype} carries fields the prompt does not show: {sorted(extra)[:3]}")
+    if etype == "schedule.set":
+        from orch.model.schedules import validate_target
+
+        if error := validate_target(ev):
+            _refuse(error)
     actor = ev.get("actor")
     if not isinstance(actor, dict) or set(actor) != {"kind", "id", "device"} or actor["kind"] != "person":
         _refuse("actor must be exactly {kind: person, id, device}")
@@ -242,6 +247,10 @@ def _event_lines(body: Any) -> list[tuple[str, str]]:
         ("actor.person", _scalar(actor.get("id"))),
         ("actor.device", _scalar(actor.get("device"))),
     ]
+    if etype == "schedule.set" and ev.get("target") == "new":
+        from orch.ops.schedule import describe
+
+        out.append(("schedule", describe(ev["rule"], log, ev["ends"], "new", ev["title"])))
     for field in EVENT_FIELDS[etype]:
         if field not in ev:
             continue

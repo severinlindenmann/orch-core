@@ -16,7 +16,7 @@ def handle(ctx, args):
 OP = operation(
     "schedule.cancel",
     "Lifecycle",
-    "Cancel a schedule and end its run grants.",
+    "Cancel future runs; existing-ticket run grants also end.",
     who="human",
     props={"id": S("schedule ID")},
     required=("id",),

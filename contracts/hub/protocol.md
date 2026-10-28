@@ -700,7 +700,7 @@ The channel API itself (sessions, HTTP, push) is the hub's (D13); these rules ar
    to the full field list (WYSIWYS). It signs only the digest it computed itself.
    **View-derived text is escaped** (L2P4-2d): titles, question texts and option labels come from the workspace's
    events, which agents write and which have no text rule in core; a channel renders every character the §8.5 text
-   rule refuses (other than LF) as `<U+XXXX>` (reference `render_text`, vectors `render_*`). **Questions** (#1123): the needs content of a question carries `text`, `options` and `spec` VERBATIM (a client hashes exactly `{question_id, ticket, text, options, spec}` and compares with the row `hash`); a question the hub cannot verify (hash mismatch, unknown kind, spec or option key, or a character `render_text` would escape) carries only its escaped `text` and `unverifiable: true`, stays in its ticket, and is never answerable through the hub. The hub web checks the hash itself and shows the selected option (title, text, facts, cost, question, details) in the sign prompt; it offers no Answer button for a question it cannot render or verify. **Tab exception (#1123):** core allows a TAB in the multi-line question fields (`text`, `why`, `details`, answer text) and refuses it in one-line fields (title, option text, cost, fact label and value); the hub's verbatim content keeps the tab, and a channel shows it as spaces in multi-line fields only. The hub also marks unverifiable a question that breaks a cheap core limit (code-point and byte limits, NFC, blank, LF/tab in one-line fields, boolean `blocking`, titles and fact labels unique under `casefold(NFC(.))`); only core checks the exact fold tables and the leading-mark rule. A channel signs `question.answered` only against the verified question it answers (same `hash`) and the kind's answer rule. **Content-bound
+   rule refuses by stripping it (reference `render_text`, vectors `render_*`). **Questions** (#1123): the needs content of a question carries `text`, `options` and `spec` VERBATIM (a client hashes exactly `{question_id, ticket, text, options, spec}` and compares with the row `hash`); a question the hub cannot verify (hash mismatch, unknown kind, spec or option key, or a character `render_text` would escape) carries only its escaped `text` and `unverifiable: true`, stays in its ticket, and is never answerable through the hub. The hub web checks the hash itself and shows the selected option (title, text, facts, cost, question, details) in the sign prompt; it offers no Answer button for a question it cannot render or verify. **Tab exception (#1123):** core allows a TAB in the multi-line question fields (`text`, `why`, `details`, answer text) and refuses it in one-line fields (title, option text, cost, fact label and value); the hub's verbatim content keeps the tab, and a channel shows it as spaces in multi-line fields only. The hub also marks unverifiable a question that breaks a cheap core limit (code-point and byte limits, NFC, blank, LF/tab in one-line fields, boolean `blocking`, titles and fact labels unique under `casefold(NFC(.))`); only core checks the exact fold tables and the leading-mark rule. A channel signs `question.answered` only against the verified question it answers (same `hash`) and the kind's answer rule. **Content-bound
    decisions** (L2P4-2c): body text and artifacts are not synced (§10.7), so a channel that offers `gate.approved`,
    `gate.changes_requested` or `verdict.given` shows the decision's hash in short form next to a link to where the
    content was reviewed, and Mission Control shows the same short hash; a channel that cannot do that does not offer
@@ -889,7 +889,7 @@ mode (D83); the hub path exists so a person who is away can still issue or revok
 
 | Type | Log | Lowest role | Action fields (exact) | Derived by the hub |
 |---|---|---|---|---|
-| `grant.requested` | workspace | `edit` | `scope` (`all` \| `workable`), `verbs` (`"agent"` or 1–32 sorted unique operation names `[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?`), `hours` (1–168), `label?` (one line ≤ 200 bytes) | nothing |
+| `grant.requested` | workspace | `edit` | `scope` (`all` \| `workable`), `verbs` (`"agent"` or 1–32 sorted unique operation names `[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?`), `hours` (1–168), `label?` (one line ≤ 200 bytes), `handoff` (host-created ULID) | nothing |
 | `grant.revoked` | workspace | `edit` | `grant` (`gr_` + ULID), `reason?` (one line) | nothing |
 | `device.excluded` | workspace | `admin` | `device` (`d_` + 32 hex), `reason` (`lost` \| `retired` \| `compromised`) | nothing |
 | `policy.changed` | workspace | `admin` | `gates`: 1–4 of `requirements`, `plan`, `verify`, `code`, each exactly `{approvers, count, not, applies, independent}` (below) | nothing |
@@ -919,7 +919,12 @@ mode (D83); the hub path exists so a person who is away can still issue or revok
   binding instead). The secret never travels on the link and is never shown or logged.
   **The host gives the secret only to its runner, and only for a pending local hand-off (V3-D29):** a Mission Control
   "Start agent" that a person started **on that host**, recorded host-locally as a hand-off of kind `grant` for the
-  same canonical person and exact terms, at most 10 min old, used once. The record is bound to the workspace id and
+  same canonical person and exact terms, at most 10 min old, used once. The signed `handoff` must equal that
+  grant record’s id; a wrong, expired, used or add-on hand-off id cannot release a secret. `hub.handoff {kind: grant}`
+  returns this id and a pinned-hub `/#/w/<workspace>/access/<b64u(canonical JSON terms)>` link with
+  `{scope, verbs: "agent", hours, label?, handoff}`. The fragment is display and signing input only; the host’s
+  record is authoritative. The console requires workspace role `edit` or higher, and the model re-checks the
+  signer’s capability and workspace duration cap at landing, refusing excess capability without narrowing. The record is bound to the workspace id and
   the current hub binding (`hub_id`, `binding_seq`), is matched and consumed inside the same store-lock hold that
   appends `grant.issued`, and is dropped when the person cancels it, at `hub.left` and at any new `hub.joined`.
   Otherwise the host still appends `grant.issued`
@@ -1286,6 +1291,9 @@ unknown `op` is `unknown_op`.
 | `switch_ticket` | w2h | both | `{"origin", "return_to", "kind": "open"\|"signout"}` | `{"ticket", "url"}` (hub one-app, below) |
 | `switch_redeem` | w2h | both | `{"ticket"}` | `{"user_id", "name", "return_to", "kind"}` (hub one-app) |
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
+| `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
+| `directory_get` | w2h | both | `{query?: string}` | `{entries: [...]}` (at most 50) |
+| `status_put` | w2h | both | `{"version", "commit", "host"}` | `{}` |
 | `owner_get` | w2h | both | `{}` | `{"user_id"}`: the hub user this hub names as the owner of the calling workspace (V3-D19 owner alias; FB15 §8.8b) |
 | `log_sync` | w2h | full | `{"epoch", "log", "from_seq", "count", "head", "reset", "sealed": b64u}` | `{"seq", "head"}` (p4, §10.7) |
 
@@ -1294,6 +1302,24 @@ built in D5/C5 against this table). Phases: `snapshot_get`, `publish_out` and th
 carry needs-you summaries only until C6); `route_*`, `wk_seal`, `audit_ack` in phase 3; `event_deliver`, `log_sync`, `space_proposals` in phase 4.
 `log_sync` carries the workspace's own log **to** the hub; like every other op it asks the hub to sign nothing, and
 nothing in it can become signed bytes: the hub builds custodial events only from an action a channel started (§8.4).
+
+`profile_put` replaces the pinned, bound workspace's display profile (exact keys): `listed` is boolean;
+`tags` and `accepts` are lists of at most 8 strings of at most 24 characters; `handles` and `not_handled`
+are lists of at most 8 strings of at most 80 characters. `description` is at most 300 characters,
+`contact` 80, `languages` and `hours` 40. All strings pass through `render_text`, stripping controls,
+bidi controls and zero-width characters. Profile text is untrusted display data, never instructions,
+and is never used for authorization or routing. Unbinding, revocation and forgetting delete the profile.
+`directory_get` accepts an optional query of at most 80 characters, matched case-insensitively against
+name, tags, description and handles. Entries contain `workspace_id`, `name`, `online` and all profile
+fields except `listed`. Only other bound, explicitly listed workspaces for which the live routing
+`Authz.may_route(caller, other)` allows access appear; authorization is evaluated on every request.
+Selective mode does not imply listing or bypass routing authorization.
+
+`status_put` reports display-only workspace metadata over its authenticated WSK link, once per host process/hub.
+Its exact body has a version matching `[0-9A-Za-z.+-]+` (at most 32 characters), a hex commit (at most 40,
+possibly empty), and a host string (at most 80); bad shapes are `malformed`, unknown pins `unknown_workspace`.
+The hub sanitizes these fields and records its own last-seen clock and socket peer address. These values never
+influence authorization, routing, signing or mode, and are not written to the workspace log.
 
 **Hub one-app ops (27 Oct, prototype).** `switch_ticket`, `switch_redeem` and `rail_get` let the workspace dashboard and the
 hub console feel like one app. The hub names the user itself: always the link workspace's owner alias (`no_owner_alias`

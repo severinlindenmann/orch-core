@@ -3,11 +3,13 @@ export function parseRoute(hash) {
   const value = String(hash ?? "");
   let m = /^#setup=([\w-]+)$/.exec(value);
   if (m) return { kind: "setup", token: m[1] };
+  m = /^#invite=([A-Za-z0-9_-]{32,128})$/.exec(value);
+  if (m) return { kind: "invite", token: m[1] };
   m = /^#t=([A-Za-z0-9._-]{8,128})$/.exec(value);
   if (m) return { kind: "ticket", token: m[1] };
-  m = /^#\/(home|workspaces|services|admin)$/.exec(value);
+  m = /^#\/(home|approvals|workspaces|services|admin|activity)$/.exec(value);
   if (m) return { kind: m[1] };
-  m = /^#\/w\/([0-9a-f]{32})(?:\/(item|addon|settings)\/([^/]+))?$/.exec(value);
+  m = /^#\/w\/([0-9a-f]{32})(?:\/(item|addon|settings|access)\/([^/]+))?$/.exec(value);
   if (!m) return { kind: "home" };
   try {
     const key = m[3] === undefined ? null : decodeURIComponent(m[3]);

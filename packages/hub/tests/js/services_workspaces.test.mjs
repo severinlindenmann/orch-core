@@ -14,7 +14,7 @@ class Node_ {
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
 const { servicesView, summary, stateOf } = await import("../../src/orch_hub/web/services.js");
-const { workspacesView, statusOf } = await import("../../src/orch_hub/web/workspaces.js");
+const { workspacesView, workspaceDetailsView, connectWorkspaceView, statusOf } = await import("../../src/orch_hub/web/workspaces.js");
 const { when, ago } = await import("../../src/orch_hub/web/ui.js");
 
 const NOW = new Date(2026, 9, 27, 12, 0).getTime();
@@ -90,4 +90,211 @@ test("empty states and times", () => {
   assert.match(t, /No tickets have been sent between workspaces yet/);
   assert.equal(when(NOW - 60000, NOW), "Today 11:59");
   assert.equal(ago(NOW - 120000, NOW), "2 min ago");
+});
+
+const workspace = (extra = {}) => ({ workspace_id: "a".repeat(32), name: "Product", mode: "full", online: true,
+  version: "0.2.0", commit: "abcdef123456", host: "Office", address: "10.0.0.2", version_state: "newest", ...extra });
+const clickButton = (out, label) => find(out, (n) => n.tag === "button" && n.textContent === label)[0].listeners.click();
+
+test("workspace table shows modes, status, versions, hosts, warnings and hand-offs below it", () => {
+  const out = workspacesView({ workspaces: [workspace(), workspace({ workspace_id: "b", name: "Legal", mode: "selective",
+    online: false, last_seen_ms: NOW - 120000, version_state: "older" }),
+  workspace({ workspace_id: "c", name: "Archive", version_state: "unsupported", host: null, address: null })],
+  handoffs: [], hub: { version: "0.3.0", min_supported: "0.1.0" } }, NOW);
+  const t = text(out);
+  assert.match(t, /2 workspaces run an older orch/);
+  assert.match(t, /Legal, Archive/);
+  assert.match(t, /The hub still works with 0.1.0 and newer\./);
+  assert.match(t, /Everything/);
+  assert.match(t, /Only what I choose/);
+  assert.match(t, /Offline.*since 2 min ago/);
+  assert.match(t, /0.2.0 · abcdef1/);
+  assert.match(t, /newest/);
+  assert.match(t, /update to 0.3.0/);
+  assert.match(t, /not supported any more/);
+  assert.match(t, /Office10.0.0.2/);
+  assert.match(t, /unknownunknown/);
+  assert.ok(t.indexOf("Connected workspaces") < t.indexOf("Hand-offs between workspaces"));
+  assert.equal(find(out, (n) => n.tag === "th" && n.textContent === "Runs on").length, 1);
+});
+
+test("old responses render without hub metadata or admin controls; actions use the selected workspace", () => {
+  const w = workspace({ version_state: "unknown", version: null, commit: null });
+  const called = [];
+  const out = workspacesView({ workspaces: [w], handoffs: [], admin: null,
+    actions: { open: (row) => called.push(["open", row]), details: (row) => called.push(["details", row]) } }, NOW);
+  assert.doesNotMatch(text(out), /Connect a workspace|Show left|newest|update to|older orch/);
+  clickButton(out, "Open"); clickButton(out, "Details");
+  assert.deepEqual(called, [["open", w], ["details", w]]);
+});
+
+test("details show access only when allowed and send mode changes to the workspace", () => {
+  const w = workspace({ mode: "selective" });
+  let opened;
+  const hidden = workspaceDetailsView(w, { roles: null, owner: "Anna" }, NOW);
+  assert.doesNotMatch(text(hidden), /Who has access/);
+  assert.match(text(hidden), /OwnerAnna/);
+  assert.match(text(hidden), /Only what I choose/);
+  assert.match(text(hidden), /To change what this workspace shares, open it and use Settings > Hub. The owner confirms there./);
+  const out = workspaceDetailsView(w, { roles: { owner: "Anna", groups: [{ group: "Design", role: "edit", members: ["Lee", "Sam"] }] },
+    actions: { open: (row) => { opened = row; } } }, NOW);
+  assert.match(text(out), /Who has accessOwner: AnnaDesign · editLee, Sam/);
+  clickButton(out, "Open Product");
+  assert.equal(opened, w);
+  assert.equal(find(out, (n) => n.tag === "button").length, 1);
+});
+
+test("connect link keeps the suggestion out of the copied link and shows expiry", async () => {
+  let copied;
+  const out = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { copy: async (s) => { copied = s; return true; } })];
+  assert.match(text(out), /Works once, for 30 minutes \(until 12:30\)/);
+  assert.match(text(out), /Suggested: Only what I choose\./);
+  const input = find(out, (n) => n.tag === "input")[0];
+  assert.equal(input.getAttribute("readonly"), "");
+  assert.equal(input.getAttribute("value"), "/join#one-time");
+  clickButton(out, "Everything");
+  assert.match(text(out), /Suggested: Everything. The workspace owner confirms the mode with one click in Mission Control./);
+  assert.deepEqual(find(out, (n) => n.getAttribute("aria-pressed") !== null).map((n) => n.getAttribute("aria-pressed")), ["false", "true"]);
+  await clickButton(out, "Copy");
+  assert.equal(copied, "/join#one-time");
+  assert.match(text(out), /Copied/);
+});
+
+test("admin empty state connects; left disclosure includes only unbound rows and removes the selected row", async () => {
+  const left = workspace({ workspace_id: "left", name: "Old", status: "unbound", left_ms: NOW });
+  let removed, connected = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [left, workspace({ status: "bound" })], actions: {
+    connect: async () => { connected++; return { link: "/join#fresh", expires_ms: NOW + 1800000 }; },
+    remove: async (w) => { removed = w; },
+  } }, NOW);
+  assert.match(text(out), /No workspaces yet/);
+  assert.match(text(out), /Show left workspaces \(1\)/);
+  assert.match(text(out), new RegExp("Left " + new Date(NOW).toLocaleDateString().replaceAll("/", "\\/")));
+  assert.doesNotMatch(text(out), /Product/);
+  await clickButton(out, "Connect a workspace");
+  assert.equal(connected, 1);
+  assert.equal(find(out, (n) => n.tag === "input")[0].getAttribute("value"), "/join#fresh");
+  await clickButton(out, "Remove");
+  assert.equal(removed, left);
+});
+
+test("failed admin actions show plain errors and allow retry", async () => {
+  const fail = async () => { throw new Error("unavailable"); };
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [workspace({ status: "unbound" })],
+    actions: { connect: fail, remove: fail } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  await clickButton(out, "Remove");
+  assert.match(text(out), /Could not create a link. Please try again./);
+  assert.match(text(out), /Could not remove this workspace. Please try again./);
+  assert.ok(find(out, (n) => n.tag === "button").every((n) => !n.disabled));
+});
+
+test("workspace and access names stay text even when they contain markup", () => {
+  const name = '<img src=x onerror="bad()">';
+  const out = workspaceDetailsView(workspace({ name }), { roles: { owner: name, groups: [{ group: name, role: "read", members: [name] }] } }, NOW);
+  assert.match(text(out), /<img/);
+  assert.equal(find(out, (n) => n.tag === "img").length, 0);
+});
+
+test("details Open passes the plain workspace with no pending mode or deep-link value", async () => {
+  const w = workspace({ mode: "selective" });
+  let args;
+  const nodes = workspaceDetailsView(w, { actions: { open: (...value) => { args = value; } } });
+  clickButton(nodes, "Open Product");
+  assert.deepEqual(args, [w]);
+  const { readFile } = await import("node:fs/promises");
+  const app = await readFile(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const open = app.slice(app.indexOf("async function openWorkspace(w)"), app.indexOf("async function openWorkspace(w)") + 230);
+  assert.match(open, /workspace_id: w.id, return_to: "\/", kind: "open"/);
+  assert.doesNotMatch(open, /pending|mode|return_to: "[^" ]*[?#]/);
+});
+
+const actions = { check() {}, open() {}, copy: async () => true };
+const diagram = (out) => find(out, (n) => n.attrs["aria-labelledby"] === "connections-title")[0];
+
+test("connection diagram has accessible workspace and service nodes with text and colour states", () => {
+  const d = base();
+  d.workspaces_list = [{ name: "Product", online: true }, { name: "<Legal>", online: false }];
+  d.relay.state = "down";
+  d.publish.state = "not_set_up";
+  d.edge = { state: "up", url: "https://hub.test" };
+  const out = servicesView(d, actions, NOW), flow = diagram(out);
+  const nodes = find([flow], (n) => n.className.startsWith("node "));
+  assert.deepEqual(nodes.map((n) => [n.tag, n.textContent, n.className]), [
+    ["li", "Productonline", "node ok"], ["li", "<Legal>offline", "node muted"],
+    ["li", "HubRunning", "node ok"], ["li", "RelayNot answering", "node warn"],
+    ["li", "PublishNot set up", "node muted"], ["li", "EdgeRunning", "node ok"],
+  ]);
+  assert.equal(find([flow], (n) => n.className === "arrow")[0].textContent, "link");
+  assert.ok(out.indexOf(flow) < out.findIndex((n) => n.className === "card svc-list"));
+  const edge = find(out, (n) => n.attrs.id === "svc-edge")[0];
+  assert.match(edge.textContent, /Edge: puts the hub on a public address\./);
+  assert.match(edge.textContent, /https:\/\/hub.test/);
+  assert.match(edge.textContent, /Running/);
+  assert.equal(find([edge], (n) => n.tag === "button" || n.tag === "details").length, 0);
+});
+
+test("workspace diagram caps names at eight and reports how many remain", () => {
+  const d = base();
+  d.workspaces_list = Array.from({ length: 11 }, (_, i) => ({ name: "Workspace " + i, online: true }));
+  const flow = diagram(servicesView(d, actions, NOW));
+  assert.equal(find([flow], (n) => n.className.startsWith("node ")).length, 12);
+  assert.match(flow.textContent, /Workspace 7online\+3 more/);
+  assert.doesNotMatch(flow.textContent, /Workspace 8/);
+});
+
+test("old response shape and an empty workspace list still render", () => {
+  const d = base();
+  let out = servicesView(d, actions, NOW);
+  assert.match(diagram(out).textContent, /3 workspaces, 2 online/);
+  assert.match(find(out, (n) => n.attrs.id === "svc-edge")[0].textContent, /Not set up/);
+  assert.match(diagram(out).textContent, /RelayRunningPublishRunningEdgeNot set up/);
+  d.workspaces_list = [];
+  out = servicesView(d, actions, NOW);
+  assert.match(diagram(out).textContent, /0 workspaces, 0 online/);
+});
+
+test("services refresh every 15 seconds, pause while hidden, and stop after navigation", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { runInNewContext } = await import("node:vm");
+  const source = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const timers = new Map(), requests = [];
+  let nextTimer = 0, rendered, release;
+  const context = {
+    root: { classList: { remove() {} }, replaceChildren() {} },
+    document: { hidden: false }, state: { user: { is_admin: true } },
+    refresh: async () => true, loadRail: async () => {},
+    api: async (_, path) => {
+      requests.push(path);
+      if (release && path === "/admin/services") await new Promise((resolve) => { release = resolve; });
+      return { status: 200, body: path === "/admin/services" ? base() : { workspaces: [{ name: "Product", online: true }] } };
+    },
+    servicesView: (data) => { rendered = data; return []; },
+    workspaces() {}, copyText() {},
+    setInterval: (fn, ms) => { assert.equal(ms, 15000); timers.set(++nextTimer, fn); return nextTimer; },
+    clearInterval: (id) => timers.delete(id), loading: () => () => {}, pageLoading() {}, loginView() {}, home() {}, navigate() {},
+    banner() {}, h() {}, say() {}, reauthView() {},
+  };
+  runInNewContext(source.match(/let servicesTimer[^\n]+/)[0] + "\n" + "let paintedRoute = null;\n" + source.match(/const show = [^\n]+/)[0] + "\n" +
+    "function shell() { show(); }\n" + source.slice(source.indexOf("async function services("), source.indexOf("async function home()")), context);
+  await context.services();
+  assert.deepEqual(requests, ["/admin/services", "/me/workspaces"]);
+  assert.equal(rendered.workspaces_list[0].name, "Product");
+  assert.equal(timers.size, 1);
+  context.document.hidden = true;
+  await [...timers.values()][0]();
+  assert.equal(requests.length, 2);
+  context.document.hidden = false;
+  await [...timers.values()][0]();
+  assert.equal(requests.length, 4);
+  assert.equal(timers.size, 1);
+  // A reply already in flight must not reopen Services after another page renders.
+  release = true;
+  const pending = [...timers.values()][0]();
+  while (release === true) await Promise.resolve();
+  context.shell("home");
+  assert.equal(timers.size, 0);
+  release();
+  await pending;
+  assert.equal(timers.size, 0);
 });

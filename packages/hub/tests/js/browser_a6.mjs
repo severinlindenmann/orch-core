@@ -108,8 +108,8 @@ try {
   await blockBox.fill("wiki@1.0.0 mine");
   await asB((o) => o.getByLabel("Blocked add-ons").fill("notes wiki@1.0.0"));  // version 4
   await page.getByRole("tab", { name: "People & groups" }).click();
-  await page.getByLabel("Name", { exact: true }).fill("Kim");
-  await page.getByRole("button", { name: "Add person" }).click();
+  await page.getByLabel("Group name", { exact: true }).fill("interns");
+  await page.getByRole("button", { name: "Create group" }).click();
   await page.getByText("Saved", { exact: true }).waitFor();
   await page.getByRole("tab", { name: "Marketplaces" }).click();
   await page.getByText(/changed elsewhere \(now version 4\)/).waitFor();
@@ -141,12 +141,11 @@ try {
   await page.getByText("Rules version 8.").waitFor();
   assert((await page.getByRole("article").count()) === 1, "only the official marketplace is left");
   await shot("admin-marketplaces-saved");
-  // add a person, then remove them with the two-step button
+  // invite a person: the admin gets a link to hand over, never a password or a code
   await page.getByRole("tab", { name: "People & groups" }).click();
-  await page.getByLabel("Name", { exact: true }).fill("Jonas");
-  await page.getByRole("button", { name: "Add person" }).click();
-  await page.getByText("Saved", { exact: true }).waitFor();
-  await page.locator("b", { hasText: "Jonas" }).first().waitFor();
+  await page.getByLabel("Their name", { exact: true }).fill("Jonas");
+  await page.getByRole("button", { name: "Invite a person" }).click();
+  await page.getByText(/you will not see them/).waitFor();
 
   assert(problems.length === 0, "CSP/Trusted Types violations: " + problems.join(" | "));
   console.log("A6 browser: ok");

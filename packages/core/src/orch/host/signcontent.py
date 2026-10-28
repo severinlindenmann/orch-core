@@ -63,7 +63,7 @@ TECHNICAL_KEYS = frozenset(
 
 #: per event type, the payload keys the plain view shows (in a section, a list or a field row)
 SHOWN: dict[str, frozenset[str]] = {
-    "schedule.set": frozenset({"schedule", "rule", "starts", "ends", "brief", "run_hours", "label"}),
+    "schedule.set": frozenset({"schedule", "rule", "starts", "ends", "brief", "run_hours", "label", "target", "title"}),
     "schedule.cancelled": frozenset({"schedule"}),
     "addon.disabled": frozenset({"name"}),
     "addon.purged": frozenset({"name"}),
@@ -104,7 +104,7 @@ SHOWN: dict[str, frozenset[str]] = {
     "settings.changed": frozenset({"set"}),
     "task.done": frozenset({"task", "receipt", "log", "text"}),
     "ticket.closed": frozenset({"resolution", "duplicate_of", "text"}),
-    "ticket.created": frozenset({"key", "ticket_type", "title", "owner"}),
+    "ticket.created": frozenset({"key", "ticket_type", "title", "owner", "schedule", "via"}),
     "ticket.moved": frozenset({"from", "to", "reason"}),
     "ticket.reopened": frozenset({"text"}),
     "ticket.updated": frozenset({"set", "sections"}),
@@ -1186,24 +1186,33 @@ def _event(
 ) -> str:
     """The headline of one event; everything it shows is added to ``out``."""
     if typ == "schedule.set":
-        from orch.ops.schedule import RISK, describe
+        from orch.model.schedules import validate_target
+        from orch.ops.schedule import describe, risk
 
-        for key in ("schedule", "starts", "ends", "run_hours", "label"):
+        if error := validate_target(ev):
+            raise PlainUnavailable(error)
+
+        for key in ("schedule", "starts", "ends", "run_hours", "label", "target", "title"):
             if key in ev:
                 _row(out, key, ev[key])
         out.setdefault("sections", []).append(
             {"id": "brief", "title": "Instructions for each run", "text": _s(ev["brief"])}
         )
-        out.setdefault("notes", []).extend([RISK, "No click or confirmation is required at firing time."])
-        return describe(ev["rule"], ref, ev["ends"])
+        out.setdefault("notes", []).extend(
+            [risk(ev.get("target", "existing")), "No click or confirmation is required at firing time."]
+        )
+        return describe(ev["rule"], ref, ev["ends"], ev.get("target", "existing"), ev.get("title"))
     if typ == "schedule.cancelled":
         _row(out, "schedule", ev["schedule"])
-        return f"Cancel automatic sessions on {ref} and end their run grants"
+        return f"Cancel future automatic sessions on {ref}; existing-ticket run grants also end"
     if typ == "ticket.created":
         title = _s(ev.get("title"))
         out["ticket"] = {**(out.get("ticket") or {}), "key": _s(ev.get("key")), "title": one(title)}
         _row(out, "type", ev.get("ticket_type"))
         _row(out, "owner", ev.get("owner"))
+        for field in ("schedule", "via"):
+            if field in ev:
+                _row(out, field, ev[field])
         tail = (out.get("ticket") or {}).get("uid_tail")
         return f"Create ticket {_s(ev.get('key'))} · {one(title)}" + (
             f" (key per host; signed id …{tail})" if tail else ""

@@ -1474,7 +1474,7 @@ the CLI signer and H9 show it, and each signer recomputes it from what it receiv
 | From | Event | To |
 |---|---|---|
 | — | `human.prepare` with `signer` | `bound` |
-| — | `human.prepare` with `handoff:true` | `prepared` |
+| — | `human.prepare` with `handoff:true` (the hub's `addon.grant` only, FB15) | `prepared` |
 | `prepared` | `human.get` with `signer`: device checked, events completed, `tree.check` re-run (N3) | `bound` |
 | `bound` | `human.get` with the same `signer`: `tree.check` re-run | `bound` |
 | `bound` | `human.submit` committed | `submitted` |
@@ -1519,6 +1519,11 @@ the CLI signer and H9 show it, and each signer recomputes it from what it receiv
   - Without `handoff`, `signer` is required.
   - With `handoff:true`, `signer` is absent and the events carry `actor.device: null` and `auth: null` until
     `human.get` binds them.
+  - **Only the hub hand-off is unbound (FB15).** A non-dry-run `handoff:true` is accepted for `addon.grant` only (the
+    add-on grant the hub answers; core marks the record `hub_handoff: true`). Every other op with `handoff:true`, and
+    `handoff:true` with a `signer` for any op, answers `invalid.input` and stores nothing: it is prepared with a
+    `signer`. A dry run stores nothing either way: it may take neither (the dashboard's folder check) or a hand-off of
+    any op, never both.
   - Binding checks that the device belongs to the mapped person and has a valid certificate with `decide` (and
     `operate` where needed).
 - **The grant secret (F1).** The secret is drawn by the process that signs, never by the one that prepares.
@@ -3981,6 +3986,11 @@ Agent class (UID 502, with a grant):
 
 Dashboard (person class, UID 501, mapped to `p_sev`). A board snapshot, a subscription, then a verdict through the
 hand-off:
+
+> **Superseded (FB15, §0.8.1 "Device binding").** This H5b transcript predates the narrow hand-off: today
+> `human.prepare {op:"verdict", …, handoff:true}` answers `invalid.input` (only the hub's `addon.grant` is prepared
+> unbound), and no code is issued. A verdict is prepared with `signer` (`state: "bound"`); the rest of the exchange is
+> unchanged.
 
 ```
 → {"t":"req","id":"d1","op":"ticket.query","args":{"status":["open","in_progress","testing"],"limit":50}}
@@ -13748,3 +13758,41 @@ CLI sequences prepare directly and use one review before signing their steps. Da
 Phone authority comes from device pairing. Hub join/mode/leave retain their sealed backup-key flow, and the
 six-character phone pairing code remains. Passphrases authenticate keys on `/dev/tty`; click signing never prompts
 for one. Setup retains its three-word channel-binding comparison and uses the same Enter review.
+
+#### `schedule.add`: signed ticket target
+
+`target` is `existing` by default (including when absent); it requires `ref` and forbids `title`.
+`target: new` forbids `ref` and requires a literal `title` of 1–100 clean single-line characters.
+Control and hidden characters are refused using core's clean-text rules. No template expansion is performed.
+The command prepares one action with a signed `ticket.created` followed by a signed `schedule.set` on the
+same new log. The creation names the schedule id; both events bind the literal title. The anchor is an open chore
+shown as a normal ticket. This two-event creation action shares a null `based_on`; only the second-position
+new-target set admits that base, and admission checks its signed anchor. All events are judged before the first
+append. Hosted submission journals the action before appending and rolls it forward after a crash.
+
+An existing-ticket `schedule.set` retains its original shape when `target` is omitted. Both `target` and `title`
+are included in the signed bytes when present. The review says "creates a NEW ticket every run", with the literal
+title, cadence, timezone and end date. Unknown targets are refused. Older consumers must reject the new shape;
+they must never run it as an existing-ticket schedule. The contract vectors cover both shapes and an old
+signature presented with a new target and title.
+
+For each occurrence, core rechecks the setter's role, device and access, the anchor's status and cancellation.
+A previous child that is not closed prevents another: `did_not_run` / `skipped_open_child` ("the last ticket was
+still open"). Core first appends `schedule.fired` on the anchor with a deterministic child uid derived from the
+schedule id and canonical occurrence. It then creates that child with the schedule's person actor and the closed
+`via: {anchor, schedule_id, occurrence, set_sig_hash}` reference. `set_sig_hash` hashes the admitted set's signature.
+The model checks that reference against the signed schedule and the recorded firing, and checks authority again.
+The child is an open chore whose parent is the anchor. Core alone renders its creation title as the literal title
+plus `YYYY-MM-DD` in the rule's timezone. No agent output supplies the title.
+
+A tick repairs a firing whose child is missing using the same uid. It never repeats a creation or regenerates a
+lost run secret: an unlaunched recovered run settles as `did_not_run` / `host_restarted`. A loss of authority before
+recovery blocks creation. The run grant, launch target, claim checks and write detection all belong to the child;
+the agent cannot write the anchor or create tickets. Core writes the outcome on the anchor. Cancelling a new-target
+schedule or closing its anchor stops future fires while leaving existing children and in-flight grants alone.
+Existing-ticket cancellation retains its earlier grant-ending behavior.
+
+Only a schedule child may close with `nothing_to_do`. Its own schedule run may close it, including through the
+`close` command; ordinary agent grants still cannot close tickets. A child closed this way is in Done and its
+run records `ran_nothing` ("Nothing to do"). Other successful runs record `ran`; failed and skipped
+runs retain the existing outcome reasons. The dashboard server preserves the new outcome and skip reason.

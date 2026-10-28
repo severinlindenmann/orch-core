@@ -197,7 +197,7 @@ main#app.shelled { max-width:none; padding:0; margin:0; }
 .cmd { display:flex; gap:8px; align-items:center; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:6px 6px 6px 12px; font:12.5px ui-monospace,monospace; color:var(--text-muted); }
 .cmd code { flex:1; overflow-x:auto; white-space:nowrap; }
 .cmd button { min-height:28px; padding:2px 10px; font-size:12px; }
-.work-grid { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.5fr); gap:20px; align-items:start; }
+.work-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:20px; align-items:start; }
 .work-grid .card { margin:0; }
 .tbl { width:100%; border-spacing:0; font-size:13.5px; }
 .tbl th { text-align:left; color:var(--text-muted); font-weight:600; padding:8px 10px; border-bottom:1px solid var(--border); background:transparent; }
@@ -206,6 +206,27 @@ main#app.shelled { max-width:none; padding:0; margin:0; }
 .pair { display:inline-flex; flex-wrap:wrap; align-items:center; gap:8px; font-weight:550; } .pair .ar { color:var(--text-faint); }
 @media (max-width:760px) { .work-grid { grid-template-columns:minmax(0,1fr); } .svc-row { grid-template-columns:minmax(0,1fr); } .svc-side { flex-direction:row; align-items:center; flex-wrap:wrap; } }
 
+/* How workspaces and services connect. Status is also written in every node. */
+.svc-connections .flow { display:flex; align-items:center; gap:10px; padding:16px 0; }
+.svc-connections .flow-column { display:grid; gap:8px; list-style:none; margin:0; padding:0; min-width:0; flex:1; }
+.svc-connections .node { border:1px solid var(--border-strong); border-radius:10px; padding:10px 12px; background:var(--bg); overflow-wrap:anywhere; }
+.svc-connections .node b { display:block; }
+.svc-connections .node.ok { border-color:var(--success); }
+.svc-connections .node.warn { border-color:var(--warning); }
+.svc-connections .arrow { color:var(--text-muted); font-size:12px; text-align:center; }
+.svc-connections .flow-direction { display:block; }
+.svc-connections .flow-direction::after { content:"──▶"; }
+@media (max-width:639px) {
+  .svc-connections .flow { flex-direction:column; align-items:stretch; }
+  .svc-connections .flow-direction::after { content:"▼"; }
+}
+.ws-table { min-width:760px; }
+.ws-table td > div + div { margin-top:5px; }
+.ws-actions { display:flex; gap:6px; }
+.ws-segment { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.ws-segment > .small { flex-basis:100%; }
+.ws-segment [aria-pressed="true"] { background:var(--brand-soft); color:var(--brand); border-color:var(--brand); }
+.ws-connect input { min-width:180px; }
 /* Workspace health stays readable even when its dashboard is unavailable. */
 .ra.offline { opacity: .5; }
 .ra.offline.on, .ra.offline:hover, .ra.offline:focus-visible { opacity: .85; }

@@ -93,8 +93,7 @@ def next_run(row: dict, now: int, prefix: str = "") -> str | None:
 
 def last_outcome(row: dict) -> dict | None:
     """The latest settled occurrence as `{at, outcome, reason}`; the reason only from the model's closed list."""
-    from orch.model.followups import OUTCOMES
-    from orch.model.schedules import REASONS
+    from orch.model.schedules import OUTCOMES, REASONS
 
     for o in reversed(_recorded(row)):
         if o.get("outcome") in OUTCOMES:
@@ -163,6 +162,24 @@ def build(gateway: Gateway, ws: str, now: int | None = None) -> dict:
     prefix = _prefix(gateway, ws)  # also the minimum lead of a new schedule
     for row in listed[:MAX_ROWS]:
         if not isinstance(row, dict):
+            continue
+        if row.get("target", "existing") != "existing":
+            # one row this dashboard cannot read must not break the page: it is listed as unsupported
+            rows.append(
+                {
+                    "id": row.get("id"),
+                    "ticket": None,
+                    "title": None,
+                    "state": row.get("state"),
+                    "rule": {},
+                    "ends": None,
+                    "brief": "",
+                    "mine": row.get("person") == me,
+                    "can_cancel": False,
+                    "supported": False,
+                    "note": "Needs a newer dashboard",
+                }
+            )
             continue
         key = row.get("key")
         mine = row.get("person") == me

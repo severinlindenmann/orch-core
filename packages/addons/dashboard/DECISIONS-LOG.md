@@ -2093,3 +2093,9 @@ Decision: Require click contract 4 on every click route; validate the relay's ri
 Why: Stale pages must not sign without the risk review; fixtures must reflect the real signer's operation classes. Risk lines must stay on screen throughout the dwell.
 
 Revert: Restore the prior gate only together with a coordinated click contract change in core, server, and client.
+
+### 2026-10-28 — New-ticket schedule dialog
+
+- **Decision:** Default New schedule to “A new ticket each run”, with a literal title limited to 100 characters. Keep the existing ticket picker as the other choice; preserve the row’s target when undoing cancellation.
+- **Why:** Repeated checks need a fresh ticket for each run. Keep the form short, with the longer explanation behind the information button. Preserve existing-ticket action arguments.
+- **Revert:** Remove the target choice and optional action/model fields, and restore the ticket picker as the first control.

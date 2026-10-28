@@ -34,7 +34,13 @@ def test_browser_sign_in_sets_http_only_strict_cookie_and_no_token_in_body(w):
     assert c.startswith("__Host-orch_hub_session=") and "HttpOnly" in c and "SameSite=Strict" in c and "Secure" in c
     token = c.split(";")[0].split("=", 1)[1]
     s, me, _ = w.call("GET", "/session", token=token, cookie=True)
-    assert s == 200 and me == {"user_id": w.ann, "name": "ann", "is_admin": False, "needs_sign_in": False}
+    assert s == 200 and me == {
+        "user_id": w.ann,
+        "name": "ann",
+        "is_admin": False,
+        "needs_sign_in": False,
+        "recovery": None,
+    }
 
 
 def test_app_sign_in_returns_token_and_bearer_works_without_origin(w):
@@ -194,7 +200,7 @@ def test_needs_you_reports_offline_and_unavailable(w):
     w.reg.add(WS_SEL, "selective", owner=w.ann, status="unbound")
     w.api.d.view = None
     _, o, _ = w.call("GET", "/me/needs-you", token=w.login(w.ann))
-    assert o == {"items": [], "offline": [WS_SEL], "unavailable": [WS]}
+    assert o == {"items": [], "offline": [WS_SEL], "unavailable": [WS], "queued": []}
 
 
 def test_item_detail_full_selective_and_not_a_member(w):

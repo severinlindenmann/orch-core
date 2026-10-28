@@ -101,7 +101,7 @@ def _grant(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
         want = grantoff.terms(args["scope"], "agent", args["hours"], args.get("label"))
         if want["label"] is None:
             want.pop("label")
-        handoffs.add(model, person, want)
+        handoff_id = handoffs.add(model, person, want)
     return ok_result(
         {
             "mode": mode,
@@ -110,7 +110,8 @@ def _grant(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
             "pending": True,
             "valid_for_s": grantoff.MAX_AGE,
             "summary": {"kind": "grant", "person": person, **{k: v for k, v in want.items() if k != "label"}},
-            "url": build_root_url(state.addr, service.workspace_id),
+            "handoff": handoff_id,
+            "url": build_grant_url(state.addr, service.workspace_id, {**want, "handoff": handoff_id}),
         }
     )
 
@@ -118,6 +119,16 @@ def _grant(call: Call, args: dict[str, Any], state: Any, mode: str) -> dict[str,
 def prepared_event(record: dict[str, Any]) -> dict[str, Any]:
     """The one unsigned event of a prepared add-on grant request."""
     return record["prepared"]["events"][0]
+
+
+def build_grant_url(addr: str, workspace_id: str, terms: dict[str, Any]) -> str:
+    """Pinned hub link; terms are display/signing input, never landing authority."""
+    import json
+
+    from orch.crypto.encoding import b64u
+
+    body = json.dumps(terms, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    return f"{build_root_url(addr, workspace_id)}/access/{b64u(body)}"
 
 
 def build_addon_url(addr: str, workspace_id: str, terms: dict[str, Any]) -> str:

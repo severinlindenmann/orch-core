@@ -32,6 +32,9 @@ try {
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("heading", { name: "Needs you" }).waitFor();
 
+  await page.locator(".side").getByRole("link", { name: "Approvals" }).click();
+  await page.getByRole("heading", { name: "Approvals" }).waitFor();
+  await shot("approvals");
   await page.locator(".side").getByRole("link", { name: "Services" }).click();
   await page.getByRole("heading", { name: "Services", exact: true }).waitFor();
   await page.locator("#services-summary").waitFor();
@@ -45,6 +48,7 @@ try {
   await page.getByRole("button", { name: "Copied" }).or(page.getByRole("button", { name: "Select and copy" })).waitFor();
   await page.locator("#svc-relay").getByRole("button", { name: "Check now" }).click();
   await page.locator("#services-summary").waitFor();
+  await page.getByRole("heading", { name: "How it connects" }).waitFor();
   await shot("services");
 
   await page.locator("#services-ws").waitFor();
@@ -53,6 +57,14 @@ try {
   await page.getByRole("heading", { name: "Hand-offs between workspaces" }).waitFor();
   await page.locator("#handoffs-empty").waitFor();
   await shot("workspaces");
+  await page.getByRole("button", { name: "Connect a workspace" }).click();
+  await page.getByText("30 minutes").first().waitFor();
+  await page.getByRole("button", { name: "Everything" }).first().click();
+  await page.getByText("Suggested: Everything").waitFor();
+  await shot("workspaces-connect");
+  await page.getByRole("button", { name: "Details" }).first().click();
+  await page.getByText("To change what this workspace shares").waitFor();
+  await shot("workspaces-details");
   assert(problems.length === 0, "CSP or script problems: " + problems.join("; "));
   console.log("R11 browser: ok");
 } finally {

@@ -406,10 +406,13 @@ def grant_requested(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return r
     if sg.person not in ws.members:
         return Refusal(Code.MEMBER_UNKNOWN, "a grant is for a member: alias this hub user to a person first")
+    if e["hours"] > ws.settings["grant_hours"]:
+        return Refusal(Code.GRANT_TERMS, "the request exceeds the workspace grant duration")
     if e["id"] in ws.requests:
         return Refusal(Code.GRANT_EXISTS, e["id"])
     ws.requests[e["id"]] = {
         "person": sg.person,
+        "handoff": e["handoff"],
         "role": sg.role,
         "scope": e["scope"],
         "verbs": copy.deepcopy(e["verbs"]),

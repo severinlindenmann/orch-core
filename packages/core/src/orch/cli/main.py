@@ -45,6 +45,8 @@ class Hooks:
     )
     #: Raises ``grant.expired`` when the (well-formed) grant is expired, revoked or out of scope.
     grant_valid: Callable[[Context], None] = field(default=lambda ctx: None)
+    #: Whether this grant is the direct run grant of a schedule child; the model still judges every write.
+    schedule_close: Callable[[Context], bool] = field(default=lambda ctx: False)
     #: The grant's ``verbs``: ``"agent"`` (every agent operation) or the list of operation names it allows.
     grant_verbs: Callable[[Context], Any] = field(default=lambda ctx: "agent")
 
@@ -65,7 +67,7 @@ def _check_input(op: Operation, args: dict[str, Any], secrets: list[str]) -> Non
 
 
 def _check_who(op: Operation, ctx: Context, args: dict[str, Any], hooks: Hooks) -> None:
-    if op.who == "human":
+    if op.who == "human" and not (op.name == "close" and ctx.grant and hooks.schedule_close(ctx)):
         if not ctx.human_presence:
             raise OrchError("human_only", f"{op.cli}: human only")
         return
@@ -201,7 +203,7 @@ def run_hosted(parsed: parser.Parsed, ctx: Context, target: Any) -> Result:
 
     op, args = parsed.op, parsed.args
     _check_input(op, args, _secrets(ctx.grant))
-    if op.who == "human" and not ctx.human_presence:
+    if op.who == "human" and not ctx.human_presence and not (op.name == "close" and ctx.grant):
         raise OrchError("human_only", f"{op.cli}: human only")
     if op.who != "human":
         if ctx.grant is not None and not _GRANT.fullmatch(ctx.grant):

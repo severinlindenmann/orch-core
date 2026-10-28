@@ -211,7 +211,10 @@ class LinkServer:
         conn = None
         try:
             conn = tls.accept(self._ctx, sock, time.monotonic() + self._t_hs, self._stop)
-            self._link(conn, pre)
+            peer_addr = ""
+            with contextlib.suppress(OSError):
+                peer_addr = str(sock.getpeername()[0])
+            self._link(conn, pre, peer_addr)
         except framing.FrameError:
             if conn is not None:
                 self._refuse(conn, "malformed")
@@ -278,7 +281,7 @@ class LinkServer:
         self._send(conn, {"t": "ready", "hub_id": self.hub_id})
         return ws, wsk
 
-    def _link(self, conn: tls.TlsConn, pre: _PreAuth) -> None:
+    def _link(self, conn: tls.TlsConn, pre: _PreAuth, peer_addr: str = "") -> None:
         who = self._auth(conn)
         if who is None:
             return
@@ -290,7 +293,7 @@ class LinkServer:
             and (port.attached_seq is None or self._bound_seq(ws, wsk) == port.attached_seq)
         )
         try:
-            self._serve_link(conn, port, ws, wsk, pre)
+            self._serve_link(conn, port, ws, wsk, pre, peer_addr)
         finally:
             self._detach(ws, port)
 
@@ -335,7 +338,9 @@ class LinkServer:
         pin = self._reg.pin(ws)
         return pin is not None and unb64u(pin["wsk_pub"], 65) == wsk
 
-    def _serve_link(self, conn: tls.TlsConn, port: _Port, ws: str, wsk: bytes, pre: _PreAuth) -> None:
+    def _serve_link(
+        self, conn: tls.TlsConn, port: _Port, ws: str, wsk: bytes, pre: _PreAuth, peer_addr: str = ""
+    ) -> None:
         # G8: a link counts as unauthenticated until the workspace is pinned to THIS link's key. A self-asserted key
         # (first link of a join) proves nothing, so it keeps its slot until the join pins it; one that dies sooner
         # than the lifetime below, or never joins, frees it at the end of the connection.
@@ -381,6 +386,7 @@ class LinkServer:
                 self._refuse(conn, "malformed")
                 return
             last_seq = o["seq"]
+            self._reg.seen(ws, now, peer_addr)
             if o["re"] is not None:  # a reply to one of our h2w requests (the host's ack of a route_in): no answer
                 if self._router is not None and port.live is not None:
                     self._router.on_reply(ws, port.live, o)
@@ -389,6 +395,8 @@ class LinkServer:
                 continue
             was_unjoined = self._reg.pin(ws) is None
             body = self._dispatch(ws, wsk, o, now, conn.same_computer())
+            if was_unjoined and self._pinned_to(ws, wsk):
+                self._reg.seen(ws, now, peer_addr)
             port.send_signed(
                 o["op"] if o["op"] in H.LINK_OPS else "error", o["seq"], body
             )  # never sign a peer-chosen string
@@ -426,7 +434,7 @@ class LinkServer:
                 raise Refused("unknown_op")  # an op of a later phase: in the table, not served yet
             if o["op"] != "join" and self._reg.pin(ws) is None:
                 raise Refused("unknown_workspace")  # an unjoined link may only join
-            if o["op"] not in ("join", "binding_put"):
+            if o["op"] not in ("join", "binding_put", "status_put"):
                 st = self._reg.binding_state(ws)
                 if st is not None and st["status"] != "bound":
                     if self._shares is not None and time.monotonic() - self._retry_at >= 30.0:

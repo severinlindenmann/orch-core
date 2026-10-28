@@ -177,7 +177,7 @@ class WsCore:
     hub: dict[str, Any] = field(default_factory=dict)
     unattended: list[tuple[int, str, int]] = field(default_factory=list)  # (at seconds, session, artifact bytes)
     #: C10 (hub protocol 8.8): the admitted ``grant.requested`` lines by event id: ``{person, role, scope, verbs, hours,
-    #: label?, at, hub_id, used}``. A host-actor ``grant.issued`` consumes one (``used``), once.
+    #: label?, handoff, at, hub_id, used}``. A host-actor ``grant.issued`` consumes one (``used``), once.
     requests: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: FB15 (hub protocol 8.8b): the admitted ``addon.requested`` lines by event id: ``{person, role, name, version,
     #: package_sha256, capabilities, runtime, at, hub_id, used}``. A host-actor ``addon.granted`` consumes one, once.
@@ -300,6 +300,9 @@ class ScheduleRec:
     set_at: str  # the `at` of schedule.set: no occurrence before set_at + min lead is ever fired or settled
     label: str | None = None
     cancelled: bool = False
+    target: str = "existing"
+    title: str | None = None
+    set_sig_hash: str = ""
     # occurrence -> {"fired_at", "grant", "run", "released"?: true when the firing cleared the setter's claim,
     # "outcome"?, "reason"?}
     occurrences: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -312,6 +315,9 @@ class TCore:
     owner: str
     status: str
     fields: dict[str, Any]
+    anchor_schedule: str | None = None
+    via: dict[str, str] | None = None
+    close_resolution: str | None = None
     sections: dict[str, dict[str, Any]] = field(default_factory=dict)  # id -> {"hash", "refs"}
     people: dict[str, set[str]] = field(
         default_factory=lambda: {"assignees": set(), "reviewers": set(), "watchers": set()}

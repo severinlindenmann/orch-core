@@ -7,7 +7,7 @@
     "cli": "orch close",
     "summary": "Close a ticket without finishing it.",
     "who": "human",
-    "usage": "orch close [REF] [--resolution wont_do|duplicate|obsolete|other] [--duplicate-of KEY] [--message TEXT] [--dry-run]",
+    "usage": "orch close [REF] [--resolution RESOLUTION] [--duplicate-of KEY] [--message TEXT] [--dry-run]",
     "pre": [
       "ticket_exists",
       "ticket_owner_or_maintainer",
@@ -33,7 +33,8 @@
             "wont_do",
             "duplicate",
             "obsolete",
-            "other"
+            "other",
+            "nothing_to_do"
           ],
           "description": "why",
           "default": "other"

@@ -932,3 +932,26 @@ it('D3: enabled update shows signer risk and never signs on the opening press', 
   await new Promise(resolve => setTimeout(resolve, 1100))
   expect(sign).not.toHaveBeenCalled()
 })
+
+it('new-ticket schedule signing preserves its target and literal title', async () => {
+  const { CLICK_RISK } = await import('@/api/click')
+  const gesture = await import('@/components/sign/trustedPress')
+  const ws = 'a'.repeat(32)
+  clickWorkspace(ws)
+  vi.spyOn(api, 'getHostSettings').mockResolvedValue({} as Awaited<ReturnType<typeof api.getHostSettings>>)
+  const action = { action: 'schedule_add' as const, target: 'new' as const, title: 'Check the shared mailbox', brief: 'Check mail.', at: '09:00', every: 'day' as const, tz: 'UTC' }
+  const expires = new Date(Date.now() + 6e5).toISOString()
+  const prepare = vi.spyOn(api, 'prepareClick').mockResolvedValue({ request_id: 'hr_' + '2'.repeat(26), expires_at: expires, op: 'schedule.add', confirm: 'click' })
+  const lines = ['A new ticket each run', action.title, action.brief, 'Every day at 09:00 UTC']
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:' + 'e'.repeat(64), view: { risk: CLICK_RISK, op: 'schedule.add', workspace: { id: ws, name: 'Demo', prefix: 'DEMO' }, fingerprint: '0123456789ab', lines, checks: [], confirm: { kind: 'click' }, expires_at: expires, auth: 'convenience', device: 'd_x', artifacts: null } })
+  vi.spyOn(api, 'cancelClick').mockResolvedValue({ id: 'x', state: 'cancelled' })
+  const sign = vi.spyOn(api, 'signClick')
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="A new ticket each run" action={action} inline onClose={() => {}} /></QueryClientProvider>)
+  const outcome = await screen.findByRole('button', { name: /A new ticket each run/i }, T)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await userEvent.setup().click(outcome)
+  await waitFor(() => expect(prepare).toHaveBeenCalledWith(ws, action, 0))
+  const panel = await screen.findByTestId('click-panel', {}, T)
+  for (const line of lines) expect(within(panel).getByText(line, { exact: false })).toBeVisible()
+  expect(sign).not.toHaveBeenCalled()
+})

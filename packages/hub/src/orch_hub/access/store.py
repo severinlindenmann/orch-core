@@ -444,24 +444,63 @@ class Access:
     # --- roles ---------------------------------------------------------------------------------------------------
 
     def roles(self, workspace_id: str) -> dict[str, str]:
-        """``{user_id: role}`` for one workspace, sorted by user id; users without a role are absent. A disabled user
-        has no role anywhere (these are the hub-derived roles only)."""
+        """``{user_id: role}`` for one workspace, sorted by user id; users without a role are absent."""
+        return self.roles_overlay(workspace_id)
+
+    def roles_overlay(
+        self,
+        workspace_id: str,
+        *,
+        set_grant: tuple[str, str] | None = None,
+        drop_grant: str | None = None,
+        drop_group: str | None = None,
+        drop_user: str | None = None,
+        drop_member: tuple[str, str] | None = None,
+        add_member: tuple[str, str] | None = None,
+        include_disabled: bool = False,
+    ) -> dict[str, str]:
+        """THE role computation: what :meth:`roles` answers, optionally as it WOULD be after one hypothetical edit (a
+        grant set or dropped, a group, user or member removed, a member added). With no edit it is :meth:`roles` itself,
+        so a simulation (``changes.rules.reach_delta``) and the roles the hub signs cannot drift apart. A disabled user has no
+        role anywhere (these are the hub-derived roles only); ``include_disabled`` is for the simulation alone: it names the
+        disabled members a change would reach, so an owner sees everyone who could ever regain access."""
         _hex(workspace_id, "workspace_id")
-        out: dict[str, str] = {}
         with self.lock:  # one consistent read
-            for (u,) in self._q(
-                "SELECT m.user_id FROM members m JOIN users u ON u.user_id = m.user_id "
-                "WHERE m.grp=? AND u.disabled_ms IS NULL",
-                (ADMIN_GROUP,),
-            ):
-                out[u] = "admin"
-            for u, r in self._q(
-                "SELECT m.user_id, g.role FROM grants g JOIN members m ON m.grp = g.grp "
-                "JOIN users u ON u.user_id = m.user_id WHERE g.workspace_id=? AND u.disabled_ms IS NULL",
-                (workspace_id,),
-            ):
-                if role_rank(r) > role_rank(out.get(u)):
-                    out[u] = r
+            grants = {g: r for g, r in self._q("SELECT grp, role FROM grants WHERE workspace_id=?", (workspace_id,))}
+            if set_grant is not None:
+                grants[set_grant[0]] = set_grant[1]
+            for dropped in (drop_grant, drop_group):
+                if dropped is not None:
+                    grants.pop(dropped, None)
+
+            def members(group: str) -> set[str]:
+                if group == drop_group:
+                    return set()
+                out = {
+                    u
+                    for (u,) in self._q(
+                        "SELECT m.user_id FROM members m JOIN users x ON x.user_id = m.user_id "
+                        "WHERE m.grp=?" + ("" if include_disabled else " AND x.disabled_ms IS NULL"),
+                        (group,),
+                    )
+                }
+                if drop_member is not None and drop_member[0] == group:
+                    out.discard(drop_member[1])
+                if (
+                    add_member is not None
+                    and add_member[0] == group
+                    and (include_disabled or self.is_active(add_member[1]))
+                ):
+                    out.add(add_member[1])
+                if drop_user is not None:
+                    out.discard(drop_user)
+                return out
+
+            out: dict[str, str] = {u: "admin" for u in members(ADMIN_GROUP)}
+            for group, role in grants.items():
+                for u in members(group):
+                    if role_rank(role) > role_rank(out.get(u)):
+                        out[u] = role
         return dict(sorted(out.items()))
 
     def role_of(self, user_id: str, workspace_id: str) -> str | None:

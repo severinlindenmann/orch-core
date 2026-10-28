@@ -3414,6 +3414,51 @@ def test_d2_host_clock_selects_last_grant(client, token, stub, script, monkeypat
         assert intent["agent"] == {"hours": 8, "scope": "workable"}
 
 
+def test_d2_valid_access_create_start_view_uses_stored_body(client, token, stub, script, monkeypatch):
+    from datetime import datetime, timedelta
+
+    from orch_dashboard.gateway import Gateway
+
+    script.features = ["custody", "sequence"]
+    real = Gateway.call
+    now = datetime(2026, 10, 28, 12, tzinfo=UTC)
+
+    def call(self, ws, op, *args, **kwargs):
+        if op == "whoami":
+            return {
+                "runner": {
+                    "now": now.isoformat(),
+                    "grant": ({"startable": True, "until": (now + timedelta(minutes=16)).isoformat()}),
+                }
+            }
+        return real(self, ws, op, *args, **kwargs)
+
+    monkeypatch.setattr(Gateway, "call", call)
+    res = prepare(
+        client, token, stub, {**SEQUENCE, "launch": {"harness": "codex", "mode": "refine"}, "agent": {"hours": 8}}
+    )
+    assert res.status_code == 200, res.text
+    args = next(args for op, args in script.clients[0].calls if op == "prepare")
+    intent = args["sequence"]["intent"]
+    assert intent["launch"] == {"harness": "codex", "mode": "refine"}
+    assert "agent" not in intent
+
+    # /view must retrieve the body stored by /prepare, after agent was removed.
+    # The browser proposed a grant; the test never supplies a stripped body.
+    script.view["view"].update(
+        op="new",
+        headline="Create ticket and start agent",
+        risk_lines=[],
+        confirm={"kind": "click", "mode": "press"},
+    )
+    shown = client.post(url(stub, "view"), json={"request_id": res.json()["request_id"]}, headers=hdr(token))
+    assert shown.status_code == 200, shown.text
+    view = shown.json()["view"]
+    assert view["op"] == "new"
+    assert view["risk_lines"] == []
+    assert view["confirm"] == {"kind": "click", "mode": "press"}
+
+
 @pytest.mark.parametrize(
     "op,risk,mode,ok",
     [

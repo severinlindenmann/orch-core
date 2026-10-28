@@ -169,22 +169,31 @@ def test_click_retry_resumes_same_sequence_without_another_ticket(served, monkey
         prepared = click_prepare(click, intent)
         shown = click.view(prepared["request_id"])
         click.mono.t += 2
-        once = []
+        submissions = []
 
         def lose_first_answer(op, args, result):
-            if op == "human.submit" and not once:
-                once.append(True)
-                raise OSError("lost answer after landing")
+            if op == "human.submit":
+                from orch import canon
+
+                submissions.append((args["request_id"], canon.dumps(args["events"]), result))
+                if len(submissions) == 1:
+                    raise OSError("lost answer after landing")
             return result
 
         click.tamper = lose_first_answer
         with pytest.raises(ClickError) as caught:
             click.sign(prepared["request_id"], shown["view_digest"])
         assert caught.value.reason == "resumable"
-        click.tamper = None
         result = click.sign(prepared["request_id"], shown["view_digest"])
         assert result["result"]["key"]
         assert click.signatures == len(sequence.steps(intent))
+        assert submissions[0][:2] == submissions[1][:2]
+        assert submissions[1][2]["duplicate"] is True
+        from tests.host.human_helpers import ok
+
+        rows = ok(served.client().req("ticket.query", {}))["data"]
+        tickets = next(value for value in rows.values() if isinstance(value, list))
+        assert len([ticket for ticket in tickets if ticket["title"] == intent["title"]]) == 1
     finally:
         click.close()
 
@@ -287,3 +296,35 @@ def test_core_requires_grant_risk_and_press_view(served, monkeypatch, bad):
         assert click.signatures == 0
     finally:
         click.close()
+
+
+@pytest.mark.parametrize("status", ["revoked", "removed"])
+def test_launch_submit_without_signer_get_refuses_invalid_device(human, tmp_path, status):
+    from tests.host.human_helpers import err, ok
+
+    rig = Rig(human, tmp_path, launch_intent())
+    prepared = rig.first()
+    rid = prepared["request"]["id"]
+    # A read without a signer does not unbind the prepare-time device/auth.
+    read = ok(human.c.req("human.get", {"request_id": rid}))["data"]
+    assert read["events"] == prepared["events"]
+    signed = human.sign(read)
+    ws = human.served.lab.ws
+    ws.tick()
+    store = ws.other()
+    ws.store = store
+    try:
+        ws.add_device()  # keep a working device so the person connection remains authorized
+        if status == "revoked":
+            ws.revoke_device(human.person.device)
+        else:
+            store.append(
+                ws.person_event(ws.owner, "workspace", "device.removed", device=human.person.device),
+                log="workspace",
+            )
+    finally:
+        store.close()
+        ws.store = None
+    assert err(human.submit_res(rid, signed.events)) == "device.invalid"
+    rows = ok(human.c.req("ticket.query", {}))["data"]
+    assert not next(value for value in rows.values() if isinstance(value, list))

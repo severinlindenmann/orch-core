@@ -53,32 +53,17 @@ def full_workspaces(registry: Any) -> list[str]:
 
 
 def roles_after(access: Access, ws: str, e: Edit) -> dict[str, str]:
-    """``{user_id: role}`` in workspace ``ws`` as :meth:`Access.roles` would answer once ``e`` was applied."""
-    grants = {g["group"]: g["role"] for g in access.grants(ws)}
-    if e.set_grant is not None:
-        grants[e.set_grant[0]] = e.set_grant[1]
-    for g in (e.drop_grant, e.drop_group):
-        if g is not None:
-            grants.pop(g, None)
-
-    def members(group: str) -> set[str]:
-        if group == e.drop_group:
-            return set()
-        out = set(access.members(group))
-        if e.drop_member is not None and e.drop_member[0] == group:
-            out.discard(e.drop_member[1])
-        if e.add_member is not None and e.add_member[0] == group:
-            out.add(e.add_member[1])
-        if e.drop_user is not None:
-            out.discard(e.drop_user)
-        return out
-
-    out: dict[str, str] = {u: "admin" for u in members(ADMIN_GROUP)}
-    for group, role in grants.items():
-        for u in members(group):
-            if role_rank(role) > role_rank(out.get(u)):
-                out[u] = role
-    return out
+    """``{user_id: role}`` in workspace ``ws`` as :meth:`Access.roles` would answer once ``e`` was applied: the access
+    model's own computation (:meth:`Access.roles_overlay`), not a second copy of it."""
+    return access.roles_overlay(
+        ws,
+        set_grant=e.set_grant,
+        drop_grant=e.drop_grant,
+        drop_group=e.drop_group,
+        drop_user=e.drop_user,
+        drop_member=e.drop_member,
+        add_member=e.add_member,
+    )
 
 
 # --- increases: who must approve ---------------------------------------------------------------------------------------

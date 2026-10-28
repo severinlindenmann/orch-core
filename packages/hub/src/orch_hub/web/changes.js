@@ -68,6 +68,7 @@ export function changesView(data, actions, now = Date.now()) {
     for (const ap of change.approvals ?? []) {
       out.push(h("div", { class: "banner warn", role: "status" }, h("b", { text: "Applied without your approval" }),
         h("div", { class: "small", text: text(change.decided_by || "An administrator") + " applied this on " + when(change.decided_ms, now) + ": " + sentence(change, ap.workspace_name) + "." }),
+        ap.people?.length ? h("div", { class: "small", text: "Now with access: " + ap.people.map((x) => text(x.name || "A person") + " (" + role(x.role) + ")").join(", ") + "." }) : null,
         h("div", { class: "small", text: "Reason given: " + text(change.reason || "none") })));
     }
   }

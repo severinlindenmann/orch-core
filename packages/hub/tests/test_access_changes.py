@@ -1094,3 +1094,133 @@ def test_grant_and_member_add_in_either_order_never_give_unapproved_reach(w, gra
             for c in done
             for a in w.changes._db.approvals(c["id"])
         )
+
+
+def test_roles_overlay_is_exactly_roles_after_the_edit_is_applied():
+    """Property: for random edits, the simulated roles equal roles() once the edit is really applied (one computation)."""
+    import random
+
+    from orch_hub.access import Access
+    from orch_hub.access.store import ADMIN_GROUP, AccessError
+
+    rng = random.Random(1028)
+    wss = [f"{n:02x}" * 16 for n in (0xA1, 0xB2, 0xC3)]
+    for _ in range(60):
+        a = Access(":memory:")
+        users = [f"{n:02x}" * 16 for n in range(1, 6)]
+        groups = ["g1", "g2", "g3"]
+        for u in users:
+            a.add_user(u, "u" + u[:2])
+        for g in groups:
+            a.add_group(g)
+        for u in users:
+            for g in rng.sample([*groups, ADMIN_GROUP], rng.randint(0, 2)):
+                a.add_member(g, u)
+        for ws in wss:
+            for g in rng.sample(groups, rng.randint(0, 3)):
+                a.grant(ws, g, rng.choice(["read", "edit", "admin"]))
+        for _step in range(6):
+            kind = rng.choice(["set_grant", "drop_grant", "drop_member", "add_member", "drop_group", "drop_user"])
+            ws0, g, u = rng.choice(wss), rng.choice([*groups, ADMIN_GROUP]), rng.choice(users)
+            role = rng.choice(["read", "edit", "admin"])
+            ggrant = rng.choice(groups)  # a grant is never made to the implicit admin group
+            args = {
+                "set_grant": {"set_grant": (ggrant, role)},
+                "drop_grant": {"drop_grant": ggrant},
+                "drop_member": {"drop_member": (g, u)},
+                "add_member": {"add_member": (g, u)},
+                "drop_group": {"drop_group": ggrant},
+                "drop_user": {"drop_user": u},
+            }[kind]
+            predicted = {ws: a.roles_overlay(ws, **args) for ws in wss}
+            try:
+                if kind in ("set_grant", "drop_grant"):  # a grant is per workspace: only ws0 changes
+                    predicted = {ws: a.roles_overlay(ws, **(args if ws == ws0 else {})) for ws in wss}
+                    if kind == "set_grant":
+                        a.grant(ws0, ggrant, role)
+                    else:
+                        a.revoke(ws0, ggrant)
+                elif kind == "drop_member":
+                    a.remove_member(g, u)
+                elif kind == "add_member":
+                    a.add_member(g, u)
+                elif kind == "drop_group":
+                    a.remove_group(ggrant)
+                else:
+                    a.remove_user(u)
+            except AccessError:
+                continue  # a refused edit changes nothing (the overlay is only asked about what would apply)
+            assert {ws: a.roles(ws) for ws in wss} == predicted, (kind, args)
+        a.close()
+
+
+def test_override_reaches_a_workspace_bound_after_the_proposal(w):
+    """Opus blocker: an override is judged by what the change does NOW; every owner it reaches gets the record and notice."""
+    from orch_hub.access.store import ADMIN_GROUP
+
+    tok = w.login(w.admin)
+    s, o, _ = w.call("PUT", f"/admin/groups/{ADMIN_GROUP}/members/{w.newbie}", token=tok)
+    assert s == 202
+    cid = o["change_id"]
+    nora, ws5 = w.env.user("nora"), "d4" * 16
+    w.reg.add(ws5, "full", owner=nora, name="Late")  # bound AFTER the proposal: no approval row names it
+    assert ws5 not in {a["workspace_id"] for a in w.changes._db.approvals(cid)}
+    assert w.call("POST", f"/admin/changes/{cid}/override", {"reason": "release tonight"}, token=tok)[0] == 200
+    assert reach(w, ws5, w.newbie) == "admin"
+    # the activity record exists for the late workspace ...
+    rows = [e for e in w.activity.list(limit=200) if e["type"] == "change.overridden"]
+    assert ws5 in {e["workspace_id"] for e in rows} and {WS2, WS3} <= {e["workspace_id"] for e in rows}
+    # ... and its owner gets the notice WITH the people who really gained access
+    notices = w.call("GET", "/me/changes", token=w.login(nora))[1]["notices"]
+    assert [n["id"] for n in notices] == [cid]
+    ap = notices[0]["approvals"][0]
+    assert ap["workspace_id"] == ws5 and [d["user_id"] for d in ap["delta"]] == [w.newbie]
+    assert ap["people"][0]["name"] == "newbie"
+
+
+def test_only_changes_writes_membership_and_grants():
+    """AST guard (like the owner_alias one): outside orch_hub/changes, nothing calls ``add_member`` / ``grant`` on the
+    access model except the operator CLI at the hub terminal (state-dir owner) and the one-time first-admin setup."""
+    root = Path(orch_hub.__file__).parent
+    allowed = {("access/cli.py", None), ("webapi/api.py", "_h_setup")}
+    found = set()
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        if rel.startswith("changes/") or rel == "access/store.py":
+            continue
+        tree = ast.parse(path.read_text())
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in ("add_member", "grant")
+            ):
+                receiver = ast.unparse(node.func.value)
+                if not (receiver.endswith("access") or receiver in ("acc", "self.acc", "self._access")):
+                    continue
+                fn = node
+                while fn in parents and not isinstance(fn, ast.FunctionDef):
+                    fn = parents[fn]
+                found.add((rel, fn.name if isinstance(fn, ast.FunctionDef) else None))
+    unexpected = {f for f in found if f not in allowed and f[0] != "access/cli.py"}
+    assert not unexpected, f"access is written outside Changes: {sorted(unexpected)}"
+
+
+def test_approval_routes_have_the_same_freshness_gate_as_signing():
+    """A session a workspace vouched for (switch ticket, no password sign-in) is read-only: it reaches neither /sign nor
+    the owner's approve/prepare/reject, because none of them is in SWITCH_HANDLERS (routes default closed)."""
+    from orch_hub.webapi.api import SWITCH_HANDLERS
+
+    gated = {r.handler for r in ROUTES if r.path.startswith("/api/v1/me/changes") or r.path.startswith("/api/v1/sign")}
+    assert {"change_prepare", "change_approve", "change_reject", "prepare", "sign"} <= gated
+    assert not gated & SWITCH_HANDLERS
+
+
+def test_a_real_registry_without_an_alias_says_none_not_an_owner():
+    from orch_hub.changes import rules as R
+    from orch_hub.link import Registry
+
+    reg = Registry(":memory:")
+    assert reg.owner_alias("e5" * 16) is None and R.owner_of(reg, "e5" * 16) is None
+    assert R.is_full(reg, "e5" * 16) is False  # an unknown workspace never needs, and never skips, an approval

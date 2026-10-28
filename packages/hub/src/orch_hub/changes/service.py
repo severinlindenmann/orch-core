@@ -569,7 +569,16 @@ class Changes:
                 self._validate_grant(body["workspace_id"], body["group"], body["role"])
             elif not self._access.has_user(body["user_id"]):
                 raise AccessError("unknown_user")
-            self._log("change.overridden", ch, self._ws_of(ch["id"]), actor=admin, reason=reason)
+            # what the change does to access NOW, not what it did when it was proposed: workspaces bound or granted since
+            # then are reached too, and every owner it reaches is told (condition 9)
+            reached = R.reach_delta(self._access, self._reg, ch["kind"], body)
+            for ws in reached:
+                if R.owner_of(self._reg, ws) is None:
+                    continue
+                self._owner_notice_row(ch["id"], ws, reached[ws])
+            self._log(
+                "change.overridden", ch, sorted(set(self._ws_of(ch["id"])) | set(reached)), actor=admin, reason=reason
+            )
             with self._db.tx() as db:
                 if (
                     db.execute(
@@ -581,6 +590,21 @@ class Changes:
                 ):
                     raise ChangeError("not_pending")
                 self._apply(ch, body, actor=admin)
+
+    def _owner_notice_row(self, change_id: str, ws: str, delta: list[dict[str, str]]) -> None:
+        """Make sure the owner of ``ws`` has an approval row on this change that carries the people who REALLY gain access
+        (the notice reads these rows): a new row for a workspace the proposal did not name, the delta refreshed on the rest."""
+        owner = R.owner_of(self._reg, ws)
+        text = cj(delta).decode()
+        with self._db.tx() as db:
+            if db.execute("SELECT 1 FROM approval WHERE change_id=? AND workspace_id=?", (change_id, ws)).fetchone():
+                db.execute("UPDATE approval SET delta=? WHERE change_id=? AND workspace_id=?", (text, change_id, ws))
+            else:
+                db.execute(
+                    "INSERT INTO approval(change_id, workspace_id, approver_user, base_snapshot_version, state, delta) "
+                    "VALUES (?,?,?,?,'pending',?)",
+                    (change_id, ws, owner, self._version(ws), text),
+                )
 
     def cancel(self, change_id: object, actor: str) -> None:
         """The proposer, or a hub admin, withdraws a pending change."""

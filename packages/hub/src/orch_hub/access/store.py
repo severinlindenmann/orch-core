@@ -345,17 +345,48 @@ class Access:
 
     def roles(self, workspace_id: str) -> dict[str, str]:
         """``{user_id: role}`` for one workspace, sorted by user id; users without a role are absent."""
+        return self.roles_overlay(workspace_id)
+
+    def roles_overlay(
+        self,
+        workspace_id: str,
+        *,
+        set_grant: tuple[str, str] | None = None,
+        drop_grant: str | None = None,
+        drop_group: str | None = None,
+        drop_user: str | None = None,
+        drop_member: tuple[str, str] | None = None,
+        add_member: tuple[str, str] | None = None,
+    ) -> dict[str, str]:
+        """THE role computation: what :meth:`roles` answers, optionally as it WOULD be after one hypothetical edit (a
+        grant set or dropped, a group, user or member removed, a member added). With no edit it is :meth:`roles` itself,
+        so a simulation (``changes.rules.reach_delta``) and the roles the hub signs cannot drift apart."""
         _hex(workspace_id, "workspace_id")
-        out: dict[str, str] = {}
         with self.lock:  # one consistent read
-            for (u,) in self._q("SELECT user_id FROM members WHERE grp=?", (ADMIN_GROUP,)):
-                out[u] = "admin"
-            for u, r in self._q(
-                "SELECT m.user_id, g.role FROM grants g JOIN members m ON m.grp = g.grp WHERE g.workspace_id=?",
-                (workspace_id,),
-            ):
-                if role_rank(r) > role_rank(out.get(u)):
-                    out[u] = r
+            grants = {g: r for g, r in self._q("SELECT grp, role FROM grants WHERE workspace_id=?", (workspace_id,))}
+            if set_grant is not None:
+                grants[set_grant[0]] = set_grant[1]
+            for dropped in (drop_grant, drop_group):
+                if dropped is not None:
+                    grants.pop(dropped, None)
+
+            def members(group: str) -> set[str]:
+                if group == drop_group:
+                    return set()
+                out = {u for (u,) in self._q("SELECT user_id FROM members WHERE grp=?", (group,))}
+                if drop_member is not None and drop_member[0] == group:
+                    out.discard(drop_member[1])
+                if add_member is not None and add_member[0] == group:
+                    out.add(add_member[1])
+                if drop_user is not None:
+                    out.discard(drop_user)
+                return out
+
+            out: dict[str, str] = {u: "admin" for u in members(ADMIN_GROUP)}
+            for group, role in grants.items():
+                for u in members(group):
+                    if role_rank(role) > role_rank(out.get(u)):
+                        out[u] = role
         return dict(sorted(out.items()))
 
     def role_of(self, user_id: str, workspace_id: str) -> str | None:

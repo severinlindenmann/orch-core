@@ -10,6 +10,7 @@ import { homeView, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { accountView } from "./account.js";
 import { skillsPage } from "./skills.js";
+import { spacesPage } from "./spaces.js";
 import { addonsPage } from "./addons.js";
 import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
@@ -168,7 +169,7 @@ function shell(active, ...nodes) {
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), tab("phones", "Phones", "nv"), state.user?.is_admin ? tab("connections", "Connections", "nv") : null, tab("handoffs", "Hand-offs", "nv"), tab("account", "Account", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("addons", "Add-ons", "nv") : null, state.user?.is_admin ? tab("skills", "Skills", "nv") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
+    tab("home", "Home", "nv"), tab("approvals", "Approvals", "nv"), tab("workspaces", "Workspaces", "nv"), tab("phones", "Phones", "nv"), state.user?.is_admin ? tab("connections", "Connections", "nv") : null, tab("handoffs", "Hand-offs", "nv"), tab("account", "Account", "nv"), state.user?.is_admin ? tab("services", "Services", "nv") : null, state.user?.is_admin ? tab("addons", "Add-ons", "nv") : null, state.user?.is_admin ? tab("skills", "Skills", "nv") : null, state.user?.is_admin ? tab("spaces", "Spaces", "nv") : null, state.user?.is_admin ? tab("spaces", "Spaces", "nav") : null, state.user?.is_admin ? tab("activity", "Activity", "nv") : null, state.user?.is_admin ? tab("admin", "Admin", "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   if (!frame) {
     const top = h("header", { class: "topbar" }, h("span", { class: "t breadcrumb", text: hubName }),
@@ -1122,7 +1123,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin, activity , account , handoffs , connections: () => connectionsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , phones , skills: () => skillsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , addons: () => addonsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) }[route.kind] ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity , account , handoffs , connections: () => connectionsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , phones , skills: () => skillsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , addons: () => addonsPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) , spaces: () => spacesPage({ api, refresh, loadRail, state, loginView, home, reauthView, pageLoading, shell, say, banner }) }[route.kind] ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

@@ -334,7 +334,17 @@ def test_a_switch_session_reaches_only_the_named_routes_everything_else_is_close
         if rt.auth == "none":
             continue
         path = rt.path[len("/api/v1") :]
-        for name in ("workspace_id", "item_id", "user_id", "group", "channel_id", "prepared_id", "change_id", "name"):
+        for name in (
+            "workspace_id",
+            "item_id",
+            "user_id",
+            "group",
+            "channel_id",
+            "prepared_id",
+            "change_id",
+            "name",
+            "space_id",
+        ):
             path = path.replace("{" + name + "}", ws)
         s, o, _ = w.call(rt.method, path, {}, token=fresh())
         seen += 1

@@ -33,6 +33,11 @@ CREATE TABLE IF NOT EXISTS space_item (
   workspace_id TEXT NOT NULL, digest TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0, sealed TEXT NOT NULL,
   PRIMARY KEY (space_id, item_id)
 );
+CREATE TABLE IF NOT EXISTS space_mode (
+  space_id TEXT NOT NULL, workspace_id TEXT NOT NULL, mode TEXT NOT NULL CHECK (mode IN ('reads','edits')),
+  PRIMARY KEY (space_id, workspace_id)
+);
+CREATE TABLE IF NOT EXISTS space_archive (space_id TEXT PRIMARY KEY, archived_ms INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS space_item_seq ON space_item (space_id, seq);
 CREATE TABLE IF NOT EXISTS space_accept (
   space_id TEXT NOT NULL, workspace_id TEXT NOT NULL, accept TEXT NOT NULL, PRIMARY KEY (space_id, workspace_id)
@@ -56,6 +61,49 @@ class SpaceStore:
     def space_ids(self) -> list[str]:
         with self.lock:
             return [r[0] for r in self._db.execute("SELECT space_id FROM space ORDER BY space_id")]
+
+    # --- the admin's per-member mode and the archive flag (M3, #1444 #1447): hub-side policy, not part of any signed record ---
+
+    def mode(self, space_id: str, ws: str) -> str:
+        """``edits`` (the default: puts as before) or ``reads`` (the hub refuses this workspace's puts and revokes)."""
+        with self.lock:
+            r = self._db.execute(
+                "SELECT mode FROM space_mode WHERE space_id=? AND workspace_id=?", (space_id, ws)
+            ).fetchone()
+        return "edits" if r is None else r[0]
+
+    def modes(self, space_id: str) -> dict[str, str]:
+        with self.lock:
+            return dict(
+                self._db.execute("SELECT workspace_id, mode FROM space_mode WHERE space_id=?", (space_id,)).fetchall()
+            )
+
+    def set_mode(self, space_id: str, ws: str, mode: str) -> None:
+        with self.lock, self._db:
+            if mode == "edits":
+                self._db.execute("DELETE FROM space_mode WHERE space_id=? AND workspace_id=?", (space_id, ws))
+            else:
+                self._db.execute(
+                    "INSERT INTO space_mode VALUES (?,?,?) ON CONFLICT(space_id, workspace_id) DO UPDATE SET mode=excluded.mode",
+                    (space_id, ws, mode),
+                )
+
+    def drop_mode(self, space_id: str, ws: str) -> None:
+        """A member left (removed, unbound): its mode goes with it, so a later return starts from the default."""
+        with self.lock, self._db:
+            self._db.execute("DELETE FROM space_mode WHERE space_id=? AND workspace_id=?", (space_id, ws))
+
+    def archived_ms(self, space_id: str) -> int | None:
+        with self.lock:
+            r = self._db.execute("SELECT archived_ms FROM space_archive WHERE space_id=?", (space_id,)).fetchone()
+        return None if r is None else r[0]
+
+    def set_archived(self, space_id: str, ms: int | None) -> None:
+        with self.lock, self._db:
+            if ms is None:
+                self._db.execute("DELETE FROM space_archive WHERE space_id=?", (space_id,))
+            else:
+                self._db.execute("INSERT OR REPLACE INTO space_archive VALUES (?,?)", (space_id, ms))
 
     def exists(self, space_id: str) -> bool:
         with self.lock:
@@ -104,7 +152,15 @@ class SpaceStore:
     def delete_space(self, space_id: str) -> None:
         """The last member left: the space, its keys, wraps and items go (what was read stays read)."""
         with self.lock, self._db:
-            for t in ("space", "space_epoch", "space_wrap", "space_item", "space_accept"):
+            for t in (
+                "space",
+                "space_epoch",
+                "space_wrap",
+                "space_item",
+                "space_accept",
+                "space_mode",
+                "space_archive",
+            ):
                 self._db.execute(f"DELETE FROM {t} WHERE space_id=?", (space_id,))
 
     def epoch_row(self, space_id: str, epoch: int) -> tuple[list[str], bytes, dict[str, Any]] | None:

@@ -33,7 +33,17 @@ def test_a_pairing_token_reaches_nothing_beyond_pair_bind_sign_out(w):  # noqa: 
         if rt.handler in ("reg_begin", "reg_complete"):
             continue
         path = rt.path.removeprefix("/api/v1")
-        for k in ("channel_id", "user_id", "workspace_id", "item_id", "prepared_id", "group", "change_id", "space_id"):
+        for k in (
+            "channel_id",
+            "user_id",
+            "workspace_id",
+            "item_id",
+            "prepared_id",
+            "group",
+            "change_id",
+            "name",
+            "space_id",
+        ):
             path = path.replace("{" + k + "}", cid if k == "channel_id" else "ab" * 16)
         s, o, _ = w.call(rt.method, path, {} if rt.method != "GET" else None, token=tok)
         assert o == {"error": "forbidden_role"}, (rt.method, rt.path, s, o)

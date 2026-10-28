@@ -38,6 +38,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -94,6 +95,8 @@ _SCHEMAS = {
                     "required": ["ticket", "harness", "mode", "spec"], "additionalProperties": False},
 }  # fmt: skip
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
+
+LOG = logging.getLogger(__name__)
 
 
 def _validate(op: str, args: Any) -> None:
@@ -824,6 +827,8 @@ async def _company_skills(call: Call, argv: list[str]) -> list[dict[str, str]]:
     """The company skills the owner accepted, for a launch that has the rules file (a Claude Code ticket work folder).
     Every other launch (Codex, a worktree, a repo, the workspace root, a shell) gets none: they have no appended system
     prompt file, and a company skill goes nowhere else. Any doubt (no hub, a file the host will not trust) is none."""
+    from orch.runner import rules
+
     from . import orgstate
     from .launch import RULES_FLAG, RULES_PLACEHOLDER
 
@@ -834,7 +839,14 @@ async def _company_skills(call: Call, argv: list[str]) -> list[dict[str, str]]:
         served = await asyncio.to_thread(orgstate.served, call.service)
     except Exception:  # noqa: BLE001 - the agent starts without company skills rather than not at all
         return []
-    return [{"name": s["name"], "text": s["text"], "digest": s["digest"]} for s in served["skills"]]
+    out = []
+    for s in served["skills"]:
+        one = {"name": s["name"], "text": s["text"], "digest": s["digest"]}
+        if rules.company_problem([one]) is not None:  # the runner would refuse the whole spawn: drop this skill instead
+            LOG.warning("a company skill the runner would refuse was left out of a launch (%s)", s["name"])
+            continue
+        out.append(one)
+    return out
 
 
 def make_workdir(call: Call, key: str, expect: str | None) -> dict[str, Any]:

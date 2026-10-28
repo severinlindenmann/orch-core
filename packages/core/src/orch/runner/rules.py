@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
+import secrets
 import stat
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -72,17 +74,18 @@ def _read(root: str, rel: str, room: int) -> str | None:
 
 
 def company_problem(skills: object) -> str | None:
-    """None when ``skills`` is a list the runner may append, else a short reason. The same text rules as the hub and the
-    host (``orch.hubclient.orgtext``: visible characters only, no front matter, no name starting ``orch``), a digest
-    that
-    matches, and no way to fake the structure of this file: a skill may not carry the company header, a
-    ``### Company skill:`` line or a line that starts ``## `` (so no ``## AGENTS`` or a second company section)."""
+    """None when ``skills`` is a list the runner may append, else a short reason. The same text rules as the hub and
+    the host (``orch.hubclient.orgtext``: visible characters only, no front matter, no name starting ``orch``), a
+    digest that matches, and not the fixed company header line. Nothing else about the text is refused: each skill is
+    written inside a fence with a random delimiter (:func:`_company`), so headings, lists and fences in a skill are
+    inert text."""
     from orch.hubclient.orgbundles import skill_digest
     from orch.hubclient.orgtext import skill_problem
 
     if type(skills) is not list or len(skills) > SKILLS_LIMIT:
         return "shape"
     names: set[str] = set()
+    header = COMPANY_HEADER.strip().splitlines()[0]
     for sk in skills:
         if type(sk) is not dict or set(sk) != {"name", "text", "digest"}:
             return "shape"
@@ -92,16 +95,34 @@ def company_problem(skills: object) -> str | None:
         if sk["digest"] != skill_digest(name, text) or name in names:
             return "digest"
         names.add(name)
-        first = COMPANY_HEADER.strip().splitlines()[0]
-        if first in text or any(line.lstrip().startswith(("## ", SKILL_HEADING)) for line in text.splitlines()):
-            return "structure"
+        if header in text:
+            return "structure"  # the one line that would fake the start of the company section
     return None
 
 
+def _fence(text: str, taken: str) -> tuple[str, str]:
+    """``(opening, closing)`` delimiter for one skill: tildes longer than any run in the text, then ``orch-skill-`` and
+    16 random hex digits drawn per launch, never contained in ``taken`` (all skill texts). A skill cannot know the
+    digits, so it cannot write its own closing line."""
+    longest = max((len(m) for m in re.findall(r"~+", text)), default=0)
+    tildes = "~" * max(4, longest + 1)
+    while True:
+        delim = f"{tildes}orch-skill-{secrets.token_hex(8)}"
+        if delim not in taken:
+            return delim, delim
+
+
 def _company(skills: Sequence[Mapping[str, str]]) -> str:
+    """The company section: the fixed header, then per skill a heading the runner writes itself and the skill body
+    inside a fence. Headings, rules and fences inside a body are just text between two delimiters."""
     if not skills:
         return ""
-    return COMPANY_HEADER + "".join(f"\n{SKILL_HEADING}{sk['name']}\n\n{sk['text'].strip()}\n" for sk in skills)
+    taken = "\n".join(sk["text"] for sk in skills)
+    out = [COMPANY_HEADER]
+    for sk in skills:
+        opening, closing = _fence(sk["text"], taken)
+        out.append(f"\n{SKILL_HEADING}{sk['name']}\n\n{opening}\n{sk['text'].strip()}\n{closing}\n")
+    return "".join(out)
 
 
 def build(root: str, skills: Sequence[Mapping[str, str]] = ()) -> str:

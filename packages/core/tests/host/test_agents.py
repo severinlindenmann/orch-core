@@ -533,7 +533,7 @@ def test_company_skills_reach_only_the_rules_file_of_a_claude_code_ticket_agent(
     from orch.host import orgstate
     from orch.hubclient.orgbundles import skill_digest
 
-    text = "Write invoice numbers as INV-2026-0001."
+    text = "Write invoice numbers as INV-2026-0001.\n## Steps\n1. Ask for the number."  # a normal skill with a heading
     monkeypatch.setattr(
         orgstate, "served",
         lambda service: {
@@ -551,6 +551,10 @@ def test_company_skills_reach_only_the_rules_file_of_a_claude_code_ticket_agent(
     path = argv[argv.index("--append-system-prompt-file") + 1]
     body = Path(path).read_text()
     assert "### Company skill: invoices" in body and text in body
+    opening = body[body.index("~~~~orch-skill-") :].splitlines()[0]
+    assert body.count(opening) == 2 and body.index(opening) < body.index("## Steps") < body.rindex(
+        opening
+    )  # in its fence
     assert body.index("rules of the orch workspace") < body.index("## Company skills from your company hub")
     assert not any(text in a for a in argv) and not any(text in v for v in env.values())  # not in argv or environment
     pre2 = preview(c, ticket=key, harness="codex", mode="work")

@@ -365,7 +365,8 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
 
   // "Create and start agent": what the review shows about the start, kept with the request so the start afterwards is
   // compared with exactly that (never with whatever the form says by then). One idem per review.
-  interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; withAccess: boolean }
+  // `notice`: the review shows the full "runs as you" notice (not read yet), so signing it counts as reading it.
+  interface StartSnapshot { reviewed: Reviewed; idem: string; priorGrantIds: string[]; view: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; withAccess: boolean; notice: boolean }
   const [handoffNew, setHandoffNew] = useState<{ action: HandoffAction; draft: Draft; another: boolean; start: StartSnapshot | null; anchor: HTMLElement | null; n: number } | null>(null)
   const [signing, setSigning] = useState(false)
   const primaryRef = useRef<HTMLButtonElement>(null)
@@ -416,7 +417,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
       const made = handoffNewTicket(full, me.person, withAccess ? plan.hours : null)
       if ('problem' in made) return setServerError(made.problem)
       const start: StartSnapshot | null = startNow
-        ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess }
+        ? { reviewed: { ...plan.reviewed, grantId: fresh?.id ?? null }, idem: newIdem(), priorGrantIds: plan.priorGrantIds, view: { shown: plan.shown, choices: plan.choices, choice: plan.choice }, withAccess, notice: plan.noticeUnread }
         : null
       return setHandoffNew((old) => ({ action: made.action, draft: full, another, start, anchor, n: (old?.n ?? 0) + 1 }))
     }
@@ -488,7 +489,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
   const initialOf = (snap: StartSnapshot): StartInitial => ({ harness: snap.reviewed.choice.harness, mode: snap.reviewed.choice.mode, ...(snap.reviewed.choice.model ? { model: snap.reviewed.choice.model } : {}) })
   /** Every signature landed: the start runs in the background and the ticket page opens at once with "Getting started…". */
   const beginStart = (ticketKey: string, snap: StartSnapshot) => {
-    void startInBackground(qc, { ws: workspace.id, key: ticketKey, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds })
+    void startInBackground(qc, { ws: workspace.id, key: ticketKey, reviewed: snap.reviewed, idem: snap.idem, priorGrantIds: snap.priorGrantIds, noticeRead: snap.notice })
     afterCreate(false, ticketKey)
   }
   const afterCreate = (another: boolean, ticketKey: string | null) => {
@@ -681,7 +682,7 @@ export function NewTicketForm({ me, workspace, variant = 'page', onDirtyChange, 
           controls={handoffNew.start?.withAccess ? <AccessSelect hours={plan.hours} onHours={plan.setHours} lengths={plan.lengths} prefix={workspace.prefix} agentName={harnessName(handoffNew.start.reviewed.choice.harness)} /> : undefined}
           doneToast={handoffNew.start ? '' : 'Ticket created'}
           onSigning={setSigning}
-          unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} /> : undefined}
+          unsigned={handoffNew.start ? <NotSignedBlock plan={handoffNew.start.view} coreSaysSo={handoffNew.start.withAccess} notice={handoffNew.start.notice} /> : undefined}
           onClose={() => {
             // The ticket landed but its agent access did not: say so, and offer the Start agent dialog (which has the access card).
             const landed = partialKey.current

@@ -7,6 +7,7 @@ import { api, mockStore } from '@/api/client'
 import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { ApiError } from '@/api/types'
 import { clearMark, markOf } from '@/app/pages/ticket/progress'
+import { EXECUTION_LINE } from '@/app/terminal/real/executionLine'
 import { fakeRequest, state } from '@/test/handoffHarness'
 import { renderApp } from '@/test/renderApp'
 import { nowMs } from '@/lib/time'
@@ -253,11 +254,43 @@ describe('after the ticket exists', () => {
     expect(s.start).not.toHaveBeenCalled()
   })
 
-  it('an unacknowledged "runs as you" notice: a failure mark, not an automatic start', async () => {
+  it('a "runs as you" notice not read yet is shown in full in the review; signing with it on screen starts the agent and saves it as read', async () => {
     setup({ acked: {} })
-    await signed()
+    const ack = vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } })
+    const { r, sheet } = await open()
+    await waitFor(() => expect(s.notices).toHaveBeenCalled(), T)
+    await r.user.click(await startBtn(sheet))
+    expect(await screen.findByTestId('not-signed-notice')).toHaveTextContent(EXECUTION_LINE)
+    expect(screen.getByTestId('not-signed-notice')).toHaveTextContent('Signing and starting the agent confirms you have read this.')
+    await r.user.click(screen.getByRole('button', { name: 'signed' }))
+    await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
+    await waitFor(() => expect(ack).toHaveBeenCalledWith(WS(), 'start_agent'), T)
+    expect(markOf(WS(), 'DEMO-0044')).toBeDefined() // "Getting started…"
+    expect(markOf(WS(), 'DEMO-0044')?.failed).toBeUndefined()
+  })
+
+  it('a notice already read is not shown in the review', async () => {
+    const { r, sheet } = await open()
+    await waitFor(() => expect(s.notices).toHaveBeenCalled(), T)
+    await new Promise((res) => setTimeout(res, 0))
+    await r.user.click(await startBtn(sheet))
+    await screen.findByTestId('not-signed-start')
+    expect(screen.queryByTestId('not-signed-notice')).toBeNull()
+  })
+
+  it('an unacknowledged "runs as you" notice the review did not show: a failure mark, not an automatic start', async () => {
+    const ack = vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } })
+    const { r, sheet } = await open()
+    await waitFor(() => expect(s.notices).toHaveBeenCalled(), T)
+    await new Promise((res) => setTimeout(res, 0))
+    await r.user.click(await startBtn(sheet))
+    await screen.findByTestId('not-signed-start')
+    expect(screen.queryByTestId('not-signed-notice')).toBeNull() // read when the review opened ...
+    s.notices.mockResolvedValue({ acknowledged: {} }) // ... and no longer when the agent would start
+    await r.user.click(screen.getByRole('button', { name: 'signed' }))
     await failedOf()
     expect(s.start).not.toHaveBeenCalled()
+    expect(ack).not.toHaveBeenCalled()
   })
 
   it('the login-shell notice starts only once acknowledged', async () => {

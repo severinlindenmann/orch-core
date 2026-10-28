@@ -65,6 +65,7 @@ PUBLISH_OPS: dict[str, int] = {
     "publish.discard": 1,
     "publish.register": 1,
 }
+REGISTER_PER_MINUTE = 3
 WRITE_OPS = frozenset({"publish.prepare", "publish.send", "publish.revoke", "publish.discard", "publish.register"})
 #: the ops that talk to the server (their network half runs off the workspace worker, in :func:`execute`)
 NETWORK_OPS = frozenset({"publish.send", "publish.revoke", "publish.register"})
@@ -232,17 +233,25 @@ def _person(call: Call) -> str:
     return call.viewer
 
 
-def _rate(call: Call, what: str) -> None:
+def _owner(call: Call) -> None:
+    """Registering sends the workspace's delegation to the signed server: the owner's act (the role as it is now)."""
+    call.service.store.refresh()
+    member = call.service.store.state.workspace.members.get(call.viewer)
+    if member is None or member.role != "owner":
+        raise HostError("role.denied", "only a workspace owner registers this workspace with the publish server")
+
+
+def _rate(call: Call, what: str, limit: int | None = None) -> None:
     key = (call.service.workspace_id, str(call.viewer), what)
     now = time.monotonic()
     with _MU:
         q = _RATE.setdefault(key, collections.deque())
         while q and now - q[0] > 60:
             q.popleft()
-        if len(q) >= PER_MINUTE:
+        if len(q) >= (limit or PER_MINUTE):
             raise HostError(
                 "rate.limited",
-                "at most 10 publish requests per minute",
+                f"at most {limit or PER_MINUTE} publish requests per minute",
                 retry_after_ms=int((60 - (now - q[0])) * 1000) + 1,
             )
         q.append(now)
@@ -601,11 +610,13 @@ def serve(call: Call) -> dict[str, Any]:
 def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
     service = call.service
     person = _person(call)
+    if op == "publish.register":
+        _owner(call)
     _gate(call)
     cfg = _config(service)
     plan: dict[str, Any] = {"op": op, "cfg": cfg, "person": person}
     if op == "publish.register":
-        _rate(call, "register")
+        _rate(call, "register", REGISTER_PER_MINUTE)
         plan["reg"] = _delegation(call)
         plan["hub"] = _hub_route(service)
         _plan_card(call, plan)

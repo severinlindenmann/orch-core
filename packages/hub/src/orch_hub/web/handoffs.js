@@ -1,7 +1,7 @@
 import { emptyState } from "./feel.js";
 import { chip, h, text, when } from "./ui.js";
 
-const nameOf = (w) => text(w?.name || (w?.workspace_id ? "Workspace " + w.workspace_id.slice(0, 8) : "Another workspace"));
+const nameOf = (w) => text(w?.name || "Another workspace");
 const button = (label, onclick, props = {}) => h("button", { type: "button", text: label, onclick, ...props });
 
 export function statusOf(row, now = Date.now()) {

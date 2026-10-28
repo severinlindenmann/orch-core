@@ -13,7 +13,7 @@ def person_reach(access, registry, user_id):
     rows = []
     for ws in sorted(registry.pins()):
         mode = registry.last_mode(ws)
-        name = (registry.card(ws) or {}).get("name")
+        name = registry.display_name(ws)
         row = {
             "workspace_id": ws,
             "name": P4.render_text(name) if isinstance(name, str) and name else None,

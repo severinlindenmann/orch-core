@@ -172,10 +172,12 @@ def test_module_never_names_a_hub_write():
     # one-click share reductions
     allowed = {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link", "addon.list", "member.list"}
     assert set(calls) <= allowed
-    # the other write: `reduce`, which sends only the two ops that take sharing away (never an add or a sync)
-    assert src.count("write=True") == 2
+    # the other writes: `reduce` (only the two ops that take sharing away) and `add` (the two click-only ops that
+    # share more: a full local session, an owner, a plan this session was shown; see test_hub_share_add)
+    assert src.count("write=True") == 3
     assert set(re.findall(r"\"(share\.[a-z_]+)\"", src)) == {"share.rules", "share.preview", "share.revoke",
-                                                             "share.rule_remove"}  # fmt: skip
+                                                             "share.rule_remove", "share.rule_add",
+                                                             "share.sync"}  # fmt: skip
     assert "hubclient" not in src and "import orch" not in src
 
 

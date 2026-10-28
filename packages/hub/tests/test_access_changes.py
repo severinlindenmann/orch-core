@@ -884,7 +884,7 @@ def test_an_expired_change_is_never_applied(w):
     assert not has_grant(w, WS2, "devs", "edit") and row(w, cid)["state"] == "expired"
     # ... and not by the apply step itself, whatever state the row was in
     with pytest.raises(ChangeError) as e:
-        w.changes._apply(c, json.loads(c["body"]), actor=w.admin)
+        w.changes._apply(c, json.loads(c["body"]), actor=w.admin, approved=None)
     assert e.value.code == "expired" and not has_grant(w, WS2, "devs", "edit")
 
 
@@ -1299,3 +1299,85 @@ def test_a_flag_disabled_member_is_named_in_the_reach_and_re_enable_changes_no_r
     assert s == 200
     assert acc(w).roles(WS2) == before and w.newbie not in acc(w).roles(WS2)
     assert acc(w).groups_of(w.newbie) == []
+
+
+# --- the proposer's own workspaces: exempt only while they STILL own them; the proposer must still stand -----------------
+
+
+def _admin_group_change(w, own=True):
+    """admin owns WSA (so it needs no approval from anyone); olive and omar own WS2/WS3 and must approve."""
+    from orch_hub.access.store import ADMIN_GROUP
+
+    wsa = "a9" * 16
+    if own:
+        w.reg.add(wsa, "full", owner=w.admin, name="Mine")
+    tok = w.login(w.admin)
+    s, o, _ = w.call("PUT", f"/admin/groups/{ADMIN_GROUP}/members/{w.newbie}", token=tok)
+    assert s == 202, o
+    return wsa, o["change_id"], tok
+
+
+def _approve_all(w, cid):
+    last = None
+    for owner in (w.olive, w.omar):
+        otok, osig, och = owner_session(w, owner)
+        last = approve(w, otok, cid, osig, och)
+    return last
+
+
+def test_proposer_owned_workspace_is_exempt_while_the_proposer_still_owns_it(w):
+    wsa, cid, _tok = _admin_group_change(w)
+    assert wsa not in {a["workspace_id"] for a in w.changes._db.approvals(cid)}
+    s, o, _ = _approve_all(w, cid)
+    assert s == 200 and o["state"] == "applied" and reach(w, wsa, w.newbie) == "admin"
+
+
+def test_ownership_of_a_proposer_owned_workspace_moving_makes_the_change_stale(w):
+    wsa, cid, _tok = _admin_group_change(w)
+    w.reg.ws[wsa]["owner"] = w.dana  # someone else owns it now: they never approved, the exemption is gone
+    s, o, _ = _approve_all(w, cid)
+    assert (s, o) == (409, {"error": "stale_change"})
+    assert row(w, cid)["state"] == "rejected" and reach(w, wsa, w.newbie) is None and reach(w, WS2, w.newbie) is None
+
+
+def test_an_owner_less_workspace_never_matches_the_exemption(w):
+    wsa, cid, _tok = _admin_group_change(w)
+    w.reg.ws[wsa]["owner"] = None  # no alias now: not "proposer-owned", it is an orphan (hub admin only)
+    ch = w.changes._db.change(cid)
+    body = json.loads(ch["body"])
+    with pytest.raises(ChangeError) as e:
+        w.changes._check_reach(ch, body, w.newbie, {WS2, WS3})  # a non-admin applier is refused, never exempt
+    assert e.value.code == "owner_unknown"
+    w.changes._check_reach(ch, body, w.admin, {WS2, WS3})  # a hub admin may (it was in the proposal's reach)
+
+
+@pytest.mark.parametrize("how", ["disabled", "demoted"])
+def test_the_proposer_must_still_stand_at_finish(w, how, monkeypatch):
+    from orch_hub.access.store import ADMIN_GROUP
+
+    # snapshot versions held still, so the finish step itself (not the staleness check before it) is what is under test
+    monkeypatch.setattr(w.changes, "_version", lambda ws: 1)
+    _wsa, cid, _tok = _admin_group_change(w)
+    admin2 = w.env.user("admin2")
+    acc(w).add_member(ADMIN_GROUP, admin2)  # so the last-admin guard allows removing the proposer's standing
+    if how == "disabled":
+        acc(w).set_disabled(w.admin, True)
+    else:
+        acc(w).remove_member(ADMIN_GROUP, w.admin)
+    s, o, _ = _approve_all(w, cid)
+    assert (s, o) == (409, {"error": "proposer_gone"})
+    assert row(w, cid)["state"] == "rejected" and reach(w, WS2, w.newbie) is None
+
+
+def test_override_refuses_an_orphan_workspace_bound_after_the_proposal(w):
+    _wsa, cid, tok = _admin_group_change(w, own=False)
+    w.reg.add("b8" * 16, "full", owner=None, name="Orphan")  # nobody can be told about it
+    s, o, _ = w.call("POST", f"/admin/changes/{cid}/override", {"reason": "release tonight"}, token=tok)
+    assert (s, o) == (409, {"error": "stale_change"})
+    assert row(w, cid)["state"] == "pending" and reach(w, WS2, w.newbie) is None
+
+
+def test_the_overlay_leaves_a_disabled_member_out_unless_asked(w):
+    acc(w).set_disabled(w.newbie, True)
+    assert w.newbie not in acc(w).roles_overlay(WS2, add_member=("owners", w.newbie))
+    assert acc(w).roles_overlay(WS2, add_member=("owners", w.newbie), include_disabled=True)[w.newbie] == "admin"

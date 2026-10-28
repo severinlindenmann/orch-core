@@ -1,11 +1,11 @@
-Schedule automatic agent sessions on this ticket for up to 30 days.
-usage: orch schedule add REF --at AT [--every day|week|month] [--tz TZ] [--weekdays WEEKDAYS] [--day DAY] [--brief BRIEF] [--brief-file PATH] [--until UNTIL] [--run-hours RUN_HOURS] [--dry-run]
-  REF  ticket REF (DEMO-0043, 43); default: your claim
+Schedule automatic agent sessions on an existing ticket or a new ticket each run, for up to 30 days.
+usage: orch schedule add [REF] [--target existing|new] [--title TITLE] --at AT [--every day|week|month] [--tz TZ] [--weekdays WEEKDAYS] [--day DAY] [--brief BRIEF] [--brief-file PATH] [--until UNTIL] [--run-hours RUN_HOURS] [--dry-run]
+  REF  ticket REF; required for target existing
+  --target TARGET  existing or new ticket (existing|new) [default existing]; --title TITLE  literal title for each new ticket
   --at AT  once: YYYY-MM-DD HH:MM; recurring: HH:MM (required)
   --every EVERY  day, week or month (day|week|month)
   --tz TZ  IANA timezone; default UTC
-  --weekdays WEEKDAYS  comma-separated weekdays 0..6, Monday=0
-  --day DAY  monthly day; clamps to the last day of shorter months
+  --weekdays WEEKDAYS  comma-separated weekdays 0..6, Monday=0; --day DAY  monthly day; clamps to the last day of shorter months
   --brief BRIEF  the brief as text
   --brief-file PATH  read the text from PATH, or - for stdin
   --until UNTIL  end instant; defaults to 30 days

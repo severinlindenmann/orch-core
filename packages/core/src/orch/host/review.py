@@ -130,6 +130,8 @@ def events_fit(op: str, types: list[str]) -> bool:
     allowed = person_op_types(op)
     if allowed is None or not 1 <= len(types) <= 16 or any(t not in allowed for t in types):
         return False
+    if op == "schedule.add":
+        return types in (["schedule.set"], ["ticket.created", "schedule.set"])
     if op == "grant":  # B8: Extend = the new runner grant, then the revoke of the one it replaces
         return types in (["grant.issued"], ["grant.issued", "grant.revoked"])
     if op in HUMAN_ONLY or op in HOST_PERSON_OPS:

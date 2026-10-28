@@ -218,3 +218,76 @@ def test_non_ascii_letters_glued_to_a_fixed_sentence_are_hidden():
     assert redact_reason("caf\u00e9" + _FIXED, ["caf\u00e9macos"]) == HIDDEN_REASON
     assert redact_reason(_FIXED + "\u00e9", ["keychain\u00e9"]) == HIDDEN_REASON
     assert redact_reason("\ufb01" + _FIXED, ["\ufb01macos"]) == HIDDEN_REASON
+
+
+# -- a filesystem path in a message is not a leak (flaky test_item5 root cause: a random recovery word such as
+# "person" occurs in "/h/.config/orch/person"; deterministic here by choosing that word)
+
+PATH_MSG = "/h/.config/orch/person is writable by others (mode 770); run: chmod 700 /h/.config/orch/person"
+
+
+def test_a_secret_word_inside_a_path_does_not_hide_the_message():
+    from orch.setup.steps import Word, _Code
+
+    secrets = [
+        _Code("person alpha bravo charlie"),
+        *map(Word, "person alpha bravo charlie".split()),
+        "orchwritable-pass",
+    ]
+    assert redact_reason(PATH_MSG, secrets) == PATH_MSG
+    assert redact_reason("cannot read ~/.orch/person/key: denied", secrets) != HIDDEN_REASON
+
+
+def test_a_secret_word_outside_a_path_is_still_hidden():
+    from orch.setup.steps import Word, _Code
+
+    secrets = [_Code("person alpha bravo charlie"), Word("person")]
+    assert redact_reason("the person is not allowed", secrets) == HIDDEN_REASON
+    assert redact_reason(PATH_MSG + " and person", secrets) == HIDDEN_REASON
+
+
+def test_a_whole_secret_is_hidden_even_inside_a_path():
+    s = Secrets(show_passphrase=True)
+    code = bytes(s._code).decode("ascii")
+    pw = bytes(s._pass).decode("ascii")
+    for secret in (code, pw):
+        assert redact_reason(f"cannot open /home/{secret.replace(' ', '/')}/x", s.held()) == HIDDEN_REASON
+        assert redact_reason(f"cannot open /home/{secret.replace(' ', '')}/x", s.held()) == HIDDEN_REASON
+
+
+def test_one_held_recovery_word_in_a_path_is_fine_outside_it_is_hidden():
+    from orch.setup.steps import Word
+
+    held = [Word("person")]
+    assert redact_reason(PATH_MSG, held) == PATH_MSG
+    assert redact_reason("the person said no", held) == HIDDEN_REASON
+    assert redact_reason(PATH_MSG, ["person"]) == HIDDEN_REASON  # a plain str secret keeps the strict rule
+
+
+def test_a_secret_embedded_in_a_path_is_still_hidden():
+    from orch.setup.steps import Word, _Code
+
+    code = "wasp milk patch into absorb example"
+    held = [_Code(code), *map(Word, code.split())]
+    assert redact_reason("no such file /tmp/absorb-example/x", held) == HIDDEN_REASON  # two words in a row
+    assert redact_reason("no such file /tmp/wasp/milk/patch/x", held) == HIDDEN_REASON
+    assert redact_reason(f"no such file /tmp/{code.replace(' ', '')}/x", held) == HIDDEN_REASON
+    assert redact_reason("see http://h/person/x", [Word("person")]) == HIDDEN_REASON  # a URL is not a path
+    assert redact_reason("x/person/y", [Word("person")]) == HIDDEN_REASON  # glued to a word: not a path
+
+
+def test_a_passphrase_word_inside_a_path_is_hidden():
+    # only recovery-code words are path-exempt; a passphrase is a plain str with the strict per-word rule
+    assert redact_reason(PATH_MSG, ["person-config-person"]) == HIDDEN_REASON
+    c, s = creator()
+    c._passphrase = "person-quiet-meadow"
+    assert c._safe(PATH_MSG) == HIDDEN_REASON
+
+
+def test_two_distinct_code_words_anywhere_are_hidden_in_any_order():
+    from orch.setup.steps import held_words
+
+    held = held_words("wasp milk patch into absorb example mandate")
+    assert redact_reason("see /a/absorb and then /b/mandate", held) == HIDDEN_REASON
+    assert redact_reason("mandate ... far apart ... absorb", held) == HIDDEN_REASON
+    assert redact_reason("only /a/absorb here", held) == "only /a/absorb here"

@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS market_policy (
   id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL CHECK (version >= 1),
   policy TEXT NOT NULL, hash TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS recovery_notes (
+  user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+  by_user TEXT NOT NULL, at_ms INTEGER NOT NULL
+);
 """
 
 
@@ -111,6 +115,11 @@ class Access:
         try:
             self._db = open_private_db(path, check_same_thread=False, isolation_level=None)
             self._db.executescript(_SCHEMA)
+            if "disabled_ms" not in {r[1] for r in self._db.execute("PRAGMA table_info(users)")}:
+                self._db.execute("ALTER TABLE users ADD COLUMN disabled_ms INTEGER")  # NULL = enabled
+            if "must_recover" not in {r[1] for r in self._db.execute("PRAGMA table_info(users)")}:
+                # set by an enabling: the old password and TOTP stay dead until a recovery link is redeemed
+                self._db.execute("ALTER TABLE users ADD COLUMN must_recover INTEGER NOT NULL DEFAULT 0")
             self._db.execute("INSERT OR IGNORE INTO groups(name, created_ms) VALUES (?,?)", (ADMIN_GROUP, self._now()))
             d = MP.default_policy()  # a new hub trusts the official marketplace only (D14)
             self._db.execute(
@@ -152,7 +161,7 @@ class Access:
             with self.tx() as db:
                 if db.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,)).fetchone():
                     raise AccessError("exists", "user")
-                db.execute("INSERT INTO users VALUES (?,?,?)", (user_id, name, self._now()))
+                db.execute("INSERT INTO users(user_id, name, created_ms) VALUES (?,?,?)", (user_id, name, self._now()))
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
 
@@ -183,12 +192,94 @@ class Access:
 
     def users(self) -> list[dict[str, Any]]:
         return [
-            {"user_id": u, "name": n, "groups": self.groups_of(u)}
-            for u, n in self._q("SELECT user_id, name FROM users ORDER BY user_id")
+            {"user_id": u, "name": n, "groups": self.groups_of(u), "disabled": d is not None}
+            for u, n, d in self._q("SELECT user_id, name, disabled_ms FROM users ORDER BY user_id")
         ]
 
     def has_user(self, user_id: str) -> bool:
+        """The user exists (enabled or not): removal and credential changes still reach a disabled person."""
         return bool(self._q("SELECT 1 FROM users WHERE user_id=?", (_hex(user_id, "user_id"),)))
+
+    def is_active(self, user_id: str) -> bool:
+        """The user exists and is not disabled. Sessions, sign-in, channels and custodial signing all ask this one."""
+        return bool(self._q("SELECT 1 FROM users WHERE user_id=? AND disabled_ms IS NULL", (_hex(user_id, "user_id"),)))
+
+    def is_live(self, user_id: str) -> bool:
+        """Active AND not waiting for a recovery link: what channels, channel sessions and pairing ask. An enabled person
+        who has not redeemed the recovery link has NO live channel, so old devices never come back on enable."""
+        return self.is_active(user_id) and not self.must_recover(user_id)
+
+    def set_disabled(self, user_id: str, disabled: bool, *, actor: str | None = None) -> bool:
+        """Set or clear the disabled flag in ONE transaction. A disabled person has no role in any workspace (``roles``
+        and ``role_of`` skip them, so the next ``hub.snapshot`` fingerprint changes and its version moves up, exactly as
+        for a grant change). Refused: disabling yourself (``self_disable``) and the last enabled hub admin
+        (``last_admin``). Idempotent; returns whether anything changed. It touches nothing but this flag: a workspace's
+        own owner key and SELECTIVE membership are not hub-derived roles and stay as they are."""
+        _hex(user_id, "user_id")
+        if actor is not None:
+            _hex(actor, "actor")
+        try:
+            with self.tx() as db:
+                row = db.execute("SELECT disabled_ms FROM users WHERE user_id=?", (user_id,)).fetchone()
+                if row is None:
+                    raise AccessError("unknown_user")
+                if disabled:
+                    if actor is not None and actor == user_id:
+                        raise AccessError("self_disable")
+                    is_admin = db.execute(
+                        "SELECT 1 FROM members WHERE grp=? AND user_id=?", (ADMIN_GROUP, user_id)
+                    ).fetchone()
+                    if row[0] is None and is_admin:
+                        (others,) = db.execute(
+                            "SELECT COUNT(*) FROM members m JOIN users u ON u.user_id = m.user_id "
+                            "WHERE m.grp=? AND m.user_id<>? AND u.disabled_ms IS NULL",
+                            (ADMIN_GROUP, user_id),
+                        ).fetchone()
+                        if others == 0:
+                            raise AccessError("last_admin")
+                if (row[0] is not None) == disabled:
+                    return False
+                # an enabling NEVER brings the old credentials back: ``must_recover`` is set in the same statement that
+                # clears ``disabled_ms`` (fail closed) and only a redeemed recovery link clears it
+                db.execute(
+                    "UPDATE users SET disabled_ms=?, must_recover=CASE WHEN ? THEN must_recover ELSE 1 END "
+                    "WHERE user_id=?",
+                    (self._now() if disabled else None, 1 if disabled else 0, user_id),
+                )
+                return True
+        except sqlite3.Error as e:
+            raise AccessError("store_error", type(e).__name__) from None
+
+    def must_recover(self, user_id: str) -> bool:
+        """The person was enabled and has not yet redeemed a recovery link: they may not sign in with anything old."""
+        return bool(self._q("SELECT 1 FROM users WHERE user_id=? AND must_recover<>0", (_hex(user_id, "user_id"),)))
+
+    def clear_must_recover(self, user_id: str) -> None:
+        self._w("UPDATE users SET must_recover=0 WHERE user_id=?", (_hex(user_id, "user_id"),))
+
+    def undo_enable(self, user_id: str, *, must_recover: bool) -> None:
+        """Roll an enabling back (its recovery link could not be made): disabled again, ``must_recover`` as it was.
+        Deliberately not :meth:`set_disabled`: it restores a state the hub already allowed, so no admin guard applies."""
+        self._w(
+            "UPDATE users SET disabled_ms=?, must_recover=? WHERE user_id=?",
+            (self._now(), 1 if must_recover else 0, _hex(user_id, "user_id")),
+        )
+
+    def set_recovery_note(self, user_id: str, by_user: str, at_ms: int) -> None:
+        """``{by, at_ms}`` of the last recovery of this account (a recovery link was redeemed); shown to the person."""
+        _hex(user_id, "user_id")
+        self._w(
+            "INSERT INTO recovery_notes(user_id, by_user, at_ms) VALUES (?,?,?) "
+            "ON CONFLICT(user_id) DO UPDATE SET by_user=excluded.by_user, at_ms=excluded.at_ms",
+            (user_id, by_user, at_ms),
+        )
+
+    def recovery_note(self, user_id: str) -> dict[str, Any] | None:
+        rows = self._q("SELECT by_user, at_ms FROM recovery_notes WHERE user_id=?", (_hex(user_id, "user_id"),))
+        return {"by": rows[0][0], "at_ms": rows[0][1]} if rows else None
+
+    def clear_recovery_note(self, user_id: str) -> None:
+        self._w("DELETE FROM recovery_notes WHERE user_id=?", (_hex(user_id, "user_id"),))
 
     # --- groups and membership -----------------------------------------------------------------------------------
 
@@ -239,11 +330,20 @@ class Access:
         return [g for (g,) in self._q("SELECT grp FROM members WHERE user_id=? ORDER BY grp", (user_id,))]
 
     def is_hub_admin(self, user_id: str) -> bool:
-        return bool(self._q("SELECT 1 FROM members WHERE grp=? AND user_id=?", (ADMIN_GROUP, _hex(user_id, "user_id"))))
+        """A member of the hub-admin group who is not disabled."""
+        return bool(
+            self._q(
+                "SELECT 1 FROM members m JOIN users u ON u.user_id = m.user_id "
+                "WHERE m.grp=? AND m.user_id=? AND u.disabled_ms IS NULL",
+                (ADMIN_GROUP, _hex(user_id, "user_id")),
+            )
+        )
 
     def _admin_only_change(self, user_id: str, actor: str | None) -> bool:
-        """True if ``actor`` (a web path) may not change ``user_id``'s admin standing."""
-        return actor is not None and self.is_hub_admin(user_id) and not self.is_hub_admin(actor)
+        """True if ``actor`` (a web path) may not change ``user_id``'s admin standing (a disabled admin still counts as
+        an admin here: being disabled does not make someone easier to remove)."""
+        member = bool(self._q("SELECT 1 FROM members WHERE grp=? AND user_id=?", (ADMIN_GROUP, user_id)))
+        return actor is not None and member and not self.is_hub_admin(actor)
 
     def add_member(self, group: str, user_id: str, *, actor: str | None = None) -> None:
         self._set_member(group, user_id, actor, add=True)
@@ -344,14 +444,20 @@ class Access:
     # --- roles ---------------------------------------------------------------------------------------------------
 
     def roles(self, workspace_id: str) -> dict[str, str]:
-        """``{user_id: role}`` for one workspace, sorted by user id; users without a role are absent."""
+        """``{user_id: role}`` for one workspace, sorted by user id; users without a role are absent. A disabled user
+        has no role anywhere (these are the hub-derived roles only)."""
         _hex(workspace_id, "workspace_id")
         out: dict[str, str] = {}
         with self.lock:  # one consistent read
-            for (u,) in self._q("SELECT user_id FROM members WHERE grp=?", (ADMIN_GROUP,)):
+            for (u,) in self._q(
+                "SELECT m.user_id FROM members m JOIN users u ON u.user_id = m.user_id "
+                "WHERE m.grp=? AND u.disabled_ms IS NULL",
+                (ADMIN_GROUP,),
+            ):
                 out[u] = "admin"
             for u, r in self._q(
-                "SELECT m.user_id, g.role FROM grants g JOIN members m ON m.grp = g.grp WHERE g.workspace_id=?",
+                "SELECT m.user_id, g.role FROM grants g JOIN members m ON m.grp = g.grp "
+                "JOIN users u ON u.user_id = m.user_id WHERE g.workspace_id=? AND u.disabled_ms IS NULL",
                 (workspace_id,),
             ):
                 if role_rank(r) > role_rank(out.get(u)):

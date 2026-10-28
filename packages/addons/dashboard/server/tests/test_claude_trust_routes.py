@@ -73,13 +73,31 @@ def test_get_shape(tmp_path, monkeypatch):
     monkeypatch.setattr(claude_folder, "offered", lambda *a, **k: True)
     monkeypatch.setattr(claude_folder, "refusal", lambda *a, **k: None)
     monkeypatch.setattr(claude_folder, "parent_config", lambda *a, **k: None)
+    monkeypatch.setattr(claude_folder, "config_state", lambda *a, **k: "ready")
     res = build(tmp_path).get("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust")
     assert res.status_code == 200, res.text
-    assert res.json() == {"available": True, "on": True, "offered": True, "why_not": "", "parent_config": ""}
+    assert res.json() == {"available": True, "on": True, "config": "ready", "offered": True, "why_not": "", "parent_config": ""}
+
+
+def test_consent_without_claudes_settings_file_is_not_on(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_trust, "_consented", lambda root: True)
+    monkeypatch.setattr(claude_folder, "config_state", lambda *a, **k: "missing")
+    body = build(tmp_path).get("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust").json()
+    assert body["on"] is False and body["config"] == "missing"
+
+
+def test_post_creates_the_file_when_claude_has_not_run_yet(tmp_path, monkeypatch):
+    made = []
+    monkeypatch.setattr(claude_folder, "grant_consent", lambda env, project, allow_parent: None)
+    monkeypatch.setattr(claude_folder, "config_state", lambda *a, **k: "missing")
+    monkeypatch.setattr(claude_folder, "trust_folder", lambda env, project, allow_parent: made.append(1) or True)
+    res = build(tmp_path).post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": False})
+    assert res.status_code == 200 and made == [1]
 
 
 def test_post_grants(tmp_path, monkeypatch):
     seen = []
+    monkeypatch.setattr(claude_folder, "config_state", lambda *a, **k: "ready")
     monkeypatch.setattr(claude_folder, "grant_consent", lambda env, project, allow_parent: seen.append(allow_parent))
     res = build(tmp_path).post("/api/w/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/claude-trust", json={"allow_parent": True})
     assert res.status_code == 200, res.text

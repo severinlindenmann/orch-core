@@ -49,9 +49,12 @@ def register(app, gateway, auth):
         project = gateway.workspace_folder(ws)[0]
         root = Path(os.path.realpath(project))
         env = os.environ
+        config = claude_folder.config_state(env, root)
         return {
             "available": True,
-            "on": bool(claude_trust._consented(str(root))),
+            # on = the person agreed AND Claude Code's settings file is really there (never "on" while it is missing)
+            "on": bool(claude_trust._consented(str(root))) and config == "ready",
+            "config": config,
             "offered": bool(claude_folder.offered(env, root, allow_parent=True)),
             "why_not": claude_folder.refusal(env, root, allow_parent=True) or "",
             "parent_config": str(claude_folder.parent_config(root, env) or ""),
@@ -67,4 +70,8 @@ def register(app, gateway, auth):
         reason = claude_folder.grant_consent(os.environ, project, allow_parent=body.allow_parent)
         if reason:
             raise fail("invalid.input", reason, exit=1)
+        if claude_folder.config_state(os.environ) == "missing" and not claude_folder.trust_folder(
+            os.environ, project, allow_parent=body.allow_parent
+        ):
+            raise fail("invalid.input", "Claude Code is not set up yet: start it once, then try again.", exit=1)
         return {"on": True}

@@ -60,6 +60,8 @@ export interface RecordsRun {
 export interface ClaudeTrust {
   available: boolean
   on: boolean
+  /** The state of Claude Code's own settings file: "missing" = Claude Code was never started here. */
+  config?: 'ready' | 'missing' | 'odd'
   offered: boolean
   why_not: string
   parent_config: string

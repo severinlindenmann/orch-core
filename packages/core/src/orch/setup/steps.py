@@ -300,6 +300,11 @@ def contains_secret(text: str, secrets: Iterable[str]) -> bool:
             distinct = {w for w in words if len(w) >= _MIN_SECRET}
             if sum(1 for w in distinct if any(w in tk for tk in toks)) >= 2:
                 return True
+            # 4 different short (3-5 letter) code words anywhere, as whole tokens: ~1 in 100,000 for real text, and it
+            # caps what a message can show at 3 short words (+1 long word) of the code
+            short = {w for w in words if 3 <= len(w) < _MIN_SECRET}
+            if sum(1 for w in short if any(w in tk for tk in toks)) >= 4:
+                return True
         for i in range(len(words)):  # every run of 2+ consecutive words, joined
             run = words[i]
             for w2 in words[i + 1 :]:

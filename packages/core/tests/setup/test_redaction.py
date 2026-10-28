@@ -297,6 +297,17 @@ def test_short_ordinary_code_words_do_not_hide_a_real_message():
     from orch.setup.steps import held_words
 
     msg = "Open System Settings, General, Login Items & Extensions and allow orch, then try again"
-    held = held_words("item login extend orch allow again quiet")  # 4-5 letter words, whole tokens of the message
+    held = held_words("item login extend orch quiet")  # 4-5 letter words; two are whole tokens of the message
     assert redact_reason(msg, held) == msg
     assert redact_reason(msg, held_words("items extensions banana")) == HIDDEN_REASON  # a 6+ letter word still hides
+
+
+def test_four_distinct_short_code_words_are_hidden_three_are_not():
+    from orch.setup.steps import held_words
+
+    held = held_words("item login extend orch allow again quiet")
+    assert redact_reason("go to item, then login, extend it, and orch", held) == HIDDEN_REASON  # 4 short words
+    three = "go to item, then login, and extend it"
+    assert redact_reason(three, held) == three
+    msg = "Open System Settings, General, Login Items & Extensions and allow orch, then try again"
+    assert redact_reason(msg, held_words("zebra yonder login items extend")) == msg  # real message, pinned secrets

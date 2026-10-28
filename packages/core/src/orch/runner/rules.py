@@ -100,28 +100,24 @@ def company_problem(skills: object) -> str | None:
     return None
 
 
-def _fence(text: str, taken: str) -> tuple[str, str]:
-    """``(opening, closing)`` delimiter for one skill: tildes longer than any run in the text, then ``orch-skill-`` and
-    16 random hex digits drawn per launch, never contained in ``taken`` (all skill texts). A skill cannot know the
-    digits, so it cannot write its own closing line."""
-    longest = max((len(m) for m in re.findall(r"~+", text)), default=0)
-    tildes = "~" * max(4, longest + 1)
-    while True:
-        delim = f"{tildes}orch-skill-{secrets.token_hex(8)}"
-        if delim not in taken:
-            return delim, delim
-
-
 def _company(skills: Sequence[Mapping[str, str]]) -> str:
     """The company section: the fixed header, then per skill a heading the runner writes itself and the skill body
-    inside a fence. Headings, rules and fences inside a body are just text between two delimiters."""
+    inside a fenced code block (CommonMark tilde fence). ONE tilde run, longer than any run in any skill, is used for
+    every fence, so no line of one skill can close another's fence. The opening line carries a random per-launch label
+    (``orch-skill-`` and 16 hex digits, never contained in any skill text); the closing line is the bare tilde run, the
+    only thing CommonMark accepts as a close. Headings, lists and fences inside a body are inert text."""
     if not skills:
         return ""
     taken = "\n".join(sk["text"] for sk in skills)
+    longest = max((len(m) for m in re.findall(r"~+", taken)), default=0)
+    tildes = "~" * max(4, longest + 1)
     out = [COMPANY_HEADER]
     for sk in skills:
-        opening, closing = _fence(sk["text"], taken)
-        out.append(f"\n{SKILL_HEADING}{sk['name']}\n\n{opening}\n{sk['text'].strip()}\n{closing}\n")
+        while True:
+            label = f"orch-skill-{secrets.token_hex(8)}"
+            if label not in taken:
+                break
+        out.append(f"\n{SKILL_HEADING}{sk['name']}\n\n{tildes}{label}\n{sk['text'].strip()}\n{tildes}\n")
     return "".join(out)
 
 

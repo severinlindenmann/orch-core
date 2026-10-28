@@ -552,9 +552,9 @@ def test_company_skills_reach_only_the_rules_file_of_a_claude_code_ticket_agent(
     body = Path(path).read_text()
     assert "### Company skill: invoices" in body and text in body
     opening = body[body.index("~~~~orch-skill-") :].splitlines()[0]
-    assert body.count(opening) == 2 and body.index(opening) < body.index("## Steps") < body.rindex(
-        opening
-    )  # in its fence
+    bare = opening.split("orch-skill-")[0]  # the fence closes with the bare tilde run
+    assert body.count(opening) == 1
+    assert body.index(opening) < body.index("## Steps") < body.rindex("\n" + bare + "\n")  # inside its fence
     assert body.index("rules of the orch workspace") < body.index("## Company skills from your company hub")
     assert not any(text in a for a in argv) and not any(text in v for v in env.values())  # not in argv or environment
     pre2 = preview(c, ticket=key, harness="codex", mode="work")

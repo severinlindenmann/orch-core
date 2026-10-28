@@ -19,7 +19,13 @@ dependencies = [
 orch = "orch.cli.main:entry"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-xdist>=3.6", "hypothesis>=6", "ruff>=0.6"]
+dev = [
+    "pytest>=8",
+    "pytest-xdist>=3.6",
+    "hypothesis>=6",
+    "ruff>=0.6",
+    "markdown-it-py>=3",
+]
 
 [build-system]
 requires = ["hatchling"]

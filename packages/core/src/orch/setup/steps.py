@@ -1136,7 +1136,7 @@ class RealPorts:
         from .claude_folder import refusal
 
         return refusal(self.env, root, allow_parent=allow_parent) or (
-            "Claude Code is not set up yet (it has not been started on this computer): start it once, then turn this on in Settings."
+            "Claude Code is not set up yet (never started here): start it once, then turn this on in Settings."
         )
 
     def records_setup(self, wid: str, root: Path) -> None:

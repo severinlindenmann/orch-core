@@ -116,6 +116,11 @@ class UserPlan:
             "--home-dir",
             self.home,
             "--create-home",
+            # An empty home. The default copies /etc/skel, which on a CI image (rust, dotnet, node toolchains) is
+            # gigabytes: useradd then ran for minutes per user and hit the 120 s step limit. An agent or add-on
+            # user must not inherit whatever the machine keeps in /etc/skel either.
+            "--skel",
+            "/dev/null",
             "--shell",
             self.shell,
             self.name,

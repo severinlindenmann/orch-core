@@ -213,6 +213,7 @@ class WebDeps:
     services: Any = None
     #: the route queue (``recent``): hand-offs between workspaces, for the Workspaces page; None = an empty list
     routes: Any = None
+    delivery: Any = None  # custodial DeliveryQueue; None = no pending deliveries
 
 
 @dataclass(frozen=True)
@@ -1122,9 +1123,15 @@ class WebApi:
 
     def _h_needs_you(self, c: Ctx, p: dict, q: dict, b: dict | None):
         items: list[dict[str, Any]] = []
-        offline, unavailable = [], []
+        offline, unavailable, queued = [], [], []
         for ws in self._workspaces(c.user_id):
             w = ws["workspace_id"]
+            if self.d.delivery is not None:
+                queued.extend(
+                    {"workspace_id": w, "type": row["type"], "queued_ms": row["enq_ms"]}
+                    for row in self.d.delivery.pending(w)
+                    if row["user_id"] == c.user_id
+                )
             if not ws["online"]:
                 offline.append(w)
             elif ws["mode"] == "selective":
@@ -1137,11 +1144,11 @@ class WebApi:
             else:
                 for r in self.d.view.needs_you(w, c.user_id):
                     items.append(self._view_row(ws, r))
-        return 200, {"items": items, "offline": offline, "unavailable": unavailable}
+        return 200, {"items": items, "offline": offline, "unavailable": unavailable, "queued": queued}
 
     @staticmethod
     def _view_row(ws: dict[str, Any], r: dict[str, Any]) -> dict[str, Any]:
-        keep = {k: r.get(k) for k in ("item_id", "kind", "type", "key", "title", "deadline", "log", "hash")}
+        keep = {k: r.get(k) for k in ("item_id", "kind", "type", "key", "title", "deadline", "log", "hash", "gate")}
         return _render({"workspace_id": ws["workspace_id"], "mode": "full", **keep, "signable": ws["can_start"]})
 
     def _h_item(self, c: Ctx, p: dict, q: dict, b: dict | None):

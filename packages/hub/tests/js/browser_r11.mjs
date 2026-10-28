@@ -32,6 +32,9 @@ try {
   await page.getByRole("button", { name: "Sign in" }).click();
   await page.getByRole("heading", { name: "Needs you" }).waitFor();
 
+  await page.locator(".side").getByRole("link", { name: "Approvals" }).click();
+  await page.getByRole("heading", { name: "Approvals" }).waitFor();
+  await shot("approvals");
   await page.locator(".side").getByRole("link", { name: "Services" }).click();
   await page.getByRole("heading", { name: "Services", exact: true }).waitFor();
   await page.locator("#services-summary").waitFor();

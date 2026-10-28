@@ -8,7 +8,7 @@ canon/hashing.py 2
 cli/quick.py 3
 click/records.py 6
 click/signer.py 4
-click/view.py 3
+click/view.py 5
 discovery.py 2
 host/artifacts.py 1
 host/auth.py 1

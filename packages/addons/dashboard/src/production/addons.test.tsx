@@ -79,7 +79,12 @@ it('turning one on is a One click signature: the switch opens the review under t
   await within(accordion).findByTestId('click-panel', {}, T)
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_grant', name: 'worktrees' }])
   expect(state.host.posts()).toEqual([]) // no hand-off is ever prepared
-  expect(accordion).toHaveTextContent('Turn on Worktrees')
+  // C3: addon.grant is not a daily op: the signer's headline and risk lines, no arm, a separate Sign (the second press)
+  expect(accordion).toHaveTextContent('FROM-THE-SIGNER headline addon.grant')
+  expect(within(accordion).getByTestId('sign-risk-lines')).toHaveTextContent('FROM-THE-SIGNER risk: the add-on worktrees gets its capabilities')
+  expect(within(accordion).queryByTestId('sign-progress')).toBeNull()
+  expect(within(accordion).getByRole('button', { name: /^Sign( |$)/ })).toBeInTheDocument()
+  expect(state.host.clickSigned).toEqual([])
 })
 
 it('the synthetic switch press grants no intent: the review waits for the outcome press, nothing is prepared', async () => {
@@ -120,7 +125,10 @@ it('turning one off is a One click signature too', async () => {
   const accordion = await turn(user, 'start-agent', 'Start agents', 'Turn off Start agents')
   await within(accordion).findByTestId('click-panel', {}, T)
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_disable', name: 'start-agent' }])
-  expect(accordion).toHaveTextContent('Turn off Start agents')
+  // C3: addon.disable is a daily op (no risk lines): the press that prepared arms, the button shows the signer's headline
+  expect(within(accordion).queryByTestId('sign-risk-lines')).toBeNull()
+  expect(within(accordion).getByTestId('sign-progress')).toBeInTheDocument()
+  expect(within(accordion).getByTestId('sign-button')).toHaveTextContent('FROM-THE-SIGNER headline addon.disable')
 })
 
 it('an add-on with running work cannot be switched off and says why', async () => {

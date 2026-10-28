@@ -74,7 +74,9 @@ def world(tmp_path_factory):
     (static / "assets/main-hash.js").write_text("console.log(1)")
     gateway = Gateway(ws.state, click=Signer(ws.state, start=ws.click_start()))
     auth = Auth()
-    with TestClient(create_app(PORT, gateway, auth, static), base_url=ORIGIN) as client:
+    with TestClient(
+        create_app(PORT, gateway, auth, static), base_url=ORIGIN, headers={"X-Orch-Click-Contract": "4"}
+    ) as client:
         yield type("World", (), {"ws": ws, "gateway": gateway, "auth": auth, "client": client, "root": root})
     gateway.close()
     ws.stop_host()

@@ -80,6 +80,8 @@ def blocked(core, t, rec, now):
 def set_event(core, t, e):
     if error := schedules.validate_target(e):
         return denied(error)
+    if e.get("target") == "new":  # until the new-ticket piece (anchor + per-run child) is merged
+        return denied("new-ticket schedules are not switched on yet")
     ws, now, a = core.ws, ts(e["at"]), e["actor"]
     if a["kind"] != "person":
         return denied("only a person may set a schedule")

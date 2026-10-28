@@ -327,7 +327,10 @@ def test_schedule_invalid_target_title(over):
 
 
 @pytest.mark.parametrize("target", ["new", "unknown", None])
-def test_schedule_read_refuses_unsupported_target(target):
-    with pytest.raises(HostError) as exc:
-        schedules.build(FakeGateway(rows=[row(target=target, title="Mail")]), "w")
-    assert exc.value.error["code"] == "schedule.denied"
+def test_one_unsupported_row_never_breaks_the_page(target):
+    other = "sc_" + "1" * 26
+    data = schedules.build(FakeGateway(rows=[row(target=target, title="Mail"), row(id=other)]), "w")
+    by_id = {r["id"]: r for r in data["rows"]}
+    assert by_id[SID]["supported"] is False and by_id[SID]["note"] == "Needs a newer dashboard"
+    assert by_id[SID]["can_cancel"] is False
+    assert by_id[other]["ticket"] == KEY and "supported" not in by_id[other]

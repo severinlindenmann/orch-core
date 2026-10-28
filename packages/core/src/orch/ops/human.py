@@ -737,6 +737,45 @@ class Human:
             raise OrchError("sign.cancelled", "nothing was signed")
         return self._sign_and_append(event, log, action, precommit, artifacts)
 
+    def run_many(self, payloads: list[dict[str, Any]], log: str, action: str) -> Any:
+        """One review and core action, with every event checked before the first append."""
+        from orch.model import Refusal, preview
+        from orch.ops.prepare import Captured, accepting
+        from orch.store import StoreError
+
+        person, device = self.who()
+        events = [self._envelope(p, log, person, device) for p in payloads]
+
+        def judge(events, unsigned=False):
+            self.store.refresh()
+            state = accepting(self.store.state) if unsigned else self.store.state
+            stamp = self.store.peek_stamp(log)
+            for event in events:
+                probe = {**event, **stamp, **({"sig": "x"} if unsigned else {})}
+                result = preview(state, probe, log=log)
+                if isinstance(result, Refusal):
+                    raise StoreError.from_refusal(result)
+                state = result
+                stamp = {**stamp, "seq": stamp["seq"] + 1, "prev": canon.event_head(probe)}
+
+        judge(events, unsigned=True)
+        if self.ctx.prepare is not None:
+            for payload in payloads:
+                self.ctx.prepare.add(Captured(log, dict(payload)))
+            return None
+        if self.ctx.dry_run:
+            return None
+        if not review_prompt(action + "\n" + canon.dumps(payloads).decode()):
+            raise OrchError("sign.cancelled", "nothing was signed")
+        for event in events:
+            event["sig"] = sign_person_event(self.backend, KEY_ID, self.workspace_id, log, event, action=action)
+        with self.store.locked():
+            judge(events)
+            done = None
+            for event in events:
+                done = self.store.append(event, log=log)
+            return done
+
     def recheck_source(self, view: Any, signed: list[dict[str, str]]) -> Callable[[], None]:
         """For ``precommit`` of a decision that binds the source list (D58, D59): inside the append, with the lock held,
         read git again (read-only) and refuse (``gate.stale``) unless it is still the commits that were shown."""

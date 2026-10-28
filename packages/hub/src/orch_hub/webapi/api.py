@@ -30,6 +30,7 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import json
+import logging
 import re
 import threading
 import time
@@ -43,6 +44,7 @@ from typing import Any, Protocol
 from .. import __version__ as hub_version
 from ..access import Access, AccessError
 from ..access.store import ADMIN_GROUP, check_name
+from ..activity.feed import feed as activity_feed
 from ..channels import Channels
 from ..channels.service import MIN_PASSWORD, ChannelError
 from ..connect import LinkError, build_link
@@ -215,6 +217,7 @@ class WebDeps:
     routes: Any = None
     authz: Any = None  # live routing authorization; None means no allowed edges
     delivery: Any = None  # custodial DeliveryQueue; None = no pending deliveries
+    activity: Any = None  # hub-local admin history; None = no local events
 
 
 @dataclass(frozen=True)
@@ -347,6 +350,7 @@ ROUTES: tuple[Route, ...] = (
     ),
     _r("POST", "/switch/redeem", "none", "switch_redeem", "Redeem a ticket from a workspace: signs me in here"),
     _r("GET", "/rail", "session", "rail", "The hub and my workspaces, for the switcher"),
+    _r("GET", "/admin/activity", "admin", "a_activity", "Read company activity"),
     _r("GET", "/admin/audit", "admin", "a_audit", "Read the audit chain (?since=N, up to 100 records)"),
 )
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
@@ -1279,6 +1283,16 @@ class WebApi:
         if c.scope == "channel" and p["channel_id"] != c.channel_id:
             raise ApiError("other_user")  # a channel session revokes its own channel only
         self.d.channels.revoke_as(c.token, p["channel_id"])  # the channel's owner, or a hub-admin (checked there)
+        if self.d.activity is not None:
+            try:  # the revoke has taken effect: a failed record is logged, never turned into an error for the admin
+                owner = next(
+                    (row["user_id"] for row in self.d.channels.channels() if row["channel_id"] == p["channel_id"]), None
+                )
+                self.d.activity.record(
+                    "channel.revoked", actor_id=c.user_id, subject_user=owner, detail={"channel_id": p["channel_id"]}
+                )
+            except Exception:
+                logging.getLogger("orch_hub.webapi").exception("channel.revoked was not recorded")
         return 200, {"ok": True}
 
     # --- (d) admin console (route auth = hub-admin, checked in the pipeline) -----------------------------------------
@@ -1465,6 +1479,12 @@ class WebApi:
             "owner_user": owner,
             "expires_ms": expires,
         }
+
+    def _h_a_activity(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        try:
+            return 200, activity_feed(self.d, q)
+        except ValueError:
+            raise ApiError("malformed") from None
 
     def _h_a_audit(self, c: Ctx, p: dict, q: dict, b: dict | None):
         since = q.get("since", "0")

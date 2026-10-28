@@ -18,7 +18,11 @@ import pytest
 
 pytestmark = [
     pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux only"),
-    pytest.mark.xdist_group("linux_root"),  # with `--dist loadgroup` one worker; the lock below holds without it
+    # CI runs these alone and serially (`-m linux_root -p no:xdist`, after the parallel run): next to ~6000 tests on
+    # other workers the runner disk stalls and useradd waited past the product's 120 s step limit. The lock below still
+    # keeps two of them from fighting over /etc/passwd when someone runs them with xdist.
+    pytest.mark.linux_root,
+    pytest.mark.xdist_group("linux_root"),
 ]
 
 #: Every test here creates and removes the SAME system users, pins and directories (the person's name, orch-agent-<p>,

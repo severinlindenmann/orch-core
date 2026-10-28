@@ -22,6 +22,7 @@ from typing import TextIO
 from . import colocation as CO
 from .access import Access, AccessSnapshots
 from .access.cli import ACCESS_FILE
+from .activity import ActivityLog
 from .audit import open_log
 from .channels import Channels
 from .channels.pushkeys import PushKeyStore
@@ -195,6 +196,7 @@ def serve(
     authz = AccessAuthz(registry, access)
     router = Router(registry, queue, authz)
     audit = open_log(state, keys, dev_mode=cfg.dev)
+    activity = ActivityLog(state / "activity.db")
     access.observer = audit.access_change  # D4: every grant and membership change is audited
     space_store = SpaceStore(str(state / SPACES_FILE))
     spaces = SpaceService(
@@ -256,6 +258,7 @@ def serve(
                 channels=channels,
                 registry=registry,
                 audit=audit,
+                activity=activity,
                 engine=engine,
                 shares=shares,
                 view=views.reader,
@@ -360,6 +363,7 @@ def serve(
         queue.close()
         space_store.close()
         share_store.close()
+        activity.close()
         audit.store.close()
         registry.close()
         wk_seals.close()

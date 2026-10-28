@@ -25,7 +25,7 @@ ACTOR_RULES: dict[str, str] = {
     "ticket.updated": "PA",
     "status.changed": "PA",
     "ticket.submitted": "PA",
-    "ticket.closed": "P",
+    "ticket.closed": "PA",  # authorize_agent restricts this to a schedule child
     "ticket.reopened": "P",
     "ticket.moved": "P",
     "visibility.changed": "P",
@@ -306,6 +306,11 @@ def authorize_agent(
     g = ws.grants.get(a["grant"])
     if g is None:
         return Refusal(Code.GRANT_INVALID, f"unknown grant {a['grant']}")
+    if e["type"] == "ticket.closed":
+        from .schedules_wire import child_run
+
+        if not child_run(core, g):
+            return Refusal(Code.EVENT_BAD_ACTOR, "only a schedule run may close its child")
     if g.parent is not None:
         if t is None or t.uid != g.scope:
             return Refusal(Code.GRANT_SCOPE, "follow-up grants belong to one ticket only")

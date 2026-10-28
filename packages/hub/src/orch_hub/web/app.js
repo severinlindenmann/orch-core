@@ -307,7 +307,7 @@ async function handoffs() {
       h("p", { role: "alert", text: "Could not load hand-offs. Please try again." }), h("button", { text: "Try again", onclick: handoffs }));
     shell("handoffs", handoffsView({ workspaces: ws.body.workspaces ?? [], handoffs: ho.body.handoffs ?? [] }, {
       dialog, close: closeDialog,
-      open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
+      open: async (w) => { await openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); closeDialog(); }, // the dialog stays if opening fails
     }));
   } finally { finishLoading(); }
 }

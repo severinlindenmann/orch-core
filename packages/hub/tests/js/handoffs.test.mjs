@@ -34,9 +34,13 @@ test("route, sealed explanation, status reasons and sent times", () => {
   assert.equal(rows(out).length, 3);
   assert.match(words(out), /Product→Legal/);
   assert.match(words(out), /Waiting for Legal to come online/);
-  assert.match(words(out), /since Yesterday 12:00/);
+  assert.match(words(out), /Yesterday 12:00/); // the Sent column only: no second "since" line
+  assert.doesNotMatch(words(out), /since Yesterday/);
   assert.match(words(out), /Product→Another workspace/);
-  assert.match(words(out), /What is inside stays sealed. Delivered means it reached the workspace, not that someone accepted it./);
+  assert.match(words(out), /Which workspace sent something to which, and whether it arrived\./);
+  assert.match(words(out), /What is inside stays private\. Delivered means it reached the workspace, not that someone accepted it\./); // behind the i
+  assert.ok(find(out, (n) => n.tag === "summary" && n.textContent === "i").length >= 1);
+  assert.doesNotMatch(words(out), /sealed|ticket/i);
   assert.deepEqual(find(out, (n) => n.tag === "th").map((n) => n.textContent), ["From → to", "Sent", "State"]);
   assert.equal(statusOf({ ...data.handoffs[0], to: A }, now).label, "Waiting for Product to take it");
   assert.equal(statusOf({ status: "delivered" }, now).label, "Delivered");
@@ -52,37 +56,35 @@ test("workspace matches either end and combines with state; reset and empty resu
   assert.match(rows(out)[0].textContent, /Legal→Archive/);
   select.value = "c"; select.listeners.change(); click(out, "Waiting");
   assert.equal(rows(out).length, 0);
-  assert.match(words(out), /Nothing found/);
+  assert.match(words(out), /No hand-offs match these filters\./);
   select.value = ""; select.listeners.change(); click(out, "All");
   assert.equal(rows(out).length, 3);
   assert.deepEqual(find(out, (n) => n.attrs["aria-pressed"]).map((n) => n.attrs["aria-pressed"]), ["true", "false", "false"]);
   assert.match(words(handoffsView({ workspaces: [], handoffs: [] })), /No hand-offs yet/);
 });
 
-test("send dialog uses eligible sources, excludes source as target and opens exact workspace", async () => {
+test("send dialog uses eligible sources and opens the exact workspace", async () => {
   let dialog, opened, closed = 0;
   const out = handoffsView(data, { dialog: (...nodes) => { dialog = nodes; }, open: (w) => { opened = w; }, close: () => closed++ });
   click(out, "Send a hand-off");
-  const [from, to] = find(dialog, (n) => n.tag === "select");
+  const [from] = find(dialog, (n) => n.tag === "select");
   assert.deepEqual(from.children.map((n) => n.attrs.value), ["a", "b"]);
-  assert.deepEqual(to.children.map((n) => n.attrs.value), ["b", "c"]);
-  assert.match(words(dialog), /In Product, open the ticket and choose Hand off to Legal./);
+  assert.equal(find(dialog, (n) => n.tag === "select").length, 1); // no target picker: the workspace owns the hand-off
+  assert.match(words(dialog), /Choose where it comes from, then use Hand off there\./);
+  assert.doesNotMatch(words(dialog), /ticket|sealed/i);
   from.value = "b"; from.listeners.change();
-  assert.deepEqual(to.children.map((n) => n.attrs.value), ["a", "c"]);
-  to.value = "c"; to.listeners.change();
-  assert.match(words(dialog), /In Legal, open the ticket and choose Hand off to Archive./);
-  await click(dialog, "Open Legal to hand off");
+  await click(dialog, "Open Legal");
   assert.equal(opened, B);
   click(dialog, "Cancel"); assert.equal(closed, 1);
 });
 
 test("send empty choices and open failure remain actionable", async () => {
-  for (const workspaces of [[], [C], [A]]) {
+  for (const workspaces of [[], [C]]) {
     const out = sendHandoffView(workspaces);
     assert.equal(find(out, (n) => n.tag === "button").at(-1).disabled, true);
   }
   const out = sendHandoffView([A, B], { open: async () => { throw Error(); } });
-  await click(out, "Open Product to hand off");
+  await click(out, "Open Product");
   assert.match(words(out), /Could not open the workspace. Please try again./);
   assert.equal(find(out, (n) => n.tag === "button").at(-1).disabled, false);
 });

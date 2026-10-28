@@ -31,10 +31,14 @@ ACTIVITY_TYPES = (
     "pairing.issued",
     "pairing.used",
     "change.cancelled",
+    "addon.allowed",
+    "addon.request_approved",
+    "addon.request_refused",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(
     {
+        "addon",
         "channel_id",
         "change_id",
         "connection_id",

@@ -1389,6 +1389,16 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
             "host": lambda x: type(x) is str and len(x) <= 80,
         },
     ),
+    # M3 (#1450): a host tells the hub an add-on install was refused by the policy; display data, never an authority
+    "addon_request": (
+        "w2h",
+        None,
+        {
+            "name": lambda x: type(x) is str and re.fullmatch(r"[a-z][a-z0-9-]{0,39}", x) is not None,
+            "version": lambda x: type(x) is str and re.fullmatch(r"[0-9A-Za-z.+-]{0,32}", x) is not None,
+            "actor": lambda x: x in ("person", "agent"),  # who asked at the host (the host knows; shown, never trusted)
+        },
+    ),
     "owner_get": ("w2h", None, {}),  # FB15: the hub user the hub names as the workspace owner (no argument)
     # p4 (§10.7): the hub's WK_e-sealed view of one workspace log; full mode only (selective: the hub holds no WK_e)
     "log_sync": (

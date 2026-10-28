@@ -3446,8 +3446,8 @@ methods).** Presentation only: the signed events, `material`, `review_digest` an
    show the full review and send no `headline`/`content`. Every single-line value goes through one helper that makes a
    line break visible (` ⏎ `), a section's text is a block with every line under a `| ` mark, and every string goes through
    `canon.clean`.
-2. **Terminal.** The review has three layers: the headline and the content (`signer.plain`), then `Type KEY/FRAG to
-   continue (d = details): `; `d` prints today's full review (`signer.render`: the header with uid/pid/"self-declared,
+2. **Terminal.** The review has three layers: the headline and the content (`signer.plain`), then the prompt of "CLI
+   signing review (C1)" below (`d` = details); `d` prints today's full review (`signer.render`: the header with uid/pid/"self-declared,
    `ORCH_SIGN_DETAILS=1` print it first. The full review is still built (and every refusal of it raised) before the
    prompt. `review_prompt(text)` receives a `str` subclass `signer.Review` whose `.details` is the full review; a
    confirm that does not know it shows the plain view. A relay pairing (`relay.pair_device`) keeps the full review as its
@@ -13669,11 +13669,18 @@ cross-UID tests run in a CI job with root (`needs_root`, `tests/osusers/`); loca
 
 ### CLI signing review (C1)
 
-Every CLI signature uses `review_prompt(text)` on `/dev/tty`: “Press Enter to sign, any other key cancels.”
-After rendering, the prompt flushes input, discards input for one second, flushes again, then reads one raw byte.
-CR or LF signs; every other byte, EOF, interrupt or read error cancels. Terminal settings are restored on exit.
+Every CLI signature uses `review_prompt(text)` on `/dev/tty`: “Press Enter to sign, d for details, any other key
+cancels.” (a text without details, such as setup's or the importer's, says “Press Enter to sign, any other key
+cancels.”). After rendering, the prompt flushes input, discards input for one second, flushes again, then reads one
+raw byte. CR or LF signs; `d` (a `signer.Review` only) prints the full review (`.details`: ids and hashes, what
+`ORCH_SIGN_DETAILS=1` shows first) and waits again with a new one-second dead time, after which Enter signs and any
+other key cancels; every other byte, EOF, interrupt or read error cancels. Terminal settings are restored on exit.
 A repeat stream crossing the deadline cancels. No terminal returns `tty.required`; cancellation returns
 `sign.cancelled`. Flags, environment variables and piped input cannot authorize a signature.
+
+Confirmations that sign nothing use the same gesture with `review_prompt(text, verb="continue")`: “Press Enter to
+continue, any other key cancels.” (`orch remote`, `orch publish revoke`, `orch prune`, `orch records`, the share rule
+and sync confirmations of `orch hub share`). The one-second dead time and the held-key rule are the same.
 
 CLI sequences prepare directly and use one review before signing their steps. Dashboard actions use One click.
 Phone authority comes from device pairing. Hub join/mode/leave retain their sealed backup-key flow, and the

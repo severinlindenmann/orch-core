@@ -1,9 +1,10 @@
 """The hub pages of Mission Control (V3 A7, orch-core #859; mockups v3-a5-mode and v3-a3-flows).
 
 Mission Control explains and shows exactly what will change; the owner signs with one click. This module has read
-routes that relay the host's own reads through a closed shape. It signs nothing, holds no hub credential and opens no connection to a hub. The one hub write it sends the
-host is `hub.connect` after a join by click (see below); the other two are the share writes that only take sharing away
-(`share.revoke`, `share.rule_remove`, one click as the session's person, below). `hub.join`, `hub.mode`, `hub.leave`,
+routes that relay the host's own reads through a closed shape. It signs nothing, holds no hub credential and opens
+no connection to a hub. The one hub write it sends the host is `hub.connect` after a join by click (see below); the
+other two are the share writes that only take sharing away (`share.revoke`, `share.rule_remove`, one click as the
+session's person, below). `hub.join`, `hub.mode`, `hub.leave`,
 `hub.unbind` and the share writes that add (`share.rule_add`, a confirming `share.sync`) are signed by click or run by
 `orch hub ...` in the owner's Terminal, which refuses agents. It imports no hub code (D79).
 

@@ -224,7 +224,6 @@ def test_new_dashboard_link_keeps_same_host_request_without_auth_session(
 ):
     from conftest import ORIGIN, PORT
     from fastapi.testclient import TestClient
-
     from pydantic import TypeAdapter
 
     from orch_dashboard.app import create_app

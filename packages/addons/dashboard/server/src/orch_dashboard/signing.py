@@ -1971,7 +1971,7 @@ class Handoffs:
 
 
 def register(app: FastAPI, gateway: Gateway):
-    handoffs = app.state.handoffs = Handoffs()
+    app.state.handoffs = Handoffs()
 
     def human(
         ws: str, op: str, args: dict, idem: str | None = None, dry_run: bool | None = None, files: dict | None = None

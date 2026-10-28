@@ -2,15 +2,17 @@
 // a pick or while the note is typed. Only a trusted press of Send answer (isTrusted, not a key repeat: trustedPress)
 // prepares the request with the signer; its View then shows as the "You are answering" strip: the ticket, the question,
 // the option and the note exactly as the signer will sign them, the workspace line (D6) and the technical facts behind
-// the small "i". The strip's Send answer is bound to that request and its digest only and turns on after the strip has
-// been visible for 1 s (useArming); a second press signs. A changed answer or Cancel cancels the open request (a
-// tombstone, never signed later); the next press is a new attempt. Signing is never routed by hub mode.
+// the small "i". C3 (usePressSign): the press that prepared runs a 1 s arm (the button shows the signer's headline and a
+// progress fill) and the answer is sent at its end, bound to that request and its digest only; a second press, Esc, a
+// press elsewhere, blur or a hidden page cancels. Risk lines (none for an answer today) would need a second press.
+// A changed answer or Cancel cancels the open request (a tombstone, never signed later); the next press is a new
+// attempt. Signing is never routed by hub mode.
 // A workspace that is not click-ready gets one plain line with one button (Turn on One click), never a terminal dialog.
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useRouter } from '@tanstack/react-router'
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import type { HandoffAction } from '@/api/handoff'
-import { clickReady } from '@/api/click'
+import { clickReady, contractViewOk, riskLinesOf } from '@/api/click'
 import { isRealHost } from '@/api/features'
 import { queries } from '@/api/queries'
 import { answeredNow, signedNow } from '@/api/signedDrop'
@@ -21,13 +23,13 @@ import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
 import { Loader2 } from 'lucide-react'
 import { ClickProblemBox } from './RefusalDevices'
-import { ClickSignPanel, TechnicalFacts } from './ClickSignPanel'
+import { ArmFill, ClickSignPanel, RiskLines, TechnicalFacts } from './ClickSignPanel'
 import { SignContent, compactAnswer } from './SignContent'
 import { trustedPress } from './trustedPress'
-import { useActivation, useArming } from './useArming'
+import { ARM_INSIDE, usePressSign } from './useArming'
 import { useClickSign } from './useClickSign'
 import { WorkspaceLine } from './WorkspaceLine'
-import { Raw } from './visible'
+import { Inline, Raw } from './visible'
 
 /** Phases in which a changed answer waits: the step in flight ends first (a prepare) or the answer is already on its way. */
 const HOLD = ['preparing', 'signing', 'settling', 'done']
@@ -184,7 +186,7 @@ export function AnswerSend({
         </p>
       )
     if (click.phase === 'done') return null
-    return <ClickSignPanel ws={ws} answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={cancel} label="Send answer" manyWorkspaces={many} />
+    return <ClickSignPanel ws={ws} answer={click.view} problem={click.problem} signing={click.phase === 'signing'} onSign={() => void click.sign()} onCancel={cancel} label="Send answer" manyWorkspaces={many} pressed={click.fresh} />
   }
   const preparing = mine && ['preparing', 'viewing'].includes(click.phase)
   return (
@@ -213,23 +215,25 @@ export function AnswerSend({
 function Presented({ click, many, onCancel }: { click: ReturnType<typeof useClickSign>; many: boolean; onCancel: () => void }) {
   const answer = click.view!
   const { view, view_digest: digest } = answer
-  const armed = useArming(digest) // starts at mount (a new View is a new mount) and only runs while this strip is visible
-  const activation = useActivation(armed)
+  const risk = riskLinesOf(view)
   const signing = click.phase === 'signing' || click.phase === 'settling'
-  const can = armed && click.phase === 'ready'
-  const go = (e: MouseEvent) => {
-    if (!activation.take(e.nativeEvent) || !can) return // a synthetic click or a key repeat never signs
-    void click.sign()
-  }
+  // C3: the press that prepared runs the arm (starts at mount: a new View is a new mount); see usePressSign.
+  const pressed = click.fresh && contractViewOk(view)
+  const press = usePressSign({ key: digest, riskLines: risk, pressed, can: click.phase === 'ready', onSign: () => void click.sign(), onCancel })
+  const arming = press.mode === 'arm' && click.phase === 'ready'
+  const can = press.mode === 'press' ? press.ready && click.phase === 'ready' : (press.mode === 'arm' || press.mode === 'held') && click.phase === 'ready'
+  const again = press.mode === 'held' ? <Button type="button" size="sm" data-testid="sign-again" {...press.button}>Send answer</Button> : null
   return (
-    <section data-testid="answer-strip" aria-label="Your answer" className="relative space-y-3 rounded-md border border-border bg-bg p-3">
+    <section ref={press.root} data-testid="answer-strip" aria-label="Your answer" className="relative space-y-3 rounded-md border border-border bg-bg p-3">
       <p role="status" className="sr-only" data-testid="strip-live">
-        <Said text={liveText(click.phase, armed)} />
+        <Said text={liveText(click.phase, press.mode === 'arm' ? 'arm' : press.mode === 'held' || (press.mode === 'press' && press.ready) ? 'ready' : 'wait')} />
       </p>
-      <InfoDrawer corner label="Technical details" testId="strip-technical">
-        <TechnicalFacts view={view} />
+      <InfoDrawer corner label="Technical details" testId="strip-technical" onOpenChange={press.info}>
+        <div {...{ [ARM_INSIDE]: '' }} className="space-y-2">
+          <TechnicalFacts view={view} action={again} />
+        </div>
       </InfoDrawer>
-      <WorkspaceLine workspace={view.workspace} many={many} testId="strip-workspace" />
+      <WorkspaceLine workspace={view.workspace} many={many} always={pressed || risk.length > 0} target={view.content?.ticket?.key} testId="strip-workspace" />
       <SignContent content={view.content!} ws={view.workspace?.id} compact />
       {view.checks.filter((c) => !c.clean).map((c, i) => (
         <p key={i} role="note" className="text-[13px] text-warning">
@@ -258,10 +262,10 @@ function Presented({ click, many, onCancel }: { click: ReturnType<typeof useClic
           size="sm"
           disabled={!can}
           aria-busy={signing}
-          onPointerDown={activation.begin}
-          onKeyDown={activation.begin}
-          onClick={go}
-          title={armed ? undefined : 'Send answer turns on after the review has been on screen for a moment'}
+          data-testid="sign-button"
+          className={arming ? 'relative overflow-hidden' : undefined}
+          {...press.button}
+          title={press.mode !== 'press' || press.ready ? undefined : 'Send answer turns on after the review has been on screen for a moment'}
         >
           {signing ? (
             <>
@@ -269,21 +273,32 @@ function Presented({ click, many, onCancel }: { click: ReturnType<typeof useClic
             </>
           ) : click.phase === 'done' ? (
             'Sent'
+          ) : arming ? (
+            <>
+              <ArmFill key={press.round} />
+              <span className="relative"><Inline>{view.headline ?? 'Send answer'}</Inline></span>
+            </>
           ) : (
             'Send answer'
           )}
         </Button>
       </div>
+      {/* C3: the signer's risk lines, under the button and never folded */}
+      <RiskLines lines={risk} box={press.riskBox} />
     </section>
   )
 }
 
-/** What the live region says for a phase of the strip (nothing for a refusal: its own message is on screen). */
-export function liveText(phase: string, armed: boolean): string {
+/**
+ * What the live region says for a phase of the strip (nothing for a refusal: its own message is on screen). `arm`: the
+ * 1 s arm runs; `ready`: a press sends; `wait`: the press turns on in a moment.
+ */
+export function liveText(phase: string, state: 'arm' | 'ready' | 'wait'): string {
   if (phase === 'signing' || phase === 'settling') return 'Sending your answer.'
   if (phase === 'done') return 'Answer sent.'
   if (phase !== 'ready') return ''
-  return armed ? 'Send answer is ready.' : 'Review loaded. Send answer turns on in a moment.'
+  if (state === 'arm') return 'Sending your answer in a moment. Press again or Esc to stop.'
+  return state === 'ready' ? 'Send answer is ready.' : 'Review loaded. Send answer turns on in a moment.'
 }
 
 /** The region starts empty and is filled one tick later, so the first announcement is read by screen readers. */

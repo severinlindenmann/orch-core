@@ -136,6 +136,24 @@ class SealBegin(BaseModel):
 ClickBody = PrepareBody
 
 
+#: contract 4 (run 13 C3): a View's `risk_lines` is at most this many lines of at most this many characters
+RISK_LINES_MAX, RISK_LINE_CHARS, HEADLINE_CHARS = 64, 400, 2000
+
+
+def contract4_view_ok(view: dict) -> bool:
+    """Contract 4's View fields: `headline`, one line of text (not empty), and `risk_lines`, a list of lines of text
+    (maybe empty), both the signer's and in its `view_digest`. Passed on unchanged; only their shape is checked here."""
+    head, risk = view.get("headline"), view.get("risk_lines")
+    return (
+        isinstance(head, str)
+        and 0 < len(head) <= HEADLINE_CHARS
+        and "\n" not in head
+        and isinstance(risk, list)
+        and len(risk) <= RISK_LINES_MAX
+        and all(isinstance(x, str) and 0 < len(x) <= RISK_LINE_CHARS and "\n" not in x for x in risk)
+    )
+
+
 def deposit_view_ok(view: dict, ws: str) -> bool:
     """A deposit grant's View (section 0.8.6 item 6): `deposit:true`, core's deposit line in `deposit_line` and in
     `lines`, the owner's risk sentence in `lines`, this workspace and a plain click
@@ -152,6 +170,8 @@ def deposit_view_ok(view: dict, ws: str) -> bool:
         and isinstance(lines, list)
         and DEPOSIT_LINE in lines
         and DEPOSIT_RISK in lines
+        and isinstance(view.get("risk_lines"), list)
+        and view["risk_lines"][:1] == [DEPOSIT_RISK]  # contract 4: the signer marks it as the risk
         and confirm == {"kind": "click"}
     )
 
@@ -178,6 +198,8 @@ def reveal_view_ok(view: dict, ws: str, reveal_key: str) -> bool:
         and isinstance(lines, list)
         and REVEAL_LINE in lines
         and REVEAL_RISK in lines
+        and isinstance(view.get("risk_lines"), list)
+        and view["risk_lines"][:1] == [REVEAL_RISK]  # contract 4: the signer marks it as the risk
         and view.get("confirm") == {"kind": "click"}
     )
 
@@ -872,6 +894,8 @@ def register(app: FastAPI, gateway: Gateway):
         shown = got.get("view") if isinstance(got, dict) else None
         if not isinstance(shown, dict) or shown.get("op") != op or shown.get("risk") != RISK:
             raise refusal_check("The review is not what was asked for, or lacks the risk line. Cancel it.")
+        if not contract4_view_ok(shown):  # run 13 C3: the headline and the signer's own risk lines
+            raise refusal_check("The review lacks its headline or its risk lines. Nothing was shown. Cancel it.")
         # The runner grant asked for `deposit:true`; its View must say so (and carry the deposit and risk lines), and
         # no other View may claim a deposit: the two must agree, or nothing is shown (no Sign button).
         if isinstance(wanted, RunnerGrant) != (shown.get("deposit") is True) or (

@@ -31,6 +31,7 @@ from . import view as views
 from .passkeys import action_digest
 from .protocol import (
     CONTRACT,
+    CONTRACT_MISMATCH,
     DEPOSIT_MAX_HOURS,
     DEPOSIT_REASONS,
     FEATURES,
@@ -2157,6 +2158,14 @@ class ClickSigner:
     def handle(self, op: str, args: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(args, Mapping):
             raise ClickError("invalid.input", "args is an object")
+        if "contract" in args:
+            # run 13 C3: a client may announce the contract it speaks; another one (strictly: True, 4.0 and "4" are
+            # not 4) is refused before anything else, so it never sees, nor signs, a View it would read otherwise
+            announced = args["contract"]
+            if type(announced) is not int or announced != CONTRACT:
+                self._note("refused", workspace=args.get("workspace_id"), code=CONTRACT_MISMATCH)
+                raise ClickError(CONTRACT_MISMATCH, f"this signer speaks click contract {CONTRACT}; update the client")
+            args = {k: v for k, v in args.items() if k != "contract"}
         if "remote" in args or "stepup" in args:
             # #1198 R1-6: the server says the session is a remote one and relays its assertion. The signer decides
             # from the op and the arguments whether this call needs it, and checks it before anything else.

@@ -62,10 +62,24 @@ export interface ClickPrepared {
   confirm: 'click'
 }
 
+/** The click contract this page speaks (C3): the View carries `headline` and `risk_lines`. Announced on every click call. */
+export const CLICK_CONTRACT = 4
+/** The request header that announces `CLICK_CONTRACT` to the dashboard server (fetchTransport sets it on `/click/` routes). */
+export const CLICK_CONTRACT_HEADER = 'X-Orch-Click-Contract'
+
 /** The signer's View, as it came (the server adds nothing). `lines` are core's terminal review, already escaped. */
 export interface ClickView {
+  /** Contract 4: one short line the signer built; the button shows it during the 1 s arm. */
   headline?: string
+  /**
+   * Contract 4: the lines the signer marks as risk (agent access, add-on capabilities, a raised role, Publish, hub ops,
+   * device removal, purge, a schedule, a shown secret). Non-empty: never signed at the end of the arm; the lines are
+   * shown under the button and a second press, at least 1 s after they are on screen, signs. A View without them
+   * (`contractViewOk` false) never runs the one-press arm: it keeps the press-after-1-s rule.
+   */
+  risk_lines?: string[]
   content?: import('./signing').SignContent
+  /** The generic convenience-signing note (unchanged, CLICK_RISK). */
   risk: string
   op: string
   workspace: { id: string; name: string; prefix: string }
@@ -162,6 +176,15 @@ export async function keyFingerprint(publicKeyB64: string): Promise<string> {
   const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(publicKeyB64)))
   return Array.from(d, (b) => b.toString(16).padStart(2, '0')).join('')
 }
+
+/** A View of contract 4: a headline and the signer's risk lines (possibly none). Only such a View may run the one-press arm. */
+export const contractViewOk = (view: Partial<ClickView> | null | undefined): boolean =>
+  !!view && typeof view.headline === 'string' && view.headline.trim() !== '' &&
+  Array.isArray(view.risk_lines) && view.risk_lines.every((l) => typeof l === 'string' && l.trim() !== '')
+
+/** The risk lines to show and to wait for: the signer's, or none when the View carries no list (it then never arms). */
+export const riskLinesOf = (view: Partial<ClickView>): string[] =>
+  Array.isArray(view.risk_lines) ? view.risk_lines.filter((l): l is string => typeof l === 'string') : []
 
 /** A shown-secret View is offered a Sign button only when it is for THIS page's key, the grant.secret purpose, both constants and this workspace. */
 export const revealViewOk = async (view: ClickView, ws: string, publicKeyB64: string): Promise<boolean> =>
@@ -273,6 +296,10 @@ const REFUSED: Record<string, ClickProblem> = {
   uncertain: { title: 'The outcome is not certain yet', body: 'The signature may or may not have reached the host. It settles by itself; do not sign again until this says it is settled.', next: 'check' },
 }
 
+/** C3: this page and the signing helper speak another click contract. One plain line; nothing to retry here. */
+export const CONTRACT_MISMATCH: ClickProblem = { title: 'Update orch-core', body: 'This page and the signing helper are different versions. Nothing was signed. Reload the page; if it stays, update orch-core.', next: 'unavailable' }
+REFUSED['contract.mismatch'] = CONTRACT_MISMATCH
+
 /**
  * A sign whose outcome the browser cannot know: the answer was lost (a failed fetch) or came from a server that failed
  * without saying anything (5xx, no catalog body). The signature may be at the host: wait for it, never offer a second one.
@@ -347,6 +374,8 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'The key store is not available', body: 'The key store is locked or refused access. Unlock it.'+OFF, next: 'unavailable' }
     case 'host.version_mismatch':
       return { title: 'Update orch-core', body: 'The signing helper and the host are different versions of orch-core. Update orch-core and restart the dashboard.', next: 'unavailable' }
+    case 'contract.mismatch':
+      return CONTRACT_MISMATCH
     case 'click.contract':
       return { title: 'Update orch-core', body: 'This dashboard and its signing helper do not speak the same version. Update orch-core and restart the dashboard.', next: 'unavailable' }
     case 'click.unavailable':

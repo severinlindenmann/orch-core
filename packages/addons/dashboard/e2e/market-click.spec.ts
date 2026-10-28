@@ -34,6 +34,8 @@ test('browse -> review -> Review installation -> one Sign press -> installed', a
   await expect(page.getByRole('dialog')).not.toContainText('7F3K-Q2MA')
   expect(fake.posts('/handoff')).toHaveLength(0) // no Terminal hand-off
   expect(fake.posts('/click/prepare')[0].body).toMatchObject({ action: 'market_grant', name: 'jira', staged: STAGE })
+  // C3: an add-on with a capability has risk lines: they are shown under the button and the second press signs
+  await expect(page.getByTestId('sign-risk-lines')).toContainText('The add-on jira can reach the network')
   await expect(sign).toBeEnabled({ timeout: 10_000 })
   await page.screenshot({ path: path.join(SHOTS, 'oneclick-sign.png') })
   await page.setViewportSize({ width: 390, height: 844 }) // phone width: the same review, no sideways spill

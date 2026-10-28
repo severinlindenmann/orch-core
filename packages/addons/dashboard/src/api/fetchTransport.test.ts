@@ -16,6 +16,17 @@ it('sends bearer headers, no cookies, and preserves error envelopes', async () =
     Authorization: 'Bearer demo-not-a-real-token', 'content-type': 'application/json',
   }, body: '{}' }))
 })
+it('C3: announces click contract 4 on the click routes only', async () => {
+  const fetcher = vi.fn(async () => Response.json({}))
+  vi.stubGlobal('fetch', fetcher)
+  const transport = createFetchTransport('', () => 'demo-not-a-real-token')
+  await transport.request('POST', `/api/w/${'a'.repeat(32)}/click/prepare`, { action: 'close', key: 'DEMO-1' })
+  expect(fetcher).toHaveBeenLastCalledWith(`/api/w/${'a'.repeat(32)}/click/prepare`, expect.objectContaining({ headers: {
+    Authorization: 'Bearer demo-not-a-real-token', 'content-type': 'application/json', 'X-Orch-Click-Contract': '4',
+  } }))
+  await transport.request('GET', `/api/w/${'a'.repeat(32)}/settings`)
+  expect(fetcher).toHaveBeenLastCalledWith(`/api/w/${'a'.repeat(32)}/settings`, expect.objectContaining({ headers: { Authorization: 'Bearer demo-not-a-real-token' } }))
+})
 it('rejects cross-origin bases and paths before credentials leave', async () => {
   const fetcher = vi.fn()
   vi.stubGlobal('fetch', fetcher)

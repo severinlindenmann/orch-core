@@ -73,6 +73,9 @@ export function stage(id: string, update: boolean) {
 /** The signer's View of a market grant, as core renders it: the signed event line by line, then the marketplace block. */
 function clickView(name: string) {
   return {
+    // Contract 4 (C3): the signer's headline, and its risk line for the add-on's capability (a second press signs).
+    headline: `Install the add-on ${name}`,
+    risk_lines: [`The add-on ${name} can reach the network`],
     risk: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.', op: 'addon.grant',
     workspace: { id: WS, name: 'Dev workspace', prefix: 'DEMO' }, fingerprint: '5b9f4bcf5cca',
     lines: [

@@ -2,15 +2,18 @@ import { usePicturesOk } from './Pictures'
 import { SignContent, SignDetails } from './SignContent'
 // The click-to-sign panel (host contract section 0.8.6 item 7): it shows ONLY the signer's View, nothing of this page's
 // own preview, the host's fingerprint or a cached ticket. `lines` are core's terminal
-// review, already escaped, and are text here, never HTML. Sign is armed after 1 s of visible presentation.
+// review, already escaped, and are text here, never HTML. C3 (usePressSign): a View prepared by a trusted press and
+// without risk lines signs at the end of a 1 s arm (the button shows the signer's headline and a progress fill; any
+// press, Esc, a press elsewhere, blur or a hidden page cancels); risk lines are shown under the button and need a second
+// press 1 s after they are on screen; any other View signs on a press after 1 s of visible presentation.
 // Every op signs on one plain click after the review; nothing is typed. The risk notice lives in Settings; the custody is a technical fact under Technical details.
 import { Loader2, ShieldAlert } from 'lucide-react'
-import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
-import { CLICK_RISK, type ClickProblem, type ClickViewAnswer } from '@/api/click'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { ARM_MS, CLICK_RISK, contractViewOk, riskLinesOf, type ClickProblem, type ClickViewAnswer } from '@/api/click'
 import { Button } from '@/components/ui/button'
-import { Raw } from './visible'
+import { Inline, Raw } from './visible'
 import { ClickProblemBox } from './RefusalDevices'
-import { useActivation, useArming } from './useArming'
+import { ARM_INSIDE, RISK_LINE, usePressSign } from './useArming'
 import type { SignStory } from './story'
 import { AgentAccess, WhatNext } from './SignAside'
 import { alsoSigned } from './alsoSigned'
@@ -56,18 +59,56 @@ interface Props {
   ready?: boolean
   /** The person has more than one workspace: the review names the one it signs in (D6, WorkspaceLine). */
   manyWorkspaces?: boolean
+  /**
+   * C3: this View is the first of a request prepared by a trusted press here (`ClickRun.fresh`). Without risk lines it
+   * runs the 1 s arm and asks for the signature at its end; otherwise (and by default) a press after 1 s signs.
+   */
+  pressed?: boolean
+  /** The arm was cancelled (Esc, a second press, a press elsewhere, blur, hidden page). Default: `onCancel`. */
+  onDisarm?: () => void
 }
 
-export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, label, extra, ready = true, manyWorkspaces = false }: Props) {
+export function ClickSignPanel({ answer, problem, signing, onSign, onCancel, waitUntil = 0, ws, story, label, extra, ready = true, manyWorkspaces = false, pressed = false, onDisarm }: Props) {
   const { view, view_digest: digest } = answer
   // A new View (a new digest) is a new confirmation: the timer, a half-done hold and any half-begun press start over.
-  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} label={label} extra={extra} ready={ready} manyWorkspaces={manyWorkspaces} />
+  return <Presented key={digest} view={view} digest={digest} problem={problem} signing={signing} onSign={onSign} onCancel={onCancel} waitUntil={waitUntil} ws={ws} story={story} label={label} extra={extra} ready={ready} manyWorkspaces={manyWorkspaces} pressed={pressed} onDisarm={onDisarm} />
+}
+
+/** The 1 s progress fill of the arm, inside the button (restarts with its `key`). */
+export function ArmFill({ ms = ARM_MS }: { ms?: number }) {
+  const [full, setFull] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setFull(true), 0)
+    return () => clearTimeout(t)
+  }, [])
+  return <span aria-hidden data-testid="sign-progress" className="pointer-events-none absolute inset-y-0 left-0 bg-white/25 transition-[width] ease-linear" style={{ width: full ? '100%' : '0%', transitionDuration: `${ms}ms` }} />
+}
+
+/** C3: the signer's risk lines, under the button, never folded. Each line carries `RISK_LINE` (counted before a press counts). */
+export function RiskLines({ lines, box, testId = 'sign-risk-lines' }: { lines: readonly string[]; box?: (el: HTMLElement | null) => void; testId?: string }) {
+  if (lines.length === 0) return null
+  return (
+    <ul ref={box} role="note" data-testid={testId} className="space-y-1 rounded-md border border-warning/50 bg-warning/10 px-3 py-2 text-[13px] font-medium text-text">
+      {lines.map((line, i) => (
+        <li key={i} {...{ [RISK_LINE]: '' }} className="flex items-start gap-2">
+          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
+          <span><Inline>{line}</Inline></span>
+        </li>
+      ))}
+    </ul>
+  )
 }
 
 /** What the one "Technical details" expander of the review holds besides the content's own ids (action, workspace, fingerprint, device, the signer's lines and checks). */
-export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
+export function TechnicalFacts({ view, action }: { view: ClickViewAnswer['view']; /** C3: the press that starts a new arm after "i" stopped one. */ action?: ReactNode }) {
   return (
     <>
+      {action}
+      {riskLinesOf(view).length > 0 && (
+        <ul data-testid="click-risk-full" className="space-y-0.5 text-[12px] text-text">
+          {riskLinesOf(view).map((line, i) => <li key={i}><Inline>{line}</Inline></li>)}
+        </ul>
+      )}
       <dl className="grid grid-cols-[110px_1fr] gap-x-3 gap-y-1 text-[13px]">
         <dt className="text-text-muted">Action</dt>
         <dd>
@@ -120,8 +161,7 @@ export function TechnicalFacts({ view }: { view: ClickViewAnswer['view'] }) {
   )
 }
 
-function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, label: given, extra, ready = true, manyWorkspaces = false }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
-  const armed = useArming(digest)
+function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil, ws, story, label: given, extra, ready = true, manyWorkspaces = false, pressed = false, onDisarm }: Omit<Props, 'answer'> & { view: ClickViewAnswer['view']; digest: string; waitUntil: number }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (waitUntil <= Date.now()) return
@@ -129,21 +169,38 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
     return () => clearInterval(t)
   }, [waitUntil])
   const waiting = waitUntil > now
-  const activation = useActivation(armed)
   const picturesOk = usePicturesOk(view.content?.images) // R3 part B: a picture that is not the pasted file switches Sign off
-  const can = armed && !signing && !waiting && picturesOk && ready
-  const go = (e: MouseEvent) => {
-    if (!activation.take(e.nativeEvent) || !can) return // a synthetic click or a key repeat never signs
-    onSign()
-  }
-  const technical = <TechnicalFacts view={view} />
+  const risk = riskLinesOf(view)
+  const allowed = !signing && !waiting && picturesOk && ready
+  const auto = pressed && contractViewOk(view) // the one-press arm: a contract-4 View of a request prepared by a press here
+  const press = usePressSign({ key: digest, riskLines: risk, pressed: auto, can: allowed, onSign, onCancel: onDisarm ?? onCancel })
+  const arming = press.mode === 'arm' && !signing
+  const can = press.mode === 'press' ? press.ready && allowed : (press.mode === 'arm' || press.mode === 'held') && !signing
+  // "i" (the Technical details) opened during the arm stops it; a press inside it starts a new one.
+  const box = useRef<HTMLElement | null>(null)
+  const { root, info } = press
+  const setBox = useCallback((el: HTMLElement | null) => {
+    box.current = el
+    root(el)
+  }, [root])
+  useEffect(() => {
+    const el = box.current
+    if (!el) return
+    const opened = (e: Event) => {
+      if (e.target instanceof HTMLDetailsElement && e.target.open) info(true)
+    }
+    el.addEventListener('toggle', opened, true)
+    return () => el.removeEventListener('toggle', opened, true)
+  }, [info])
+  const label = story?.signLabel ?? given ?? 'Sign'
+  const again = press.mode === 'held' ? <Button type="button" size="sm" data-testid="sign-again" {...press.button}>{label}</Button> : null
+  const technical = <TechnicalFacts view={view} action={again} />
   // A compact review (a summary, or a quick task shown folded) says what happens in its own lines: no step list under it.
   const lean = !!view.content?.summary || (!!story?.quick && !!view.content && alsoSigned(view.content, story.quick) !== null)
-  const label = story?.signLabel ?? given ?? 'Sign'
   const danger = !!story?.danger
   return (
-    <section data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
-      <WorkspaceLine workspace={view.workspace} many={manyWorkspaces} />
+    <section ref={setBox} data-testid="click-panel" aria-label="Review before signing" className="space-y-3">
+      <WorkspaceLine workspace={view.workspace} many={manyWorkspaces} always={auto || risk.length > 0} target={view.content?.ticket?.key} />
       {view.content && <SignContent content={view.content} ws={view.workspace?.id} technical={technical} compact={story?.compact} quick={story?.quick} />}
       {/* authority stays in the default view, never folded: the scope, the agent access length, what happens next */}
       {story?.scope && <p data-testid="sign-scope" className="text-[13px] text-text">{story.scope}</p>}
@@ -155,11 +212,16 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
       {!view.content && <div data-testid="click-lines" className="max-h-64 overflow-auto rounded-md border border-border bg-bg p-3 font-mono text-[12px]">{view.lines.map((line, i) => <div key={i} className="whitespace-pre-wrap break-all">{line || " "}</div>)}</div>}
       {problem && <ClickProblemBox problem={{ ...problem, body: problem.body.replace('Press the button again', `Press ${label} again`), next: undefined, signedAt: undefined }} ws={ws} />}
       {extra}
-      <SignFooter><div className={danger ? 'shrink-0 border-t border-border pt-3' : STICKY_FOOTER} data-testid="sign-footer">
+      <SignFooter><div className={danger ? 'shrink-0 border-t border-border pt-3' : STICKY_FOOTER} data-testid="sign-footer" {...{ [ARM_INSIDE]: '' }}>
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {!armed && !signing && (
+          {press.mode === 'press' && !press.ready && !signing && (
             <span data-testid="sign-arming" role="status" className="mr-auto text-[12px] text-text-muted">
               Ready in a moment
+            </span>
+          )}
+          {arming && (
+            <span data-testid="sign-arm-status" role="status" className="mr-auto text-[12px] text-text-muted">
+              Signs in a moment. Press again or Esc to stop.
             </span>
           )}
           <Button type="button" variant="ghost" onClick={onCancel} disabled={signing}>
@@ -170,20 +232,27 @@ function Presented({ view, digest, problem, signing, onSign, onCancel, waitUntil
             variant={danger ? 'destructive' : 'default'}
             disabled={!can}
             aria-busy={signing}
-            onPointerDown={activation.begin}
-            onKeyDown={activation.begin}
-            onClick={go}
-            title={armed ? undefined : `${label} turns on after the review has been on screen for a moment`}
+            data-testid="sign-button"
+            className={arming ? 'relative overflow-hidden' : undefined}
+            {...press.button}
+            title={press.mode !== 'press' || press.ready ? undefined : `${label} turns on after the review has been on screen for a moment`}
           >
             {signing ? (
               <>
                 <Loader2 className="size-4 animate-spin" aria-hidden /> Signing…
+              </>
+            ) : arming ? (
+              <>
+                <ArmFill key={press.round} />
+                <span className="relative"><Inline>{view.headline ?? label}</Inline></span>
               </>
             ) : (
               label
             )}
           </Button>
         </div>
+        {/* C3: the signer's risk lines, under the button and never folded; the second press counts only once they are on screen */}
+        <RiskLines lines={risk} box={press.riskBox} />
       </div></SignFooter>
     </section>
   )

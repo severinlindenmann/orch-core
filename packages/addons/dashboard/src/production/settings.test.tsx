@@ -320,11 +320,10 @@ it('adding a member is signed with One click and sends the invitee\'s certificat
   expect(panel).toHaveTextContent('FROM-THE-SIGNER member.add')
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'member_add', name: 'Nia', role: 'member', pk: PK, cert: CERT, reader_decl: DECL }])
   expect(state.host.posts()).toEqual([]) // no hand-off is ever prepared
-  const sign = within(dialog).getByRole('button', { name: /^Sign( |$)/ })
-  await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 3000 })
-  fireEvent.pointerDown(sign)
-  fireEvent.click(sign)
-  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  // C3: adding a member carries no risk lines: the press that prepared signs at the end of the 1 s arm
+  expect(within(dialog).getByRole('button', { name: 'FROM-THE-SIGNER headline member.add' })).toBeEnabled()
+  expect(state.host.clickSigned).toEqual([])
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), { timeout: ARM_MS + 3000 })
 })
 
 it('the One click confirmation can be chosen or dropped on its own field', async () => {

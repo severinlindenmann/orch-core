@@ -2502,11 +2502,16 @@ by proving the passphrase of a key that is in passphrase custody now, and it nev
   (`sha256(cj(sorted served_ops()))`); a mismatch refuses that workspace with `host.version_mismatch` ("the signer's
   orch-core differs from the host's") and `status` shows `available:false, problem:"version_mismatch"`. Algorithm
   drift the registry digest does not see still fails closed in the signer's checks (`check_failed`). `status` also
-  answers `core` (the orch-core version), `contract` and `features`. **Contract 3** (#1198 C1/C2, item 6) is the only
-  one: every confirmation is a plain click after the shown review, `prepare`
-  answers `confirm:"click"`, `sign` reads no `word` and the `word` refusal is gone. Contract 2 (H11c-2, deposit
-  support) and 1 (H5c to H11b, a typed word for some ops) are history: the dashboard accepts exactly 3
-  (`CONTRACTS = (3,)`) and answers any other value with `click.contract` ("update orch-core"). `features` lists
+  answers `core` (the orch-core version), `contract` and `features`. **Contract 4** (run 13 C3) is the only one: the
+  View carries `headline` and `risk_lines` (below), both in `view_digest`, and a client may announce the contract it
+  speaks as `contract:int` in the `args` of any request (the dashboard sends it on `prepare`, `view` and `sign`); the
+  signer refuses any other value (strictly the int: `true`, `4.0` and `"4"` are other contracts) with
+  `contract.mismatch` before anything else, and a request without `contract` is not refused. Everything of contract 3
+  (#1198 C1/C2, item 6) stays: every confirmation is a plain click after the shown review, `prepare`
+  answers `confirm:"click"`, `sign` reads no `word` and the `word` refusal is gone. Contracts 3, 2 (H11c-2, deposit
+  support) and 1 (H5c to H11b, a typed word for some ops) are history: the dashboard accepts exactly 4
+  (`CONTRACTS = (4,)`) and answers any other value, and the signer's `contract.mismatch`, with `click.contract`
+  ("update orch-core"). `features` lists
   `custody`, `sequence`, `images` and `reveal`; `reveal` (#1198 C7) is a `grant` without `deposit` whose secret is
   sealed to the page (item 6); a signer without it answers `terminal_only` for that grant.
 - **Frames (normative)** on the socketpair: §0.2's codec (`orch.host.frames.encode` and `Decoder`: a 4-byte big-endian
@@ -2537,12 +2542,16 @@ sign    {workspace_id:WsId, request_id:ReqHr, view_digest:Hash, reveal_key?:str}
 DepositReason = "grant.forgotten"|"grant.not_runner"|"grant.verbs"|"grant.expiring"|"rate.limited"|"runner.unavailable"|"other"
                // a static code of this closed set, never host text; any other host refusal is "other"
 cancel  {workspace_id:WsId, request_id:ReqHr} → {state:"cancelled"|"submitted"|"expired"}
-status  {} → {core:str, contract:3, features:[str], workspaces:[{workspace_id:WsId, prefix:str,
+status  {} → {core:str, contract:4, features:[str], workspaces:[{workspace_id:WsId, prefix:str,
                            custody:"convenience"|"passphrase"|"none", device:Device|null, enabled:bool,
                            available:bool, problem?:str}]}
+<any request> args.contract?:int                       // contract 4: another value → contract.mismatch
 View = {risk:"Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.",
+                                                   // contract 4: the same generic note for every op (schedule.add too)
         op:OpName, workspace:{id:WsId, name:str, prefix:str}, fingerprint:str/[0-9a-f]{12}/,
-        headline:str, content:SignContent,                 // B6: the plain view (additive), derived from the same events and material
+        headline:str,                              // contract 4: always; one line: content.headline, else the op's title (OP_TITLES)
+        risk_lines:[str],                          // contract 4: the signer's own risk lines (RISK_OPS), [] for every other op
+        content?:SignContent,                      // B6: the plain view (additive), derived from the same events and material
         lines:[str],                                       // the terminal review of CLI signing, line for line, escaped
         checks:[{repo:str, clean:true, attested_by:"worker", at:Time}],   // shown; `at` is not in view_digest
         confirm:{kind:"click"}, expires_at:Time, auth:"convenience", device:Device,
@@ -2550,16 +2559,31 @@ View = {risk:"Convenience signing: agents running as you, or anything that takes
         deposit?:true,                 // v1.6: set only for a deposit grant (§0.8.6 item 6); the line below is then in lines
         deposit_line?:"The secret goes to your orch runner on this machine and is never shown",
         seal?:{v:1, alg:str, purposes:["grant.secret"], for:str}}   // C7: a shown-secret grant only (item 6)
-view_digest = "sha256:" + hex(sha256(cj(View with every checks[].at removed)))
+view_digest = "sha256:" + hex(sha256(cj(View with every checks[].at removed)))   // headline and risk_lines included
 Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, one per click, reused on retry
 ```
+
+  **Risk lines (contract 4, run 13 C3, normative).** `risk_lines` is built by the signer from its closed per-op table
+  `orch.click.protocol.RISK_OPS` (next to `CLICK_OPS`) over the signed events only, never from client text: an event
+  value reaches a line only through a closed table (a capability's words, a role) or as a number (a grant's hours).
+  The marked ops: `grant` (deposit: `DEPOSIT_RISK`; shown once: `REVEAL_RISK`; then the length, "Agents get this
+  authority for N hours/days, until it ends or you stop it."), `addon.grant` (one plain line per declared capability,
+  "It may <words>."; an unknown capability: one fixed line; Publish: its own line first), `member.role` to `owner` or
+  `maintainer`, `settings.set` that sets (not removes) `publish`, `publish.share`, `hub.join`/`hub.mode` (selective or
+  full words by the signed mode), `hub.leave`, `device.remove`, `device.rotate` (the `rotate` review), `addon.purge`
+  and `schedule.add` (the schedule risk and "No click or confirmation is required at firing time.", also at the end of
+  `lines`). Every other op has `risk_lines: []`. The rotate review (`rotate {begin}`) carries `headline` and
+  `risk_lines` too. A risk line that changes between `view` and `sign` changes the rebuilt View's digest:
+  `view_changed`. The 1 s dwell (`too_soon`) is the signer's own monotonic clock from the View it built; nothing a
+  client sends shortens it.
 
   **Error codes on the channel.** `invalid.input`; `custody.no_key` (no device key for the workspace on this machine);
   `custody.unavailable` (keychain locked, access denied, an unsupported platform); `sign.convenience_unavailable`
   with `reason` `disabled`, `relay_paired`, `other_member`, `phone_device` or `reader_version` (from the host);
   `sign.convenience_readers` (from the host, on `prepare` of a reader-adding op); `rate.limited` with
   `retry_after_ms` (the event-signature budget); `human.request_state`, `human.request_expired`, `not_found` and other
-  host codes passed through; `host.unavailable` (the workspace socket cannot be reached); and
+  host codes passed through; `host.unavailable` (the workspace socket cannot be reached); `contract.mismatch` (contract
+  4: `args.contract` is not this signer's contract; nothing else of the request is read); and
   **`human.click_refused`** with `reason`:
 
   | `reason` | When |
@@ -2673,13 +2697,14 @@ Idem = str/a_[0-7][0-9A-HJKMNP-TV-Z]{25}/                  // the dashboard's, o
   diagnostic evidence, not proof of human approval or a tamper-resistant audit trail against the person's UID.
 - **Errors** reuse the catalog (`custody.no_key`, `custody.unavailable`, `rate.limited`, `human.request_state`,
   `human.request_expired`, `sign.convenience_unavailable`) plus `human.click_refused` (exit 3, not retryable,
-  client-side only: the host never sends it).
+  client-side only: the host never sends it) and `contract.mismatch` (contract 4, not retryable, channel only: the
+  dashboard answers it as `click.contract`).
 
 **6. Which ops are click-signed** (amended by #1198, owner decision V3-D40 of 24 Oct 2026: every admin action in the
 dashboard is a plain click after the shown review, no typed word; the CLI is the backup). The signer enforces an
 explicit operation allowlist (`orch.click.protocol.CLICK_OPS`) and the complete emitted-event checks. Unknown
 operations and future additions fail closed (terminal-only). There is one confirmation class on the click path:
-`prepare` answers `confirm:"click"` and the View carries `confirm:{kind:"click"}` (contract 3, item 5). A `grant`
+`prepare` answers `confirm:"click"` and the View carries `confirm:{kind:"click"}` (since contract 3, item 5). A `grant`
 (the only op that returns a bearer secret) is a click in exactly two shapes, and refused before signing in any other:
 
 - **Deposit grant** (v1.6, D-P2-27, owner decision of 12 Oct 2026): `prepare {deposit:true}`, one `grant.issued` with
@@ -4195,8 +4220,12 @@ existing op changes its version.
     word class and the `word` refusal are gone; member, policy, add-on purge, repo/sign-method/grant-hour settings and
     Publish (`publish.share`, `addon.grant` of `publish`, `settings.set` of `publish`) are plain clicks after the review;
     a reveal grant (feature `reveal`) shows a grant secret once, sealed to the page (§0.8.6 items 5 and 6,
-    [orch-v2-sealed-field.md](orch-v2-sealed-field.md)). The dashboard accepts only contract 3. The terminal signer keeps
-    its `/dev/tty` word. No host op or wire schema change on the workspace socket.
+    [orch-v2-sealed-field.md](orch-v2-sealed-field.md)). The dashboard accepted only contract 3 then. The terminal signer
+    keeps its `/dev/tty` word. No host op or wire schema change on the workspace socket.
+23. **Risk lines in the click View (run 13 C3; click-signer contract 4):** the View carries `headline` and
+    `risk_lines` (the signer's closed `RISK_OPS` table, `[]` for other ops), both in `view_digest`; a client may announce
+    `args.contract` and another value is `contract.mismatch` (§0.8.6 item 5). The dashboard accepts only contract 4. No
+    host op or wire schema change on the workspace socket.
 
 **v1.6 → v1.7 (draft, 12 Oct 2026, revised 13 Oct after the Codex challenge and Opus tie-break, §11A.13).** The host
 bridge client. On the wire it is additive: no op on any socket changes its version, and no new error code is added (an

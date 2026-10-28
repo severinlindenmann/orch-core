@@ -32,6 +32,12 @@ const sign = async (name: string | RegExp) => {
   trustedPresses()
   await userEvent.click(button)
 }
+/** C3: a View without risk lines, prepared by the press: the button shows the signer's headline during the 1 s arm, then it signs once. */
+const armSigns = async (op: string) => {
+  expect(await screen.findByRole('button', { name: `FROM-THE-SIGNER headline ${op}` }, T)).toBeEnabled()
+  expect(state.host.clickSigned).toHaveLength(0)
+  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), { timeout: ARM_MS + 3000 })
+}
 async function openReview(tab = 'browse') {
   show(`/w/DEMO/addons?tab=${tab}`)
   await userEvent.click(await screen.findByRole('button', { name: tab === 'browse' ? 'Install...' : 'Update...' }, T))
@@ -288,8 +294,7 @@ it('run 9 remove: an On add-on\'s Remove opens the "Turn off and remove" review;
   await within(d).findByTestId('click-panel', {}, T)
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'addon_disable', name: 'calendar' }])
   expect(state.host.calls.some((c) => c.path.endsWith('/market/uninstall'))).toBe(false) // not before the signature
-  await sign(/^Sign( |$)/)
-  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  await armSigns('addon.disable') // turning off carries no risk lines: the Remove press signs at the end of the 1 s arm
   await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/market/uninstall'))?.body).toEqual({ name: 'calendar' }), T)
 })
 
@@ -313,6 +318,5 @@ it('run 9 side panel: Settings opens a panel beside the list with controls from 
   trusted()
   await userEvent.click(within(sheet).getByRole('button', { name: 'Save' }))
   await waitFor(() => expect(state.host.calls.find((c) => c.path.endsWith('/click/prepare'))?.body).toEqual({ action: 'addon_settings', name: 'calendar', value: { mode: 'week', limit: 300 } }), T)
-  await sign('Approve and save')
-  await waitFor(() => expect(state.host.clickSigned).toHaveLength(1), T)
+  await armSigns('settings.set') // add-on settings carry no risk lines: the Save press signs at the end of the 1 s arm
 })

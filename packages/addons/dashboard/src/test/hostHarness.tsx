@@ -220,13 +220,44 @@ function prepare(body: Record<string, unknown>): HandoffRequest {
   }
 }
 
+/**
+ * C3: the fake signer's risk lines (contract 4), after core's per-op table: add-on capabilities, a raised role, Publish,
+ * purge, agent access, hub ops, device removal, schedules. Every other op has none (it signs at the end of the 1 s arm).
+ */
+export function riskLinesFor(request: Pick<HandoffRequest, 'op' | 'material'>, body: Record<string, unknown> = {}): string[] {
+  if (body.agent) return ['FROM-THE-SIGNER risk: agents can act for you on tickets'] // a task started with agent access
+  const payload = (request.material as unknown as { review?: { payload?: Record<string, unknown> }[] } | undefined)?.review?.[0]?.payload ?? {}
+  const set = (payload.set ?? {}) as Record<string, unknown>
+  switch (request.op) {
+    case 'addon.grant':
+      return [`FROM-THE-SIGNER risk: the add-on ${String(payload.name)} gets its capabilities`]
+    case 'member.role':
+      return payload.role === 'owner' || payload.role === 'maintainer' ? [`FROM-THE-SIGNER risk: role raised to ${String(payload.role)}`] : []
+    case 'settings.set':
+      return 'publish' in set ? ['FROM-THE-SIGNER risk: files can be published outside this computer'] : []
+    case 'publish.share':
+      return ['FROM-THE-SIGNER risk: files are shared outside this computer']
+    case 'addon.purge':
+      return ['FROM-THE-SIGNER risk: the add-on data is deleted']
+    case 'grant':
+    case 'hub.join':
+    case 'hub.mode':
+    case 'hub.leave':
+    case 'device.remove':
+    case 'schedule.add':
+      return [`FROM-THE-SIGNER risk: ${request.op}`]
+    default:
+      return []
+  }
+}
+
 export class FakeHost {
   calls: Call[] = []
   workspaces: FakeWs[]
   requests = new Map<string, HandoffRequest>()
   cancelled: string[] = []
   /** Click-to-sign: what the fake signer was asked, and the Views it shows (by request id). */
-  clickRequests = new Map<string, { op: string; confirm: 'click' }>()
+  clickRequests = new Map<string, { op: string; confirm: 'click'; risk: string[] }>()
   clickCancelled: string[] = []
   clickSigned: Record<string, unknown>[] = []
   clickCount = 0
@@ -320,7 +351,7 @@ export class FakeHost {
       const request = prepare(body!)
       const id = 'hr_' + String(++this.clickCount).padStart(26, '0')
       const confirm = 'click'
-      this.clickRequests.set(id, { op: request.op, confirm })
+      this.clickRequests.set(id, { op: request.op, confirm, risk: riskLinesFor(request, body!) })
       return json({ request_id: id, expires_at: request.expires_at, op: request.op, confirm })
     }
     if (rest === 'click/view' && method === 'POST') {
@@ -329,6 +360,8 @@ export class FakeHost {
       return json({
         view_digest: 'sha256:' + '9'.repeat(64),
         view: {
+          headline: `FROM-THE-SIGNER headline ${got.op}`,
+          risk_lines: got.risk,
           risk: 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.',
           op: got.op,
           workspace: { id: ws.id, name: ws.name, prefix: ws.prefix },

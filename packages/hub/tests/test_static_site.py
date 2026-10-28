@@ -47,6 +47,7 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         "/inbox.js",
         "/route.js",
         "/admin.js",
+        "/admin_reach.js",
         "/switch.js",
         "/ui.js",
         "/feel.js",

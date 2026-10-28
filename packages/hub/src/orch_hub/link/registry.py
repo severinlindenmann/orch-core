@@ -199,7 +199,9 @@ class Registry:
                 (
                     render_text(body["version"])[:32],
                     render_text(body["commit"])[:40],
-                    "" if self._mode_locked(ws) else render_text(body["host"])[:80],  # a selective workspace keeps its host name
+                    ""
+                    if self._mode_locked(ws)
+                    else render_text(body["host"])[:80],  # a selective workspace keeps its host name
                     ws,
                 ),
             )

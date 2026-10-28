@@ -7,6 +7,9 @@ The owner's signed record is a person op (``hub.join`` -> ``hub.joined``, ``hub.
   ``WSK`` and send ``join`` (card, owner key, binding) over the hub link.
 * ``hub.unbind {}``: after ``hub.left`` is on the log, sign ``hub.unbound`` with ``WSK`` and offer it to the hub; the
   hub being down is not an error (it stays queued in ``hub.json`` and is offered again).
+* ``hub.profile {profile?}``: owner-only get / replace of local ``hub/profile.json`` (0600); best-effort push.
+  Put returns pushed=False when not yet updated on the hub.
+* ``hub.directory {query?}``: read live routing-authorized profiles as untrusted display data.
 * ``hub.status {}``: the model's hub and the host's link state.
 * ``hub.handoff {kind, ticket, ...}``: a read for Mission Control's "approve in the hub" panel (:mod:`.hubhandoff`).
 
@@ -21,6 +24,8 @@ other workspace refuses a dev hub (hub contract 2.4). The real TLS link is C5: :
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import threading
 from collections.abc import Callable
@@ -52,9 +57,12 @@ __all__ = [
 
 HUB_OPS: dict[str, int] = {
     "hub.connect": 1, "hub.link": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1,
+    "hub.profile": 1, "hub.directory": 1,
     "hub.history": 1, "keys.rotate": 1, "hub.switch": 1,
 }  # fmt: skip
-NETWORK_OPS = frozenset({"hub.connect", "hub.link", "hub.unbind", "hub.refresh", "hub.switch"})
+NETWORK_OPS = frozenset(
+    {"hub.connect", "hub.link", "hub.unbind", "hub.refresh", "hub.switch", "hub.directory", "hub.profile"}
+)
 HUB_CAPS = ["hub/1"]
 _MU = threading.Lock()
 
@@ -64,7 +72,41 @@ TRANSPORT: Any = None
 #: the workspace's current v2 directory card (hub contract 9.5), or ``None``; tests replace it
 CARD_SOURCE: Any = None
 
+_PROFILE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "listed": {"type": "boolean"},
+        "tags": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 24}},
+        "handles": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 80}},
+        "not_handled": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 80}},
+        "accepts": {"type": "array", "maxItems": 8, "items": {"type": "string", "maxLength": 24}},
+        "description": {"type": "string", "maxLength": 300},
+        "contact": {"type": "string", "maxLength": 80},
+        "languages": {"type": "string", "maxLength": 40},
+        "hours": {"type": "string", "maxLength": 40},
+    },
+    "required": ["listed", "tags", "handles", "not_handled", "accepts", "description", "contact", "languages", "hours"],
+    "additionalProperties": False,
+}
+_DEFAULT_PROFILE = {
+    "listed": False,
+    "tags": [],
+    "handles": [],
+    "not_handled": [],
+    "accepts": [],
+    "description": "",
+    "contact": "",
+    "languages": "",
+    "hours": "",
+}
+
 _SCHEMAS: dict[str, dict[str, Any]] = {
+    "hub.profile": {"type": "object", "properties": {"profile": _PROFILE_SCHEMA}, "additionalProperties": False},
+    "hub.directory": {
+        "type": "object",
+        "properties": {"query": {"type": "string", "maxLength": 80}},
+        "additionalProperties": False,
+    },
     "hub.link": {  # run-9 feedback 6: a read; fetch the hub card named by a connect link and check it against the link
         "type": "object",
         "properties": {"link": {"type": "string", "minLength": 8, "maxLength": 1024}},
@@ -187,6 +229,30 @@ def facts_for(service: WorkspaceService) -> HubFacts:
 
 def _dir(service: WorkspaceService) -> Path:
     return Path(os.path.realpath(service.state_dir)) / "hosts" / service.workspace_id / "hub"
+
+
+def _load_profile(service: Any) -> dict[str, Any]:
+    from .custody import read_json
+
+    doc = read_json(_dir(service) / "profile.json", service.host_uid, limit=65536)
+    profile = doc if doc is not None else _DEFAULT_PROFILE
+    if not Draft202012Validator(_PROFILE_SCHEMA).is_valid(profile):
+        raise HostError("invalid.input", "invalid stored hub profile")
+    return profile
+
+
+def _save_profile(service: Any, profile: dict[str, Any]) -> None:
+    import json
+
+    from orch.store.fsio import write_atomic
+
+    from .custody import ensure_private_dir
+
+    d = _dir(service)
+    for level in (d.parent, d):
+        ensure_private_dir(level, service.host_uid)
+    write_atomic(d / "profile.json", json.dumps(profile).encode(), mode=0o600)
+    service.__dict__.pop("_hub_profile_sent", None)
 
 
 def _load_state(service: WorkspaceService) -> Any:
@@ -731,6 +797,17 @@ def serve(call: Call) -> dict[str, Any]:
         return {"plan": {"op": "hub.link", "link": args["link"], "dev": workspace_dev(service)}}
     model = dict(service.store.state.workspace.hub)
     state = _load_state(service)
+    if op == "hub.profile":
+        if "profile" not in args:
+            return ok_result({"profile": _load_profile(service)})
+        _save_profile(service, args["profile"])
+        if state is None or state.status != "bound":
+            return ok_result({"profile": args["profile"], "pushed": False})
+        return {"plan": {"op": op, "args": args, "state": state, "dev": workspace_dev(service)}}
+    if op == "hub.directory":
+        if state is None or state.status != "bound":
+            raise HostError("hub.not_joined", "this workspace is not connected to a hub")
+        return {"plan": {"op": op, "args": args, "state": state, "dev": workspace_dev(service)}}
     if op == "hub.history":
         from . import breakglass
 
@@ -873,7 +950,29 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             )
         except HubRefused as exc:
             raise _refused(exc.code) from None
+    if plan["op"] == "hub.profile":
+        pushed = False
+        try:
+            wsk_pub, sign = _wsk_sign(service)
+            link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"], send_profile=False)
+            try:
+                link.call("profile_put", plan["args"]["profile"])
+                pushed = True
+            finally:
+                getattr(transport, "close", lambda: None)()
+        except Exception:
+            pass
+        return ok_result({"profile": plan["args"]["profile"], "pushed": pushed})
     wsk_pub, sign = _wsk_sign(service)
+    if plan["op"] == "hub.directory":
+        try:
+            link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"])
+            try:
+                return ok_result({**link.call("directory_get", plan["args"]), "untrusted": True})
+            finally:
+                getattr(transport, "close", lambda: None)()
+        except HubRefused as exc:
+            raise _refused(exc.code) from None
     if plan["op"] == "hub.switch":
         try:
             return ok_result(_switch(service, plan, wsk_pub, sign))
@@ -894,6 +993,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 "sign": sign,
                 "mode": model["mode"],  # the link carries wk_seal only in full mode
             }
+            service.__dict__.pop("_hub_profile_sent", None)
             transport = _transport(service, model["hub_id"], link)
             try:
                 r = _connect(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
@@ -976,7 +1076,9 @@ def _stop_peers(service: Any) -> None:
     logsyncops.start(service)  # V3 C14: eligible (full, bound, sealed) -> a pass now; else the sender ends
 
 
-def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool) -> tuple[Any, Any]:
+def _snapshot_link(
+    service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: bool, *, send_profile: bool = True
+) -> tuple[Any, Any]:
     """``(HubLink, transport)`` for the bound hub of ``state`` (the caller closes the transport)."""
     from orch.crypto.encoding import unb64u
     from orch.hubclient import HubLink
@@ -1002,9 +1104,19 @@ def _snapshot_link(service: Any, state: Any, wsk_pub: bytes, sign: Any, dev: boo
                 {
                     "version": orch.__version__,
                     "commit": "",
-                    "host": socket.gethostname()[:80] if state.mode == "full" else "",  # selective keeps its host name
+                    "host": socket.gethostname()[:80] if state.mode == "full" else "",
                 },
             )
+    except Exception:
+        pass
+    try:
+        if send_profile:
+            profile = _load_profile(service)
+            digest = hashlib.sha256(json.dumps(profile, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            sent = service.__dict__.setdefault("_hub_profile_sent", {})
+            if sent.get(state.hub_id) != digest:
+                hub_link.call("profile_put", profile)
+                service.__dict__.setdefault("_hub_profile_sent", {})[state.hub_id] = digest
     except Exception:
         pass
     return hub_link, transport

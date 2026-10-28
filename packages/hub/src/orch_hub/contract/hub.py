@@ -1309,7 +1309,19 @@ def check_recorded_owner_proof(
 
 #: op -> (direction of the request, mode it exists in or None for both, exact body fields)
 #: body members a request may leave out (everything else in LINK_OPS is required)
-LINK_OPTIONAL: dict[str, frozenset[str]] = {"join": frozenset({"alias_users"})}
+PROFILE_FIELDS: dict[str, Check] = {
+    "listed": _bool,
+    "tags": lambda x: type(x) is list and len(x) <= 8 and all(type(v) is str and len(v) <= 24 for v in x),
+    "handles": lambda x: type(x) is list and len(x) <= 8 and all(type(v) is str and len(v) <= 80 for v in x),
+    "not_handled": lambda x: type(x) is list and len(x) <= 8 and all(type(v) is str and len(v) <= 80 for v in x),
+    "accepts": lambda x: type(x) is list and len(x) <= 8 and all(type(v) is str and len(v) <= 24 for v in x),
+    "description": lambda x: type(x) is str and len(x) <= 300,
+    "contact": lambda x: type(x) is str and len(x) <= 80,
+    "languages": lambda x: type(x) is str and len(x) <= 40,
+    "hours": lambda x: type(x) is str and len(x) <= 40,
+}
+
+LINK_OPTIONAL: dict[str, frozenset[str]] = {"join": frozenset({"alias_users"}), "directory_get": frozenset({"query"})}
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "snapshot_get": ("w2h", None, {}),
     "event_deliver": ("h2w", None, {"log": lambda x: type(x) is str, "event": lambda x: type(x) is dict}),
@@ -1366,6 +1378,8 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     ),
     "switch_redeem": ("w2h", None, {"ticket": lambda x: type(x) is str}),
     "rail_get": ("w2h", None, {"origin": lambda x: type(x) is str}),
+    "profile_put": ("w2h", None, PROFILE_FIELDS),
+    "directory_get": ("w2h", None, {"query": lambda x: type(x) is str and len(x) <= 80}),
     "status_put": (
         "w2h",
         None,

@@ -20,7 +20,7 @@ def test_status_stores_rows_and_socket_address(hub, mode):
     status = hub.registry.status(G.WS_A)
     with hub.registry.lock, hub.registry._db:
         hub.registry._db.execute("INSERT OR REPLACE INTO owner_alias VALUES (?, ?)", (G.WS_A, G.U_ALICE))
-    host = render_text(STATUS["host"]) if mode == "full" else ""  # a selective workspace keeps its host name
+    host = render_text(STATUS["host"]) if mode == "full" else ""
     assert status == {**STATUS, "host": host, "address": "127.0.0.1", "last_seen_ms": G.NOW}
     hub.server._now = lambda: G.NOW + 1
     c.request("owner_get", {})
@@ -106,6 +106,7 @@ def test_roles_and_api_rows(tmp_path):
             200,
             {
                 "owner": "ann",
+                "profile": None,
                 "groups": [{"group": "team", "role": "edit", "members": ["ann"]}],
             },
         )
@@ -116,17 +117,39 @@ def test_roles_and_api_rows(tmp_path):
         stranger = w.env.user("stranger")
         assert w.call("GET", route, token=w.login(stranger))[1] == {"error": "unknown_workspace"}
         w.reg.add(WS_SEL, "selective", owner=w.ann)
-        assert w.call("GET", f"/workspaces/{WS_SEL}/roles", token=ann)[:2] == (200, {"owner": "ann", "groups": []})
+        assert w.call("GET", f"/workspaces/{WS_SEL}/roles", token=ann)[:2] == (
+            200,
+            {"owner": "ann", "groups": [], "profile": None},
+        )
         assert w.call("GET", f"/workspaces/{WS_SEL}/roles", token=admin)[1] == {"error": "unknown_workspace"}
         result = w.call("GET", "/me/workspaces", token=ann)[1]
         assert result["hub"]["min_supported"] == MIN_SUPPORTED_VERSION
         for row in result["workspaces"] + w.call("GET", "/admin/workspaces", token=admin)[1]["workspaces"]:
             assert {"version", "commit", "version_state"} <= row.keys()
             assert row["version_state"] == "unknown"
-        # host, address and last seen: the owner and hub admins only (ann is an edit member of WS here)
+        # Private telemetry is visible for each owned workspace, including aliases with a lesser role.
         private = {"host", "address", "last_seen_ms"}
-        assert all(private.isdisjoint(r) for r in result["workspaces"] if r["role"] not in ("admin", "owner"))
+        assert all(private <= r.keys() for r in result["workspaces"])
         assert any(r["role"] == "read" for r in result["workspaces"])
+        assert any(r["role"] == "owner" for r in result["workspaces"])
+        w.env.acc.grant(WS, "team", "admin")
+        rows = w.call("GET", "/me/workspaces", token=ann)[1]["workspaces"]
+        assert any(r["role"] == "admin" for r in rows)
+        assert all(private <= r.keys() for r in rows)
+        # A group admin grant alone does not grant private telemetry.
+        w.reg.ws[WS]["owner"] = w.admin
+        for role in ("read", "edit", "admin"):
+            w.env.acc.grant(WS, "team", role)
+            rows = w.call("GET", "/me/workspaces", token=ann)[1]["workspaces"]
+            assert private.isdisjoint(next(r for r in rows if r["workspace_id"] == WS))
+            assert private <= next(r for r in rows if r["workspace_id"] == WS_SEL).keys()
+        # Phone/channel sessions hide private telemetry even for owners and hub admins.
+        from orch_hub.webapi.api import Ctx
+
+        for user in (w.ann, w.admin):
+            _, data = w.api._h_my_workspaces(Ctx(user_id=user, scope="channel"), {}, {}, None)
+            assert data["workspaces"]
+            assert all(private.isdisjoint(r) for r in data["workspaces"])
         assert all(private <= r.keys() for r in w.call("GET", "/admin/workspaces", token=admin)[1]["workspaces"])
         assert all(private <= r.keys() for r in w.call("GET", "/me/workspaces", token=admin)[1]["workspaces"])
     finally:
@@ -137,5 +160,39 @@ def test_roles_route_gates():
     (route,) = [r for r in ROUTES if r.handler == "workspace_roles"]
     assert route.auth == "session"
     assert route.path == "/api/v1/workspaces/{workspace_id}/roles"
-    assert route_scopes(route) == {"full", "channel"}
-    assert route.handler in SWITCH_HANDLERS
+    assert route_scopes(route) == {"full"}
+    assert route.handler not in SWITCH_HANDLERS
+
+
+@pytest.mark.parametrize("method", ["set_binding_state", "commit_join"])
+def test_selective_mode_change_clears_stored_host(method):
+    reg = Registry()
+    try:
+        full = {"status": "bound", "binding": {"mode": "full"}}
+        selective = {"status": "bound", "binding": {"mode": "selective"}}
+        reg.commit_join("ws", "owner", "key", "pk", {}, full)
+        reg.put_status("ws", STATUS)
+        assert reg.status("ws")["host"]
+        if method == "commit_join":
+            reg.commit_join("ws", "owner", "key", "pk", {}, selective)
+        else:
+            reg.set_binding_state("ws", selective)
+        assert reg.status("ws")["host"] == ""
+        reg.put_status("ws", STATUS)
+        assert reg.status("ws")["host"] == ""
+    finally:
+        reg.close()
+
+
+@pytest.mark.parametrize("op", ["join", "binding_put"])
+def test_selective_link_binding_paths_clear_stored_host(hub, op):
+    c = hub.open(first=True)
+    c.request("join", hub.join_body(mode="full"))
+    c.request("status_put", STATUS)
+    assert hub.registry.status(G.WS_A)["host"]
+    if op == "join":
+        c.request("join", hub.join_body(invite="inv2", seq=2, mode="selective"))
+    else:
+        c.request("binding_put", {"object": G.binding(seq=2, mode="selective")})
+    assert hub.registry.mode(G.WS_A) == "selective"
+    assert hub.registry.status(G.WS_A)["host"] == ""

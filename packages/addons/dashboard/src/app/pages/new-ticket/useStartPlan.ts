@@ -2,7 +2,7 @@
 // here, the agent choice (remembered per workspace), and whether the ticket's signature also has to carry agent access.
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AGENT_MODES, HARNESSES, runnerQuery, type AgentMode, type Harness } from '@/api/agents'
+import { AGENT_MODES, HARNESSES, agentsApi, runnerQuery, type AgentMode, type Harness } from '@/api/agents'
 import { hasFeature, handoffMode } from '@/api/features'
 import { GRANT_MAX_HOURS, grantDefaultHours, runnerLengths } from '@/api/grants'
 import { routingQueries } from '@/api/modelRouting'
@@ -56,6 +56,10 @@ export function useStartPlan(workspace: Workspace, person: string) {
   const runner = useQuery({ ...runnerQuery(ws), enabled: feature, retry: false })
   const settings = useQuery({ ...queries.hostSettings(ws), enabled: feature, retry: false })
   const choices = useQuery({ ...routingQueries.choices(ws), enabled: feature && routing })
+  // The "runs as you" notice (the Start agent dialog's cache): until it has been read once, the review shows it in full
+  // and signing with it on screen counts as reading it. A failed read counts as not read.
+  const notices = useQuery({ queryKey: ['risk-notices', ws], queryFn: () => agentsApi.riskNotices(ws), retry: false, enabled: feature })
+  const noticeUnread = notices.data?.acknowledged.start_agent !== true
   const [pref, setPrefState] = useState<AgentPref>(() => readPref(prefKey))
   const setPref = useCallback((p: Partial<AgentPref>) => setPrefState((old) => { const next = { ...old, ...p, ...(p.mode !== undefined ? { modeChosen: true } : {}) }; writePref(prefKey, next); return next }), [prefKey])
 
@@ -91,6 +95,6 @@ export function useStartPlan(workspace: Workspace, person: string) {
   const models = choices.data?.harnesses.find((h) => h.id === pref.harness)?.models ?? []
   const shown = shownModel(choice)
   const reviewed: Reviewed = { choice, model: shown, grantId: grant?.id ?? null }
-  return { feature, available, reason: reason === 'checking' ? null : reason, pending: feature && runner.isPending, grant, grantNow, needsGrant, lengths, hours, setHours, cap, pref, setPref, choice, models, routing, choices: choices.data, shown, reviewed, priorGrantIds: info?.grant ? [info.grant.id] : [] }
+  return { feature, available, reason: reason === 'checking' ? null : reason, pending: feature && runner.isPending, grant, grantNow, needsGrant, lengths, hours, setHours, cap, pref, setPref, choice, models, routing, choices: choices.data, shown, reviewed, noticeUnread, priorGrantIds: info?.grant ? [info.grant.id] : [] }
 }
 export type StartPlan = ReturnType<typeof useStartPlan>

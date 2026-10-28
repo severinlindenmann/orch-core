@@ -141,6 +141,31 @@ def test_next_run_never_precedes_first_allowed_or_a_recorded_occurrence(fixed_ne
     assert fixed_next[-1] == _epoch("2031-01-01T00:00:00Z")
 
 
+def test_the_minimum_lead_of_a_new_schedule_is_cores(monkeypatch):
+    """Run 13: the form offers no time before now plus the lead the host enforces (`schedule.denied` below it), read
+    from core's caps of this workspace: an hour, a dev sandbox's shorter one; also with no schedule yet."""
+    from orch.model import followups as fu
+
+    assert schedules.build(FakeGateway(), "w")["min_lead_s"] == fu.FU_MIN_LEAD_S == 3600
+    assert schedules.build(FakeGateway(prefix="SBX"), "w")["min_lead_s"] == fu.DEV_MIN_LEAD_S
+    assert schedules.build(FakeGateway(addon=False), "w")["min_lead_s"] is None
+    unread = FakeGateway()
+    monkeypatch.setattr(unread, "call", lambda ws, op, args: {"rows": []} if op == "schedule.list" else {})
+    assert schedules.build(unread, "w")["min_lead_s"] == fu.FU_MIN_LEAD_S  # no prefix read: the real lead
+
+
+def test_the_schedules_read_is_served_and_is_a_host_read():
+    """Run 13: the route was never registered and `schedule.list` was not a read of the host link (My schedules got a
+    404)."""
+    from conftest import PORT
+
+    from orch_dashboard.app import create_app
+    from orch_dashboard.hostlink import OPS
+
+    assert "/api/w/{ws}/schedules" in {route.path for route in create_app(PORT).routes}
+    assert "schedule.list" in OPS
+
+
 def test_next_run_is_null_when_nothing_is_left(monkeypatch):
     monkeypatch.setattr("orch.model.schedules.occurrences", lambda *a: None)
     assert schedules.build(FakeGateway(rows=[row()]), "w")["rows"][0]["next_run"] is None

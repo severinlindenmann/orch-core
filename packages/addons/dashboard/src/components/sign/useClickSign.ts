@@ -67,8 +67,11 @@ export function settledAs(prepared: ClickPrepared, signed: ClickSigned): { state
   return { state, request }
 }
 
-export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done', state: HandoffState | null, request: HandoffRequest | null) => void): ClickRun {
+/** `minLeadS`: the host's minimum scheduling lead when the page knows it (the schedules list), for a "too soon" refusal. */
+export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done', state: HandoffState | null, request: HandoffRequest | null) => void, minLeadS?: number): ClickRun {
   const qc = useQueryClient()
+  const leadNow = useRef(minLeadS)
+  leadNow.current = minLeadS
   const [phase, setPhaseState] = useState<ClickPhase>('idle')
   const [prepared, setPrepared] = useState<ClickPrepared | null>(null)
   const [view, setView] = useState<ClickViewAnswer | null>(null)
@@ -96,7 +99,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   }, [qc])
   const fail = useCallback(
     (e: unknown, keep: ClickPhase = 'failed') => {
-      const p = clickProblem(e)
+      const p = clickProblem(e, leadNow.current)
       setError(e)
       setProblem(p)
       // A refusal to sign that can simply be tried again leaves the View where it is; the request stays open.

@@ -195,6 +195,43 @@ def test_a_policy_op_signs_on_one_click_and_takes_no_word(world, click):
     assert ok.status_code == 200, ok.text
 
 
+def _signed(world, click, body):
+    """prepare, view and sign one action through the dashboard server; the View as shown."""
+    got = click.prepare(body)
+    assert got.status_code == 200, got.text
+    assert got.json()["confirm"] == "click"
+    rid = got.json()["request_id"]
+    view = click.post("view", {"request_id": rid})
+    assert view.status_code == 200, view.text
+    time.sleep(1.2)
+    done = click.post("sign", {"request_id": rid, "view_digest": view.json()["view_digest"]})
+    assert done.status_code == 200, done.text
+    assert done.json()["state"] == "submitted"
+    return view.json()["view"]
+
+
+def test_a_new_schedule_signs_on_one_click(world, click):
+    """Run 13 (owner e2e, blocking): Schedules > New schedule, a once-run 1.5 h ahead with the host's default run
+    hours, is shown and signed on one click. The View keeps the convenience-signing notice in `risk` (the server's
+    check) and carries the schedule's own risk as a line of the review."""
+    from datetime import UTC, datetime
+
+    from orch.ops.schedule import RISK as SCHEDULE_RISK
+
+    _signed(world, click, {"action": "addon_grant", "name": "schedules"})
+    at = datetime.fromtimestamp((int(time.time()) + 5400) // 60 * 60, UTC).strftime("%Y-%m-%d %H:%M")
+    body = {"action": "schedule_add", "key": world.keys["three"], "brief": "Write the report", "at": at, "tz": "UTC"}
+    shown = _signed(world, click, body)
+    assert shown["op"] == "schedule.add" and shown["risk"] == RISK and SCHEDULE_RISK in shown["lines"]
+    listed = world.client.get(f"/api/w/{world.ws.ws_id}/schedules", headers=click.headers(False))
+    assert listed.status_code == 200, listed.text
+    page = listed.json()
+    assert page["min_lead_s"] == 3600  # a real (DEMO) workspace: the form offers nothing earlier than an hour ahead
+    assert [(r["ticket"], r["brief"], r["state"], r["run_hours"]) for r in page["rows"]] == [
+        (world.keys["three"], "Write the report", "live", 8)
+    ]
+
+
 def test_cancel_cancels_on_the_host(world, click):
     got = click.prepare(approve(world, "three")).json()
     res = click.post("cancel", {"request_id": got["request_id"]})

@@ -61,6 +61,7 @@ export async function startInBackground(qc: QueryClient, r: StartRequest): Promi
       void qc.invalidateQueries({ queryKey: ['runs', r.ws] })
       void qc.invalidateQueries({ queryKey: ['ticket', r.ws, r.key] })
       void qc.invalidateQueries({ queryKey: ['today', r.ws] })
+      if (r.noticeRead) void qc.invalidateQueries({ queryKey: ['risk-notices', r.ws] })
     } else {
       failMark(r.ws, r.key, out.reason, out.initial)
       toast.warning(out.reason)

@@ -150,6 +150,27 @@ describe('the action dialog with click-to-sign', () => {
   })
 
 
+  it.each([
+    ['with the unsigned slot on screen beside the review', true],
+    ['without an unsigned slot', false],
+  ] as const)('a one-click signature says how it was made: %s', async (_n, withSlot) => {
+    flag(true)
+    const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+    const { SignPopover } = await import('./SignPopover')
+    const { render } = await import('@testing-library/react')
+    const ws = (await api.getWorkspaces())[0]!.id
+    const onSettled = vi.fn()
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws={ws} title="Change host settings" action={{ action: 'settings_set', grant_hours: 24 }} unsigned={withSlot ? <p>Not part of what you sign</p> : undefined} onSettled={onSettled} onClose={() => {}} /></QueryClientProvider>)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    // a render grants no intent: the trusted press of the outcome button prepares, then the review shows and arms
+    const outcome = await within(dialog).findByRole('button', { name: 'Change host settings' }, T)
+    await waitFor(() => expect(outcome).toBeEnabled(), T)
+    fireEvent.click(outcome)
+    await within(dialog).findByTestId('click-panel', {}, T)
+    press(await armed(dialog))
+    await waitFor(() => expect(onSettled).toHaveBeenCalledWith('done', expect.anything(), expect.anything(), { via: 'click', unsignedShown: withSlot }), T)
+  })
+
   it('a network failure is a retry, not a crash', () => {
     expect(clickProblem(new Error('boom')).next).toBe('retry')
   })

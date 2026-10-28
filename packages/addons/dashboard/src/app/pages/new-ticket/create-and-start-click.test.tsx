@@ -7,8 +7,8 @@ import { agentsApi } from '@/api/agents'
 import { api, mockStore } from '@/api/client'
 import { ARM_MS, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { routingApi } from '@/api/modelRouting'
-import { ApiError } from '@/api/types'
-import { markOf } from '@/app/pages/ticket/progress'
+import { ApiError, type TicketDocument } from '@/api/types'
+import { clearMark, markOf, phaseOf } from '@/app/pages/ticket/progress'
 import * as gesture from '@/components/sign/trustedPress'
 import { renderApp } from '@/test/renderApp'
 
@@ -34,6 +34,7 @@ let s: { preview: ReturnType<typeof vi.spyOn>; start: ReturnType<typeof vi.spyOn
 
 beforeEach(() => {
   vi.spyOn(gesture, 'trustedPress').mockReturnValue(true) // fireEvent is untrusted: stand in for a real press of the outcome button
+  clearMark(mockStore.workspaces[0].id, 'DEMO-0044') // marks live in memory for the page's life: never one from the test before
   const real = api.getWorkspaces.bind(api)
   vi.spyOn(api, 'getWorkspaces').mockImplementation(async () => (await real()).map((w) => ({ ...w, click: { custody: 'convenience' as const, enabled: true, available: true } })))
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168 } as Awaited<ReturnType<typeof api.getHostSettings>>)
@@ -56,7 +57,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
-async function signed() {
+async function signed(beforeSign?: (dialog: HTMLElement) => void) {
   const r = renderApp('/board')
   await waitFor(() => expect(screen.getByTestId('topbar-title')).not.toHaveTextContent(/^$/), T)
   await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
@@ -73,6 +74,7 @@ async function signed() {
   expect(s.sign).not.toHaveBeenCalled()
   const go = within(dialog).getByRole('button', { name: 'Sign and start agent' })
   await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })
+  beforeSign?.(dialog)
   fireEvent.pointerDown(go)
   fireEvent.click(go)
   await waitFor(() => expect(s.sign).toHaveBeenCalled(), { timeout: 3000 })
@@ -103,6 +105,64 @@ describe('the real click path', () => {
     expect((await failedOf()).reason).toBeTruthy()
     expect(s.preview).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['local (no hub)', 'standalone'],
+    ['hub', 'selective'],
+  ] as const)('%s One click workspace, "runs as you" never read before: signing starts the agent, with "Getting started…"', async (_mode, signing) => {
+    const listed = api.getWorkspaces as unknown as ReturnType<typeof vi.spyOn>
+    const before = listed.getMockImplementation() as () => Promise<Awaited<ReturnType<typeof api.getWorkspaces>>>
+    listed.mockImplementation(async () => (await before()).map((w) => ({ ...w, signing })))
+    const notices = (agentsApi.riskNotices as unknown as ReturnType<typeof vi.spyOn>).mockResolvedValue({ acknowledged: {} })
+    const ack = vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } })
+    const GRANT = 'gr_01M4Y46B485AXD4CBEJZ15Z1TV'
+    s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: 'DEMO-0044', seq: 9, deposit: 'confirmed', deposit_id: REQ.slice(3), grant: GRANT })
+    s.preview.mockResolvedValue({
+      spec: 'f'.repeat(64), ticket: 'DEMO-0044', display: 'claude "work on DEMO-0044"', display_hidden: false, model: null, model_source: 'default',
+      cwd: { kind: 'workspace' }, cwd_path: '/w/billing', cwd_path_hidden: false, will_create_worktree: false, login_shell: false,
+      env: ['TERM'], grant: { id: GRANT, until: new Date(Date.now() + 86_400_000).toISOString(), scope: 'workable' }, blocked: null, warnings: [],
+    })
+    s.start.mockResolvedValue({ run: { run: 'r_01M4Y46B485AXD4CBEJZ15Z1TV' } as never })
+    const { r } = await signed((dialog) => expect(within(dialog).getByTestId('not-signed-notice')).toBeInTheDocument()) // the review shows the notice in full
+    expect(notices).toHaveBeenCalled()
+    await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
+    expect(s.start.mock.calls[0][1]).toMatchObject({ ticket: 'DEMO-0044' })
+    await waitFor(() => expect(ack).toHaveBeenCalledWith(expect.any(String), 'start_agent'), T)
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
+    const mark = markOf(mockStore.workspaces[0].id, 'DEMO-0044')
+    expect(mark?.failed).toBeUndefined()
+    expect(phaseOf({ status: 'draft', claim: null } as unknown as TicketDocument, { needsYou: false, mark, run: null, now: Date.now() }).kind).toBe('starting')
+  })
+
+  it('"runs as you" never read, One click off: nothing is prepared or signed here, so the notice is not saved as read and nothing starts', async () => {
+    const listed = api.getWorkspaces as unknown as ReturnType<typeof vi.spyOn>
+    const before = listed.getMockImplementation() as () => Promise<Awaited<ReturnType<typeof api.getWorkspaces>>>
+    listed.mockImplementation(async () => (await before()).map((w) => ({ ...w, click: { custody: 'convenience' as const, enabled: false, available: true } })))
+    const GRANT = { id: 'gr_01M4Y46B485AXD4CBEJZ15Z1TV', until: new Date(Date.now() + 86_400_000).toISOString(), scope: 'workable' as const }
+    ;(agentsApi.runner as unknown as ReturnType<typeof vi.spyOn>).mockResolvedValue({ runner: { connected: true, enabled: true, terminals: false, grant: GRANT } })
+    ;(agentsApi.riskNotices as unknown as ReturnType<typeof vi.spyOn>).mockResolvedValue({ acknowledged: {} })
+    const ack = vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } })
+    s.preview.mockResolvedValue({
+      spec: 'f'.repeat(64), ticket: 'DEMO-0044', display: 'claude "work on DEMO-0044"', display_hidden: false, model: null, model_source: 'default',
+      cwd: { kind: 'workspace' }, cwd_path: '/w/billing', cwd_path_hidden: false, will_create_worktree: false, login_shell: false,
+      env: ['TERM'], grant: GRANT, blocked: null, warnings: [],
+    })
+    const r = renderApp('/board')
+    await waitFor(() => expect(screen.getByTestId('topbar-title')).not.toHaveTextContent(/^$/), T)
+    await r.user.click(await screen.findByRole('button', { name: /New ticket/ }, T))
+    const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
+    await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
+    await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
+    await r.user.click(await within(sheet).findByRole('button', { name: 'Create and start' }, T))
+    const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
+    expect(await within(dialog).findByText('One click is not ready on this computer.', {}, T)).toBeInTheDocument()
+    expect(within(dialog).queryByTestId('not-signed-notice')).toBeNull() // no review beside it to be read with
+    await new Promise((r) => setTimeout(r, 200))
+    expect(api.prepareClick).not.toHaveBeenCalled()
+    expect(s.sign).not.toHaveBeenCalled()
+    expect(s.start).not.toHaveBeenCalled()
+    expect(ack).not.toHaveBeenCalled()
   })
 
   it('signed and the hand-over confirmed: the start goes on to preview for the ticket\'s own key', async () => {

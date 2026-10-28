@@ -80,6 +80,7 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (GET, W + "/activity"): (ALLOWED, ""),
     (GET, W + "/usage"): (ALLOWED, ""),
     (GET, W + "/followups"): (ALLOWED, ""),
+    (GET, W + "/schedules"): (ALLOWED, ""),
     (GET, W + "/worktrees"): (ALLOWED, ""),
     (GET, W + "/explorer"): (ALLOWED, ""),
     (GET, W + "/explorer/tree"): (ALLOWED, ""),

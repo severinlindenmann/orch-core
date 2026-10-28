@@ -228,8 +228,10 @@ def build(
     if prepared["op"] == "schedule.add":
         from orch.ops.schedule import RISK as SCHEDULE_RISK
 
-        view["risk"] = SCHEDULE_RISK
-        view["lines"] += [SCHEDULE_RISK, "No click or confirmation is required at firing time."]
+        # run 13: the schedule's own risk is a line of the review, never `risk`: that field is the convenience-signing
+        # notice of every click View, and the dashboard server refuses a View without it (check_failed). FIRST: the
+        # review shows `lines` in a short scroll box, and the consequence must be read before the rule's details
+        view["lines"] = [SCHEDULE_RISK, "No click or confirmation is required at firing time.", *view["lines"]]
     if deposit:
         deposit_checks(prepared)
         view["lines"] = [*view["lines"], "", DEPOSIT_RISK, DEPOSIT_LINE]

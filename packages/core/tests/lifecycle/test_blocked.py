@@ -32,3 +32,21 @@ def test_a_unit_orch_stop_disabled_is_not_blocked(tmp_path, monkeypatch):
     e = env(tmp_path)
     monkeypatch.setattr(units, "stopped_by_orch", lambda state: {"io.orch.host"})
     assert blocked_by_macos(e, "io.orch.host") is False and blocked_orch_labels(e) == []
+
+
+def test_a_part_orch_stop_stopped_reads_stopped_not_blocked(tmp_path, monkeypatch):
+    """Run 14: `orch stop` records a part by its NAME; macOS lists its launchd LABEL as disabled; it is stopped."""
+
+    class Runner:
+        def info(self, key):
+            return {"running": False}
+
+        def label(self, key):
+            return "io.orch.host"
+
+    monkeypatch.setattr(units, "_runner", lambda e, kind: Runner())
+    e = env(tmp_path)
+    monkeypatch.setattr(units, "stopped_by_orch", lambda state: {"dashboard"})
+    assert units._part(e, "dashboard", "Dashboard", "g", {"runner": "launchd"}).blocked is False
+    monkeypatch.setattr(units, "stopped_by_orch", lambda state: set())
+    assert units._part(e, "dashboard", "Dashboard", "g", {"runner": "launchd"}).blocked is True  # really blocked

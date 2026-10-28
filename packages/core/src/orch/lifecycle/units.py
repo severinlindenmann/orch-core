@@ -239,7 +239,8 @@ def _part(e: Env, key: str, label: str, group: str, rec: dict[str, Any]) -> Svc:
         s.state = "running" if _runner(e, kind).info(key).get("running") else "stopped"
         label_of = getattr(_runner(e, kind), "label", None)
         if s.state != "running" and kind == "launchd" and label_of is not None:
-            s.blocked = blocked_by_macos(e, label_of(key))
+            # `orch stop` records a part by its name, not its launchd label: a part it stopped is stopped, not blocked
+            s.blocked = key not in stopped_by_orch(e.state) and blocked_by_macos(e, label_of(key))
     except Exception:  # noqa: BLE001 - a broken service manager must not hide the other rows
         s.state = "unknown"
     return s

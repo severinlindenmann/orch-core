@@ -98,6 +98,8 @@ from .hubops import HUB_OPS
 from .hubops import NETWORK_OPS as HUB_NETWORK_OPS
 from .marketops import MARKET_OPS, MARKET_READS
 from .marketops import NETWORK_OPS as MARKET_NETWORK_OPS
+from .orgops import NETWORK_OPS as ORG_NETWORK_OPS
+from .orgops import ORG_OPS, ORG_READS
 from .outcomes import BUILDERS, Planned, request_idem
 from .peerops import NETWORK_OPS as PEER_NETWORK_OPS
 from .peerops import PEER_OPS, PEER_READS
@@ -242,6 +244,7 @@ def served_ops() -> dict[str, int]:
     out.update(HUB_OPS)  # V3 C2a: hub.connect, hub.unbind, hub.status
     out.update(PEER_OPS)  # V3 C12: peer.* (ws->ws through the hub)
     out.update(SPACE_OPS)  # V3 C13: space.* (shared spaces through the hub)
+    out.update(ORG_OPS)  # M3 H-2: org.* (company skills and MCP servers offered by the hub)
     out.update(MARKET_OPS)  # V3 G2: market.* (the add-on marketplace)
     out.update(COSMETIC_OPS)  # run 13 D6: workspace.cosmetic.set (name and icon, unsigned)
     out.update(SHARE_OPS)  # V3 C6: share.* (selective-mode share rules)
@@ -313,6 +316,14 @@ def op_kind(name: str) -> tuple[OpKind, Phase] | None:
         return ("person_read", "read") if name in SHARE_READS else ("person_write", "write")
     if name in SPACE_OPS:  # V3 C13: list and get for P and G (untrusted data), the rest P only (owner role)
         return ("pg_read", "read") if name in SPACE_READS else ("person_write", "write")
+    if name in ORG_OPS:  # M3 H-2: offers P and G (names only); show, accept, decline P only (owner); sync P and G
+        if name in ORG_READS:
+            return ("pg_read", "read")
+        return (
+            ("pg_write", "write")
+            if name == "org.sync"
+            else (("person_read", "read") if name == "org.show" else ("person_write", "write"))
+        )
     if name in MARKET_OPS:  # V3 G2: P and G; the op itself refuses an agent's add and --commit (market.actor_refused)
         return ("pg_read", "read") if name in MARKET_READS else ("pg_write", "write")
     if name in READ_OPS:  # H6b: session.list and grant.list are P and G only (§0.5)
@@ -527,6 +538,10 @@ class RegistryBackend:
             from . import spaceops
 
             return await spaceops.execute(call, result)
+        if op in ORG_NETWORK_OPS:  # M3 H-2: the hub link (org.sync), off the workspace worker
+            from . import orgops
+
+            return await orgops.execute(call, result)
         if op in PEER_NETWORK_OPS:  # V3 C12: peer.send / peer.reply, the hub link off the worker
             from . import peerops
 
@@ -739,6 +754,10 @@ class RegistryBackend:
                 from . import spaceops
 
                 result = spaceops.serve(call)
+            elif op in ORG_OPS:
+                from . import orgops
+
+                result = orgops.serve(call)
             elif op in MARKET_OPS:
                 from . import marketops
 

@@ -1019,6 +1019,9 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
         out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
+        from . import orgstate
+
+        orgstate.purge(service)  # M3: the company skills and servers of that binding go with it (nothing stays served)
         _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
         return ok_result(out)
     except HubRefused as exc:

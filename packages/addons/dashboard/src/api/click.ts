@@ -91,7 +91,7 @@ export interface ClickView {
   fingerprint: string
   lines: string[]
   checks: { repo: string; clean: boolean; attested_by: string; at: string }[]
-  confirm: { kind: 'click' }
+  confirm: { kind: 'click'; mode?: 'press' }
   expires_at: string
   auth: string
   device: string
@@ -223,7 +223,7 @@ export interface RotateOffer {
     old: string
     new: string
     lines: string[]
-    confirm: { kind: 'click' }
+    confirm: { kind: 'click'; mode?: 'press' }
     rotate_line: string
     seal: { v: 1; alg: string; pk: string; purposes: string[] }
   }

@@ -326,7 +326,8 @@ def test_a_grant_is_one_click_and_goes_to_the_runner_last(click, served, human):
     click.signer._execution = lambda entry: True
     p = click_prepare(click, quick(agent={"hours": 8, "scope": "workable"}))
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"] == {"kind": "click"}
+    assert v["view"]["confirm"] == {"kind": "click", "mode": "press"}
+    assert v["view"]["op"] == "grant" and v["view"]["risk_lines"]
     assert "Agents may work on any ticket they are allowed to work on" in "\n".join(v["view"]["lines"])
     click.mono.t += 2
     out = click.sign(p["request_id"], v["view_digest"])

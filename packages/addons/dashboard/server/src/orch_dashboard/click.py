@@ -22,6 +22,7 @@ from collections import OrderedDict
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
+from orch.click.protocol import ONE_PRESS_OPS
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import adapters
@@ -151,6 +152,7 @@ def contract4_view_ok(view: dict) -> bool:
         and "\n" not in head
         and (detail is None or (isinstance(detail, str) and 0 < len(detail) <= HEADLINE_CHARS and "\n" not in detail))
         and isinstance(risk, list)
+        and (risk == []) == (view.get("op") in ONE_PRESS_OPS)
         and len(risk) <= RISK_LINES_MAX
         and all(isinstance(x, str) and 0 < len(x) <= RISK_LINE_CHARS and "\n" not in x for x in risk)
     )
@@ -795,6 +797,11 @@ def register(app: FastAPI, gateway: Gateway):
         planned = plan(gateway, ws, body)  # the only place an op name is chosen
         if planned.sequence and planned.sequence["intent"].get("images") and not signer.images():
             raise fail("click.contract", "Update orch-core: its signing helper cannot sign pictures yet.", exit=9)
+        # A grant-carrying sequence requires a grant/press View, checked before it reaches the page.
+        # Keep the host-selected intent: valid access can remove the browser's proposed grant.
+        if isinstance(body, NewTicketSequence | QuickStart) and body.agent is not None:
+            if planned.sequence and not planned.sequence["intent"].get("agent"):
+                body = body.model_copy(update={"agent": None})
         files = planned.files
 
         def call(idem: str):
@@ -894,7 +901,15 @@ def register(app: FastAPI, gateway: Gateway):
         got = _signer_call("view", ws, rid)
         # The signer's View and digest, unchanged: nothing is added, hidden or re-rendered here.
         shown = got.get("view") if isinstance(got, dict) else None
-        if not isinstance(shown, dict) or shown.get("op") != op or shown.get("risk") != RISK:
+        press_required = isinstance(wanted, NewTicketSequence | QuickStart) and wanted.agent is not None
+        view_op = "grant" if press_required else op
+        if press_required and (
+            not isinstance(shown, dict)
+            or not shown.get("risk_lines")
+            or (shown.get("confirm") or {}).get("mode") != "press"
+        ):
+            raise refusal_check("A grant sequence requires a risk View in press mode. Cancel it.")
+        if not isinstance(shown, dict) or shown.get("op") != view_op or shown.get("risk") != RISK:
             raise refusal_check("The review is not what was asked for, or lacks the risk line. Cancel it.")
         if not contract4_view_ok(shown):  # run 13 C3: the headline and the signer's own risk lines
             raise refusal_check("The review lacks its headline or its risk lines. Nothing was shown. Cancel it.")

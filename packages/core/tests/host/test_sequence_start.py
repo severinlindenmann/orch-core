@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from orch.click import view
-from orch.click.protocol import DEPOSIT_RISK
+from orch.click.protocol import DEPOSIT_RISK, ONE_PRESS_OPS
 from orch.host import agents, sequence
 from orch.host.errors import HostError
 from tests.host import human_helpers
@@ -66,6 +66,8 @@ def test_sequence_view_marks_last_grant_and_launch(human, tmp_path):
         expires_at=first["request"]["expires_at"],
         artifacts=None,
     )
+    assert got["op"] == "grant" and got["op"] not in ONE_PRESS_OPS
+    assert got["confirm"] == {"kind": "click", "mode": "press"}
     assert got["headline"] == "Create ticket and start agent"
     assert DEPOSIT_RISK in got["risk_lines"]
     assert "Agents can run as you for 8 hours" in got["risk_lines"]
@@ -131,6 +133,7 @@ def test_valid_access_omits_grant_and_only_info_mentions_access(human, tmp_path,
         expires_at=first["request"]["expires_at"],
         artifacts=None,
     )
+    assert got["op"] in ONE_PRESS_OPS
     assert got["risk_lines"] == []
     assert "grant" not in [s["op"] for s in sequence.steps(rig.intent)]
     assert any("Uses your current agent access until" in line for line in got["info_lines"])
@@ -211,3 +214,76 @@ def test_daily_op_cannot_hide_grant_in_risk_table():
     for op in ONE_PRESS_OPS:
         lines = risk_lines(op, [{"type": "grant.issued", "hours": 8}], deposit=True)
         assert "Agents can run as you for 8 hours" in lines
+
+
+@pytest.mark.parametrize("at_sign", [False, True])
+def test_launch_grant_requires_execution_at_prepare_and_sign(served, at_sign):
+    from tests.host.test_click import Click, refused
+    from tests.host.test_sequence_quick import click_prepare
+
+    click = Click(served)
+    try:
+        click.signer._execution = lambda entry: at_sign
+        if not at_sign:
+            refused(lambda: click_prepare(click, launch_intent()), "human.click_refused", "terminal_only")
+        else:
+            prepared = click_prepare(click, launch_intent())
+            shown = click.view(prepared["request_id"])
+            click.mono.t += 2
+            click.signer._execution = lambda entry: False
+            refused(
+                lambda: click.sign(prepared["request_id"], shown["view_digest"]), "human.click_refused", "terminal_only"
+            )
+        assert click.signatures == 0
+    finally:
+        click.close()
+
+
+def test_sequence_risk_uses_the_v2_grant_payload(human, tmp_path, monkeypatch):
+    rig = Rig(human, tmp_path, launch_intent())
+    first = rig.first()
+    real = view.risk_lines
+    seen = []
+
+    def risk(op, events=None, **kwargs):
+        if op == "grant":
+            seen.extend(events)
+        return real(op, events, **kwargs)
+
+    monkeypatch.setattr(view, "risk_lines", risk)
+    shown = view.build(
+        first,
+        lambda _: ("Workspace", "DEMO"),
+        device=human.person.device,
+        expires_at=first["request"]["expires_at"],
+        artifacts=None,
+    )
+    grant = next(e for e in seen if e["type"] == "grant.issued")
+    rig.driver().run(first)
+    signed = next(e for _, events, _ in rig.submitted for e in events if e["type"] == "grant.issued")
+    assert all(signed[k] == v for k, v in grant.items() if k != "secret_hash")
+    assert shown["risk_lines"] == real("grant", [signed], deposit=True)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"op": "new"},
+        {"risk_lines": []},
+        {"confirm": {"kind": "click", "mode": "arm"}},
+    ],
+)
+def test_core_requires_grant_risk_and_press_view(served, monkeypatch, bad):
+    from tests.host.test_click import Click, refused
+    from tests.host.test_sequence_quick import click_prepare
+
+    click = Click(served)
+    click.signer._execution = lambda entry: True
+    real = view.build
+    try:
+        prepared = click_prepare(click, launch_intent())
+        monkeypatch.setattr(view, "build", lambda *args, **kwargs: {**real(*args, **kwargs), **bad})
+        refused(lambda: click.view(prepared["request_id"]), "human.click_refused", "check_failed")
+        assert click.signatures == 0
+    finally:
+        click.close()

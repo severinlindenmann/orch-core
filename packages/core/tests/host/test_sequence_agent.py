@@ -167,7 +167,8 @@ def test_i3_agent_access_is_a_click_and_a_runner_grant_needs_dashboard_execution
     p = click_prepare(click, intent_of(agent=AGENT))
     assert p["confirm"] == "click"
     v = click.view(p["request_id"])
-    assert v["view"]["confirm"] == {"kind": "click"}
+    assert v["view"]["confirm"] == {"kind": "click", "mode": "press"}
+    assert v["view"]["op"] == "grant" and v["view"]["risk_lines"]
     click.mono.t += 2
     click.signer._execution = lambda entry: False  # switched off after the review: the click is refused, nothing signed
     refused(lambda: click.sign(p["request_id"], v["view_digest"]), "human.click_refused", "terminal_only")

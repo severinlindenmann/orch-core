@@ -880,7 +880,7 @@ def test_c3_a_view_without_its_headline_or_risk_lines_is_not_shown(client, token
 
 def test_c3_the_view_and_its_risk_lines_are_passed_on_unchanged(client, token, stub, script):
     prepare(client, token, stub)
-    risk = ["Files you share will be sent to this Publish server; whoever runs it can read them."]
+    risk = []  # approve is on the closed one-press allowlist
     view = {**script.view["view"], "risk_lines": risk, "headline_detail": "“Export does nothing”"}
     script.view = {"view": view, "view_digest": HASH}
     res = client.post(url(stub, "view"), json={"request_id": REQ}, headers=hdr(token))
@@ -3394,7 +3394,8 @@ def test_d2_host_clock_selects_last_grant(client, token, stub, script, monkeypat
                     "now": now.isoformat(),
                     "grant": (
                         {"startable": True, "until": (now + timedelta(minutes=minutes)).isoformat()}
-                        if minutes is not None else None
+                        if minutes is not None
+                        else None
                     ),
                 }
             }
@@ -3411,3 +3412,30 @@ def test_d2_host_clock_selects_last_grant(client, token, stub, script, monkeypat
     assert ("agent" in intent) is expected_grant
     if expected_grant:
         assert intent["agent"] == {"hours": 8, "scope": "workable"}
+
+
+@pytest.mark.parametrize(
+    "op,risk,mode,ok",
+    [
+        ("grant", ["Agents can run as you for 8 hours"], "press", True),
+        ("new", ["Agents can run as you for 8 hours"], "press", False),
+        ("grant", [], "press", False),
+        ("grant", ["Agents can run as you for 8 hours"], "arm", False),
+    ],
+)
+def test_grant_sequence_requires_risk_view_in_press_mode(client, token, stub, script, op, risk, mode, ok):
+    script.features = ["custody", "sequence"]
+    res = prepare(client, token, stub, {**SEQUENCE, "agent": {"hours": 8}})
+    assert res.status_code == 200, res.text
+    script.view["view"].update(op=op, risk_lines=risk, confirm={"kind": "click", "mode": mode})
+    res = client.post(url(stub, "view"), json={"request_id": res.json()["request_id"]}, headers=hdr(token))
+    assert res.status_code == (200 if ok else 409), res.text
+
+
+@pytest.mark.parametrize(
+    "op,risk,ok", [("new", [], True), ("new", ["risk"], False), ("grant", [], False), ("grant", ["risk"], True)]
+)
+def test_relay_preserves_one_press_allowlist(op, risk, ok):
+    from orch_dashboard.click import contract4_view_ok
+
+    assert contract4_view_ok({"op": op, "headline": "Review", "risk_lines": risk}) is ok

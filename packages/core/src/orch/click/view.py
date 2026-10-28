@@ -248,14 +248,21 @@ def build(
         from orch.host import sequence
 
         intent = sequence.validate_intent(meta["intent"])
-        person = prepared[sequence._EVENTS][0]["actor"]["id"]
+        # V2 payloads are the exact events check_step requires before each signature. The first
+        # prepared request only carries `new`; risk must cover the later signed grant too.
+        events = [
+            sequence.expected_payload(intent, k, prepared["events"][0]["actor"]["id"])
+            for k in range(len(sequence.steps(intent)))
+        ]
+        if sequence.has_grant(intent):
+            view["op"] = "grant"
+            view["confirm"]["mode"] = "press"
+            view["headline"] = headline("grant", ticket.get("key"))
         view["risk_lines"] = list(
             dict.fromkeys(
                 line
-                for k, step in enumerate(sequence.steps(intent))
-                for line in risk_lines(
-                    step["op"], [sequence.expected_payload(intent, k, person)], deposit=step["op"] == "grant"
-                )
+                for step, event in zip(sequence.steps(intent), events, strict=True)
+                for line in risk_lines(step["op"], [event], deposit=step["op"] == "grant")
             )
         )
         if intent.get("launch"):

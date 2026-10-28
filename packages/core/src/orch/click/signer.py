@@ -711,15 +711,23 @@ class ClickSigner:
 
         return {"path": {"blob": upload(_Conn(), data, None)}}
 
-    def _sequence_kind(self, entry: dict[str, Any], intent: Mapping[str, Any]) -> str:
+    def _sequence_kind(
+        self, entry: dict[str, Any], intent: Mapping[str, Any], view: Mapping[str, Any] | None = None
+    ) -> str:
         """The confirmation of a sequence (always ``click``, else ``terminal_only``). Its own rule, not part of any
-        confirmation class: a sequence that ends in a grant to the runner needs dashboard execution on this machine."""
+        confirmation class: a grant sequence requires a risk View in press mode and dashboard execution."""
         from orch.host import sequence
 
         if sequence.confirm_kind(intent) == "terminal":
             raise refused("terminal_only", "this sequence needs more than a click; use the terminal")
-        if sequence.has_grant(intent) and not self._execution(entry):
-            raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+        if sequence.has_grant(intent):
+            if not self._execution(entry):
+                raise refused("terminal_only", "dashboard execution is off for this workspace on this machine")
+            # Prepare checks execution; once built, the review and sign paths require the risk/press View too.
+            if view is not None and (
+                view["op"] != "grant" or not view["risk_lines"] or view["confirm"].get("mode") != "press"
+            ):
+                raise refused("check_failed", "a grant sequence requires a risk View in press mode")
         return "click"
 
     def _sequence_ok(
@@ -763,7 +771,7 @@ class ClickSigner:
             artifacts = "checked" if approval.files else "unseen"
         elif approval.images:
             artifacts = "checked"  # the pasted screenshots of a sequence: this signer holds the bytes and compared them
-        return views.build(
+        view = views.build(
             prepared,
             self._names(entry),
             device=device,
@@ -775,6 +783,10 @@ class ClickSigner:
             if approval.seal is None or approval.vault
             else (approval.seal.public, SEALED_OPS[approval.op]),
         )
+        meta = (prepared.get("material") or {}).get("sequence")
+        if meta:
+            self._sequence_kind(entry, meta["intent"], view)
+        return view
 
     def sign(self, args: Mapping[str, Any]) -> dict[str, Any]:
         if self.busy:

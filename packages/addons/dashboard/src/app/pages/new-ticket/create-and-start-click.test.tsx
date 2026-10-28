@@ -189,6 +189,7 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
       grant: { id: 'gr_demo', until: new Date(now + minutes * 60_000).toISOString(), scope: 'workable', startable: true },
     } })
   }
+  shown.view.op = needsGrant ? 'grant' : 'new'
   shown.view.risk_lines = needsGrant ? [DEPOSIT_RISK, 'Agents can run as you for 8 hours'] : []
   vi.mocked(api.viewClick).mockResolvedValue(shown)
   s.sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: 'DEMO-0044', deposit: 'confirmed' })
@@ -207,6 +208,7 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
     expect(action).toHaveProperty('agent.hours', 8)
     expect(panel).toHaveTextContent('Agents can run as you for 8 hours')
     const button = screen.getByRole('button', { name: 'Sign and start agent' })
+    expect(screen.queryByTestId('sign-arm-status')).not.toBeInTheDocument()
     expect(button).toBeDisabled()
     fireEvent.click(button)
     expect(s.sign).not.toHaveBeenCalled()
@@ -214,6 +216,7 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
     await new Promise(resolve => setTimeout(resolve, 1100))
     expect(s.sign).not.toHaveBeenCalled()
     expect(s.start).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('sign-arm-status')).not.toBeInTheDocument()
     fireEvent.pointerDown(button)
     fireEvent.click(button)
   } else {

@@ -3,6 +3,12 @@
 Non-trivial product and engineering decisions made during the autonomous run, for the owner's review.
 Format: date, decision, why, how to revert.
 
+## 2026-10-28 — D2 grant sequences retain C3's press guard
+
+- **Decision:** Mark grant-carrying sequence Views as `grant` with `confirm.mode: press`. Enforce nonempty signer risk lines and the closed one-press allowlist at the relay; preserve dashboard execution checks at prepare and sign.
+- **Why:** Creating with missing access needs a second press over the grant's V2 payload. Valid existing access still produces a grant-free, one-press sequence. The grant remains last and launch waits for every step to land.
+- **Revert:** Refuse grant-carrying sequences again; never remove the risk or execution guards.
+
 ## 2026-10-27 — Follow-up Reschedule and Undo on real hosts
 
 - **Decision:** Use person-signed handoffs for Reschedule and Undo, gated by host support. Keep Undo signing in the shell and offer it for 15 seconds after a successful Cancel.

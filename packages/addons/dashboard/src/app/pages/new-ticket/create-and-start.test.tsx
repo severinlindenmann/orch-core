@@ -1,15 +1,12 @@
 // "Create and start agent" (U4 PR2): the default path, Only create, agent access only without a usable grant, the step
 // limit, the start compared with the review, the risk notices, partial failures, one idem, and a reload that never starts.
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { agentsApi, LOGIN_NOTICE, type AgentPreview } from '@/api/agents'
+import { agentsApi, type AgentPreview } from '@/api/agents'
 import { api, mockStore } from '@/api/client'
 import { routingApi, type RoutingChoices } from '@/api/modelRouting'
 import { ApiError } from '@/api/types'
 import { clearMark, markOf } from '@/app/pages/ticket/progress'
-import { EXECUTION_LINE } from '@/app/terminal/real/executionLine'
 import { fakeRequest, state } from '@/test/handoffHarness'
 import { renderApp } from '@/test/renderApp'
 import { nowMs } from '@/lib/time'
@@ -69,9 +66,9 @@ function setup(opts: { grant?: typeof GRANT | null; runner?: { connected: boolea
   vi.spyOn(api, 'getHostSettings').mockResolvedValue({ available: true, grant_hours: 168 } as Awaited<ReturnType<typeof api.getHostSettings>>)
   vi.spyOn(routingApi, 'choices').mockResolvedValue(CHOICES)
   s = {
-    runner: vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: runner ? { ...runner, terminals: false, grant } : null }),
+    runner: vi.spyOn(agentsApi, 'runner').mockResolvedValue({ runner: runner ? { ...runner, terminals: false, now: new Date(nowMs()).toISOString(), grant: grant ? { ...grant, startable: true } : null } : null }),
     preview: vi.spyOn(agentsApi, 'preview').mockResolvedValue(preview()),
-    start: vi.spyOn(agentsApi, 'start').mockResolvedValue({ run }),
+    start: vi.spyOn(agentsApi, 'startAfter').mockResolvedValue({ run }),
     notices: vi.spyOn(agentsApi, 'riskNotices').mockResolvedValue({ acknowledged: opts.acked ?? { start_agent: true } }),
   }
 }
@@ -161,12 +158,14 @@ describe('the form', () => {
 })
 
 describe('what is signed', () => {
-  it('with a usable grant the intent has no agent access, and the start is said to be not signed', async () => {
+  it('asks the host to conditionally grant access and binds the launch settings', async () => {
+    setup({ grant: null }) // no usable access: the grant is proposed (with valid access the request carries none, see create-and-start-click)
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
     const action = await sent()
-    expect(action.agent).toBeUndefined()
-    expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Not part of what you sign')
+    expect(action.agent).toEqual({ hours: 168 })
+    expect(action.launch).toEqual({ harness: 'claude-code', mode: 'refine' })
+    expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Then: start an agent on the new ticket.')
     expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(230) // one line, not a paragraph
     expect(screen.getByTestId('starts-agent')).toHaveTextContent('true') // the dialog's steps then say the agent starts with the access already there
   })
@@ -177,7 +176,7 @@ describe('what is signed', () => {
     expect(within(sheet).queryByLabelText('Give agents access for')).toBeNull() // asked in the review, not in the form
     await r.user.click(await startBtn(sheet))
     const hours = await screen.findByLabelText('Give agents access for', {}, T)
-    expect([...hours.querySelectorAll('option')].map((o) => o.textContent)).toEqual(['1 day', '3 days', '7 days'])
+    expect([...hours.querySelectorAll('option')].map((o) => o.textContent)).toEqual(['8 hours', '1 day', '3 days', '7 days'])
     await r.user.selectOptions(hours, '72')
     await waitFor(async () => expect((await sent()).agent).toEqual({ hours: 72 }), T)
   })
@@ -210,184 +209,39 @@ describe('what is signed', () => {
   })
 })
 describe('after the ticket exists', () => {
-  async function signed(opts: { button?: string } = {}) {
+  async function signed() {
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
-    await r.user.click(await screen.findByRole('button', { name: opts.button ?? 'signed' }))
-    return { r, sheet }
+    await r.user.click(await screen.findByRole('button', { name: 'signed' }))
+    return r
   }
-
-  it('#1127: once the ticket exists the emptied form shows no red validation errors while the agent starts', async () => {
-    s.preview.mockReturnValue(new Promise(() => {})) // the start stays "running"
-    const { r } = await signed()
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T) // the form closes at once, the start goes on in the background
-    expect(screen.queryByText(/needs 3 to 120 characters/)).toBeNull()
-    expect(screen.queryByText(/need your attention|needs your attention/)).toBeNull()
-    expect(markOf(WS(), 'DEMO-0044')?.failed).toBeUndefined()
-  })
-
-  it('previews for the ticket\'s own key, then starts once with the preview\'s spec and the review\'s idem', async () => {
-    const { r } = await signed()
+  it('starts with only the reviewed request id, without a browser preview', async () => {
+    const r = await signed()
     await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
-    expect(s.preview).toHaveBeenCalledWith(WS(), { ticket: 'DEMO-0044', harness: 'claude-code', mode: 'refine', worktree: true })
-    const [ws, args, spec, idem] = s.start.mock.calls[0]
-    expect([ws, args, spec]).toEqual([WS(), { ticket: 'DEMO-0044', harness: 'claude-code', mode: 'refine', worktree: true }, 'f'.repeat(64)])
-    expect(String(idem)).toMatch(/^[0-9A-Za-z_-]{8,}$/)
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
-    expect(markOf(WS(), 'DEMO-0044')?.failed).toBeUndefined()
-  })
-
-  it('never starts for a key that is not the one of its own request (the state is another request\'s)', async () => {
-    await signed({ button: 'signed-other-request' })
-    await new Promise((res) => setTimeout(res, 150))
+    expect(s.start).toHaveBeenCalledWith(WS(), 'hr_' + '0'.repeat(25) + '7')
     expect(s.preview).not.toHaveBeenCalled()
-    expect(s.start).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    ['a different model', { model: 'sonnet', model_source: 'chosen' as const }],
-    ['a different model source', { model_source: 'addon' as const }],
-    ['a new worktree', { will_create_worktree: true }],
-    ['a different grant', { grant: { ...GRANT, id: 'gr_01M4Y46B485AXD4CBEJZ15Z1TW' } }],
-    ['no grant', { grant: null }],
-    ['a block', { blocked: { code: 'launch.claimed', message: 'DEMO-0044 is claimed', detail: {} } }],
-    ['another warning', { warnings: ['ORCH_WORKTREES leaves out x'] }],
-    ['a hidden command', { display: null }],
-  ])('%s in the preview: no start, the failure mark carries the reason and the prefill', async (_n, over) => {
-    s.preview.mockResolvedValue(preview(over as Partial<AgentPreview>))
-    await signed()
-    const failed = await failedOf()
-    expect(failed.reason).toMatch(/^Created DEMO-0044\. The agent was not started: /)
-    expect(failed.initial).toMatchObject({ harness: 'claude-code', mode: 'refine' })
-    expect(s.start).not.toHaveBeenCalled()
-  })
-
-  it('a "runs as you" notice not read yet is shown in full in the review; signing with it on screen starts the agent and saves it as read', async () => {
-    setup({ acked: {} })
-    const ack = vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } })
-    const { r, sheet } = await open()
-    await waitFor(() => expect(s.notices).toHaveBeenCalled(), T)
-    await r.user.click(await startBtn(sheet))
-    expect(await screen.findByTestId('not-signed-notice')).toHaveTextContent(EXECUTION_LINE)
-    expect(screen.getByTestId('not-signed-notice')).toHaveTextContent('Signing and starting the agent confirms you have read this.')
-    await r.user.click(screen.getByRole('button', { name: 'signed' }))
-    await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
-    await waitFor(() => expect(ack).toHaveBeenCalledWith(WS(), 'start_agent'), T)
-    expect(markOf(WS(), 'DEMO-0044')).toBeDefined() // "Getting started…"
+    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
     expect(markOf(WS(), 'DEMO-0044')?.failed).toBeUndefined()
   })
-
-  it.each(['signed-in-terminal', 'signed-on-hub', 'signed-click-slot-not-shown', 'signed-unknown-path'])('the notice was in the review but signed another way (%s): not saved as read, no automatic start, Start agent is offered', async (button) => {
-    setup({ acked: {} })
-    const ack = vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } })
-    const { r, sheet } = await open()
-    await waitFor(() => expect(s.notices).toHaveBeenCalled(), T)
-    await r.user.click(await startBtn(sheet))
-    expect(await screen.findByTestId('not-signed-notice')).toBeInTheDocument()
-    await r.user.click(screen.getByRole('button', { name: button }))
-    const failed = await failedOf()
-    expect(failed.initial).toMatchObject({ harness: 'claude-code', mode: 'refine' }) // the pill's Start agent, prefilled
-    await waitFor(() => expect(r.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
-    expect(s.start).not.toHaveBeenCalled()
-    expect(ack).not.toHaveBeenCalled()
-  })
-
-  it('the notice in the review is exactly the text the Start agent dialog shows and acknowledges', async () => {
-    setup({ acked: {} })
-    const { r, sheet } = await open()
-    await waitFor(() => expect(s.notices).toHaveBeenCalled(), T)
-    await r.user.click(await startBtn(sheet))
-    const reviewText = (await screen.findByTestId('not-signed-execution-line')).textContent
-    cleanup()
-    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ ...mockStore.workspaces[0], grant_hours: 168 }] as Awaited<ReturnType<typeof api.getWorkspaces>>)
-    const { StartAgentDialog } = await import('@/app/terminal/real/StartAgentDialog')
-    render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TooltipProvider>
-        <StartAgentDialog ws={WS()} ticket="DEMO-0044" open onClose={() => {}} onStarted={() => {}} />
-      </TooltipProvider></QueryClientProvider>,
-    )
-    const full = await screen.findByTestId('agent-risk-full', {}, T) // the notice the dialog shows in full until acknowledged
-    expect(within(full).getByTestId('execution-line').textContent).toBe(reviewText)
-    expect(reviewText).toBe(EXECUTION_LINE)
-  })
-
-  it('a notice already read is not shown in the review', async () => {
-    const { r, sheet } = await open()
-    await waitFor(() => expect(s.notices).toHaveBeenCalled(), T)
-    await new Promise((res) => setTimeout(res, 0))
-    await r.user.click(await startBtn(sheet))
-    await screen.findByTestId('not-signed-start')
-    expect(screen.queryByTestId('not-signed-notice')).toBeNull()
-  })
-
-  it('an unacknowledged "runs as you" notice the review did not show: a failure mark, not an automatic start', async () => {
-    const ack = vi.spyOn(agentsApi, 'acknowledge').mockResolvedValue({ acknowledged: { start_agent: true } })
-    const { r, sheet } = await open()
-    await waitFor(() => expect(s.notices).toHaveBeenCalled(), T)
-    await new Promise((res) => setTimeout(res, 0))
-    await r.user.click(await startBtn(sheet))
-    await screen.findByTestId('not-signed-start')
-    expect(screen.queryByTestId('not-signed-notice')).toBeNull() // read when the review opened ...
-    s.notices.mockResolvedValue({ acknowledged: {} }) // ... and no longer when the agent would start
-    await r.user.click(screen.getByRole('button', { name: 'signed' }))
-    await failedOf()
-    expect(s.start).not.toHaveBeenCalled()
-    expect(ack).not.toHaveBeenCalled()
-  })
-
-  it('the login-shell notice starts only once acknowledged', async () => {
-    s.preview.mockResolvedValue(preview({ warnings: [LOGIN_NOTICE] }))
-    setup({ acked: { start_agent: true } })
-    s.preview.mockResolvedValue(preview({ warnings: [LOGIN_NOTICE] }))
-    await signed()
-    await failedOf()
-    expect(s.start).not.toHaveBeenCalled()
-  })
-
-  it('a changed start (launch.changed, runner.stale text as it is) is not retried: the mark shows the host words', async () => {
-    s.start.mockRejectedValue(new ApiError(409, { code: 'launch.changed', message: 'What would run changed: the runner restarted (runner.stale).', retryable: false }))
-    await signed()
-    const initial = (await failedOf()).initial as { note?: string; idem?: string } | undefined
-    expect(initial?.note).toContain('What would run changed: the runner restarted (runner.stale).')
-    expect(initial?.idem).toBeUndefined() // a refused start is not a lost answer: the dialog gets its own idem
-    expect(s.preview).toHaveBeenCalledTimes(1)
-    expect(s.start).toHaveBeenCalledTimes(1)
-  })
-
-  it('a lost answer (network error): the mark reuses the review\'s idem, so Start returns the same run', async () => {
+  it('a lost response retains the request id for the host-idempotent retry', async () => {
     s.start.mockRejectedValue(new TypeError('network'))
     await signed()
-    const initial = (await failedOf()).initial as { idem?: string } | undefined
-    expect(initial?.idem).toBe(s.start.mock.calls[0][3])
+    expect((await failedOf()).initial).toMatchObject({ afterRequest: 'hr_' + '0'.repeat(25) + '7' })
   })
-
-  it('a preview that cannot be read goes to the failure mark and nothing starts', async () => {
-    s.preview.mockRejectedValue(new ApiError(503, { code: 'host.unavailable', message: 'Host not available', retryable: true }))
+  it('reports a host refusal and never falls back to an unbound start', async () => {
+    s.start.mockRejectedValue(new ApiError(409, { code: 'sequence.incomplete', message: 'Every step must land.', retryable: false }))
+    const unbound = vi.spyOn(agentsApi, 'start')
     await signed()
-    await failedOf()
-    expect(s.start).not.toHaveBeenCalled()
-  })
-
-  it('a reload never starts: a fresh page with nothing in memory previews and starts nothing', async () => {
-    s.preview.mockResolvedValue(preview({ blocked: { code: 'launch.claimed', message: 'x', detail: {} } }))
-    await signed()
-    await failedOf()
-    s.preview.mockClear()
-    cleanup()
-    const again = renderApp('/ticket/DEMO-0044')
-    await waitFor(() => expect(again.router.state.location.pathname).toBe('/ticket/DEMO-0044'), T)
-    await new Promise((res) => setTimeout(res, 150))
-    expect(s.start).not.toHaveBeenCalled()
-    expect(s.preview).not.toHaveBeenCalled()
+    expect((await failedOf()).reason).toContain('Every step must land.')
+    expect(unbound).not.toHaveBeenCalled()
   })
 })
-
 describe('partial failures', () => {
   it('the ticket landed, the access did not: said in the failure mark, and nothing started', async () => {
     setup({ grant: null })
     const { r, sheet } = await open()
     await r.user.click(await startBtn(sheet))
-    expect((await sent()).agent).toEqual({ hours: 24 })
+    expect((await sent()).agent).toEqual({ hours: 168 })
     await r.user.click(await screen.findByRole('button', { name: 'access-missing' }))
     await r.user.click(screen.getByRole('button', { name: 'cancelled' }))
     const failed = await failedOf()
@@ -433,7 +287,7 @@ describe('a grant that runs out while the form is open', () => {
     const realNow = nowMs()
     const spy = vi.spyOn(await import('@/lib/time'), 'nowMs').mockReturnValue(realNow + 5 * 60_000) // five minutes later: 11 left
     await r.user.click(await startBtn(sheet))
-    expect((await sent()).agent).toEqual({ hours: 24 })
+    expect((await sent()).agent).toEqual({ hours: 168 })
     spy.mockRestore()
   })
 })

@@ -251,6 +251,36 @@ def build(
     view["risk_lines"] = risk_lines(
         str(prepared["op"]), list(prepared.get("events") or []), deposit=deposit, reveal=reveal is not None
     )
+    meta = (prepared.get("material") or {}).get("sequence")
+    if meta:
+        from orch.host import sequence
+
+        intent = sequence.validate_intent(meta["intent"])
+        # V2 payloads are the exact events check_step requires before each signature. The first
+        # prepared request only carries `new`; risk must cover the later signed grant too.
+        events = [
+            sequence.expected_payload(intent, k, prepared["events"][0]["actor"]["id"])
+            for k in range(len(sequence.steps(intent)))
+        ]
+        if sequence.has_grant(intent):
+            view["op"] = "grant"
+            view["confirm"]["mode"] = "press"
+            view["headline"] = headline("grant", ticket.get("key"))
+        view["risk_lines"] = list(
+            dict.fromkeys(
+                line
+                for step, event in zip(sequence.steps(intent), events, strict=True)
+                for line in risk_lines(step["op"], [event], deposit=step["op"] == "grant")
+            )
+        )
+        if intent.get("launch"):
+            view["headline"] = "Create ticket and start agent"
+            until = prepared["material"].get("agent_access_until")
+            if until and not intent.get("agent"):
+                from datetime import datetime
+
+                clock = datetime.fromisoformat(until.replace("Z", "+00:00")).astimezone().strftime("%H:%M")
+                view["info_lines"] = [f"Uses your current agent access until {clock}"]
     if prepared["op"] == "schedule.add":
         # run 13: the schedule's own risk is a line of the review (FIRST: the review shows `lines` in a short scroll
         # box and the consequence must be read before the rule's details); `risk` stays the convenience notice

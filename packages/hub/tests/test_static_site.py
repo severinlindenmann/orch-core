@@ -48,13 +48,17 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         "/route.js",
         "/account.js",
         "/admin.js",
+        "/connections.js",
         "/changes.js",
+        "/admin_reach.js",
         "/activity.js",
         "/switch.js",
         "/ui.js",
         "/feel.js",
         "/services.js",
         "/workspaces.js",
+        "/phones.js",
+        "/handoffs.js",
         "/invite.js",
     }
     for path, (name, ctype) in FILES.items():

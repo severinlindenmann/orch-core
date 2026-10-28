@@ -38,3 +38,15 @@ export function ago(ms, now = Date.now()) {
   const d = Math.round(s / 86400);
   return d + (d === 1 ? " day ago" : " days ago");
 }
+
+/** Agent identity never falls back to the person who started it. */
+export function actorLabel(actor) {
+  if (!actor || typeof actor !== "object" || Array.isArray(actor)) return "unknown";
+  if (actor.kind === "agent") {
+    const session = actor.session_id ?? actor.session;
+    return typeof session === "string" && session.trim() ? "agent:" + text(session) : "agent";
+  }
+  if (actor.kind === "person") return typeof actor.name === "string" && actor.name.trim() ? text(actor.name) : "person";
+  if (actor.kind === "host") return "host";
+  return "unknown";
+}

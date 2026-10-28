@@ -92,13 +92,20 @@ class Router:
         queue: RouteQueue | None = None,
         authz: Authz | None = None,
         now_ms: Callable[[], int] | None = None,
+        on_routed: Callable[[str, str], None] | None = None,
     ) -> None:
         self._reg = registry
+        self._on_routed = on_routed  # (from_ws, to_ws) after an accepted hand-off: counts only (route_stats)
         self.queue = queue or RouteQueue()
         self._authz = authz or BoundOnly(registry)
         self._now = now_ms or (lambda: int(time.time() * 1000))
         self._lock = threading.Lock()
         self._live: dict[str, _Live] = {}
+
+    @property
+    def authz(self) -> Authz:
+        """The routing rule in force: the directory lists only what THIS says the caller may reach."""
+        return self._authz
 
     # --- w2h route_out ------------------------------------------------------------------------------------------
 
@@ -117,6 +124,11 @@ class Router:
         if self._reg.mode(header.to_ws) is None or not self._authz.may_route(sender_ws, header.to_ws):
             raise Refused("not_allowed")
         qid = self.queue.add(header.to_ws, sender_ws, header.envelope_id, raw, self._now())
+        if self._on_routed is not None:
+            try:
+                self._on_routed(sender_ws, header.to_ws)
+            except Exception:  # noqa: BLE001, S110 - a counter never stops a hand-off
+                pass
         with self._lock:
             live = self._live.get(header.to_ws)
         if live is None:

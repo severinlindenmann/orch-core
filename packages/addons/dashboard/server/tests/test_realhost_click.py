@@ -238,6 +238,34 @@ def test_a_new_schedule_signs_on_one_click(world, click):
     ]
 
 
+def test_a_new_ticket_schedule_signs_on_one_click(world, click):
+    """Run 14 (lead e2e, blocking): "A new ticket each run" prepares [ticket.created, schedule.set]; the signing check
+    expects exactly that pair, so the review is shown and one click signs the anchor and the schedule together."""
+    from datetime import UTC, datetime
+
+    got = click.prepare({"action": "addon_grant", "name": "schedules"})  # the world may have it on already
+    if got.status_code == 200:
+        _signed(world, click, {"action": "addon_grant", "name": "schedules"})
+    else:
+        assert got.json()["error"]["code"] == "addon.already"
+    at = datetime.fromtimestamp((int(time.time()) + 5400) // 60 * 60, UTC).strftime("%Y-%m-%d %H:%M")
+    body = {
+        "action": "schedule_add",
+        "target": "new",
+        "title": "Check the mail",
+        "brief": "Look at the inbox",
+        "at": at,
+        "tz": "UTC",
+    }
+    shown = _signed(world, click, body)
+    assert shown["op"] == "schedule.add" and any("NEW ticket every run" in line for line in shown["lines"])
+    listed = world.client.get(f"/api/w/{world.ws.ws_id}/schedules", headers=click.headers(False))
+    assert listed.status_code == 200, listed.text
+    rows = [r for r in listed.json()["rows"] if r["brief"] == "Look at the inbox"]
+    assert [(r["state"], r.get("target")) for r in rows] == [("live", "new")]
+    assert rows[0]["title"] == "Check the mail"  # the anchor ticket carries the literal title
+
+
 def test_cancel_cancels_on_the_host(world, click):
     got = click.prepare(approve(world, "three")).json()
     res = click.post("cancel", {"request_id": got["request_id"]})

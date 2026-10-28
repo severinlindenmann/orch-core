@@ -163,7 +163,7 @@ def build(gateway: Gateway, ws: str, now: int | None = None) -> dict:
     for row in listed[:MAX_ROWS]:
         if not isinstance(row, dict):
             continue
-        if row.get("target", "existing") != "existing":
+        if row.get("target", "existing") not in ("existing", "new"):
             # one row this dashboard cannot read must not break the page: it is listed as unsupported
             rows.append(
                 {
@@ -202,6 +202,7 @@ def build(gateway: Gateway, ws: str, now: int | None = None) -> dict:
                 "label": note(row.get("label")) or None,
                 "run_hours": _int(row.get("run_hours")),
                 "max_run_hours": max_run_hours(row),
+                **({"target": "new"} if row.get("target") == "new" else {}),
             }
         )
     return {

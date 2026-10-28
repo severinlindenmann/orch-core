@@ -1,5 +1,6 @@
 import { emptyState, itemKey } from "./feel.js";
 import { renderText } from "./render.js";
+import { newChannelsNotice } from "./phones.js";
 
 function h(tag, props = {}, ...kids) {
   const el = document.createElement(tag);
@@ -87,7 +88,8 @@ export function homeView(d) {
       c.status === "active" ? h("button", { text: "Remove", onclick: () => d.actions.removeChannel(c.channel_id) }) : null)),
     note("You confirm with a key held by this browser or your iPhone. The hub signs this approval for you."));
   const notice = d.notice?.nodeType ? d.notice : d.notice ? h("div", { class: "banner", role: "status", text: text(d.notice) }) : null;
-  return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice,
+  const added = newChannelsNotice(d.newChannels, { remove: (c) => d.actions?.removeChannel(c.channel_id), dismiss: () => d.actions?.dismissNew?.() });
+  return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,
     h("p", { class: "company-summary", text: health.online + " workspaces online, " + health.offline + " offline, " + health.waiting + " things need you" }),
     h("div", { class: "home-grid" }, needs, h("div", { class: "home-side" }, spaces, signing))].filter(Boolean);
 }

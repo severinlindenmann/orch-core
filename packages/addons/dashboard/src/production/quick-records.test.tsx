@@ -171,8 +171,8 @@ it('with an agent runner and no access the review carries the access length as a
   const select = await within(dialog).findByLabelText('Give agents access for', {}, T)
   expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['8 hours', '1 day', '3 days'])
   expect(state.host.clickPrepares()).toEqual([]) // nothing is prepared until the choice is made and the outcome pressed
-  await user.selectOptions(select, '24')
-  await user.click(within(dialog).getByRole('button', { name: 'Sign and start task' }))
+  await user.selectOptions(select, '24') // the default is 8 hours (D1/D2): another length re-keys the review, so look it up again
+  await user.click(within(await screen.findByRole('dialog', {}, T)).getByRole('button', { name: 'Sign and start task' }))
   await waitFor(() => expect(state.host.clickPrepares()).toHaveLength(1), T)
   expect(state.host.calls.filter(c => c.path.endsWith('/click/sign'))).toEqual([])
   expect(state.host.clickPrepares().map((c) => c.body)).toEqual([{ action: 'quick_start', title: 'Water the plants', agent: { hours: 24 } }])

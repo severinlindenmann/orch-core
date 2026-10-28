@@ -93,6 +93,11 @@ class AgentStartBody(AgentPreviewBody):
     idem: Idem
 
 
+class AfterStartBody(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+    after_request: Annotated[str, StringConstraints(pattern=r"^hr_[0-7][0-9A-HJKMNP-TV-Z]{25}$")]
+
+
 class ForgetBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     grant: GrantId
@@ -119,7 +124,12 @@ def register(app: FastAPI, gateway: Gateway) -> None:
         }
 
     @app.post("/api/w/{ws}/agents/start")
-    def start(body: AgentStartBody, ws: str = Depends(reads.workspace)):
+    def start(body: AfterStartBody | AgentStartBody, ws: str = Depends(reads.workspace)):
+        if isinstance(body, AfterStartBody):
+            data = gateway.enabled(ws).call(
+                "agent.start", {"after_request": body.after_request}, write=True, idem="a_" + body.after_request[3:]
+            )
+            return {"run": project.run(data["run"])}
         # Exactly the preview's values plus its spec (section 12.4: never a value edited between preview and start).
         args = {**body.host_args(), "spec": body.spec}
         args.update({k: v for k, v in (("cols", body.cols), ("rows", body.rows)) if v is not None})

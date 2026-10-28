@@ -353,3 +353,15 @@ def test_policy_and_task_bodies_are_closed(client, token, stub, host, extra):
     body = {"ticket": "DEMO-1", "harness": "codex", "mode": "task", **extra}
     assert client.post(url(stub, "/agents/preview"), json=body, headers=hdr(token)).status_code == 400
     assert host.calls == []
+
+
+def test_start_after_request_discards_browser_launch_values(client, token, stub, host):
+    request = "hr_01M4Y46B485AXD4CBEJZ15Z1TV"
+    host.answers["agent.start"] = {"run": RUN}
+    res = client.post(
+        url(stub, "/agents/start"),
+        json={"after_request": request, "ticket": "EVIL-0001", "spec": "forged", "harness": "shell", "idem": "forged"},
+        headers=hdr(token),
+    )
+    assert res.status_code == 200, res.text
+    assert host.calls == [("agent.start", {"after_request": request}, True, "a_" + request[3:])]

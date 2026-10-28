@@ -410,6 +410,7 @@ def test_a_replay_comes_before_the_workspace_state(served):
 def test_whoami_per_column(served):
     c = served.client()
     p = ok(c.req("whoami", session=SESSION))["data"]
+    assert p["runner"].pop("now").endswith("Z")  # D2: the host's clock (renewal threshold)
     assert p == {
         "peer": {"uid": UID, "class": "person"},
         "person": served.lab.owner,

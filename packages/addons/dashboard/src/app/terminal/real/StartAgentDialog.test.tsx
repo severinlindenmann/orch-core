@@ -515,7 +515,7 @@ describe('a short, calm dialog (U6)', () => {
     await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
     fireEvent.click(screen.getByTestId('agent-start'))
     await prepareAccess()
-    expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 8, scope: 'workable' })
+    expect(s.prepare.mock.calls[0][1]).toEqual({ action: 'runner_grant', hours: 168, scope: 'workable' }) // run 14: preselected = the length chosen at setup (the workspace's access setting, 7 days here)
     s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
     s.preview.mockResolvedValue(preview())
     const sign = screen.getByRole('button', { name: /^Sign and start agent$/ })

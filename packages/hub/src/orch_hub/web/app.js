@@ -3,6 +3,7 @@
 // every string from the workspace goes through renderText first, and nothing here calls a signer except the prompt.
 import { CanonError, parseStrict } from "./cj.js";
 import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, signProof, signRegistration } from "./channel.js";
+import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { homeView } from "./home.js";
 import { adminView } from "./admin.js";
 import { servicesView } from "./services.js";
@@ -121,10 +122,10 @@ function shell(active, ...nodes) {
   const side = h("aside", { class: "side", "aria-label": "Hub" },
     h("div", { class: "logo" }, h("i"), h("span", { text: "orch" })),
     h("div", { class: "hubbox" }, h("span", { text: hubName })),
-    tab("home", "Home", home, "nv"), tab("workspaces", "Workspaces", workspaces, "nv"), state.user?.is_admin ? tab("services", "Services", services, "nv") : null, state.user?.is_admin ? tab("admin", "Admin", admin, "nv") : null,
+    tab("home", "Home", home, "nv"), tab("approvals", "Approvals", approvals, "nv"), tab("workspaces", "Workspaces", workspaces, "nv"), state.user?.is_admin ? tab("services", "Services", services, "nv") : null, state.user?.is_admin ? tab("admin", "Admin", admin, "nv") : null,
     h("div", { class: "sp" }), h("div", { class: "who" }, h("span", { text: name })));
   const top = h("header", { class: "topbar" }, h("span", { class: "t", text: hubName }),
-    h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", home, "nav"), tab("workspaces", "Workspaces", workspaces, "nav"), state.user?.is_admin ? tab("services", "Services", services, "nav") : null, state.user?.is_admin ? tab("admin", "Admin", admin, "nav") : null),
+    h("nav", { class: "navtabs top-nav", "aria-label": "Sections" }, tab("home", "Home", home, "nav"), tab("approvals", "Approvals", approvals, "nav"), tab("workspaces", "Workspaces", workspaces, "nav"), state.user?.is_admin ? tab("services", "Services", services, "nav") : null, state.user?.is_admin ? tab("admin", "Admin", admin, "nav") : null),
     h("span", { class: "grow" }), h("span", { class: "small muted", text: name }), signOutMenu());
   show(h("div", { class: "app" }, railView(), side, h("div", { class: "main" }, top, h("div", { class: "content" }, nodes.flat(2)))));
   root.classList.add("shelled");
@@ -248,6 +249,14 @@ async function services() {
   shell("services", servicesView(r.body, { check: services, open: workspaces, copy: copyText }));
 }
 
+async function approvals(filter = {}) {
+  if (!(await refresh())) return loginView();
+  await loadRail();
+  const [ws, needs] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/needs-you")]);
+  if (ws.status !== 200 || needs.status !== 200) return shell("approvals", banner("bad", "Cannot read approvals", "Please try again."));
+  shell("approvals", inboxView({ ...needs.body, workspaces: ws.body.workspaces, channels: state.channels, filter }, { review: reviewItem, open: openWorkspace, filter: approvals }));
+}
+
 async function home() {
   if (!(await refresh())) return loginView();
   state.menu = false;
@@ -338,7 +347,7 @@ async function reviewItem(it) {
   // #1123: the question is hashed HERE from exactly what the hub sent; no Answer button for one we cannot verify or render
   if (r.body.hash !== it.hash) { state.notice = banner("warn", "This question changed", "Reload your list and review it again."); return home(); }
   const qv = await verifyQuestion(it, c);
-  const head = [h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Question") }), h("p", { class: "sentence", text: renderMulti(c.text ?? it.title ?? "") })];
+  const head = [h("p", { class: "sentence", text: reviewMeaning(it, state.rail.rows.find((w) => w.id === it.workspace_id)?.name || "this workspace") }), h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Question") }), h("p", { class: "sentence", text: renderMulti(c.text ?? it.title ?? "") })];
   const back = h("button", { text: "Back", onclick: home });
   if (!qv) return show(...head, h("p", { class: "small muted", text: "This question cannot be shown or checked here. Answer it on your Mac." }), back);
   const spec = qv.spec;
@@ -370,9 +379,9 @@ function reviewDecision(it, c) {
     h("p", { class: "small" }, h("a", { href: "#", text: "\u2190 Back to your list", onclick: (e) => { e.preventDefault(); home(); } })),
     h("h1", { text: renderText(c.ticket_title ?? it.title ?? "Review") }),
     it.key ? h("p", { class: "small muted", text: renderText(it.key) }) : null,
-    h("p", { class: "sentence", text: verdict ? "Give your verdict on this ticket." : "Review the " + renderText(c.gate ?? "") + " gate." }),
+    h("p", { class: "sentence", text: reviewMeaning(it, state.rail.rows.find((w) => w.id === it.workspace_id)?.name || "this workspace", c.gate) }),
     h("p", { class: "small muted", text: "The content itself is not shown here. Check it where it lives; the reference below is what you are deciding on." }),
-    h("details", { open: true }, h("summary", { text: "Review details" }), h("dl", { class: "facts" },
+    h("details", {}, h("summary", { text: "What exactly is signed" }), h("dl", { class: "facts" },
       h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: renderText(shortHash(it.hash) || String(it.hash ?? "")) }),
       h("dt", { text: "Generation" }), h("dd", { text: renderText(String(c.gate_gen ?? "")) }),
       sources.flatMap((e) => [h("dt", { text: "Code to check" }), h("dd", { text: renderText(e.repo) + " " + renderText(e.sha) })]))),
@@ -540,9 +549,9 @@ function promptView(me, p, digest, d) {
   });
   dialog(
     h("h1", { text: d.type === "addon.requested" ? "Approve an add-on" : d.type === "settings.changed" ? "Approve a settings change" : "Review your answer" }),
-    h("p", { class: "sentence", text: d.sentence }),
-    h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.facts.length ? d.facts.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: k === "Content reference" ? "fp" : "", text: v })]) : d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
-    h("details", {}, h("summary", { text: "Signed details" }), factsList(d.fields)),
+    h("p", { class: "sentence", text: signedMeaning(d.sentence, state.rail.rows.find((w) => w.id === p.ctx.workspace_id)?.name || "this workspace") }),
+    h("details", {}, h("summary", { text: "What exactly is signed" }), h("dl", { class: "facts" }, h("dt", { text: "On behalf of" }), h("dd", { text: renderText(state.user.name ?? "you") }), h("dt", { text: "Signature reference" }), h("dd", { class: "fp", text: d.fingerprint }), d.facts.length ? d.facts.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { class: k === "Content reference" ? "fp" : "", text: v })]) : d.contentHash ? [h("dt", { text: "Content reference" }), h("dd", { class: "fp", text: d.contentHash })] : null),
+    factsList(d.fields)),
     h("p", { class: "small muted who-signs", text: "You confirm with the key held by this browser. " + "The hub" + " signs this approval for you." }),
     h("div", { class: "row" }, h("button", { text: "Cancel", onclick: done }), sign),
   );

@@ -158,6 +158,7 @@ function workspace(s: ServerWorkspace): Workspace {
     members: s.members,
     gates: {} as Workspace['gates'],
     addons: viewAddons(s.features),
+    features: [...s.features],
     counts: {},
     needs_you: s.needs_you ?? 0,
     ...(s.host_state === 'ok' ? {} : { host_state: s.host_state }),

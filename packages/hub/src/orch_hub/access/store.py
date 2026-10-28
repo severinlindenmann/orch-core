@@ -117,6 +117,9 @@ class Access:
             self._db.executescript(_SCHEMA)
             if "disabled_ms" not in {r[1] for r in self._db.execute("PRAGMA table_info(users)")}:
                 self._db.execute("ALTER TABLE users ADD COLUMN disabled_ms INTEGER")  # NULL = enabled
+            if "must_recover" not in {r[1] for r in self._db.execute("PRAGMA table_info(users)")}:
+                # set by an enabling: the old password and TOTP stay dead until a recovery link is redeemed
+                self._db.execute("ALTER TABLE users ADD COLUMN must_recover INTEGER NOT NULL DEFAULT 0")
             self._db.execute("INSERT OR IGNORE INTO groups(name, created_ms) VALUES (?,?)", (ADMIN_GROUP, self._now()))
             d = MP.default_policy()  # a new hub trusts the official marketplace only (D14)
             self._db.execute(
@@ -231,12 +234,31 @@ class Access:
                             raise AccessError("last_admin")
                 if (row[0] is not None) == disabled:
                     return False
+                # an enabling NEVER brings the old credentials back: ``must_recover`` is set in the same statement that
+                # clears ``disabled_ms`` (fail closed) and only a redeemed recovery link clears it
                 db.execute(
-                    "UPDATE users SET disabled_ms=? WHERE user_id=?", (self._now() if disabled else None, user_id)
+                    "UPDATE users SET disabled_ms=?, must_recover=CASE WHEN ? THEN must_recover ELSE 1 END "
+                    "WHERE user_id=?",
+                    (self._now() if disabled else None, 1 if disabled else 0, user_id),
                 )
                 return True
         except sqlite3.Error as e:
             raise AccessError("store_error", type(e).__name__) from None
+
+    def must_recover(self, user_id: str) -> bool:
+        """The person was enabled and has not yet redeemed a recovery link: they may not sign in with anything old."""
+        return bool(self._q("SELECT 1 FROM users WHERE user_id=? AND must_recover<>0", (_hex(user_id, "user_id"),)))
+
+    def clear_must_recover(self, user_id: str) -> None:
+        self._w("UPDATE users SET must_recover=0 WHERE user_id=?", (_hex(user_id, "user_id"),))
+
+    def undo_enable(self, user_id: str, *, must_recover: bool) -> None:
+        """Roll an enabling back (its recovery link could not be made): disabled again, ``must_recover`` as it was.
+        Deliberately not :meth:`set_disabled`: it restores a state the hub already allowed, so no admin guard applies."""
+        self._w(
+            "UPDATE users SET disabled_ms=?, must_recover=? WHERE user_id=?",
+            (self._now(), 1 if must_recover else 0, _hex(user_id, "user_id")),
+        )
 
     def set_recovery_note(self, user_id: str, by_user: str, at_ms: int) -> None:
         """``{by, at_ms}`` of the last recovery of this account (a recovery link was redeemed); shown to the person."""

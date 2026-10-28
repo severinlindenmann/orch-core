@@ -1326,6 +1326,9 @@ class WebApi:
 
     def _h_a_user_remove(self, c: Ctx, p: dict, q: dict, b: dict | None):
         self.d.channels.remove_user(p["user_id"], actor=c.user_id)  # revokes and purges the user's channels too
+        if self.d.user_invites is not None:  # the links they made and the links made for them die with the account
+            self.d.user_invites.void_created_by(p["user_id"])
+            self.d.user_invites.void_for_user(p["user_id"])
         return 200, {"ok": True}
 
     # --- people: invitation links (join, reset, recovery), disable / enable (M2-5) --------------------------------------
@@ -1396,6 +1399,7 @@ class WebApi:
         self._void_prepared(uid)
         if self.d.user_invites is not None:
             self.d.user_invites.void_for_user(uid)
+            self.d.user_invites.void_created_by(uid)  # and the links they made for others
         self._record("user.disabled", actor_id=c.user_id, subject_user=uid)
         return 200, {"ok": True}
 
@@ -1403,13 +1407,21 @@ class WebApi:
         uid, inv = p["user_id"], self._inv()
         if (self.d.api_origin or c.origin) is None:
             raise ApiError("unavailable")
+        prior = self.d.access.has_user(uid) and self.d.access.must_recover(uid)
+        # clears ``disabled`` AND sets ``must_recover`` in one transaction: from this instant the old password and TOTP
+        # are useless, whatever happens next; only the recovery link below (or none: the person stays locked out) opens it
         if not self.d.access.set_disabled(uid, False, actor=c.user_id):
             raise ApiError("conflict")  # not disabled: nothing to enable
-        token, iid, expires = inv.create("recovery", created_by=c.user_id, for_user=uid)
+        try:
+            token, iid, expires = inv.create("recovery", created_by=c.user_id, for_user=uid)
+            link = self._invite_link(c, token)
+        except BaseException:  # no link, no enabling: back to disabled, ``must_recover`` as it was
+            self.d.access.undo_enable(uid, must_recover=prior)
+            raise
         self._record("user.enabled", actor_id=c.user_id, subject_user=uid)
         self._record("reset.issued", actor_id=c.user_id, subject_user=uid, detail={"invite_id": iid})
         return 200, {
-            "link": self._invite_link(c, token),
+            "link": link,
             "expires_ms": expires,
             "kind": "recovery",
             "name": self._user_name(uid),
@@ -1425,6 +1437,16 @@ class WebApi:
                     out[ch["channel_id"]] = cert
         return out
 
+    def _creator_standing(self, row: Invite) -> None:
+        """A link is only as good as its maker: if they are no longer a (live) hub-admin, or are gone, it is dead, with
+        the same ``bad_invite`` as any other dead link. Asked at peek and again at redeem time."""
+        try:
+            ok = self.d.access.is_hub_admin(row.created_by)
+        except AccessError:
+            ok = False
+        if not ok:
+            raise InviteError()
+
     def _h_invite_peek(self, c: Ctx, p: dict, q: dict, b: dict | None):
         """What the link is for, without using it. Condition 1: a reset for a person who still has a live channel needs a
         proof from one of those channels, so peek hands out a random challenge (five minutes, bound to this link)."""
@@ -1432,12 +1454,13 @@ class WebApi:
         self._limit.hit("invite-peek", c.source, SIGNIN_SOURCE_LIMIT)
         inv = self._inv()
         row = inv.peek(b["token"])
+        self._creator_standing(row)
         if row.kind == "join":
             return 200, {"kind": "join", "name": row.name, "needs_proof": False}, []
         uid = row.for_user or ""
         if not self.d.access.is_active(uid):
             raise InviteError()  # the person was removed or disabled since: the link is dead, same answer
-        needs = row.kind == "reset" and bool(self._live_channels(uid))
+        needs = row.kind == "reset" and not self.d.access.must_recover(uid) and bool(self._live_channels(uid))
         out: dict[str, Any] = {
             "kind": row.kind,
             "name": self._user_name(uid),
@@ -1465,13 +1488,15 @@ class WebApi:
     def _apply_invite(self, row: Invite, password: str, proof: Any) -> dict[str, Any]:
         """The account change, run by ``Invites.redeem`` inside the claim's transaction: whatever raises here leaves the
         link unused. Returns what the person's own screen shows once."""
+        self._creator_standing(row)
         if row.kind == "join":
             return self._apply_join(row, password)
         uid = row.for_user or ""
         if not self.d.access.is_active(uid):
             raise InviteError()
         live = self._live_channels(uid)
-        recovery = row.kind == "recovery" or not live  # no approving device left = nothing to prove with = a recovery
+        pending = self.d.access.must_recover(uid)  # just enabled: whatever the link's kind, this is a recovery
+        recovery = row.kind == "recovery" or not live or pending  # no approving device left = nothing to prove with
         if not recovery and not self._proof_ok(row.token_hash, live, proof):
             raise ApiError("proof_required")
         now = self.d.now_ms()
@@ -1486,6 +1511,9 @@ class WebApi:
         t = self.d.channels.new_totp(uid)
         self.d.channels.end_sessions(uid)  # every existing session of this person, whatever the two calls above did
         self.d.channels.unlock(uid)
+        self.d.access.clear_must_recover(
+            uid
+        )  # last: any earlier failure leaves the person locked out and the link usable
         return {
             "kind": row.kind,
             "recovery": recovery,

@@ -576,6 +576,195 @@ def test_enable_clears_the_flag_and_issues_a_recovery_link(w):
         assert k in kinds, k
 
 
+def _old_sign_in(w, user):
+    return w.call(
+        "POST",
+        "/session",
+        {
+            "user_id": user,
+            "password": "correct horse battery",
+            "totp": w.env.next_code(user),  # a valid code of the OLD secret
+            "client": "browser",
+        },
+    )
+
+
+def test_enable_fails_closed_the_old_password_and_code_stay_dead_until_recovery(w, monkeypatch):
+    atok = w.login(w.admin)
+    w.call("POST", f"/admin/users/{w.ann}/disable", token=atok)
+    s, o, _ = w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)
+    assert s == 200 and w.env.acc.is_active(w.ann) and w.env.acc.must_recover(w.ann)
+    # the old password with a valid old code: the generic answer of a wrong password, with the password work still done
+    calls = _count_hashing(monkeypatch)
+    wrong = w.call(
+        "POST", "/session", {"user_id": w.ann, "password": "nope nope nope", "totp": "000000", "client": "browser"}
+    )
+    n_wrong = len(calls)
+    old = _old_sign_in(w, w.ann)
+    assert old[:2] == wrong[:2] == (401, {"error": "bad_credentials"})
+    assert len(calls) == 2 * n_wrong
+    assert w.env.acc.must_recover(w.ann)
+    # and again after more time, nothing else opens a session: not the switch path either
+    assert _old_sign_in(w, w.ann)[:2] == (401, {"error": "bad_credentials"})
+    with pytest.raises(CS.ChannelError):
+        w.env.svc.open_session(w.ann)
+    # the recovery link redeemed: flag cleared, the NEW credentials work, the old ones still do not
+    s, got, _ = redeem(w, token_of(o["link"]))
+    assert s == 200 and not w.env.acc.must_recover(w.ann)
+    assert sign_in_as(w, w.ann, NEW_PW, got["totp_secret"])[0] == 200
+    assert _old_sign_in(w, w.ann)[:2] == (401, {"error": "bad_credentials"})
+
+
+def test_a_reset_link_for_a_just_enabled_person_is_treated_as_a_recovery(w):
+    atok = w.login(w.admin)
+    w.call("POST", f"/admin/users/{w.ann}/disable", token=atok)
+    w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)
+    tok = issue(w, w.ann)  # a plain reset (replaces the recovery link)
+    p = peek(w, tok)[1]
+    assert p["needs_proof"] is False and p["recovery"] is True
+    s, got, _ = redeem(w, tok)
+    assert s == 200 and got["recovery"] is True and not w.env.acc.must_recover(w.ann)
+
+
+def test_a_failed_recovery_redeem_leaves_the_person_locked_out(w, monkeypatch):
+    atok = w.login(w.admin)
+    w.call("POST", f"/admin/users/{w.ann}/disable", token=atok)
+    tok = token_of(w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)[1]["link"])
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(w.env.svc, "unlock", boom)
+    with pytest.raises(RuntimeError):
+        w.api._apply_invite(w.api.d.user_invites.peek(tok), NEW_PW, None)
+    assert w.env.acc.must_recover(w.ann)
+
+
+@pytest.mark.parametrize("prior", [False, True])
+def test_enable_is_rolled_back_when_the_recovery_link_cannot_be_made(w, monkeypatch, prior):
+    atok = w.login(w.admin)
+    w.call("POST", f"/admin/users/{w.ann}/disable", token=atok)
+    if prior:  # an earlier enabling that was never recovered, then disabled again
+        w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)
+        w.call("POST", f"/admin/users/{w.ann}/disable", token=atok)
+    assert w.env.acc.must_recover(w.ann) is prior
+
+    def fail(*a, **k):
+        raise InviteError("store_error")
+
+    monkeypatch.setattr(w.api.d.user_invites, "create", fail)
+    s, o, _ = w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)
+    assert s == 503 and o == {"error": "unavailable"}
+    assert not w.env.acc.is_active(w.ann) and w.env.acc.must_recover(w.ann) is prior
+    assert _old_sign_in(w, w.ann)[:2] == (401, {"error": "bad_credentials"})
+    monkeypatch.undo()
+    assert w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)[0] == 200  # and a retry works
+
+
+def test_must_recover_survives_a_reopen_and_the_column_is_migration_safe(tmp_path):
+    import sqlite3
+
+    from orch_hub.access import Access
+
+    path = str(tmp_path / "old-access.db")
+    a = Access(path)
+    a.add_user("ab" * 16, "x")
+    a.close()
+    db = sqlite3.connect(path)  # an old database: no must_recover column
+    db.execute("ALTER TABLE users DROP COLUMN must_recover")
+    db.commit()
+    db.close()
+    a = Access(path)
+    assert a.must_recover("ab" * 16) is False
+    a.add_member("hub-admin", "ab" * 16)
+    a.add_user("cd" * 16, "y")
+    a.set_disabled("cd" * 16, True)
+    a.set_disabled("cd" * 16, False)
+    a.close()
+    a = Access(path)
+    assert a.must_recover("cd" * 16) is True
+    a.clear_must_recover("cd" * 16)
+    assert a.must_recover("cd" * 16) is False
+    a.close()
+
+
+# --- links die with their maker's standing ------------------------------------------------------------------------------
+
+
+def _live_created_by(w, user) -> int:
+    return w.api.d.user_invites._db.execute(
+        "SELECT COUNT(*) FROM invites WHERE created_by=? AND used_ms IS NULL", (user,)
+    ).fetchone()[0]
+
+
+def _second_admin_link(w, name="dora") -> str:
+    w.env.acc.add_member("hub-admin", w.ann)
+    s, o, _ = w.call("POST", "/admin/invites", {"name": name}, token=w.login(w.ann))
+    assert s == 200, o
+    return token_of(o["link"])
+
+
+def test_disabling_an_admin_voids_the_links_they_made(w):
+    tok = _second_admin_link(w)
+    reset = w.call("POST", f"/admin/users/{w.admin}/reset", {}, token=w.login(w.ann))[1]
+    assert peek(w, tok)[0] == 200 and _live_created_by(w, w.ann) == 2
+    assert w.call("POST", f"/admin/users/{w.ann}/disable", token=w.login(w.admin))[0] == 200
+    assert _live_created_by(w, w.ann) == 0  # voided in the store, not only refused
+    assert peek(w, tok)[:2] == BAD and redeem(w, tok)[:2] == BAD
+    assert peek(w, token_of(reset["link"]))[:2] == BAD
+    assert w.api.d.activity.verify()  # audit-neutral: nothing new to explain
+
+
+def test_a_disabled_admins_unused_link_cannot_be_peeked_or_redeemed_even_if_not_voided(w):
+    tok = _second_admin_link(w)
+    w.env.acc.set_disabled(w.ann, True)  # the flag alone: nothing voided
+    assert _live_created_by(w, w.ann) == 1
+    assert peek(w, tok)[:2] == BAD
+    assert redeem(w, tok)[:2] == BAD
+    assert not [u for u in w.env.acc.users() if u["name"] == "dora"]  # no account was made
+    w.env.acc.set_disabled(w.ann, False)  # enabled again, still an admin: the link is good again (it was never voided)
+    w.env.acc.clear_must_recover(w.ann)
+    assert peek(w, tok)[0] == 200
+
+
+def test_a_demoted_admins_link_cannot_be_peeked_or_redeemed(w):
+    tok = _second_admin_link(w)
+    assert peek(w, tok)[0] == 200
+    w.env.acc.remove_member("hub-admin", w.ann)
+    assert peek(w, tok)[:2] == BAD
+    assert redeem(w, tok)[:2] == BAD
+    assert not [u for u in w.env.acc.users() if u["name"] == "dora"]
+    # a recovery link made by a now-demoted admin is dead as well
+    w.env.acc.add_member("hub-admin", w.ann)
+    rec = w.call("POST", f"/admin/users/{w.admin}/reset", {"recovery": True}, token=w.login(w.ann))[1]
+    w.env.acc.remove_member("hub-admin", w.ann)
+    assert redeem(w, token_of(rec["link"]))[:2] == BAD
+
+
+def test_a_liveness_check_at_redeem_time_not_only_at_peek(w):
+    tok = _second_admin_link(w)
+    assert peek(w, tok)[0] == 200  # fine at peek ...
+    w.env.acc.remove_member("hub-admin", w.ann)  # ... demoted before the redeem
+    assert redeem(w, tok)[:2] == BAD
+
+
+def test_removing_a_user_voids_the_links_they_made(w):
+    tok = _second_admin_link(w)
+    assert _live_created_by(w, w.ann) == 1
+    assert w.call("DELETE", f"/admin/users/{w.ann}", token=w.login(w.admin))[0] == 200
+    assert _live_created_by(w, w.ann) == 0
+    assert peek(w, tok)[:2] == BAD and redeem(w, tok)[:2] == BAD
+
+
+def test_void_created_by_is_scoped_to_the_maker(w):
+    mine = invite_join(w, "erin")  # made by the admin
+    w.env.acc.add_member("hub-admin", w.ann)
+    w.call("POST", "/admin/invites", {"name": "fay"}, token=w.login(w.ann))
+    assert w.api.d.user_invites.void_created_by(w.ann) == 1
+    assert w.api.d.user_invites.void_created_by(w.ann) == 0
+    assert peek(w, mine)[0] == 200
+
+
 # --- H: activity records ------------------------------------------------------------------------------------------------
 
 

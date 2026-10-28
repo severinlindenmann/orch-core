@@ -147,6 +147,19 @@ class Invites:
         except sqlite3.Error as e:
             raise InviteError("store_error") from e
 
+    def void_created_by(self, user_id: str) -> int:
+        """End every unused link this person CREATED (their disabling or removal: a link outlives neither its maker's
+        standing nor their account). Marks them used; writes nothing to any log. Returns how many were voided."""
+        try:
+            with self._lock:
+                n = self._db.execute(
+                    "UPDATE invites SET used_ms=? WHERE created_by=? AND used_ms IS NULL", (self._now(), user_id)
+                ).rowcount
+                self._challenges = {}
+                return n
+        except sqlite3.Error as e:
+            raise InviteError("store_error") from e
+
     @staticmethod
     def _hash_of(token: object) -> str:
         if type(token) is not str or not _TOKEN.fullmatch(token):

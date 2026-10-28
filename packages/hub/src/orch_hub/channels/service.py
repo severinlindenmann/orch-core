@@ -319,7 +319,8 @@ class Channels:
         salt, ph, secret, last = row[0] if row else (None, None, None, 0)
         ok = bool(row) and ph is not None and secret is not None
         try:
-            ok = ok and self.acc.is_active(u)  # a disabled person fails like a wrong password (the hashing ran above)
+            # a disabled person, or one enabled but not yet recovered, fails like a wrong password (the hashing ran above)
+            ok = ok and self.acc.is_active(u) and not self.acc.must_recover(u)
         except AccessError:
             ok = False
         h = _pw_hash(password, salt or _DUMMY_SALT)  # always spend the hashing time
@@ -381,6 +382,11 @@ class Channels:
         ``via`` is ``switch``: the hub did not see a password sign-in, so hub-admin routes refuse this session until the
         person signs in for real (``reauth_required``)."""
         u = self._known_user(user_id)
+        try:
+            if self.acc.must_recover(u):  # enabled, not yet recovered: nothing but the recovery link opens a session
+                raise ChannelError("unknown_user")
+        except AccessError as e:
+            raise ChannelError("store_error", e.code) from None
         token = secrets.token_urlsafe(32)
         now = self._now()
 
@@ -404,7 +410,9 @@ class Channels:
         if not rows or rows[0][1] <= self._now():
             raise ChannelError("no_session")
         try:
-            if not self.acc.is_active(rows[0][0]):  # a removed or disabled user's sessions are dead
+            if not self.acc.is_active(rows[0][0]) or self.acc.must_recover(
+                rows[0][0]
+            ):  # removed, disabled, unrecovered
                 raise ChannelError("no_session")
         except AccessError:
             raise ChannelError("no_session") from None

@@ -142,6 +142,8 @@ class SpawnSpec:
     rows: int = 40
     #: ``(workspace root, work folder)`` a Claude Code trust entry was recorded for (re-checked when the run exits)
     trusted: tuple[str, str] | None = field(default=None, compare=False)
+    #: accepted company skills for the rules file (M3 H-3): ``[{name, text, digest}]``, re-checked by ``rules.prepare``
+    company_skills: tuple[dict[str, str], ...] = field(default=(), compare=False)
 
     def check(self) -> None:
         def bad(what: str) -> SpawnError:

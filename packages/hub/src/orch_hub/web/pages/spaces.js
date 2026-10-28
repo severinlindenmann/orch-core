@@ -1,7 +1,7 @@
 // The Shared spaces page (M3, #1443 #1444 #1447): spaces the hub hosts, who may only read, archive. The page signs nothing:
 // the hub does what its service already did; creating a space and its history come in a later slice.
-import { emptyState, loading } from "./feel.js";
-import { chip, h, text, when } from "./ui.js";
+import { emptyState, loading } from "../feel.js";
+import { chip, h, text, when } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
 const nameOf = (w) => text(w?.name || (w?.workspace_id ? "Workspace " + w.workspace_id.slice(0, 8) : "A workspace"));
@@ -63,3 +63,6 @@ export async function spacesPage(d) {
     d.state.notice = null;
   } finally { finish(); }
 }
+
+// The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
+export const page = { path: "spaces", nav: { label: "Spaces", admin: true, after: "mcp" }, render: spacesPage };

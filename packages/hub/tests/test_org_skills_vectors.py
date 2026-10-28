@@ -37,3 +37,15 @@ def test_cases_hold() -> None:
         assert got == c["expect"], c["name"]
         codes.add(got.get("error"))
     assert codes >= {None, "bundle_conflict", "stale_bundle", "other_workspace", "bad_signature", "malformed"}
+
+
+def test_text_cases_hold() -> None:
+    """The host replays these same cases with its own copy of the rule (orch-core ``orch.hubclient.orgtext``)."""
+    from orch_hub.contract.org_bundles import skill_problem
+
+    doc = json.loads((VEC / "vectors_org_skills.json").read_text())
+    for c in doc["text_cases"]:
+        assert skill_problem(c["skill_name"], c["text"]) == c["expect"], c["name"]
+    assert {"variation selector", "tag character", "hangul filler", "line separator"} <= {
+        c["name"] for c in doc["text_cases"]
+    }

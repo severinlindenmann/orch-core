@@ -2,7 +2,7 @@
 
 Company skills are instructions an agent reads, so they are a prompt-injection channel. The rules here are the same on
 both sides (the hub refuses to store a bad skill, the host refuses to adopt a bad bundle): a name that cannot be mistaken
-for one of orch's own skills, a bounded text with no control or bidirectional characters and no front matter. Nothing
+for one of orch's own skills, a bounded text of visible characters only (an allowlist) and no front matter. Nothing
 here grants anything: a skill the owner accepts is read below orch's rules (the host adds that label)."""
 
 from __future__ import annotations
@@ -19,19 +19,31 @@ SKILL_NAME = re.compile(r"[a-z][a-z0-9-]{1,39}")
 RESERVED_PREFIX = "orch"
 SKILL_TEXT_MAX = 2400
 SKILLS_MAX = 20
-#: characters that reorder or hide text: bidi controls, isolates, zero width, the BOM
-_HIDDEN = frozenset(
-    chr(c) for c in (0x061C, *range(0x200B, 0x2010), *range(0x202A, 0x202F), 0x2060, *range(0x2066, 0x206A), 0xFEFF)
-)
+#: Letters, numbers, punctuation, symbols and plain spaces, plus newline and tab: an ALLOWLIST. Everything else is
+#: refused, never stripped, because any category left out (marks, format characters, line separators, private use,
+#: unassigned) can hide text from the person who reads it and still reach an agent: variation selectors, the tag block,
+#: bidi and zero-width characters. A few fillers are letters or symbols by category but draw nothing, so they are named.
+_ALLOWED_CATEGORIES = ("L", "N", "P", "S")
+_INVISIBLE_FILLERS = frozenset(chr(c) for c in (0x115F, 0x1160, 0x17B4, 0x17B5, 0x2800, 0x3164, 0xFFA0))
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
 
-def clean_text(text: str) -> str:
-    """Strip control (except newline and tab) and hidden/bidi characters; normalise line ends."""
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    return "".join(
-        ch for ch in text if ch not in _HIDDEN and (ch in "\n\t" or unicodedata.category(ch) not in ("Cc", "Cf"))
+def text_ok(text: str) -> bool:
+    """True when every character is visible text. The same function, byte for byte, runs at the host (orch-core
+    ``orch.hubclient.org_text``); ``vectors_org_skills.json`` holds the cases both replay."""
+    return all(
+        ch in "\n\t"
+        or (
+            ch not in _INVISIBLE_FILLERS
+            and (unicodedata.category(ch)[0] in _ALLOWED_CATEGORIES or unicodedata.category(ch) == "Zs")
+        )
+        for ch in text
     )
+
+
+def normal_text(text: str) -> str:
+    """The one harmless rewrite on save: NFC and ``\n`` line ends. Nothing else is changed; a bad character is refused."""
+    return unicodedata.normalize("NFC", text.replace("\r\n", "\n"))
 
 
 def skill_problem(name: Any, text: Any) -> str | None:
@@ -44,7 +56,7 @@ def skill_problem(name: Any, text: Any) -> str | None:
         return "empty"
     if len(text) > SKILL_TEXT_MAX:
         return "too_long"
-    if clean_text(text) != text.replace("\r\n", "\n").replace("\r", "\n") or "\r" in text:
+    if not text_ok(text):
         return "hidden_characters"
     if text.lstrip().startswith("---"):
         return "front_matter"

@@ -458,6 +458,486 @@
       "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
       "skills": [
        {
+        "digest": "sha256:f43e0367c59588ac2159ea90f76cb466a14a14aa1efaf8164c85d02030a5c1c7",
+        "name": "invoices",
+        "text": "ok\u202e"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "N_zW8AUoaIHO7_YxrB-vHXqBMsLA_TxNHiasSEhL6wR-F_EsdYPHsWB6BvEfpeynsZtQX6Z_RuWh7KF5LXeSRA"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "bidi override in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:f62bb0f848e090c0561c3fcb210259f3e14a5cb8d1ec56ae2b03ba9e8fa30f41",
+        "name": "invoices",
+        "text": "ok\u200b"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "5o1kX9ADsyMWjyQ4-ePjYsZpB3KPR7ZPHECCxNHbqv896vclIyA-m4D0n4UdJ9NqRY7Zl7d6hNDoucNnGR6uVw"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "zero width space in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:1f279a62dddd42d2cdd42a6a0a1b075889201e6ff5bf78ea73a0ec0b29a79d25",
+        "name": "invoices",
+        "text": "ok\ufe0f"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "bRq4VevEV7gPAHZ4ry4BVnDbgzdqPoQ__uKX_6gankNA4M2cHSS8WeeJxMIxwTdDUBveBcwq_U-KytV-gkTrVA"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "variation selector in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:ead71cec914cda7e7e8783d409cb8655bddf2e75e015aacef7097bf663f87e18",
+        "name": "invoices",
+        "text": "ok\udb40\udd00"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "jhAFXHlRvIQWTlAF4u4XnIxSf8c5YRjktOsBDoTpbqb_cvMbtUea4_fRGE5PjKVF4hO13wHwD_piu7uu4_42WQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "variation selector supplement in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:cb5f68189aee571c7a74b3d7f1e416abaa712edecf5ec0669adf23858feab184",
+        "name": "invoices",
+        "text": "ok\udb40\udc41"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "Ew_-dXeVa6LW42tiCdLjk1qfgcrgm2pMyr3g-hRzUV4K3muNoSyM_Tx3nmhRFHb0lwEkpR1HQker2a7g2Uacrw"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "tag character in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:513531299b0a92033b09a5f3d0ef0e61aeb89ef24f0b11c48164ea4294d07e52",
+        "name": "invoices",
+        "text": "ok\u3164"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "07X3gZ-uEtgg4Z70KPUhppuVAYVgiCRY61yliapSlrnijMIAbS11pPpjJ9p4v3Qml-bVtHVe8S3pSeBbrtSIiQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "hangul filler in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:0689dbe033b559857a15b8c80dedc9bce21f520c2aaee29b38a8d0e848c73e02",
+        "name": "invoices",
+        "text": "ok\uffa0"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "JNLLAPwW-BJzx_TDrBRIbS_hhBWblqjITfNySXuS8fZkbieq7kOETlkiSyai5ojdbrWiPiCCiXcAVVex1RE9KQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "halfwidth hangul filler in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:e01adc2370f53f78583e621769ec925ad2f0bc10b5d0379d689816d10d3a3467",
+        "name": "invoices",
+        "text": "ok\u2028"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "ucAItN4rkdufs7H5kJ7CYLXpyWcRTs81_gTzefmZVUy9DKjzRiBb8ezE49hXugm3gMhX2Ww8EHj1ETljOt7FYQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "line separator in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:a70a83ddeefbc55492c8edc21e151630dc439a3f59898541854c1d6e74dd3acd",
+        "name": "invoices",
+        "text": "ok\u2029"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "AGTumT9iyXTIE5Vc4qcdUWl4n9Chc9F20Fa_geM3aBiTpNziMXn4QpAMw1OskXAcm2fdS4IYO7F6z2dTKNW2IA"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "paragraph separator in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:5b2e5602b7457959093dfd928e7ad41942aa2e053f3a1c464e0271193aed4de0",
+        "name": "invoices",
+        "text": "ok\u2800"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "W5dEIFWH3xSG8JV-UTS8oOrX1E_ybCOHjuZQt4drslw5pRrLNxTL1SYncWvaPB-Jh7UH6ZCskdmg3D8FbxDMhQ"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "braille blank in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:480929abde21c9ddb805de8c5a32463846b9d47871f8886f48ca83535e51f22c",
+        "name": "invoices",
+        "text": "ok\u00ad"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "2cPlyqwfMJrNeELmSnBfBlsaem9cifiba8yBsYBgHvbeFEqQnCrQJ213l7QVVR6i8duIh4gWsnucCxoUXYw9Fg"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "soft hyphen in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:8020aab8d89da92b6a3413dfc94382ebd27805e7605b34b41e8ad4191d556060",
+        "name": "invoices",
+        "text": "ok\ue000"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "jn-O_h-SjzU6jyglB35x9kze0LJf380C7lIneGozOHXBFhgUNVTBOqIpOJ59XonrmzgSV9zcbI6vBiiHctp4Bg"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "private use in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:440d75aa3bfbff323a38ceca02a6bf4eb7c5b8cffc792701c1f15bc173f05067",
+        "name": "invoices",
+        "text": "ok\u001b"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "GsPt-1qWBz5Izi79X8qMQhs8MuY_-AbrQjkowg_-Dpn5zFrJ_emYj3XkAJoztObj0YEE6qeckYZdCY5YYSXQEw"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "control in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:8a931ac748587b0896a2771778eb4dee57be63965aea01c2bb11b1272fe54b57",
+        "name": "invoices",
+        "text": "ok\r"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "B0SAKM4ZW0YINsc13CrfZQZneyxIF0U3edQD0iKO_HnqknSxP-0gb_rUJols73Ksr7L4SYmaRM6WM4Yc7tC74w"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "carriage return in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
+        "digest": "sha256:4aca86a866aca8be21cb02652c0ba4a28cc3e979a4e15259e8007774e2e4736c",
+        "name": "invoices",
+        "text": "ok\ufeff"
+       }
+      ],
+      "suite": 2,
+      "v": 2,
+      "version": 2,
+      "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+     },
+     "sig": "mmwglb53rcacM9DvVYGOcdqsrHwX95JoM4D9UtAAJF7BgdIiGyinj-p4P0I9-3GUXNIZp9W-acXcGT-MQB2zUw"
+    },
+    "pinned": null,
+    "workspace_id": "336afd0fd4c349f575c2ec155d7258ad"
+   },
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "byte order mark in the text"
+  },
+  {
+   "args": {
+    "bundle": {
+     "o": {
+      "dev": true,
+      "hub_id": "38d8abed52ccfb538da401fd54e64bdc",
+      "hv": 0,
+      "issued_ms": 1789999940000,
+      "kind": "hub.org_skills",
+      "op_cert_id": "dd963f7365b19dba347a4ba580cc7c2b",
+      "skills": [
+       {
         "digest": "sha256:010090ff225ae2f65b1e22ac561153ec111e61ac6eafb28c896d4cd57ae353fa",
         "name": "invoices",
         "text": "---\nname: x\n---\nbody"
@@ -581,5 +1061,151 @@
   }
  ],
  "doc": "hub.org_skills (M3 #1430): replay each case with verify_org_skills against the card",
- "now_ms": 1790000000000
+ "now_ms": 1790000000000,
+ "text_cases": [
+  {
+   "expect": "hidden_characters",
+   "name": "bidi override",
+   "skill_name": "invoices",
+   "text": "ok\u202etext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "zero width space",
+   "skill_name": "invoices",
+   "text": "ok\u200btext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "variation selector",
+   "skill_name": "invoices",
+   "text": "ok\ufe0ftext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "variation selector supplement",
+   "skill_name": "invoices",
+   "text": "ok\udb40\udd00text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "tag character",
+   "skill_name": "invoices",
+   "text": "ok\udb40\udc41text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "hangul filler",
+   "skill_name": "invoices",
+   "text": "ok\u3164text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "halfwidth hangul filler",
+   "skill_name": "invoices",
+   "text": "ok\uffa0text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "line separator",
+   "skill_name": "invoices",
+   "text": "ok\u2028text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "paragraph separator",
+   "skill_name": "invoices",
+   "text": "ok\u2029text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "braille blank",
+   "skill_name": "invoices",
+   "text": "ok\u2800text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "soft hyphen",
+   "skill_name": "invoices",
+   "text": "ok\u00adtext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "private use",
+   "skill_name": "invoices",
+   "text": "ok\ue000text"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "control",
+   "skill_name": "invoices",
+   "text": "ok\u001btext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "carriage return",
+   "skill_name": "invoices",
+   "text": "ok\rtext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "byte order mark",
+   "skill_name": "invoices",
+   "text": "ok\ufefftext"
+  },
+  {
+   "expect": "hidden_characters",
+   "name": "combining mark after a digit",
+   "skill_name": "invoices",
+   "text": "1\u0301"
+  },
+  {
+   "expect": null,
+   "name": "plain text",
+   "skill_name": "invoices",
+   "text": "Write invoice numbers as INV-2026-0001."
+  },
+  {
+   "expect": null,
+   "name": "accents, other scripts, symbols",
+   "skill_name": "invoices",
+   "text": "Rechnung \u00fcber 100 \u20ac \u65e5\u672c\u8a9e \ud83d\ude00"
+  },
+  {
+   "expect": null,
+   "name": "newline and tab",
+   "skill_name": "invoices",
+   "text": "a\tb\nc"
+  },
+  {
+   "expect": "reserved_name",
+   "name": "reserved name",
+   "skill_name": "orch-x",
+   "text": "Write invoice numbers as INV-2026-0001."
+  },
+  {
+   "expect": "name",
+   "name": "bad name",
+   "skill_name": "Invoices",
+   "text": "Write invoice numbers as INV-2026-0001."
+  },
+  {
+   "expect": "empty",
+   "name": "empty",
+   "skill_name": "invoices",
+   "text": " \n"
+  },
+  {
+   "expect": "too_long",
+   "name": "too long",
+   "skill_name": "invoices",
+   "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  {
+   "expect": "front_matter",
+   "name": "front matter",
+   "skill_name": "invoices",
+   "text": "---\nx"
+  }
+ ]
 }

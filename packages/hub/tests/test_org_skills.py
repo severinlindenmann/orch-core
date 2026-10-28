@@ -86,18 +86,61 @@ def test_the_skill_text_rules(name, text, problem):
     assert OB.skill_problem(name, text) == problem
 
 
-def test_clean_text_strips_control_and_bidi_but_keeps_lines_and_tabs():
-    assert OB.clean_text("a" + RLO + "b\x00c" + ZW + "d\r\ne\tf\rg") == "abcd\ne\tf\ng"
+# one class of hidden character each: refused, never stripped
+HIDDEN = {
+    "bidi override": chr(0x202E),
+    "zero width space": chr(0x200B),
+    "variation selector": chr(0xFE0F),
+    "variation selector supplement": chr(0xE0100),
+    "tag character": chr(0xE0041),
+    "hangul filler": chr(0x3164),
+    "halfwidth hangul filler": chr(0xFFA0),
+    "line separator": chr(0x2028),
+    "paragraph separator": chr(0x2029),
+    "braille blank": chr(0x2800),
+    "soft hyphen": chr(0x00AD),
+    "combining mark": "1" + chr(0x0301),  # (an accent that composes, like e + U+0301, is NFC-composed on save instead)
+    "private use": chr(0xE000),
+    "control": chr(0x1B),
+    "carriage return": "\r",
+    "bom": chr(0xFEFF),
+}
 
 
-def test_put_strips_hidden_characters_and_refuses_what_stays_bad(env):
+@pytest.mark.parametrize("what", sorted(HIDDEN))
+def test_every_hidden_class_is_refused_not_stripped(what, env):
     _k, _acc, _s, store = env
-    store.put("invoices", "keep" + RLO + " this\x00", actor=ADMIN)
-    assert store.list()[0]["text"] == "keep this"
+    text = "ok" + HIDDEN[what] + "text"
+    assert OB.skill_problem("invoices", text) == "hidden_characters"
+    assert OB.text_ok("ok text") and not OB.text_ok(text)
+    with pytest.raises(AccessError) as e:
+        store.put("invoices", text, actor=ADMIN)  # the hub refuses; it does not store a cleaned copy
+    assert "hidden_characters" in str(e.value) and store.list() == []
+
+
+def test_visible_text_in_any_language_and_plain_layout_is_accepted():
+    for ok in (
+        "Rechnung \u00fcber 100 \u20ac",
+        "\u65e5\u672c\u8a9e\u306e\u624b\u9806",
+        "a\tb\nc",
+        "\U0001f600 done",
+        "caf\u00e9",
+    ):
+        assert OB.text_ok(ok), ok
+
+
+def test_the_one_rewrite_is_nfc_and_line_ends(env):
+    _k, _acc, _s, store = env
+    store.put("invoices", "cafe" + chr(0x0301) + "\r\nnext", actor=ADMIN)  # a decomposed accent and CRLF
+    assert store.list()[0]["text"] == "caf\u00e9\nnext"
+
+
+def test_put_refuses_what_stays_bad(env):
+    _k, _acc, _s, store = env
     for name, text in (("orch-x", TEXT), ("ok-name", "---\nx"), ("ok-name", "x" * 2401)):
         with pytest.raises(AccessError):
             store.put(name, text, actor=ADMIN)
-    assert [s["name"] for s in store.list()] == ["invoices"]
+    assert store.list() == []
 
 
 def test_only_a_hub_admin_manages_skills_and_the_list_is_capped(env):
@@ -243,6 +286,8 @@ def test_the_admin_routes_save_offer_remove_audit_and_are_admin_only(tmp_path):
         admin, ann = w.login(w.admin), w.login(w.ann)
         w.reg.add(WS, "full", name="Product")
         s, o, _ = w.call("PUT", "/admin/skills/invoices", {"text": TEXT + RLO}, token=admin)
+        assert s == 400 and o["error"] == "malformed"  # hidden characters are refused, not cleaned
+        s, o, _ = w.call("PUT", "/admin/skills/invoices", {"text": TEXT}, token=admin)
         assert s == 200 and o["digest"] == OB.skill_digest("invoices", TEXT)
         s, o, _ = w.call("PUT", "/admin/skills/invoices/offers", {"workspaces": [WS]}, token=admin)
         assert s == 200 and o["offered_to"] == [WS]

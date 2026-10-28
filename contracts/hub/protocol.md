@@ -591,10 +591,12 @@ hub.org_skills {v, suite, kind: "hub.org_skills", hv, hub_id, op_cert_id, worksp
 One bundle per workspace, fetched with `org_skills_get` and verified like a snapshot: under the verified card, `hub_id` and
 `op_cert_id` match, `workspace_id` is the host's own (`other_workspace`), `version` never goes down (`stale_bundle`), the same
 version with other bytes is `bundle_conflict`. Each skill: `name` `[a-z][a-z0-9-]{1,39}` and not starting with `orch` (the
-prefix of orch's own skills, so a company skill never shadows a builtin), `text` 1..2400 characters with no control
-character (other than newline and tab), no bidirectional or zero-width character (`U+061C U+200B-U+200F U+202A-U+202E
-U+2060 U+2066-U+2069 U+FEFF`) and no front matter (it does not start with `---`), `digest` = `"sha256:" + hex(sha256(cj({"name","text"})))`.
-Anything else in a bundle is `malformed`. The hub strips the forbidden characters when an admin saves; the host refuses a bundle that still has them.
+prefix of orch's own skills, so a company skill never shadows a builtin), `text` 1..2400 characters of visible text only: an ALLOWLIST of Unicode categories `L*`, `N*`, `P*`, `S*` and `Zs`, plus newline
+and tab. Everything else is refused, never stripped (marks, format characters such as bidi, zero-width, variation selectors and
+the tag block, `Zl`/`Zp`, control, private use, unassigned) as are the letters and symbols that draw nothing (`U+115F U+1160
+U+17B4 U+17B5 U+2800 U+3164 U+FFA0`); no front matter (it does not start with `---`). The hub applies NFC and `\n` line ends on
+save and nothing else. The host runs the same rule (`orch.hubclient.orgtext`); `text_cases` of the vectors file are replayed by both. `digest` = `"sha256:" + hex(sha256(cj({"name","text"})))`.
+Anything else in a bundle is `malformed`; a save that has a forbidden character is refused (`malformed`).
 
 A skill is offered, never enabled: the host shows the full text to its owner and keeps it Off until the owner accepts that
 exact digest (human-only). Any change of text is a new digest and needs a new accept; withdrawing a skill narrows and applies

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..contract.org_bundles import SKILLS_MAX, clean_text, skill_digest, skill_problem
+from ..contract.org_bundles import SKILLS_MAX, normal_text, skill_digest, skill_problem
 from .store import Access, AccessError, _hex
 
 _SCHEMA = """
@@ -48,11 +48,11 @@ class OrgSkillStore:
         ]
 
     def put(self, name: object, text: object, *, actor: str) -> dict[str, Any]:
-        """Create or replace a skill. Control and bidirectional characters are stripped; a name or text that is still not
-        acceptable is refused with the reason. Replacing changes the digest, so every owner has to accept again."""
+        """Create or replace a skill. Only visible text is accepted (hidden or control characters are refused, never silently
+        stripped); a name or text that is not acceptable is refused with the reason. Replacing changes the digest, so every owner has to accept again."""
         self._admin(actor)
         if type(text) is str:
-            text = clean_text(text)
+            text = normal_text(text)
         problem = skill_problem(name, text)
         if problem is not None:
             raise AccessError("malformed", problem)

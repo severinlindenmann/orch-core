@@ -1,5 +1,55 @@
 import { describe, expect, it } from 'vitest'
-import { scheduleAddAction, scheduleSummary } from './schedules'
+import { ApiError } from './types'
+import { clickProblem } from './click'
+import { earliestStart, firstRun, firstSlot, leadText, scheduleAddAction, scheduleDenial, scheduleSummary, startsTooSoon, type ScheduleForm } from './schedules'
+
+describe('the minimum scheduling lead (run 13)', () => {
+  const now = new Date('2026-10-28T08:20:30Z') // a Wednesday
+  const form = (over: Partial<ScheduleForm>): ScheduleForm => ({ ticket: 'ORCH-1', brief: 'b', repeat: 'once', date: '2026-10-28', time: '09:30', weekdays: [0], day: 1, tz: 'UTC', ...over })
+
+  it('names the lead in words', () => {
+    expect([leadText(3600), leadText(7200), leadText(1800), leadText(60), leadText(30)]).toEqual(['1 hour', '2 hours', '30 minutes', '1 minute', '30 seconds'])
+  })
+
+  it('puts the earliest start at now plus the lead on the zone clock, and the first offered time on the next quarter', () => {
+    expect(earliestStart('UTC', now, 3600)).toEqual({ date: '2026-10-28', time: '09:21' }) // rounded up: 09:20:30 is too soon
+    expect(firstSlot('UTC', now, 3600)).toEqual({ date: '2026-10-28', time: '09:30' })
+    expect(firstSlot('Europe/Berlin', now, 3600)).toEqual({ date: '2026-10-28', time: '10:30' })
+    expect(firstSlot('UTC', new Date('2026-10-28T23:30:00Z'), 3600)).toEqual({ date: '2026-10-29', time: '00:30' })
+  })
+
+  it('finds the first run of a rule as the host does', () => {
+    expect(firstRun(form({}), now)).toBe('2026-10-28 09:30')
+    expect(firstRun(form({ date: '2026-10-27' }), now)).toBeNull() // a once-run in the past: none
+    expect(firstRun(form({ repeat: 'day', time: '08:00' }), now)).toBe('2026-10-29 08:00')
+    expect(firstRun(form({ repeat: 'week', weekdays: [2], time: '09:00' }), now)).toBe('2026-10-28 09:00')
+    expect(firstRun(form({ repeat: 'week', weekdays: [0], time: '09:00' }), now)).toBe('2026-11-02 09:00')
+    expect(firstRun(form({ repeat: 'month', day: 31, time: '09:00' }), now)).toBe('2026-10-31 09:00')
+    expect(firstRun(form({ repeat: 'month', day: 31, time: '09:00' }), new Date('2026-11-01T00:00:00Z'))).toBe('2026-11-30 09:00') // clamped
+  })
+
+  it('refuses before the host does: a first run inside the lead', () => {
+    expect(startsTooSoon(form({ time: '09:15' }), now, 3600)).toBe(true) // the owner's case was 1.5 h ahead: allowed
+    expect(startsTooSoon(form({ time: '09:50' }), now, 3600)).toBe(false)
+    expect(startsTooSoon(form({ time: '09:15' }), now, 30)).toBe(false) // a dev sandbox lead
+    expect(startsTooSoon(form({ date: '2026-10-27' }), now, 3600)).toBe(true)
+    expect(startsTooSoon(form({ repeat: 'day', time: '09:00' }), now, 3600)).toBe(true) // today 09:00 comes first
+    expect(startsTooSoon(form({ repeat: 'day', time: '08:00' }), now, 3600)).toBe(false) // first run is tomorrow
+  })
+
+  it('says the host refusal in plain words, in a click and in the terminal hand-off', () => {
+    const raw = 'first occurrence must be after the minimum scheduling lead'
+    expect(scheduleDenial('schedule.denied', raw)).toBe('A schedule must start at least 1 hour from now.')
+    expect(scheduleDenial('schedule.denied', `schedule.denied: ${raw}`)).toBe('A schedule must start at least 1 hour from now.')
+    expect(scheduleDenial('schedule.denied', 'ticket_closed')).toBeNull()
+    expect(scheduleDenial('other.code', raw)).toBeNull()
+    const p = clickProblem(new ApiError(400, { code: 'schedule.denied', message: raw, retryable: false }))
+    expect(p.body).toContain('A schedule must start at least 1 hour from now.')
+    expect(p.body).not.toContain('minimum scheduling lead')
+    expect(p.details).toBe(raw) // the host's own words stay folded under Technical details
+    expect(clickProblem(new ApiError(400, { code: 'schedule.denied', message: 'ticket_closed', retryable: false })).body).toBe('ticket_closed')
+  })
+})
 
 describe('scheduleSummary', () => {
   it('says a one-off run with its weekday', () => {

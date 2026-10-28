@@ -5,6 +5,7 @@ import type { Workspace } from './types'
 import { ApiError } from './types'
 import type { HandoffAction } from './handoff'
 import { DEV_REFUSED, devRefusedSentence, refusalOf, refusalSentence } from './refusals'
+import { scheduleDenial } from './scheduleLead'
 
 /** Verbatim risk notice: enable time and Settings, with a tooltip in sign dialogs. */
 export const CLICK_RISK = 'Convenience signing: agents running as you, or anything that takes over this dashboard, could sign.'
@@ -351,6 +352,12 @@ export function clickProblem(e: unknown): ClickProblem {
       return { title: 'The host does not answer', body: 'Nothing was signed. Try again in a moment.', next: 'retry' }
     case 'not_found':
       return { title: 'Not found', body: 'The dashboard server does not know this request any more. Prepare it again.', next: 'prepare' }
+    case 'schedule.denied': {
+      // run 13: the host's raw words ("first occurrence must be after the minimum scheduling lead") stay folded
+      const lead = scheduleDenial(e.code, e.message)
+      if (lead) return { title: 'Too soon', body: `${lead} Nothing was signed. Pick a later time.`, next: 'terminal', details: e.message }
+      return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: 'terminal' }
+    }
     default:
       return { title: 'Refused', body: e.message || `The host refused this (${e.code}). Nothing was signed.`, next: e.retryable ? 'retry' : 'terminal' }
   }

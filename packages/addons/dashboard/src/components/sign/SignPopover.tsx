@@ -21,6 +21,7 @@ import { useWorkspace } from '@/app/workspace'
 import { useMe } from '@/app/useMe'
 import { alreadyDetails, alreadySigned, clickEligible, clickReady } from '@/api/click'
 import { refusalOf, refusalSentence } from '@/api/refusals'
+import { scheduleDenial } from '@/api/scheduleLead'
 import { addFirst, missingOf } from '@/api/gates'
 import { ClickProblemBox, RefusalDevices, TechnicalDetails } from './RefusalDevices'
 import { ClickSignPanel } from './ClickSignPanel'
@@ -276,7 +277,8 @@ export function SignPopover(p: SignPopoverProps) {
   const refusal = refusalOf(run.error)
   // B11 (#14): an incomplete gate is said in words ("Add Context and Out of scope first."), never as the raw code
   const lacking = run.error?.code === 'gate.incomplete' ? missingOf(run.error.message) : null
-  const errorText = lacking?.length ? addFirst(lacking) : run.error?.message ?? null
+  // run 13: a schedule inside the host's minimum lead is said in words, never as "schedule.denied: first occurrence ..."
+  const errorText = lacking?.length ? addFirst(lacking) : scheduleDenial(run.error?.code, run.error?.message) ?? run.error?.message ?? null
   const end = words(phase, run.error?.code === 'intent.done' ? alreadySigned(run.error) : refusal ? refusalSentence(refusal) : errorText, run.error?.code, (run.request?.material.sequence?.intent as { kind?: unknown } | undefined)?.kind === 'new_ticket')
   // a CLI pointer ("orch describe approve") means nothing on this page
   const cliOnly = (v: unknown) => run.error?.code === 'gate.incomplete' && typeof v === 'string' && /\borch describe\b/.test(v)

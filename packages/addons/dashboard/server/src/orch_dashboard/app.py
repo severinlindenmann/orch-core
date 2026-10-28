@@ -30,6 +30,7 @@ from . import (
     phone,
     reads,
     riskack,
+    schedules,
     settings,
     shares,
     signprefs,
@@ -344,6 +345,7 @@ def create_app(
     workdirs.register(app, gateway)
     usage.register(app, gateway)
     followups.register(app, gateway)
+    schedules.register(app, gateway)  # run 13: "My schedules" was never served (the page read a 404)
     shares.register(app, gateway)
     explorer_routes.register(app, gateway)
     wiki_routes.register(app, gateway)

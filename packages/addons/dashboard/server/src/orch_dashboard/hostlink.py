@@ -63,6 +63,7 @@ OPS = {
         "activity.list",
         "quick.list",
         "follow_up.list",
+        "schedule.list",  # run 13: "My schedules" (a read; schedule.add/cancel are signed hand-offs)
         "records.status",
         "ticket.query",
         "ticket.get",

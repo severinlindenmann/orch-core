@@ -43,6 +43,7 @@ export function AnswerSend({
   fallback,
   onViewQuestion,
   onBusy,
+  onSent,
 }: {
   ticket: string
   question: QuestionStatus
@@ -56,6 +57,8 @@ export function AnswerSend({
   onViewQuestion?: (text: string | null) => void
   /** True while the signature is on its way or done: the owner of the answer form locks the option and the note. */
   onBusy?: (busy: boolean) => void
+  /** The host confirmed the answer sent from here (before its item is dropped from "what needs you"). */
+  onSent?: () => void
 }) {
   const qc = useQueryClient()
   const workspaces = useQuery(queries.workspaces())
@@ -72,7 +75,9 @@ export function AnswerSend({
   const many = (workspaces.data?.length ?? 0) > 1
 
   const click = useClickSign(ws, () => {
-    // No toast: the answer is shown where it was given (the card turns into "Answered"), one message only.
+    // No toast: the answer is shown where it was given (the card turns into "Answered"), one message only. The owner of
+    // the card hears it first, so a list that drops the item (Today) can keep the card, answered, in the same render.
+    onSent?.()
     signedNow(qc, ws, ticket, question.id, question.hash)
     // The card says "You answered" at once, without waiting for the next read of the ticket.
     const by = me.data?.person

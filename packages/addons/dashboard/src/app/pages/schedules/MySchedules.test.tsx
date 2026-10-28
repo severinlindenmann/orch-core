@@ -1,11 +1,11 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ScheduleRow } from '@/api/schedules'
 import MySchedules, { nextRunText } from './MySchedules'
 
-const h = vi.hoisted(() => ({ signed: [] as unknown[], show: vi.fn(), rows: [] as unknown[], cap: undefined as number | null | undefined }))
+const h = vi.hoisted(() => ({ signed: [] as unknown[], show: vi.fn(), rows: [] as unknown[], cap: undefined as number | null | undefined, lead: undefined as number | null | undefined }))
 
 vi.mock('@/components/sign/SignPopover', () => ({
   SignPopover: (p: { action: unknown; title: string; onSettled?: (phase: string) => void }) => (
@@ -24,7 +24,7 @@ vi.mock('@tanstack/react-router', () => ({ Link: (p: { children: React.ReactNode
 vi.mock('@/api/client', () => ({ api: { listTickets: vi.fn(async () => []) } }))
 vi.mock('@/api/schedules', async (orig) => ({
   ...(await orig<typeof import('@/api/schedules')>()),
-  useSchedules: () => ({ data: { available: true, role: 'member', can: { add: true, cancel: true }, grant_hours_cap: h.cap, rows: h.rows }, isLoading: false }),
+  useSchedules: () => ({ data: { available: true, role: 'member', can: { add: true, cancel: true }, grant_hours_cap: h.cap, min_lead_s: h.lead, rows: h.rows }, isLoading: false }),
 }))
 
 const row = (over: Partial<ScheduleRow> & Pick<ScheduleRow, 'id' | 'rule'>): ScheduleRow => ({
@@ -53,11 +53,74 @@ function view(manager = false) {
   )
 }
 
+// A fixed clock (Wed 28 Oct 2026, 06:00 UTC; the suite runs in UTC): what the form offers depends on now plus the lead.
+const NOW = new Date('2026-10-28T06:00:00Z')
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW)
   h.signed.length = 0
   h.show.mockClear()
   h.rows = [WEEKLY, ONCE, OTHER, GONE]
   h.cap = undefined
+  h.lead = undefined
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+async function openForm() {
+  const user = userEvent.setup()
+  view()
+  fireEvent.click(screen.getByRole('button', { name: 'New schedule' }))
+  const d = within(screen.getByRole('dialog'))
+  await user.click(d.getByRole('combobox', { name: 'Ticket' }))
+  await user.click(await screen.findByRole('option', { name: 'DEMO-1 Import' }))
+  await waitFor(() => expect(d.getByRole('combobox', { name: 'Ticket' }).textContent).toContain('DEMO-1 Import'))
+  fireEvent.change(d.getByLabelText('What should the agent do'), { target: { value: 'Rebuild the forecast.' } })
+  return d
+}
+
+describe('New schedule and the minimum lead (run 13)', () => {
+  it('starts a once-run no sooner than now plus the lead, and signs that time', async () => {
+    vi.setSystemTime(new Date('2026-10-28T08:20:00Z')) // 09:00 today is only 40 minutes away
+    const d = await openForm()
+    expect(d.getByRole('button', { name: 'Time: 09:30' })).toBeTruthy() // 08:20 + 1 h, up to the next quarter
+    expect(d.queryByRole('alert')).toBeNull()
+    fireEvent.click(d.getByRole('button', { name: 'Time: 09:30' }))
+    expect((screen.getByRole('button', { name: '15 minutes earlier' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(d.getByRole('button', { name: 'Create schedule' }))
+    fireEvent.click(screen.getByRole('button', { name: /^Sign: Schedule on DEMO-1/ }))
+    expect(h.signed).toEqual([expect.objectContaining({ action: 'schedule_add', at: '2026-10-28 09:30', tz: 'UTC' })])
+  })
+
+  it('reads the lead from the server: a dev sandbox lead keeps 09:00 today', async () => {
+    vi.setSystemTime(new Date('2026-10-28T08:50:00Z'))
+    h.lead = 30
+    const d = await openForm()
+    expect(d.getByRole('button', { name: 'Time: 09:00' })).toBeTruthy()
+    expect((d.getByRole('button', { name: 'Create schedule' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('says in plain words when a repeating rule would first run too soon, and does not offer to sign it', async () => {
+    vi.setSystemTime(new Date('2026-10-28T08:30:00Z')) // a Wednesday
+    const d = await openForm()
+    fireEvent.click(d.getByRole('button', { name: 'Every week' }))
+    fireEvent.click(d.getByRole('button', { name: 'Wed' })) // on
+    fireEvent.click(d.getByRole('button', { name: 'Mon' })) // off
+    expect(d.getByText('Runs every week on Wed at 09:30')).toBeTruthy() // today at 09:30: exactly the lead, allowed
+    expect(d.queryByRole('alert')).toBeNull()
+    fireEvent.click(d.getByRole('button', { name: 'Time: 09:30' }))
+    fireEvent.click(screen.getByRole('button', { name: '15 minutes earlier' })) // a time of day is free on a repeating rule
+    expect(d.getByText('Runs every week on Wed at 09:15')).toBeTruthy() // its first run, today at 09:15, is too soon
+    expect(d.getByRole('alert').textContent).toContain('A schedule must start at least 1 hour from now.')
+    expect((d.getByRole('button', { name: 'Create schedule' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(d.getByRole('button', { name: 'Thu' }))
+    fireEvent.click(d.getByRole('button', { name: 'Wed' })) // off again: the first run is Thursday
+    expect(d.queryByRole('alert')).toBeNull()
+    expect((d.getByRole('button', { name: 'Create schedule' }) as HTMLButtonElement).disabled).toBe(false)
+  })
 })
 
 describe('MySchedules', () => {

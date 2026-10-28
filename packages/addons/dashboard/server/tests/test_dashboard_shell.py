@@ -45,6 +45,8 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/repos/check",
         "/api/w/{ws}/click/status",
         "/api/w/{ws}/hubsign",
+        "/api/w/{ws}/hub/approve/prepare",  # FB15: the one hand-off route, an add-on grant for the hub (owner, full)
+        "/api/w/{ws}/hub/approve/{request_id}",  # FB15: polls a request that route prepared
         "/api/w/{ws}/hub",
         "/api/w/{ws}/hub/link",
         "/api/w/{ws}/hub/share",
@@ -111,6 +113,7 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/activity",
         "/api/w/{ws}/usage",
         "/api/w/{ws}/followups",
+        "/api/w/{ws}/schedules",
         "/api/w/{ws}/records",
         "/api/w/{ws}/records/commit",
         "/api/w/{ws}/records/auto-off",

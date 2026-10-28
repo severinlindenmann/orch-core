@@ -132,6 +132,15 @@ def _prefix(gateway: Gateway, ws: str) -> str:
     return prefix if isinstance(prefix, str) else ""
 
 
+def min_lead_s(prefix: str) -> int:
+    """The minimum scheduling lead the host enforces (`schedule.denied` below it): core's own caps of a workspace with
+    this prefix (a dev sandbox workspace has a shorter one). The form offers no earlier time."""
+    from orch.model.engine import DEV_PREFIX
+    from orch.model.followups import effective_caps
+
+    return effective_caps({}, dev=prefix == DEV_PREFIX).min_lead_s
+
+
 def build(gateway: Gateway, ws: str, now: int | None = None) -> dict:
     """The page's data. A workspace without the Schedules add-on is `available: false` with nothing else."""
     link = gateway.enabled(ws)
@@ -143,6 +152,7 @@ def build(gateway: Gateway, ws: str, now: int | None = None) -> dict:
             "role": role,
             "can": {"add": False, "cancel": False},
             "grant_hours_cap": None,
+            "min_lead_s": None,
             "rows": [],
         }
     now = int(time.time()) if now is None else now
@@ -150,7 +160,7 @@ def build(gateway: Gateway, ws: str, now: int | None = None) -> dict:
     titles: dict = {}
     rows = []
     cap = None  # the viewer's own grant_hours cap, as the host says it on their schedules
-    prefix = _prefix(gateway, ws) if any(isinstance(r, dict) and r.get("state") == "live" for r in listed) else ""
+    prefix = _prefix(gateway, ws)  # also the minimum lead of a new schedule
     for row in listed[:MAX_ROWS]:
         if not isinstance(row, dict):
             continue
@@ -182,6 +192,7 @@ def build(gateway: Gateway, ws: str, now: int | None = None) -> dict:
         "role": role,
         "can": {"add": role in WRITERS, "cancel": role in WRITERS},
         "grant_hours_cap": cap,
+        "min_lead_s": min_lead_s(prefix),
         "rows": rows,
     }
 

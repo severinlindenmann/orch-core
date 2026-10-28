@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { AnswerSend } from '@/components/sign/AnswerSend'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Prose } from '@/components/sign/visible'
 import { canAnswer } from './actions'
 import { QuestionOptions } from './QuestionOptions'
@@ -74,7 +75,6 @@ function QuestionCard({ q, viewer, sign, ticketKey, agentLive, isNew }: { q: Que
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <Mono className="text-text-muted">{q.id}</Mono>
         {open ? (
           <Pill tone={q.blocking ? 'warning' : 'info'}>
             {q.blocking ? <OctagonAlert /> : <CircleHelp />}
@@ -96,11 +96,13 @@ function QuestionCard({ q, viewer, sign, ticketKey, agentLive, isNew }: { q: Que
           {q.asked_by ? ` · asked by ${viewer.name(q.asked_by)}` : ''}
           {q.asked_at ? ` · ${ago(q.asked_at)}` : ''}
         </span>
-        {q.hash && (
-          <Mono className="ml-auto text-[11px] text-text-faint" >
-            hash {shortHash(q.hash, 10)}
-          </Mono>
-        )}
+        {/* Plain words on the card (owner rule, run-13): the ids only behind the small "i". */}
+        <InfoDrawer className="ml-auto">
+          <p>
+            Ticket <Mono>{ticketKey}</Mono> · question <Mono>{q.id}</Mono>
+          </p>
+          {q.hash && <p>Question hash <Mono>{shortHash(q.hash, 10)}</Mono></p>}
+        </InfoDrawer>
       </div>
       <Prose className="mt-2 text-[14px] font-medium leading-snug">{viewText ?? q.text}</Prose>
       {q.why && <Prose className="mt-1 text-[13px] text-text-muted">{q.why}</Prose>}

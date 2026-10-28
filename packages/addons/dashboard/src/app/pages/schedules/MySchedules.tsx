@@ -4,7 +4,7 @@ import { Link } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import { scheduleAddAction, scheduleKey, scheduleSummary, skippedText, useSchedules, type ScheduleForm, type ScheduleRepeat, type ScheduleRow } from '@/api/schedules'
+import { DEFAULT_MIN_LEAD_S, firstSlot, leadSentence, scheduleAddAction, scheduleKey, scheduleSummary, skippedText, startsTooSoon, useSchedules, type ScheduleForm, type ScheduleRepeat, type ScheduleRow } from '@/api/schedules'
 import { SignPopover } from '@/components/sign/SignPopover'
 import { DatePicker } from '@/components/pickers/DatePicker'
 import { Dropdown } from '@/components/pickers/Dropdown'
@@ -164,7 +164,7 @@ const REPEATS: [ScheduleRepeat, string][] = [
 
 const DEFAULT_RUN_HOURS = 8
 
-function NewScheduleDialog({ ws, tickets, maxHours, onClose }: { ws: string; tickets?: TicketOption[]; maxHours: number; onClose: () => void }) {
+function NewScheduleDialog({ ws, tickets, maxHours, leadS, onClose }: { ws: string; tickets?: TicketOption[]; maxHours: number; leadS: number; onClose: () => void }) {
   const qc = useQueryClient()
   const found = useQuery({
     queryKey: ['schedule-tickets', ws],
@@ -179,15 +179,23 @@ function NewScheduleDialog({ ws, tickets, maxHours, onClose }: { ws: string; tic
   const [ticket, setTicket] = useState('')
   const [brief, setBrief] = useState('')
   const [repeat, setRepeat] = useState<ScheduleRepeat>('once')
-  const today = toDateStr(new Date())
-  const [date, setDate] = useState(today)
-  const [time, setTime] = useState('09:00')
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  const now = new Date()
+  const today = toDateStr(now)
+  // run 13: nothing before now plus the host's minimum lead is offered (the host refuses it: schedule.denied)
+  const slot = firstSlot(tz, now, leadS)
+  const [date, setDate] = useState(() => (`${today} 09:00` >= `${slot.date} ${slot.time}` ? today : slot.date))
+  const [time, setTime] = useState(() => (`${today} 09:00` >= `${slot.date} ${slot.time}` ? '09:00' : slot.time))
   const [weekdays, setWeekdays] = useState([0])
   const [day, setDay] = useState(1)
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  const pickDate = (d: string) => {
+    setDate(d)
+    if (d === slot.date && time < slot.time) setTime(slot.time)
+  }
   const form: ScheduleForm = { ticket, brief: brief.trim(), repeat, date: repeat === 'once' ? date : undefined, time, weekdays, day, tz }
   const summary = scheduleSummary({ every: repeat === 'once' ? undefined : repeat, at: time, tz, weekdays, day, date: repeat === 'once' ? date : undefined })
-  const valid = !!ticket && !!form.brief && brief.length <= MAX_BRIEF && (repeat !== 'once' || /^\d{4}-\d\d-\d\d$/.test(date)) && (repeat !== 'week' || weekdays.length > 0)
+  const tooSoon = (repeat !== 'once' || /^\d{4}-\d\d-\d\d$/.test(date)) && (repeat !== 'week' || weekdays.length > 0) && startsTooSoon(form, now, leadS)
+  const valid = !!ticket && !!form.brief && brief.length <= MAX_BRIEF && (repeat !== 'once' || /^\d{4}-\d\d-\d\d$/.test(date)) && (repeat !== 'week' || weekdays.length > 0) && !tooSoon
   const label = 'text-[12px] font-medium text-text-muted'
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
@@ -230,7 +238,7 @@ function NewScheduleDialog({ ws, tickets, maxHours, onClose }: { ws: string; tic
             <label htmlFor="sched-date" className={label}>
               Day
             </label>
-            <DatePicker id="sched-date" value={date} min={today} onChange={setDate} />
+            <DatePicker id="sched-date" value={date} min={slot.date} onChange={pickDate} />
           </div>
         )}
         {repeat === 'week' && <WeekdayChips value={weekdays} onChange={setWeekdays} />}
@@ -244,9 +252,14 @@ function NewScheduleDialog({ ws, tickets, maxHours, onClose }: { ws: string; tic
           <label htmlFor="sched-time" className={label}>
             Time of day
           </label>
-          <TimePicker id="sched-time" value={time} onChange={setTime} />
+          <TimePicker id="sched-time" value={time} minTime={repeat === 'once' && date === slot.date ? slot.time : undefined} onChange={setTime} />
           <p className="text-[11px] text-text-faint">Time zone {tz}</p>
         </div>
+        {tooSoon && (
+          <p role="alert" className="text-[12px] text-danger">
+            {leadSentence(leadS)} {repeat === 'once' ? 'Pick a later time.' : 'Its first run would be sooner; pick another time or day.'}
+          </p>
+        )}
         <p className="text-[13px] font-medium">{summary}</p>
         <p className="text-[12px] text-text-muted">An agent starts by itself each time, with your rights on this ticket, for up to {maxHours} {maxHours === 1 ? 'hour' : 'hours'}. It stops after 30 days.</p>
         <div className="flex justify-end gap-2">
@@ -262,6 +275,7 @@ function NewScheduleDialog({ ws, tickets, maxHours, onClose }: { ws: string; tic
               title={`Schedule on ${ticket}`}
               action={scheduleAddAction(form)}
               confirmLabel="Create schedule"
+              minLeadS={leadS}
               onSettled={(p) => {
                 if (p === 'done') {
                   void qc.invalidateQueries({ queryKey: scheduleKey(ws) })
@@ -291,6 +305,9 @@ export default function MySchedules({ ws, manager, tickets }: Props) {
   // The default run length, cut to the member's grant_hours when the server says it.
   const cap = data?.grant_hours_cap
   const maxHours = typeof cap === 'number' && cap >= 1 ? Math.min(DEFAULT_RUN_HOURS, cap) : DEFAULT_RUN_HOURS
+  // The host's minimum lead for this workspace (core's caps, via the server); an hour when the server does not say.
+  const lead = data?.min_lead_s
+  const leadS = typeof lead === 'number' && lead >= 0 ? lead : DEFAULT_MIN_LEAD_S
   if (data?.available === false) return <p className="text-[13px] text-text-faint">Schedules is not turned on in this workspace.</p>
   return (
     <section className="space-y-3">
@@ -311,7 +328,7 @@ export default function MySchedules({ ws, manager, tickets }: Props) {
       ) : (
         <p className="text-[13px] text-text-faint">No schedules yet.</p>
       )}
-      {adding && <NewScheduleDialog ws={ws} tickets={tickets} maxHours={maxHours} onClose={() => setAdding(false)} />}
+      {adding && <NewScheduleDialog ws={ws} tickets={tickets} maxHours={maxHours} leadS={leadS} onClose={() => setAdding(false)} />}
     </section>
   )
 }

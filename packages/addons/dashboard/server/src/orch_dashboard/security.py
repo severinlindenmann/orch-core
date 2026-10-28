@@ -42,7 +42,13 @@ SWITCH_GLOBAL = frozenset(
 SWITCH_POST = frozenset({"hub/switch"})
 #: Writes a switch session is told plainly it cannot make (`session.readonly`, not a step-up offer): there is no way up
 #: from a switch session (E4). The one-click share reductions are owner actions of a full session (hub.py).
-READONLY_REFUSED = ("/click/prepare", "/market/add", "/hub/share/revoke", "/hub/share/rule-remove")
+READONLY_REFUSED = (
+    "/click/prepare",
+    "/hub/approve/prepare",
+    "/market/add",
+    "/hub/share/revoke",
+    "/hub/share/rule-remove",
+)
 
 
 def switch_allows(method, path, bound, query=None) -> bool:

@@ -188,6 +188,30 @@ def test_a_market_install_prepares_the_same_op_and_is_a_hub_hand_off(env):
     assert rec["op"] == "addon.grant" and rec["staged"] and rec["hub_handoff"] is True
 
 
+def test_only_an_unsigned_add_on_grant_hand_off_is_marked_for_the_hub_and_never_by_the_caller(env):
+    """FB15 narrow path: core sets ``hub_handoff`` for ``addon.grant`` with ``handoff: true`` and no signer only. A
+    hand-off of another op is not marked (the hub link refuses it); the caller can never set the mark itself."""
+
+    def record(rid):
+        return env.service.submit(lambda: env.service.requests.read(rid)).result()
+
+    _, key = env.human.ticket()
+    other = ok(env.human.prepare_res("log", {"ref": key, "text": "not for the hub"}, handoff=True))["data"]
+    rid = other["request"]["id"]
+    assert record(rid)["hub_handoff"] is False
+    assert err(env.served.client().req("hub.handoff", {"kind": "addon", "request": rid})) == "not_found"
+    signed = env.human.prepare_res("addon.grant", {"name": "standup", "staged": env.st["stage"]})
+    if signed.get("ok"):  # a local signature stays valid in every mode (A1): it is bound, never a hub hand-off
+        assert record(ok(signed)["data"]["request"]["id"])["hub_handoff"] is False
+    body = {"op": "addon.grant", "args": {"name": "standup", "staged": env.st["stage"]}, "handoff": True}
+    assert err(env.human.c.req("human.prepare", {**body, "hub_handoff": True})) == "invalid.input"
+    assert err(env.human.c.req("human.prepare", {**body, "signer": env.human.signer})) == "invalid.input"
+    prepared, _ = prepare_handoff(env)
+    assert record(prepared["request"]["id"])["hub_handoff"] is True
+    dry = ok(env.human.c.req("human.prepare", body, dry_run=True))["data"]
+    assert dry["request"] is None  # a dry run stores nothing, hand-off or not
+
+
 def test_an_unmarked_lapsed_or_foreign_record_gets_no_link_and_no_answer(env):
     prepared, ev = prepare_handoff(env)
     rid = prepared["request"]["id"]

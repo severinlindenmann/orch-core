@@ -36,7 +36,7 @@ MAX_ITEMS = 8
 
 
 def terms(scope: Any, verbs: Any, hours: Any, label: Any) -> dict[str, Any]:
-    """The exact terms a hand-off and a request are compared on (the label counts only when the hand-off names one)."""
+    """The exact terms a hand-off and a request are compared on (including label presence)."""
     return {"scope": scope, "verbs": verbs, "hours": hours, "label": label}
 
 
@@ -114,9 +114,10 @@ class GrantHandoffs:
             self._write(keep)
         return len(live) - len(keep)
 
-    def take(self, model: Any, *, person: str, hub_id: str, want: dict[str, Any]) -> bool:
-        """Match and consume: a live record for exactly this canonical ``person``, this ``hub_id`` and binding, and the
-        same terms (scope, verbs, hours; the label when the record names one). Used once: it is removed before this
+    def take(self, model: Any, *, person: str, hub_id: str, handoff: str, want: dict[str, Any]) -> bool:
+        """Match and consume: a live record with this ``handoff`` id, for exactly this canonical ``person``, this
+        ``hub_id`` and binding, and the
+        same terms (scope, verbs, hours, and label including its presence). Used once: it is removed before this
         returns ``True``. Any doubt (unreadable file, no record, other terms) is ``False``: the grant stays inert."""
         try:
             live = self.prune(model, self.service.clock())
@@ -127,11 +128,12 @@ class GrantHandoffs:
             return False
         for i, rec in enumerate(live):
             same = (
-                rec.get("person") == person
+                rec.get("id") == handoff
+                and rec.get("person") == person
                 and rec.get("scope") == want["scope"]
                 and rec.get("verbs") == want["verbs"]
                 and rec.get("hours") == want["hours"]
-                and (rec.get("label") is None or rec.get("label") == want["label"])
+                and rec.get("label") == want.get("label")
             )
             if same:
                 self._write(live[:i] + live[i + 1 :])

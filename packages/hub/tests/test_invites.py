@@ -945,3 +945,27 @@ def test_a_paired_phone_stays_dead_after_a_flag_only_disable_and_enable(w):
     assert w.env.svc.active_channel(w.ann, cid) is None and w.env.svc.active_channel(w.ann, cid2) is None
     assert w.call("GET", "/me/workspaces", token=ctok)[0] == 401  # the channel session does not read anything
     assert w.call("POST", "/session/channel", {"auth": auth}, token=ptok)[0] in (401, 403)  # nor does the pairing bind
+
+
+def test_enable_strips_groups_left_by_a_flag_only_disable(w):
+    w.env.acc.add_member("hub-admin", w.ann)
+    atok = w.login(w.admin)
+    assert "hub-admin" in w.env.acc.groups_of(w.ann) and "team" in w.env.acc.groups_of(w.ann)
+    w.env.acc.set_disabled(w.ann, True)  # flag only (an interrupted disable): the memberships are still there
+    assert w.call("POST", f"/admin/users/{w.ann}/enable", token=atok)[0] == 200
+    assert w.env.acc.groups_of(w.ann) == [] and not w.env.acc.is_hub_admin(w.ann)
+    rec = next(e for e in w.api.d.activity.list(limit=50) if e["type"] == "user.enabled")
+    assert sorted(rec["detail"]["groups_removed"]) == ["hub-admin", "team"]
+
+
+def test_a_person_in_33_groups_can_still_be_disabled(w):
+    for n in range(33):
+        w.env.acc.add_group(f"g{n:02d}")
+        w.env.acc.add_member(f"g{n:02d}", w.ann)
+    atok = w.login(w.admin)
+    assert (
+        w.call("POST", f"/admin/users/{w.ann}/disable", token=atok)[0] == 200
+    )  # the record is truncated, never refused
+    assert w.env.acc.groups_of(w.ann) == []
+    rec = next(e for e in w.api.d.activity.list(limit=50) if e["type"] == "user.disabled")
+    assert len(rec["detail"]["groups_removed"]) == 32 and rec["detail"]["count"] == 34  # 33 + team

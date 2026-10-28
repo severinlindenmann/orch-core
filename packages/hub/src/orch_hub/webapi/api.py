@@ -545,6 +545,15 @@ def _hex32(x: Any) -> str:
     return x
 
 
+def _groups_detail(groups: list[str]) -> dict[str, Any]:
+    """The activity detail for the groups a person was taken out of: at most 32 names and the real ``count``, so recording
+    never raises after the change it describes has committed."""
+    out: dict[str, Any] = {"groups_removed": list(groups[:32])}
+    if len(groups) > 32:
+        out["count"] = len(groups)
+    return out
+
+
 class WebApi:
     def __init__(self, deps: WebDeps) -> None:
         if deps.behind_edge and not deps.trusted_peers:
@@ -1396,7 +1405,7 @@ class WebApi:
         self.d.access.set_disabled(uid, True, actor=c.user_id)  # self_disable / last_admin / unknown_user
         groups = list(self.d.access.groups_of(uid))
         # first: an interrupted clean-up is still on record, and so is what is about to be taken away (hub-admin included)
-        self._record("user.disabled", actor_id=c.user_id, subject_user=uid, detail={"groups_removed": groups})
+        self._record("user.disabled", actor_id=c.user_id, subject_user=uid, detail=_groups_detail(groups))
         # a disabled person leaves every group, the hub-admin group too: enabling never brings group reach (or admin)
         # back on its own, it is re-granted through the normal path (where an owner's approval applies). A group this
         # leaves empty stays (with its grants): only the person goes, nothing is deleted or orphaned.
@@ -1424,12 +1433,17 @@ class WebApi:
             self.d.channels.revoke_all(uid)
             self.d.channels.end_sessions(uid)
             self._void_prepared(uid)
+            # and no group (hub-admin included): a flag-only or interrupted disable left them, an enabling must not bring
+            # their reach back; it is re-granted through the normal path
+            groups = list(self.d.access.groups_of(uid))
+            for group in groups:
+                self.d.access.remove_member(group, uid)
             token, iid, expires = inv.create("recovery", created_by=c.user_id, for_user=uid)
             link = self._invite_link(c, token)
         except BaseException:  # no link, no enabling: back to disabled, ``must_recover`` as it was
             self.d.access.undo_enable(uid, must_recover=prior)
             raise
-        self._record("user.enabled", actor_id=c.user_id, subject_user=uid)
+        self._record("user.enabled", actor_id=c.user_id, subject_user=uid, detail=_groups_detail(groups))
         self._record("reset.issued", actor_id=c.user_id, subject_user=uid, detail={"invite_id": iid})
         return 200, {
             "link": link,

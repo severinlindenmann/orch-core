@@ -295,6 +295,26 @@ def test_gates_count_only_when_they_can_be_waiting_like_mission_control(kit):
     assert seen == {"open": ["plan", "requirements"], "in_progress": [], "testing": ["code", "verify"], "done": []}
 
 
+def test_the_hosts_waiting_list_decides_which_gates_count(kit):
+    """R14b: with ``waiting`` in P the hub lists exactly the gates the workspace's own needs rule says wait (what Mission
+    Control counts), whatever the status; without it the status rule above applies."""
+    kit.push()
+    every = {g: kit.host.gate(1, "sha256:" + f"{i:02x}" * 32) for i, g in enumerate(("requirements", "plan"), 1)}
+    every["verify"] = kit.host.gate(1, H_VER, SRC)
+    n = len(kit.host.logs[LOG])
+    seen = {}
+    for waiting in ([], ["plan"], ["requirements", "verify"]):
+        p = {**kit.host.proj(LOG, "open", every), "waiting": waiting}
+        kit.vs.service.accept(WS, WSK_PUB, kit.host.page(LOG, n, 1, proj=p))
+        seen[tuple(waiting)] = sorted((r["gate"], r["kind"]) for r in kit.r.needs_you(WS, USER))
+        n = len(kit.host.logs[LOG])
+    assert seen == {
+        (): [],
+        ("plan",): [("plan", "gate")],
+        ("requirements", "verify"): [("requirements", "gate"), ("verify", "verdict")],
+    }
+
+
 def test_a_new_hash_is_a_new_row(kit):
     push_proj(kit)
     old = kit.r.needs_you(WS, USER)[0]

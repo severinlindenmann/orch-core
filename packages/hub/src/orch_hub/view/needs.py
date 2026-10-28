@@ -148,8 +148,13 @@ class StoreViewReader:
             and (e.get("actor") or {}).get("id") in me
         }
         rows = []
+        waiting = proj.get("waiting")  # R14b: the host's own needs rule (what Mission Control counts); old host: absent
         for gate, g in sorted(proj["gates"].items()):
-            if gate == "verify":
+            if waiting is not None:
+                if gate not in waiting:
+                    continue
+                kind = "verdict" if gate == "verify" else "gate"
+            elif gate == "verify":
                 if proj["status"] != "testing":
                     continue
                 kind = "verdict"

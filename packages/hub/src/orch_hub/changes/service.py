@@ -217,7 +217,17 @@ class Changes:
             db.execute(
                 "INSERT INTO change(id, kind, body, proposer, created_ms, expires_ms, state, reach) "
                 "VALUES (?,?,?,?,?,?,'pending',?)",
-                (cid, kind, text, actor, now, now + TTL_MS, cj(sorted(deltas)).decode()),
+                (
+                    cid,
+                    kind,
+                    text,
+                    actor,
+                    now,
+                    now + TTL_MS,
+                    cj(
+                        {ws: {"delta": d, "version": versions.get(ws) or self._version(ws)} for ws, d in deltas.items()}
+                    ).decode(),
+                ),
             )
             for ws, owner in needs:
                 db.execute(
@@ -500,20 +510,18 @@ class Changes:
                     (ch["id"], a["workspace_id"]),
                 )
                 return reject("stale_change")
-        # every workspace the change reaches NOW was approved by its owner: one that appeared since (a newly bound owner's
-        # workspace, or an orphan one nobody can approve for) makes the approvals stale
-        reached = {
-            ws
-            for ws in R.reach_delta(self._access, self._reg, ch["kind"], body)
-            if R.owner_of(self._reg, ws) != ch["proposer"]  # the proposer's own workspaces never needed an approval
-        }
-        # approved by an owner, or already reached (and unowned: only a hub admin proposes that) when it was proposed
-        if not reached <= {a["workspace_id"] for a in aps} | set(json.loads(ch["reach"])):
-            return reject("stale_change")
-        if not self._access.has_user(ch["proposer"]) or not self._access.is_hub_admin(ch["proposer"]):
-            return reject("proposer_gone")  # the proposal was made by an admin who no longer is one
+        # the proposer must still stand where they stood when they proposed: a live hub admin (a disabled, unrecovered or
+        # demoted proposer voids the change)
+        proposer = ch["proposer"]
+        if (
+            not self._access.has_user(proposer)
+            or not self._access.is_live(proposer)
+            or not self._access.is_hub_admin(proposer)
+        ):
+            return reject("proposer_gone")
+        approved = {a["workspace_id"] for a in aps if a["state"] == "approved"}
         try:
-            self._apply(ch, body, actor=ch["proposer"])
+            self._apply(ch, body, actor=proposer, approved=approved)
         except ChangeError as e:
             return reject(e.code)
         except AccessError as e:
@@ -524,13 +532,33 @@ class Changes:
         )
         return None
 
-    def _apply(self, ch: dict[str, Any], body: dict[str, Any], *, actor: str) -> None:
+    def _check_reach(self, ch: dict[str, Any], body: dict[str, Any], actor: str, approved: set[str] | None) -> None:
+        """The change reaches exactly what was proposed, judged against ownership NOW (never against what it was): every
+        workspace it reaches must be in the proposal's recorded reach with the SAME people (else ``stale_change``), an
+        owner-less one only ever for a hub admin (``owner_unknown``), and (``approved`` given: an owner approval, not an
+        override) every one owned by someone other than the proposer must carry that owner's approval. The proposer's own
+        workspaces are exempt only while the proposer is STILL their owner."""
+        stored = json.loads(ch["reach"])
+        override = approved is None  # an override reaches the owners it finds NOW (and tells them), but never an orphan
+        for ws, delta in R.reach_delta(self._access, self._reg, ch["kind"], body).items():
+            owner = R.owner_of(self._reg, ws)
+            known = ws in stored and cj(stored[ws]["delta"]) == cj(delta)
+            if owner is None:  # never matches the proposer exemption: hub-admin only, and only if it was proposed so
+                if ws not in stored or (not override and not known):
+                    raise ChangeError("stale_change")
+                if not self._access.is_hub_admin(actor):
+                    raise ChangeError("owner_unknown")
+            elif not override:
+                if not known or (owner != ch["proposer"] and ws not in approved):
+                    raise ChangeError("stale_change")
+
+    def _apply(self, ch: dict[str, Any], body: dict[str, Any], *, actor: str, approved: set[str] | None) -> None:
         """Make the change. Never after its expiry, and always with the owner protection checked against the state NOW (an
         approved or overridden grant is applied as a role to SET, which could be lower than what the group holds by then)."""
         if self._now() >= ch["expires_ms"]:
             raise ChangeError("expired")
         kind = ch["kind"]
-        self._unowned_check(actor, kind, body)  # an orphan full workspace needs a hub admin, at apply time too
+        self._check_reach(ch, body, actor, approved)  # new reach and orphan workspaces, judged now
         if kind == "grant":
             self._guard_owner(R.Edit(set_grant=(body["group"], body["role"])), [body["workspace_id"]])
             self._access.grant(body["workspace_id"], body["group"], body["role"], actor=actor)
@@ -613,7 +641,7 @@ class Changes:
                 for ws, delta in reached.items():
                     self._owner_notice_row(db, ch["id"], ws, delta)
                 db.execute("UPDATE approval SET state='overridden' WHERE change_id=? AND state='pending'", (ch["id"],))
-                self._apply(ch, body, actor=admin)
+                self._apply(ch, body, actor=admin, approved=None)
 
     def _owner_notice_row(self, db: Any, change_id: str, ws: str, delta: list[dict[str, str]]) -> None:
         """Make sure the owner of ``ws`` has an approval row on this change that carries the people who REALLY gain access

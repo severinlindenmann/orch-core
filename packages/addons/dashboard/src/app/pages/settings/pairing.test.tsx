@@ -327,8 +327,11 @@ describe('after the code', () => {
     expect(await screen.findByTestId('pair-primary-command', {}, T)).toHaveTextContent('orch host relay pair --resume --offer ' + '7'.repeat(32))
     expect(screen.queryByRole('button', { name: 'Add the phone' })).toBeNull()
     await user.click(screen.getByTestId('pair-add-details'))
-    expect(await screen.findByTestId('info-drawer-content', {}, T)).toHaveTextContent('the command finishes adding it')
-    expect(screen.queryByRole('dialog')).toBeNull()
+    const details = await screen.findByTestId('info-drawer-content', {}, T)
+    expect(details).toHaveTextContent('the command finishes adding it')
+    // the open details drawer is the only dialog: no sign or prepare dialog, no review panel
+    expect(screen.queryAllByRole('dialog').filter((d) => !d.contains(details))).toEqual([])
+    expect(screen.queryByTestId('click-panel')).toBeNull()
     expect(click).not.toHaveBeenCalled()
   })
 

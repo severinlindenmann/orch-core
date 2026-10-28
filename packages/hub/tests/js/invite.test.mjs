@@ -298,7 +298,7 @@ const at = (needle) => appSource.indexOf(needle);
 function shellContext(user) {
   const root = new El("main"), calls = [];
   const state = { user, rail: { hubName: "Company", rows: [] }, menu: false };
-  const context = vm.createContext({ clearInterval, root, state, location: { hash: "#/home" }, parseRoute, enter() {}, replaceContent: (el, nodes) => el.replaceChildren(...nodes), renderText: String,
+  const context = vm.createContext({ clearInterval, root, state, PAGES: [], location: { hash: "#/home" }, parseRoute, enter() {}, replaceContent: (el, nodes) => el.replaceChildren(...nodes), renderText: String,
     initials: (s) => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new El("button"), openSearch() {}, openShortcuts() {},
     api: async (method, path) => { calls.push([method, path]); return { status: 200, body: { ok: true } }; }, skeleton: () => new El("p"),
     document: { createElement: (t) => new El(t), createTextNode: (text) => Object.assign(new El("#text"), { _text: text }) } });

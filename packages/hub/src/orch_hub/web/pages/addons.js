@@ -1,7 +1,7 @@
 // The Add-ons page (M3, #1448-#1450): which add-ons each workspace may install, and the requests waiting for a decision.
 // The hub only RESTRICTS: allowing an add-on here never installs it; the workspace owner still decides, in the workspace.
-import { emptyState, loading } from "./feel.js";
-import { chip, h, text, when } from "./ui.js";
+import { emptyState, loading } from "../feel.js";
+import { chip, h, text, when } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
 const nameOf = (w) => text(w?.name || (w?.workspace_id ? "Workspace " + w.workspace_id.slice(0, 8) : "A workspace"));
@@ -90,3 +90,6 @@ export async function addonsPage(d) {
     d.state.notice = null;
   } finally { finish(); }
 }
+
+// The registry entry: the console's router, tabs and file list are built from this one export (no other file names a page).
+export const page = { path: "addons", nav: { label: "Add-ons", admin: true, after: "services" }, render: addonsPage };

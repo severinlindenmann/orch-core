@@ -14,7 +14,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { mcpView, serverProblem } = await import("../../src/orch_hub/web/mcp.js");
+const { mcpView, serverProblem } = await import("../../src/orch_hub/web/pages/mcp.js");
 const find = (n, pred) => n.all().filter(pred);
 const A = "a".repeat(32), B = "b".repeat(32);
 const data = {

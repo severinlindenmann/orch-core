@@ -24,7 +24,7 @@ test("switching sections preserves rail, buttons, top bar and updates selected t
   const root = new Element("main");
   const state = { user: { name: "Ann", is_admin: true }, rail: { hubName: "Company", rows: [{ id: "ab".repeat(16), name: "Legal", online: false }] }, menu: false };
   const location = { hash: "#/home" };
-  const context = vm.createContext({ clearInterval, root, state, location, parseRoute, enter, replaceContent: (el, nodes) => el.replaceChildren(...nodes), renderText: String, initials: (s) => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: (t) => new Element(t), createTextNode: (text) => Object.assign(new Element("#text"), { textContent: text }) } });
+  const context = vm.createContext({ clearInterval, root, state, PAGES: [], location, parseRoute, enter, replaceContent: (el, nodes) => el.replaceChildren(...nodes), renderText: String, initials: (s) => s.slice(0, 2), colour: () => "c0", navigate() {}, signOutMenu: () => new Element("button"), document: { createElement: (t) => new Element(t), createTextNode: (text) => Object.assign(new Element("#text"), { textContent: text }) } });
   vm.runInContext(source.slice(source.indexOf("function h("), source.indexOf("const field =")) + source.slice(source.indexOf("function shell("), source.indexOf("async function loadRail(")), context);
   context.shell("home", new Element("h1"));
   const rail = root.querySelector(".rail"), top = root.querySelector(".topbar"), button = rail.childNodes[0];
@@ -45,7 +45,7 @@ test("switching sections preserves rail, buttons, top bar and updates selected t
 test("hash changes and sign-in continuation dispatch the wanted view", async () => {
   const visits = [], handlers = {};
   const location = { hash: "#/admin" };
-  const context = vm.createContext({ location, parseRoute, window: { addEventListener: (event, fn) => { handlers[event] = fn; } },
+  const context = vm.createContext({ location, parseRoute, PAGES: [], registerPages() {}, window: { addEventListener: (event, fn) => { handlers[event] = fn; } },
     phones: async () => visits.push("phones"), handoffs: async () => visits.push("handoffs"), account: async () => visits.push("account"), home: async () => visits.push("home"), approvals: async () => visits.push("approvals"), workspaces: async () => visits.push("workspaces"), services: async () => visits.push("services"), admin: async () => visits.push("admin"), activity: async () => visits.push("activity"),
     loginView: () => visits.push("login"), addonView: async (w, k) => visits.push("addon:" + k), settingsView: async (w, k) => visits.push("settings:" + k), setupView: () => visits.push("setup"), landFromTicket: async () => visits.push("ticket") });
   vm.runInContext(source.slice(source.indexOf("// Serialize renders")), context);

@@ -10,6 +10,7 @@ when the cookie is Secure, HSTS. HTML is never cached; assets are revalidated.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -29,23 +30,44 @@ FILES: dict[str, tuple[str, str]] = {
     "/account.js": ("account.js", _JS),
     "/activity.js": ("activity.js", _JS),
     "/admin.js": ("admin.js", _JS),
-    "/mcp.js": ("mcp.js", _JS),
-    "/skills.js": ("skills.js", _JS),
-    "/spaces.js": ("spaces.js", _JS),
-    "/addons.js": ("addons.js", _JS),
     "/changes.js": ("changes.js", _JS),
     "/admin_reach.js": ("admin_reach.js", _JS),
     "/render.js": ("render.js", _JS),
     "/switch.js": ("switch.js", _JS),
     "/ui.js": ("ui.js", _JS),
     "/feel.js": ("feel.js", _JS),
-    "/connections.js": ("connections.js", _JS),
     "/services.js": ("services.js", _JS),
     "/handoffs.js": ("handoffs.js", _JS),
     "/workspaces.js": ("workspaces.js", _JS),
     "/phones.js": ("phones.js", _JS),
     "/invite.js": ("invite.js", _JS),
 }
+
+#: A page module's file name: the allowlist of the ``pages/`` folder. The folder is read by glob when the site is built; a file
+#: that does not match makes the build fail, so nothing odd can be served by being dropped there.
+PAGE_FILE = re.compile(r"[a-z][a-z0-9-]{0,31}\.js")
+
+
+def page_files(root: Path = WEB_DIR) -> list[str]:
+    """The page modules of ``<root>/pages``, sorted. Anything else in the folder is a build error."""
+    folder = root / "pages"
+    names = sorted(p.name for p in folder.iterdir()) if folder.is_dir() else []
+    bad = [n for n in names if not PAGE_FILE.fullmatch(n) or not (folder / n).is_file()]
+    if bad:
+        raise ValueError(f"not a page module name: {bad}")
+    return names
+
+
+def pages_module(names: list[str]) -> bytes:
+    """``/pages.js``: static imports of every page module and the one ``PAGES`` array the console builds its router, tabs
+    and dispatch from. Generated, never hand-kept (adding a page touches only that page's file)."""
+    ids = {n: "p_" + n[:-3].replace("-", "_") for n in names}
+    lines = [f'import {{ page as {ids[n]} }} from "./pages/{n}";' for n in names]
+    lines.append("export const PAGES = [" + ", ".join(ids[n] for n in names) + "];")
+    return (
+        "// Generated from the pages/ folder when the site is built. Do not edit.\n" + "\n".join(lines) + "\n"
+    ).encode()
+
 
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; "
@@ -58,6 +80,10 @@ class StaticSite:
     def __init__(self, *, hsts: bool, root: Path = WEB_DIR) -> None:
         self._hsts = hsts
         self._files = {p: ((root / name).read_bytes(), ctype) for p, (name, ctype) in FILES.items()}
+        names = page_files(root)
+        self._files.update({"/pages/" + n: ((root / "pages" / n).read_bytes(), _JS) for n in names})
+        self._files["/pages.js"] = (pages_module(names), _JS)
+        self.pages = names
 
     def get(self, path: str) -> tuple[int, list[tuple[str, str]], bytes] | None:
         """The answer for an exact allow-listed path, or ``None`` (the caller answers the JSON ``unknown_op``)."""

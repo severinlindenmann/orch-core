@@ -48,11 +48,6 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         "/route.js",
         "/account.js",
         "/admin.js",
-        "/mcp.js",
-        "/skills.js",
-        "/spaces.js",
-        "/addons.js",
-        "/connections.js",
         "/changes.js",
         "/admin_reach.js",
         "/activity.js",
@@ -226,3 +221,68 @@ def test_node_unit_tests_run_green():
     files = sorted(str(p) for p in (Path(__file__).parent / "js").glob("*.test.mjs"))
     r = subprocess.run([NODE, "--test", *files], check=False, capture_output=True, text=True, timeout=120)
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-1000:]
+
+
+# --- the pages/ folder (registry): one file per page, served by glob, nothing hand-kept --------------------------------------
+
+
+def test_every_page_module_is_served_and_the_generated_list_names_exactly_those(w):
+    from orch_hub.webapi.static import PAGE_FILE, page_files
+
+    names = page_files()
+    assert names and all(PAGE_FILE.fullmatch(n) for n in names)
+    on_disk = sorted(p.name for p in (WEB_DIR / "pages").iterdir())
+    assert (
+        names == on_disk
+    )  # a file in the folder is served; nothing is served from the folder that is not a file in it
+    for n in names:
+        s, h, body = get(w, "/pages/" + n)
+        assert s == 200 and body == (WEB_DIR / "pages" / n).read_bytes() and h["Content-Security-Policy"] == CSP
+    s, h, body = get(w, "/pages.js")
+    assert s == 200 and h["Content-Type"].startswith("text/javascript")
+    text = body.decode()
+    listed = sorted(__import__("re").findall(r'from "\./pages/([^"]+)"', text))
+    assert listed == names and text.count("import ") == len(names)
+    for bad in ("/pages/nope.js", "/pages/../app.js", "/pages/", "/pages"):
+        assert get(w, bad)[0] != 200 or bad == "/pages.js"
+
+
+def test_a_file_in_pages_that_is_not_a_page_module_name_fails_the_build(tmp_path):
+    import shutil
+
+    import pytest
+
+    from orch_hub.webapi.static import StaticSite
+
+    root = tmp_path / "web"
+    shutil.copytree(WEB_DIR, root)
+    for odd in ("Bad.js", "x.txt", "a_b.js", ".hidden.js"):
+        (root / "pages" / odd).write_text("x")
+        with pytest.raises(ValueError):
+            StaticSite(hsts=False, root=root)
+        (root / "pages" / odd).unlink()
+    (root / "pages" / "sub").mkdir()
+    with pytest.raises(ValueError):
+        StaticSite(hsts=False, root=root)
+    (root / "pages" / "sub").rmdir()
+    assert StaticSite(hsts=False, root=root).pages == sorted(p.name for p in (root / "pages").iterdir())
+
+
+def test_the_generated_pages_module_loads_and_lists_every_page(tmp_path):
+    """The real module graph: /pages.js as served plus the page files, imported by node (as the browser does)."""
+    import json
+    import shutil
+    import subprocess
+
+    from orch_hub.webapi.static import page_files, pages_module
+
+    shutil.copytree(WEB_DIR, tmp_path / "web")
+    (tmp_path / "web" / "pages.js").write_bytes(pages_module(page_files()))
+    out = subprocess.run(
+        ["node", "-e", "import('./pages.js').then(m => console.log(JSON.stringify(m.PAGES.map(p => p.path))))"],
+        cwd=tmp_path / "web",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert json.loads(out) == [n[:-3] for n in page_files()]

@@ -13,7 +13,7 @@
 //   npm run layout:guard -- --quick                                # 1440x900, default dock, sidebar left to choose, Normal
 //   npm run layout:guard -- --only tickets --shots ./shots         # routes matching /tickets/, with screenshots
 //
-// Options: --url <base> (default http://127.0.0.1:5201), --quick, --only <regex>, --dataset normal|busy, --docks min,default,max,
+// Options: --url <base> (default http://127.0.0.1:5201), --quick, --shard <i>/<n>, --only <regex>, --dataset normal|busy, --docks min,default,max,
 // --selftest (plants overflow on a page and checks the detector finds it; then reruns the guard with --break tabs|overlay|loading|tabrow and expects exit 1 with the reason), --shots <dir> (a PNG per page of the first configuration), --prefix <name> (screenshot file prefix),
 // --chrome <path> (or CHROME_PATH). Needs the dev build: it moves between routes through `window.__orchRouter` (main.tsx). jsdom cannot lay out, so this runs against the real dev server.
 
@@ -46,6 +46,10 @@ const VIEWPORTS = QUICK ? [[1440, 900]] : [[1440, 900], [1470, 956]]
 const DOCKS = opt('docks') ? opt('docks').split(',') : QUICK ? ['default'] : ['min', 'default', 'max']
 // 'auto' = no choice made (beside the dock the sidebar becomes the rail by itself); 'wide' and 'rail' = the person's choice.
 const SIDEBARS = QUICK ? ['auto'] : ['wide', 'rail']
+// --shard i/n: run every n-th configuration (1-based i), so CI can spread the 24 configurations over parallel jobs.
+const [SHARD_I, SHARD_N] = (opt('shard') ?? '1/1').split('/').map(Number)
+if (!(SHARD_N >= 1 && SHARD_I >= 1 && SHARD_I <= SHARD_N)) throw new Error('--shard expects i/n with 1 <= i <= n')
+let configIndex = 0
 const DATASETS = opt('dataset') ? [opt('dataset')] : QUICK ? ['normal'] : ['normal', 'busy']
 
 // Places that may scroll sideways inside themselves.
@@ -334,6 +338,7 @@ async function run(send, close) {
     for (const [width, height] of VIEWPORTS) {
       for (const dock of DOCKS) {
         for (const sidebar of SIDEBARS) {
+          if (configIndex++ % SHARD_N !== SHARD_I - 1) continue
           const config = `${dataset} ${width}x${height} dock-${dock} sidebar-${sidebar}`
           console.log(`\n${config}`)
           await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })

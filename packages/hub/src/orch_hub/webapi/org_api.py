@@ -65,7 +65,7 @@ class OrgHandlers:
         probes = mcp_probes(self.d.access)
         probes.refresh_stale(servers)  # in the background; the page asks again a moment later
         for s in servers:
-            s["status"] = probes.status(s["name"])
+            s["status"] = probes.status(s["name"], s["url"])
         return 200, {"servers": servers, "workspaces": workspaces}
 
     def _h_a_mcp_check(self, c: Any, p: dict, q: dict, b: dict | None):

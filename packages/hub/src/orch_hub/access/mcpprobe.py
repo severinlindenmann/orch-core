@@ -205,19 +205,27 @@ class McpProbes:
     ) -> None:
         self._now, self._run = now_ms, run
         self._last: dict[str, dict[str, Any]] = {}
+        self._gen: dict[str, int] = {}  # bumped by forget(): an answer that started before it is dropped
         self._asked: dict[str, int] = {}  # name -> when a probe last started
         self._lock = threading.Lock()
         self._slots = threading.BoundedSemaphore(MAX_PARALLEL)
 
-    def status(self, name: str) -> dict[str, Any]:
+    def status(self, name: str, url: str | None = None) -> dict[str, Any]:
+        """The last answer; with ``url``, only one that was about that very address."""
         with self._lock:
-            return dict(self._last.get(name) or {"status": "not_checked", "checked_ms": None, "detail": "none"})
+            got = self._last.get(name)
+            if got is None or (url is not None and got["url"] != url):
+                return {"status": "not_checked", "checked_ms": None, "detail": "none"}
+            return {k: v for k, v in got.items() if k != "url"}
 
     def _do(self, name: str, url: str) -> dict[str, Any]:
         fn = self._run or probe  # looked up late so a test can replace ``probe``
+        with self._lock:
+            gen = self._gen.get(name, 0)
         res = fn(url)
         with self._lock:
-            self._last[name] = res
+            if self._gen.get(name, 0) == gen:  # not forgotten (saved with a new address, removed) while it ran
+                self._last[name] = {**res, "url": url}
         return dict(res)
 
     def check_now(self, name: str, url: str) -> dict[str, Any]:
@@ -258,6 +266,7 @@ class McpProbes:
 
     def forget(self, name: str) -> None:
         with self._lock:
+            self._gen[name] = self._gen.get(name, 0) + 1
             self._last.pop(name, None)
             self._asked.pop(name, None)
 

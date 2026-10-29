@@ -306,3 +306,25 @@ def test_dns_lookups_are_capped_so_stuck_resolvers_cannot_pile_up(monkeypatch):
         gate.set()
         time.sleep(0.1)
     assert probe(URL, _resolve=lambda h, p: [PUB], _connect=lambda *a: FakeConn(http(200), []))["status"] == "reachable"
+
+
+def test_a_result_that_lands_after_forget_is_not_kept():
+    gate, entered = threading.Event(), threading.Event()
+
+    def slow(url):
+        entered.set()
+        gate.wait(5)
+        return {"status": "reachable", "checked_ms": 1, "detail": "ok"}
+
+    p = McpProbes(run=slow)
+    th = threading.Thread(target=p.check_now, args=("crm", URL))
+    th.start()
+    assert entered.wait(5)
+    p.forget("crm")  # the server was saved with a new address meanwhile
+    gate.set()
+    th.join(5)
+    assert p.status("crm")["status"] == "not_checked"
+    p2 = McpProbes(run=lambda url: {"status": "reachable", "checked_ms": 1, "detail": "ok"})
+    p2.check_now("crm", URL)
+    assert p2.status("crm", URL + "2")["status"] == "not_checked"  # an answer about another address
+    assert p2.status("crm", URL)["status"] == "reachable"

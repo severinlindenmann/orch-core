@@ -135,7 +135,10 @@ def _pins(service: WorkspaceService, state: Any) -> dict[str, Any]:
         raise PinsUnusable
     if any(type(k) is not str or type(v) is not int or v < 1 for k, v in doc["ids"].items()):
         raise PinsUnusable
-    if doc.get("hub_id") != str(state.hub_id):
+    hub = doc.get("hub_id")
+    if type(hub) is not str or not hub:
+        raise PinsUnusable  # no usable hub id: never read as "another hub" (that would reset the pins)
+    if hub != str(state.hub_id):
         return empty  # another hub's pins are not this hub's (unbind purges them anyway)
     return {"hub_id": empty["hub_id"], "bundle": bundle, "ids": dict(doc["ids"])}
 

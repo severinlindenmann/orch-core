@@ -828,3 +828,38 @@ def test_an_expiry_found_at_sync_and_a_decline_empty_the_held_values(live):
     assert live.proxy._held_now  # noqa: SLF001
     ok(req(w.served, "org.decline", {"kind": "mcp", "name": "vault"}))
     assert live.proxy._held_now == ()  # noqa: SLF001
+
+
+# -- review M1b: a pin file without a usable hub_id is not "another hub" ----------------------------------------------
+
+
+@pytest.mark.parametrize("hub_id", [None, 5, ["x"], ""])
+def test_pins_without_a_usable_hub_id_are_unusable_never_empty(w, hub_id):
+    w.accept_server()
+    w.org.secrets = [w.entry(version=3)]
+    sec_sync(w)
+    path = orgstate.org_dir(w.service) / "secret-pins.json"
+    doc = json.loads(path.read_text())
+    if hub_id is None:
+        doc.pop("hub_id")
+    else:
+        doc["hub_id"] = hub_id
+    path.write_text(json.dumps(doc))
+    os.chmod(path, 0o600)
+    with pytest.raises(orgsecrets.PinsUnusable):
+        orgsecrets._pins(w.service, orgstate._state(w.service))  # noqa: SLF001
+    w.org.secrets = [w.entry(version=2, value="older-value-2222")]
+    assert sec_sync(w)["secrets"] == "pins_unusable"
+    assert json.loads(path.read_text()).get("ids", {}).get(SID) == 3  # nothing was reset
+
+
+def test_pins_of_another_hub_are_empty_pins(w):
+    w.accept_server()
+    w.org.secrets = [w.entry(version=3)]
+    sec_sync(w)
+    path = orgstate.org_dir(w.service) / "secret-pins.json"
+    doc = json.loads(path.read_text())
+    doc["hub_id"] = "ab" * 16
+    path.write_text(json.dumps(doc))
+    os.chmod(path, 0o600)
+    assert orgsecrets._pins(w.service, orgstate._state(w.service))["ids"] == {}  # noqa: SLF001

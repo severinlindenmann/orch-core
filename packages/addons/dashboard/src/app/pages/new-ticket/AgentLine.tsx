@@ -1,18 +1,10 @@
 // The notes of the New ticket form about the agent (no agent can start here, too many parts to sign with access), the
 // dialog to choose the agent, and the "not signed" block of the review.
-import { modelLabel } from '@/api/modelRouting'
 import { EXECUTION_SHORT } from '@/app/terminal/real/executionLine'
 import { AgentPick, harnessName, ModelPick } from '@/components/agents/AgentChoice'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { StartPlan } from './useStartPlan'
-
-/** "Opus" or "chosen by the agent app". */
-export function modelText(plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>): string {
-  const { model } = plan.shown
-  if (!model) return 'chosen by the agent app'
-  return modelLabel(plan.choices, plan.choice.harness, model)
-}
 
 export function AgentLine({ plan, tooMany }: { plan: StartPlan; tooMany: boolean }) {
   if (!plan.feature) return null

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { queries } from '@/api/queries'
 import type { HandoffAction, HandoffRequest, HandoffState } from '@/api/handoff'
+import { ReviewShown } from './AccessSelect'
 import { clickEligible, clickReady, DEPOSIT_RISK } from '@/api/click'
 import { scheduleKey, type ScheduleList } from '@/api/schedules'
 import { useWorkspace } from '@/app/workspace'
@@ -192,7 +193,7 @@ export function SignPopover(p: SignPopoverProps) {
     </SignShell>
   }
   return <SignShell inline={p.inline} anchor={anchor} open={!folded} onDismiss={() => void close()} title={<SignerHeadline view={click.view?.view ?? {}} fallback={<Inline>{p.title}</Inline>} />} showClose onOpenAutoFocus={e => { e.preventDefault(); (p.initialFocus?.() ?? cancelRef.current)?.focus() }}>
-    {(!sequenceStart || !click.view || click.view.view.risk_lines?.includes(DEPOSIT_RISK)) && p.controls}{p.lead}{!click.view && p.summary}
+    {(!sequenceStart || !click.view || click.view.view.risk_lines?.includes(DEPOSIT_RISK)) && <ReviewShown.Provider value={!!click.view}>{p.controls}</ReviewShown.Provider>}{p.lead}{!click.view && p.summary}
     {/* The switch is read before the press; a request already open keeps its review (the signer refuses it if the switch moved). */}
     {!canClick && click.phase === 'idle' ? <><p>One click is not ready on this computer.</p>{router && <Link to="/settings/$tab" params={{ tab: 'general' }} onClick={() => void close()}>Turn on One click</Link>}<div className="flex justify-end">{dismiss('Close')}</div></> : <>
       {click.phase === 'idle' && <>{p.children}{p.hint && <p>{p.hint}</p>}<div className="flex flex-wrap justify-end gap-2">{dismiss('Cancel')}<Button disabled={!p.action || !!p.hint} onClick={e => { if (trustedPress(e.nativeEvent) && p.action) void click.start(p.action) }}>{p.confirmLabel ?? story?.signLabel ?? p.title}</Button></div></>}

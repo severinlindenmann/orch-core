@@ -503,7 +503,7 @@ class EditTicket(Action):
             if intent["ticket"]["key"] != self.key:
                 raise sequence.SequenceInvalid("the host answered for another ticket")
             if self.title is not None:
-                title = normalize_text(self.title, one_line=True)
+                title = normalize_text(self.title, one_line=True).strip()
                 if title != doc.get("title"):  # core refuses a title that does not differ; here "unchanged" is no edit
                     intent["title"] = {"was": doc.get("title"), "text": title}
             if self.acceptance is not None and (self.acceptance.edit or self.acceptance.add):

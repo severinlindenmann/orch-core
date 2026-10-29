@@ -308,8 +308,22 @@ class SetupFlow:
         if self.mode == "finish":
             assert self.facts is not None
             missing = facts_mod.missing_items(self.facts, self.profile, self.addons)
+        from orch import layout as layout_mod
+        from orch import privdir
+
+        home = Path(self.e.env.get("HOME") or Path.home())
+        shown = [
+            privdir.shown(p, home)
+            for p in privdir.setup_paths(Path(self.dir), layout_mod.store_of(self.dir), self.e.state_dir, home)
+        ]
         plan = review_mod.plan(
-            self.profile, self.dir, self.addons, self.facts, manifest_bytes=self.e.manifest_bytes, missing=missing
+            self.profile,
+            self.dir,
+            self.addons,
+            self.facts,
+            manifest_bytes=self.e.manifest_bytes,
+            missing=missing,
+            private_paths=shown,
         )
         rid = "rv_" + _secrets.token_hex(8)
         self.review = _Review(rid, plan)
@@ -444,6 +458,10 @@ class SetupFlow:
         return self.secrets.reveal()
 
     def _approve(self, body: Any) -> dict[str, Any]:
+        if self.phase != "secrets":
+            raise SetupError(
+                "setup.phase", "the recovery words can only be acknowledged right after they are shown", 409
+            )
         if self.secrets is None:
             raise SetupError("secrets.not_shown", "show the secrets first", 409)
         if not isinstance(body, dict):

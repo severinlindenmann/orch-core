@@ -1125,23 +1125,12 @@ class RealPorts:
         init_repository(root)
 
     def privatize(self, root: Path) -> None:
-        """P08: exact paths only (see orch.privdir.privatize): the folder, its .orch store, the state dir, the orch data
-        dir, and the user's own ~/.config and ~/.local."""
+        """P08: exactly the paths the review named (see orch.privdir.setup_paths / privatize)."""
         from orch import layout as layout_mod
         from orch import privdir
 
         home = Path(self.env.get("HOME") or Path.home())
-        privdir.privatize(
-            [
-                root,
-                layout_mod.store_of(root),
-                self.state,
-                home / ".local" / "share" / "orch",
-                home / ".config",
-                home / ".local",
-            ],
-            self.uid,
-        )
+        privdir.privatize(privdir.setup_paths(root, layout_mod.store_of(root), self.state, home), self.uid)
 
     def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool:
         from .claude_folder import trust_folder

@@ -15,7 +15,7 @@ from orch.posixmod import posixmod
 pwd = posixmod("pwd")
 grp = posixmod("grp")
 
-__all__ = ["make_private_dir", "others_can_write", "privatize", "tighten"]
+__all__ = ["make_private_dir", "others_can_write", "privatize", "setup_paths", "tighten"]
 
 _WRITE_OTHER = 0o002
 _WRITE_GROUP = 0o020
@@ -138,3 +138,16 @@ def privatize(paths: Iterable[str | os.PathLike[str]], uid: int) -> list[Path]:
         finally:
             os.close(fd)
     return changed
+
+
+def setup_paths(root: Path, store: Path, state: Path, home: Path) -> list[Path]:
+    """The ONE list of directories setup makes private: shown in the signed review and changed by the run."""
+    return [root, store, state, home / ".local" / "share" / "orch", home / ".config", home / ".local"]
+
+
+def shown(path: Path, home: Path) -> str:
+    """A path in words for the review: under the home folder as ``~/...``."""
+    try:
+        return "~/" + path.relative_to(home).as_posix()
+    except ValueError:
+        return str(path)

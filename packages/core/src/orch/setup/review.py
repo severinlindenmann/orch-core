@@ -187,6 +187,7 @@ def plan(
     *,
     manifest_bytes: Any,
     missing: list[str] | None = None,
+    private_paths: list[str] | None = None,
 ) -> Plan:
     """The plan of ``profile``. In new mode every item is planned; in finish mode only ``missing`` ones (R7)."""
     from orch.custody.cli import RISK as CONVENIENCE_RISK
@@ -256,9 +257,9 @@ def plan(
             {
                 "id": "perms",
                 "text": "Folders made private: only you can change this folder and orch's own folders.",
-                "detail": "Removes the group and other write permission from the workspace folder, its .orch store, "
-                "~/.config/orch, ~/.local/share/orch and your own ~/.config and ~/.local, where you own them. "
-                "Nothing else is changed.",
+                "detail": "Removes the group and other write permission from these folders, where you own them: "
+                + ", ".join(private_paths or [])
+                + ". Nothing else is changed.",
             }
         )
     if profile.get("git_init") and wanted("git"):

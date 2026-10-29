@@ -128,3 +128,16 @@ def test_the_review_names_the_private_folders_and_the_run_makes_them_first(tmp):
     assert perms["text"].startswith("Folders made private")
     assert p["steps"][0]["id"] == "perms" and p["steps"][0]["status"] == "done"
     assert [e[0] for e in ports.log if e[0] in ("privatize", "genesis")] == ["privatize", "genesis"]
+
+
+def test_the_signed_perms_text_names_the_paths_the_run_changes(tmp):
+    from pathlib import Path
+
+    from orch import layout as layout_mod
+    from orch import privdir
+
+    f, ports, p, rv = run_ok(tmp, AGENT)
+    detail = next(x for x in rv["flags"] if x["id"] == "perms")["detail"]
+    home = Path(f.e.env.get("HOME") or Path.home())
+    real = privdir.setup_paths(Path(f.dir), layout_mod.store_of(f.dir), f.e.state_dir, home)
+    assert all(privdir.shown(x, home) in detail for x in real)

@@ -126,3 +126,12 @@ def test_cancel_wipes_the_secrets(flow):
     s = flow.secrets
     post(flow, "cancel")
     assert s.dead and flow.secrets is None
+
+
+def test_confirm_only_in_the_secrets_phase(flow):
+    post(flow, "profile", PROFILE)
+    reveal(flow)
+    post(flow, "secrets/confirm", {"acknowledged": True})
+    assert flow.phase == "review"
+    e = err(post, flow, "secrets/confirm", {"acknowledged": True})
+    assert e.code == "setup.phase" and e.status == 409 and flow.phase == "review"

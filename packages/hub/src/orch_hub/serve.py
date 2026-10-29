@@ -22,6 +22,7 @@ from typing import TextIO
 from . import colocation as CO
 from .access import Access, AccessSnapshots
 from .access.cli import ACCESS_FILE
+from .access.orgcleanup import org_cleanup
 from .activity import ActivityLog
 from .audit import open_log
 from .changes import Changes
@@ -41,14 +42,17 @@ from .publish import HttpPublishSync, HubPublish, PublishConfig
 from .reconcile import reconcile_full_only, reconcile_relay_purge
 from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
+from .restart import exec_self
 from .router import AccessAuthz, RouteQueue, Router
 from .services import Services
-from .settings import SETTINGS_FILE
+from .settings import SETTINGS_FILE, serve_origins, where_answer
+from .settings import load as load_settings
 from .shares import ShareService, ShareStore, hxk_handle
 from .spaces import SpaceService, SpaceStore
 from .switch import SwitchService
 from .view import build_view_services
 from .webapi import SessionBridge, WebApi, WebDeps, WebServer
+from .webapi.settings_api import SettingsControl
 
 REGISTRY_FILE = "registry.db"
 ROUTE_QUEUE_FILE = "route-queue.db"
@@ -116,6 +120,17 @@ def invite_line(hub_id: str, code: str) -> str:
     return f"invite {hub_id}:{code}"
 
 
+def _link_endpoint(state: Path, fallback: str) -> str:
+    """The link address the connect link carries: the first advertised address that has one (hub-settings.json, read when
+    the link is made so a change shows at once); the bound address only when the file has none."""
+    try:
+        s = load_settings(state)
+    except Exception:  # noqa: BLE001  # a damaged file must not stop "connect a workspace"; the bound address answers
+        return fallback
+    link = next((a["link"] for a in (s or {"addresses": []})["addresses"] if a["link"]), None)
+    return link or fallback
+
+
 def parse_listen(value: str) -> tuple[str, int]:
     host, sep, port = value.rpartition(":")
     try:
@@ -159,8 +174,11 @@ def serve(
     relay_transport: Transport | None = None,
     stop: threading.Event | None = None,
     out: TextIO | None = None,
+    restart_exec: Callable[[], None] | None = None,
 ) -> int:
     out = out or sys.stdout
+    stop = stop or threading.Event()
+    restarting = threading.Event()  # set by the settings route: serve returns, then the process starts again (C3)
     if (listen is None) == (link_listen is None):
         raise ValueError("exactly one of --listen (loopback) and --link-listen (network) is required")
     if listen is not None:
@@ -174,6 +192,15 @@ def serve(
     u = urllib.parse.urlsplit(publish_url)
     api_host = api_host or u.netloc
     keys = HubKeys.open(state)
+    # Opus condition 5: once `orch install` wrote hub-settings.json, the advertised addresses, the console origins and the
+    # API origin come from that file ONLY. The start arguments keep the listen sockets; --web-origin / --api-origin are
+    # ignored (a restart must not bring an old value back).
+    from_file = serve_origins(state)
+    file_settings = load_settings(state) if from_file is not None else None
+    if from_file is not None and (web_origins or api_origin):
+        print("orch-hub WARN hub-settings.json decides the origins: --web-origin / --api-origin ignored", file=out)
+    if from_file is not None:
+        web_origins, api_origin = (from_file[0], from_file[1]) if behind_edge else (frozenset(), None)
     # The one HubConfig of this process (orch-hub#30): the dev flag is the held card's, every service gets it below.
     cfg = HubConfig.from_card(
         keys.card(),
@@ -270,8 +297,34 @@ def serve(
     )
     switch = SwitchService(
         hub_origin=cfg.resolved_api_origin,
+        hub_name=file_settings["name"] if file_settings is not None else "Hub",
         badge=lambda ws, user: len(views.reader.needs_you(ws, user)),
     )
+
+    def request_restart() -> None:
+        """Called by the address route: stop after the reply had time to go out, then serve returns and restarts."""
+
+        def go() -> None:
+            restarting.set()
+            stop.set()
+
+        timer = threading.Timer(0.5, go)
+        timer.daemon = True
+        timer.start()
+
+    def check_origins(origins: frozenset[str], api: str) -> None:
+        """The start-up rules for a new origin set (the next start applies them to the file): ValueError if refused."""
+        if behind_edge:
+            HubConfig.from_card(
+                keys.card(),
+                listen=cfg.listen,
+                web_listen=web_listen,
+                trusted_peers=trusted_peers,
+                behind_edge=True,
+                allowed_origins=origins,
+                api_origin=api,
+            )
+
     web: WebServer | None = None
     if cfg.web_listen is not None:
         api = WebApi(
@@ -287,15 +340,16 @@ def serve(
                 engine=engine,
                 shares=shares,
                 view=views.reader,
-                allowed_origins=cfg.allowed_origins,
+                allowed_origins=from_file[0] if from_file is not None else cfg.allowed_origins,
                 trusted_peers=cfg.trusted_peers,
                 behind_edge=cfg.behind_edge,
-                api_origin=cfg.resolved_api_origin(),
+                api_origin=from_file[1] if from_file is not None else cfg.resolved_api_origin(),
                 invites=gate,
-                link_endpoint=lambda: f"{host}:{server.address[1]}",
+                link_endpoint=lambda: _link_endpoint(state, f"{host}:{server.address[1]}"),
                 push=notifier,
                 setup_token_file=state / SETUP_TOKEN_FILE,
                 settings_file=state / SETTINGS_FILE,
+                settings_ctl=SettingsControl(bind_all=bind_all, restart=request_restart, check_origins=check_origins),
                 switch=switch,
                 services=Services(
                     relay_url=cfg.relay_url,
@@ -316,7 +370,9 @@ def serve(
         web = WebServer.from_listen(
             api, cfg.web_listen, bind_all=bind_all
         )  # loopback, or one private IP (dev, plain http)
-        if not cfg.allowed_origins:  # loopback dev: the console is served from this very address
+        if not cfg.allowed_origins or (
+            from_file is not None and not cfg.behind_edge
+        ):  # loopback dev: the console is served from this very address
             # --bind-all makes web.address 0.0.0.0: allow the advertised address (and loopback: a computer dials itself there)
             adv = parse_web_listen(cfg.web_listen)[0]
             api.allow_loopback_origin(f"http://{adv}:{web.address[1]}")
@@ -326,7 +382,6 @@ def serve(
                 loop_origin = f"http://127.0.0.1:{web.address[1]}"
                 switch.set_loopback_origin(lambda: loop_origin)
     fw = HubPublish(keys, HttpPublishSync(publish_url), PublishConfig(publish_url, api_host))
-    stop = stop or threading.Event()
     server = LinkServer.from_keys(
         keys,
         snapshots=AccessSnapshots(access, keys),
@@ -342,12 +397,14 @@ def serve(
         views=views.service,
         shares=shares,
         switch=switch,
+        where=lambda: where_answer(state),
         deliveries=deliveries,
         host="0.0.0.0" if bind_all and link_listen is not None else host,  # the address stays the validated one
         port=port,
         dev_mode=cfg.dev,
     )
     try:
+        org_cleanup(access).retry()  # a drop that a crash or a failure left undone
         shares.reconcile()  # items of a workspace that is no longer a bound selective one are deleted
         spaces.reconcile()  # a workspace that is no longer bound leaves its spaces (also after a crash)
         reconcile_full_only(registry, wk_seals, views.store)  # wraps and synced view of a non-full workspace go
@@ -358,6 +415,7 @@ def serve(
         def _retry() -> None:  # D9-1 share purge, D9/D15 wrap retire and view drop: retried while the hub runs
             while not stop.wait(30):
                 shares.retry_pending()
+                org_cleanup(access).retry()  # company content of a workspace that left, if a drop failed
                 reconcile_full_only(registry, wk_seals, views.store)
                 reconcile_relay_purge(notifier)  # a CLI revoke (another process) reaches the relay within a tick
                 try:
@@ -387,21 +445,36 @@ def serve(
             print(invite_line(keys.hub_id, code), file=out, flush=True)
         stop.wait()
     finally:
-        if web is not None:
-            web.close()
-        server.close()
-        deliveries.close()
-        channels.close()
-        views.close()
-        queue.close()
-        space_store.close()
-        share_store.close()
-        changes.close()
-        activity.close()
-        connections.close()
-        user_invites.close()
-        audit.store.close()
-        registry.close()
-        wk_seals.close()
-        access.close()
+        failed = False
+        for close in (
+            web.close if web is not None else None,
+            server.close,
+            deliveries.close,
+            channels.close,
+            views.close,
+            queue.close,
+            space_store.close,
+            share_store.close,
+            changes.close,
+            activity.close,
+            connections.close,
+            user_invites.close,
+            audit.store.close,
+            registry.close,
+            wk_seals.close,
+            access.close,
+        ):
+            if close is None:
+                continue
+            try:
+                close()
+            except Exception as e:  # noqa: BLE001  # keep closing the rest, then exit non-zero (a service manager restarts us)
+                failed = True
+                print(f"orch-hub WARN close failed: {type(e).__name__}", file=out, flush=True)
+    if failed:  # also when a restart was asked for: no exec on top of a half-closed process
+        return 1
+    if (
+        restarting.is_set()
+    ):  # everything above is closed; exec replaces this process (same pid) with a clean descriptor table
+        (restart_exec or exec_self)()
     return 0

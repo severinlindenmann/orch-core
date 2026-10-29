@@ -43,6 +43,7 @@ from typing import Any, Protocol
 
 from .. import __version__ as hub_version
 from ..access import Access, AccessError
+from ..access.orgcleanup import org_cleanup
 from ..access.store import ADMIN_GROUP, check_name
 from ..activity.feed import feed as activity_feed
 from ..changes import ChangeError
@@ -64,6 +65,7 @@ from ..switch import SwitchError, clean_return_to, owner_fallback_names, workspa
 from ..versions import MIN_PHONE_VERSION, MIN_SUPPORTED_VERSION, version_state, workspace_status
 from .changes_api import ChangeHandlers, confirmed
 from .org_api import OrgHandlers
+from .secrets_api import SecretHandlers, secret_routes
 from .settings_api import SettingsHandlers, settings_routes
 from .static import StaticSite
 
@@ -150,6 +152,7 @@ STATUS = {
     "rate_limited": 429,
     "too_many_channels": 429,
     "unavailable": 503,
+    "phone_address_locked": 409,  # the first address is the one phones pair with: not changed by the address route
     "internal": 500,
     "not_bound": 409,
     "bad_ticket": 403,
@@ -260,6 +263,9 @@ class WebDeps:
         None  # orch_hub.changes.Changes: access changes that need the owner; None = those routes answer ``unavailable``
     )
     settings_file: Path | None = None  # hub-settings.json; None = "not configured"
+    settings_ctl: Any = (
+        None  # webapi.settings_api.SettingsControl (restart hook, bind-all, detector); None = no address writes
+    )
     user_invites: Any = (
         None  # orch_hub.invites.Invites (join / reset / recovery links); None = those routes are ``unavailable``
     )
@@ -541,6 +547,7 @@ ROUTES: tuple[Route, ...] = (
     _r("DELETE", "/admin/mcp-servers/{name}", "admin", "a_mcp_delete", "Remove a remote MCP server"),
     _r("PUT", "/admin/mcp-servers/{name}/offers", "admin", "a_mcp_offer", "Set the workspaces a server is offered to"),
     _r("POST", "/admin/mcp-servers/{name}/check", "admin", "a_mcp_check", "Check a server now (no credential sent)"),
+    *secret_routes(_r),
     *settings_routes(_r),
 )
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
@@ -733,7 +740,7 @@ def _groups_detail(groups: list[str]) -> dict[str, Any]:
 _NEED_KINDS = ("needs_you", "question")  # the shared item kinds that are a wait (a shared ticket is not)
 
 
-class WebApi(ChangeHandlers, OrgHandlers, SettingsHandlers):
+class WebApi(ChangeHandlers, OrgHandlers, SecretHandlers, SettingsHandlers):
     def __init__(self, deps: WebDeps) -> None:
         if deps.behind_edge and not deps.trusted_peers:
             raise ValueError("web API behind the edge needs trusted_peers (the edge's addresses)")
@@ -1994,6 +2001,9 @@ class WebApi(ChangeHandlers, OrgHandlers, SettingsHandlers):
             raise ApiError("not_left")
         for grant in self.d.access.grants(ws):
             self.d.access.revoke(ws, grant["group"], actor=c.user_id)
+        org_cleanup(self.d.access).drop(
+            ws
+        )  # its company secrets, skills and tool servers go with it (retried if it fails)
         reg.forget(ws)
         if self.d.connections is not None:  # no connection to or from it, and no counts about it, outlive the workspace
             self.d.connections.forget_workspace(ws)

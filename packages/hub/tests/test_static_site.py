@@ -158,7 +158,12 @@ def test_head_is_allowed_and_a_query_string_does_not_widen_the_set(w):
 
 def test_the_tab_icon_is_served_and_linked_and_favicon_ico_stays_unknown(w):
     s, h, body = get(w, "/favicon.svg")
-    assert s == 200 and h["Content-Type"] == "image/svg+xml" and h["Content-Security-Policy"] == CSP and b"<script" not in body
+    assert (
+        s == 200
+        and h["Content-Type"] == "image/svg+xml"
+        and h["Content-Security-Policy"] == CSP
+        and b"<script" not in body
+    )
     for page in ("index.html", "connect.html"):
         assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in (WEB_DIR / page).read_text()
     assert get(w, "/favicon.ico")[0] == 404

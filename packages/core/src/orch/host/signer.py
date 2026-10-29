@@ -953,7 +953,11 @@ def render(
             f"=== {int(prepared['material']['sequence']['of'])} signatures, ONE confirmation; all steps below ==="
         )
         intent = sequence.validate_intent(prepared["material"]["sequence"]["intent"])
-        extra = sequence.extra_lines(intent) + sequence.technical_lines(intent)
+        extra = [
+            *sequence.extra_lines(intent, full=True),
+            sequence.steps_line(intent, int(prepared["material"]["sequence"]["of"])),
+            *sequence.technical_lines(intent),
+        ]
         prepared = sequence.expand(prepared)
     material = prepared["material"]
     events = prepared["events"]

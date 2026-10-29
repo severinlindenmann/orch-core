@@ -397,12 +397,11 @@ def _hours_line(events: Events) -> list[str]:
 def _grant_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:
     # deposit (the runner grant, "agent access" handed to the runner) or reveal (the secret shown once in the page);
     # any other grant never reaches a View (terminal_only), and is still marked here
-    lines = [DEPOSIT_RISK if deposit else REVEAL_RISK, *_hours_line(events)]
+    # r7-P10: a runner grant carries ONE risk line (the length is in the headline and the grant row, and DEPOSIT_RISK
+    # says it is the length you choose, up to 7 days); the shown secret keeps its own risk line and the length
     if deposit:
-        hours = next((e.get("hours") for e in events if e.get("type") == "grant.issued"), None)
-        if type(hours) is int and hours > 0:
-            lines.append(f"Agents can run as you for {hours} {'hour' if hours == 1 else 'hours'}")
-    return lines
+        return [DEPOSIT_RISK]
+    return [REVEAL_RISK, *_hours_line(events)]
 
 
 def _addon_grant_risk(events: Events, deposit: bool, reveal: bool) -> list[str]:

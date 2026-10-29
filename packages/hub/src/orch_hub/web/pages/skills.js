@@ -1,10 +1,10 @@
 // The Company skills page (M3, #1430): instructions a hub admin offers to workspaces. Offering is not enabling: a
 // workspace's owner reads the full text and turns a skill on at their own host. The hub never reaches an agent from here.
 import { emptyState, loading } from "../feel.js";
-import { h, text } from "../ui.js";
+import { h, text, withNames } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
-const wsName = (w) => text(w?.name || (w?.workspace_id ? "Workspace " + w.workspace_id.slice(0, 8) : "A workspace"));
+const wsName = (w) => text(w?.name || "A workspace");
 const NAME = /^[a-z][a-z0-9-]{1,39}$/;
 
 // Mirrors the hub's own check so a typo is caught before sending; the hub decides in the end.
@@ -77,7 +77,7 @@ export async function skillsPage(d) {
     const save = async (name, body) => { say("Saved", await d.api("PUT", "/admin/skills/" + name, { text: body })); await skillsPage(d); };
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/skills/" + s.name)); await skillsPage(d); };
     const offer = async (name, workspaces) => { say("Saved", await d.api("PUT", "/admin/skills/" + name + "/offers", { workspaces })); await skillsPage(d); };
-    d.shell("skills", d.state.notice, skillsView(r.body, { save, remove, offer }));
+    d.shell("skills", d.state.notice, skillsView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer }));
     d.state.notice = null;
   } finally { finish(); }
 }

@@ -19,7 +19,7 @@ export function safeReturn(path) {
 /** Up to two letters for a rail icon. */
 export function initials(name, id = "") {
   const words = String(name ?? "").trim().split(/\s+/).filter(Boolean);
-  const s = words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? String(id)).slice(0, 2);
+  const s = words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? "W").slice(0, 2); // never a piece of an id
   return s.toUpperCase();
 }
 
@@ -37,7 +37,7 @@ export function railRows(body) {
     .filter((w) => w && typeof w.workspace_id === "string")
     .map((w) => ({
       id: w.workspace_id,
-      name: typeof w.name === "string" && w.name ? w.name : w.workspace_id.slice(0, 8),
+      name: typeof w.name === "string" && w.name ? w.name : typeof w.owner_name === "string" && w.owner_name ? w.owner_name + "'s workspace" : "A workspace",
       role: typeof w.role === "string" ? w.role : null,
       online: w.online === true,
       ...(w.last_seen == null ? {} : { last_seen: w.last_seen }),

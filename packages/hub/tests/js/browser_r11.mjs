@@ -60,6 +60,16 @@ try {
   await page.getByRole("button", { name: "Everything" }).first().click();
   await page.getByText("Suggested: Everything").waitFor();
   await shot("workspaces-connect");
+  // P07: a workspace joins while the page is open (the test joins one now); no click, no navigation.
+  assert((await page.getByText("No workspaces yet").count()) === 1, "empty before the join");
+  console.log("JOIN_NOW");
+  await new Promise((resolve) => process.stdin.once("data", resolve)); process.stdin.pause();
+  await page.locator(".ws-joined").waitFor({ timeout: 8000 });
+  assert((await page.locator(".ws-joined").innerText()).includes("joined"), "joined message");
+  assert((await page.getByText("No workspaces yet").count()) === 0, "empty state gone");
+  assert((await page.locator("tr[data-workspace]").count()) === 1, "the new row appeared");
+  assert((await page.locator(".rail").innerText()).length > 0, "rail present");
+  await shot("workspaces-joined");
   await page.getByRole("button", { name: "Details" }).first().click();
   await page.getByText("To change what this workspace shares").waitFor();
   await shot("workspaces-details");

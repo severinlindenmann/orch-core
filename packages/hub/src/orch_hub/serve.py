@@ -223,6 +223,7 @@ def serve(
         hxk=hxk_handle(keys.hxk_pub, keys.hxk_exchange),
         dev_mode=cfg.dev,
         on_change=audit.share_change,
+        access=access,  # a signed audience (P02) is resolved against current group membership
     )
     views = build_view_services(state, wk_seals=wk_seals, registry=registry, access=access)
     channels = Channels(keys, access, state / CHANNELS_FILE, audit=audit, dev_mode=cfg.dev)

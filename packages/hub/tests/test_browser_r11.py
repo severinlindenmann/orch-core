@@ -24,7 +24,6 @@ pytestmark = pytest.mark.slow
 
 @pytest.mark.skipif(playwright_path() is None, reason="playwright for node is not installed")
 def test_services_and_workspaces_pages_in_a_browser(hub):  # noqa: F811
-    c = host_link(hub)
     acc = Access(str(hub["state"] / "access.db"))
     acc.add_member(ADMIN_GROUP, hub["user"])
     acc.close()
@@ -39,7 +38,25 @@ def test_services_and_workspaces_pages_in_a_browser(hub):  # noqa: F811
         "CODE_SIGNIN": totp_code(hub["secret"], int(time.time()) // 30 - 1),
     }
     script = Path(__file__).parent / "js" / "browser_r11.mjs"
-    r = subprocess.run([NODE, str(script)], env=env, capture_output=True, text=True, timeout=120, check=False)
-    assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-3000:]
-    assert "R11 browser: ok" in r.stdout
-    c.close()
+    # The page opens on an empty Workspaces list; the script prints JOIN_NOW, we join a stub workspace, it must show up by itself.
+    proc = subprocess.Popen(
+        [NODE, str(script)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    c = None
+    out: list[str] = []
+    try:
+        assert proc.stdout is not None and proc.stdin is not None
+        for line in proc.stdout:
+            out.append(line)
+            if line.strip() == "JOIN_NOW":
+                c = host_link(hub)
+                proc.stdin.write("joined\n")
+                proc.stdin.flush()
+        rest, err = proc.communicate(timeout=120)
+    finally:
+        proc.kill()
+        if c is not None:
+            c.close()
+    stdout = "".join(out) + (rest or "")
+    assert proc.returncode == 0, stdout[-2000:] + err[-3000:]
+    assert "R11 browser: ok" in stdout

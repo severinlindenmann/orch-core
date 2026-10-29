@@ -60,7 +60,7 @@ from ..contract.hub import HV, Refused, channel_proof_bytes
 from ..invites import Invite, InviteError, proof_digest
 from ..relay.client import RelayError
 from ..spaces.service import SpaceError
-from ..switch import SwitchError, clean_return_to, workspace_rows
+from ..switch import SwitchError, clean_return_to, owner_fallback_names, workspace_rows
 from ..versions import MIN_PHONE_VERSION, MIN_SUPPORTED_VERSION, version_state, workspace_status
 from .changes_api import ChangeHandlers, confirmed
 from .org_api import OrgHandlers
@@ -318,6 +318,13 @@ ROUTES: tuple[Route, ...] = (
         "Needs-you items (full: workspace view; selective: shared items)",
     ),
     _r(
+        "GET",
+        "/me/shared",
+        "session",
+        "my_shared",
+        "Tickets shared with me (optionally of one workspace): who shared, and for the owner with whom",
+    ),
+    _r(
         "GET", "/workspaces/{workspace_id}/items/{item_id}", "session", "item", "One ticket, question or needs-you item"
     ),
     _r("GET", "/me/channels", "session", "my_channels", "My registered channels (phone, browser)"),
@@ -572,6 +579,7 @@ SWITCH_HANDLERS = frozenset(
         "my_workspaces",
         "my_handoffs",
         "needs_you",
+        "my_shared",
         "item",
         "switch_ticket",
         "rail",
@@ -1311,7 +1319,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
         gates, qs = f1.get("gates"), f1.get("questions")
         return type(gates) is dict and type(qs) is dict and len(gates) + len(qs) == 1
 
-    def _shared_row(self, ws: dict[str, Any], it: dict[str, Any]) -> dict[str, Any]:
+    def _shared_row(self, ws: dict[str, Any], it: dict[str, Any], user_id: str) -> dict[str, Any]:
         o = it["item"]
         content = o["content"]
         return _render(
@@ -1328,7 +1336,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
                 "summary_only": o["item_kind"] == "needs_you",
                 "chain": o.get("chain"),  # §10.2b, as verified by D9 (display data; the hub build is the authority)
                 "f1": o.get("f1"),
-                "signable": self._shared_signable(o),
+                # H2: only the owner alias may sign; a reader (audience) never gets a sign button, on any route
+                "signable": self.d.registry.owner_alias(ws["workspace_id"]) == user_id and self._shared_signable(o),
             }
         )
 
@@ -1349,7 +1358,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
                 if it["item"]["item_kind"] == "question"
             }
             return [
-                self._shared_row(ws, it)
+                self._shared_row(ws, it, user_id)
                 for it in shared
                 if not (
                     it["item"]["item_kind"] == "needs_you"
@@ -1367,6 +1376,38 @@ class WebApi(ChangeHandlers, OrgHandlers):
             if ws["workspace_id"] == workspace_id:
                 return len(self._needs_rows(ws, user_id) or [])
         return 0
+
+    def _h_my_shared(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Shared TICKETS of selective workspaces that the CALLER may read, nothing more. ``list_shared`` is the only
+        gate: it answers with the caller's own identity (the owner sees all, anyone else only what a verified, owner-signed
+        audience names them or their team in; hub-admins and role holders get nothing by role). Nothing here widens it;
+        an unknown, full-mode or unbound workspace answers an empty list, like a workspace the caller has no part in."""
+        if self.d.shares is None:
+            raise ApiError("unavailable")
+        only = q.get("workspace_id")
+        if only is not None:
+            _hex32(only)
+        people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
+        rows: list[dict[str, Any]] = []
+        for ws in sorted(self.d.registry.pins()):
+            if (only is not None and ws != only) or self.d.registry.mode(ws) != "selective":
+                continue
+            owner = self.d.registry.owner_alias(ws)
+            for it in self.d.shares.list_shared(c.user_id, ws):
+                if it["item"]["item_kind"] != "ticket":
+                    continue
+                row = self._shared_row({"workspace_id": ws}, it, c.user_id)
+                aud = it["item"].get("audience")
+                if owner == c.user_id:  # the person who shared sees the audience ([] = only you), never "shared by me"
+                    users = aud.get("users", []) if type(aud) is dict else []
+                    groups = aud.get("groups", []) if type(aud) is dict else []
+                    row["shared_with"] = [people[u] for u in users if u in people] + [
+                        "Team: " + P4.render_text(g) for g in groups
+                    ]
+                else:
+                    row["shared_by"] = people.get(owner)
+                rows.append(row)
+        return 200, {"items": rows}
 
     def _h_needs_you(self, c: Ctx, p: dict, q: dict, b: dict | None):
         items: list[dict[str, Any]] = []
@@ -1404,7 +1445,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
             for it in self.d.shares.list_shared(c.user_id, ws["workspace_id"]):
                 if it["item"]["item_id"] == p["item_id"]:
                     return 200, {
-                        **self._shared_row(ws, it),
+                        **self._shared_row(ws, it, c.user_id),
                         "content": _render(it["item"]["content"]),
                         "item_hash": it["hash"],
                     }
@@ -1951,13 +1992,16 @@ class WebApi(ChangeHandlers, OrgHandlers):
 
     def _h_a_workspaces(self, c: Ctx, p: dict, q: dict, b: dict | None):
         reg, out = self.d.registry, []
+        people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
+        fallback = owner_fallback_names(reg, self.d.access)
         for ws in sorted(reg.pins()):
             st = reg.binding_state(ws)
             card_name = reg.display_name(ws)
             out.append(
                 {
                     "workspace_id": ws,
-                    "name": P4.render_text(card_name) if type(card_name) is str and card_name else None,
+                    "name": P4.render_text(card_name) if type(card_name) is str and card_name else fallback.get(ws),
+                    "owner_name": people.get(reg.owner_alias(ws)),
                     "mode": reg.last_mode(ws),
                     "status": st["status"] if st else None,
                     "left_ms": reg.unbound_ms(ws) if st and st["status"] == "unbound" else None,
@@ -1973,6 +2017,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
             raise ApiError("unavailable")  # an empty map would say "nobody can reach anyone": say nothing instead
         reg = self.d.registry
         workspaces = []
+        people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
+        fallback = owner_fallback_names(reg, self.d.access)
         for ws in sorted(reg.pins()):
             if reg.mode(ws) is None:
                 continue
@@ -1980,7 +2026,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
             workspaces.append(
                 {
                     "workspace_id": ws,
-                    "name": P4.render_text(name) if type(name) is str and name else None,
+                    "name": P4.render_text(name) if type(name) is str and name else fallback.get(ws),
+                    "owner_name": people.get(reg.owner_alias(ws)),
                 }
             )
         edges = [
@@ -2159,7 +2206,9 @@ class WebApi(ChangeHandlers, OrgHandlers):
             raise ApiError("unavailable")
         # the workspace's owner on the hub: the admin who mints the link, or the user they pick (V3-D19)
         owner = b.get("owner_user", c.user_id)
-        if type(owner) is not str or not any(u["user_id"] == owner for u in self.d.access.users()):
+        if type(owner) is not str or not any(
+            u["user_id"] == owner and not u["disabled"] for u in self.d.access.users()
+        ):
             raise ApiError("malformed")
         code, expires = self.d.invites.mint(self.d.now_ms(), owner_user=owner)
         try:

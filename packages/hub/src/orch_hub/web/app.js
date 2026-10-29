@@ -16,7 +16,7 @@ import { inviteView } from "./invite.js";
 import { servicesView } from "./services.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
-import { workspacesView, workspaceDetailsView } from "./workspaces.js";
+import { workspacesView, workspaceDetailsView, newWorkspaces } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
@@ -42,11 +42,11 @@ function h(tag, props = {}, ...kids) {
   if (props["data-sign"] !== undefined) { e.arm = () => arm(e); e.arm(); }
   return e;
 }
-let servicesTimer, viewRevision = 0;
+let servicesTimer, workspacesTimer, viewRevision = 0;
 let frame = null;
 let railSnapshot = "";
 let paintedRoute = null;
-const show = (...nodes) => { clearInterval(servicesTimer); viewRevision++; frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
+const show = (...nodes) => { clearInterval(servicesTimer); clearInterval(workspacesTimer); viewRevision++; frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
 const field = (label, input) => h("div", {}, h("label", { text: label }), input);
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
@@ -158,6 +158,7 @@ function pageLoading(active, kind = active) {
 
 function shell(active, ...nodes) {
   nodes = [recoveryBanner(), ...nodes];
+  if (active !== "workspaces") clearInterval(workspacesTimer);
   if (active !== "services") { clearInterval(servicesTimer); viewRevision++; } // leave the Services page: stop its refresh
   const sameRoute = paintedRoute === location.hash;
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
@@ -304,7 +305,7 @@ async function landFromTicket(t) {
   const name = renderText(p.body.name ?? "you");
   const plan = landingPlan(p.body);
   if (plan === "redeem") return redeemTicket(t, false);
-  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You came from a workspace. Nothing happens until you continue." }),
+  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "This workspace was connected for " + name + ". Nothing happens until you continue." }),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { text: "Cancel", onclick: () => loginView() })));
   const cur = renderText(p.body.signed_in_as?.name ?? "someone else");
   return plain(h("h1", { text: "Different person" }), h("p", { text: "You are signed in as " + cur + " here. This link is for " + name + "." }),
@@ -398,7 +399,7 @@ async function handoffs() {
   } finally { finishLoading(); }
 }
 
-async function workspaces() {
+async function workspaces(joined = [], known = null) {
   const finishLoading = loading();
   pageLoading("workspaces");
   try {
@@ -411,8 +412,12 @@ async function workspaces() {
       const actions = {
         open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
         copy: copyText,
-        connect: async () => {
-          const r = await api("POST", "/admin/connect", {});
+        people: async () => { // the real, active people of this hub (admin-only route); the hub rejects anyone else
+          const r = await api("GET", "/admin/users");
+          return r.status === 200 ? (r.body.users ?? []).filter((u) => !u.disabled) : [];
+        },
+        connect: async (ownerUser) => {
+          const r = await api("POST", "/admin/connect", ownerUser ? { owner_user: ownerUser } : {});
           if (r.status < 200 || r.status >= 300 || typeof r.body.link !== "string" || !Number.isFinite(r.body.expires_ms)) throw new Error("connect failed");
           return r.body;
         },
@@ -428,8 +433,28 @@ async function workspaces() {
             h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
         },
       };
-      shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces ?? [] : [],
-        handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions }));
+      const rows = ws.status === 200 ? ws.body.workspaces ?? [] : [];
+      shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions, joined, self: state.user.user_id }));
+      // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
+      clearInterval(workspacesTimer);
+      // Diff only against a successful first read: a failed one must not make every workspace look newly joined.
+      let seen = known ?? (ws.status === 200 ? new Set(rows.map((w) => w.workspace_id)) : null);
+      const mine = ++viewRevision;
+      let checking = false;
+      workspacesTimer = setInterval(async () => {
+        if (document.hidden || checking || mine !== viewRevision) return;
+        checking = true;
+        try {
+          const r = await api("GET", "/me/workspaces");
+          if (mine !== viewRevision || r.status !== 200) return;
+          if (seen === null) return void (await workspaces([], null)); // the first good read: draw it, nothing is "joined"
+          const fresh = newWorkspaces(seen, r.body.workspaces);
+          if (!fresh.length) return;
+          for (const w of fresh) seen.add(w.workspace_id);
+          void pollLive();
+          await workspaces([...joined, ...fresh], seen);
+        } finally { checking = false; }
+      }, 3000);
   } finally { finishLoading(); }
 }
 
@@ -770,7 +795,7 @@ async function accessView(wsId, raw) {
   const action = { type: "grant.requested", log: "workspace", ...terms };
   shell("home", h("div", {}, back,
     h("h1", { text: "Approve agent access" }),
-    h("p", { class: "sentence", text: grantSentence(terms, mine.name ?? wsId.slice(0, 8)) }),
+    h("p", { class: "sentence", text: grantSentence(terms, mine.name ?? "A workspace") }),
     h("dl", { class: "facts" }, grantFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
@@ -792,7 +817,7 @@ async function addonView(wsId, raw) {
   const action = { type: "addon.requested", log: "workspace", ...terms };
   shell("home", h("div", {}, back,
     h("h1", { text: "Approve an add-on" }),
-    h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? wsId.slice(0, 8)) + " asks to install and turn on " + renderText(terms.name) + "." }),
+    h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? "A workspace") + " asks to install and turn on " + renderText(terms.name) + "." }),
     h("dl", { class: "facts" }, addonFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("p", { class: "small muted", text: "Approving here lets the workspace's computer install exactly this package. You can check the fingerprint against the one shown in the workspace." }),
     h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
@@ -819,13 +844,13 @@ async function settingsView(wsId, raw) {
   const action = { type: "settings.changed", log: "workspace", set: terms };
   shell("home", h("div", {}, back,
     h("h1", { text: "Change workspace settings" }),
-    h("p", { class: "sentence", text: "This link asks to change how long things are held in " + renderText(mine.name ?? wsId.slice(0, 8)) + ". Check the change below; nothing happens until you approve." }),
+    h("p", { class: "sentence", text: "This link asks to change how long things are held in " + renderText(mine.name ?? "A workspace") + ". Check the change below; nothing happens until you approve." }),
     h("dl", { class: "facts" }, settingsFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
 
 function advancedForm(workspaces) {
-  const ws = h("select", {}, workspaces.filter((w) => w.can_start).map((w) => h("option", { value: w.workspace_id, text: renderText(w.name ?? w.workspace_id.slice(0, 8)) })));
+  const ws = h("select", {}, workspaces.filter((w) => w.can_start).map((w) => h("option", { value: w.workspace_id, text: renderText(w.name ?? "A workspace") })));
   const type = h("select", {}, Object.keys(DECISIONS).filter((t) => t !== "question.answered").map((t) => h("option", { value: t, text: t })));
   const inputs = Object.fromEntries(["log", "question", "gate", "outcome", "hash", "option", "text"].map((k) => [k, h("input", { id: "f-" + k })]));
   const go = h("button", { class: "pri", "data-sign": "", text: "Review", onclick: () => {
@@ -1031,7 +1056,7 @@ function openShortcuts() {
 async function openSearch() {
   if (!state.user || document.querySelector('[role="dialog"]')) return;
   const user = state.user;
-  let people = [], index = 0, matches = [];
+  let people = [], shared = [], index = 0, matches = [];
   const results = h("div", { id: "search-results", role: "listbox", "aria-label": "Search results" });
   const input = h("input", { type: "search", placeholder: "Search pages, workspaces, tickets…", "aria-label": "Search everything", role: "combobox", "aria-controls": "search-results", "aria-expanded": "true", "aria-autocomplete": "list" });
   const choose = () => {
@@ -1044,7 +1069,7 @@ async function openSearch() {
   };
   const draw = () => {
     if (state.user !== user) { results.replaceChildren(); return; }
-    matches = filterSearch(searchEntries({ admin: user.is_admin, workspaces: state.rail.rows, items: liveItems.user_id === user.user_id ? liveItems.items : [], people }), input.value);
+    matches = filterSearch(searchEntries({ admin: user.is_admin, workspaces: state.rail.rows, items: liveItems.user_id === user.user_id ? liveItems.items : [], people, shared }), input.value);
     index = Math.max(0, Math.min(index, matches.length - 1));
     results.replaceChildren();
     let group;
@@ -1066,8 +1091,9 @@ async function openSearch() {
   const layer = dialog(h("h1", { text: "Search everything" }), input, results, h("button", { text: "Close", onclick: closeDialog }));
   layer.classList.add("search-layer");
   draw(); input.focus();
-  const [needs, rail, users] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail"), user.is_admin ? api("GET", "/admin/users") : Promise.resolve(null)]);
+  const [needs, rail, users, sharedRes] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail"), user.is_admin ? api("GET", "/admin/users") : Promise.resolve(null), api("GET", "/me/shared")]);
   if (!layer.isConnected || state.user !== user) return;
+  if (sharedRes.status === 200) shared = sharedRes.body.items ?? [];
   liveItems = { user_id: user.user_id, items: needs.status === 200 ? needs.body.items ?? [] : [] };
   if (rail.status === 200) state.rail.rows = railRows(rail.body);
   if (users?.status === 200) people = users.body.users ?? [];
@@ -1107,8 +1133,9 @@ async function workspacePage(route) {
     await loadRail();
     const w = state.rail.rows.find((row) => row.id === route.workspace);
     if (!w) return shell("workspaces", h("h1", { text: "Workspace unavailable" }), h("p", { text: "This workspace is not in your list." }));
-    const needs = await api("GET", "/me/needs-you");
+    const [needs, sharedRes] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/me/shared?workspace_id=" + encodeURIComponent(w.id))]);
     const items = needs.status === 200 ? needs.body.items.filter((it) => it.workspace_id === w.id) : [];
+    const sharedTickets = sharedRes.status === 200 ? (sharedRes.body.items ?? []).filter((it) => it.workspace_id === w.id) : [];
     if (route.kind === "item" && w.online) {
       const item = items.find((it) => it.key === route.key || it.item_id === route.key);
       if (item) return reviewItem(item);
@@ -1117,9 +1144,18 @@ async function workspacePage(route) {
     shell("workspaces", h("h1", { text: renderText(w.name) + (w.online ? "" : " is " + workspaceStatus(w)) }),
       h("p", { text: w.online ? "Online" : "Hand-offs and approvals wait until this workspace is back." }),
       h("p", { text: needs.status === 200 && w.online ? items.length + " things need you" : w.badge ? w.badge + " things need you. They wait until the workspace is back." : "Waiting items will be shown when the workspace is back." }),
+      sharedTicketsView(sharedTickets),
       w.online ? h("button", { text: "Open workspace", disabled: !w.canOpen, onclick: () => openWorkspace(w) }) : null,
       w.online && !w.canOpen ? h("p", { text: OPEN_FIRST }) : null);
   } finally { finishLoading(); }
+}
+
+// "Shared tickets (n)": read-only rows; the owner sees with whom a ticket is shared, anyone else by whom.
+function sharedTicketsView(list) {
+  if (!list.length) return null;
+  return h("section", { "aria-label": "Shared tickets" }, h("h2", { text: "Shared tickets (" + list.length + ")" }),
+    list.map((it) => h("div", { class: "list-row" }, h("b", { text: renderText(it.title ?? it.key ?? "Ticket") }),
+      h("div", { class: "small muted", text: Array.isArray(it.shared_with) ? (it.shared_with.length ? "Shared with " + it.shared_with.map(renderText).join(", ") : "Only you") : it.shared_by ? "Shared by " + renderText(it.shared_by) : "Shared" }))));
 }
 
 // Serialize renders so an earlier slow read cannot overwrite the final route.

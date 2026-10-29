@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { busyButton, createLoadingController, emptyWords, focusIndex, skeletonPlan, PROGRESS_DELAY, TOAST_DURATION } from "../../src/orch_hub/web/feel.js";
+import { filterSearch, searchEntries, busyButton, createLoadingController, emptyWords, focusIndex, skeletonPlan, PROGRESS_DELAY, TOAST_DURATION } from "../../src/orch_hub/web/feel.js";
 
 test("skeletons follow the page's column structure", () => {
   assert.deepEqual(skeletonPlan("home"), { grid: "home-grid", sections: [4, 2, 2] });
@@ -173,4 +173,13 @@ test("a second press on a busy button does nothing and returns undefined, so a c
   assert.equal(await busyButton(button, async () => null), undefined);
   release();
   assert.equal(await first, null);
+});
+
+test("a shared ticket is found by search for the person it was shared with, and only from what the hub returned", () => {
+  const shared = [{ workspace_id: "w".repeat(32), key: "DEMO-7", title: "Invoice export for Ben", shared_by: "Anna Test" }];
+  const hit = filterSearch(searchEntries({ shared }), "invoice export");
+  assert.deepEqual(hit.map((e) => e.group), ["Shared tickets"]);
+  assert.match(hit[0].label, /shared by Anna Test/);
+  assert.equal(hit[0].hash, "#/w/" + "w".repeat(32));
+  assert.deepEqual(filterSearch(searchEntries({ shared: [] }), "invoice export"), []); // nothing returned for another user
 });

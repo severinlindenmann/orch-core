@@ -244,7 +244,12 @@ def test_the_review_of_an_adding_change_comes_from_the_host_and_lists_only_new_i
     review = got["review"]
     assert review["new"]["count"] == 1 and review["new"]["items"][0]["line"].endswith(": Second public")
     assert review["leaves"] == [{"kind": "ticket", "text": shareops.LEAVES["ticket"]}]
-    assert review["later_edits"] == shareops.LATER_EDITS and "hub_id" in review and "audience_note" in review
+    assert (
+        review["later_edits"] == shareops.LATER_EDITS
+        and "hub_id" in review
+        and "readers" in review
+        and "widened" in review
+    )
 
 
 def test_five_adding_changes_a_minute_and_each_leaves_a_log_line(served, selective, log):
@@ -288,3 +293,69 @@ def test_a_confirming_sync_checks_the_owner_again_under_the_lock(served, selecti
     before = list(selective.ops)
     assert err(req(served, "share.sync", {"expect": shown})) == "role.denied"
     assert selective.ops == before and seen
+
+
+# --- P02-sec: the confirmed grant (who may read, and the description) is part of what the owner confirmed -------------
+
+U1 = "1" * 32
+RULE_A = {"kind": "tag", "tag": "public", "audience": {"users": [U1], "groups": []}}
+RULE_B = {"kind": "tag", "tag": "extra", "audience": {"users": [], "groups": ["team-b"]}, "description": True}
+
+
+def widened_setup(served, selective):
+    res = ok(agent(served, "new", {"title": "Public note", "message": "What this is about", "label": ["public"]}))
+    key = res["key"]
+    uid = served.lab.ws.uid(key)
+    ok(rule_op(served, "share.rule_add", RULE_A))
+    ok(rule_op(served, "share.rule_add", RULE_B))  # matches nothing yet
+    assert [i.get("audience") for i in selective.opened] == [{"users": [U1], "groups": []}]
+    ok(
+        agent(served, "set", {"ref": key, "pairs": ["labels=extra"]})
+    )  # now only rule B matches: new readers, and the text
+    return uid, key
+
+
+def test_a_group_or_description_that_appears_after_the_confirmation_is_held_back_and_shown_as_widened(
+    served, selective
+):
+    widened_setup(served, selective)
+    ok(req(served, "share.sync"))  # an automatic, unconfirmed pass: the new label may follow, the new readers not
+    for item in selective.opened:
+        assert item.get("audience") in (None, {"users": [U1], "groups": []}) and "description" not in item["content"]
+    st = shareops._load(served.service)
+    (grant,) = [g for lg, g in st.confirmed.items() if lg.startswith("ticket:")]
+    assert grant["groups"] == [] and grant["description"] is False
+    review = ok(req(served, "share.preview"))["data"]["review"]
+    (w,) = review["widened"]
+    assert w["teams_added"] == ["team-b"] and w["description_added"] is True
+    assert review["readers"]["teams"] == ["team-b"]
+    sync_shown(served)  # only the owner's confirmation widens
+    item = selective.opened[-1]
+    assert item["audience"] == {"users": [], "groups": ["team-b"]}
+    assert "What this is about" in item["content"]["description"]
+
+
+def test_narrowing_still_goes_through_automatically(served, selective):
+    _uid, key = widened_setup(served, selective)
+    sync_shown(served)  # the owner confirms the wider audience and the description
+    assert selective.opened[-1]["audience"] == {"users": [], "groups": ["team-b"]}
+    ok(agent(served, "set", {"ref": key, "pairs": ["labels=public,extra"]}))  # both rules match: readers U1 + team-b
+    sync_shown(served)
+    assert selective.opened[-1]["audience"] == {"users": [U1], "groups": ["team-b"]}
+    got = ok(rule_op(served, "share.rule_remove", RULE_A))["data"]  # only B matches now: fewer readers, no new ones
+    assert got["put"] == 1
+    assert selective.opened[-1]["audience"] == {"users": [], "groups": ["team-b"]}
+
+
+def test_a_review_never_opens_a_hub_link_for_names(monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.host import shareops
+
+    def boom(service):
+        raise AssertionError("share.preview must not use the network")
+
+    monkeypatch.setattr(shareops, "_audience", boom)
+    monkeypatch.setattr(shareops, "_link", boom)
+    assert shareops._names_for(SimpleNamespace(), {"a" * 32}) == {}  # cold: the review says "a person on the hub"
+    assert shareops._names_for(SimpleNamespace(_share_names={"a" * 32: "Ben"}), {"a" * 32}) == {"a" * 32: "Ben"}

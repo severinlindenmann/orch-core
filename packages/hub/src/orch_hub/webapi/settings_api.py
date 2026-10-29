@@ -74,6 +74,10 @@ class SettingsControl:
     restart: Callable[[], None] | None = None
     assigned: Callable[[str], bool] = CO.locally_assigned
     detect: Callable[[], list[dict[str, str]]] = field(default=detect_addresses)
+    #: the start-up origin rules of this process (``HubConfig``): called with the new console origins and the API origin
+    #: BEFORE anything is audited or saved, and raises ValueError for a set the next start would refuse (e.g. http
+    #: origins behind the edge), so a change can never leave a hub that crash-loops
+    check_origins: Callable[[frozenset[str], str], None] | None = None
 
 
 def settings_routes(r: Any) -> tuple[Any, ...]:
@@ -140,6 +144,10 @@ def _host_part(host: str) -> str:
     return f"[{host}]" if ":" in host else host
 
 
+def _host_of(web: str) -> str:
+    return web.split("://", 1)[1].rsplit(":", 1)[0].strip("[]")
+
+
 def _port(addr: str) -> int:
     m = _PORT.search(addr)
     assert m is not None  # the settings validator guarantees host:port
@@ -149,30 +157,27 @@ def _port(addr: str) -> int:
 def _entry(a: Any, web_port: int, link_port: int, ctl: SettingsControl) -> dict[str, Any]:
     """One requested address as a settings entry. A private, office or server address must be one of THIS computer's own
     addresses of that kind (an admin cannot make the hub advertise, and allow as an origin, a stranger's address); a
-    public one is a public IP or a host name."""
+    public one is never made here (the public address belongs to the edge setup): only an unchanged one passes."""
     a = _exact(a, {"kind", "host"}, frozenset({"scheme"}))
     kind, host, scheme = a["kind"], a["host"], a.get("scheme", "http")
-    if kind not in KINDS or type(host) is not str or scheme not in ("http", "https") or len(host) > 100:
-        raise _err("malformed")
-    if kind != "public" and scheme != "http":
+    if kind not in KINDS or kind == "public" or type(host) is not str or scheme != "http" or len(host) > 100:
         raise _err("malformed")
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
         ip = None
-    if ip is not None:
-        host = str(ip)
-        if ip.version != 4 and kind != "public" or address_kind(host) != kind:
-            raise _err("malformed")
-        if kind != "public" and not ctl.assigned(host):
-            raise _err("malformed")  # not an address of this computer
-    elif kind != "public" or not _HOST_NAME.fullmatch(host) or host.lower() == "localhost":
+    if ip is None:  # a name, a number such as 2130706433 or 0x7f.1: only addresses of this computer, as dotted IPs
+        raise _err("malformed")
+    host = str(ip)
+    if ip.version != 4 or ip.is_unspecified or ip.is_multicast or ip.is_reserved or ip.is_link_local:
+        raise _err("malformed")
+    if address_kind(host) != kind or not ctl.assigned(host):  # the kind fits and it is one of THIS computer's own
         raise _err("malformed")
     h = _host_part(host)
     return {
         "kind": kind,
         "web": f"{scheme}://{h}:{web_port}",
-        "link": None if kind == "public" else f"{h}:{link_port}",
+        "link": f"{h}:{link_port}",
     }
 
 
@@ -258,8 +263,22 @@ class SettingsHandlers:
             if not links:
                 raise _err("unavailable")
             web_port, link_port = _port(primary["web"]), _port(links[0])
-            entries = [_entry(a, web_port, link_port, ctl) for a in asked]
+            pub = next((a for a in cur["addresses"] if a["kind"] == "public"), None)
+            entries = []
+            for a in asked:
+                if type(a) is dict and a.get("kind") == "public":  # only the install's own public entry, as it is
+                    if pub is None or set(a) - {"kind", "host", "scheme"} or a.get("host") != _host_of(pub["web"]):
+                        raise _err("malformed")
+                    if a.get("scheme", "http") != pub["web"].split(":", 1)[0]:
+                        raise _err("malformed")
+                    entries.append(pub)
+                else:
+                    entries.append(_entry(a, web_port, link_port, ctl))
+            if pub is not None and pub not in entries:
+                entries.append(pub)  # not touched by this route
             if len({e["kind"] for e in entries}) != len(entries) or len({e["web"] for e in entries}) != len(entries):
+                raise _err("malformed")
+            if len(entries) > ADDRESSES_MAX:
                 raise _err("malformed")
             if primary not in entries:  # the phone address is the first entry and is not changed by this route
                 raise _err("phone_address_locked")
@@ -267,6 +286,13 @@ class SettingsHandlers:
             entries.insert(0, primary)
             if entries == cur["addresses"]:
                 return 200, {"ok": True, "changed": False, "restarting": False}
+            if ctl.check_origins is not None:
+                try:
+                    ctl.check_origins(frozenset(e["web"] for e in entries), entries[0]["web"])
+                except ValueError:
+                    raise _err(
+                        "malformed"
+                    ) from None  # the next start would refuse these origins: nothing is audited or saved
             self._settings_commit(c, state, {**cur, "addresses": entries}, "addresses")
             if ctl.restart is None:
                 return 200, {"ok": True, "changed": True, "restarting": False}

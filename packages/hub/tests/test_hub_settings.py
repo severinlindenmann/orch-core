@@ -315,12 +315,115 @@ def test_address_change_saves_audits_and_restarts_once(w, state):
     assert restarts == [1] and len(last) == 1
 
 
-def test_a_public_address_may_be_a_name_and_may_use_https(w, state):
-    _wired(w, state)
+def test_a_public_address_is_not_made_here_and_an_installed_one_is_left_alone(w, state):
+    restarts = _wired(w, state)
     tok = w.login(w.admin)
-    s, o, _ = _put_addrs(w, tok, P_ENTRY, {"kind": "public", "host": "hub.example.com", "scheme": "https"})
+    for pub in (
+        {"kind": "public", "host": "hub.example.com"},
+        {"kind": "public", "host": "8.8.8.8", "scheme": "https"},
+    ):
+        assert _put_addrs(w, tok, P_ENTRY, pub)[:2] == (400, {"error": "malformed"})
+    assert S.load(state) == UP and restarts == []
+    seeded = {"kind": "public", "web": "https://hub.example.com:8100", "link": None}
+    S.save(state, {**UP, "addresses": [PRIMARY, SERVER, seeded]})
+    # an office address is added; the seeded public entry is kept untouched, asked for or not
+    s, o, _ = _put_addrs(w, tok, P_ENTRY, {"kind": "office", "host": "10.0.0.7"})
     assert s == 202, o
-    assert S.load(state)["addresses"][1] == {"kind": "public", "web": "https://hub.example.com:8100", "link": None}
+    assert S.load(state)["addresses"][-1] == seeded and len(S.load(state)["addresses"]) == 3
+    same = {"kind": "public", "host": "hub.example.com", "scheme": "https"}  # naming it unchanged is fine
+    assert _put_addrs(w, tok, P_ENTRY, {"kind": "office", "host": "10.0.0.7"}, same)[1]["changed"] is False
+    other = {"kind": "public", "host": "evil.example", "scheme": "https"}  # changing it is not
+    assert _put_addrs(w, tok, P_ENTRY, other)[:2] == (400, {"error": "malformed"})
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "0.0.0.0",
+        "::",
+        "224.0.0.1",
+        "240.0.0.1",
+        "255.255.255.255",
+        "169.254.1.1",
+        "2130706433",
+        "0x7f.1",
+        "127.1",
+        "localhost",
+        "::1",
+        "fe80::1",
+    ],
+)
+def test_address_change_refuses_unusable_hosts(w, state, host):
+    restarts = _wired(w, state, assigned=lambda ip: True)  # even if the computer "owned" it
+    tok = w.login(w.admin)
+    for kind in ("office", "server", "private"):
+        assert _put_addrs(w, tok, P_ENTRY, {"kind": kind, "host": host})[:2] == (400, {"error": "malformed"})
+    assert S.load(state) == UP and restarts == [] and "hub_settings" not in _audit_types(w)
+
+
+def test_an_origin_set_the_next_start_would_refuse_is_not_saved(w, state):
+    # behind the edge only https origins are valid: an http office address would crash-loop the restart
+    restarts = _wired(w, state)
+
+    def rules(origins, api):
+        SV.HubConfig(
+            dev=True, listen="127.0.0.1:0", web_listen="127.0.0.1:0", trusted_peers=frozenset({"10.9.9.9"}),
+            behind_edge=True, allowed_origins=origins, api_origin=api,
+        )  # fmt: skip
+
+    w.api.d.settings_ctl.check_origins = rules
+    tok = w.login(w.admin)
+    assert _put_addrs(w, tok, P_ENTRY, {"kind": "office", "host": "10.0.0.7"})[:2] == (400, {"error": "malformed"})
+    assert S.load(state) == UP and restarts == [] and "hub_settings" not in _audit_types(w)
+
+
+def test_serve_still_starts_on_the_file_left_after_a_refused_change(tmp_path):
+    state = tmp_path / "hub"
+    HubKeys.init(state)
+    edge = {"kind": "public", "web": "https://hub.example.com", "link": "127.0.0.1:18105"}
+    edge["web"] += ":443"
+    S.save(state, {**UP, "addresses": [edge]})
+    stop, out, result = threading.Event(), io.StringIO(), []
+    t = threading.Thread(
+        target=lambda: result.append(
+            SV.serve(state, "127.0.0.1:0", "http://127.0.0.1:9", [], web_listen="127.0.0.1:0", behind_edge=True,
+                     trusted_peers=frozenset({"127.0.0.1"}), stop=stop, out=out)
+        ),
+        daemon=True,
+    )  # fmt: skip
+    t.start()
+    end = time.monotonic() + 15
+    while "orch-hub web port=" not in out.getvalue() and time.monotonic() < end:
+        time.sleep(0.05)
+    assert "orch-hub web port=" in out.getvalue(), out.getvalue()
+    stop.set()
+    t.join(15)
+    assert result == [0]
+
+
+def test_a_failing_cleanup_exits_non_zero_even_when_a_restart_was_asked_for(tmp_path, monkeypatch):
+    from orch_hub.link import LinkServer
+
+    state = tmp_path / "hub"
+    HubKeys.init(state)
+    S.save(state, UP)
+    monkeypatch.setattr(LinkServer, "close", lambda self: (_ for _ in ()).throw(OSError("boom")))
+    stop, out, result, execs = threading.Event(), io.StringIO(), [], []
+    t = threading.Thread(
+        target=lambda: result.append(
+            SV.serve(state, "127.0.0.1:0", "http://127.0.0.1:9", [], web_listen="127.0.0.1:0", bind_all=True,
+                     stop=stop, out=out, restart_exec=lambda: execs.append(1))
+        ),
+        daemon=True,
+    )  # fmt: skip
+    t.start()
+    end = time.monotonic() + 15
+    while "orch-hub web port=" not in out.getvalue() and time.monotonic() < end:
+        time.sleep(0.05)
+    stop.set()
+    t.join(15)
+    assert result == [1] and execs == []
+    assert "close failed" in out.getvalue()
 
 
 @pytest.mark.parametrize(
@@ -599,7 +702,8 @@ def test_serve_with_bind_all_restarts_and_the_next_start_reads_the_new_file(tmp_
     ch.close()
     acc.close()
     first = {"kind": "server", "web": "http://127.0.0.1:18100", "link": "127.0.0.1:18105"}
-    S.save(state, {**UP, "addresses": [first]})
+    office = {"kind": "office", "web": "http://10.0.0.7:18100", "link": "10.0.0.7:18105"}
+    S.save(state, {**UP, "addresses": [first, office]})
     out, result, execs = io.StringIO(), [], []
     t = threading.Thread(
         target=lambda: result.append(
@@ -617,10 +721,10 @@ def test_serve_with_bind_all_restarts_and_the_next_start_reads_the_new_file(tmp_
     code = totp_code(base64.b32decode(b32 + "=" * (-len(b32) % 8)), int(time.time()) // 30)
     s, o, cookie = _http(port, "POST", "/session", {"user_id": user, "password": PW, "totp": code}, origin=origin)
     assert s == 200, o
-    body = {"addresses": [{"kind": "server", "host": "127.0.0.1"}, {"kind": "public", "host": "hub.example.com"}]}
+    body = {"addresses": [{"kind": "server", "host": "127.0.0.1"}]}  # drop the office address
     s, o, _ = _http(port, "PUT", "/admin/settings/addresses", body, cookie.split(";")[0], origin)
     assert (s, o["restarting"]) == (202, True)
     t.join(15)
     assert not t.is_alive() and result == [0] and execs == [1]  # serve returned (all closed), THEN the restart ran
-    assert [a["kind"] for a in S.load(state)["addresses"]] == ["server", "public"]
+    assert [a["kind"] for a in S.load(state)["addresses"]] == ["server"]
     assert SV._link_endpoint(state, "x:1") == "127.0.0.1:18105"  # the connect link follows the file

@@ -34,9 +34,9 @@ const schemeOf = (web) => (String(web).startsWith("https:") ? "https" : "http");
 
 /**
  * The body of "change the addresses": the phone address as it is, then one entry per kind that has a choice.
- * `picks` maps a kind to the chosen host ("" = not used); `secure` says the public address is https.
+ * `picks` maps a kind to the chosen host ("" = not used);
  */
-export function addressBody(data, picks, secure = false) {
+export function addressBody(data, picks) {
   const phone = (data.addresses ?? [])[0];
   const out = [];
   if (phone) out.push({ kind: phone.kind, host: hostOf(phone.web), ...(phone.kind === "public" && schemeOf(phone.web) === "https" ? { scheme: "https" } : {}) });
@@ -44,7 +44,7 @@ export function addressBody(data, picks, secure = false) {
     if (phone && kind === phone.kind) continue;
     const host = String(picks[kind] ?? "").trim();
     if (!host) continue;
-    out.push(kind === "public" ? { kind, host, ...(secure ? { scheme: "https" } : {}) } : { kind, host });
+    if (kind !== "public") out.push({ kind, host });
   }
   return { addresses: out };
 }
@@ -80,15 +80,7 @@ function addressCard(data, actions) {
   for (const [kind, label] of KINDS) {
     if (kind === data.phone_kind) { fields.push(h("div", { class: "field", "data-kind": kind }, h("label", { text: label }), h("span", { class: "small muted", text: "Phones use this one. It stays as it is." }))); continue; }
     const cur = byKind.get(kind);
-    if (kind === "public") {
-      const input = h("input", { type: "text", id: "addr-public", maxlength: "100", placeholder: "hub.example.com", autocomplete: "off" });
-      input.value = cur ? hostOf(cur) : ""; picks.public = input;
-      const secure = h("input", { type: "checkbox", id: "addr-secure" });
-      secure.checked = !!cur && schemeOf(cur) === "https"; picks.secure = secure;
-      fields.push(h("div", { class: "field", "data-kind": kind }, h("label", { for: "addr-public", text: label }), input,
-        h("label", { class: "small" }, secure, " Reached with https")));
-      continue;
-    }
+    if (kind === "public") continue; // the public address is set up with the edge, not here; an installed one stays as it is
     const choices = detected.filter((d) => d.kind === kind);
     const select = h("select", { id: "addr-" + kind, "aria-label": label }, h("option", { value: "", text: "Not used" }),
       choices.map((d) => h("option", { value: d.ip, text: d.ip })));
@@ -103,7 +95,7 @@ function addressCard(data, actions) {
     h("p", { class: "small muted", text: "Workspaces pick up the new address the next time they connect. Nothing signed changes, so no connection breaks. The hub restarts for a moment." }),
     h("button", { type: "button", class: "primary", text: "Save", onclick: () => {
       const chosen = {}; for (const [k, el] of Object.entries(picks)) if (k !== "secure") chosen[k] = el.value ?? "";
-      actions.saveAddresses?.(addressBody(data, chosen, !!picks.secure?.checked));
+      actions.saveAddresses?.(addressBody(data, chosen));
     } }));
   const open = h("button", { type: "button", text: "Change address", hidden: opened, onclick: () => { form.hidden = false; open.hidden = true; actions.loadDetected?.(); } });
   card.append(open, form);

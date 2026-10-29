@@ -81,11 +81,10 @@ test("Address: Save sends the phone address first, the chosen ones after it, and
   const a = card(view, "address");
   const sel = (kind) => byTag(a.all().find((n) => n.attrs["data-kind"] === kind), "select")[0];
   sel("office").value = "10.1.1.4"; sel("server").value = "";
-  const pub = byTag(a, "input").find((n) => n.attrs.id === "addr-public"); pub.value = "hub.example.com";
-  byTag(a, "input").find((n) => n.attrs.id === "addr-secure").checked = true;
+  assert.deepEqual(byTag(a, "input"), []);   // no field for the public address: it is set up with the edge
   button(a, "Save").listeners.click();
   assert.deepEqual(sent, [{ addresses: [
-    { kind: "private", host: "100.71.188.237" }, { kind: "office", host: "10.1.1.4" }, { kind: "public", host: "hub.example.com", scheme: "https" }] }]);
+    { kind: "private", host: "100.71.188.237" }, { kind: "office", host: "10.1.1.4" }] }]);
 });
 
 test("Address: a hub that only answers on this server shows the install line instead of a picker", () => {
@@ -100,6 +99,7 @@ test("addressBody and hostOf: the phone address is kept as it is, blanks are dro
   const d = { phone_kind: "public", addresses: [{ kind: "public", web: "https://hub.example.com:8100" }, { kind: "server", web: "http://127.0.0.1:8100" }] };
   assert.deepEqual(addressBody(d, { server: "127.0.0.1", office: "  ", public: "other.example" }),
     { addresses: [{ kind: "public", host: "hub.example.com", scheme: "https" }, { kind: "server", host: "127.0.0.1" }] });
+  assert.deepEqual(addressBody(DEMO, { public: "x.example", office: "10.1.1.4" }).addresses.map((e) => e.kind), ["private", "office"]);
 });
 
 test("text from the hub is shown as text, not markup", () => {

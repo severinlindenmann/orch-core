@@ -310,6 +310,19 @@ def serve(
         timer.daemon = True
         timer.start()
 
+    def check_origins(origins: frozenset[str], api: str) -> None:
+        """The start-up rules for a new origin set (the next start applies them to the file): ValueError if refused."""
+        if behind_edge:
+            HubConfig.from_card(
+                keys.card(),
+                listen=cfg.listen,
+                web_listen=web_listen,
+                trusted_peers=trusted_peers,
+                behind_edge=True,
+                allowed_origins=origins,
+                api_origin=api,
+            )
+
     web: WebServer | None = None
     if cfg.web_listen is not None:
         api = WebApi(
@@ -334,7 +347,7 @@ def serve(
                 push=notifier,
                 setup_token_file=state / SETUP_TOKEN_FILE,
                 settings_file=state / SETTINGS_FILE,
-                settings_ctl=SettingsControl(bind_all=bind_all, restart=request_restart),
+                settings_ctl=SettingsControl(bind_all=bind_all, restart=request_restart, check_origins=check_origins),
                 switch=switch,
                 services=Services(
                     relay_url=cfg.relay_url,
@@ -428,23 +441,34 @@ def serve(
             print(invite_line(keys.hub_id, code), file=out, flush=True)
         stop.wait()
     finally:
-        if web is not None:
-            web.close()
-        server.close()
-        deliveries.close()
-        channels.close()
-        views.close()
-        queue.close()
-        space_store.close()
-        share_store.close()
-        changes.close()
-        activity.close()
-        connections.close()
-        user_invites.close()
-        audit.store.close()
-        registry.close()
-        wk_seals.close()
-        access.close()
+        failed = False
+        for close in (
+            web.close if web is not None else None,
+            server.close,
+            deliveries.close,
+            channels.close,
+            views.close,
+            queue.close,
+            space_store.close,
+            share_store.close,
+            changes.close,
+            activity.close,
+            connections.close,
+            user_invites.close,
+            audit.store.close,
+            registry.close,
+            wk_seals.close,
+            access.close,
+        ):
+            if close is None:
+                continue
+            try:
+                close()
+            except Exception as e:  # noqa: BLE001  # keep closing the rest, then exit non-zero (a service manager restarts us)
+                failed = True
+                print(f"orch-hub WARN close failed: {type(e).__name__}", file=out, flush=True)
+    if failed:  # also when a restart was asked for: no exec on top of a half-closed process
+        return 1
     if (
         restarting.is_set()
     ):  # everything above is closed; exec replaces this process (same pid) with a clean descriptor table

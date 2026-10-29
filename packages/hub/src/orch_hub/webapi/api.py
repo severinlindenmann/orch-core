@@ -150,6 +150,7 @@ STATUS = {
     "rate_limited": 429,
     "too_many_channels": 429,
     "unavailable": 503,
+    "phone_address_locked": 409,  # the first address is the one phones pair with: not changed by the address route
     "internal": 500,
     "not_bound": 409,
     "bad_ticket": 403,
@@ -260,6 +261,9 @@ class WebDeps:
         None  # orch_hub.changes.Changes: access changes that need the owner; None = those routes answer ``unavailable``
     )
     settings_file: Path | None = None  # hub-settings.json; None = "not configured"
+    settings_ctl: Any = (
+        None  # webapi.settings_api.SettingsControl (restart hook, bind-all, detector); None = no address writes
+    )
     user_invites: Any = (
         None  # orch_hub.invites.Invites (join / reset / recovery links); None = those routes are ``unavailable``
     )

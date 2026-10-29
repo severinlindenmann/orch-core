@@ -39,6 +39,8 @@ export type HandoffAction =
    * criteria to change or add, a new `title` (only when it differs), the repositories (and a branch each) the ticket is linked to, and the people to add or remove. `head_seq` is the log head the page showed: the server
    * refuses the edit when the ticket has changed since.
    */
+  /** R11 P09: the requirements AND the plan of an existing ticket approved with ONE signature (two ordinary approvals). `head_seq` is the log head the page showed. */
+  | { action: 'approve_both'; key: string; head_seq: number }
   | { action: 'edit_sequence'; key: string; head_seq: number; title?: string; sections?: Partial<Record<'summary' | 'context' | 'requirements' | 'out_of_scope' | 'plan' | 'decisions' | 'verification' | 'findings' | 'current_state', string>>; acceptance?: { edit: Record<string, string>; add: string[] }; tasks?: { edit: Record<string, { text?: string; verify?: string | null; proves?: string[] }>; add: { text: string; verify?: string; proves: string[] }[] }; links?: { repos: string[]; branches: Record<string, string> }; people?: Partial<Record<'owner' | 'assignees' | 'reviewers', { add: string[]; remove: string[] }>>; images?: { name: string; sha256: string; bytes: number; alt: string }[] }
   /** B11 step (ii): a quick task on ONE review and ONE confirmation: ticket, requirements, plan, both approvals and, if asked, agent access last. */
   | { action: 'quick_start'; title: string; description?: string; checks?: { text: string; cmd?: string }[]; agent?: { hours: number } }
@@ -213,7 +215,7 @@ function reviewMatches(material: HandoffMaterial, events: HandoffEvent[]): boole
 
 /** kind -> [required, allowed]: core signer `_MATERIAL_KEYS` for these kinds (a server test keeps them equal). */
 const MATERIAL_KEYS: Record<string, [string[], string[]]> = {
-  gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review', 'manual_acceptances']],
+  gate: [['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review'], ['kind', 'gate', 'input', 'policy', 'texts', 'ticket', 'review', 'manual_acceptances', 'sequence']],
   question: [['kind', 'ticket', 'question', 'review'], ['kind', 'ticket', 'question', 'review']],
   payload: [['kind', 'ticket', 'review'], ['kind', 'ticket', 'review', 'texts', 'before', 'sequence', 'statement', 'grants', 'market', 'deps', 'removed_device', 'agent_access_until']],
 }

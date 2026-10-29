@@ -24,7 +24,7 @@ import { HandoffSignDialog } from './HandoffSignDialog'
 type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
 
 /** The dialog title and what the signature covers, in core's words (the answer itself is shown field by field, see Answer). */
-function describe(ticket: TicketDocument, a: HumanAction): Described {
+function describe(ticket: TicketDocument, a: Exclude<HumanAction, { kind: 'approve_both' }>): Described {
   if (a.kind === 'answer') {
     const q = ticket.questions_state.find((x) => x.id === a.question)!
     return { title: `Answer ${q.id}`, hash: q.hash ?? '', covers: ['The question, its options and its current hash', 'Your answer: the option and the text shown above'] }
@@ -145,7 +145,7 @@ function Answer({ ticket, question, option, text }: { ticket: TicketDocument; qu
  * button, keeps the hash in a closed Details, and starts with focus on Cancel (the first radio for a verdict).
  * `onOpenEvidence` lets the ticket page jump to the evidence; without it the dialog closes and opens the ticket.
  */
-function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChanges, onPending }: { onPending?: (pending: boolean) => void; ticket: TicketDocument; action: HumanAction | null; onClose: () => void; onOpenEvidence?: () => void; onOpenChanges?: () => void }) {
+function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenChanges, onPending }: { onPending?: (pending: boolean) => void; ticket: TicketDocument; action: Exclude<HumanAction, { kind: 'approve_both' }> | null; onClose: () => void; onOpenEvidence?: () => void; onOpenChanges?: () => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [phase, setPhase] = useState<'confirm' | 'touch' | 'sending'>('confirm')
@@ -367,7 +367,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
   )
 }
 
-type Props = Parameters<typeof SimulatedSignDialog>[0]
+type Props = Omit<Parameters<typeof SimulatedSignDialog>[0], 'action'> & { action: HumanAction | null }
 
 /**
  * A ticket's human action. On a real host the host prepares the request and the person signs it with one click
@@ -376,5 +376,7 @@ type Props = Parameters<typeof SimulatedSignDialog>[0]
 export function SignDialog(props: Props) {
   const workspaces = useQuery(queries.workspaces())
   const ws = workspaceOfTicket(props.ticket.key, workspaces.data ?? [])
-  return handoffMode(ws?.id) ? <HandoffSignDialog {...props} ws={ws?.id} /> : <SimulatedSignDialog {...props} />
+  if (handoffMode(ws?.id)) return <HandoffSignDialog {...props} ws={ws?.id} />
+  // The mockup has no signer: approving both gates with one signature is offered on a real host only (availableActions).
+  return props.action?.kind === 'approve_both' ? null : <SimulatedSignDialog {...props} action={props.action} />
 }

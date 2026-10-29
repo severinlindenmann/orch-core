@@ -54,6 +54,8 @@ export function storyOf(action: ClickAction | null | undefined, ctx: StoryContex
         steps: ['You sign.', 'The task is created, with the requirements and the plan you see here approved.', ...(hours ? [`Access is given for ${accessLength(hours)}.`] : []), ...(ctx.startsAgent ? ['An agent starts and does the work.'] : ['Nothing starts yet: an agent starts only when you press Start agent.'])],
       }
     }
+    case 'approve_both':
+      return { signLabel: 'Sign and start building', steps: ['You sign.', 'The requirements and the plan are locked as shown.', 'The agent may start building.'] }
     case 'approve':
       if (action.gate === 'requirements') return { signLabel: 'Sign requirements', scope: 'This signs the requirements only, not the plan.', steps: ['You sign.', 'The requirements are locked as shown.', 'The plan still needs your approval, separately.'] }
       if (action.gate === 'plan') return { signLabel: 'Sign and start building', steps: ['You sign.', 'The agent may start building the plan shown here.', 'You review the result and give the final verdict.'] }

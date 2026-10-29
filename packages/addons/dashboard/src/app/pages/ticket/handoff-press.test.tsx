@@ -48,3 +48,16 @@ it('verdict: nothing is preselected when a requirement is not checked; the hint 
   expect(p.action).toBeNull()
   expect(p.hint).toBe('Pick Pass or Send back to continue')
 })
+
+// R11 P09: the combined approval asks the signer for ONE sequence request (never two separate approvals).
+it('approve_both prepares one approve_both request bound to the head the page showed, and arms only on a press', () => {
+  const t = { ...ticket, title: 'Add a hello.txt', head: { seq: 7, hash: 'h' } } as unknown as TicketDocument
+  const r = render(<QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'approve_both', pressed: true }} ws="w" onClose={() => {}} /></QueryClientProvider>)
+  const p = last() as unknown as { action: unknown; title: string; autoStart: boolean; confirmLabel: string }
+  expect(p.action).toEqual({ action: 'approve_both', key: 'T-1', head_seq: 7 })
+  expect(p.title).toBe('Approve requirements and plan: Add a hello.txt')
+  expect(p.autoStart).toBe(true)
+  r.unmount()
+  render(<QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'approve_both' }} ws="w" onClose={() => {}} /></QueryClientProvider>)
+  expect((last() as unknown as { autoStart: boolean }).autoStart).toBe(false)
+})

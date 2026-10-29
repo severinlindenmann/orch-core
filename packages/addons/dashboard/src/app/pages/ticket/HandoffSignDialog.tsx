@@ -17,8 +17,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { gateActionName } from './actions'
 import { useViewer, type HumanAction } from './shared'
 
-function titleOf(a: HumanAction): string {
+function titleOf(a: HumanAction, ticketTitle: string): string {
   switch (a.kind) {
+    case 'approve_both':
+      return `Approve requirements and plan: ${ticketTitle}`
     case 'answer':
       return `Answer ${a.question}`
     case 'approve':
@@ -33,6 +35,8 @@ function titleOf(a: HumanAction): string {
 /** The ONE toast after the signature says the outcome, not the mechanism. */
 function doneToastOf(a: HumanAction): string {
   switch (a.kind) {
+    case 'approve_both':
+      return 'Requirements and plan approved'
     case 'answer':
       return 'Answer sent'
     case 'approve':
@@ -47,7 +51,7 @@ function doneToastOf(a: HumanAction): string {
 /** The content the ticket had when the request was prepared, for the "changed since you started" warning only. */
 function liveHash(ticket: TicketDocument, a: HumanAction): string | null {
   if (a.kind === 'answer') return ticket.questions_state.find((q) => q.id === a.question)?.hash ?? null
-  const gate: GateName = a.kind === 'verdict' ? 'verify' : a.gate
+  const gate: GateName = a.kind === 'verdict' ? 'verify' : a.kind === 'approve_both' ? 'requirements' : a.gate
   return ticket.gates[gate].hash ?? null
 }
 
@@ -77,12 +81,12 @@ export function HandoffSignDialog({
   // The opening press of an approve is used once: it is kept per action object and spent when the review starts,
   // so a remount never re-arms without a new press. Approve never depends on the ambient press flag.
   const press = useRef<{ a: HumanAction | null; left: boolean }>({ a: null, left: false })
-  if (press.current.a !== action) press.current = { a: action, left: action?.kind === 'approve' && action.pressed === true }
+  if (press.current.a !== action) press.current = { a: action, left: (action?.kind === 'approve' || action?.kind === 'approve_both') && action.pressed === true }
   // A preview replaces the verdict form in the dialog body; the choice and note stay in this component's state.
   const [preview, setPreview] = useState<{ artifact: Artifact; acId: string } | null>(null)
   if (!action) return null
 
-  const title = titleOf(action)
+  const title = titleOf(action, ticket.title)
   const note = text.trim()
   let request: HandoffAction | null = null
   let hint: string | null = null
@@ -90,6 +94,10 @@ export function HandoffSignDialog({
   switch (action.kind) {
     case 'approve':
       request = { action: 'approve', key: ticket.key, gate: action.gate }
+      break
+    case 'approve_both':
+      confirmLabel = 'Approve and start building'
+      request = { action: 'approve_both', key: ticket.key, head_seq: ticket.head.seq }
       break
     case 'request_changes':
       confirmLabel = 'Request changes'
@@ -136,7 +144,7 @@ export function HandoffSignDialog({
       action={request}
       doneToast={doneToastOf(action)}
       confirmLabel={confirmLabel}
-      autoStart={action.kind === 'approve' ? press.current.left : undefined}
+      autoStart={action.kind === 'approve' || action.kind === 'approve_both' ? press.current.left : undefined}
       armOnStart
       hint={preview ? 'Go back to the verdict to sign' : hint}
       warning={warning}
@@ -146,7 +154,13 @@ export function HandoffSignDialog({
       }}
       onSettled={(phase) => {
         // The host confirmed the signature: the item leaves Today and the approvals now, not at the next read.
-        if (phase === 'done') signedNow(qc, ws, ticket.key, action.kind === 'answer' ? action.question : action.kind === 'verdict' ? 'verify' : action.gate, now)
+        if (phase !== 'done') return
+        if (action.kind === 'approve_both') {
+          signedNow(qc, ws, ticket.key, 'requirements', ticket.gates.requirements.hash ?? null)
+          signedNow(qc, ws, ticket.key, 'plan', ticket.gates.plan.hash ?? null)
+          return
+        }
+        signedNow(qc, ws, ticket.key, action.kind === 'answer' ? action.question : action.kind === 'verdict' ? 'verify' : action.gate, now)
       }}
       onClose={onClose}
       initialFocus={() => (action.kind === 'verdict' ? radio.current : null)}

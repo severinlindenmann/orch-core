@@ -35,6 +35,7 @@ from .signing import (
     NEXT_RETRY_HOPS,
     AddonEnable,
     AgentAccess,
+    ApproveBoth,
     EditTicket,
     HubJoin,
     HubLeave,
@@ -848,7 +849,7 @@ def register(app: FastAPI, gateway: Gateway):
         if isinstance(body, AgentAccess) and not signer.reveals():
             raise fail("click.contract", "Update orch-core: its signing helper cannot show a grant secret yet.", exit=9)
         if (
-            isinstance(body, NewTicketSequence | EditTicket | QuickStart | AddonEnable | MarketGrant)
+            isinstance(body, NewTicketSequence | EditTicket | ApproveBoth | QuickStart | AddonEnable | MarketGrant)
             and not signer.sequences()
         ):
             # an older signer would ignore `sequence` and sign the first step only

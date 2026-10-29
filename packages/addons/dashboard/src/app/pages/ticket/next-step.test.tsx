@@ -338,3 +338,60 @@ it('P15: the working line says what the agent does and counts up on its own', as
     expect(screen.getByTestId('activity-line')).toHaveTextContent('Building: Add hello.txt · 2 min')
   } finally { vi.useRealTimers() }
 })
+
+// R11 P09: requirements and plan together: one card, one button, one signature.
+async function both() {
+  const { setFeatures } = await import('@/api/features')
+  setFeatures({ features: ['identity', 'today', 'tickets', 'board', 'ticket', 'actions'], workspaces: {} }) // a real host
+  const doc = await demo()
+  doc.status = 'open'
+  doc.claim = null
+  doc.head = { seq: 7, hash: 'sha256:' + 'a'.repeat(64) }
+  doc.body = { ...doc.body, requirements: 'Write hello.txt.', plan: 'Do it.' }
+  doc.tasks = doc.tasks.length ? doc.tasks : ([{ id: 'T1', text: 'Write it', proves: ['AC1'] }] as never)
+  doc.gates.requirements = { ...doc.gates.requirements, state: 'pending', approvals: [], missing: [], needed: 1, hash: 'sha256:' + 'b'.repeat(64) }
+  doc.gates.plan = { ...doc.gates.plan, state: 'pending', approvals: [], missing: [], needed: 1, hash: 'sha256:' + 'c'.repeat(64) }
+  return doc
+}
+
+it('both written and open: one "Ready for your approval" card whose button signs both at once', async () => {
+  const { setFeatures } = await import('@/api/features')
+  const doc = await both()
+  const sign = vi.fn()
+  show(doc, sign)
+  const card = screen.getByTestId('next-step')
+  expect(card).toHaveTextContent('Ready for your approval')
+  const user = userEvent.setup()
+  await user.click(within(card).getByRole('button', { name: 'Approve and start building' }))
+  expect(sign).toHaveBeenLastCalledWith({ kind: 'approve_both', pressed: false }) // a synthetic click is no press: nothing is signed by it
+  await user.click(within(card).getByRole('button', { name: 'Change something' }))
+  expect(sign).toHaveBeenLastCalledWith({ kind: 'request_changes', gate: 'requirements' })
+  expect(within(card).queryByRole('button', { name: 'Approve plan' })).toBeNull()
+  setFeatures(null)
+})
+
+it.each([
+  ['the plan is not written yet', (d: TicketDocument) => { d.body = { ...d.body, plan: '' } }],
+  ['the plan still lacks something', (d: TicketDocument) => { d.gates.plan = { ...d.gates.plan, missing: ['tasks'] } }],
+  ['the requirements lack something', (d: TicketDocument) => { d.gates.requirements = { ...d.gates.requirements, missing: ['context'] } }],
+  ['the requirements need more than one approval', (d: TicketDocument) => { d.gates.requirements = { ...d.gates.requirements, needed: 2 } }],
+  ['someone else already approved the requirements', (d: TicketDocument) => { d.gates.requirements = { ...d.gates.requirements, approvals: [{ by: 'p_other', at: '2026-10-29T08:00:00Z' }] } }],
+  ['the requirements are approved already', (d: TicketDocument) => { d.gates.requirements = { ...d.gates.requirements, state: 'approved' } }],
+  ['the viewer may not decide the plan', (d: TicketDocument) => { d.gates.plan = { ...d.gates.plan, eligible: ['p_other'] } }],
+])('today\'s single card stays when %s', async (_why, mutate) => {
+  const { setFeatures } = await import('@/api/features')
+  const doc = await both()
+  mutate(doc)
+  show(doc)
+  expect(screen.queryByTestId('next-step')?.textContent ?? '').not.toContain('Ready for your approval')
+  expect(screen.queryByRole('button', { name: 'Approve and start building' })).toBeNull()
+  setFeatures(null)
+})
+
+it('without a real host (the mockup) there is no combined card', async () => {
+  const { setFeatures } = await import('@/api/features')
+  const doc = await both()
+  setFeatures(null)
+  show(doc)
+  expect(screen.queryByRole('button', { name: 'Approve and start building' })).toBeNull()
+})

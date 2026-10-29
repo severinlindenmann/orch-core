@@ -24,7 +24,7 @@ MAX_LIFE = 900  # the host lets a request live 10 minutes; anything much longer 
 MATERIAL_KEYS = {
     "gate": (
         {"kind", "gate", "input", "policy", "texts", "ticket", "review"},
-        {"kind", "gate", "input", "policy", "texts", "ticket", "review", "manual_acceptances"},
+        {"kind", "gate", "input", "policy", "texts", "ticket", "review", "manual_acceptances", "sequence"},
     ),
     "question": ({"kind", "ticket", "question", "review"},) * 2,
     "payload": (

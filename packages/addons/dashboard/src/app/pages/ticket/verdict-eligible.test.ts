@@ -42,7 +42,7 @@ it('a verdict the host marks stale (current: false) does not hide "Give verdict"
 })
 
 const q = (id: string, blocking: boolean) => ({ id, blocking }) as Available['answer'][number]
-const none: Available = { approve: [], requestChanges: [], verdict: false, answer: [] }
+const none: Available = { approve: [], approveBoth: false, requestChanges: [], verdict: false, answer: [] }
 
 it('header priority: blocking question > verdict > approve > other question > start agent', () => {
   expect(primaryAction({ ...none, verdict: true, approve: ['plan'], answer: [q('Q1', true)] })).toEqual({ kind: 'answer', question: 'Q1' })

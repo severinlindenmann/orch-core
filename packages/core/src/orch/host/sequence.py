@@ -1403,10 +1403,14 @@ def _gates_content(content: dict[str, Any], prepared: Mapping[str, Any], intent:
     ref = f"{signcontent.one(key)} (key per host; signed id …{uid_tail})"
     content["headline"] = f"Approve requirements and plan of {ref}"
     content["subline"] = "the requirements as shown, then the plan as shown; one signature approves both"
-    sections = [{**s, "title": f"Requirements: {s['title']}"} for s in content.get("sections", [])]
+
+    def title(gate: str, name: str) -> str:
+        return name if name.lower() == gate else f"{gate.capitalize()}: {name}"
+
+    sections = [{**s, "title": title("requirements", s["title"])} for s in content.get("sections", [])]
     for sid, text in intent["plan"]["sections"].items():
         if text:
-            sections.append({"id": f"plan:{sid}", "title": f"Plan: {signcontent._title(sid)}", "text": text})
+            sections.append({"id": f"plan:{sid}", "title": title("plan", signcontent._title(sid)), "text": text})
     content["sections"] = sections
     tasks = signcontent._tasks(intent["plan"]["tasks"])
     content["tasks"] = tasks

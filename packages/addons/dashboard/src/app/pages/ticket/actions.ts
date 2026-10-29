@@ -53,6 +53,8 @@ export function canAnswer(q: QuestionStatus, viewer: Viewer): boolean {
 
 export interface Available {
   approve: ('requirements' | 'plan' | 'code')[]
+  /** R11 P09: requirements AND plan are both written, complete and open, and this person's one approval completes the requirements: one signature approves both. */
+  approveBoth: boolean
   requestChanges: GateName[]
   verdict: boolean
   answer: QuestionStatus[]
@@ -96,6 +98,16 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
       requestChanges.push('plan')
     }
   }
+  // One signature for both: only on a real host (the signer serves it), both gates written and complete, this person may
+  // decide both, and their one approval completes the requirements (otherwise the plan cannot be approved in the same run).
+  const planGate = t.gates.plan
+  const approveBoth =
+    isRealHost() &&
+    t.status !== 'done' &&
+    !!t.head?.seq &&
+    t.gates.requirements.state !== 'approved' && !!t.body.requirements?.trim() && !lacks(t.gates.requirements) && canApproveGate(t, 'requirements', viewer) &&
+    t.gates.requirements.needed === 1 && t.gates.requirements.approvals.length === 0 &&
+    planGate.state !== 'approved' && !!t.body.plan?.trim() && t.tasks.length > 0 && !lacks(planGate) && canApproveGate(t, 'plan', viewer)
   // A verdict the host marks stale (a fail followed by a resubmit, a new commit) does not count: a new one is due. A current verdict by someone else leaves the viewer's own to give (a verify gate with two people).
   const verdict = t.status === 'testing' && t.gates.verify.state !== 'approved' && !(t.verdict && t.verdict.current !== false && t.verdict.by === viewer.person) && canApproveGate(t, 'verify', viewer)
   if (verdict) requestChanges.push('verify')
@@ -104,7 +116,7 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
     approve.push('code')
     requestChanges.push('code')
   }
-  return { approve, requestChanges, verdict, answer: t.questions_state.filter((q) => canAnswer(q, viewer)) }
+  return { approve, approveBoth, requestChanges, verdict, answer: t.questions_state.filter((q) => canAnswer(q, viewer)) }
 }
 
 /** The one thing the viewer should do next on this ticket, shown as the header's primary button (null: nothing). */

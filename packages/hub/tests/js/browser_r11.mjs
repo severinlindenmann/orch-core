@@ -57,8 +57,9 @@ try {
   await shot("workspaces");
   await page.getByRole("button", { name: "Connect a workspace" }).click();
   await page.getByText("30 minutes").first().waitFor();
-  await page.getByRole("button", { name: "Everything" }).first().click();
-  await page.getByText("Suggested: Everything").waitFor();
+  // P10: one link box in the connect card, no mode buttons
+  await page.getByRole("region", { name: "Connect a workspace" }).waitFor();
+  assert((await page.getByRole("button", { name: "Everything" }).count()) === 0, "no mode buttons in the connect card");
   await shot("workspaces-connect");
   // P07: a workspace joins while the page is open (the test joins one now); no click, no navigation.
   assert((await page.getByText("No workspaces yet").count()) === 1, "empty before the join");

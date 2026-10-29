@@ -94,6 +94,11 @@ def test_every_case_has_a_phase_and_negatives_cover_the_brief():
         "log_sync_proj_refreshed_by_overlap",
         "proj_build_stale_ticket_head",
         "proj_build_hash_differs",
+        "space_item_by_missing",
+        "space_item_by_bad_kind",
+        "space_item_by_agent_ok",
+        "space_item_restored_from_ok",
+        "space_item_restored_from_bad",
     ):
         assert must in names
 

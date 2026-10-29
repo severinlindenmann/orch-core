@@ -244,7 +244,9 @@ def apply_in_background(service: WorkspaceService, state: Any, answer: dict[str,
 
     t = threading.Thread(target=work, name="hub-addrs", daemon=True)
     t.start()
-    _THREADS.append(t)
+    with _MU:
+        _THREADS[:] = [x for x in _THREADS if x.is_alive()]
+        _THREADS.append(t)
     return t
 
 

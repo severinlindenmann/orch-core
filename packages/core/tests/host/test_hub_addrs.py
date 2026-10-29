@@ -487,15 +487,43 @@ def test_probes_run_after_the_link_is_closed_and_the_refresh_never_waits_for_the
     assert _state(served).addrs == ["10.0.0.5:8105"]
 
 
+def _no_dial(monkeypatch):
+    """Any real dial fails the test loudly: a refusal must happen before it."""
+    from orch.hubclient.tlslink.client import LinkClient
+
+    def dialled(*a, **k):
+        raise AssertionError("dialled")
+
+    monkeypatch.setattr(LinkClient, "open", staticmethod(dialled))
+    monkeypatch.setattr(hubaddr.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", ("169.254.169.254", 0))])
+
+
 def test_the_policy_applies_to_the_current_address_at_every_dial(monkeypatch):
     from types import SimpleNamespace
 
+    _no_dial(monkeypatch)
     service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0)
-    monkeypatch.setattr(hubaddr.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", ("169.254.169.254", 0))])
     link = {"addr": "hub.example:8105", "spki": PIN, "hk_op": b"", "wsk_pub": b"", "sign": lambda m: b""}
     t = hubops._transport(service, HUB_ID, link)  # noqa: SLF001
-    with pytest.raises(OSError):
-        t.ensure_open("status_put")  # refused before any connection
+    with pytest.raises(OSError, match="refused by policy"):
+        t.ensure_open("status_put")
+
+
+def test_the_peer_link_applies_the_policy_to_the_current_address_too(monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.host import peerops
+
+    _no_dial(monkeypatch)
+    state = SimpleNamespace(
+        binding={"o": {"dev": False}}, addr="hub.example:8105", addrs=[], tls_spki=PIN, hub_id=HUB_ID, mode="selective",
+        hk_op_pub=CARD["op_cert"]["o"]["hk_op_pub"],
+    )  # fmt: skip
+    monkeypatch.setattr(peerops, "_hub_state", lambda service, full: state)
+    monkeypatch.setattr(hubops, "_wsk_sign", lambda service: (b"", lambda m: b""))
+    service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0)
+    with pytest.raises(OSError, match="refused by policy"):
+        peerops._open_link(service)  # noqa: SLF001
 
 
 def test_old_failures_are_forgotten(probe):

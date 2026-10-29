@@ -363,7 +363,7 @@ def restore(
     data: bytes,
     words: str,
     *,
-    dev_mode: bool = True,
+    dev_mode: bool,
     keys: HubKeys | None = None,
     actor: str | None = None,
     audit: Any = None,

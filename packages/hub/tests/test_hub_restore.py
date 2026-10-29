@@ -68,6 +68,7 @@ def _backup(w):
 
 
 def _restore(w, data, words, **kw):
+    kw.setdefault("dev_mode", True)
     kw.setdefault("keys", w.env.keys)
     kw.setdefault("audit", w.env.audit)
     kw.setdefault("now_ms", w.clock)
@@ -250,14 +251,14 @@ def test_a_fresh_server_floor_is_the_clock_in_milliseconds_and_climbs_on_a_secon
     words, data = _backup(w)
     fresh = tmp_path / "srv" / "data"
     h = B.read_header(data, dev_mode=True, live=None)[1]
-    got = RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    got = RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
     assert got["in_place"] is False
     assert got["op_seq"] == max(h["op_seq"] + 1000, 1_900_000_000_000) == 1_900_000_000_000
     assert got["op_seq"] < 2**53 and got["card_seq"] == 1_900_000_000_000
     k = HubKeys.open(fresh, now_ms=lambda: 1_900_000_000_000)
     assert k.op_seq == got["op_seq"] and k.hub_id == w.env.keys.hub_id
     again = RS.restore(
-        fresh, data, words, now_ms=lambda: 1_900_000_000_001
+        fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_001
     )  # an earlier clock still climbs (in place now)
     assert again["in_place"] is True and again["op_seq"] == got["op_seq"] + 1000
     assert not (tmp_path / "srv" / "data.new").exists()
@@ -728,7 +729,7 @@ def test_a_fresh_server_switches_shares_and_offers_off_until_an_admin_confirms_a
     _org(w)
     words, data = _backup(w)
     fresh = tmp_path / "srv" / "d"
-    got = RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    got = RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
     q = lambda sql: _rows(fresh, "access.db", sql)
     assert (
         q("SELECT * FROM org_secret_shares") == []
@@ -770,7 +771,7 @@ def test_the_pending_routes_list_and_confirm_for_admins_only(w):
     _org(w)
     words, data = _backup(w)
     fresh = w.tmp / "f" / "d"
-    RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
     acc = Access(str(fresh / "access.db"))
     w.api.d.access = acc
     try:
@@ -829,7 +830,7 @@ def test_a_fresh_server_deletes_the_credentials_of_everyone_who_must_recover(w, 
     _set(w, "UPDATE users SET must_recover=1 WHERE user_id=?", w.ann)
     words, data = _backup(w)
     fresh = tmp_path / "srv" / "d"
-    RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
     left = {u for (u,) in _rows(fresh, "channels.db", "SELECT user_id FROM credentials")}
     assert w.ann not in left and w.admin not in left and w.carol not in left  # admins recover too (fresh server)
     assert _rows(fresh, "access.db", f"SELECT must_recover FROM users WHERE user_id='{w.ann}'") == [(1,)]
@@ -883,7 +884,7 @@ def test_L4_recover_gives_the_kept_backups_back_when_the_crash_came_after_they_m
 def test_L1_a_fresh_server_restore_is_audited_too(w, tmp_path):
     words, data = _backup(w)
     fresh = tmp_path / "srv" / "d"
-    got = RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    got = RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
     from orch_hub.audit import AuditStore
 
     st = AuditStore(str(fresh / "audit.db"))
@@ -940,7 +941,7 @@ def test_L5_a_fresh_server_keeps_every_restriction_and_stages_only_what_grants(w
     db.execute("INSERT INTO addon_request VALUES (?, 'x', '1', 'person', 1, 1, 1)", (WS,))
     words, data = _backup(w)
     fresh = tmp_path / "srv" / "d"
-    RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
     # RESTRICTING: allow lists, block list, ceiling are kept as they were
     assert _rows(fresh, "access.db", "SELECT * FROM workspace_addon_allow") == [(WS, '["a"]')]
     pol = _j.loads(_rows(fresh, "access.db", "SELECT policy FROM market_policy")[0][0])
@@ -1190,7 +1191,7 @@ def test_L5_a_fresh_restore_never_adds_a_market_and_confirm_never_re_adds_offici
     _put_policy(w, only_company)
     words, data = _backup(w)
     fresh = tmp_path / "srv" / "d"
-    RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    RS.restore(fresh, data, words, dev_mode=True, now_ms=lambda: 1_900_000_000_000)
     pol = _j.loads(_rows(fresh, "access.db", "SELECT policy FROM market_policy")[0][0])
     assert pol["markets"] == []  # the backup had no official market: none is added
     acc = Access(str(fresh / "access.db"))

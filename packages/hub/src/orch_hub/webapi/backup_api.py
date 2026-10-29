@@ -241,6 +241,7 @@ class BackupHandlers:
                 keys.state,
                 data,
                 words,
+                dev_mode=keys.dev,
                 keys=keys,
                 actor=c.user_id,
                 audit=self.d.audit,

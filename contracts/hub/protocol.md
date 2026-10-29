@@ -2224,7 +2224,7 @@ without touching a card, a binding or a certificate. Bound hosts learn the list 
   the grammar of the connect link's endpoint (host a name, an IPv4 address or `[v6]`; port 1..65535 without leading zero;
   at most 300 characters; no scheme, path, space or user info). No `link` twice. Order is the hub's preference.
 - `name`: the display name, 1 to 60 code points **as sent**; the receiver removes every character of the Unicode
-  categories `Cc`, `Cf` (so bidi marks and embeddings, zero-width characters), `Zl` and `Zp`, trims outer white space and
+  categories `Cc`, `Cf` (so bidi marks and embeddings, zero-width characters), `Cs`, `Co`, `Cn`, `Zl` and `Zp`, trims outer white space and
   refuses the answer (`malformed`) if nothing is left. It is shown as the hub's own words, never inside workspace-owned UI.
 
 Anything else is `malformed` (fail closed; the host keeps what it holds). **The answer is a hint, not evidence** (Opus

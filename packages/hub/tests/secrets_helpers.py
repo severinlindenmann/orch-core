@@ -1,6 +1,5 @@
 """Helpers of the company-secrets tests (M3 S-2): a web API whose registry holds real VERIFIED v2 cards, and the browser's
-sealing done with the contract's reference function. The secrets routes are added to the route table here because the
-table lives in ``webapi/api.py`` (registration is a one-line change there, owned by another lane)."""
+sealing done with the contract's reference function. The secrets routes are the real ones from ``webapi/api.py``."""
 
 from __future__ import annotations
 
@@ -10,25 +9,11 @@ from orch_hub.contract import vectorgen as G
 from orch_hub.contract.canon import b64u, unb64u
 from orch_hub.contract.org_secrets import seal_org_secret
 from orch_hub.link import Registry
-from orch_hub.webapi import api as API
-from orch_hub.webapi import secrets_api as SA
 
 WS_A, WS_B, WS_C = G.WS_A, G.WS_B, G.WS_C
 KEYS = {WS_A: ("wsk_a", "wxk_a"), WS_B: ("wsk_b", "wxk_b"), WS_C: ("wsk_a", "wxk_a")}
 VALUE = "sk-live-0123456789abcdef"
 DAY = 86_400_000
-
-
-def install_routes(monkeypatch) -> None:
-    routes = SA.secret_routes(API._r)
-    monkeypatch.setattr(API, "ROUTES", (*API.ROUTES, *routes))
-    by = {k: list(v) for k, v in API._BY_METHOD.items()}
-    for r in routes:
-        by.setdefault(r.method, []).append(r)
-    monkeypatch.setattr(API, "_BY_METHOD", by)
-    for name in dir(SA.SecretHandlers):
-        if name.startswith("_h_") or name in ("_now_ms", "_bound", "_recipients"):
-            monkeypatch.setattr(API.WebApi, name, getattr(SA.SecretHandlers, name), raising=False)
 
 
 def card(ws: str, wxk_version: int = 1) -> dict:
@@ -52,7 +37,6 @@ class SWeb(Web):
     """The Web fixture with a REAL registry (verified cards) and the secrets routes."""
 
     def __init__(self, tmp_path, monkeypatch, workspaces=(WS_A, WS_B)) -> None:
-        install_routes(monkeypatch)
         super().__init__(tmp_path)
         self.registry = Registry()
         self.api.d.registry = self.registry

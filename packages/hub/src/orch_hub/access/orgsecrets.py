@@ -7,6 +7,8 @@ transaction, so a failure leaves no half-removed state (Opus S-2 condition 7).""
 
 from __future__ import annotations
 
+import datetime
+import re
 from collections import deque
 from collections.abc import Mapping
 from typing import Any
@@ -271,6 +273,12 @@ class OrgSecretStore:
         ws = _hex(workspace_id, "workspace_id")
         sid = _hex(secret_id, "secret_id")
         today = now_ms // DAY_MS
+        try:
+            if type(day) is not str or re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) is None:
+                raise ValueError
+            day = (datetime.date.fromisoformat(day) - datetime.date(1970, 1, 1)).days
+        except ValueError:
+            raise Refused("malformed") from None
         if type(day) is not int or type(n) is not int or not today - 7 <= day <= today + 1 or not 0 <= n <= USE_N_MAX:
             raise Refused("malformed")
         q = self._hits.setdefault(ws, deque())

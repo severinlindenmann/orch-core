@@ -664,12 +664,12 @@ hub.org_secrets {v, suite, kind: "hub.org_secrets", hv, hub_id, op_cert_id, work
 
 Verified like 7.3 (`other_workspace`, `stale_bundle`, `bundle_conflict`). The hub puts into a workspace's bundle ONLY that
 workspace's own wraps (the link's authenticated workspace, never a caller-named one), of secrets that are not removed, not
-expired, and shared with it. `sealed` is 65 + (8..4096) + 16 bytes. Vectors: `vectors_org_secrets_bundle.json` (S-3 replays it).
+expired, and shared with it. `sealed` is base64url WITHOUT padding (core `crypto.b64u`) of 65 + (8..4096) + 16 bytes. Vectors: `vectors_org_secrets_bundle.json` (S-3 replays it).
 
 Hub rules (S-2): a value entry (create, rotate, "enter again") is always version `current + 1` (create = 1) with one wrap per
 bound workspace of the share set, each with that workspace's CURRENT verified card `wxk_version`; the hub refuses extras,
 duplicates, missing wraps and a stale `wxk_version`. Unshare, remove, chosen-to-all and unbind each run in one database
-transaction. `secret_use {secret_id, day, n}`: `n` is the number of uses on that UTC day so far (the hub keeps the larger value),
+transaction. `secret_use {secret_id, day, n}`: `day` is a UTC calendar date `YYYY-MM-DD` (within 7 days back to 1 day ahead of the hub's clock), `n` is the number of uses on that UTC day so far (the hub keeps the larger value),
 bounded, rate limited per workspace, shown to the admin as untrusted. The hub can read a value only if it is taken over and
 substitutes its own key (deferred to #1263).
 
@@ -1366,7 +1366,7 @@ unknown `op` is `unknown_op`.
 | `mcp_servers_get` | w2h | both | `{}` | `{"bundle": <hub.mcp_servers>}`: the remote MCP servers offered to the link's workspace (M3 #1435, 7.4) |
 | `org_skills_get` | w2h | both | `{}` | `{"bundle": <hub.org_skills>}`: the company skills offered to the link's workspace (M3 #1430, 7.3) |
 | `org_secrets_get` | w2h | both | `{}` | `{"bundle": <hub.org_secrets>}`: the sealed company secrets of the link's workspace only (M3 #1431, 7.5) |
-| `secret_use` | w2h | both | `{secret_id, day, n}` | `{}`: how often a secret was used on one UTC day (counts only, 7.5) |
+| `secret_use` | w2h | both | `{secret_id, day, n}` | `{}`: `day` is `"YYYY-MM-DD"` (UTC), `n` the uses that day (counts only, 7.5) |
 | `event_deliver` | h2w | both | `{"log", "event"}`: a custodial event (§8) | `{}` or `{"error"}` |
 | `route_out` | w2h | both | `{"envelope": b64u}`: a v2 §11 ws→ws envelope, as is | `{}` |
 | `route_in` | h2w | both | `{"envelope": b64u}` | `{}` |

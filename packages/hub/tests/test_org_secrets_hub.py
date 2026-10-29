@@ -4,6 +4,7 @@ cleanup on unbind. Opus conditions 5-9 of ``state/devA/secrets-design.md`` secti
 # ruff: noqa: RUF059
 from __future__ import annotations
 
+import datetime
 import logging
 import sqlite3
 from types import SimpleNamespace
@@ -412,7 +413,9 @@ def test_condition_7_unbind_deletes_shares_wraps_and_counts_in_one_transaction(w
     create(w, shared="chosen", workspaces=[WS_A, WS_B])
     store = org_secrets(w.env.acc)
     sid = stored(w)["secrets"][0][0]
-    store.record_use(WS_A, sid, w.now // 86_400_000, 3, w.now)
+    store.record_use(
+        WS_A, sid, datetime.datetime.fromtimestamp(w.now / 1000, datetime.UTC).date().isoformat(), 3, w.now
+    )
     before = stored(w)
     _fail_on_wrap_delete(w.env.acc)
     with pytest.raises(sqlite3.Error):
@@ -590,18 +593,26 @@ def test_secret_use_counts_are_bounded_rate_limited_and_only_for_shared_secrets(
     b = bundles
     _row(b, "11" * 16, "live", WS_A, sealed=_good_sealed())
     _row(b, "22" * 16, "chosen", WS_A, shared="chosen", sealed=_good_sealed())
-    day = G.NOW // 86_400_000
+    base = G.NOW // 86_400_000
+
+    def iso(offset: int) -> str:
+        return (datetime.date(1970, 1, 1) + datetime.timedelta(days=base + offset)).isoformat()
+
+    day = iso(0)
     use = lambda sid, d, n, ws=WS_A: secret_use(
         SimpleNamespace(**{**vars(ctx(b, ws)), "body": {"secret_id": sid, "day": d, "n": n}})
     )
     assert use("11" * 16, day, 3) == {}
     assert use("11" * 16, day, 2) == {}  # the larger value is kept (a report is the day's total so far)
-    assert use("11" * 16, day - 1, 4) == {} and use("11" * 16, day, 5, ws=WS_B) == {}
+    assert use("11" * 16, iso(-1), 4) == {} and use("11" * 16, day, 5, ws=WS_B) == {}
     mine = {s["name"]: s["used_this_week"] for s in b.store.list(G.NOW)}
     assert mine["live"] == 12  # 3 + 4 (this workspace) + 5 (the other); sums are display data
     for sid, d, n in (
-        ("11" * 16, day + 5, 1),
-        ("11" * 16, day - 30, 1),
+        ("11" * 16, iso(5), 1),
+        ("11" * 16, iso(-30), 1),
+        ("11" * 16, base, 1),
+        ("11" * 16, "2026-13-40", 1),
+        ("11" * 16, "20261029", 1),
         ("11" * 16, day, -1),
         ("11" * 16, day, 10**9),
         ("22" * 16, day, 1),
@@ -610,7 +621,15 @@ def test_secret_use_counts_are_bounded_rate_limited_and_only_for_shared_secrets(
         with pytest.raises(Refused):
             use(sid, d, n)  # out of range / not shared with that workspace / unknown
     assert H.LINK_OPS["secret_use"][0] == "w2h" and HANDLERS["secret_use"] is secret_use
-    for k, bad in (("n", "5"), ("n", 1.5), ("day", True), ("secret_id", "zz")):
+    for k, bad in (
+        ("n", "5"),
+        ("n", 1.5),
+        ("day", True),
+        ("day", 20000),
+        ("day", "2026-13-40"),
+        ("day", "2026-1-1"),
+        ("secret_id", "zz"),
+    ):
         body = {"secret_id": "11" * 16, "day": day, "n": 1, k: bad}
         assert not all(chk(body[f]) for f, chk in H.LINK_OPS["secret_use"][2].items()), (k, bad)
     for i in range(200):
@@ -628,7 +647,9 @@ def test_the_list_shows_use_per_workspace_as_untrusted_display_data(w):
     create(w)
     sid = stored(w)["secrets"][0][0]
     store = org_secrets(w.env.acc)
-    store.record_use(WS_A, sid, w.now // 86_400_000, 7, w.now)
+    store.record_use(
+        WS_A, sid, datetime.datetime.fromtimestamp(w.now / 1000, datetime.UTC).date().isoformat(), 7, w.now
+    )
     s, o, _ = w.call("GET", "/admin/secrets", token=w.token)
     sec = o["secrets"][0]
     assert (

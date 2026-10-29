@@ -64,6 +64,7 @@ from ..switch import SwitchError, clean_return_to, workspace_rows
 from ..versions import MIN_PHONE_VERSION, MIN_SUPPORTED_VERSION, version_state, workspace_status
 from .changes_api import ChangeHandlers, confirmed
 from .org_api import OrgHandlers
+from .secrets_api import SecretHandlers, secret_routes
 from .static import StaticSite
 
 MAX_BODY = 64 * 1024
@@ -531,6 +532,7 @@ ROUTES: tuple[Route, ...] = (
     _r("PUT", "/admin/mcp-servers/{name}", "admin", "a_mcp_put", "Create or replace a remote MCP server (new digest)"),
     _r("DELETE", "/admin/mcp-servers/{name}", "admin", "a_mcp_delete", "Remove a remote MCP server"),
     _r("PUT", "/admin/mcp-servers/{name}/offers", "admin", "a_mcp_offer", "Set the workspaces a server is offered to"),
+    *secret_routes(_r),
 )
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
 #: (password + TOTP from the app) may only read the card, register a phone, bind and sign out; ``channel`` is bound to
@@ -721,7 +723,7 @@ def _groups_detail(groups: list[str]) -> dict[str, Any]:
 _NEED_KINDS = ("needs_you", "question")  # the shared item kinds that are a wait (a shared ticket is not)
 
 
-class WebApi(ChangeHandlers, OrgHandlers):
+class WebApi(ChangeHandlers, OrgHandlers, SecretHandlers):
     def __init__(self, deps: WebDeps) -> None:
         if deps.behind_edge and not deps.trusted_peers:
             raise ValueError("web API behind the edge needs trusted_peers (the edge's addresses)")

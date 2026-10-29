@@ -117,6 +117,19 @@ def _int_min(lo: int) -> Check:
     return lambda x: type(x) is int and x >= lo
 
 
+def _utc_day(x: Any) -> bool:
+    """A calendar day as ``YYYY-MM-DD`` (UTC), a real date."""
+    import datetime
+
+    if type(x) is not str or re.fullmatch(r"\d{4}-\d{2}-\d{2}", x) is None:
+        return False
+    try:
+        datetime.date.fromisoformat(x)
+    except ValueError:
+        return False
+    return True
+
+
 def _enum(*vals: Any) -> Check:
     return lambda x: type(x) is str and x in vals
 
@@ -1421,10 +1434,10 @@ LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "mcp_servers_get": ("w2h", None, {}),  # M3 (#1435): the signed hub.mcp_servers of the link's workspace
     "org_skills_get": ("w2h", None, {}),  # M3 (#1430): the signed hub.org_skills of the link's workspace
     "org_secrets_get": ("w2h", None, {}),  # M3 (#1431): the signed hub.org_secrets of the link's workspace
-    "secret_use": (  # M3 (#1433): counts only: how often a secret was used on one day (UTC day number), bounded
+    "secret_use": (  # M3 (#1433): counts only: how often a secret was used on one UTC day ("YYYY-MM-DD"), bounded
         "w2h",
         None,
-        {"secret_id": _hex16, "day": _int_min(0), "n": _int_min(0)},
+        {"secret_id": _hex16, "day": _utc_day, "n": _int_min(0)},
     ),
     "event_deliver": ("h2w", None, {"log": lambda x: type(x) is str, "event": lambda x: type(x) is dict}),
     "route_out": ("w2h", None, {"envelope": _b64u_any}),

@@ -17,6 +17,7 @@ from orch.identity import wscard
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import ok
 from tests.host.human_helpers import err
+from tests.host.test_hub_ops import keystore  # noqa: F401
 from tests.hub.fake import FakeHub
 from tests.hub.tlshub import TlsHub
 from tests.hub.vec import V
@@ -155,6 +156,28 @@ def test_no_address_means_unreachable_and_a_retry_with_one_resumes(human, served
     assert err(served.client().req("hub.connect", base, idem=True)) == "hub.unreachable"
     got = ok(served.client().req("hub.connect", {**base, "addr": f"127.0.0.1:{tls_hub.port}"}, idem=True))["data"]
     assert got["status"] == "bound" and hub_binding_seq(served) == 1
+
+
+#: A P-256 scalar whose public key reads, in base64url, "...ghu_B1gu5c9sd_4KWWXuk5Pd7lUGe1lG3UrKHT...": the GitHub
+#: token shape. Random keys hit such a shape about once in 10^5; this one makes it happen every time.
+TOKEN_SHAPED_KEY = 0xF23F7D6D65F9742FA9B6A55FD3F736133907353B979EA89271DC59695BC4808D
+
+
+@pytest.mark.parametrize("mode", ["selective", "full"])
+def test_a_card_key_that_looks_like_a_token_still_connects(human, served, tls_hub, keystore, mode):  # noqa: F811
+    """The hub card's keys are random base64url: one may contain a token shape. The host redacts what it ANSWERS,
+    never the plan it still acts on: the card a connect verifies and sends is the card it was given."""
+    from orch.crypto import suite
+    from orch.tokenshape import GITHUB_TOKEN_SHAPE
+
+    hxk = suite.private_key_from_scalar(TOKEN_SHAPED_KEY)
+    assert GITHUB_TOKEN_SHAPE.search(crypto.b64u(suite.public_bytes(hxk)))
+    card = make_card(tls_hub, now_ms(served), hxk=hxk)
+    human.run("hub.join", {"hub_card": card, "mode": mode})
+    args = {"invite": "invite-1", "hub_card": card, "addr": f"127.0.0.1:{tls_hub.port}"}
+    got = ok(served.client().req("hub.connect", args, idem=True))["data"]
+    assert got["status"] == "bound" and got["mode"] == mode
+    assert tls_hub.requests[0]["o"]["op"] == "join"
 
 
 def hub_binding_seq(served) -> int:

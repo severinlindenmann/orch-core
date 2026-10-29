@@ -158,6 +158,11 @@ class AuditLog:
         who, never the value (M4, #1461). Written before the change is saved; a failure here refuses the change."""
         return self.append("hub_settings", {"change": change, "actor_user_id": actor_user_id})
 
+    def hub_backup(self, *, change: str, actor_user_id: str | None) -> dict[str, Any]:
+        """The hub backup key was set/replaced (``key_set``; ``key_confirmed`` once the person saved the new words), a backup was made (``made``) or handed out (``downloaded``):
+        which one and who (None = the schedule or the hub terminal), never a key, a word or a file (M4 S5, cond 23)."""
+        return self.append("hub_backup", {"change": change, "actor_user_id": actor_user_id})
+
     # --- the link ops --------------------------------------------------------------------------------------------
 
     def get(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:

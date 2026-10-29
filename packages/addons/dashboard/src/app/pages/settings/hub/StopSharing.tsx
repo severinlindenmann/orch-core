@@ -61,7 +61,7 @@ function StopButton({ ws, act, disabled, testId, onDone }: { ws: string; act: ()
 
 const TICKET = (key: string) => `ticket ${key}:`
 
-export function StopSharing({ ws, workspace, ticket, onClose, ruleMatches = false }: { ws: string; workspace: HubWorkspace; ticket: string; onClose: () => void; ruleMatches?: boolean }) {
+export function StopSharing({ ws, workspace, ticket, onClose }: { ws: string; workspace: HubWorkspace; ticket: string; onClose: () => void }) {
   const [finished, setFinished] = useState(false)
   const now = useSharedNow(ws)
   const item = now.data?.items.find(i => i.kind === 'ticket' && i.line.startsWith(TICKET(ticket)))
@@ -73,14 +73,14 @@ export function StopSharing({ ws, workspace, ticket, onClose, ruleMatches = fals
       <p>Stops being shared: this ticket&apos;s title, status, labels and deadline ({item ? 1 : 0} item).</p>
       <p>{now.data.count} items shared now · {now.data.count - (item ? 1 : 0)} after this. Preview from the hub, not signed.</p>
     </div>}
-    <p>The hub is asked to delete its copy.{ruleMatches && ' A rule that matches this ticket may share it again.'}</p>
+    <p>The hub is asked to delete its copy. It stays unshared even if a rule matches it, until you share this ticket by name again.</p>
     <p className="text-warning">{caveat}</p>
     <StopButton ws={ws} testId="hub-revoke-stop" disabled={!now.data} act={() => api.revokeHubShare(ws, ticket)} onDone={() => setFinished(true)} />
   </Flow>
 }
 
 /** The review of removing one rule (`share.rule_remove`, bound to the plan of the preview shown here). */
-export function StopRule({ ws, workspace, rule, after, onDone }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; onDone?: () => void }) {
+export function StopRule({ ws, workspace, rule, after, onDone, error, onRetry }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; onDone?: () => void; error?: string; onRetry?: () => void }) {
   const now = useSharedNow(ws)
   const kept = new Set(after?.items.map(i => i.line) ?? [])
   const stops = now.data && after ? now.data.items.filter(i => !kept.has(i.line)) : []
@@ -93,7 +93,8 @@ export function StopRule({ ws, workspace, rule, after, onDone }: { ws: string; w
     <p>Remove this sharing rule. Items covered by other rules remain shared.</p>
     <p data-testid="hub-rule-review-rule">Rule: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}</p>
     <ReviewWorkspace workspace={workspace} />
-    {!after || now.isPending ? <p role="status">Loading the preview…</p> : <div data-testid="hub-rule-review-what">
+    {error ? <div role="alert"><p className="text-danger">{error}</p>{onRetry && <Button data-testid="hub-rule-preview-retry" variant="outline" size="sm" onClick={onRetry}>Try again</Button>}</div>
+      : !after || now.isPending ? <p role="status">Loading the preview…</p> : <div data-testid="hub-rule-review-what">
       <p>{after.revoked} no longer shared · {after.count} items shared after this. Preview from the hub, not signed.</p>
       {stops.length > 0 && <ul className="space-y-1">{stops.slice(0, 20).map((i, n) => <li key={n}><Raw>{i.line}</Raw></li>)}</ul>}
       {stops.length > 20 && <p>and {stops.length - 20} more</p>}

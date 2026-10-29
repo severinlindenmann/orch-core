@@ -89,7 +89,7 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
     </>}
     {review && <Flow title="Review sharing change" done={finished} cancel={review.remove ? 'Keep sharing' : 'Cancel'} onClose={() => { setReview(undefined); setFinished(false); if (review.remove) setRemove(undefined); else if (finished) { setAdding(false); setValue('') } }}>{review.add
       ? <AddRuleReview ws={ws} workspace={workspace} rule={review.add} after={current} onDone={() => setFinished(true)} />
-      : <StopRule ws={ws} workspace={workspace} rule={review.remove} after={current} onDone={() => setFinished(true)} />}</Flow>}
-    {revoke && <StopSharing ws={ws} workspace={workspace} ticket={revoke} ruleMatches={share.data?.rules.some(r => r.kind !== 'needs_you' && r.kind !== 'questions' && r.kind !== 'ticket' && r.count > 0)} onClose={() => setRevoke(undefined)} />}
+      : <StopRule ws={ws} workspace={workspace} rule={review.remove} after={current} error={error} onRetry={() => setRetry(n => n + 1)} onDone={() => setFinished(true)} />}</Flow>}
+    {revoke && <StopSharing ws={ws} workspace={workspace} ticket={revoke} onClose={() => setRevoke(undefined)} />}
   </div>
 }

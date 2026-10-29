@@ -73,6 +73,8 @@ export interface HubShareReview {
   hub_id: string | null
   audience: { read: number; edit: number; admin: number } | null
   audience_note: string | null
+  /** Who can read at the hub, by name (from the hub, not signed); `info` is shown behind the small i. */
+  readers?: { people: string[]; teams: string[]; note?: string; info?: string | null } | null
   new_count: number
   new_more: number
   new_items: string[]

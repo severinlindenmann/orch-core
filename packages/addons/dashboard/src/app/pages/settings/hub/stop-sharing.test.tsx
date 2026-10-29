@@ -89,6 +89,20 @@ describe('stop sharing one ticket', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('says the ticket stays unshared even if a rule matches; never "may share it again"', async () => {
+    const { dialog } = await ticketReview()
+    expect(dialog.textContent).toContain('It stays unshared even if a rule matches it, until you share this ticket by name again.')
+    expect(dialog.textContent).not.toMatch(/may share it again/)
+  })
+
+  it('an untrusted click on the ticket button does not call revoke', async () => {
+    vi.spyOn(gesture, 'trustedPress').mockReturnValue(false)
+    const { button } = await ticketReview()
+    await waitFor(() => expect(button).toBeEnabled())
+    fireEvent.click(button)
+    expect(revoke).not.toHaveBeenCalled()
+  })
+
   it('a refusal is said plainly', async () => {
     trusted()
     const { ApiError } = await import('@/api/types')
@@ -122,6 +136,18 @@ describe('the shared list', () => {
 })
 
 describe('stop sharing by a rule', () => {
+  it('a rejected removal preview shows an alert and Try again in the dialog', async () => {
+    const get = vi.spyOn(api, 'getHubPreview').mockImplementation(async (_ws, body) => { if (body.remove) throw new Error('x'); return NOW })
+    const user = userEvent.setup()
+    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+    await user.click(await screen.findByTestId('hub-rule-remove-0'))
+    const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Could not preview this rule')
+    get.mockImplementation(async () => AFTER)
+    await user.click(within(dialog).getByTestId('hub-rule-preview-retry'))
+    await waitFor(() => expect(within(dialog).getByTestId('hub-rule-stop')).toBeEnabled())
+  })
+
   it('the review shows the rule, what stops, the workspace line and the caveat', async () => {
     const { dialog } = await ruleReview()
     expect(within(dialog).getByTestId('hub-rule-review-rule')).toHaveTextContent('Rule: type · feature')
@@ -218,6 +244,26 @@ describe('stop sharing by a rule', () => {
     await waitFor(() => expect(add).toHaveBeenCalledWith(WS.id, { kind: 'type', value: 'team' }, 'N'.repeat(43)))
     expect(await within(dialog).findByTestId('hub-add-done')).toHaveTextContent('Shared.')
     expect(within(dialog).getByTestId('hub-flow-cancel')).toHaveTextContent('Done')
+  })
+
+  it('the readers info line sits behind the small i', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
+      ...NOW, new: 1, plan: 'N'.repeat(43),
+      review: { hub_id: 'ab12', audience: null, audience_note: null, new_count: 1, new_more: 0, new_items: [], leaves: [], later_edits: null,
+        readers: { people: ['Ben'], teams: ['sales'], note: 'from the hub, not signed', info: 'Team membership is managed by the hub admin.' } },
+    }))
+    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
+    await user.click(await screen.findByTestId('hub-rule-add'))
+    await user.type(screen.getByTestId('hub-rule-value'), 'team')
+    await waitFor(() => expect(screen.getByTestId('hub-share-review')).toBeEnabled())
+    await user.click(screen.getByTestId('hub-share-review'))
+    const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
+    const readers = await within(dialog).findByTestId('hub-add-readers')
+    expect(readers).toHaveTextContent('Ben, sales')
+    expect(readers.textContent).not.toContain('managed by the hub admin')
+    await user.click(within(readers).getByTestId('hub-add-readers-info'))
+    expect(await screen.findByText('Team membership is managed by the hub admin.')).toBeTruthy()
   })
 
   it('an older host without the review says so and offers no button', async () => {

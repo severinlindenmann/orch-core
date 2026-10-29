@@ -6,6 +6,7 @@ import { ApiError } from '@/api/types'
 import { trustedPress } from '@/components/sign/trustedPress'
 import { WorkspaceLine } from '@/components/sign/WorkspaceLine'
 import { Raw } from '@/components/sign/visible'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
 import { caveat } from './shared'
 import type { HubWorkspace } from './StopSharing'
@@ -49,6 +50,10 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: stri
     {review.audience && <p data-testid="hub-add-audience">
       Who can see it there: {review.audience.read} read, {review.audience.edit} edit, {review.audience.admin} admin{review.audience_note ? ` (${review.audience_note})` : ''}
     </p>}
+    {review.readers && (review.readers.people.length > 0 || review.readers.teams.length > 0) && <div className="flex items-center gap-1" data-testid="hub-add-readers">
+      <p>Who will see it: <Raw>{[...review.readers.people, ...review.readers.teams].join(', ')}</Raw></p>
+      {review.readers.info && <InfoDrawer testId="hub-add-readers-info"><p>{review.readers.info}</p></InfoDrawer>}
+    </div>}
     <p data-testid="hub-add-new">{review.new_count} new {review.new_count === 1 ? 'item leaves' : 'items leave'} this computer.</p>
     {review.leaves.map((t, i) => <p key={i} data-testid="hub-add-leaves">What leaves: <Raw>{t}</Raw></p>)}
     {review.later_edits && <p data-testid="hub-add-later">{review.later_edits}</p>}

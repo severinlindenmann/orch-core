@@ -104,6 +104,7 @@ class _Cap:
         self.expires_at = expires_at
         self.upstreams: dict[str, tuple[Any, str | None]] = {}
         self.pins: dict[str, dict[str, str]] = {}  # server -> latest {tool: pin} (present once listed)
+        self.schemas: dict[str, dict[str, Any]] = {}  # server -> {tool: pinned inputSchema}, same moment as pins
         self.inflight: dict[str, int] = {}
         self.calls = 0
         self.list_n = 0
@@ -288,6 +289,7 @@ class Proxy:
                 del cap.servers[name]
                 held = cap.upstreams.pop(name, None)
                 cap.pins.pop(name, None)
+                cap.schemas.pop(name, None)
                 if held is not None:
                     self._close_up(held[0])
                 if not cap.servers:
@@ -517,6 +519,7 @@ class Proxy:
             if held is not None:
                 self._close_up(held[0])
                 cap.pins.pop(name, None)
+                cap.schemas.pop(name, None)
             up = self._upstream(record, bearer)
             cap.upstreams[name] = (up, bearer)
             return up
@@ -670,6 +673,7 @@ class Proxy:
             if problem is None:
                 tools.append(row)
         cap.pins[name] = {t["name"]: t["pin"] for t in tools}
+        cap.schemas[name] = {t["name"]: t["inputSchema"] for t in tools}
         if self._on_seen is not None:
             try:
                 self._on_seen(cap.ws, name, str(record.get("digest", "")), seen_rows)
@@ -716,12 +720,14 @@ class Proxy:
         with self._lock:
             k = (cap.ws, name, tool, day)
             self._usage[k] = self._usage.get(k, 0) + 1
-        arguments = params.get("arguments")
+        arguments = params.get("arguments", {})
+        if not self._arguments_ok(arguments, cap.schemas.get(name, {}).get(tool)):
+            return _rpc_error(rid, -32602, "invalid params")
         message = {
             "jsonrpc": "2.0",
             "id": rid,
             "method": "tools/call",
-            "params": {"name": tool, "arguments": arguments if isinstance(arguments, dict) else {}},
+            "params": {"name": tool, "arguments": arguments},
         }
         answer = self._answer(await self._forward(key, cap, name, up, message), rid)
         if answer is None:
@@ -733,6 +739,20 @@ class Proxy:
             return _rpc_error(rid, -32603, "the company server did not answer")
         clean = {k: result[k] for k in ("content", "structuredContent", "isError") if k in result}
         return {"jsonrpc": "2.0", "id": rid, "result": clean}
+
+    @staticmethod
+    def _arguments_ok(arguments: Any, schema: Any) -> bool:
+        """Three cheap checks against the pinned schema (not a full validation)."""
+        if not isinstance(arguments, dict):
+            return False
+        if not isinstance(schema, dict):
+            return True
+        props = schema.get("properties")
+        props = props if isinstance(props, dict) else {}
+        if schema.get("additionalProperties") is False and any(k not in props for k in arguments):
+            return False
+        required = schema.get("required")
+        return not isinstance(required, list) or all(k in arguments for k in required if type(k) is str)
 
     def _served_record(self, cap: _Cap, name: str) -> dict:
         return {"name": name, "digest": cap.servers.get(name, "")}

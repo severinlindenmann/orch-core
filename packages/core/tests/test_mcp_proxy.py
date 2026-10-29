@@ -1011,3 +1011,37 @@ def test_scrub_never_redacts_short_forms():
     assert mcpproxy._scrub("abc abc", forms) == "abc abc"
     forms = mcpproxy._secret_forms("abcdefgh")
     assert mcpproxy._scrub("ab abcdefgh", forms) == "ab [redacted]"
+
+
+# -- review fix 4: arguments are checked against the pinned schema ---------------------------------------------------
+
+STRICT = {
+    "type": "object",
+    "properties": {"q": {"type": "string"}},
+    "required": ["q"],
+    "additionalProperties": False,
+}
+
+
+@pytest.mark.parametrize(
+    ("arguments", "ok"),
+    [
+        ({"q": "x"}, True),
+        ({}, False),  # a required key is missing
+        ({"q": "x", "extra": 1}, False),  # additionalProperties: false
+        ([1], False),  # not an object
+        ("str", False),
+        (None, False),
+    ],
+)
+def test_call_arguments_against_the_pinned_schema(env, arguments, ok):
+    t = tool("echo", schema=STRICT)
+    turn_on(env, t)
+    env.up_factory = lambda rec, bearer: FakeUp(tools=[t])
+    cap = mint(env)
+    st, body, _ = rpc(env, cap, "tools/call", {"name": "echo", "arguments": arguments})
+    posts = [m for up in env.ups for m in up.posts if m.get("method") == "tools/call"]
+    if ok:
+        assert st == 200 and "result" in body and len(posts) == 1
+    else:
+        assert body["error"] == {"code": -32602, "message": "invalid params"} and not posts

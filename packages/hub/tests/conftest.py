@@ -181,3 +181,11 @@ def make_hub():
     yield make
     for h in made:
         h.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_mcp_probe(monkeypatch):
+    """The page's lazy status check must never reach the real network from a test (#1439)."""
+    from orch_hub.access import mcpprobe
+
+    monkeypatch.setattr(mcpprobe, "probe", lambda url, **kw: {"status": "failing", "checked_ms": 1, "detail": "dns"})

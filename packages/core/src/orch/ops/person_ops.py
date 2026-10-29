@@ -464,6 +464,7 @@ def handle_remote_set(ctx: Context, args: dict[str, Any]) -> Result:
     try:
         payload = wire.changed_payload(
             level=level, premises=premises, agents_risk=risk and not facts.isolated, hub_mode=facts.hub_mode,
+            remote_v=h.store.state.workspace.remote.get("version", 0),
             until_ms=None if days is None else facts.now_ms + int(days) * _DAY_MS,
         )  # fmt: skip
     except HubRefused as exc:
@@ -498,6 +499,7 @@ def handle_remote_device_confirm(ctx: Context, args: dict[str, Any]) -> Result:
             presence_kind=pending["presence_kind"], transport_pub=pending["transport_pub"],
             presence_pub=pending["presence_pub"], level_cap=args["level_cap"],
             expires_ms=facts.now_ms + int(args["days"]) * _DAY_MS, code_id=pending["code_id"],
+            remote_v=h.store.state.workspace.remote.get("version", 0),
         )  # fmt: skip
     except (HubRefused, KeyError, TypeError):
         raise OrchError("invalid.input", "the pending device is not well formed") from None

@@ -1790,7 +1790,7 @@ workspace, the op (`remote.set` for `remote.changed`, `remote.device_confirm` fo
 request, valid for at most 10 minutes, with the dev marker of §2.4. A hub proof never verifies for a remote step and a
 remote proof never for a hub step (kind, label and op set are all different). The model checks it for every such line
 it appends or replays, whatever its `auth` and whoever delivered it, against the roster's `PK` and the host-signed append
-time of the line; there is no place rule (no prior event to follow). No `remote.*` type is custodial (§8.5): a line
+time of the line; there is no hub-style place rule; instead the signed payload carries `remote_v`, the model's remote counter at that position, and the line applies only at exactly that value (every state-changing `remote.*` line raises it), the proof's `request_id` is single-use, and a `device_id` or `code_id` seen in any earlier `remote.device_added` is refused for ever. An old valid proof therefore cannot be replayed. No `remote.*` type is custodial (§8.5): a line
 with `auth: "hub"` is `not_custodial`. A full `hub.joined` (a switch to full, a leave and rejoin, another hub) turns
 remote access off in the model whatever the premises answer, and `remote.changed` with `premises: "yes"` while the hub
 mode is `full` is refused. The device fingerprint the owner confirms is `device_fp` below; the device and the owner
@@ -3223,7 +3223,7 @@ transport in the action).
 | 56 | Device ids (R0) | `rd_` + 32 hex (codes `rc_`), so no hub `device.excluded` (`d_`) can name a remote device | D93 "touch the devices" |
 | 57 | Device list (R0) | `remote.device_list`, `hv: 0`, a rising `version` (rollback refused), `name` added for the session list, `presence_kind` added; the sign counter kept beside it | spec §5, D91 |
 | 58 | Remote labels (R0) | their own table (like the backup labels), so `vectors_hub.json` stays unchanged | §3 |
-| 59 | Remote owner proof (R2, proposed) | the §9.6 proof object under its own kind `remote.owner_proof` and its own label `orch/v2/sig/remote-owner-proof\|`, ops `remote.set` and `remote.device_confirm`; core only | spec D84, D93; a hub proof can never stand in for a remote one or the reverse |
+| 59 | Remote owner proof (R2, proposed) | the §9.6 proof object under its own kind `remote.owner_proof` and its own label `orch/v2/sig/remote-owner-proof\|`, ops `remote.set` and `remote.device_confirm`; signed payload includes `remote_v` (the replay counter), single-use `request_id`; core only | spec D84, D93; a hub proof can never stand in for a remote one or the reverse |
 | 60 | Remote code text and fingerprint words (R2, proposed) | the code text is `orch-rc1.<workspace_id>.<b64u(code_id raw 16 ‖ secret 16 ‖ wrk_fp 16)>.<b64u(WRK_pub, 32)>`; the owner and the device show `device_fp` as the first 66 bits, six BIP-39 English words of 11 bits each (the all-zero fingerprint is `abandon` six times) | spec §5 "fingerprint", R5 renders and parses the same |
 
 ## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)

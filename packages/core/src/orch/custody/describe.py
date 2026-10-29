@@ -98,7 +98,7 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
     "hub.joined": ("hub_id", "hk_root_pub", "mode", "binding_seq", "aliases", "owner_proof"),
     "hub.left": ("hub_id", "binding_seq", "owner_proof"),
     # R2 (#1590): the owner's remote policy and one confirmed remote device, each with the remote owner proof
-    "remote.changed": ("on", "level", "until_ms", "premises", "agents_risk", "hub_mode", "owner_proof"),
+    "remote.changed": ("on", "level", "until_ms", "premises", "agents_risk", "hub_mode", "remote_v", "owner_proof"),
     "remote.device_added": (
         "device_id",
         "name",
@@ -110,6 +110,7 @@ EVENT_FIELDS: dict[str, tuple[str, ...]] = {
         "expires_ms",
         "fingerprint",
         "code_id",
+        "remote_v",
         "owner_proof",
     ),
 }

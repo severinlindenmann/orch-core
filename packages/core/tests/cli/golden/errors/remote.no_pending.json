@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "error": {
+    "code": "remote.no_pending",
+    "message": "no device is waiting to be added",
+    "hint": "make a new code and add the device again",
+    "fix": {
+      "argv": [
+        "orch",
+        "status"
+      ]
+    },
+    "retryable": false
+  }
+}

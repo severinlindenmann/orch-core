@@ -130,6 +130,8 @@ def test_welcome_lists_exactly_the_registry_ops_and_the_host_ops(served):
         "device.mark_exposed",
         "device.rotate",
         "device.remove",
+        "remote.set",
+        "remote.device_confirm",
     }  # H12c-e, B12D, P5, R3, V3 C2a, C2b, #1097
     assert set(HUMAN_OPS) == {"human.prepare", "human.get", "human.submit", "human.cancel", "human.pending"}
     assert set(NOT_SERVED) == {"import.v1"}

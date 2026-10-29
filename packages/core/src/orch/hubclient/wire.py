@@ -44,10 +44,10 @@ REMOTE_LEVELS = _remote.LEVELS
 REMOTE_PRESENCE_KINDS = _remote.PRESENCE_KINDS
 REMOTE_PREMISES = _remote.PREMISES
 REMOTE_HUB_MODES = _remote.HUB_MODES
-REMOTE_CHANGED_KEYS = frozenset({"on", "level", "until_ms", "premises", "agents_risk", "hub_mode"})
+REMOTE_CHANGED_KEYS = frozenset({"on", "level", "until_ms", "premises", "agents_risk", "hub_mode", "remote_v"})
 REMOTE_ADDED_KEYS = frozenset(
     {"device_id", "name", "person", "presence_kind", "transport_pub", "presence_pub", "level_cap", "expires_ms",
-     "fingerprint", "code_id"}
+     "fingerprint", "code_id", "remote_v"}
 )  # fmt: skip
 #: contract 10.2c "The device list": ``added_ms < expires_ms <= added_ms + 366 d``
 REMOTE_DEVICE_LIFE_MAX_MS = _remote.DEVICE_LIFE_MAX_MS
@@ -621,13 +621,15 @@ def changed_payload(
     premises: str,
     agents_risk: bool,
     hub_mode: str,
+    remote_v: int,
     owner_proof: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The exact members of ``remote.changed`` (R2). ``owner_proof`` is ``None`` in a prepared event: the signer fills
-    it after the review. ``malformed`` for anything the model would refuse by shape."""
+    """The exact members of ``remote.changed`` (R2); ``remote_v`` is the model's remote counter the owner saw.
+    ``owner_proof`` is ``None`` in a prepared event: the signer fills it after the review. ``malformed`` for anything
+    the model would refuse by shape."""
     p = {
         "on": True, "level": level, "until_ms": until_ms, "premises": premises, "agents_risk": agents_risk,
-        "hub_mode": hub_mode,
+        "hub_mode": hub_mode, "remote_v": remote_v,
     }  # fmt: skip
     if not _changed_shape(p):
         raise HubRefused("malformed")
@@ -645,6 +647,7 @@ def device_added_payload(
     level_cap: str,
     expires_ms: int,
     code_id: str,
+    remote_v: int,
     owner_proof: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The exact members of ``remote.device_added`` (R2); ``fingerprint`` is recomputed here from the two public keys
@@ -656,7 +659,7 @@ def device_added_payload(
     p = {
         "device_id": device_id, "name": name, "person": person, "presence_kind": presence_kind,
         "transport_pub": transport_pub, "presence_pub": presence_pub, "level_cap": level_cap,
-        "expires_ms": expires_ms, "fingerprint": fp, "code_id": code_id,
+        "expires_ms": expires_ms, "fingerprint": fp, "code_id": code_id, "remote_v": remote_v,
     }  # fmt: skip
     if not _added_shape(p):
         raise HubRefused("malformed")
@@ -731,6 +734,7 @@ def _changed_shape(p: Any) -> bool:
         and type(p["agents_risk"]) is bool
         and type(p["hub_mode"]) is str
         and p["hub_mode"] in REMOTE_HUB_MODES
+        and _int_min(0)(p["remote_v"])
     ):
         return False
     if p["until_ms"] is None and (p["premises"] == "yes" or p["level"] == "terminals"):
@@ -759,6 +763,7 @@ def _added_shape(p: Any) -> bool:
         and type(p["expires_ms"]) is int
         and p["expires_ms"] >= 1
         and _fingerprint_ok(p["fingerprint"])
+        and _int_min(0)(p["remote_v"])
         and type(p["code_id"]) is str
         and _REMOTE_CODE_ID.fullmatch(p["code_id"]) is not None
     )

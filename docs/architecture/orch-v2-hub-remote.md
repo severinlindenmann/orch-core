@@ -117,6 +117,14 @@ person's device (notebook)                     public VPS                       
 active. Each entry: `device_id`, person, transport and presence public keys, level cap, expiry, added at, confirmed by.
 Removing a device ends its sessions at once (D91).
 
+**Replay rule (R2).** The remote policy and the device list are folded from signed lines of the workspace log (the model
+is the authority, the file is an export). The owner's lines (`remote.changed`, `remote.device_added`) carry the owner
+proof of the backup key, which covers a **remote counter** (`remote_v`) the model keeps: a line applies only when it
+names exactly the model's current counter, and every state-changing remote line (an owner's policy or device, a
+disable, a removal, a key rotation, a full hub) raises it. A proof also has a request id that can be used once, and a
+device id or an enrollment code id that has ever appeared in the log is never accepted again, even after the device
+was removed. So an old valid proof cannot be replayed to switch remote access back on or to re-add a removed device.
+
 **Same-UID agents on the host.** Until H1 is active on the workspace host, an agent there could add its own device,
 as it can already sign with the One-click key. Turning remote access on then shows "Agents on this computer can act as
 you" and is not offered by default (host 10.x, same rule).

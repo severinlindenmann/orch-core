@@ -41,8 +41,6 @@ from .codes import Code, Refusal
 from .types import WORKSPACE, Core, InvalidEvent, LogCore, TCore, WsCore, position, ts
 from .verifier import SigContext, Verifier
 
-REMOTE_TYPES = tuple(t for t in authz.ACTOR_RULES if t.startswith("remote."))
-
 CHAIN_CODES = frozenset({Code.CHAIN_BROKEN, Code.CHAIN_BAD_WS_SEQ})
 # Workspace events that change every ticket: those get a copy of all tickets.
 CROSS_TICKETS = frozenset(
@@ -310,7 +308,15 @@ def _workspace_handler(core: Core, lc: LogCore, e: dict[str, Any], ctx: Ctx) -> 
             workspace.hub_owner_proof(ws, e, v, dev=hub_dev_of(core, ctx)) or workspace.hub_left(ws, e, core)
         ),
         "hub.pinned": lambda: workspace.hub_pinned(core, e, v, dev=hub_dev_of(core, ctx)),
-        **dict.fromkeys(REMOTE_TYPES, lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx))),
+        "remote.changed": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.device_added": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.disabled": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.device_removed": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.key_rotated": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.code_issued": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.code_burned": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.session_opened": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
+        "remote.session_closed": lambda: remote.remote_apply(ws, e, v, dev=hub_dev_of(core, ctx)),
         "restore": lambda: workspace.restore(core, lc, e, v),
         "invalid.acknowledged": lambda: _ack(ws, lc, e),
         "projection.repaired": lambda: None,

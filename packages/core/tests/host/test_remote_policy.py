@@ -57,6 +57,7 @@ def changed_payload(w, at: str, **over: Any) -> dict[str, Any]:
     p = {
         "on": True, "level": "work", "until_ms": ts(at) * 1000 + DAY_MS, "premises": "no", "agents_risk": False,
         "hub_mode": "none",
+        "remote_v": remote(w).get("version", 0),
     }  # fmt: skip
     return {**p, **over}
 
@@ -75,6 +76,7 @@ def device(w, at: str, n: int = 1, **over: Any) -> dict[str, Any]:
         "device_id": "rd_" + hex32(f"dev{n}"), "name": f"Laptop {n}", "person": w.people["sev"],
         "presence_kind": "platform", "transport_pub": transport, "presence_pub": presence, "level_cap": "work",
         "expires_ms": ts(at) * 1000 + 30 * DAY_MS, "fingerprint": fp, "code_id": "rc_" + hex32(f"code{n}"),
+        "remote_v": remote(w).get("version", 0),
     }  # fmt: skip
     return {**p, **over}
 
@@ -267,6 +269,70 @@ def test_at_most_64_devices(w):
     e, res = add_device(w, 65)
     assert code(res) == (Code.REMOTE_INVALID, "full")
     assert len(remote(w)["devices"]) == 64
+
+
+SIG = "A" * 86  # the schema's shape of a signature
+
+
+def proof_of(request_id: str) -> dict[str, Any]:
+    """An owner proof object the fake verifier accepts; the model reads only its request id."""
+    return {"o": {"request_id": request_id}, "sig": SIG}
+
+
+def test_remote_proof_for_old_counter_refused(w):
+    turn_on(w)  # the counter is 1 now
+    assert remote(w)["version"] == 1
+    at = w.tick()
+    e, res = w.try_("workspace", "remote.changed", "sev", at=at, **changed_payload(w, at, remote_v=0))
+    assert code(res) == (Code.REMOTE_INVALID, "stale_remote")
+    e, res = w.try_("workspace", "remote.changed", "sev", at=at, **changed_payload(w, at, remote_v=2))
+    assert code(res) == (Code.REMOTE_INVALID, "stale_remote")  # a future counter is as wrong as an old one
+    e, res = w.try_("workspace", "remote.changed", "sev", at=at, **changed_payload(w, at, level="view"))
+    assert not hasattr(res, "code") and remote(w)["version"] == 2
+
+
+def test_same_remote_proof_reused_refused(w):
+    rid = "hr_01J9ZP00000000000000000RQ1"
+    at = w.tick()
+    e, res = w.try_("workspace", "remote.changed", "sev", at=at, owner_proof=proof_of(rid), **changed_payload(w, at))
+    assert not hasattr(res, "code"), res
+    assert remote(w)["used_requests"] == [rid]
+    at = w.tick()  # the right counter now, but the same proof (request id)
+    e, res = w.try_("workspace", "remote.changed", "sev", at=at, owner_proof=proof_of(rid), **changed_payload(w, at))
+    assert code(res) == (Code.REMOTE_INVALID, "proof_reused")
+    at = w.tick()
+    e, res = w.try_("workspace", "remote.device_added", "sev", at=at, owner_proof=proof_of(rid), **device(w, at, 1))
+    assert code(res) == (Code.REMOTE_INVALID, "proof_reused")  # one request id is one proof, across both line types
+
+
+def test_replayed_device_add_after_remove_refused(w):
+    at = w.tick()
+    line = device(w, at, 1)
+    e, res = w.try_("workspace", "remote.device_added", "sev", at=at, **line)
+    assert not hasattr(res, "code"), res
+    w.try_("workspace", "remote.device_removed", World.HOST, device_id=e["device_id"], reason="owner")
+    at = w.tick()  # the very same signed payload, delivered again: the counter moved, so it is refused
+    e2, res = w.try_("workspace", "remote.device_added", "sev", at=at, **line)
+    assert code(res) == (Code.REMOTE_INVALID, "stale_remote")
+    assert remote(w)["devices"] == {}
+
+
+def test_device_id_or_code_id_ever_seen_refused(w):
+    first, _ = add_device(w, 1)
+    w.try_("workspace", "remote.device_removed", World.HOST, device_id=first["device_id"], reason="owner")
+    at = w.tick()  # a fresh proof at the right counter, but the id was used once in the life of the log
+    again = device(w, at, 2, device_id=first["device_id"])
+    assert code(w.try_("workspace", "remote.device_added", "sev", at=at, **again)[1]) == (
+        Code.REMOTE_INVALID,
+        "ever_seen",
+    )
+    same_code = device(w, at, 3, code_id=first["code_id"])
+    assert code(w.try_("workspace", "remote.device_added", "sev", at=at, **same_code)[1]) == (
+        Code.REMOTE_INVALID,
+        "ever_seen",
+    )
+    fresh = device(w, at, 4)
+    assert not hasattr(w.try_("workspace", "remote.device_added", "sev", at=at, **fresh)[1], "code")
 
 
 def test_key_rotated_records_the_wrk_fingerprint_and_a_removed_device_must_exist(w):

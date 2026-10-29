@@ -72,7 +72,33 @@ def hub_full(ws: WsCore) -> None:
     """A full ``hub.joined`` turns remote access off (D93, stricter than the spec's "if yes"): a switch to full, a
     leave and rejoin, another hub. Called by ``hub_joined`` after it applied the line."""
     if ws.remote and ws.remote.get("on") is True:
-        ws.remote = {**ws.remote, "on": False, "off_reason": "hub_full"}
+        _set(ws, on=False, off_reason="hub_full")
+
+
+def _set(ws: WsCore, **changes: Any) -> None:
+    """Apply a change to ``ws.remote`` and raise the remote counter (``version``): every state-changing line (an owner's
+    policy or device, a disable, a removal, a key rotation, a full hub) moves it, so an owner proof, which names the
+    counter it was made at, can never be replayed at a later position (R2 replay rule)."""
+    cur = ws.remote
+    ws.remote = {"devices": {}, "device_version": 0, **cur, **changes, "version": cur.get("version", 0) + 1}
+
+
+def _bind(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
+    """The position and single-use rules of an owner's remote line: the signed ``remote_v`` is the model's current
+    counter; the proof's request id was never used before (a proof the host consumed once stays consumed)."""
+    if e["remote_v"] != ws.remote.get("version", 0):
+        return _no("stale_remote")
+    proof = e.get("owner_proof")
+    rid = proof["o"].get("request_id") if isinstance(proof, dict) and isinstance(proof.get("o"), dict) else None
+    if rid is not None and rid in ws.remote.get("used_requests", ()):
+        return _no("proof_reused")
+    return None
+
+
+def _used(ws: WsCore, e: dict[str, Any]) -> list[str]:
+    proof = e.get("owner_proof")
+    rid = proof["o"].get("request_id") if isinstance(proof, dict) and isinstance(proof.get("o"), dict) else None
+    return [*ws.remote.get("used_requests", ()), *([rid] if rid is not None else [])]
 
 
 def _owner_person(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
@@ -104,6 +130,8 @@ def _proof(ws: WsCore, e: dict[str, Any], v: Verifier, dev: bool) -> Refusal | N
 def _changed(ws: WsCore, e: dict[str, Any], v: Verifier, dev: bool) -> Refusal | None:
     if (r := _owner_person(ws, e)) is not None or (r := _proof(ws, e, v, dev)) is not None:
         return r
+    if (r := _bind(ws, e)) is not None:
+        return r
     at_ms = ts(e["at"]) * 1000
     if e["on"] is not True or e["level"] not in LEVELS or e["premises"] not in PREMISES:
         return _no("malformed")
@@ -116,12 +144,10 @@ def _changed(ws: WsCore, e: dict[str, Any], v: Verifier, dev: bool) -> Refusal |
         return _no("until_required")
     if until is not None and until <= at_ms:
         return _no("until_past")
-    cur = ws.remote
-    ws.remote = {
-        "devices": dict(cur.get("devices", {})), "device_version": cur.get("device_version", 0),
-        "wrk_fp": cur.get("wrk_fp"), "on": True, "level": e["level"], "until_ms": until, "premises": e["premises"],
-        "agents_risk": e["agents_risk"], "hub_mode": e["hub_mode"], "off_reason": None,
-    }  # fmt: skip
+    _set(
+        ws, on=True, level=e["level"], until_ms=until, premises=e["premises"], agents_risk=e["agents_risk"],
+        hub_mode=e["hub_mode"], off_reason=None, used_requests=_used(ws, e),
+    )  # fmt: skip
     return None
 
 
@@ -130,12 +156,14 @@ def _disabled(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
         return _no("not_on")  # off already: nothing to record, and no line ever turns anything on
     if e["by"] == "device" and e.get("device") not in ws.remote.get("devices", {}):
         return _no("device_unknown")
-    ws.remote = {**ws.remote, "on": False, "off_reason": e["by"]}
+    _set(ws, on=False, off_reason=e["by"])
     return None
 
 
 def _added(ws: WsCore, e: dict[str, Any], v: Verifier, dev: bool) -> Refusal | None:
     if (r := _owner_person(ws, e)) is not None or (r := _proof(ws, e, v, dev)) is not None:
+        return r
+    if (r := _bind(ws, e)) is not None:
         return r
     cur = ws.remote
     devices = dict(cur.get("devices", {}))
@@ -150,6 +178,8 @@ def _added(ws: WsCore, e: dict[str, Any], v: Verifier, dev: bool) -> Refusal | N
         d["transport_pub"] == e["transport_pub"] or d["presence_pub"] == e["presence_pub"] for d in devices.values()
     ):
         return _no("device_exists")  # ids unique and no key used twice (contract 10.2c)
+    if e["device_id"] in cur.get("seen_devices", ()) or e["code_id"] in cur.get("seen_codes", ()):
+        return _no("ever_seen")  # a device id or an enrollment code is used once in the life of the log, even removed
     try:
         want = device_fp(e["presence_kind"], unb64u(e["transport_pub"], 32), unb64u(e["presence_pub"], 65))
     except (ValueError, EncodingError):
@@ -162,7 +192,14 @@ def _added(ws: WsCore, e: dict[str, Any], v: Verifier, dev: bool) -> Refusal | N
         "expires_ms": e["expires_ms"], "added_ms": at_ms, "confirmed_by": e["actor"]["id"],
         "fingerprint": e["fingerprint"], "code_id": e["code_id"],
     }  # fmt: skip
-    ws.remote = {**cur, "devices": devices, "device_version": cur.get("device_version", 0) + 1}
+    _set(
+        ws,
+        devices=devices,
+        device_version=cur.get("device_version", 0) + 1,
+        used_requests=_used(ws, e),
+        seen_devices=[*cur.get("seen_devices", ()), e["device_id"]],
+        seen_codes=[*cur.get("seen_codes", ()), e["code_id"]],
+    )
     return None
 
 
@@ -171,7 +208,7 @@ def _removed(ws: WsCore, e: dict[str, Any]) -> Refusal | None:
     if e["device_id"] not in devices:
         return _no("device_unknown")
     del devices[e["device_id"]]
-    ws.remote = {**ws.remote, "devices": devices, "device_version": ws.remote.get("device_version", 0) + 1}
+    _set(ws, devices=devices, device_version=ws.remote.get("device_version", 0) + 1)
     return None
 
 
@@ -187,6 +224,6 @@ def remote_apply(ws: WsCore, e: dict[str, Any], v: Verifier, *, dev: bool) -> Re
     if t == "remote.device_removed":
         return _removed(ws, e)
     if t == "remote.key_rotated":
-        ws.remote = {**ws.remote, "wrk_fp": e["wrk_fp"]}
+        _set(ws, wrk_fp=e["wrk_fp"])
         return None
     return None  # code_issued, code_burned, session_opened, session_closed: records, no state

@@ -279,6 +279,10 @@
           }
         }
       ]
+    },
+    "remote_v": {
+      "$ref": "https://schemas.orch.dev/v2/common#/$defs/nonNegInt",
+      "description": "R2: the model's remote counter the owner saw; the line applies only at exactly this value (replay rule)"
     }
   },
   "required": [
@@ -302,6 +306,7 @@
     "expires_ms",
     "fingerprint",
     "code_id",
+    "remote_v",
     "owner_proof"
   ],
   "additionalProperties": false,

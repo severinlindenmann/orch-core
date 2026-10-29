@@ -112,13 +112,6 @@ HOST_CODES: dict[str, tuple[int, bool]] = {
     "hub.rotation_pending": (9, True),
     "hub.state_mismatch": (3, False),
     "hub.not_joined": (3, False),
-    # R2, remote access (#1590; host/hubproof.py, ops/person_ops.py)
-    "remote.proof_invalid": (3, False),
-    "remote.agents_risk": (3, False),
-    "remote.needs_selective": (3, False),
-    "remote.no_pending": (3, False),
-    "remote.full": (3, False),
-    "switch.refused": (3, False),
     # H11c, start agent and the runner grant (§12.4)
     "launch.claimed": (3, False),
     "launch.no_grant": (3, False),

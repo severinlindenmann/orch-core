@@ -685,17 +685,16 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
 def _plan_link(call: Call, plan: dict[str, Any], op: str, args: dict[str, Any]) -> dict[str, Any]:
     """``publish.extend`` / ``publish.password`` on a link the host itself shared (M4 S2, #1453). Column P only (the
     caller ran :func:`_person`). Extending a link makes it reachable for longer, so it needs what sharing needs: the
-    ticket owner, a workspace owner or a maintainer (:func:`_may_share`). A password only narrows who can open it, so
-    any
-    person who may see the ticket may set one. Neither op takes a password or a record from the caller."""
+    ticket owner, a workspace owner or a maintainer (:func:`_may_share`). A password replaces the one in use, so
+    it needs the same. Neither op takes a password or a record from the caller."""
     rec = next((r for r in _records(call.service) if r.get("id") == args["share_id"]), None)
     if rec is None:
         raise HostError("not_found", "no such share")
     view = _ticket(call, rec["ticket"])  # a ticket the person may not see is not theirs to act on
     if rec.get("state") != "live":
         raise HostError("publish.changed", "this link is not live: share the files again")
+    _may_share(call, view)  # extend and password alike: seeing the ticket is not enough to change a live link
     if op == "publish.extend":
-        _may_share(call, view)
         _rate(call, "extend")
         plan["days"] = args["days"]
     else:

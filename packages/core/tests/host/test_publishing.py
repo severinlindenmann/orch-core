@@ -892,9 +892,8 @@ def test_extending_needs_what_sharing_needs(w, monkeypatch):
     sent = len(w.server.requests)
     assert err(w.req("publish.extend", {"share_id": data["share_id"], "days": 3})) == "role.denied"
     assert len(w.server.requests) == sent
-    ok(
-        w.req("publish.password", {"share_id": data["share_id"]})
-    )  # a password only narrows: any person who sees the ticket
+    assert err(w.req("publish.password", {"share_id": data["share_id"]})) == "role.denied"  # seeing is not enough
+    assert len(w.server.requests) == sent
 
 
 def test_a_dead_link_is_not_extended(w):

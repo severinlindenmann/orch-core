@@ -16,6 +16,7 @@ import { HostGates } from '@/app/pages/settings/host/Gates'
 import { HostGrants } from '@/app/pages/settings/host/Grants'
 import { HostMembers } from '@/app/pages/settings/host/Members'
 import { HostDevices } from '@/app/pages/settings/host/Devices'
+import { BuiltInAddOns } from '@/app/pages/settings/host/AddOns'
 import { DropError, dropError } from '@/api/drop'
 import { DropErrorLine, DropView, type DropPreviewStart } from '@/app/pages/drop'
 import { AGENT, PHONE_SHARE, createDropFixture, dropItem, dropVersion, installDropFixture, ME, PHONE, type DropFixture, type DropFixtureOptions } from './dropFixture'
@@ -491,7 +492,7 @@ function install() {
   r.preview = async () => ({
     spec: 'f'.repeat(64), display: `$SHELL -l -c 'exec "$0" "$@"' ${LONG_WORD}`, display_hidden: false, cwd_path: `/Users/demo/${'deeply-nested-folder/'.repeat(6)}billing`,
     cwd_path_hidden: false, notice: 'acts as you, not as an agent', as_person: true, login_shell: true, env: ['PATH', 'HOME', 'LANG', 'TERM', 'ORCH_TICKET', 'SHELL', 'USER', 'LOGNAME'],
-    blocked: null, warnings: [`The working copy ${LONG_URL} has uncommitted changes.`],
+    blocked: current === 'terminal-preview' ? { code: 'runner.disabled', message: `The host refused to open a terminal ${LONG_URL}` } : null, warnings: [`The working copy ${LONG_URL} has uncommitted changes.`],
   })
   r.ticket = async () => ({ ticket: 'layout-preview', expires_in_ms: 30000 })
   r.stop = async () => ({ state: 'exited', cleanup: 'incomplete' })
@@ -717,6 +718,7 @@ export function LayoutPreview({ name }: { name: string }) {
         </div>
       </section>
     )
+  if (scenario.startsWith('addons-')) return <div className="max-w-3xl"><BuiltInAddOns workspace={workspace} /></div>
   if (scenario === 'readers-devices' || scenario === 'readers-solo')
     return (
       <SettingsFrame current="devices" addon={undefined} ws={workspace.id} tabs={HOST_TABS}>
@@ -748,7 +750,7 @@ function TerminalPreview({ scenario }: { scenario: LayoutScenario }) {
       <p className="p-3 text-xs text-text-muted">Real-host terminal dock ({scenario}): fixture runs and a fixture socket.</p>
       <div className="flex-1" />
       <RealDock prefs={{ open: true, side: 'bottom', bottom: 360, right: 480, harness: 'shell' } as never} side="bottom" size={360} view={view} area={view.width}
-        rightFits={false} setPrefs={() => {}} focus={{ current: null }} memory={new Map()} collapse={() => {}} autoPreview={scenario === 'terminal-preview'} />
+        rightFits={false} setPrefs={() => {}} focus={{ current: null }} memory={new Map()} collapse={() => {}} />
     </div>
   )
 }

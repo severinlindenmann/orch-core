@@ -92,7 +92,7 @@ export function HostGeneral({ workspace }: { workspace: Workspace }) {
         <div className="min-w-0 space-y-1 break-words">
           {renaming === null ? (
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-[22px] font-semibold leading-tight"><bdi>{visible(workspace.name)}</bdi></h2>
+              <h2 className="min-w-0 text-[22px] font-semibold leading-tight [overflow-wrap:anywhere]"><bdi>{visible(workspace.name)}</bdi></h2>
               {role === 'owner' && <Button variant="ghost" size="sm" onClick={() => setRenaming(workspace.name)}>Rename</Button>}
             </div>
           ) : (

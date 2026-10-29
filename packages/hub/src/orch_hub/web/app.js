@@ -432,6 +432,11 @@ async function workspaces(joined = [], known = null) {
           const r = await api("GET", "/admin/users");
           return r.status === 200 ? (r.body.users ?? []).filter((u) => !u.disabled) : [];
         },
+        invite: async (name) => { // the existing admin invite (name checked by the hub): a one-time sign-in link
+          const r = await api("POST", "/admin/invites", { name });
+          if (r.status !== 200 || typeof r.body.link !== "string") throw new Error("invite failed");
+          return r.body;
+        },
         connect: async (ownerUser) => {
           const r = await api("POST", "/admin/connect", ownerUser ? { owner_user: ownerUser } : {});
           if (r.status < 200 || r.status >= 300 || typeof r.body.link !== "string" || !Number.isFinite(r.body.expires_ms)) throw new Error("connect failed");

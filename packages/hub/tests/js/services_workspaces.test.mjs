@@ -322,14 +322,14 @@ test("workspaces are named after their owner and connect asks whose workspace it
   assert.match(t, /Ben Test's workspace/); assert.match(t, /Owner: Ben Test/); assert.match(t, /Anna Test's workspace/);
   assert.doesNotMatch(t, /Another workspace/);
   await clickButton(out, "Connect a workspace");
-  assert.deepEqual(sent, ["u1"]); // the signed-in person is preselected
+  assert.deepEqual(sent, []); // r9 P04: with several people nothing is preselected
   assert.match(text(out), /Whose workspace is this\?/);
   const select = find(out, (n) => n.tag === "select")[0];
-  assert.deepEqual(find([select], (n) => n.tag === "option").map((o) => o.textContent), ["Anna Test", "Ben Test"]);
+  assert.deepEqual(find([select], (n) => n.tag === "option").map((o) => o.textContent), ["Choose…", "Anna Test", "Ben Test", "Someone new…"]);
   select.value = "u2";
   await select.listeners.change({ target: select });
-  assert.deepEqual(sent, ["u1", "u2"]);
-  assert.equal(find(out, (n) => n.tag === "input")[0].value, "/c#u2");
+  assert.deepEqual(sent, ["u2"]);
+  assert.equal(find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Connect link")[0].value, "/c#u2");
 });
 
 test("a workspace-session admin still sees Connect a workspace; the click asks for one sign-in and mints nothing", async () => {
@@ -366,4 +366,66 @@ test("one workspace on an older orch is worded in the singular", () => {
     handoffs: [], hub: { version: "0.3.0", min_supported: "0.1.0" } }, NOW);
   assert.match(text(out), /1 workspace runs an older orch/);
   assert.doesNotMatch(text(out), /1 workspaces/);
+});
+
+// r9 P04: the admin can pick "Someone new..." in Connect a workspace; nothing is silently preselected.
+const twoPeople = [{ user_id: "a".repeat(32), name: "Admin" }, { user_id: "b".repeat(32), name: "Ben" }];
+
+test("P04: with several people nothing is preselected and no workspace link is minted until one is chosen", async () => {
+  const connected = [];
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [], self: "a".repeat(32), actions: {
+    people: async () => twoPeople,
+    connect: async (who) => { connected.push(who); return { link: "/c#fresh", expires_ms: NOW + 1800000 }; },
+  } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  assert.deepEqual(connected, [], "no link before a person is chosen");
+  const select = find(out, (n) => n.tag === "select")[0];
+  const options = find([select], (n) => n.tag === "option");
+  assert.deepEqual(options.map((o) => o.textContent), ["Choose…", "Admin", "Ben", "Someone new…"]);
+  assert.ok(options.every((o) => o.getAttribute("selected") === null || o === options[0]));
+  assert.equal(find(out, (n) => n.className === "ws-link")[0].hidden, true, "the link is hidden until a person is chosen");
+  select.value = "b".repeat(32);
+  await select.listeners.change({ target: select });
+  assert.deepEqual(connected, ["b".repeat(32)]);
+  assert.equal(find(out, (n) => n.className === "ws-link")[0].hidden, false);
+});
+
+test("P04: Someone new shows a name field, calls invite (not connect), and shows the sign-in link", async () => {
+  const connected = [], invited = [];
+  let refreshed = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [], self: "a".repeat(32), actions: {
+    people: async () => { refreshed++; return twoPeople; },
+    connect: async (who) => { connected.push(who); return { link: "/c#fresh", expires_ms: NOW + 1800000 }; },
+    invite: async (name) => { invited.push(name); return { link: "http://hub.test/#invite=tok", expires_ms: NOW + 1800000 }; },
+    copy: async () => true,
+  } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  const select = find(out, (n) => n.tag === "select")[0];
+  select.value = "__new__";
+  await select.listeners.change({ target: select });
+  assert.deepEqual(connected, [], "Someone new never mints a workspace link");
+  const name = find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Their name")[0];
+  assert.ok(name);
+  assert.match(text(out), /Create sign-in link/);
+  await clickButton(out, "Create sign-in link");
+  assert.deepEqual(invited, [], "an empty name is not sent");
+  name.value = "  Ben Muster ";
+  await clickButton(out, "Create sign-in link");
+  assert.deepEqual(invited, ["Ben Muster"]);
+  assert.deepEqual(connected, []);
+  assert.equal(find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Sign-in link")[0].getAttribute("value"), "http://hub.test/#invite=tok");
+  assert.match(text(out), /come back here to connect their workspace/);
+  assert.ok(refreshed >= 2, "the people list is refreshed after the invite");
+});
+
+test("P04: an invite that fails shows a plain error", async () => {
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [], self: "a".repeat(32), actions: {
+    people: async () => twoPeople, invite: async () => { throw new Error("x"); } } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  const select = find(out, (n) => n.tag === "select")[0];
+  select.value = "__new__";
+  await select.listeners.change({ target: select });
+  find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Their name")[0].value = "Ben";
+  await clickButton(out, "Create sign-in link");
+  assert.match(text(out), /Could not create a sign-in link\. Please try again\./);
 });

@@ -40,40 +40,88 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
     button("Open " + nameOf(w), () => actions.open?.(w), { class: "pri" })].filter(Boolean);
 }
 
-/** The link is copied unchanged; after Copy the page says what to do next. */
+/** The link is copied unchanged; after Copy the page says what to do next.
+ * `link` is null until a person is chosen (several people: nothing is preselected). "Someone new..." invites a person
+ * (the existing admin invite) and never mints a workspace link. */
 export function connectWorkspaceView(link, actions = {}, { people = [], selected = null } = {}) {
+  const NEW = "__new__";
   const next = h("p", { class: "small muted", "aria-live": "polite" });
-  const NEXT = "Now open your workspace, go to Settings › Hub › Connect a hub, and paste.";
+  const NEXT = "Send this link to the workspace owner, or open it on their computer.";
+  const clock = (ms) => { const d = new Date(ms); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+  const input = h("input", { class: "grow", readonly: true, value: link?.link ?? "", "aria-label": "Connect link" });
+  let current = link?.link ?? "";
   const copy = button("Copy", async () => {
     let ok = false;
-    try { ok = !!(await actions.copy?.(link.link)); } catch { ok = false; }
+    try { ok = !!(await actions.copy?.(current)); } catch { ok = false; }
     copy.textContent = ok ? "Copied ✓" : "Could not copy. Select the link to copy it.";
     next.textContent = ok ? NEXT : "";
   });
-  const clock = (ms) => { const d = new Date(ms); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
-  const input = h("input", { class: "grow", readonly: true, value: link.link, "aria-label": "Connect link" });
-  const until = h("p", { text: "Works once, for 30 minutes (until " + clock(link.expires_ms) + ")" });
+  const openLink = button("Open link", () => actions.openLink?.(current));
+  const until = h("p", { text: link ? "Works once, for 30 minutes (until " + clock(link.expires_ms) + ")" : "" });
   const problem = h("p", { role: "alert" });
+  const linkRow = h("div", { class: "ws-link" }, h("div", { class: "row" }, input, copy, openLink), next, until);
+  linkRow.hidden = !link;
   // Only people the hub knows are offered, and the hub rejects anyone else (the workspace host never picks its owner).
-  const choices2 = people.filter((p) => p && typeof p.user_id === "string");
-  const who = choices2.length ? h("div", {},
-    h("label", { for: "ws-owner", text: "Whose workspace is this?" }),
-    h("select", { id: "ws-owner", onchange: async (e) => {
-      problem.textContent = "";
-      const select = e.target;
-      select.disabled = true;
-      try {
-        const next = await actions.connect?.(select.value);
-        if (next) { input.value = next.link; until.textContent = "Works once, for 30 minutes (until " + clock(next.expires_ms) + ")"; }
-      } catch { problem.textContent = "Could not create a link for this person. Please try again."; }
-      finally { select.disabled = false; }
-    } }, choices2.map((p) => h("option", { value: p.user_id, selected: p.user_id === selected ? true : null, text: text(p.name ?? "Unnamed") }))),
-    small("You open the hub from it as this person.")) : null;
+  let known = people.filter((p) => p && typeof p.user_id === "string");
+  const select = h("select", { id: "ws-owner" });
+  const fill = (chosen) => {
+    select.textContent = "";
+    if (!chosen) select.append(h("option", { value: "", text: "Choose…" }));
+    for (const p of known) select.append(h("option", { value: p.user_id, selected: p.user_id === chosen ? true : null, text: text(p.name ?? "Unnamed") }));
+    select.append(h("option", { value: NEW, text: "Someone new…" }));
+    select.value = chosen ?? "";
+  };
+  // "Someone new...": name + Create sign-in link (POST /admin/invites). The workspace link waits until they have signed in.
+  const nameInput = h("input", { id: "ws-new-name", maxlength: 80, autocomplete: "off", "aria-label": "Their name" });
+  const inviteInput = h("input", { class: "grow", readonly: true, "aria-label": "Sign-in link" });
+  let inviteLink = "";
+  const inviteCopy = button("Copy", async () => {
+    let ok = false;
+    try { ok = !!(await actions.copy?.(inviteLink)); } catch { ok = false; }
+    inviteCopy.textContent = ok ? "Copied ✓" : "Could not copy. Select the link to copy it.";
+  });
+  const inviteResult = h("div", {}, h("div", { class: "row" }, inviteInput, inviteCopy),
+    small("Send them the link. They choose a password, then come back here to connect their workspace."));
+  inviteResult.hidden = true;
+  const create = button("Create sign-in link", async () => {
+    problem.textContent = "";
+    const name = (nameInput.value ?? "").trim();
+    if (!name) { problem.textContent = "Enter their name first."; return; }
+    create.disabled = true;
+    try {
+      const made = await actions.invite?.(name);
+      if (!made || typeof made.link !== "string") throw new Error("invite failed");
+      inviteLink = made.link; inviteInput.value = made.link; inviteInput.setAttribute("value", made.link);
+      inviteResult.hidden = false;
+      nameInput.value = "";
+      try { const fresh = await actions.people?.(); if (Array.isArray(fresh)) { known = fresh.filter((p) => p && typeof p.user_id === "string"); fill(NEW); } } catch { /* keep the old list */ }
+    } catch { problem.textContent = "Could not create a sign-in link. Please try again."; }
+    finally { create.disabled = false; }
+  }, { class: "pri" });
+  const newBox = h("div", { class: "ws-new" }, h("label", { for: "ws-new-name", text: "Their name" }),
+    h("div", { class: "row" }, nameInput, create), inviteResult,
+    small("The workspace link appears here once they have signed in and show up in the list."));
+  newBox.hidden = true;
+  fill(selected);
+  select.addEventListener("change", async (e) => {
+    problem.textContent = "";
+    const value = e.target.value;
+    const isNew = value === NEW;
+    newBox.hidden = !isNew;
+    linkRow.hidden = true;
+    if (isNew || !value) return;
+    select.disabled = true;
+    try {
+      const made = await actions.connect?.(value);
+      if (made) { current = made.link; input.value = made.link; input.setAttribute("value", made.link); until.textContent = "Works once, for 30 minutes (until " + clock(made.expires_ms) + ")"; next.textContent = ""; copy.textContent = "Copy"; linkRow.hidden = false; }
+    } catch { problem.textContent = "Could not create a link for this person. Please try again."; }
+    finally { select.disabled = false; }
+  });
+  const who = h("div", {}, h("label", { for: "ws-owner", text: "Whose workspace is this?" }), select,
+    small("You open the hub from it as this person."));
   return h("section", { class: "card ws-connect", "aria-label": "Connect a workspace" },
     h("h2", { text: "Connect a workspace" }),
-    who,
-    h("div", { class: "row" }, input, copy),
-    next, until, problem);
+    who, linkRow, newBox, problem);
 }
 
 /** Workspaces in `rows` whose id is not in `known` (a Set of ids). */
@@ -99,8 +147,10 @@ export function workspacesView(data, now = Date.now()) {
     connectBox.textContent = "";
     try {
       const people = (await actions.people?.()) ?? [];
-      const mine = people.find((x) => x.user_id === data.self)?.user_id ?? people[0]?.user_id ?? null;
-      connectBox.append(connectWorkspaceView(await actions.connect(mine), actions, { people, selected: mine }));
+      // With several people nothing is preselected and no link exists until one is chosen; alone, the admin is the person.
+      const mine = people.length > 1 ? null : people.find((x) => x.user_id === data.self)?.user_id ?? people[0]?.user_id ?? null;
+      const first = people.length > 1 ? null : await actions.connect(mine);
+      connectBox.append(connectWorkspaceView(first, actions, { people, selected: mine }));
     }
     catch { connectBox.append(h("p", { role: "alert", text: "Could not create a link. Please try again." })); }
     finally { connect.disabled = false; }

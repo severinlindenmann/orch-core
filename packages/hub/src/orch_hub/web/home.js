@@ -92,6 +92,14 @@ export function homeView(d) {
           : "Hand-offs and approvals wait until it is back"))),
       d.actions.open ? h("button", { text: "Open", onclick: () => d.actions.open(w.workspace_id) }) : null))
       : emptyState("workspaces"));
+  // Tickets shared with this person (GET /me/shared, the same filter as search): read-only, hidden when there are none.
+  const sharedItems = (d.shared ?? []).filter((it) => it && typeof it === "object");
+  const sharedCard = sharedItems.length ? h("section", { class: "card shared-tickets", "aria-labelledby": "shared-heading" },
+    h("h2", { id: "shared-heading", text: "Shared tickets (" + sharedItems.length + ")" }),
+    sharedItems.map((it) => h("article", { class: "list-row row" },
+      h("div", { class: "grow" }, h("b", { text: text(it.title ?? it.key ?? "Ticket") }),
+        note([workspaceName(it.workspace_id), it.shared_by ? "shared by " + text(it.shared_by) : "shared with you"].join(" · "))),
+      d.actions?.open && it.workspace_id ? h("button", { text: "Open", onclick: () => d.actions.open(it.workspace_id) }) : null))) : null;
   const browser = d.thisBrowser;
   const active = browser?.state === "active";
   const fromWorkspace = browser?.state === "from_workspace";
@@ -112,5 +120,5 @@ export function homeView(d) {
   const added = newChannelsNotice(d.newChannels, { remove: (c) => d.actions?.removeChannel(c.channel_id), dismiss: () => d.actions?.dismissNew?.() });
   return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,
     h("p", { class: "company-summary", text: health.online + (health.online === 1 ? " workspace" : " workspaces") + " online, " + health.offline + " offline, " + health.waiting + (health.waiting === 1 ? " thing needs you" : " things need you") }),
-    h("div", { class: "home-grid" }, needs, h("div", { class: "home-side" }, spaces, signing))].filter(Boolean);
+    h("div", { class: "home-grid" }, needs, h("div", { class: "home-side" }, sharedCard, spaces, signing))].filter(Boolean);
 }

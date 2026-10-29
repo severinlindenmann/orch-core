@@ -14,13 +14,14 @@ import { nowMs } from '@/lib/time'
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
 // The signing dialog is its own feature; here it shows the action, the "not signed" block, and reports how it ended.
 vi.mock('@/components/sign/SignPopover', () => ({
-  SignPopover: (p: { title: string; startsAgent?: boolean; controls?: React.ReactNode; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown, how?: { via: string; unsignedShown: boolean }) => void; onClose: () => void }) => {
+  SignPopover: (p: { title: string; startsAgent?: boolean; controls?: React.ReactNode; lead?: React.ReactNode; action: { action: string }; unsigned?: React.ReactNode; onSettled?: (phase: string, st: unknown, req: unknown, how?: { via: string; unsignedShown: boolean }) => void; onClose: () => void }) => {
     const req = { ...fakeRequest({ key: 'DEMO-0044', id: 'hr_' + '0'.repeat(25) + '7' }), op: 'new' }
     const done = (how?: { via: string; unsignedShown: boolean }) => p.onSettled?.('done', state(req, { state: 'submitted', key: 'DEMO-0044' }), req, how)
     return (
       <div role="dialog" aria-label={p.title}>
         <pre data-testid="sent-action">{JSON.stringify(p.action)}</pre>
         <span data-testid="starts-agent">{String(!!p.startsAgent)}</span>
+        {p.lead}
         {p.controls}
         {p.unsigned}
         {/* "signed": one click from this popover, with the unsigned slot on screen (what the real popover reports then) */}
@@ -120,19 +121,30 @@ describe('the form', () => {
     expect(stored).toMatchObject({ harness: 'codex', mode: 'work', start: true })
   })
 
-  it('remembers Create without starting: next time Create is the main button and Create and start is in the menu', async () => {
+  it('Create without starting from the menu is used once: the main button and the stored choice stay as they were', async () => {
     const { r, sheet } = await open()
     await createOnly(r, sheet)
     expect((await sent()).agent).toBeUndefined()
-    expect(JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}').start).toBe(false)
-    cleanup()
-    const again = await open({ [`orch.dashboard.new-ticket.agent.p_sev.${WS()}`]: JSON.stringify({ start: false, harness: 'claude-code', mode: 'work', model: '' }) })
-    expect(await within(again.sheet).findByRole('button', { name: 'Create ticket' }, T)).toBeInTheDocument()
-    expect(within(again.sheet).queryByRole('button', { name: 'Create and start' })).toBeNull()
-    await again.r.user.click(within(again.sheet).getByRole('button', { name: 'More ways to create' }))
-    await again.r.user.click(await screen.findByRole('menuitem', { name: 'Create and start' }, T))
+    expect(await screen.findByTestId('nt-lead')).toHaveTextContent('Creates the ticket. No agent starts.')
+    expect(JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}').start).not.toBe(false)
+    expect(await startBtn(sheet)).toBeInTheDocument()
+    expect(within(sheet).queryByRole('button', { name: 'Create ticket' })).toBeNull()
+  })
+
+  it('the main button keeps its choice: with start=false stored, Create ticket is main and the menu start is used once', async () => {
+    const key = `orch.dashboard.new-ticket.agent.p_sev.${WS()}`
+    const stored = JSON.stringify({ start: false, harness: 'claude-code', mode: 'work', model: '' })
+    const { r, sheet } = await open({ [key]: stored })
+    expect(await within(sheet).findByRole('button', { name: 'Create ticket' }, T)).toBeInTheDocument()
+    await r.user.click(within(sheet).getByRole('button', { name: 'More ways to create' }))
+    await r.user.click(await screen.findByRole('menuitem', { name: 'Create and start' }, T))
     expect(await screen.findByTestId('not-signed-start')).toBeInTheDocument()
-    expect(JSON.parse(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`) ?? '{}').start).toBe(true)
+    expect(JSON.parse(localStorage.getItem(key) ?? '{}').start).toBe(false) // the menu did not change the default
+    cleanup()
+    const again = await open({ [key]: stored })
+    await again.r.user.click(await within(again.sheet).findByRole('button', { name: 'Create ticket' }, T))
+    expect((await sent()).agent).toBeUndefined()
+    expect(JSON.parse(localStorage.getItem(key) ?? '{}').start).toBe(false) // the main button persists its choice
   })
 
   it('shows only Create, and says why, when the runner is not connected', async () => {

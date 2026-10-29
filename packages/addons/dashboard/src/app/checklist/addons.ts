@@ -513,9 +513,9 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       },
       {
         id: 'V3',
-        title: 'Only create, and it is remembered',
-        text: 'Press "Only create" on a new ticket and sign. Open New ticket again.',
-        see: 'The ticket is created and no agent starts. "Only create" is now the first button, "Create and open another" is back, and "Create and start agent" is the second button.',
+        title: 'Only create, used once',
+        text: 'Choose "Create without starting" from the small arrow menu on a new ticket and sign. Open New ticket again.',
+        see: 'The signing box says "Creates the ticket. No agent starts." and its button reads "Sign and create ticket". The ticket is created and no agent starts. The first button is unchanged: the menu choice is used once.',
       },
       {
         id: 'V4',

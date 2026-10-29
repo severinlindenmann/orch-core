@@ -43,7 +43,7 @@ Acceptance criteria
 
 Applies under
   type: feature
-  rule for this gate: 1 approval from owner; applies to all tickets
+  Who approves the requirements: 1 approval from owner; applies to all tickets
 
 Empty, not shown: Summary.
 """
@@ -355,7 +355,7 @@ def test_authority_is_in_the_plain_view_of_a_grant_a_member_and_a_gate(human, se
     ready(human, key)
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
     rows = {r["field"]: r["after"] for r in build(p)["fields_changed"]}
-    assert "approval" in rows["rule for this gate"] and "owner" in rows["rule for this gate"]
+    assert "approval" in rows["Who approves the requirements"] and "owner" in rows["Who approves the requirements"]
 
 
 def _tz(monkeypatch, name):
@@ -501,8 +501,8 @@ def test_an_unverified_build_labels_every_before_and_leaves_out_the_policy(human
     (row,) = build(s, verified=False)["fields_changed"]
     assert row["before_note"] == "per host, not checked"
     p = human.prepare("approve", {"ref": key, "gate": "requirements"})
-    assert "rule for this gate" in {r["field"] for r in build(p, verified=True)["fields_changed"]}
-    assert "rule for this gate" not in {r["field"] for r in build(p, verified=False)["fields_changed"]}
+    assert "Who approves the requirements" in {r["field"] for r in build(p, verified=True)["fields_changed"]}
+    assert "Who approves the requirements" not in {r["field"] for r in build(p, verified=False)["fields_changed"]}
     settings = sample("settings.changed")
     c = build(
         {"op": "settings.set", "events": [settings], "material": material_for("settings.changed", settings)}, False

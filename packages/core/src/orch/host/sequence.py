@@ -1418,7 +1418,10 @@ def _gates_content(
     content["tasks"] = tasks
     plan_rule = prepared["material"]["sequence"].get("plan_policy")
     if plan_rule is not None and verified:  # like a single approval's rule: only once the signer recomputed it
-        signcontent._row(content, "rule for the plan (per host, not signed)", signcontent.policy_words(plan_rule))
+        signcontent._row(content, signcontent.who_approves("plan"), signcontent.policy_words(plan_rule))
+        content["ticket"]["key_note"] += (
+            "; who approves the plan is read from this computer's settings and is not part of what you sign here"
+        )
     notes = content.setdefault("notes", [])
     notes.extend(extra_lines(intent))
     return content

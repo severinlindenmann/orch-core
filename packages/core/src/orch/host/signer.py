@@ -977,7 +977,9 @@ def render(
         ]
         plan_rule = prepared["material"]["sequence"].get("plan_policy")
         if plan_rule is not None:
-            extra.append(f"rule for the plan (per host, not signed): {signcontent.policy_words(plan_rule)}")
+            extra.append(
+                f"{signcontent.who_approves('plan')} (per host, not signed): {signcontent.policy_words(plan_rule)}"
+            )
         prepared = sequence.expand(prepared)
     material = prepared["material"]
     events = prepared["events"]

@@ -693,6 +693,11 @@ def _task_rows(out: dict[str, Any], value: Any, before: Any, note: str | None) -
         )
 
 
+def who_approves(gate_id: str) -> str:
+    """The label of a gate's rule row, in plain words (the rule itself is :func:`policy_words`)."""
+    return "Who approves the " + {"verify": "verify step"}.get(gate_id, gate_id)
+
+
 def policy_words(policy: Mapping[str, Any]) -> str:
     """A gate policy in plain words; every key of it is in the sentence."""
     _check_keys("policy keys", policy, _POLICY_SHOWN)
@@ -1022,7 +1027,7 @@ def _gate(
     if not isinstance(policy, Mapping):
         raise PlainUnavailable("a gate request without its policy")
     if ctx.verified:  # the policy is shown only when the signer recomputed its hash from it
-        _row(out, "rule for this gate", policy_words(policy))
+        _row(out, who_approves(gate_id), policy_words(policy))
 
 
 def _question(material: Mapping[str, Any], events: list[Mapping[str, Any]], ticket: Any, out: dict[str, Any]) -> None:

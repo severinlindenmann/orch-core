@@ -488,17 +488,21 @@ def test_the_view_says_who_approves_the_plan_as_a_single_plan_approval_does(huma
     first = rig.first()
     human.check(first)
     row = next(
-        r for r in signcontent.build(first, verified=True)["fields_changed"] if "rule for the plan" in r["field"]
+        r for r in signcontent.build(first, verified=True)["fields_changed"] if r["field"] == "Who approves the plan"
     )
-    assert "per host, not signed" in row["field"]
+    content = signcontent.build(first, verified=True)
+    assert "not part of what you sign" in content["ticket"]["key_note"] and "not part" not in row["after"]
     single = human.prepare("approve", {"ref": key, "gate": "plan"})
     assert row["after"] == signcontent.policy_words(single["material"]["policy"])
     assert first["material"]["sequence"]["plan_policy"] == single["material"]["policy"]
     # like a single approval's rule: not shown before the signer has checked the request
     assert not any(
-        "rule for the plan" in r["field"] for r in signcontent.build(first, verified=False).get("fields_changed", [])
+        r["field"] == "Who approves the plan"
+        for r in signcontent.build(first, verified=False).get("fields_changed", [])
     )
-    assert "rule for the plan (per host, not signed): " + row["after"] in signer.render(first, lambda w: ("ws", "DEMO"))
+    assert "Who approves the plan (per host, not signed): " + row["after"] in signer.render(
+        first, lambda w: ("ws", "DEMO")
+    )
 
 
 def test_the_plan_rule_is_in_the_digest_and_the_signer_recomputes_it(human, tmp_path):

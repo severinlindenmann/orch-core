@@ -1133,10 +1133,15 @@ class RealPorts:
 
     def trust_why(self, root: Path, *, allow_parent: bool = False) -> str:
         """Why the trust step was skipped, in plain words (shown on the page and in the setup log)."""
-        from .claude_folder import refusal
+        from .claude_folder import claude_installed, refusal
 
+        if not claude_installed(self.env):  # J01-06: the sign card of the first Claude Code start asks again
+            return (
+                "Claude Code is not installed on this computer yet. Install it any time: starting a Claude Code agent "
+                "asks again, and no terminal question is needed."
+            )
         return refusal(self.env, root, allow_parent=allow_parent) or (
-            "Claude Code is not set up yet (never started here): start it once, then turn this on in Settings."
+            "Claude Code is not set up yet (never started here): starting an agent asks again, in the sign card."
         )
 
     def records_setup(self, wid: str, root: Path) -> None:

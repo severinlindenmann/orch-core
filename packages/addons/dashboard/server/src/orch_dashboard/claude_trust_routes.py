@@ -50,6 +50,10 @@ def register(app, gateway, auth):
         root = Path(os.path.realpath(project))
         env = os.environ
         config = claude_folder.config_state(env, root)
+        # the sign card of a Claude Code start: asked only when the consent is not there and could be given WITHOUT
+        # "trust anyway" (allow_parent stays false from the card); else the plain reason why it cannot be
+        consented = bool(claude_trust._consented(str(root)))
+        agent_why = "" if consented else (claude_folder.refusal(env, root, allow_parent=False) or "")
         return {
             "available": True,
             # on = the person agreed AND Claude Code's settings file is really there (never "on" while it is missing)
@@ -58,6 +62,8 @@ def register(app, gateway, auth):
             "offered": bool(claude_folder.offered(env, root, allow_parent=True)),
             "why_not": claude_folder.refusal(env, root, allow_parent=True) or "",
             "parent_config": str(claude_folder.parent_config(root, env) or ""),
+            "agent_needs_consent": not consented and not agent_why,
+            "agent_why_not": agent_why,
         }
 
     @app.post("/api/w/{ws}/claude-trust")
@@ -70,8 +76,8 @@ def register(app, gateway, auth):
         reason = claude_folder.grant_consent(os.environ, project, allow_parent=body.allow_parent)
         if reason:
             raise fail("invalid.input", reason, exit=1)
-        # the same trust whether or not the file existed (setup's own step)
-        done = claude_folder.trust_folder(os.environ, project, allow_parent=body.allow_parent)
-        if not done and claude_folder.config_state(os.environ) == "missing":
-            raise fail("invalid.input", "Claude Code is not set up yet: start it once, then try again.", exit=1)
+        # the same trust whether or not the file existed (setup's own step). Claude Code's settings file may still be
+        # missing here (it was never started): that is no refusal, the consent is recorded and the runner makes the
+        # file when it pre-trusts the first ticket folder (P03).
+        claude_folder.trust_folder(os.environ, project, allow_parent=body.allow_parent)
         return {"on": True}

@@ -289,6 +289,7 @@ RESERVED_ADDON_NAMES = frozenset(
         "invalid",
         "hub",
         "relay",
+        "remote",
     ]
 )
 _SEMVER = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")

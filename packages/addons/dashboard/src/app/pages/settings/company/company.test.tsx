@@ -23,7 +23,7 @@ describe('the Company tab', () => {
   it('lists skills and tools with a status word and one button each', async () => {
     page()
     expect(await screen.findByText('Company skills', {}, T)).toBeTruthy()
-    expect(screen.getByText('Company tools (MCP servers)')).toBeTruthy()
+    expect(screen.getByText('Company tools')).toBeTruthy()
     expect(screen.getByTestId('company-status-style-guide').textContent).toBe('Off')
     expect(screen.getByTestId('company-status-support-tone').textContent).toBe('Changed — look again')
     expect(screen.getByTestId('company-on-style-guide').textContent).toBe('Review and turn on')

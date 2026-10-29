@@ -51,6 +51,12 @@ describe('Tickets page', () => {
     await user.type(await screen.findByRole('searchbox', { name: 'Search tickets' }), 'zzzz-no-match')
     expect(await screen.findByText(/No tickets match/)).toBeInTheDocument()
   })
+  it('the empty state shows no terminal command (r10-P07)', async () => {
+    const { user } = renderApp('/tickets')
+    await user.type(await screen.findByRole('searchbox', { name: 'Search tickets' }), 'zzzz-no-match')
+    await screen.findByText(/No tickets match/)
+    expect(document.body.textContent).not.toMatch(/orch list/)
+  })
   it('opens a ticket with Enter on the focused row', async () => {
     const { user } = renderApp('/tickets')
     await screen.findByRole('table', { name: 'Tickets' })

@@ -1852,8 +1852,11 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
     seen[nonce.hex()] = now_ms + NONCE_RETENTION_MS
     # 9. the owner's approval (V3-D4): required for public access; verified whenever present
     if approval is None:
-        if req.get("access") == "public":
-            raise Refused("approval_required")
+        from .published import app_route  # late: published imports this module
+
+        route = app_route(req["method"], req["target"].partition("?")[0])
+        if req.get("access") == "public" or (route is not None and route["approval"]):
+            raise Refused("approval_required")  # an app commit, rollback or start never goes live unapproved (M4)
         return {"workspace": wsx, "hub": hub, "approved": False}
     verify_approval(
         approval,

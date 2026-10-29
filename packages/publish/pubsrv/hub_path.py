@@ -641,8 +641,13 @@ def check_hub_publish(req, st, nonces, now_ms, dev_mode):
         raise Refused("replay")
     approval = p["approval"]  # 9
     if approval is None:
-        if req.get("access") == "public":
-            raise Refused("approval_required")
+        from .published import app_route  # late: published imports this module
+
+        route = app_route(method, target.partition("?")[0])
+        if req.get("access") == "public" or (route is not None and route["approval"]):
+            raise Refused(
+                "approval_required"
+            )  # an app commit, rollback or start never goes live unapproved (M4)
         return {"workspace": wsx, "hub": hub, "approved": False}
     verify_approval(
         approval,

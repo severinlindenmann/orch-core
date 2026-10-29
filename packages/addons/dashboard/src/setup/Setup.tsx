@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   SetupAPI,
@@ -137,6 +137,21 @@ export function reviewFacts(review: Review): Fact[] {
   if (has('git')) facts.push({ icon: '⧉', label: 'Safe copies', value: 'Each ticket gets its own safe copy of this folder. None of your files are changed.' })
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
   return facts
+}
+/** The four buttons of one word check: the right word and three other distinct words of the same list, shuffled. */
+export function choicesFor(n: number, recoveryWords: string[]): string[] {
+  const right = recoveryWords[n - 1]
+  const others = [...new Set(recoveryWords.filter((w) => w !== right))]
+  for (let i = others.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[others[i], others[j]] = [others[j], others[i]]
+  }
+  const all = [right, ...others.slice(0, 3)]
+  for (let i = all.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[all[i], all[j]] = [all[j], all[i]]
+  }
+  return all
 }
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
 /** A ticket prefix from a workspace name: first letters, capitals, letters and digits only ("Marketing Department" gives
@@ -393,6 +408,11 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [workspaceEdited, setWorkspaceEdited] = useState(false)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
   const [words, setWords] = useState<Record<string, string>>({})
+  // The word check is a tap: the choices are made once per set of words and stay while the page re-renders.
+  const choices = useMemo(
+    () => Object.fromEntries((secrets?.check_positions ?? []).map((n) => [n, choicesFor(n, secrets?.recovery_words ?? [])])),
+    [secrets],
+  )
   const [review, setReview] = useState<Review>()
   const [run, setRun] = useState<string>()
   const [progress, setProgress] = useState<Progress>()
@@ -651,7 +671,9 @@ export function Setup({ api }: { api: SetupAPI }) {
       setEnded(true)
       api.forget()
       setError(expiredCopy)
-    } else setError(`Those words did not match. ${result.attempts_left} attempts left.`)
+    } else setError(
+        `That was not the right word. Look at the highlighted number in the list. ${result.attempts_left} ${result.attempts_left === 1 ? 'try' : 'tries'} left.`,
+      )
   }
   async function copyRecovery() {
     try {
@@ -1088,7 +1110,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <h2>Recovery words</h2>
                     <ol className="recovery">
                       {secrets.recovery_words.map((word, i) => (
-                        <li key={i}>
+                        <li key={i} className={secrets.check_positions.includes(i + 1) ? 'check' : undefined}>
                           <span>{i + 1}</span> {word}
                         </li>
                       ))}
@@ -1104,22 +1126,23 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my
                     recovery words
                   </label>
-                  <h2>One quick check</h2>
-                  <div className="word-check">
-                    {secrets.check_positions.map((n) => (
-                      <label key={n}>
-                        Word {n}
-                        <input
-                          autoComplete="off"
-                          autoCorrect="off"
-                          spellCheck={false}
-                          value={words[String(n)] ?? ''}
-                          onChange={(e) => setWords({ ...words, [String(n)]: e.target.value })}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                  <p>Only {secrets.check_positions.length === 1 ? 'this recovery word is' : 'these recovery words are'} checked. Five incorrect attempts end this session.</p>
+                  {secrets.check_positions.map((n) => (
+                    <div key={n} className="word-check" role="group" aria-label={`Word ${n}`}>
+                      <h2>Tap word {n} to confirm</h2>
+                      <div className="word-choices">
+                        {(choices[n] ?? []).map((w) => (
+                          <button
+                            key={w}
+                            type="button"
+                            aria-pressed={words[String(n)] === w}
+                            onClick={() => setWords({ ...words, [String(n)]: w })}
+                          >
+                            {w}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                   <SetupFooter cancel={cancel}>
                     <button
                       className="primary"

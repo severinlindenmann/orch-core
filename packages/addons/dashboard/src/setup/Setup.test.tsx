@@ -186,8 +186,7 @@ async function reveal() {
 }
 async function check() {
   fireEvent.click(screen.getByLabelText('I saved my recovery words'))
-  for (const n of [17])
-    fireEvent.change(screen.getByLabelText(`Word ${n}`), { target: { value: `demo-word-${n}` } })
+  for (const n of [17]) fireEvent.click(within(screen.getByRole('group', { name: `Word ${n}` })).getByRole('button', { name: `demo-word-${n}` }))
   fireEvent.click(screen.getByRole('button', { name: 'Confirm saved words →' }))
 }
 afterEach(() => {
@@ -725,10 +724,18 @@ test('a wrong attempt clears the wrong word and shows the attempts left', async 
   render(<Setup api={f.api} />)
   await reveal()
   fireEvent.click(screen.getByLabelText('I saved my recovery words'))
-  fireEvent.change(screen.getByLabelText('Word 17'), { target: { value: 'wrong' } })
+  const group = within(screen.getByRole('group', { name: 'Word 17' }))
+  expect(group.getAllByRole('button')).toHaveLength(4)
+  expect(group.getByRole('button', { name: 'demo-word-17' })).toBeInTheDocument()
+  expect(document.querySelectorAll('.recovery li.check')).toHaveLength(1)
+  expect(document.querySelector('.recovery li.check')).toHaveTextContent('17')
+  expect(screen.getByRole('heading', { name: 'Tap word 17 to confirm' })).toBeInTheDocument()
+  const decoy = group.getAllByRole('button').find((b) => b.textContent !== 'demo-word-17')!
+  fireEvent.click(decoy)
+  expect(decoy).toHaveAttribute('aria-pressed', 'true')
   fireEvent.click(screen.getByRole('button', { name: 'Confirm saved words →' }))
-  await screen.findByText(/did not match. 3 attempts left/)
-  expect(screen.getByLabelText('Word 17')).toHaveValue('')
+  await screen.findByText(/not the right word.*highlighted number.*3 tries left/)
+  expect(group.getByRole('button', { name: decoy.textContent! })).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('the progress words are shown, and the unfinished items are named in words', async () => {
@@ -1076,7 +1083,7 @@ test('a folder without git offers to make one when Worktrees is on, and never co
   await screen.findByRole('heading', { name: 'Your recovery words' })
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ git_init: true })
   expect(screen.getAllByLabelText(/^Word \d+$/)).toHaveLength(1)
-  expect(screen.getByRole('heading', { name: 'One quick check' })).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'Tap word 17 to confirm' })).toBeInTheDocument()
 })
 
 test('choosing to continue without worktrees drops them and asks no git question', async () => {

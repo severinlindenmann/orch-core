@@ -236,10 +236,26 @@
   font-size: 11px;
   margin-right: 5px;
 }
-.setup .word-check {
+.setup .word-check h2 {
+  margin: 8px 0;
+}
+.setup .word-choices {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.setup .word-choices button {
+  font-family: monospace;
+}
+.setup .recovery li.check {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+@media (max-width: 520px) {
+  .setup .word-choices {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .setup .review-item {
   border-bottom: 1px solid var(--border);

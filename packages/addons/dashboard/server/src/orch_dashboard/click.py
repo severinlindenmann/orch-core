@@ -32,6 +32,7 @@ from .gateway import Gateway
 from .hubapprove import mode_of
 from .reads import workspace
 from .signing import (
+    NEXT_RETRY_HOPS,
     AddonEnable,
     AgentAccess,
     EditTicket,
@@ -887,6 +888,28 @@ def register(app: FastAPI, gateway: Gateway):
             return signer.call("prepare", sent)
 
         idem_key = planned.idem(ws, 0)
+        repeated = False
+
+        def step_past_signed(plan_, ws_, first, call_, key):
+            """P06: the signed twin's record is a genuine conflict. Prepare the next retry (a new idem, a fresh
+            request); if that one is itself already signed, step once more. A bounded walk, never a signature."""
+            at = first
+            for _ in range(NEXT_RETRY_HOPS + 1):
+                failed_bumps[key] = at
+                try:
+                    return send_prepare(plan_, ws_, at, call_, lambda: human(ws_, "human.pending", {}))
+                except HostError as err:
+                    said_ = str(err.error.get("message", "")) if err.error["code"] == "human.request_state" else ""
+                    if said_ != SUBMITTED:
+                        raise
+                    at = getattr(err, "retry_used", at) + 1
+            raise fail(
+                "intent.blocked",
+                "The earlier attempt was signed, but its record can't be read here. Start again only if you intend "
+                "another attempt; an earlier one may have been signed.",
+                exit=5,
+            )
+
         start = max(body.retry, failed_bumps.get(idem_key, 0))
         try:
             got = send_prepare(planned, ws, start, call, lambda: human(ws, "human.pending", {}))
@@ -902,11 +925,18 @@ def register(app: FastAPI, gateway: Gateway):
             device = signer.status().get(ws, {}).get("device")
             if not device:
                 raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
+            stepped = None
             try:
                 prepared = app.state.human(
                     ws,
                     "human.prepare",
-                    {"op": planned.op, "args": planned.args, "signer": {"device": device, "auth": "convenience"}},
+                    {
+                        "op": planned.op,
+                        "args": planned.args,
+                        "signer": {"device": device, "auth": "convenience"},
+                        # the host binds the sequence too: without it a signed twin could never be read back
+                        **({"sequence": planned.sequence} if planned.sequence else {}),
+                    },
                     idem=planned.idem(ws, signed_retry),
                     files=files,
                 )
@@ -920,20 +950,30 @@ def register(app: FastAPI, gateway: Gateway):
                         "another attempt; an earlier one may have been signed.",
                         exit=5,
                     ) from None
-                if code == "idem.conflict":
+                if code == "idem.conflict" and isinstance(body, NewTicketSequence | QuickStart):
+                    # P06: a new ticket whose earlier twin (same title and text) was signed but is unreadable here.
+                    # Step to the next retry: a NEW idem, so a fresh request and review; nothing signed is reused,
+                    # and nothing is signed until the person presses Sign on that review.
+                    stepped = step_past_signed(planned, ws, signed_retry + 1, call, idem_key)
+                elif code == "idem.conflict":
                     raise fail(
                         "intent.blocked",
                         "The earlier attempt was signed, but its record can't be read here. Start again only if "
                         "you intend another attempt; an earlier one may have been signed.",
                         exit=5,
                     ) from None
-                raise
-            if prepared.get("request", {}).get("state") != "submitted":
-                raise fail("internal", "The host did not return the submitted intent.")
-            error = read_done(human, ws, prepared["request"]["id"])
-            if error.error["code"] == "intent.failed":
-                failed_bumps[idem_key] = signed_retry + 1
-            raise error from None
+                else:
+                    raise
+            if stepped is not None:
+                got = stepped
+                repeated = True
+            else:
+                if prepared.get("request", {}).get("state") != "submitted":
+                    raise fail("internal", "The host did not return the submitted intent.")
+                error = read_done(human, ws, prepared["request"]["id"])
+                if error.error["code"] == "intent.failed":
+                    failed_bumps[idem_key] = signed_retry + 1
+                raise error from None
         rid = got["request_id"]
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()
@@ -942,7 +982,10 @@ def register(app: FastAPI, gateway: Gateway):
             handoffs.note_intent(planned.person, rid, planned.sequence["intent"])
         handoffs.own(planned.person, ws, rid, TTL)
         handoffs.commit(token, ws, rid, until=handoffs.clock() + TTL, kind="click")
-        return {k: got[k] for k in ("request_id", "expires_at", "op", "confirm") if k in got}
+        answer = {k: got[k] for k in ("request_id", "expires_at", "op", "confirm") if k in got}
+        if repeated:
+            answer["repeat"] = True  # shown beside the review: this makes another ticket like one already signed
+        return answer
 
     @app.post("/api/w/{ws}/click/view", dependencies=[Depends(contract)])
     def view(body: Step, ws: str = Depends(workspace)):

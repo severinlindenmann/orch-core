@@ -291,11 +291,14 @@ describe('stop sharing by a rule', () => {
     await user.click(within(dialog).getByTestId('hub-add-readers-info'))
     expect(await screen.findByText('Team membership is managed by the hub admin.')).toBeTruthy()
     await user.keyboard('{Escape}')
-    expect(within(dialog).getByTestId('hub-add-new')).toHaveTextContent('1 new item leaves')
     expect(within(dialog).getByTestId('hub-add-later')).toHaveTextContent('Later edits to these tickets are shared too')
-    expect(within(dialog).queryByTestId('hub-add-list')).toBeNull() // the list is behind one small click
-    await user.click(within(dialog).getByText('Show list'))
-    expect(within(dialog).getByTestId('hub-add-list')).toHaveTextContent('Later public note')
+    expect(within(dialog).queryByTestId('hub-add-new')).toBeNull() // what leaves is behind the i (r10-P08)
+    await user.click(within(dialog).getByTestId('hub-add-details'))
+    expect(await screen.findByTestId('hub-add-new')).toHaveTextContent('1 new item leaves')
+    expect(screen.queryByTestId('hub-add-list')).toBeNull() // the list is behind one more small click
+    await user.click(screen.getByText('Show list'))
+    expect(screen.getByTestId('hub-add-list')).toHaveTextContent('Later public note')
+    await user.keyboard('{Escape}')
     expect(within(dialog).queryByRole('textbox')).toBeNull()
     expect(dialog.textContent).not.toMatch(/orch |terminal|backup key|type the/i)
     // a script-made click is not a press

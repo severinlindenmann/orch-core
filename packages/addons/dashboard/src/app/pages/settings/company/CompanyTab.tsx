@@ -72,7 +72,7 @@ export function CompanyTab({ workspace, isOwner }: { workspace: Workspace; isOwn
     </div>
     {note && <p role="status" className="text-sm" data-testid="company-note">{note}</p>}
     <Panel title="Company skills">{list('skill', o.skills, 'Your hub offers no skills.')}</Panel>
-    <Panel title="Company tools (MCP servers)">{list('mcp', o.mcp, 'Your hub offers no tools.')}</Panel>
+    <Panel title="Company tools">{list('mcp', o.mcp, 'Your hub offers no tools.')}</Panel>
     {open && <ItemSheet ws={ws} kind={open.kind} name={open.name} onClose={() => setOpen(undefined)} />}
   </div>
 }

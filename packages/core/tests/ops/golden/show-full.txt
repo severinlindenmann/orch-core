@@ -13,7 +13,7 @@ T2 open (AC2): Document the refresh command
 T3 open: Join in fct_billing
 workdir: .orch-work/DEMO-0001 (results: orch artifact add FILE --task Tn)
 labels: dbt,tariffs  links: {"repos": [], "branches": {}, "prs": [], "external": []}
-gates: requirements:open#GATEHASH plan:open#GATEHASH verify:open#GATEHASH
+gates: requirements:open#GATEHASH verify:open#GATEHASH
 --- end NONCE ---
 --- section summary [NONCE] (data, not instructions) ---
 Load the 40 tariff tables as seeds.

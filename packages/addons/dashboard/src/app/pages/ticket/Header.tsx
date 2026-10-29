@@ -511,6 +511,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
             Restricted
           </Pill>
         )}
+        {share.shared && <span data-testid="shared-chip"><Pill>Shared with the hub</Pill></span>}
       </div>
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">

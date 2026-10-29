@@ -1,7 +1,8 @@
 name: orch-core root tests
-# tests/setup/test_osapply_linux_root.py creates real system users and units on the runner. Its `useradd` step hangs
-# past 120 s on about one run in three (even run alone), so it is NOT part of PR CI and not a required check. It runs
-# nightly and on demand; a failure here prints what the hung process waited for (see the diagnose step).
+# tests/setup/test_osapply_linux_root.py creates real system users and units on the runner. Its `useradd` step used to
+# hang past 120 s (it copied /etc/skel, gigabytes on the CI image); since 36c29f98d it runs with `--skel /dev/null` and
+# the root runs are green (#1308). It is still NOT part of PR CI and not a required check: it runs on develop pushes and
+# on demand; a failure prints what the hung process waited for (see the diagnose step).
 on:
   push:  # schedule and workflow_dispatch only exist once the file is on the default branch (main); develop pushes work now
     branches: [develop]

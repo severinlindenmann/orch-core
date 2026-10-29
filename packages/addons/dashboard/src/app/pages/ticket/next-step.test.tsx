@@ -295,6 +295,8 @@ it('an idle agent after the plan approval: no spinner, one Start building button
   const card = screen.getByTestId('next-step')
   expect(card).toHaveTextContent('Plan approved')
   expect(card).not.toHaveTextContent('working')
+  expect(card).not.toHaveTextContent('stopped') // the idle source may be a quiet terminal: "may be waiting"
+  expect(card).toHaveTextContent('may be waiting')
   expect(within(card).getAllByRole('button')).toHaveLength(1)
   await userEvent.setup().click(within(card).getByRole('button', { name: 'Start building' }))
   expect(onFinish).toHaveBeenCalledOnce()

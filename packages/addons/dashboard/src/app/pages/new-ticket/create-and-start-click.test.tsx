@@ -196,7 +196,7 @@ describe('the real click path', () => {
   })
 })
 
-it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant needs the second press', async (minutes) => {
+it.each([null, 14, 15, 16])('one review with %s minutes access: never armed by Create and start, one press in the sign box signs', async (minutes) => {
   const { DEPOSIT_RISK } = await import('@/api/click')
   vi.spyOn(gesture, 'takeTrustedPress').mockReturnValueOnce(true)
   const shown = view()
@@ -242,6 +242,14 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
   } else {
     expect(action).not.toHaveProperty('agent')
     expect(panel).not.toHaveTextContent(DEPOSIT_RISK)
+    // Opus r9-build 1: the "Create and start" click (a trusted press) never arms the review: nothing signs by itself
+    await new Promise(resolve => setTimeout(resolve, ARM_MS + 400))
+    expect(s.sign).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('sign-arm-status')).not.toBeInTheDocument()
+    const button = screen.getByRole('button', { name: 'Sign and start agent' })
+    await waitFor(() => expect(button).toBeEnabled(), { timeout: ARM_MS + 3000 })
+    fireEvent.pointerDown(button)
+    fireEvent.click(button)
   }
   await waitFor(() => expect(s.sign).toHaveBeenCalledTimes(1), T)
   await waitFor(() => expect(s.start).toHaveBeenCalledWith(expect.any(String), REQ), T)

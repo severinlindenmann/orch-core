@@ -92,6 +92,8 @@ def refine_hint(view: Any) -> str | None:
         hint = fill_hint(view, g)
         if hint:
             return hint
+    if any(gate_missing(view, g) for g in gates):
+        return "orch show"  # it lacks only what has no one-line command (an artifact): nothing to wait for yet
     return "orch wait"
 
 

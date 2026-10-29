@@ -59,7 +59,7 @@ export function AgentStatus({ ticket, viewer, wait }: { ticket: TicketDocument; 
       <span className="min-w-0 truncate">
         {c ? (
           <>
-            <span className="text-text">{agentName(c.agent)}</span> {agentWorking(ticket, wait) ? 'is working' : 'is waiting for the next step'} for <span className="text-text">{viewer.name(c.for)}</span>
+            <span className="text-text">{agentName(c.agent)}</span> {agentWorking(ticket, wait) ? 'is working' : 'may be waiting for the next step'} for <span className="text-text">{viewer.name(c.for)}</span>
             {' · '}since {fmtClock(c.since)}
             {subagents > 0 && ` · ${subagents} ${subagents === 1 ? 'subagent' : 'subagents'}`}
           </>
@@ -99,7 +99,7 @@ export interface StartAgent {
  * "Start agent" for this ticket, on a real host through core's dialog (hasFeature agent.start), in the mock through the
  * start-agent addon. The header's primary button and the Actions menu share it, so there is one dialog and one rule.
  */
-function useStartAgent(ticket: TicketDocument, viewer: Viewer, wait?: string): StartAgent {
+function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
   const { workspace } = useWorkspace()
   const { data: addons } = useAddons()
   const r = useRunAddonAction(ticket.key)
@@ -113,7 +113,7 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer, wait?: string): S
     ? !!workspace && hasFeature('agent_start', workspace.id) && !finished
     : !!workspace && addonActive(workspace, START_AGENT) && canSpawnAgent(pkg, workspace.addons[START_AGENT]) && !finished
   const roleBlocked = real ? !can(viewer.role, 'ticket.act') : !r.allowed(START_AGENT, 'start')
-  const reason = roleBlocked ? VIEWER_REASON : agentWorking(ticket, wait) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
+  const reason = roleBlocked ? VIEWER_REASON : agentWorking(ticket) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
   const run = () => {
     setMode(undefined)
     setStopFirst(undefined)
@@ -324,7 +324,7 @@ export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; 
   // "Start agent again" asks the header's one start flow (its dialog); this card holds no second dialog and reads
   // `startable` only, so a viewer who cannot start sees no button.
   const edit = useTicketEdit()
-  const { canStart } = useStartAgent(p.ticket, p.viewer, wait)
+  const { canStart } = useStartAgent(p.ticket, p.viewer)
   // "Ask the agent to finish": the header's start flow in `continue` mode; the idle run is stopped only when Start is pressed.
   const onFinish = canStart
     ? () => window.dispatchEvent(new CustomEvent(START_EVENT, { detail: { ticket: p.ticket.key, mode: 'continue', ...(wait ? { stop: wait } : {}) } }))
@@ -413,7 +413,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     enabled: ticket.type === 'epic' && !!home,
   })
   const { run, wait } = useTicketAgent(ticket, home)
-  const start = useStartAgent(ticket, viewer, wait)
+  const start = useStartAgent(ticket, viewer)
   const { startable, canStart, run: startPlain, runWith } = start
   // The listener reads the latest start through a ref, so it subscribes once per ticket, not on every render.
   const latest = useRef({ startable, canStart, startPlain, runWith })

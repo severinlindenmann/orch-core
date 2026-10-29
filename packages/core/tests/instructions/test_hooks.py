@@ -395,3 +395,16 @@ def test_next_hint_waits_for_the_person_while_a_complete_gate_is_open(ws):
     _complete_gate(ws)
     v = ws.view("1")
     assert views.next_hint(v, v.claim.session) == "orch wait"
+
+
+def test_refine_hint_says_show_not_wait_when_only_an_artifact_is_missing(monkeypatch):
+    # Opus r9-build 3: an artifact-only gap has no one-line command and is not ready for approval: no "orch wait"
+    from types import SimpleNamespace as N
+
+    from orch.ops import views
+
+    gate = N(applies=True, approved=False, missing=["artifact:screenshot"])
+    view = N(gates={"requirements": N(applies=True, approved=True, missing=[]), "plan": gate})
+    assert views.refine_hint(view) == "orch show"
+    gate.missing = []
+    assert views.refine_hint(view) == "orch wait"

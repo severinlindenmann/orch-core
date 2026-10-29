@@ -250,11 +250,11 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
   }
   // Run-9 J04: the plan is approved and the agent is idle (its turn ended) or its run ended: one button, the build.
   if (open && !gap && idle && ticket.gates.plan?.state === 'approved' && onFinish) {
-    const begun = (ticket.tasks_state ?? []).some((t) => t.state !== 'todo')
+    // `idle` may come from a quiet terminal only (90 s without output): say "may be waiting", never "stopped" (Opus r9-build 2)
     return (
-      <Card title={begun ? 'The agent stopped' : 'Plan approved'} text={begun ? 'The build is not finished. Continue it.' : 'The agent stopped before building. Start the build.'}>
+      <Card title="Plan approved" text="The agent may be waiting. If it does not go on by itself, start the build.">
         <Button size="sm" onClick={onFinish}>
-          {begun ? 'Continue building' : 'Start building'}
+          Start building
         </Button>
       </Card>
     )

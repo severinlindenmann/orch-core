@@ -220,7 +220,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, signing 
           </DropdownMenuItem>
         )}
         {av.approve.map((g) => (
-          <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g })}>
+          <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g, pressed: false })}>
             <Check />
             Approve {gateActionName(g)}
             {isNext(`approve:${g}`) && <Next />}

@@ -36,6 +36,7 @@ __all__ = [
     "KIND",
     "check_gate",
     "host_check_first",
+    "single_only",
     "intent_of_ticket",
     "lines",
     "payload",
@@ -226,6 +227,16 @@ def _texts(intent: Mapping[str, Any], gate: str) -> dict[str, str]:
     return dict(intent[gate]["sections"])
 
 
+def single_only(inp: Mapping[str, Any] | None) -> bool:
+    """Display flag (``gates.<gate>.single_only`` of ``ticket.get``): does this gate's CURRENT input bind files, add-on
+    fields or add-on packages? Then the combined approval cannot carry it (the View shows none of them) and the page
+    offers the single cards. The same emptiness rule as :func:`content_ok` and :func:`host_check_first`, which stay
+    the real guards; this only decides what the page offers."""
+    if inp is None:
+        return False
+    return bool(inp.get(_ARTIFACTS) or (inp.get("fields") or {}).get(_ADDONS) or inp.get("addon_packages"))
+
+
 def content_ok(
     intent: Mapping[str, Any], gate: str, inp: Mapping[str, Any], *, uid: str, workspace_id: Any = None
 ) -> bool:
@@ -321,9 +332,7 @@ def host_check_first(
 
     for gate in GATES:
         inp = thaw(view.gates[gate].input) if view.gates[gate].input is not None else None
-        if inp is not None and (
-            inp.get(_ARTIFACTS) or (inp.get("fields") or {}).get(_ADDONS) or inp.get("addon_packages")
-        ):
+        if single_only(inp):
             raise err("invalid.input", f"the {gate} binds files or add-on fields; approve the steps one by one")
         # L1: a gate that changed after the review is refused before anything is signed (its prior is the host's)
         if inp is None or not content_ok(intent, gate, inp, uid=t["uid"]):

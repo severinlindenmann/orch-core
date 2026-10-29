@@ -158,3 +158,13 @@ def test_a_gate_carries_what_an_approval_still_lacks():
     assert _gate({"state": "open", "missing": ["plan"]}, True)["missing"] == ["plan"]
     assert _gate({"state": "open", "missing": []}, True)["missing"] == []
     assert "missing" not in _gate({"state": "open"}, True)
+
+
+def test_a_gate_that_binds_files_or_addon_fields_is_single_only_for_the_page():
+    """R11 P09: the host flags a gate whose input has files, add-on fields or packages (core seqgates.single_only);
+    the page then offers the single approval cards, never the combined one. Display only: the host still refuses."""
+    from orch_dashboard.adapters.tickets import _gate
+
+    assert _gate({"state": "open", "single_only": True}, True)["single_only"] is True
+    assert "single_only" not in _gate({"state": "open"}, True)
+    assert "single_only" not in _gate({"state": "open", "single_only": False}, True)

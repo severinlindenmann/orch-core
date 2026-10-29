@@ -105,6 +105,8 @@ export function availableActions(t: TicketDocument, viewer: Viewer): Available {
     isRealHost() &&
     t.status !== 'done' &&
     !!t.head?.seq &&
+    !t.gates.requirements.single_only &&
+    !t.gates.plan.single_only &&
     t.gates.requirements.state !== 'approved' && !!t.body.requirements?.trim() && !lacks(t.gates.requirements) && canApproveGate(t, 'requirements', viewer) &&
     t.gates.requirements.needed === 1 && t.gates.requirements.approvals.length === 0 &&
     planGate.state !== 'approved' && !!t.body.plan?.trim() && t.tasks.length > 0 && !lacks(planGate) && canApproveGate(t, 'plan', viewer)

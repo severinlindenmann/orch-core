@@ -395,3 +395,14 @@ it('without a real host (the mockup) there is no combined card', async () => {
   show(doc)
   expect(screen.queryByRole('button', { name: 'Approve requirements and plan' })).toBeNull()
 })
+
+it.each(['requirements', 'plan'] as const)('single_only on the %s gate: no combined card, today\'s single card stays', async (gate) => {
+  const { setFeatures } = await import('@/api/features')
+  const doc = await both()
+  doc.gates[gate] = { ...doc.gates[gate], single_only: true }
+  show(doc)
+  expect(screen.queryByRole('button', { name: 'Approve requirements and plan' })).toBeNull()
+  expect(screen.getByTestId('next-step')).toHaveTextContent('Requirements ready') // the single cards, one at a time
+  expect(screen.getByRole('button', { name: 'Approve requirements' })).toBeInTheDocument()
+  setFeatures(null)
+})

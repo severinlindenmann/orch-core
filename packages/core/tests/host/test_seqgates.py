@@ -444,3 +444,39 @@ def test_the_intent_is_closed(mutate):
     mutate(i)
     with pytest.raises(SequenceInvalid):
         sequence.validate_intent(i)
+
+
+@pytest.mark.parametrize(
+    ("over", "flag"),
+    [
+        ({}, False),
+        ({"addon_packages": {"x": "sha256:" + "b" * 64}}, True),
+        ({"artifacts": _ART}, True),
+        (
+            {
+                "fields": {
+                    "ticket_type": "chore",
+                    "size": None,
+                    "acceptance": _AC,
+                    "links": None,
+                    "addons": {"x": {"y": 1}},
+                }
+            },
+            True,
+        ),
+    ],
+)
+def test_single_only_is_the_emptiness_rule_of_the_guards(over, flag):
+    inp = _input("plan", "p", **over)
+    assert seqgates.single_only(inp) is flag
+    assert seqgates.content_ok(seqgates_intent(), "plan", inp, uid=_UID) is not flag
+
+
+def seqgates_intent():
+    return copy.deepcopy(_INTENT)
+
+
+def test_ticket_get_flags_a_gate_with_an_addon_package(human, tmp_path):
+    key = ready(human, tmp_path)
+    gates = doc(human, key)["gates"]
+    assert "single_only" not in gates["requirements"] and "single_only" not in gates["plan"]

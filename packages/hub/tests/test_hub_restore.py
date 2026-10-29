@@ -885,3 +885,57 @@ def test_L1_a_fresh_server_restore_is_audited_too(w, tmp_path):
     last, ev = recs[-1]
     assert last["type"] == "hub_restore" and ev["op_seq"] == got["op_seq"] and ev["actor_user_id"] is None
     assert ev["backup_made_ms"] == got["made_ms"] and ev["gap_ms"] == got["gap_ms"]
+
+
+def test_L5_a_fresh_server_resets_market_policy_and_addon_lists_until_confirmed(w, tmp_path):
+    import json as _j
+
+    from orch_hub.backup import guard as GD
+    from orch_hub.contract import market_policy as MP
+
+    wide = {**MP.default_policy(), "ceiling": None, "addons": {"allow": None, "block": []}}
+    wide["ceiling"] = []  # a capability ceiling an admin set
+    db = w.env.acc._db
+    db.execute(
+        "UPDATE market_policy SET version=2, policy=?, hash=? WHERE id=1",
+        (_j.dumps(wide, separators=(",", ":"), sort_keys=True), MP.policy_hash(wide)),
+    )
+    db.execute("INSERT INTO workspace_addon_allow VALUES (?, '[\"a\"]')", (WS,))
+    db.execute("INSERT INTO addon_request VALUES (?, 'x', '1', 'person', 1, 1, 1)", (WS,))
+    words, data = _backup(w)
+    fresh = tmp_path / "srv" / "d"
+    RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    assert _rows(fresh, "access.db", "SELECT * FROM workspace_addon_allow") == []
+    assert _rows(fresh, "access.db", "SELECT * FROM addon_request") == []
+    pol = _j.loads(_rows(fresh, "access.db", "SELECT policy FROM market_policy")[0][0])
+    assert pol == MP.default_policy()  # the narrowest: the official marketplace only
+    kinds = {k for (k,) in _rows(fresh, "access.db", "SELECT kind FROM restore_pending")}
+    assert {"market_policy", "addon_allow", "addon_request"} <= kinds
+    acc = Access(str(fresh / "access.db"))
+    try:
+        for i in GD.pending(acc):
+            GD.confirm(acc, i["id"])
+        assert _j.loads(acc._q("SELECT policy FROM market_policy")[0][0]) == wide
+        assert acc.market_policy()["hash"] == MP.policy_hash(wide)
+        assert acc._q("SELECT * FROM workspace_addon_allow") == [(WS, '["a"]')]
+        assert len(acc._q("SELECT * FROM addon_request")) == 1
+    finally:
+        acc.close()
+
+
+def test_L5_the_server_command_names_the_admins_it_prints_links_for(w, tmp_path):
+    words, data = _backup(w)
+    f = tmp_path / "x.orchbak"
+    f.write_bytes(data)
+    args = CLI._parser().parse_args(["restore", str(f), "--state", str(tmp_path / "fresh" / "d")])
+    out: list[str] = []
+    rc = BCLI.run_restore(
+        args,
+        out=out.append,
+        now_ms=lambda: 1_900_000_000_000,
+        tty=lambda: True,
+        read_words=lambda: words,
+        confirm=lambda _p: "yes",
+    )
+    text = "\n".join(out)
+    assert rc == 0 and "admin (" in text and "carol (" in text and "#invite=" in text

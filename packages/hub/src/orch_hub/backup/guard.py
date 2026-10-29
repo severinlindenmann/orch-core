@@ -18,10 +18,13 @@ Checked tables (what the rule does to each): see :data:`POLICY`."""
 from __future__ import annotations
 
 import contextlib
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
 
+from ..contract import market_policy as MP
+from ..contract.canon import cj
 from ..invites import Invites
 
 ADMIN_GROUP = "hub-admin"
@@ -63,7 +66,7 @@ PENDING_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS restore_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, "
     "a TEXT NOT NULL, b TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '')"
 )
-KINDS = ("secret_share", "secret_all", "skill_offer", "mcp_offer")
+KINDS = ("secret_share", "secret_all", "skill_offer", "mcp_offer", "market_policy", "addon_allow", "addon_request")
 
 
 def _connect(path: Path, live: Path | None) -> sqlite3.Connection:
@@ -213,6 +216,7 @@ def _fresh_access(new: Path) -> None:
                 for name, ws in c.execute(f"SELECT name, workspace_id FROM {table}").fetchall():
                     c.execute("INSERT INTO restore_pending(kind,a,b,label) VALUES (?,?,?,?)", (kind, name, ws, name))
                 c.execute(f"DELETE FROM {table}")
+        _fresh_addons(c)
         c.execute(
             "UPDATE users SET must_recover=1 WHERE user_id IN (SELECT user_id FROM members WHERE grp=?)",
             (ADMIN_GROUP,),
@@ -224,6 +228,36 @@ def _fresh_access(new: Path) -> None:
         raise
     finally:
         c.close()
+
+
+def _fresh_addons(c: sqlite3.Connection) -> None:
+    """The market policy goes back to the default (the official marketplace only) and the per-workspace add-on allow lists
+    and requests are emptied; what was there waits in ``restore_pending`` (JSON in ``a``)."""
+    default = MP.default_policy()
+    row = (
+        c.execute("SELECT policy FROM market_policy WHERE id=1").fetchone()
+        if _has(c, "main", "market_policy")
+        else None
+    )
+    if row is not None and json.loads(row[0]) != default:
+        c.execute("INSERT INTO restore_pending(kind,a,label) VALUES ('market_policy',?,'Add-on rules')", (row[0],))
+        c.execute(
+            "UPDATE market_policy SET version=version+1, policy=?, hash=? WHERE id=1",
+            (cj(default).decode(), MP.policy_hash(default)),
+        )
+    if _has(c, "main", "workspace_addon_allow"):
+        for ws, ids in c.execute("SELECT workspace_id, ids FROM workspace_addon_allow").fetchall():
+            c.execute(
+                "INSERT INTO restore_pending(kind,a,b,label) VALUES ('addon_allow',?,?,'Add-ons allowed')", (ids, ws)
+            )
+        c.execute("DELETE FROM workspace_addon_allow")
+    if _has(c, "main", "addon_request"):
+        for r in c.execute("SELECT * FROM addon_request").fetchall():
+            c.execute(
+                "INSERT INTO restore_pending(kind,a,b,label) VALUES ('addon_request',?,?,?)",
+                (json.dumps(list(r)), r[0], f"Add-on request: {r[1]}"),
+            )
+        c.execute("DELETE FROM addon_request")
 
 
 def recovery_links(new: Path, admins: frozenset[str], now_ms: Any) -> dict[str, str]:
@@ -291,5 +325,15 @@ def confirm(a: Any, pid: int) -> dict[str, Any]:
                 "INSERT OR IGNORE INTO org_mcp_offer SELECT ?,? WHERE EXISTS (SELECT 1 FROM org_mcp WHERE name=?)",
                 (x, y, x),
             )
+        elif kind == "market_policy":
+            policy = MP.check_policy(json.loads(x))
+            db.execute(
+                "UPDATE market_policy SET version=version+1, policy=?, hash=? WHERE id=1",
+                (cj(policy).decode(), MP.policy_hash(policy)),
+            )
+        elif kind == "addon_allow":
+            db.execute("INSERT OR REPLACE INTO workspace_addon_allow VALUES (?,?)", (y, x))
+        elif kind == "addon_request":
+            db.execute("INSERT OR IGNORE INTO addon_request VALUES (?,?,?,?,?,?,?)", json.loads(x))
         db.execute("DELETE FROM restore_pending WHERE id=?", (pid,))
     return {"id": pid, "kind": kind, "label": label}

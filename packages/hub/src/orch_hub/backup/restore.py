@@ -438,6 +438,7 @@ def _restore(
         G.never_widen(new, state if in_place else None)  # one rule for every table: never widen, never revive
         G.credentials(new, state if in_place else None)
         recovery = G.recovery_links(new, admins, now_ms) if not in_place else {}
+        names = _names(new)
         channels_revoked = _revoke_channels(new, state if in_place else None, removed, actor, now)
         _lift_versions(new, floor["snapshot_seq"])
         for u in removed:
@@ -516,9 +517,20 @@ def _restore(
         "in_place": in_place,
         "suspended": notice["suspended"],
         "channels_revoked": channels_revoked,
-        "recovery": recovery,  # fresh server only: {admin_id: one-time recovery token}, shown once by the caller
+        "recovery": recovery,
+        "recovery_names": {
+            u: n for u, n in names.items() if u in recovery
+        },  # fresh server only: {admin_id: one-time recovery token}, shown once by the caller
         **floor,
     }
+
+
+def _names(new: Path) -> dict[str, str]:
+    db = _ro(new / "access.db")
+    try:
+        return dict(db.execute("SELECT user_id, name FROM users"))
+    finally:
+        db.close()
 
 
 def _count_suspended(new: Path) -> int:

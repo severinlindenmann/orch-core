@@ -295,6 +295,12 @@ class FakeHub:
 
     # --- ops ------------------------------------------------------------------------------------------------------
 
+    def _op_hub_where(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
+        answer = getattr(self, "where_answer", None)  # set by a test; otherwise this fake knows no such op
+        if answer is None:
+            raise H.Refused("unknown_op")
+        return answer
+
     def _op_snapshot_get(self, body: Json, ws_id: str, ws: _Ws | None) -> Json:
         assert ws is not None
         return {"snapshot": ws.snapshot}

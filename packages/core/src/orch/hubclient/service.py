@@ -62,8 +62,22 @@ class EpochKeys(Protocol):
 _ENTRY = {"unbound", "addr", "tls_spki", "hk_op_pub", "mode"}
 _OPTIONAL = {
     "outbox", "addr", "tls_spki", "hxk_pub", "sealed", "rotate_after", "card", "revoked_op_certs", "snapshot",
-    "revoked_op_objs", "publish_owed",
+    "revoked_op_objs", "publish_owed", "addrs", "hub_name",
 }  # fmt: skip
+MAX_ADDRS = 4  # M4 (#1461): other addresses of the hub the host has verified (next to ``addr``)
+
+
+def _addrs_ok(v: Any) -> bool:
+    from .tlsadapter import parse_addr
+
+    if type(v) is not list or len(v) > MAX_ADDRS or len(set(v)) != len(v):
+        return False
+    try:
+        for a in v:
+            parse_addr(a)
+    except HubRefused:
+        return False
+    return True
 
 
 def _outbox_ok(box: Any) -> bool:
@@ -103,6 +117,10 @@ class HubState:
     #: Per hub, it survives new bindings (even with another hub) and is deleted only once delivered.
     outbox: dict[str, dict[str, Any]] = field(default_factory=dict)
     addr: str | None = None  # host:port the host dials (not signed: the TLS pin of the card is the trust)
+    #: M4 (#1461): up to 4 more ``host:port`` of the same hub, each stored only after a TLS handshake AT that address
+    #: passed against ``tls_spki`` (never from a card or a hint alone); dialled after ``addr``, in this order
+    addrs: list[str] = field(default_factory=list)
+    hub_name: str | None = None  # the display name the hub says of itself (``hub_where``); the hub's words, a hint
     tls_spki: str | None = None  # b64u SPKI hash from the verified hub card: the pin of that dial
     hxk_pub: str | None = None  # b64u, from the verified card: the key a full-mode ``WK_e`` is sealed to
     #: full mode only: ``{"epoch", "hxk_pub"}`` of the last ``wk_seal`` the hub accepted (``None``: nothing sealed)
@@ -133,6 +151,8 @@ class HubState:
             "aliases": dict(self.aliases),
             "outbox": self.outbox,
             "addr": self.addr,
+            "addrs": list(self.addrs),
+            "hub_name": self.hub_name,
             "tls_spki": self.tls_spki,
             "hxk_pub": self.hxk_pub,
             "sealed": self.sealed,
@@ -163,6 +183,8 @@ class HubState:
             and all(wire.hex16(p) and wire.hex16(u) for p, u in d["aliases"].items())
             and _outbox_ok(d.get("outbox", {}))
             and (d.get("addr") is None or (type(d["addr"]) is str and len(d["addr"]) <= 300))
+            and _addrs_ok(d.get("addrs", []))
+            and (d.get("hub_name") is None or (type(d["hub_name"]) is str and len(d["hub_name"]) <= 60))
             and (d.get("tls_spki") is None or type(d["tls_spki"]) is str)
             and (d.get("hxk_pub") is None or wire.is_pub(d["hxk_pub"]))
             and _sealed_ok(d.get("sealed"))
@@ -190,6 +212,8 @@ class HubState:
             aliases=dict(d["aliases"]),
             outbox=dict(d.get("outbox", {})),
             addr=d.get("addr"),
+            addrs=list(d.get("addrs", [])),
+            hub_name=d.get("hub_name"),
             tls_spki=d.get("tls_spki"),
             hxk_pub=d.get("hxk_pub"),
             sealed=None if d.get("sealed") is None else dict(d["sealed"]),

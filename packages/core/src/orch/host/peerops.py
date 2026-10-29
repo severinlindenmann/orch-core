@@ -137,6 +137,7 @@ def _open_link(service: WorkspaceService) -> Any:
     from orch.crypto.encoding import unb64u
     from orch.hubclient.tlsadapter import parse_addr
     from orch.hubclient.tlslink.client import LinkClient
+    from orch.hubclient.tlslink.tls import PinMismatch
 
     from . import hubops
 
@@ -145,14 +146,24 @@ def _open_link(service: WorkspaceService) -> Any:
     addr = hubops._addr({}, state, dev)  # noqa: SLF001
     if not addr or not state.tls_spki:
         raise OSError("no hub address")
-    host, port = parse_addr(addr)
     wsk_pub, sign = hubops._wsk_sign(service)  # noqa: SLF001
     del wsk_pub
-    return LinkClient.open(
-        host, port, tls_spki_sha256=state.tls_spki, hub_id=state.hub_id, workspace_id=service.workspace_id,
-        sign=sign, hk_op_pub=unb64u(state.hk_op_pub, 65), mode=state.mode, timeout=10.0,
-        now_ms=lambda: int(service.clock() * 1000),
-    )  # fmt: skip
+    last: Exception | None = None
+    from . import hubaddr
+
+    for one in dict.fromkeys([addr, *hubops._more_addrs(state, dev)]):  # noqa: SLF001 - current first, then verified
+        host, port = parse_addr(one)
+        try:
+            host = hubaddr.checked_ip(host, allow_loopback=hubaddr.is_loopback(addr))  # resolve once, policy, that IP
+            return LinkClient.open(
+                host, port, tls_spki_sha256=state.tls_spki, hub_id=state.hub_id, workspace_id=service.workspace_id,
+                sign=sign, hk_op_pub=unb64u(state.hk_op_pub, 65), mode=state.mode, timeout=10.0,
+                now_ms=lambda: int(service.clock() * 1000),
+            )  # fmt: skip
+        except (OSError, PinMismatch) as exc:  # unreachable or not the pinned certificate: the next verified address
+            last = exc
+    assert last is not None
+    raise last
 
 
 def _load_box(service: WorkspaceService) -> Any:

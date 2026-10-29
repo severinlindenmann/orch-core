@@ -70,6 +70,24 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, member: 1, maintainer: 2, o
  */
 const MAX_PAGES = 25
 
+/**
+ * A workspace read the host refuses because the dashboard add-on is off or paused (409 `addon.disabled` / `addon.paused`):
+ * the workspace list we read was older than the host's state. The page does not retry the read or log it; whoever owns the
+ * query cache is told once, drops the workspace list, and the shell shows its "Getting your workspace ready" card.
+ */
+const notReadyListeners = new Set<() => void>()
+export function onWorkspaceNotReady(fn: () => void): () => void {
+  notReadyListeners.add(fn)
+  return () => void notReadyListeners.delete(fn)
+}
+let notReadyAt = 0
+function workspaceNotReady(): void {
+  const now = Date.now()
+  if (now - notReadyAt < 1000) return // a page's parallel reads all answer at once: one refresh is enough
+  notReadyAt = now
+  for (const fn of notReadyListeners) fn()
+}
+
 async function call<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const token = getToken()
   const result = await createFetchTransport('', () => token).request(method, path, body, signal)
@@ -79,6 +97,7 @@ async function call<T>(path: string, method: 'GET' | 'POST' | 'PUT' | 'DELETE' =
   }
   if (result.status >= 400) {
     const body = result.json as ApiErrorBody | null
+    if (result.status === 409 && path.startsWith('/api/w/') && (body?.error?.code === 'addon.disabled' || body?.error?.code === 'addon.paused')) workspaceNotReady()
     throw new ApiError(
       result.status,
       body?.error ?? { code: 'host.unavailable', message: 'Host not available', retryable: result.status >= 500 },

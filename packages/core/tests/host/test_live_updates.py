@@ -670,8 +670,7 @@ def test_a_parked_agent_wait_is_recorded_and_its_answer_clears_it(w):
 
     from orch.host import runners
 
-    uid, key = w.ticket()
-    ok(w.client().req("ask", {"ref": key, "text": "which?"}, grant=w.grant, session=SESSION, idem=True))
+    uid, key = _claimed_asked(w)
     c = w.conn()
     rid = c.send("wait", {"ref": key, "timeout": 60}, grant=w.grant, session=SESSION)
     assert _until(lambda: len(_waits(w)) == 1)
@@ -689,8 +688,23 @@ def test_a_parked_agent_wait_is_recorded_and_its_answer_clears_it(w):
     assert _until(lambda: not _waits(w))
 
 
+def _claimed_asked(s):
+    uid, key = s.ticket()
+    ok(s.client().req("claim", {"ref": key}, grant=s.grant, session=SESSION, idem=True))
+    ok(s.client().req("ask", {"ref": key, "text": "which?"}, grant=s.grant, session=SESSION, idem=True))
+    return uid, key
+
+
+def test_only_the_claim_holders_wait_is_recorded(w):
+    _, key = _claimed_asked(w)
+    c = w.conn()
+    c.send("wait", {"ref": key, "timeout": 60}, grant=w.grant, session="s_01J9ZP0000000000000000000T")  # a sibling
+    c.quiet(wait=0.4)
+    assert not _waits(w)
+
+
 def test_a_killed_wait_clears_the_waiting_state(w):
-    _, key = w.ticket()
+    _, key = _claimed_asked(w)
     c = w.conn()
     c.send("wait", {"ref": key, "timeout": 60}, grant=w.grant, session=SESSION)
     assert _until(lambda: len(_waits(w)) == 1)

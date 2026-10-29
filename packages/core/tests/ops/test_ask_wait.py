@@ -194,8 +194,8 @@ def test_wait_a_fail_verdict_exits_3_with_its_text(ws, cli):
     r = wait_for(cli, "verdict")
     assert r.code == 3 and r.data["kind"] == "verdict" and r.data["outcome"] == "fail"
     assert r.data["text"] == "the test is wrong" and r.data["by"] == ws.owner.ref
-    t = cli("wait", "--timeout", "1")  # text mode: the decision text is fenced
-    assert t.first.endswith("timeout cursor=" + str(r.data["seq"]))  # (the first call already consumed it)
+    t = cli.j("wait", "--timeout", "1")  # the first call consumed it; back in progress, the plan approved: build
+    assert (t.code, t.err_code) == (5, "wait.build")
 
 
 def test_wait_a_pass_verdict_exits_0_and_carries_no_text(ws, cli):
@@ -292,3 +292,19 @@ def test_wait_hands_over_a_pending_decision_before_any_refusal(ws, cli):
             policy_hash=g.policy_hash, text="more")  # fmt: skip
     r = cli("wait", "--timeout", "5")
     assert r.code == 3 and "changes_requested" in r.first
+
+
+def test_wait_after_the_plan_is_approved_refuses_with_the_build_step(ws, cli):
+    from tests.ops.test_task_ac import fill_and_approve
+
+    claimed(cli)
+    fill_and_approve(ws, cli)
+    for gate in ("requirements", "plan"):  # the approvals are handed over first
+        assert cli.j("wait", "--timeout", "1").data["gate"] == gate
+    t = time.monotonic()
+    r = cli.j("wait", "--timeout", "30")
+    assert (r.code, r.err_code) == (5, "wait.build") and time.monotonic() - t < 5
+    assert "the plan of DEMO-0001 is approved: build now (orch task start T1)" in r.doc["error"]["message"]
+    assert r.doc["error"]["hint"] == "orch task start T1"
+    other = Cli(ws, session=OTHER)  # not the claim holder: it may wait
+    assert other.j("wait", "--ref", "1", "--timeout", "1").data["kind"] == "timeout"

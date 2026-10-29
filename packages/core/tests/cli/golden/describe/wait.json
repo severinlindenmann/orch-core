@@ -67,6 +67,17 @@
         ]
       },
       {
+        "code": "wait.build",
+        "exit": 5,
+        "retryable": false,
+        "hint": "orch task next",
+        "fix": [
+          "orch",
+          "task",
+          "next"
+        ]
+      },
+      {
         "code": "wait.incomplete",
         "exit": 5,
         "retryable": false,

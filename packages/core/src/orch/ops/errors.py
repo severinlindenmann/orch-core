@@ -505,6 +505,16 @@ _SPECS = [
         "person: the wait could never end. The message names each missing item and the command that fills it.",
     ),
     _e(
+        "wait.build",
+        5,
+        False,
+        "the plan is approved: build now, nothing waits for a person",
+        "orch task next",
+        ["orch", "task", "next"],
+        "orch wait by the claim holder after the plan is approved, with no gate, question or decision open: the wait "
+        "could never end. The message and hint name the next build step.",
+    ),
+    _e(
         "ac.evidence_missing",
         5,
         False,

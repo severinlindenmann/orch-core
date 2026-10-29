@@ -58,6 +58,7 @@ custody.unsafe_mode 3 retry:false
 host.unavailable 9 retry:true
 invalid.input 5 retry:false
 wait.incomplete 5 retry:false
+wait.build 5 retry:false
 ac.evidence_missing 5 retry:false
 verify.failed 5 retry:false
 observe.unavailable 5 retry:false

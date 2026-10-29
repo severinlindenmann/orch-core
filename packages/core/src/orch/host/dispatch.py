@@ -674,7 +674,8 @@ class RegistryBackend:
                 try:
                     return await asyncio.wrap_future(service.submit(self.serve, call, step))
                 except Parked:
-                    if waiting is None and call.column.name == "G" and call.verified.grant is not None:
+                    # only the claim holder's wait (a sibling run of the same grant never reads as waiting)
+                    if waiting is None and step.mine and call.column.name == "G" and call.verified.grant is not None:
                         waiting = agentwaits.enter(service, call.verified.grant.id, step.key, timeout)
                 watch.uid = step.log
                 # look again only for an entry that can answer (or refuse) this wait, a rebuild, or the timeout

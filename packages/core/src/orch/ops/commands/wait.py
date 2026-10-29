@@ -10,7 +10,7 @@ from orch.ops.base import Context, Result
 from orch.ops.decisions import decision
 from orch.ops.errors import OrchError
 from orch.ops.runtime import Call
-from orch.ops.views import fence, gap_commands, open_gates, open_questions
+from orch.ops.views import fence, gap_commands, next_hint, open_gates, open_questions
 
 POLL = (0.1, 0.25, 0.5, 1.0)  # seconds between looks at the log, growing
 
@@ -30,13 +30,14 @@ def unfinished(c: Call, view: Any) -> OrchError | None:
     the person cannot approve anything (the plan is approved after the requirements), so the wait would never end.
     The message names each missing item and the command that fills it (views.gap_commands); an artifact has no
     one-line command: ``orch show``."""
-    session = getattr(c.ctx, "session", None)
     if view.status in ("testing", "done", "closed") or any(q.blocking for q in open_questions(view)):
         return None
-    if view.claim is None or not session or not in_family(session, view.claim.session):
+    if not holder(c, view):
         return None
     gates = open_gates(view)
-    if not gates or not view.gates[gates[0]].missing:
+    if not gates:
+        return built(c, view)
+    if not view.gates[gates[0]].missing:
         return None  # the first open gate is complete: the person can approve it (the plan only after requirements)
     parts: list[str] = []
     first: str | None = None
@@ -55,6 +56,26 @@ def unfinished(c: Call, view: Any) -> OrchError | None:
     return OrchError("wait.incomplete", msg, hint=hint)
 
 
+def holder(c: Call, view: Any) -> bool:
+    """Does the caller's session (or its subagent) hold the ticket's claim?"""
+    session = getattr(c.ctx, "session", None)
+    return view.claim is not None and bool(session) and in_family(session, view.claim.session)
+
+
+def built(c: Call, view: Any) -> OrchError | None:
+    """Run-10 review: the plan is approved and no gate is open: nobody decides anything before the build, so a wait
+    would park forever. Refuse with the next step (views.next_hint), unless that step is itself a wait."""
+    plan = view.gates["plan"]
+    if not (plan.applies and plan.approved):
+        return None
+    hint = next_hint(view, getattr(c.ctx, "session", None))
+    if hint == "orch wait":
+        return None
+    return OrchError(
+        "wait.build", f"the plan of {view.key} is approved: build now ({hint}); nothing waits for a person", hint=hint
+    )
+
+
 class Parked(Exception):  # noqa: N818 - a signal, not an error
     """Host mode: no decision yet; the host parks the request on its bus and calls again (``Step``)."""
 
@@ -67,6 +88,7 @@ class Step:
     after: int | None = None
     log: str | None = None
     key: str | None = None  # the ticket key (the host's "agent waits" record matches a run by it)
+    mine: bool = False  # the caller's session holds the claim: only then the host records "agent waits"
     expired: bool = False
     notes: list[str] = field(default_factory=list)  # the first look's observe notes, for the answer
 
@@ -98,6 +120,8 @@ def handle(ctx: Context, args: dict[str, Any]) -> Result:
         after = start if note["decided"] is None else note["decided"]
     if step is not None:
         step.after, step.log, step.key = after, view.uid, view.key
+        if first_look:
+            step.mine = holder(c, view)
     deadline = time.monotonic() + args.get("timeout", 540)
     pause = iter(POLL)
     wait = POLL[0]
@@ -148,6 +172,6 @@ OP = operation(
     pre=("ticket_exists", "ticket_visible"),
     text="ok {key} {kind} cursor={cursor}\nnext: {next}",
     output_ref="https://schemas.orch.dev/v2/wait-result",
-    errors=(err("wait.timeout"), err("wait.incomplete"), err("not_found"), err("ambiguous_ref")),
+    errors=(err("wait.timeout"), err("wait.incomplete"), err("wait.build"), err("not_found"), err("ambiguous_ref")),
     handler=handle,
 )

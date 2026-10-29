@@ -51,7 +51,6 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
   const [remove, setRemove] = useState<HubRule>()
   const [review, setReview] = useState<Change>()
   const [revoke, setRevoke] = useState<string>()
-  const [finished, setFinished] = useState(false)
   const now = useSharedNow(ws)
   const titleOf = (key: string) => now.data?.items.find(i => i.kind === 'ticket' && i.line.startsWith(`ticket ${key}:`))?.line.slice(`ticket ${key}:`.length).trim()
   const readers: HubAudience | undefined = users.length || groups.length ? { users: [...users].sort(), groups: [...groups].sort() } : undefined
@@ -68,7 +67,7 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
             <p className="text-xs text-text-muted">{r.readers ? `Readable by ${r.readers} ${r.readers === 1 ? 'person or team' : 'people and teams'} besides you` : 'Only you'}{r.description ? ' · description included' : ''}</p>
             <InfoDrawer testId={'hub-rule-details-' + i}><Raw>{r.value ?? ''}</Raw></InfoDrawer>
           </div>
-          <Action id={'hub-rule-remove-' + i} onClick={() => { const rule = { kind: r.kind, value: r.value } as HubRule; setRemove(rule); setReview({ remove: rule }); setFinished(false); setAdding(false) }}>Stop sharing</Action>
+          <Action id={'hub-rule-remove-' + i} onClick={() => { const rule = { kind: r.kind, value: r.value } as HubRule; setRemove(rule); setReview({ remove: rule }); setAdding(false) }}>Stop sharing</Action>
         </div>)}
         {share.data.tickets_complete && share.data.tickets.length > 0 && <ul className="space-y-2" data-testid="hub-ticket-list">{share.data.tickets.map((ticket, i) => <li key={ticket} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
           <div className="flex min-w-0 items-center gap-1"><p><bdi><Raw>{titleOf(ticket) ?? ticket}</Raw></bdi></p><InfoDrawer testId={'hub-ticket-details-' + i}><Raw>{ticket}</Raw></InfoDrawer></div>
@@ -96,11 +95,12 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
           <InfoDrawer testId="hub-preview-details">{current.items.map((item, i) => <p key={i}><Raw>{item.line}</Raw></p>)}{current.rules.map((rule, i) => <p key={i}><Raw>{rule}</Raw></p>)}</InfoDrawer>
           {current.more > 0 && <p>and {current.more} more</p>}
         </>}
-        <Action id="hub-share-review" disabled={!change || !current || !!error} onClick={() => { setReview(change); setFinished(false) }}>Review change</Action>
+        <Action id="hub-share-review" disabled={!change || !current || !!error} onClick={() => { setReview(change) }}>Review change</Action>
       </Panel>}
     </>}
-    {review?.add && <Flow title="Review sharing change" done={finished} cancel="Cancel" onClose={() => { setReview(undefined); setFinished(false); if (finished) { setAdding(false); setValue('') } }}>
-      <AddRuleReview ws={ws} workspace={workspace} rule={review.add} title={review.add.kind === 'ticket' ? titleOf(review.add.value) : undefined} after={current} onDone={() => setFinished(true)} /></Flow>}
+    {review?.add && <Flow title="Review sharing change" cancel="Cancel" onClose={() => setReview(undefined)}>
+      <AddRuleReview ws={ws} workspace={workspace} rule={review.add} title={review.add.kind === 'ticket' ? titleOf(review.add.value) : undefined} after={current}
+        onDone={() => { setReview(undefined); setAdding(false); setValue(''); setUsers([]); setGroups([]); setWithText(true) }} /></Flow>}
     {review?.remove && <StopRule ws={ws} workspace={workspace} rule={review.remove} after={current} error={error} onRetry={() => retryPreview()}
       onClose={() => { setReview(undefined); setRemove(undefined) }} onDone={() => { setReview(undefined); setRemove(undefined) }} />}
     {revoke && <StopSharing ws={ws} workspace={workspace} ticket={revoke} onClose={() => setRevoke(undefined)} />}

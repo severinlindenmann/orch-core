@@ -2,6 +2,7 @@
 // mode; the dialog is the Settings review (same preview, same plan), nothing typed.
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 import { api } from '@/api/client'
 import * as gesture from '@/components/sign/trustedPress'
 import { setHubScenario, setMockOneClick, type HubScenario } from '@/mocks/hub'
@@ -39,6 +40,7 @@ describe('the ticket Actions menu and sharing', () => {
   it('shows the same review as Settings, binds its plan, and shares with one click', async () => {
     vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
     const add = vi.spyOn(api, 'addHubRule')
+    const ok = vi.spyOn(toast, 'success')
     const preview = vi.spyOn(api, 'getHubPreview')
     const view = await openMenu('selective')
     await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub…' }, T))
@@ -51,7 +53,8 @@ describe('the ticket Actions menu and sharing', () => {
     const shownPlan = await preview.mock.results[preview.mock.results.length - 1].value.then((p: { plan: string }) => p.plan)
     expect(preview).toHaveBeenLastCalledWith(expect.any(String), { add: { kind: 'ticket', value: 'DEMO-0042', description: true } })
     fireEvent.click(go)
-    await within(dialog).findByTestId('hub-add-done', {}, T)
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Share this ticket with the hub' })).toBeNull(), T)
+    expect(ok).toHaveBeenCalledWith(expect.stringMatching(/^Shared “.+” with the hub\.$|^Shared “.+” with .+\.$/), expect.anything())
     expect(add).toHaveBeenCalledTimes(1)
     expect(add.mock.calls[0][1]).toEqual({ kind: 'ticket', value: 'DEMO-0042', description: true })
     expect(add.mock.calls[0][2]).toBe(shownPlan)

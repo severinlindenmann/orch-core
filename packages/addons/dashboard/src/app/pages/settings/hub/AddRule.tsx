@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { api } from '@/api/client'
-import type { HubAdded, HubPreview, HubRule } from '@/api/hub'
+import { hubQueries, type HubAdded, type HubPreview, type HubRule, type HubStatus } from '@/api/hub'
 import { ApiError } from '@/api/types'
 import { trustedPress } from '@/components/sign/trustedPress'
 import { WorkspaceLine } from '@/components/sign/WorkspaceLine'
@@ -58,7 +59,7 @@ function ruleWords(rule: HubRule, n: number, title?: string): React.ReactNode {
   return <Raw>{rule.kind}</Raw>
 }
 
-export function AddRuleReview({ ws, workspace, rule, after, onDone, title }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; onDone?: () => void; /** The ticket's title when the rule names one ticket. */ title?: string }) {
+export function AddRuleReview({ ws, workspace, rule, after, onDone, title }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; /** The share went through (the message was shown): the caller closes the dialog. */ onDone?: () => void; /** The ticket's title when the rule names one ticket. */ title?: string }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -73,7 +74,14 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, title }: { w
     setBusy(true)
     setError('')
     api.addHubRule(ws, rule, after.plan).then(
-      got => { setDone(got); onDone?.(); void qc.invalidateQueries({ queryKey: ['hub', ws] }) },
+      got => {
+        // Read the cached status (no request): older hosts give no hub name, and then the message names no hub.
+        const st = qc.getQueryData<HubStatus & { name?: string; hub_name?: string }>(hubQueries.status(ws).queryKey)
+        const hub = st?.hub_name ?? st?.name
+        const what = rule.kind === 'ticket' && title ? `“${title}”` : `${review.new_count} ${review.new_count === 1 ? 'item' : 'items'}`
+        toast.success(`Shared ${what}${hub ? ` with ${hub}` : ' with the hub'}.`, { description: got.synced ? undefined : 'Saved here. It is sent when the hub is back.' })
+        setDone(got); onDone?.(); void qc.invalidateQueries({ queryKey: ['hub', ws] })
+      },
       err => setError(refusal(err)),
     ).finally(() => setBusy(false))
   }

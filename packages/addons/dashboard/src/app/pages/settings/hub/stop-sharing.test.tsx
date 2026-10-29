@@ -254,6 +254,7 @@ describe('stop sharing by a rule', () => {
   it('adding a rule: the review is the host\'s words, only new items, one trusted press, no terminal, no typed word', async () => {
     const user = userEvent.setup()
     const add = vi.spyOn(api, 'addHubRule').mockResolvedValue({ synced: true, pending: null, put: 1 })
+    const ok = vi.spyOn(toast, 'success')
     vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
       ...NOW, new: 1, plan: 'N'.repeat(43),
       review: { hub_id: 'ab12cd34ef56ab12', readers: { people: ['Ben Test'], teams: [], note: 'from the hub, not signed', info: 'Team membership is managed by the hub admin.' }, widened: [{ line: 'ticket DEMO-0001: Old', people_added: ['Ana'], teams_added: [], description_added: false }], new_count: 1, new_more: 0,
@@ -290,8 +291,9 @@ describe('stop sharing by a rule', () => {
     press.mockReturnValue(true)
     fireEvent.click(within(dialog).getByTestId('hub-add-go'))
     await waitFor(() => expect(add).toHaveBeenCalledWith(WS.id, { kind: 'type', value: 'team', audience: { users: ['b'.repeat(32)], groups: [] }, description: true }, 'N'.repeat(43)))
-    expect(await within(dialog).findByTestId('hub-add-done')).toHaveTextContent('Shared.')
-    expect(within(dialog).getByTestId('hub-flow-cancel')).toHaveTextContent('Done')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Review sharing change' })).toBeNull())
+    expect(ok).toHaveBeenCalledWith('Shared 1 item with the hub.', { description: undefined })
+    expect(screen.queryByTestId('hub-rule-value')).toBeNull() // the form is reset
   })
 
   it('a long review shows the first names and "and N more", the whole list behind the i, and nothing is cut', async () => {

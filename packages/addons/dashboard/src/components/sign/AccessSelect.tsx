@@ -1,5 +1,5 @@
 // "Give agents access for [8 hours]": the one signed choice a start can need (shown only when access is missing or short).
-// The sentence under it says when it ends and that it covers every agent the runner starts; what it allows is the review's own sentence (the signed scope), never restated here.
+// The sentence under it (behind Details, one click away) says when it ends and that it covers every agent the runner starts; what it allows is the review's own sentence (the signed scope), never restated here.
 import { ChevronDown } from 'lucide-react'
 import { useId } from 'react'
 import { nowMs, fmtExact } from '@/lib/time'
@@ -18,10 +18,13 @@ export function AccessSelect({ hours, onHours, lengths, prefix, agentName, disab
           {lengths.map(([h, text]) => <option key={h} value={h}>{text}</option>)}
         </select>
       </details>
-      <p className="text-[12px] text-text-muted" data-testid="agent-access-until">
-        Access{prefix ? ` in ${prefix}` : ''} ends <time dateTime={until}>{fmtExact(until)}</time>.
-        {agentName ? ` Every agent the runner starts can use it, not only ${agentName}.` : ''}
-      </p>
+      <details data-testid="agent-access-details" className="text-[12px] text-text-muted">
+        <summary className="cursor-pointer">Details</summary>
+        <p data-testid="agent-access-until">
+          Access{prefix ? ` in ${prefix}` : ''} ends <time dateTime={until}>{fmtExact(until)}</time>.
+          {agentName ? ` Every agent the runner starts can use it, not only ${agentName}.` : ''}
+        </p>
+      </details>
     </div>
   )
 }

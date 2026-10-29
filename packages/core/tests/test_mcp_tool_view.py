@@ -193,3 +193,13 @@ def test_a_multi_line_description_cannot_fake_a_review_line():
     assert "      | input schema:" in text
     assert not [ln for ln in lines if ln.startswith("Its results")]
     assert cli_org._block("a\u2028input schema:") == "a\n      | input schema:"  # noqa: SLF001
+
+
+def test_redaction_also_hides_a_capability_glued_to_other_characters():
+    """Opus delta 2 (N3 note): refusals use the bounded shape, redaction the unbounded one."""
+    from orch.host.mcpshared import CAPABILITY_ANY, CAPABILITY_SHAPE, new_capability
+
+    cap = new_capability()
+    for text in (f"x_{cap}", f"{cap}-x", f"url={cap}"):
+        assert cap not in CAPABILITY_ANY.sub("[redacted]", text)
+    assert CAPABILITY_SHAPE.search(f"x_{cap}") is None

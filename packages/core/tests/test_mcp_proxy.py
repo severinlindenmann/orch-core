@@ -16,7 +16,7 @@ import pytest
 
 from orch.host import mcpproxy
 from orch.host.mcpproxy import Proxy
-from orch.host.mcpshared import tool_pin, tool_view
+from orch.host.mcpshared import CAPABILITY_SHAPE, tool_pin, tool_view
 
 SECRET = "s3cr3t/value+with=chars"
 
@@ -268,7 +268,7 @@ def test_mint_validation(env):
         env.proxy.mint("w1", 1, "r1", [{"name": "orch-x", "digest": "d"}], hub_id="h1")
     with pytest.raises(ValueError):
         env.proxy.mint("w1", 1, "r1", [{"name": "Bad Name", "digest": "d"}], hub_id="h1")
-    assert mcpproxy.CAPABILITY_SHAPE.fullmatch(mint(env))
+    assert CAPABILITY_SHAPE.fullmatch(mint(env))
 
 
 def test_revoke_run_and_closes_upstream(env):
@@ -1206,3 +1206,31 @@ def test_capability_shape_has_boundaries():
     assert CAPABILITY_SHAPE.search("n" + real) is None  # "nocap_..."
     assert CAPABILITY_SHAPE.search("nocap_" + "a" * 60) is None
     assert CAPABILITY_SHAPE.search("ocap_" + "a" * 44) is None
+
+
+@pytest.mark.parametrize("how", ["server", "binding", "run"])
+def test_a_revoke_during_the_upstream_post_discards_the_answer(env, how):
+    """Opus delta 2 (F1): a revoke that lands while the upstream post is in flight returns 401/403, never the answer."""
+    gate, started = threading.Event(), threading.Event()
+
+    def slow(msg):
+        if msg.get("method") == "initialize":
+            started.set()
+            gate.wait(5)
+
+    env.up_factory = lambda r, b: FakeUp(on_post=slow)
+    cap = mint(env)
+    out = []
+    t = threading.Thread(target=lambda: out.append(rpc(env, cap, "initialize", {})))
+    t.start()
+    assert started.wait(5)
+    if how == "server":
+        env.proxy.revoke_server("w1", "crm")
+    elif how == "binding":
+        env.bindings = {"w1": ("h1", 2)}
+    else:
+        env.proxy.revoke_run("r1")
+    gate.set()
+    t.join(5)
+    assert out[0][0] in (401, 403)
+    assert "protocolVersion" not in json.dumps(out[0][1])

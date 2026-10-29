@@ -27,6 +27,7 @@ from typing import Any
 from orch.hubclient.orgtext import text_ok
 
 __all__ = [
+    "CAPABILITY_ANY",
     "CAPABILITY_SHAPE",
     "SERVER_NAME",
     "TOOL_DESCRIPTION_MAX",
@@ -41,6 +42,9 @@ __all__ = [
 ]
 
 CAPABILITY_SHAPE = re.compile(r"(?<![A-Za-z0-9_-])ocap_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])")
+#: for REDACTING only (log/text substitution): no boundaries, so a capability glued to other characters is still hidden;
+#: over-redacting harmless text costs nothing. Refusals and exact checks use the bounded :data:`CAPABILITY_SHAPE`.
+CAPABILITY_ANY = re.compile(r"ocap_[A-Za-z0-9_-]{43}")
 SERVER_NAME = re.compile(r"[a-z0-9-]{1,40}")
 TOOL_NAME = re.compile(r"[A-Za-z0-9_.-]{1,128}")
 TOOL_TITLE_MAX = 100

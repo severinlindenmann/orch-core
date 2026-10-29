@@ -23,7 +23,7 @@ import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
-from .mcpshared import CAPABILITY_SHAPE, new_capability, server_name_ok, tool_pin, tool_view
+from .mcpshared import CAPABILITY_ANY, new_capability, server_name_ok, tool_pin, tool_view
 
 __all__ = ["Proxy"]
 
@@ -72,7 +72,7 @@ class _Redact(logging.Filter):
         self._held = held
 
     def scrub(self, text: str) -> str:
-        text = CAPABILITY_SHAPE.sub("[redacted]", text)
+        text = CAPABILITY_ANY.sub("[redacted]", text)
         for value in sorted(self._held(), key=len, reverse=True):
             if value:
                 text = text.replace(value, "[redacted]")

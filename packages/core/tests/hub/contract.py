@@ -778,6 +778,7 @@ def check_joined_payload(p: Any, *, prior_aliases: Mapping[str, str] = {}) -> di
 #: op -> (direction of the request, mode it exists in or None for both, exact body fields)
 LINK_OPS: dict[str, tuple[str, str | None, dict[str, Check]]] = {
     "snapshot_get": ("w2h", None, {}),
+    "hub_where": ("w2h", None, {}),
     "event_deliver": ("h2w", None, {"log": lambda x: type(x) is str, "event": lambda x: type(x) is dict}),
     "route_out": ("w2h", None, {"envelope": _b64u_any}),
     "route_in": ("h2w", None, {"envelope": _b64u_any}),

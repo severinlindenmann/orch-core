@@ -12,6 +12,8 @@ not right.
   (V3-D8). The reference code that produces it is `src/orch_hub/contract/`; `uv run pytest tests/test_vectors.py`
   checks that the reference rebuilds the file byte for byte and that every case replays from its JSON. Where the
   reference and this document disagree, this document wins.
+- **Hub backup and `hub_where` (M4, #1358):** §17 and §10.9, vectors [`vectors_hub_backup.json`](vectors_hub_backup.json)
+  (generator `make_vectors_hub_backup.py`; the hub replays all cases, orch-core the `hub_where` ones).
 - **Status:** H0 draft for the L2 gate (one Opus security pass, orch-core #847). Choices this document had to make
   are marked **DECIDED HERE** and listed in §16.
 
@@ -188,6 +190,13 @@ literal `orch/v2/hub-…|` names.
 | `h_channel_id` | `orch/v2/id/channel\|` | hash | `channel_id` | 2.3 |
 | `h_hub_event_digest` | `orch/v2/hub-event-digest\|` | hash | what the channel key signs | 8 |
 | `h_hub_publish_request` | `orch/v2/hub-publish-request\|` | hash | what the owner's approval names | 11 |
+
+**Hub-local labels of the backup (§17).** `orch/v2/hub-backup|` (`HK_root` signs a backup header) and
+`orch/v2/hub-backup-aad|` (AAD of the sealed payload) name no object any other repo reads, so, like the access-change
+label, they stay out of the table above and of `vectors_hub.json`; `tests/test_hub_backup_vectors.py` checks they are new,
+end in `|` and keep the union with every label above prefix-free. `HK_root` may sign **only** `hub.op_cert`,
+`hub.op_revoked` and `hub.backup` (the hub key store gains that one signer method in M4 S5; no "sign these bytes").
+HKDF infos (outside the table): `orch/v2/hub-backup-auth` (the MAC key), `orch/v2/seal|hub-backup|<hub_id>` (the seal).
 
 HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label followed by `|` fields, v2 §3): `orch/v2/space-item` (item key of a space and epoch), `orch/v2/space-item-msg` (one item), `orch/v2/hub-view` (the view key of a workspace and epoch, §10.7) and `orch/v2/hub-view-msg` (one view page) and `orch/v2/hub-share-msg` (one shared item under its item key). Reused unchanged: `orch/v2/sig/host-event|` and `orch/v2/event|` (ticket-format §5.5, verified by the hub in §10.7, never signed by it), `orch/v2/seal-aad|`, `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
 `orch/v2/sig/device-cert|` (`PK`, v2 §6.1).
@@ -1338,6 +1347,7 @@ unknown `op` is `unknown_op`.
 | `space_get` | w2h | both | `{"space_id", "since"}` | `{"space", "wraps", "entries", "next"}` |
 | `space_proposals` | w2h | both | `{}` | `{"proposals": [<hub.space_proposal>]}` (p4, §10.4) |
 | `switch_ticket` | w2h | both | `{"origin", "return_to", "kind": "open"\|"signout"}` | `{"ticket", "url"}` (hub one-app, below) |
+| `hub_where` | w2h | both | `{}` | `{"addresses": [{"kind", "link"}], "name"}`: where this hub can be reached and its display name (M4, §10.9). Unsigned: a hint under the TLS pin |
 | `switch_redeem` | w2h | both | `{"ticket"}` | `{"user_id", "name", "return_to", "kind"}` (hub one-app) |
 | `rail_get` | w2h | both | `{"origin"}` | `{"hub": {name, origin, network_origin}, "user_id", "workspaces": [{workspace_id, name, role, online, badge, origin, current}]}` (hub one-app) |
 | `profile_put` | w2h | both | `{listed, tags, description, handles, not_handled, accepts, contact, languages, hours}` | `{}` |
@@ -2201,6 +2211,29 @@ to the push-configuration `404`):
 - Reference `relayroutes.route` (`cutover_put`/`cutover_get`), `cutover_hub`, `cutover_workspace`; vectors
   `relay_route_cutover_*`, `cutover_*`, and the signed request bytes `phase4.relay_routes.cutover_put`/`cutover_get`.
 
+### 10.9 `hub_where`: the hub's addresses (M4 #1461)
+
+**Purpose.** A hub's link address is not signed (the host pins the hub's TLS key from the card, never an address), so an
+admin can change which addresses the hub advertises (private network, office network, this server, public address)
+without touching a card, a binding or a certificate. Bound hosts learn the list with this op on every link session.
+
+**Request** `{}`. **Reply** `{"addresses": [{"kind", "link"}], "name"}`, and nothing else (exact keys):
+
+- `addresses`: 1 to 4 entries, each exactly `kind` and `link`; `kind` is one of `private`, `office`, `server`, `public`
+  (the UI words "Private network (VPN)", "Office network", "On this server", "Public address"); `link` is `host:port` with
+  the grammar of the connect link's endpoint (host a name, an IPv4 address or `[v6]`; port 1..65535 without leading zero;
+  at most 300 characters; no scheme, path, space or user info). No `link` twice. Order is the hub's preference.
+- `name`: the display name, 1 to 60 code points **as sent**; the receiver removes every character of the Unicode
+  categories `Cc`, `Cf` (so bidi marks and embeddings, zero-width characters), `Zl` and `Zp`, trims outer white space and
+  refuses the answer (`malformed`) if nothing is left. It is shown as the hub's own words, never inside workspace-owned UI.
+
+Anything else is `malformed` (fail closed; the host keeps what it holds). **The answer is a hint, not evidence** (Opus
+conditions 1-4 of the M4 design check): a host stores an address only after a TLS handshake **at that address** passes
+against the pin it already holds, keeps the last good address until a replacement passed, and never takes an address from
+a link-fetched card (the card is fetched over plain HTTP and proves nothing about where the hub is). Reference
+`orch_hub.contract.where.check_hub_where` (hub) and `orch.hubclient.where.check_hub_where` (core, written from this text);
+both replay the `hub_where_*` cases of `vectors_hub_backup.json` (§15) and must agree with them.
+
 ## 11. Publish through the hub (phase 2, D76, V3-D4)
 
 **Purpose.** A workspace publishes through its hub; orch-publish accepts it only with the workspace's live binding
@@ -2393,6 +2426,9 @@ v2 codes keep their meaning (v2 §14). New in H0:
 | `reader_downgrade` | card | §5 step 7: a newer card declares a lower `reader` than the held one |
 | `hub_too_old` | card at join (host) | §5 "Reader level": the card's `reader` is below the workspace's `required_reader`; the host's `sign.convenience_readers` reason |
 | `unknown_op`, `wrong_mode` | link | §10 |
+| `wrong_backup_key` | hub restore (local) | §17.5: the key derived from the typed words is not the backup header's `bk_pub` |
+| `backup_invalid` | hub restore (local) | §17: every other reason a backup file is refused (container, envelope, signature, MAC, fields, file list, seal, tar entries, hashes, sequence overflow); the `reason` (§17.9) is for the admin's log, never an oracle on the wire |
+| `hub_retired` | link reply (M4 S8) | the hub is being removed: an unsigned notice, shown on the host as a banner with the break-glass leave; the host never unbinds, leaves or deletes anything because of it |
 | `bad_wrap` | `wk_seal` reply | the wrap does not open under `HXK`, is not bound to this `hub_id`, this workspace and the stated epoch, or is another wrap for an epoch already sealed (§10.2a) |
 | `bad_epoch` | `wk_seal` reply | v2 code reused: the epoch is lower than the newest one held for the live binding (§10.2a) |
 | `auth_failed` | link open | §10.1: every failure before the link is authenticated (unknown workspace, key mismatch, bad signature) returns this one code, so an unauthenticated peer learns nothing; the reason stays in the hub's log |
@@ -2490,6 +2526,13 @@ plus `selective_build`. D15b: orch-core builds the `log_sync_proj_*` pages (its 
 must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`; both run `workspace_roster_v*` (hub: `project_workspace`, core: its replay's
 `roster_v`). The hub also runs `hub_join`. #1198 C8 (§5, §9.6): orch-core runs `card_reader`, `hub_reader`, `owner_proof`,
 `owner_proof_recorded`, `joined_payload` and `left_payload`; the hub runs all of them and `owner_proof_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
+
+`vectors_hub_backup.json` (M4 S0; FAKE keys, words and ephemeral keys, fixed in the generator only): `labels`, `constants`,
+`words` (three 24-word lists; the first two are valid BIP-39), `keys`, an `example` file (header, envelope, sealed payload
+and tar) and `cases` with `check` one of `bk_key`, `open_backup`, `tar`, `file_list`, `restore_floor`, `hub_where` and
+`expect` `{"ok": …}` or `{"error": code, "reason"?}`. The hub replays every case and fails on an unknown check or a missing
+required case; orch-core replays `hub_where`. Expected values are written by hand in the generator, not computed by the code
+under test; the BK / K_auth / seal values are computed there from first principles and compared with the module.
 
 ## 16. Decided here, and open points for L2
 
@@ -2589,3 +2632,124 @@ transport in the action).
   it, which only stops publishing. **orch-publish never pins a binding first-come:** that would make the hub's choice
   of `WSK` authoritative. A binding counts only under the `WSK` of the card publish already holds (§9.2, §11.2 step 5).
 - **Relay accounts by hub card** (E1) and hub↔hub objects (H7) are not in H0.
+| 46 | Backup file header (M4 S0) | the §2.4 envelope `{o, sig}` plus a `mac` key; `v: 2`, `hv: 0` like every hub object (the design draft said `v: 1`) | §2.4 |
+| 47 | Backup MAC covers `cj(header)` only, not the signature | the signature is verified separately and the header already holds the root key, so a swapped root changes the MAC input | Opus condition 12 |
+| 48 | Backup payload nonce | all-zero, safe because every seal draws a fresh ephemeral key (as `seal_sk`) | v2 §5.3 |
+| 49 | Required files and `snapshot_seq` | `hk_root.key`, `hxk.key`, `meta.json` must be listed; the header carries `snapshot_seq` besides `op_seq` and `card_seq` (condition 14 raises all three) | design 4.2, conditions 13-14 |
+
+## 17. Hub backup (M4, #1462; design `m4-settings-design.md` 4.2-4.3 and the Opus conditions 9-17)
+
+Everything here is local to the hub (no link op, no other repo reads it). It is written first so that the backup code
+(M4 S5) and the restore code (M4 S6) have one fixed shape and one vector file. A hub is optional for its workspaces: a
+backup protects the hub's own state (keys, people, channels), nothing a workspace needs to keep working.
+
+### 17.1 The file
+
+```
+file     = MAGIC || u32(len(E)) || E || sealed            MAGIC = "ORCHBAK1" (8 bytes), E = cj(envelope) exactly
+envelope = {"o": header, "sig": b64u(Sign(HK_root, "orch/v2/hub-backup|" || cj(header))), "mac": b64u(HMAC-SHA256(K_auth, cj(header)))}
+header   = {v: 2, suite: 2, kind: "hub.backup", hv: 0, hub_id, hk_root_pub, made_ms, op_seq, card_seq, snapshot_seq,
+            bk_pub, files: [{path, size, sha256}], dev}
+sealed   = eph_pub (65) || AES-256-GCM(K, nonce = 12 zero bytes, tar, AAD)
+```
+
+`E` is at most 1 MiB and byte-for-byte the canonical form of its own parse (strict, §2.3). `made_ms`, `op_seq`, `card_seq`
+and `snapshot_seq` are integers in `0 … 2^53 − 1`; `hub_id` is 32 lower-case hex; `hk_root_pub` and `bk_pub` are 65-byte
+public keys (b64u); `dev` is a boolean. `op_seq` and `card_seq` are the hub's current counters (§4, §5), `snapshot_seq` the
+newest access snapshot sequence it issued. The header is public: nothing in it is secret.
+
+### 17.2 The backup key from 24 words
+
+The hub generates 24 BIP-39 English words (256 bits + the 8-bit checksum, as core's recovery code), shows them once, and
+keeps only `bk_pub` and `K_auth`. `normalise(words)` = NFKD, lower case, split on white space, rejoin with single spaces;
+the caller checks the wordlist and the checksum **before** deriving (a list of 24 other strings simply gives another key;
+the vectors use valid lists). Then
+
+```
+okm    = scrypt(password = normalise(words) in UTF-8, salt = "orch/v2/hub-backup-key|" || 0x02, N = 2^17, r = 8, p = 1, dklen = 40)
+BK     = (int(okm) mod (n − 1)) + 1        n = the P-256 group order (FIPS 186-5 A.2.1)
+bk_pub = the public key of BK
+K_auth = HKDF-SHA256(ikm = okm, salt = 32 zero bytes, info = "orch/v2/hub-backup-auth", L = 32)
+```
+
+`K_auth` is stored on the server (0600) so a nightly backup needs no secret; `BK` and the words are never stored, logged or
+written to a file, and are wiped from memory after use. Replacing the words (new `BK`) makes a new backup and then deletes
+the kept backups made under the old key.
+
+### 17.3 Signature and MAC (why both)
+
+The header is public and `bk_pub` is in it, so anyone could build a file under **another** `HK_root`, seal it to a copied
+`bk_pub` and sign it correctly. The signature alone proves only "some root signed this". The MAC needs `K_auth`, which comes
+from the words only: a restore recomputes it from the typed words, so a forged file fails with `backup_invalid`/`mac` even
+though its signature and seal verify. In place, a different `hub_id` is refused earlier (`other_hub`). On a fresh server the
+person additionally compares the fingerprint (`hub_id`, 8 × 4 characters, as the phone shows it) before typing the words.
+
+### 17.4 The seal
+
+`seal_to(bk_pub)` with purpose `hub-backup` (v2 §5.3's construction): a fresh ephemeral P-256 key per seal;
+`K = HKDF-SHA256(ECDH(eph, bk_pub), salt = eph_pub || bk_pub, info = "orch/v2/seal|hub-backup|" || hub_id, L = 32)`;
+`AAD = "orch/v2/hub-backup-aad|" || cj(header)`. A payload moved under another header does not open. The plaintext is a tar.
+
+### 17.5 What a restore checks, and in which order (nothing is written before the last step passes)
+
+1. Container: magic, length, canonical envelope (`backup_invalid`/`container`).
+2. Envelope: exactly `o`, `sig`, `mac`; `kind`, `suite`, `v`, `hv` (`envelope`).
+3. `HK_root` signature over the header, with the `hk_root_pub` the header itself names (`sig`).
+4. Exact header fields and types (`fields`); the file list (§17.6); `hub_id` = the id of `hk_root_pub` (`hub_id`).
+5. `dev`: a real hub refuses `dev: true` (`dev_refused`), a dev hub refuses `dev: false` (`dev_mismatch`).
+6. In place: `hub_id` and `hk_root_pub` equal the running hub's, else `other_hub`. Fresh server: the fingerprint is shown.
+7. Words → keys. `bk_pub` ≠ the header's: `wrong_backup_key`.
+8. MAC mismatch: `backup_invalid`/`mac`.
+9. Open the seal with the header as AAD (`seal`), then the tar rules (§17.7), then every SHA-256 (`hash`).
+
+Steps 1-6 need no words, so a restore can show the fingerprint and refuse the wrong hub before asking for them.
+
+### 17.6 The file list and what is never in a backup
+
+`files` is 1 to 512 entries, strictly ascending by `path` (so unique), exactly the keys `path`, `size`, `sha256`
+(lower-case hex). A path is relative, `/`-separated, 1 to 8 segments of `[A-Za-z0-9][A-Za-z0-9._-]{0,63}`, at most 200
+characters (so never absolute, never empty, never `.` or `..`, never a backslash); no path is a directory of another;
+`size` ≤ 200 MiB and the sum ≤ 200 MiB (also the upload limit). `hk_root.key`, `hxk.key` and `meta.json` must be listed.
+The list contains every key file, `meta.json`, `op/<current>/`, `revoked/`, `tls.key`, `hub-settings.json` and a
+consistent copy (SQLite backup API) of every store, and **never**: `setup-token`; `route-queue.db` (and its `-wal`,
+`-shm`, `-journal`); anything under `backups/`, `tmp/`, `logs/`, `state.new/`, `state.old/`; `*.log`, `*.tmp`, `*.lock`,
+`*.pid`. Inside the copied stores these rows are removed first: sessions, pending TOTP enrolments, pairing codes, limiter
+and failure rows, switch tickets, push tokens. The words are never in a backup. (Row removal is the writer's duty, tested
+in M4 S5; the path rules are checked by `file_list` vectors.)
+
+### 17.7 Extraction
+
+The plaintext is a tar. A restore accepts exactly the header's list and nothing else: **regular files only** (type `0`; a
+symlink, hard link, device, fifo, directory, sparse or any other type is refused: `tar_type`); the entry name is a valid
+path of §17.6 and in the list (`tar_path`, `tar_unlisted`), appears once (`tar_dup`), has the listed size **checked from the
+entry header before its data is read** (`tar_size`) and the listed SHA-256 (`hash`); every listed file appears
+(`tar_missing`); anything the tar library cannot read is `tar`. The tar's own modes, owners and times are ignored. The
+restore writes under a fresh staging directory (`state.new/`, directories 0700, files 0600) with its own paths, then swaps.
+All entries are validated in memory before the first write.
+
+### 17.8 Sequence floor (anti-rollback)
+
+After a restore the hub must issue `op_seq`, `card_seq` and `snapshot_seq` above everything it ever issued, or a bound
+workspace refuses the restored hub as stale (§5 step 7, §7):
+
+```
+in place     v = max(live, backup) + 1000
+fresh server v = max(backup + 1000, unix seconds now)
+every v      v ≤ 2^53 − 1, else the restore is refused (backup_invalid / seq_overflow)
+```
+
+Restoring the same backup twice therefore climbs twice (`live` after the first restore is the first result), and a workspace
+that accepted the first accepts the second. The restore never reissues a user or channel certificate for non-admin users:
+people the backup brought back stay suspended until an admin turns each on in People; the op certificate of the backup is
+revoked live before the restore; `revoked/` and the access removals of the live hub are merged, never dropped. (Those steps
+are M4 S6; the floor and the checks above are the contract.)
+
+### 17.9 Reasons
+
+`backup_invalid` carries a stable `reason` for the admin's log and for the vectors: `container`, `envelope`, `sig`,
+`fields`, `hub_id`, `mac`, `seal`, `words`, `files`, `files_path`, `files_size`, `files_order`, `files_required`, `tar`,
+`tar_type`, `tar_path`, `tar_unlisted`, `tar_dup`, `tar_size`, `tar_missing`, `hash`, `seq_overflow`. The page shows one
+plain sentence for all of them ("this file is not a backup of this hub, or it was changed").
+
+Reference: `orch_hub.contract.backup` (`derive_keys`, `header_mac`, `read_header`, `open_backup`, `check_file_list`,
+`check_tar`, `restore_floor`, `seal_payload`) and `orch_hub.contract.where`. Vectors: `vectors_hub_backup.json`.

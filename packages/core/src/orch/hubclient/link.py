@@ -43,6 +43,7 @@ W2H_OPS: dict[str, str | None] = {
     "profile_put": None,
     "directory_get": None,
     "audience_get": None,
+    "shared_get": None,
     "share_put": "selective",
     "share_revoke": "selective",
     "wk_seal": "full",

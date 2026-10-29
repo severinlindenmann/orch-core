@@ -170,7 +170,7 @@ describe('stopping sharing one ticket', () => {
     expect(within(dialog).queryByRole('textbox')).toBeNull()
     expect(within(dialog).queryByTestId('hub-backup-input')).toBeNull()
     for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('orch hub')
-    await view.user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await view.user.click(within(dialog).getByRole('button', { name: 'Keep sharing' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Stop sharing this ticket' })).toBeNull(), T)
   })
 
@@ -209,6 +209,24 @@ describe('share rules (A3.3)', () => {
     expect(screen.getByTestId('hub-add-go')).toBeTruthy()
     expect(screen.queryByTestId('hub-command')).toBeNull()
     expect(screen.getAllByText(/cannot be taken back/).length).toBeGreaterThan(0)
+  })
+
+  it('the form asks who should see it (hub people and teams, Only me by default) and ticks the description', async () => {
+    const view = hubPage('selective')
+    await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
+    await view.user.click(await screen.findByTestId('hub-rule-add', {}, T))
+    expect(await screen.findByText('Who should see it?', {}, T)).toBeTruthy()
+    expect(await screen.findByText('Ben Test', {}, T)).toBeTruthy()
+    expect(screen.getByText(/Team:/)).toBeTruthy()
+    expect(screen.getByTestId('hub-rule-only-me')).toHaveTextContent('Only me')
+    expect(screen.getByTestId('hub-rule-description')).toBeChecked()
+    const preview = vi.spyOn(api, 'getHubPreview')
+    await type(view, 'hub-rule-value', 'team')
+    await view.user.click(screen.getByTestId('hub-rule-description')) // untick: the text stays home
+    await view.user.click(await screen.findByTestId('hub-rule-team-finance', {}, T))
+    await waitFor(() => expect(preview).toHaveBeenLastCalledWith(expect.anything(), { add: { kind: 'type', value: 'team', audience: { users: [], groups: ['finance'] }, description: false } }), T)
+    expect(screen.getByTestId('hub-rule-only-me')).toHaveTextContent('not signed')
+    vi.restoreAllMocks()
   })
 
   it('a value with shell characters is never put into a command', async () => {

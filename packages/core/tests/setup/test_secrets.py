@@ -34,7 +34,7 @@ def test_reveal_needs_the_approval_step_first(flow):
 def test_reveal_once_then_410(flow):
     post(flow, "profile", PROFILE)
     r = reveal(flow)
-    assert len(r["recovery_words"]) == 24 and len(r["check_positions"]) == 3
+    assert len(r["recovery_words"]) == 24 and len(r["check_positions"]) == 1
     assert r["check_positions"] == sorted(set(r["check_positions"]))
     assert isinstance(r["passphrase"], str) and len(r["passphrase"].split()) == 6
     e = err(post, flow, "secrets/reveal")

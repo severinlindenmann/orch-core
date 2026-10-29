@@ -6,6 +6,9 @@ import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Tag, Timer } 
 import { useEffect, useState } from 'react'
 import { api } from '@/api/client'
 import { runQueries } from '@/api/runs'
+import { queries } from '@/api/queries'
+import { terminalWaitFor } from '@/app/attention'
+import { TicketProgress } from './NextStep'
 import { addonActive } from '@/api/addons'
 import { AddonBadge, useAddons, useRunAddonAction } from '@/addon-ui'
 import { canSpawnAgent } from '@/addon-ui/capabilities'
@@ -285,6 +288,28 @@ function newestRun(runs: ReadonlyArray<{ ticket?: string | null; kind?: string; 
   return newest as ProgressRun | null
 }
 
+const START_EVENT = 'orch:start-agent'
+
+/** The newest agent run of this ticket and the run id its agent waits in a terminal on (Today's terminal_wait), polled.
+ *  Real host only: in the mock both are absent, so mock mode never shows the stopped or waiting cards. */
+function useTicketAgent(ticket: TicketDocument, home: string | undefined) {
+  const runs = useQuery({ ...runQueries.list(home ?? ''), enabled: isRealHost() && !!home })
+  const today = useQuery({ ...queries.today(home ?? ''), enabled: isRealHost() && !!home })
+  return { run: newestRun(runs.data?.runs, ticket.key), wait: terminalWaitFor(today.data?.needs_you ?? [], ticket.key) }
+}
+
+/** The stepper and the next-step card, told what the ticket's agent really did (never ran / waiting / ended early). */
+export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; signing?: boolean }) {
+  const { workspaces } = useWorkspace()
+  const home = workspaceOfTicket(p.ticket.key, workspaces)?.id
+  const { run, wait } = useTicketAgent(p.ticket, home)
+  // "Start agent again" asks the header's one start flow (its dialog); this card holds no second dialog and reads
+  // `startable` only, so a viewer who cannot start sees no button.
+  const { startable } = useStartAgent(p.ticket, p.viewer)
+  const onStart = startable ? () => window.dispatchEvent(new CustomEvent(START_EVENT, { detail: p.ticket.key })) : undefined
+  return <TicketProgress {...p} run={run} wait={wait} onStart={onStart} />
+}
+
 /** The one status pill for the agent's progress, in plain words, in a live region so changes are announced. */
 function ProgressPill({ phase, start, ticket, viewer, ws }: { phase: Phase; start: StartAgent; ticket: TicketDocument; viewer: Viewer; ws?: string }) {
   const [pending, setPending] = useState(false)
@@ -365,10 +390,16 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     enabled: ticket.type === 'epic' && !!home,
   })
   const start = useStartAgent(ticket, viewer)
+  const startRun = start.startable ? start.run : undefined
+  useEffect(() => {
+    if (!startRun) return
+    const on = (e: Event) => (e as CustomEvent<string>).detail === ticket.key && startRun()
+    window.addEventListener(START_EVENT, on)
+    return () => window.removeEventListener(START_EVENT, on)
+  }, [startRun, ticket.key])
   const av = availableActions(ticket, viewer)
-  const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict
-  const runs = useQuery({ ...runQueries.list(home ?? ''), enabled: isRealHost() && !!home })
-  const run = newestRun(runs.data as Parameters<typeof newestRun>[0], ticket.key)
+  const { run, wait } = useTicketAgent(ticket, home)
+  const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict || !!wait
   const mark = useMark(home ?? '', ticket.key)
   const tracking = !!mark || run?.state === 'starting' || run?.state === 'running'
   const [tick, setTick] = useState(() => Date.now())

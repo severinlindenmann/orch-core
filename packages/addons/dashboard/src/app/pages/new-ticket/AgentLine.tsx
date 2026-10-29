@@ -1,18 +1,10 @@
 // The notes of the New ticket form about the agent (no agent can start here, too many parts to sign with access), the
 // dialog to choose the agent, and the "not signed" block of the review.
-import { modelLabel } from '@/api/modelRouting'
-import { EXECUTION_LINE } from '@/app/terminal/real/executionLine'
-import { AgentPick, harnessName, MODE_LABEL, ModelPick } from '@/components/agents/AgentChoice'
+import { EXECUTION_SHORT } from '@/app/terminal/real/executionLine'
+import { AgentPick, harnessName, ModelPick } from '@/components/agents/AgentChoice'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { StartPlan } from './useStartPlan'
-
-/** "Opus" or "chosen by the agent app". */
-export function modelText(plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>): string {
-  const { model } = plan.shown
-  if (!model) return 'chosen by the agent app'
-  return modelLabel(plan.choices, plan.choice.harness, model)
-}
 
 export function AgentLine({ plan, tooMany }: { plan: StartPlan; tooMany: boolean }) {
   if (!plan.feature) return null
@@ -54,18 +46,17 @@ export function ChangeDialog({ plan, onClose }: { plan: StartPlan; onClose: () =
  * Under the review, outside the signed content: the start is NOT part of what the person signs. It uses their agent
  * access and happens in the dashboard once the ticket exists.
  */
-export function NotSignedBlock({ plan, notice = false }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** Kept for callers: the steps above now say what is and is not approved. */ coreSaysSo?: boolean; /** The "runs as you" notice is not read yet: shown in full here, as the Start agent dialog would, and signing counts as reading it. */ notice?: boolean }) {
+export function NotSignedBlock({ plan, notice = false }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** Kept for callers: the steps above now say what is and is not approved. */ coreSaysSo?: boolean; /** The "runs as you" notice is not read yet: its short version (EXECUTION_SHORT) is shown here, and signing counts as reading it. */ notice?: boolean }) {
   const { choice } = plan
   return (
     <>
       <p data-testid="not-signed-start" className="border-t border-border pt-3 text-[13px] text-text-muted">
-        Then: start an agent on the new ticket. {harnessName(choice.harness)} starts ({MODE_LABEL[choice.mode].toLowerCase()}, model {modelText(plan)}).
+        Then {harnessName(choice.harness)} starts on it.
       </p>
       {notice && (
         <div role="note" data-testid="not-signed-notice" className="mt-2 space-y-1 rounded-md border border-warning/40 bg-warning-soft px-3 py-2 text-xs leading-5 text-warning">
-          {/* The same constant the Start agent dialog shows (and acknowledges as `start_agent`): never a copy of its words. */}
-          <p data-testid="not-signed-execution-line">{EXECUTION_LINE}</p>
-          <p>Signing and starting the agent confirms you have read this.</p>
+          {/* The short version of the line the Start agent dialog shows in full (and acknowledges as `start_agent`). */}
+          <p data-testid="not-signed-execution-line">{EXECUTION_SHORT} Signing means you know this.</p>
         </div>
       )}
     </>

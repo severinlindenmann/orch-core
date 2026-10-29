@@ -270,6 +270,16 @@ class Gateway:
             raise fail("addon.disabled", exit=3)
         return link
 
+    def paused_unverified(self, ws) -> bool:
+        """Is the dashboard add-on only paused because a joined hub has not confirmed its first snapshot yet? Read-only,
+        for the words the page shows; the pause itself (fail closed, hubpolicy) is the host's and is not touched."""
+        try:
+            row = next((a for a in self.link(ws).call("addon.list")["addons"] if a.get("name") == "dashboard"), {})
+        except (HostError, KeyError, TypeError, AttributeError):
+            return False
+        paused = row.get("paused")
+        return row.get("state") == "paused" and isinstance(paused, dict) and paused.get("cause") == "unverified"
+
     @staticmethod
     def addon_rows(link):
         """`addon.list` once per HTTP request (a write clears it): the gates of one request share one read."""
@@ -506,7 +516,9 @@ class Gateway:
                         id=ws,
                         prefix=adapters.pinned_prefix(pins[ws]),
                         name=ws,
-                        host_state=exc.error["code"],
+                        host_state="addon.paused"
+                        if exc.error["code"] == "addon.disabled" and self.paused_unverified(ws)
+                        else exc.error["code"],
                         host_message=adapters.unavailable_reason(exc.error),
                     )
                 )

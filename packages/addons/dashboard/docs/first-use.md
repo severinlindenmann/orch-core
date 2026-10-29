@@ -100,8 +100,10 @@ and asked, in this order:
 2. **The 24-word recovery code**, shown once. It is the only way back to your *person* key if you lose this Mac or the
    passphrase; orch does not store it ("nowhere else"). Write it down and keep it somewhere safe and offline.
    The page then asks **three of the words** by position to check you wrote it down.
-3. A review of what is created is shown; press Create, compare the three words your Terminal shows with the page's and type
-   `yes`. The page lists the steps as done and the Terminal prints `workspace TEST set up in <dir>`.
+3. A review of what is created is shown; press Create. With **One click on this computer** that is all: setup runs in the
+   browser and needs no terminal check. With **Terminal approval**, compare the three words your Terminal shows with the
+   page's and press Enter (do not type `yes`). The page lists the steps as done and the Terminal prints
+   `workspace TEST set up in <dir>`.
 
 What to keep: **passphrase**, **recovery code**. State lives in `~/.config/orch/` (device key under
 `hosts/<workspace-id>/person/`; the host's workspace key under `hosts/<workspace-id>/keys/`).

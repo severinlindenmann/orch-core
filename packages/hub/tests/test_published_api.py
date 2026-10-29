@@ -151,3 +151,32 @@ def test_with_no_good_answer_and_publish_down_the_route_says_unavailable(w):
 
 def test_no_publish_address_is_unavailable(w):
     assert get(w)[0] == 503
+
+
+def _stale_after(w, change):
+    r = FakeReader([link(), link(id="cd" * 16, workspace_id=WS_SEL, label="Plans")])
+    w.reg.add(WS_SEL, "full", name="Marketing")
+    w.api.d.published = r
+    tok = w.login(w.admin)
+    assert len(get(w, tok)[1]["links"]) == 2
+    change()
+    r.fail = True
+    return get(w, tok)
+
+
+def test_cached_answer_drops_a_workspace_that_was_unbound(w):
+    s, o, _ = _stale_after(w, lambda: w.reg.add(WS_SEL, "full", status="unbound", name="Marketing"))
+    assert s == 200 and [x["label"] for x in o["links"]] == ["Q3 report"] and o["stale_ms"] is not None
+
+
+def test_cached_answer_drops_a_workspace_that_switched_to_selective(w):
+    _s, o, _ = _stale_after(w, lambda: w.reg.add(WS_SEL, "selective", name="Marketing"))
+    assert [x["label"] for x in o["links"]] == ["Q3 report"]
+    assert "Plans" not in json.dumps(o) and o["hidden"] == [{"workspace_id": WS_SEL, "name": "Marketing"}]
+
+
+def test_cached_answer_drops_a_workspace_whose_binding_changed(w):
+    seqs = {WS_FULL: 1, WS_SEL: 1}
+    w.reg.binding_state = lambda ws: {"status": "bound", "binding": {"mode": "full"}, "binding_seq": seqs.get(ws, 1)}
+    _s, o, _ = _stale_after(w, lambda: seqs.update({WS_SEL: 2}))  # left and joined again: the old rows are not shown
+    assert [x["label"] for x in o["links"]] == ["Q3 report"]

@@ -67,6 +67,11 @@ class PublishedHandlers:
             return render_text(n) if type(n) is str and n else fallback.get(ws, "A workspace")
 
         hidden = [{"workspace_id": ws, "name": name(ws)} for ws in sorted(reg.pins()) if reg.mode(ws) == "selective"]
+
+        def seq(ws: str) -> Any:
+            st = reg.binding_state(ws)
+            return st.get("binding_seq") if st else None
+
         now = int(self.d.now_ms())
         cache = self.d.__dict__.setdefault("_published_cache", {})
         try:
@@ -77,7 +82,17 @@ class PublishedHandlers:
         except AdminReadError, Refused:
             if "answer" not in cache:
                 raise _err("unavailable") from None
-            return 200, {**cache["answer"], "stale_ms": max(0, now - cache["at"])}
+            # the old answer is filtered by the CURRENT registry again: a workspace that has since left, been unbound or
+            # changed its binding (seq or mode) is dropped, and the hidden list is the current one
+            keep = {ws for ws in full if cache["seq"].get(ws, False) == seq(ws)}
+            old = cache["answer"]
+            return 200, {
+                **old,
+                "links": [x for x in old["links"] if x["workspace_id"] in keep],
+                "apps": [x for x in old["apps"] if x["workspace_id"] in keep],
+                "hidden": hidden,
+                "stale_ms": max(0, now - cache["at"]),
+            }
         links, apps = [], []
         for r in rows:
             out = {
@@ -111,5 +126,5 @@ class PublishedHandlers:
         links.sort(key=lambda x: (-x["created_ms"], x["id"]))
         apps.sort(key=lambda x: (-x["created_ms"], x["id"]))
         answer = {"links": links, "apps": apps, "hidden": hidden, "stale_ms": None}
-        cache["answer"], cache["at"] = answer, now
+        cache["answer"], cache["at"], cache["seq"] = answer, now, {ws: seq(ws) for ws in full}
         return 200, answer

@@ -107,3 +107,19 @@ it('asks nothing for another agent app, and nothing of a person who is not an ow
   expect(screen.queryByTestId('claude-consent')).toBeNull()
   expect(get).not.toHaveBeenCalled()
 })
+
+it('a failed record may be tried again (the once-guard is released on failure, kept on success)', async () => {
+  const { renderHook, waitFor: wf } = await import('@testing-library/react')
+  const { useClaudeConsent } = await import('./claudeConsent')
+  vi.spyOn(api, 'getClaudeTrust').mockResolvedValue(trust())
+  const grant = vi.spyOn(api, 'grantClaudeTrust').mockRejectedValueOnce(new Error('nope')).mockResolvedValue({ on: true })
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const { result } = renderHook(() => useClaudeConsent('w', true), { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> })
+  await wf(() => expect(result.current.asks).toBe(true), T)
+  expect(result.current.grant()).toBeNull() // not shown yet: fail closed
+  result.current.markShown()
+  await result.current.grant()
+  await result.current.grant() // the retry after the failure goes out
+  expect(result.current.grant()).toBeNull() // and once it worked, no third
+  expect(grant).toHaveBeenCalledTimes(2)
+})

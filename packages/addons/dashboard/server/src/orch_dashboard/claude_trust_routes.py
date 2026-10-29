@@ -57,7 +57,7 @@ def register(app, gateway, auth):
         return {
             "available": True,
             # on = the person agreed AND Claude Code's settings file is really there (never "on" while it is missing)
-            "on": bool(claude_trust._consented(str(root))) and config == "ready",
+            "on": consented and config == "ready",
             "config": config,
             "offered": bool(claude_folder.offered(env, root, allow_parent=True)),
             "why_not": claude_folder.refusal(env, root, allow_parent=True) or "",

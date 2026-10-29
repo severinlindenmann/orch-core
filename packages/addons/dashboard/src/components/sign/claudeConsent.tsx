@@ -46,7 +46,10 @@ export function useClaudeConsent(ws: string | undefined, active: boolean): Claud
     sent.current = true
     return api.grantClaudeTrust(ws, false).then(
       () => { void qc.invalidateQueries({ queryKey: ['claude-trust', ws] }) },
-      (e: unknown) => { toast.message(`Claude Code may still ask about the folder. ${e instanceof Error ? e.message : ''}`.trim()) },
+      (e: unknown) => {
+        sent.current = false // a failed record may be tried again
+        toast.message(`Claude Code may still ask about the folder. ${e instanceof Error ? e.message : ''}`.trim())
+      },
     )
   }
   return { asks, refused, ticked, setTicked, grant, markShown: () => { shown.current = true }, pending: active && !!ws && q.isPending && q.fetchStatus !== 'idle' }

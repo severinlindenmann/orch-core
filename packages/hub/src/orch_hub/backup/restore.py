@@ -103,9 +103,18 @@ def recover(state: Path) -> None:
                 os.rename(new, state)
             else:
                 os.rename(old, state)
+                _rescue_backups(state, new)
                 _rm(new)
     elif new.exists():
+        _rescue_backups(state, new)
         _rm(new)
+
+
+def _rescue_backups(state: Path, new: Path) -> None:
+    """The kept backups move into the staged copy just before the swap: a crash after that must give them back."""
+    src = new / "backups"
+    if src.is_dir() and not src.is_symlink() and not (state / "backups").exists():
+        os.rename(src, state / "backups")
 
 
 def finish(state: Path) -> None:

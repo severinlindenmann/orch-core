@@ -851,3 +851,21 @@ def test_L3_a_channel_paired_after_the_backup_is_revoked_in_the_store_so_the_rel
         "AND channel_id NOT IN (SELECT channel_id FROM relay_purged)",
     )
     assert (cid,) in rows
+
+
+def test_L4_recover_gives_the_kept_backups_back_when_the_crash_came_after_they_moved(w):
+    _words, _data = _backup(w)
+    state = w.state
+    new, old = RS.paths(state)
+    kept = sorted(p.name for p in (state / "backups").iterdir())
+    # crash point 1: backups moved into the staged copy, state itself still in place (no backups folder any more)
+    os.mkdir(new, 0o700)
+    os.rename(state / "backups", new / "backups")
+    RS.recover(state)
+    assert sorted(p.name for p in (state / "backups").iterdir()) == kept and not new.exists()
+    # crash point 2: state renamed to old, the staged copy is unfinished and holds the backups
+    os.mkdir(new, 0o700)
+    os.rename(state / "backups", new / "backups")
+    os.rename(state, old)
+    RS.recover(state)
+    assert sorted(p.name for p in (state / "backups").iterdir()) == kept and not new.exists() and not old.exists()

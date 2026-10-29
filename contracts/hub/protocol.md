@@ -2374,7 +2374,9 @@ a company list of both. orch-publish stays the source of truth; the hub is a win
 own copy of the rules (`orch_hub.contract.published`, `pubsrv/published.py`, `orch/hubclient/published.py`). The hub
 contract version stays `hv: 0`: the design's name "hv1" for the new rows means "the M4 revision of this document", not a
 second wire version (an `hv` bump would make every existing verifier refuse every existing object). Nothing here is a
-second signing scheme: the new signed kinds are ordinary §2.2 objects.
+second signing scheme: the new signed kinds are ordinary §2.2 objects. `hub.release_narrow` and `hub.app_pass` carry no `dev` member: they are only
+valid under a held hub card that was verified again for the request, dev marker included (§2.4), so a real orch-publish
+refuses a dev hub's narrowing and pass through the card (`dev_refused`).
 
 **Authority (unchanged from V3-D4).** Widening needs a person at the workspace: publish, update, rollback, start, a wider
 access, a new reach. Narrowing (revoke a link, stop an app) may also come from a hub admin (§11.6). The hub never signs

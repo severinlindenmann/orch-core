@@ -1,6 +1,7 @@
 // Run-11 #12/#13: the Services and Workspaces pages, against a tiny DOM stub.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 class Node_ {
   constructor(tag, text) { this.tag = tag; this.nodeType = tag === "#text" ? 3 : 1; this.children = []; this.attrs = {}; this._text = text ?? ""; this.className = ""; this.listeners = {}; }
@@ -329,4 +330,24 @@ test("workspaces are named after their owner and connect asks whose workspace it
   await select.listeners.change({ target: select });
   assert.deepEqual(sent, ["u1", "u2"]);
   assert.equal(find(out, (n) => n.tag === "input")[0].value, "/c#u2");
+});
+
+test("a workspace-session admin still sees Connect a workspace; the click asks for one sign-in and mints nothing", async () => {
+  let asked = 0, minted = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: null, canConnect: true,
+    actions: { signInToConnect: () => { asked++; }, connect: async () => { minted++; return {}; } } }, NOW);
+  assert.match(text(out), /Connect a workspace/);
+  assert.match(text(out), /No workspaces yet/);
+  await clickButton(out, "Connect a workspace");
+  assert.equal(asked, 1);
+  assert.equal(minted, 0);
+  const member = workspacesView({ workspaces: [], handoffs: [], admin: null, actions: {} }, NOW);
+  assert.doesNotMatch(text(member), /Connect a workspace/);
+});
+
+test("the return route after sign-in is a short same-origin hash only", () => {
+  const source = readFileSync(new URL("../../src/orch_hub/web/app.js", import.meta.url), "utf8");
+  const re = new RegExp(source.match(/const SAFE_RETURN = \/(.*)\/i;/)[1], "i");
+  assert.ok(re.test("#/workspaces"));
+  for (const bad of ["https://evil.test/", "//evil.test", "#//evil.test", "javascript:alert(1)", "#/a?x=1", "#/" + "a".repeat(60), "workspaces"]) assert.ok(!re.test(bad), bad);
 });

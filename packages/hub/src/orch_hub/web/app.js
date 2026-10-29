@@ -134,7 +134,7 @@ function setupView(token, err) {
         banner("ok", "You are signed in"),
         h("h2", { text: "Add your sign-in code to your phone" }),
         h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in." }),
-        totpPanel(r.body.totp_uri, r.body.totp_secret, { userId: r.body.user_id }),
+        totpPanel(r.body.totp_uri, r.body.totp_secret),
         h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "Open the hub", onclick: () => afterLogin() })),
       );
     },
@@ -326,6 +326,13 @@ function reauthView() {
     h("button", { class: "pri", text: "Sign in again", onclick: async () => { await api("DELETE", "/session"); clearSession(); loginView(); } })));
 }
 
+// P17: an admin whose session came from a workspace keeps "Connect a workspace" in reach. The click explains why one real
+// sign-in is needed, then the normal login form (password + code) runs; nothing here grants a session.
+function signInToAddWorkspace() {
+  show(h("div", { class: "plain" }, h("h1", { text: "Sign in once to add a workspace" }), h("p", { class: "muted", text: "You arrived from a workspace. Adding a workspace needs your password and code. You come straight back here afterwards." }),
+    h("button", { class: "pri", id: "sign-in-to-connect", text: "Sign in", onclick: async () => { await api("DELETE", "/session"); clearSession(); returnHash = "#/workspaces"; loginView(); } })));
+}
+
 async function activity() {
   pageLoading("activity");
   if (!(await refresh())) return loginView();
@@ -420,6 +427,7 @@ async function workspaces(joined = [], known = null) {
       const actions = {
         open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
         copy: copyText,
+        signInToConnect: signInToAddWorkspace,
         people: async () => { // the real, active people of this hub (admin-only route); the hub rejects anyone else
           const r = await api("GET", "/admin/users");
           return r.status === 200 ? (r.body.users ?? []).filter((u) => !u.disabled) : [];
@@ -442,7 +450,8 @@ async function workspaces(joined = [], known = null) {
         },
       };
       const rows = ws.status === 200 ? ws.body.workspaces ?? [] : [];
-      shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions, joined, self: state.user.user_id }));
+      shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions, joined, self: state.user.user_id,
+        canConnect: !!state.user.is_admin }));
       // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
       clearInterval(workspacesTimer);
       // Diff only against a successful first read: a failed one must not make every workspace look newly joined.
@@ -790,7 +799,15 @@ function reviewDecision(it, c) {
 }
 
 // Keep the wanted fragment while the sign-in form is showing.
-async function afterLogin() { return renderRoute(); }
+// The page to land on after the next sign-in; only a short same-origin hash route is ever accepted.
+let returnHash = null;
+const SAFE_RETURN = /^#\/[a-z0-9\/_-]{0,40}$/i;
+async function afterLogin() {
+  const back = returnHash;
+  returnHash = null;
+  if (typeof back === "string" && SAFE_RETURN.test(back) && location.hash !== back) { location.hash = back; return; }
+  return renderRoute();
+}
 
 // Agent access terms are display and signing input; the host checks its pending record at landing.
 async function accessView(wsId, raw) {

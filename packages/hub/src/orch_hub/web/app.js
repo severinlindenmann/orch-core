@@ -7,7 +7,7 @@ import { ChannelError, deleteChannel, generateKey, loadChannel, saveChannel, sig
 import { inboxView, reviewMeaning, signedMeaning } from "./inbox.js";
 import { parseRoute, registerPages } from "./route.js";
 import { PAGES } from "./pages.js";
-import { homeView, workspaceStatus } from "./home.js";
+import { firstRunOutgrown, homeView, workspaceStatus } from "./home.js";
 import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
 import { adminView } from "./admin.js";
@@ -142,9 +142,14 @@ function setupView(token, err) {
   show(h("h1", { text: "Set up your hub" }), err ? banner("bad", "Not created", err) : null, h("p", { class: "muted", text: "This creates the first admin, with a password and an authenticator code." }), form);
 }
 
+/** Hub admin routes need a full sign-in; roles also need an admin or owner role in that workspace (the hub refuses the rest). */
+const canAdmin = (w) => !state.user?.needs_sign_in && (w ? ["admin", "owner"].includes(w.role) : !!state.user?.is_admin);
+
 async function refresh() {
-  const [who, chans] = await Promise.all([api("GET", "/session"), api("GET", "/me/channels")]);
+  // A session that came from a workspace (needs_sign_in) is refused /me/channels: ask only when the hub will answer.
+  const who = await api("GET", "/session");
   if (who.status !== 200) { clearSession(); return false; }
+  const chans = who.body.needs_sign_in ? { status: 0, body: {} } : await api("GET", "/me/channels");
   if (state.user?.user_id !== who.body.user_id) clearSession();
   state.user = who.body;
   state.channels = chans.status === 200 ? chans.body.channels : [];
@@ -409,7 +414,7 @@ async function workspaces(joined = [], known = null) {
       if (!(await refresh())) return loginView();
       state.menu = false;
       await loadRail();
-      const [ws, ho, admin] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs"), api("GET", "/admin/workspaces")]);
+      const [ws, ho, admin] = await Promise.all([api("GET", "/me/workspaces"), api("GET", "/me/handoffs"), canAdmin() ? api("GET", "/admin/workspaces") : Promise.resolve({ status: 0, body: {} })]);
       const adminRows = admin.status === 200 ? admin.body.workspaces ?? [] : null;
       const hub = ws.body?.hub;
       const actions = {
@@ -430,7 +435,7 @@ async function workspaces(joined = [], known = null) {
           await workspaces();
         },
         details: async (w) => {
-          const r = await api("GET", "/workspaces/" + encodeURIComponent(w.workspace_id) + "/roles");
+          const r = canAdmin(w) ? await api("GET", "/workspaces/" + encodeURIComponent(w.workspace_id) + "/roles") : { status: 0, body: {} };
           dialog(...workspaceDetailsView(w, { hub, actions, roles: r.status === 200 ? r.body : null,
             owner: adminRows?.find((row) => row.workspace_id === w.workspace_id)?.owner_alias }),
             h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
@@ -639,10 +644,10 @@ async function home() {
       newChannels: state.newChannels,
       thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
-      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
     };
     liveItems = { user_id: user.user_id, items: homeData.items };
-    shell("home", homeView(homeData), advancedForm(workspaces));
+    shell("home", homeView(homeData), workspaces.some((w) => w.can_start) ? advancedForm(workspaces) : null);
     state.notice = null;
   } finally { finishLoading(); }
 }
@@ -683,6 +688,10 @@ async function signOut() {
   loginView();
 }
 
+async function registerRoute() { // a hub with no workspace has no Home signing card: register a browser from here
+  if (!(await refresh())) return loginView();
+  registerView();
+}
 function registerView(err) {
   const label = h("input", { id: "label", value: "This browser", maxlength: 60 });
   const pw = h("input", { id: "pw2", type: "password", autocomplete: "current-password", required: true });
@@ -1026,6 +1035,10 @@ async function pollLive() {
       reconcileRows(frame.querySelector(".rail"), railView());
       railSnapshot = JSON.stringify(state.rail);
     }
+    if (frame?.isConnected && parseRoute(location.hash).kind === "home" && frame.querySelector(".first-run-root") && firstRunOutgrown(state.rail.rows, liveItems.items)) {
+      void home(); // the first workspace connected while this page was open: draw the full home
+      return;
+    }
     const current = frame?.isConnected && parseRoute(location.hash).kind === "home" ? frame.querySelector(".needs-you") : null;
     if (current && homeData?.user_id === user.user_id) {
       homeData.items = liveItems.items;
@@ -1094,7 +1107,7 @@ async function openSearch() {
   const layer = dialog(h("h1", { text: "Search everything" }), input, results, h("button", { text: "Close", onclick: closeDialog }));
   layer.classList.add("search-layer");
   draw(); input.focus();
-  const [needs, rail, users, sharedRes] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail"), user.is_admin ? api("GET", "/admin/users") : Promise.resolve(null), api("GET", "/me/shared")]);
+  const [needs, rail, users, sharedRes] = await Promise.all([api("GET", "/me/needs-you"), api("GET", "/rail"), user.is_admin && !user.needs_sign_in ? api("GET", "/admin/users") : Promise.resolve(null), api("GET", "/me/shared")]);
   if (!layer.isConnected || state.user !== user) return;
   if (sharedRes.status === 200) shared = sharedRes.body.items ?? [];
   liveItems = { user_id: user.user_id, items: needs.status === 200 ? needs.body.items ?? [] : [] };
@@ -1195,7 +1208,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones }[route.kind] ?? pageRender(route.kind) ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones, register: registerRoute }[route.kind] ?? pageRender(route.kind) ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

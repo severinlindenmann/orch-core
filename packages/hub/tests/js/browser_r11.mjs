@@ -30,7 +30,7 @@ try {
   await page.fill("#pw", HUB_PW);
   await page.fill("#code", CODE_SIGNIN);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByRole("heading", { name: "Needs you" }).waitFor();
+  await page.getByRole("heading", { name: "Connect your first workspace" }).waitFor(); // a new hub: Home shows only the next step (P11)
 
   await page.locator(".side").getByRole("link", { name: "Approvals" }).click();
   await page.getByRole("heading", { name: "Approvals" }).waitFor();
@@ -57,8 +57,9 @@ try {
   await shot("workspaces");
   await page.getByRole("button", { name: "Connect a workspace" }).click();
   await page.getByText("30 minutes").first().waitFor();
-  await page.getByRole("button", { name: "Everything" }).first().click();
-  await page.getByText("Suggested: Everything").waitFor();
+  // P10: one link box in the connect card, no mode buttons
+  await page.getByRole("region", { name: "Connect a workspace" }).waitFor();
+  assert((await page.getByRole("button", { name: "Everything" }).count()) === 0, "no mode buttons in the connect card");
   await shot("workspaces-connect");
   // P07: a workspace joins while the page is open (the test joins one now); no click, no navigation.
   assert((await page.getByText("No workspaces yet").count()) === 1, "empty before the join");

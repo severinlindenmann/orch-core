@@ -15,9 +15,9 @@ entry is that single folder, whose only external import is the workspace's ``AGE
 
 **Consent.** The owner agreed when creating the workspace: ``orch setup`` / setup writes the marker
 ``<root>/.orch/claude-trust`` (:func:`record_consent`). Without it (an older workspace, or a folder that merely
-looks like one) nothing is written. The same marker is also written later, by the dashboard's sign card for a Claude
-Code start (``POST /api/w/{ws}/claude-trust``, owner on a local session only, ``claude_folder.grant_consent``); the guards
-below are the same whichever way the consent arrived.
+looks like one) nothing is written. The same marker is also written later, by the dashboard's sign card for a
+Claude Code start (``POST /api/w/{ws}/claude-trust``, owner on a local session only, ``claude_folder.grant_consent``);
+the guards below are the same whichever way the consent arrived.
 
 **Only for isolated launches.** The runner calls this only for a launch that carries ``--setting-sources user
 --strict-mcp-config`` (a ticket work folder, see :func:`orch.host.launch.launch_argv`); worktree, repo and root launches

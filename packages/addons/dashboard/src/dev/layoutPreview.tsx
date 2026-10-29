@@ -502,7 +502,7 @@ function install() {
   ag.preview = async () => agentPreview(current)
   ag.runnerReview = async (_ws: string, b: { on: boolean; terminals?: boolean }) => ({
     view: { op: b.on ? 'runner.on' : 'runner.off', on: b.on, terminals: b.on && !!b.terminals, lines: b.on
-      ? ['Turn on dashboard execution for Demo.', 'Agents may run commands on this computer as you when you start them.', 'Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys.', 'That includes reading your SSH keys and your orch keys. The dashboard can then start agents, create worktrees and open terminals for this workspace, as you.']
+      ? ['Turn on dashboard execution for Demo.', 'Agents may run commands on this computer as you when you start them.', 'Agents and terminals you start here work as you on this computer. They can run programs and open your files, including secret keys, and so can anything that takes over this dashboard. Only continue on a computer you trust.', 'That includes reading your SSH keys and your orch keys. The dashboard can then start agents, create worktrees and open terminals for this workspace, as you.']
       : ['Turn off dashboard execution for Demo.', 'Open terminals close within a second; agents already running keep running; the dashboard starts no new ones.'] },
     view_digest: 'sha256:' + 'a'.repeat(64),
   })

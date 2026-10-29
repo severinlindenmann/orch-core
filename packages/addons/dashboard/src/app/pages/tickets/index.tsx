@@ -21,6 +21,7 @@ import { groupByEpic, hasEpics, isCollapsed, NO_EPIC } from '../board/grouping'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useTicketsGroup } from './group'
 import { Filters } from './Filters'
+import { SharedWithYou } from './SharedWithYou'
 import { SavedViews } from './SavedViews'
 import { useElementWidth } from '@/lib/useElementWidth'
 import { TicketRowsSkeleton } from '../skeletons'
@@ -371,6 +372,7 @@ export function TicketsPage() {
           </p>
         </>
       )}
+      {wsId && <SharedWithYou ws={wsId} />}
     </div>
   )
 }

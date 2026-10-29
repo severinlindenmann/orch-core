@@ -132,6 +132,16 @@ describe('ticket page structure: next action first, gates as a stepper, a rail t
     expect(within(sheet).getByRole('heading', { name: 'Details' })).toBeInTheDocument()
   })
 
+  it('the Technical details link inside the Panels sheet closes the sheet when it navigates', async () => {
+    vi.stubGlobal('innerWidth', 1024)
+    const { user } = renderApp('/ticket/DEMO-0041')
+    await screen.findByRole('heading', { level: 1, name: /billing reconciliation/ }, T)
+    await user.click(screen.getByRole('button', { name: /^Panels \(\d+\)$/ }))
+    const sheet = await screen.findByRole('dialog', { name: /Panels/ })
+    await user.click(within(sheet).getByTestId('ticket-technical-link'))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Panels/ })).toBeNull())
+  })
+
   it('at 1440 the rail is a column next to the content, without "Needs you"', async () => {
     vi.stubGlobal('innerWidth', 1440)
     renderApp('/ticket/DEMO-0041')

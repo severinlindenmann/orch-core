@@ -614,6 +614,8 @@ test('finish shows the current values read-only and offers only what is missing,
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
   expect(page(container)).toContain('Agents may work for3 days')
   expect(screen.getByText('Already set up')).toBeInTheDocument()
+  // r10-P11: whether agents can start now is the top bar's message only, so setup lists no agent-access row
+  expect(page(container)).not.toMatch(/Agent access for this|Given before|Not given/)
   // the name and the short name are not inputs, the add-on that is on is not a switch
   expect(screen.queryByLabelText('Your name')).toBeNull()
   expect(screen.getAllByRole('switch').map((el) => el.closest('label')?.textContent ?? '')).toEqual([
@@ -641,7 +643,7 @@ test('finish never lists custody or ids; missing items are in words', async () =
   const f = fake({ finish: true })
   const { container } = render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
-  expect(page(container)).toContain('Agent access for this computer’s runner')
+  expect(page(container)).toContain('Let agents start on this computer now') // the offer stays; the old read-only row is gone (r10-P11)
   expect(page(container)).not.toMatch(/runner_grant|custody|addon:/)
 })
 

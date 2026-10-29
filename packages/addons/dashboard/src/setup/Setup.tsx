@@ -262,8 +262,6 @@ function FinishChoices({
         <dd>{hoursText(current.agent_hours)}</dd>
         <dt>Agent execution on this computer</dt>
         <dd>{yesNo(current.runner.enabled)}</dd>
-        <dt>Agent access for this computer’s runner</dt>
-        <dd>{current.runner_grant ? 'Given before' : 'Not given'}</dd>
         <dt>You approve with</dt>
         <dd>{current.method === 'click' ? 'One click on this computer' : 'Terminal'}</dd>
       </dl>

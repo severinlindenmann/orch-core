@@ -597,7 +597,7 @@ def test_the_contract_event_is_closed():
 def _cli(w, *extra, out=None):
     args = CLI._parser().parse_args(["backup-key", "--state", str(w.state), *extra])
     assert args.group == "backup-key"
-    return BCLI.run(args, out=out or (lambda _l: None), now_ms=w.clock)
+    return BCLI.run(args, out=out or (lambda _l: None), now_ms=w.clock, tty=lambda: True)
 
 
 def test_the_server_command_prints_the_words_once_and_refuses_a_second_setup(w, capsys, caplog):
@@ -675,3 +675,24 @@ def test_the_key_is_one_file_and_the_lock_file_never_travels(w):
     assert not any(p.name.startswith("backup-auth") for p in w.state.iterdir())
     got = B.open_backup((w.state / "backups" / name).read_bytes(), words=words, dev_mode=True, live=None)
     assert SN.KEY_FILE in got.files and "backups.lock" not in got.files
+
+
+@pytest.mark.parametrize("var", ["ORCH_GRANT", "ORCH_SESSION"])
+def test_the_server_command_refuses_an_agent_and_changes_nothing(w, monkeypatch, capsys, var):
+    monkeypatch.setenv(var, "x")
+    lines: list[str] = []
+    assert _cli(w, out=lines.append) == 1
+    assert "agent" in capsys.readouterr().err and lines == []
+    assert not (w.state / SN.KEY_FILE).exists() and not (w.state / "backups").exists()
+    assert "hub_backup" not in _types(w)
+
+
+def test_the_server_command_refuses_when_its_output_is_not_a_terminal(w, monkeypatch, capsys):
+    for v in ("ORCH_GRANT", "ORCH_SESSION"):
+        monkeypatch.delenv(v, raising=False)
+    args = CLI._parser().parse_args(["backup-key", "--state", str(w.state)])
+    lines: list[str] = []
+    assert BCLI.run(args, out=lines.append, now_ms=w.clock, tty=lambda: False) == 1
+    assert "terminal" in capsys.readouterr().err and lines == []
+    assert not (w.state / SN.KEY_FILE).exists() and not (w.state / "backups").exists()
+    assert BCLI.run(args, out=lines.append, now_ms=w.clock, tty=lambda: True) == 0  # the same call at a terminal works

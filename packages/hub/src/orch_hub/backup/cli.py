@@ -4,6 +4,7 @@ reached over plain http on an office or public address (the web page refuses to 
 
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -22,7 +23,20 @@ def add_parser(sub: Any) -> None:
     )
 
 
-def run(args: Any, out: Callable[[str], None] = print, now_ms: Callable[[], int] | None = None) -> int:
+def run(
+    args: Any,
+    out: Callable[[str], None] = print,
+    now_ms: Callable[[], int] | None = None,
+    tty: Callable[[], bool] = sys.stdout.isatty,
+) -> int:
+    if os.environ.get("ORCH_GRANT") or os.environ.get("ORCH_SESSION"):  # an agent never gets the words (human only)
+        print("orch-hub: refused: this command is for a person, not an agent", file=sys.stderr)
+        return 1
+    if not tty():  # the words go to a person's screen, never into a pipe, a file or a log
+        print(
+            "orch-hub: refused: run this at a terminal (the words are not written to a pipe or a file)", file=sys.stderr
+        )
+        return 1
     try:
         state = Path(args.state) if args.state else default_state_dir()
         keys = HubKeys.open(state, **({} if now_ms is None else {"now_ms": now_ms}))

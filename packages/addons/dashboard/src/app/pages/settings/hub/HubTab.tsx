@@ -50,7 +50,7 @@ export function StandalonePage({ onJoin }: { onJoin: () => void }) {
 }
 export function SelectivePage({ ws, fullAllowed: _fullAllowed, onShare, onFull, onLeave }: { ws: string; fullAllowed: boolean; onShare: () => void; onFull: () => void; onLeave: () => void }) {
   const share = useQuery(hubQueries.share(ws))
-  return <><Panel title="Connected · Hub sees only what you share" tone={violet}><p>You keep signing locally. Needs-you notes (items that need your attention) and full questions are always shared; the hub sees nothing else unless you choose it.</p></Panel>
+  return <><Panel title="Connected · Hub sees only what you share" tone={violet}><p>You keep signing locally. Needs-you notes (items that need your attention) and full questions are always shared; the hub sees nothing else, apart from this workspace's name, unless you choose it.</p></Panel>
     <Panel title="What the hub can see">
       {share.isPending ? <p role="status">Loading shared items…</p> : share.isError ? <><p role="alert">Could not load shared items.</p><Action id="hub-shared-retry" onClick={() => void share.refetch()}>Try again</Action></> : !share.data.available ? <p data-testid="hub-share-unavailable">Sharing settings are not available on this host yet. Update orch to choose what the hub sees.</p> : <>
         <p>{share.data.shared} shared items · from the hub, not signed</p><AlwaysShared share={share.data} />

@@ -161,7 +161,7 @@ class FakePorts:
         return FakeLink(self)
 
     @contextlib.contextmanager
-    def unlock(self, wid, passphrase, digest, fields):
+    def unlock(self, wid, passphrase, digest, fields, one_click=False):
         self.unlocks += 1
         self.log.append(("unlock",))
         yield steps_backend()

@@ -16,6 +16,8 @@ export interface SetupState {
     capabilities: string[]
   }[]
   methods: ('terminal' | 'click')[]
+  /** The OS of the machine running setup; absent or unknown hides OS-specific notes. */
+  os?: 'darwin' | 'linux' | 'windows'
   click_available: boolean
   click_reason: string
   /** Core's convenience-signing risk sentence, shown with the method choice before Continue. */

@@ -1020,7 +1020,7 @@ test('N7: the review names the workspace from what core returned, not from the t
   await screen.findByRole('heading', { name: 'Review your setup' })
   const box = container.querySelector('.review-facts')!
   expect(box).toHaveTextContent('Marketing')
-  expect(box).toHaveTextContent('RA-0001')
+  expect(box).not.toHaveTextContent('RA-0001') // r11-P15: the ticket prefix is in Details, not on the card
   expect(box).toHaveTextContent('orch-run2-a')
   expect(box).not.toHaveTextContent('/demo/')
   expect(box.textContent).not.toContain('Demo')
@@ -1179,10 +1179,11 @@ test('reviewFacts builds the short card in plain words from the review', () => {
     ],
   } as unknown as Review
   const facts = reviewFacts(review)
-  expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Owner', 'Project folder', 'How you approve', 'Agents', 'History'])
+  expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Owner', 'Your project', 'How you approve', 'Agents', 'History'])
+  expect(facts.find((f) => f.label === 'Workspace')!.value).toBe('Marketing') // r11-P15: no ticket prefix on the card
   expect(facts.find((f) => f.label === 'Agents')!.value).toBe('may work for 3 days')
   expect(facts.find((f) => f.label === 'Add-ons')).toBeUndefined()
-  expect(facts.find((f) => f.label === 'Project folder')!.value).toBe('p')
+  expect(facts.find((f) => f.label === 'Your project')!.value).toBe('p')
 })
 
 
@@ -1308,13 +1309,13 @@ test.each([
   ['linux', false],
   [undefined, false],
 ])('the Background Items note shows only on a Mac (os %s)', async (os, shown) => {
-  const f = fake({ done: true, os })
-  render(<Setup api={f.api} />)
+  const f = fake({ running: true, os })
+  const { container } = render(<Setup api={f.api} />)
   await reveal()
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
-  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+  await waitFor(() => expect(container.querySelector('ol.progress li')).not.toBeNull())
   expect(Boolean(screen.queryByText(/orch added items that run in the background/))).toBe(shown)
 })
 
@@ -1379,4 +1380,19 @@ test('r11-P01: a Finish that cannot open the dashboard says so in plain words an
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
   await waitFor(() => expect(assign).toHaveBeenCalledWith('/'))
   expect(finishes).toBe(3)
+})
+
+test('r11-P15: the Mac notice shows while the steps run, never on the ready or the error screen', async () => {
+  for (const [opts, shown] of [[{ running: true }, true], [{ done: true }, false], [{ failure: true }, false]] as const) {
+    const f = fake({ ...opts, os: 'darwin' })
+    const { container, unmount } = render(<Setup api={f.api} />)
+    await reveal()
+    await check()
+    await screen.findByRole('heading', { name: 'Review your setup' })
+    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+    await waitFor(() => expect(container.querySelector('ol.progress li')).not.toBeNull())
+    if (!shown) await waitFor(() => expect(page(container)).toMatch(/ready|attention|Failed/))
+    expect(page(container).includes('Your Mac may say')).toBe(shown)
+    unmount()
+  }
 })

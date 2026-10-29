@@ -9,6 +9,7 @@ Nothing here puts a word, a key or a file into a log, the audit chain or the act
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import urllib.parse
 from typing import Any
@@ -19,7 +20,13 @@ from ..contract.canon import b64u
 _NET_100 = ipaddress.ip_network("100.64.0.0/10")  # the company's private network (VPN) range
 
 #: codes this feature adds to the API's STATUS table (the rest are existing ones)
-STATUS = {"insecure_origin": 403, "no_backup_key": 409, "backup_failed": 500, "backup_not_found": 404}
+STATUS = {
+    "confirm_denied": 403,
+    "insecure_origin": 403,
+    "no_backup_key": 409,
+    "backup_failed": 500,
+    "backup_not_found": 404,
+}
 _MAP = {"not_found": "backup_not_found", "audit_failed": "backup_failed"}
 
 
@@ -32,6 +39,13 @@ def backup_routes(r: Any) -> tuple[Any, ...]:
             "admin",
             "a_backup_key",
             "Set up or replace the hub backup key: password + code in the request; the 24 words are shown once",
+        ),
+        r(
+            "POST",
+            "/admin/backup/key/confirm",
+            "admin",
+            "a_backup_confirm",
+            "The new backup words are saved: backups under the old key are deleted (same session, no step-up)",
         ),
         r("POST", "/admin/backups", "admin", "a_backup_make", "Make a hub backup now (audited)"),
         r(
@@ -73,6 +87,11 @@ def _err(code: str) -> Exception:
     return ApiError(_MAP.get(code, code))
 
 
+def _session_id(c: Any) -> str:
+    """Who must confirm the new words: this browser session (a hash, never the token)."""
+    return hashlib.sha256(c.token.encode()).hexdigest()
+
+
 class BackupHandlers:
     d: Any
 
@@ -99,6 +118,7 @@ class BackupHandlers:
         return 200, {
             "key_set": info is not None,
             "key_set_ms": None if info is None else info["set_ms"],
+            "key_pending": info is not None and info["pending"] is not None,
             "backups": kept,
             "keep": KEEP,
             "schedule": "daily",
@@ -111,13 +131,21 @@ class BackupHandlers:
         self._stepup(c, b)
         words = ""
         try:
-            words, made = self._backups().set_key(c.user_id)
+            words, made = self._backups().set_key(c.user_id, _session_id(c))
             body = {"words": words, "backup": made}
         except BackupError as e:
             raise _err(e.code) from None
         finally:
             del words
         return 200, body, [("Pragma", "no-cache")]
+
+    def _h_a_backup_confirm(self, c: Any, p: dict, q: dict, b: dict | None):
+        if b not in (None, {}):
+            raise _err("malformed")
+        try:
+            return 200, {"ok": True, "removed": self._backups().confirm(_session_id(c))}
+        except BackupError as e:
+            raise _err(e.code) from None
 
     def _h_a_backup_make(self, c: Any, p: dict, q: dict, b: dict | None):
         if b not in (None, {}):

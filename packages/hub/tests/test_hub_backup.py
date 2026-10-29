@@ -168,7 +168,10 @@ def test_the_words_are_shown_once_with_no_store_and_are_nowhere_else(w, caplog):
     words = o["words"]
     assert W.check_words(words) == words and set(o) == {"words", "backup"}
     info = json.loads((w.state / SN.KEY_FILE).read_text())  # only bk_pub + K_auth are stored, 0600
-    assert set(info) == {"v", "bk_pub", "k_auth", "set_ms"} and (w.state / SN.KEY_FILE).stat().st_mode & 0o777 == 0o600
+    assert (
+        set(info) == {"v", "bk_pub", "k_auth", "set_ms", "pending"}
+        and (w.state / SN.KEY_FILE).stat().st_mode & 0o777 == 0o600
+    )
     keys = B.derive_keys(words)
     assert info["bk_pub"] == b64u(keys.bk_pub)
     assert info["k_auth"] == b64u(keys.k_auth)
@@ -371,9 +374,9 @@ def test_a_symlink_in_the_state_dir_refuses_the_backup_and_odd_names_are_skipped
 # --- cond 10: replacing the key ---------------------------------------------------------------------------------------------
 
 
-def test_replacing_the_key_makes_a_new_backup_then_deletes_those_under_the_old_key(w):
+def test_replacing_the_key_makes_a_new_backup_and_the_old_ones_go_only_after_the_words_are_confirmed(w):
     tok, words1, n1 = _first(w)
-    w.clock.advance(5000)
+    w.clock.advance(11 * 60_000)
     assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 200
     old = {r["name"] for r in w.call("GET", "/admin/backup", token=tok)[1]["backups"]}
     assert len(old) == 2
@@ -382,19 +385,52 @@ def test_replacing_the_key_makes_a_new_backup_then_deletes_those_under_the_old_k
     assert s == 200 and o["words"] != words1
     words2 = o["words"]
     names = {r["name"] for r in w.call("GET", "/admin/backup", token=tok)[1]["backups"]}
-    assert names == {o["backup"]["name"]} and not (names & old)  # only the new backup, under the new key
+    assert old < names and o["backup"]["name"] in names  # NOT deleted yet: the person has not said they saved the words
+    assert w.call("GET", "/admin/backup", token=tok)[1]["key_pending"] is True
+    other = w.login(w.admin)  # another session of the same admin cannot confirm for this one
+    assert w.call("POST", "/admin/backup/key/confirm", {}, token=other)[:2] == (403, {"error": "confirm_denied"})
+    assert {r["name"] for r in BackupService(w.env.keys).list()} == names
+    assert w.call("POST", "/admin/backup/key/confirm", {"x": 1}, token=tok)[0] == 400
+    s, o2, _ = w.call("POST", "/admin/backup/key/confirm", {}, token=tok)  # no step-up: the same session
+    assert (s, o2) == (200, {"ok": True, "removed": 2})
+    st = w.call("GET", "/admin/backup", token=tok)[1]
+    assert {r["name"] for r in st["backups"]} == {o["backup"]["name"]} and st["key_pending"] is False
     assert not (w.state / "backups" / n1).exists()
+    assert w.call("POST", "/admin/backup/key/confirm", {}, token=tok)[:2] == (200, {"ok": True, "removed": 0})
     data = (w.state / "backups" / o["backup"]["name"]).read_bytes()
     assert B.open_backup(data, words=words2, dev_mode=True, live=None).header["bk_pub"] == b64u(
         B.derive_keys(words2).bk_pub
     )
     with pytest.raises(B.Refused):
         B.open_backup(data, words=words1, dev_mode=True, live=None)
-    w.clock.advance(5000)  # later backups use the new key
-    mk = w.call("POST", "/admin/backups", {}, token=tok)[1]["backup"]["name"]
+    w.clock.advance(11 * 60_000)  # later backups use the new key
+    tok = w.login(w.admin)
+    r = w.call("POST", "/admin/backups", {}, token=tok)
+    assert r[0] == 200, r[:2]
+    mk = r[1]["backup"]["name"]
     assert B.open_backup((w.state / "backups" / mk).read_bytes(), words=words2, dev_mode=True, live=None)
     assert json.loads((w.state / SN.KEY_FILE).read_text())["k_auth"] == b64u(B.derive_keys(words2).k_auth)
     assert [e["change"] for e in _events(w, "hub_backup")].count("key_set") == 2
+
+
+def test_confirm_needs_an_admin_session_and_a_key_and_a_pending_replacement_survives_a_second_one(w):
+    assert w.call("POST", "/admin/backup/key/confirm", {})[0] == 401
+    tok = w.login(w.admin)
+    assert w.call("POST", "/admin/backup/key/confirm", {}, token=tok)[:2] == (409, {"error": "no_backup_key"})
+    assert w.call("POST", "/admin/backup/key/confirm", {}, token=w.login(w.ann))[0] == 403
+    _first(w, tok)
+    w.clock.advance(5000)
+    _key(w, tok)
+    w.clock.advance(5000)
+    s, o, _ = _key(w, tok)  # replaced twice without confirming: the confirm drops everything not under the last key
+    assert s == 200
+    assert w.call("POST", "/admin/backup/key/confirm", {}, token=tok)[1] == {"ok": True, "removed": 2}
+    assert [r["name"] for r in BackupService(w.env.keys).list()] == [o["backup"]["name"]]
+    assert "pending" not in (w.state / SN.KEY_FILE).read_text()
+    got = B.open_backup(
+        (w.state / "backups" / o["backup"]["name"]).read_bytes(), words=o["words"], dev_mode=True, live=None
+    )
+    assert "pending" not in got.files[SN.KEY_FILE].decode()  # the session marker never travels
 
 
 def test_a_failed_key_setup_puts_everything_back(w, monkeypatch):
@@ -633,7 +669,9 @@ def test_the_server_command_and_the_hub_make_backups_at_once_and_every_kept_file
 def test_the_key_is_one_file_and_the_lock_file_never_travels(w):
     _tok, words, name = _first(w)
     info = json.loads((w.state / SN.KEY_FILE).read_text())
-    assert set(info) == {"v", "bk_pub", "k_auth", "set_ms"} and info["k_auth"] == b64u(B.derive_keys(words).k_auth)
+    assert set(info) == {"v", "bk_pub", "k_auth", "set_ms", "pending"} and info["k_auth"] == b64u(
+        B.derive_keys(words).k_auth
+    )
     assert not any(p.name.startswith("backup-auth") for p in w.state.iterdir())
     got = B.open_backup((w.state / "backups" / name).read_bytes(), words=words, dev_mode=True, live=None)
     assert SN.KEY_FILE in got.files and "backups.lock" not in got.files

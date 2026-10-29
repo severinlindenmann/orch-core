@@ -187,7 +187,7 @@ function backupCard(b, actions) {
   const more = h("div", { class: "replace" });
   if (mayShow) {
     const open = h("button", { type: "button", text: "Replace the backup key", onclick: () => {
-      more.replaceChildren(h("p", { class: "small muted", text: "New words make a new backup. Backups made with the old words are deleted." }), stepUpForm("bk-new", "Make new words", (c) => actions.setKey?.(c)));
+      more.replaceChildren(h("p", { class: "small muted", text: "New words make a new backup. Backups made with the old words are deleted once you have saved the new words." }), stepUpForm("bk-new", "Make new words", (c) => actions.setKey?.(c)));
     } });
     more.append(open);
   } else more.append(h("p", { class: "small muted", text: NO_WORDS_HERE }), h("code", { class: "mono cli-line", text: text(b.cli_line ?? "orch-hub backup-key") + " --replace" }));
@@ -240,7 +240,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
       words,
       wordsMayShow: wordsMayShow(),
       copy: async (t) => { try { await globalThis.navigator?.clipboard?.writeText(t); return true; } catch { return false; } },
-      wordsSaved: () => hubSettingsPage(d),
+      wordsSaved: async () => { await d.api("POST", "/admin/backup/key/confirm", {}); await hubSettingsPage(d); },
       setKey: async (c) => {
         const x = await d.api("POST", "/admin/backup/key", c);
         if (x.status === 200) { d.state.notice = d.banner("ok", "Backups are set up", null); return hubSettingsPage(d, [], x.body.words); }

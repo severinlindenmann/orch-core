@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import gc
+import hmac
 import json
 import os
 import re
@@ -119,18 +120,27 @@ class BackupService:
             d = json.loads(raw)
             if (
                 type(d) is not dict
-                or set(d) != {"v", "bk_pub", "k_auth", "set_ms"}
+                or not {"v", "bk_pub", "k_auth", "set_ms"} <= set(d) <= {"v", "bk_pub", "k_auth", "set_ms", "pending"}
+                or type(d.get("pending", "")) is not str
                 or d["v"] != 1
                 or type(d["set_ms"]) is not int
             ):
                 raise ValueError
-            return {"bk_pub": unb64u(d["bk_pub"], 65), "k_auth": unb64u(d["k_auth"], 32), "set_ms": d["set_ms"]}
+            return {
+                "bk_pub": unb64u(d["bk_pub"], 65),
+                "k_auth": unb64u(d["k_auth"], 32),
+                "set_ms": d["set_ms"],
+                "pending": d.get("pending") or None,
+            }
         except ValueError, CanonError, TypeError:
             raise BackupError("bad_key_file") from None
 
-    def _key_files(self, bk_pub: bytes, k_auth: bytes, set_ms: int) -> dict[str, bytes]:
-        """The ONE key file (``bk_pub`` and ``K_auth`` together, so a reader never sees a new half next to an old one)."""
+    def _key_files(self, bk_pub: bytes, k_auth: bytes, set_ms: int, pending: str | None = None) -> dict[str, bytes]:
+        """The ONE key file (``bk_pub`` and ``K_auth`` together, so a reader never sees a new half next to an old one).
+        ``pending`` (who must still confirm the new words) is written to the live file only, never into a backup."""
         doc = {"v": 1, "bk_pub": b64u(bk_pub), "k_auth": b64u(k_auth), "set_ms": set_ms}
+        if pending:
+            doc["pending"] = pending
         return {SN.KEY_FILE: json.dumps(doc, sort_keys=True).encode() + b"\n"}
 
     def _material(self) -> tuple[bytes, bytes, int]:
@@ -252,10 +262,12 @@ class BackupService:
             self._prune()
             return got
 
-    def set_key(self, actor: str | None) -> tuple[str, dict[str, Any]]:
+    def set_key(self, actor: str | None, pending: str = "cli") -> tuple[str, dict[str, Any]]:
         """Set up or replace the backup key. Returns ``(words, new backup)``; the words are shown once by the caller and
-        stored nowhere. Order: derive, store the new key files, make a backup under the new key, audit, THEN delete every
-        kept backup under another key (cond 10). Any failure puts the old key files back and removes the new backup."""
+        stored nowhere. Order: derive, store the new key file, make a backup under the new key, audit. The kept backups under
+        another key stay until :meth:`confirm` (cond 10 + review M2: they are the only ones the person can still open if
+        the words never reached them); ``pending`` names who must confirm (a session hash, or ``cli``). Any failure puts
+        the old key file back and removes the new backup."""
         with locked(self.state):
             words = generate_words()
             keys = B.derive_keys(check_words(words))
@@ -269,7 +281,7 @@ class BackupService:
                 except StateError:
                     old[p] = None
             set_ms = self._now()
-            new_files = self._key_files(bk_pub, k_auth, set_ms)
+            new_files = self._key_files(bk_pub, k_auth, set_ms, pending)
             made: dict[str, Any] | None = None
             try:
                 write_atomic(self._key_path(), new_files[SN.KEY_FILE])
@@ -286,9 +298,24 @@ class BackupService:
                 words = ""
                 raise
             self._activity("hub.backup.key_set", actor)
-            self._drop_other_keys(bk_pub)
             self._prune()
             return words, made
+
+    def confirm(self, pending: str = "cli") -> int:
+        """The person has saved the new words: delete every kept backup under another key and clear the marker. Only the
+        one the key was set for (``pending``) may confirm; a second call is a no-op. Returns how many files went."""
+        with locked(self.state):
+            info = self.key_info()
+            if info is None:
+                raise BackupError("no_backup_key")
+            if info["pending"] is None:
+                return 0
+            if not hmac.compare_digest(info["pending"].encode(), pending.encode()):
+                raise BackupError("confirm_denied")
+            before = len(self.list())
+            self._drop_other_keys(info["bk_pub"])
+            write_atomic(self._key_path(), self._key_files(info["bk_pub"], info["k_auth"], info["set_ms"])[SN.KEY_FILE])
+            return before - len(self.list())
 
     # --- download, schedule ----------------------------------------------------------------------------------------------
 

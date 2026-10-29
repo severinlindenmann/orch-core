@@ -50,6 +50,7 @@ def run(args: Any, out: Callable[[str], None] = print, now_ms: Callable[[], int]
         for i in range(0, 24, 6):
             out("  ".join(f"{i + j + 1:>2} {x}" for j, x in enumerate(w[i : i + 6])))
         out(f"\nFirst backup: {made['name']}")
+        svc.confirm("cli")  # the words were printed to this terminal: older backups under another key can go now
         return 0
     finally:
         activity.close()

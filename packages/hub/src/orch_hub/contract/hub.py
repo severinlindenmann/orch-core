@@ -112,6 +112,10 @@ def _hex16(x: Any) -> bool:
         return False
 
 
+def _hex32(x: Any) -> bool:
+    return type(x) is str and re.fullmatch(r"[0-9a-f]{32}", x) is not None
+
+
 def _pub(x: Any) -> bool:
     try:
         return S.valid_public_key(unb64u(x, 65))
@@ -409,12 +413,34 @@ FIELDS: dict[str, dict[str, Check]] = {
         "expires_ms": _int_min(1),
         "dev": _bool,
     },
+    # hub_id is null on the direct (12.1) path; access is what the request grants: any of the four app accesses (M4)
     "hub.publish_approval": {
         "workspace_id": _hex16,
-        "hub_id": _hex16,
+        "hub_id": lambda x: x is None or _hex16(x),
         "device_id": _hex16,
         "request_hash": _b64u_n(32),
-        "access": _enum("public"),
+        "access": _enum("public", "password", "company", "group"),
+    },
+    # M4 (#1357, section 11.5): a hub admin's narrowing of a share or an app at orch-publish (HK_op)
+    "hub.release_narrow": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "target": _enum("share", "app"),
+        "id": _hex32,
+        "action": _enum("revoke", "stop"),
+        "ts_ms": _int_min(0),
+        "nonce": _b64u_n(32),
+    },
+    # M4 (section 11.8): the hub's single-use pass into a company or group app (HK_op); no person id, no user id
+    "hub.app_pass": {
+        "hub_id": _hex16,
+        "workspace_id": _hex16,
+        "app_id": _hex32,
+        "audience": lambda x: (
+            type(x) is str and re.fullmatch(r"company|group:[a-z0-9][a-z0-9_-]{0,39}|ws:[0-9a-f]{32}", x) is not None
+        ),
+        "nonce": _b64u_n(32),
+        "exp_ms": _int_min(1),
     },
 }
 
@@ -431,6 +457,8 @@ LABEL_OF_KIND = {
     "hub.binding": "sig_hub_binding",
     "hub.unbound": "sig_hub_unbound",
     "hub.publish_approval": "sig_hub_publish_approval",
+    "hub.release_narrow": "sig_hub_release_narrow",
+    "hub.app_pass": "sig_hub_app_pass",
     "hub.owner_proof": "sig_hub_owner_proof",
     "hub.space": "sig_hub_space",
     "hub.space_wrap": "sig_hub_space_wrap",
@@ -1899,8 +1927,11 @@ def check_hub_publish(req: Mapping[str, Any], st: Mapping[str, Any], *, now_ms: 
     seen[nonce.hex()] = now_ms + NONCE_RETENTION_MS
     # 9. the owner's approval (V3-D4): required for public access; verified whenever present
     if approval is None:
-        if req.get("access") == "public":
-            raise Refused("approval_required")
+        from .published import app_route  # late: published imports this module
+
+        route = app_route(req["method"], req["target"].partition("?")[0])
+        if req.get("access") == "public" or (route is not None and route["approval"]):
+            raise Refused("approval_required")  # an app commit, rollback or start never goes live unapproved (M4)
         return {"workspace": wsx, "hub": hub, "approved": False}
     verify_approval(
         approval,

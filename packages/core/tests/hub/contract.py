@@ -265,10 +265,10 @@ FIELDS: dict[str, dict[str, Check]] = {
     },
     "hub.publish_approval": {
         "workspace_id": _hex16,
-        "hub_id": _hex16,
+        "hub_id": lambda x: x is None or _hex16(x),  # null on the direct 12.1 path (M4)
         "device_id": _hex16,
         "request_hash": _b64u_n(32),
-        "access": _enum("public"),
+        "access": _enum("public", "password", "company", "group"),
     },
 }
 

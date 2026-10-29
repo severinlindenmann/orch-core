@@ -27,6 +27,8 @@ from orch.canon.jcs import dumps as cj
 from orch.hubclient.tlslink.client import stream_body_ok
 from orch.model import remote as model_remote
 
+from . import devices
+
 __all__ = [
     "BYTE_BUDGET", "CODES", "FRAME_MIN_COST", "LIMITS", "STREAMS_ACCEPT", "Budget", "StreamTable", "decide",
     "frame_cost", "on_commit", "open", "table",
@@ -372,7 +374,7 @@ def open(  # noqa: A001 - the gate's verb, as in the contract
     t = table(service)
     store = service.store
     with store.locked():
-        core = store.state._core  # noqa: SLF001 - the model's own state, read under the lock
+        core = store.state.workspace  # the model's workspace state, read under the lock
         rem = core.remote or {}
         sid, dev, kind = body["stream_id"], body["device_id"], body["kind"]
         code = decide(
@@ -381,7 +383,7 @@ def open(  # noqa: A001 - the gate's verb, as in the contract
             on=model_remote.is_on(core, now_ms),
             codes=(CODES(service, now_ms) if codes is None else codes) if kind == "enroll" else {},
             enrolls=t.enrolls(now_ms),
-            device=(rem.get("devices") or {}).get(dev) if kind == "session" else None,
+            device=devices.lookup(rem, dev, now_ms, devices.owner_ids(core.members)) if kind == "session" else None,
             streams_device=t.count_device(dev),
             streams_workspace=t.count_workspace(),
             handshakes_device=t.handshakes(dev, now_ms),

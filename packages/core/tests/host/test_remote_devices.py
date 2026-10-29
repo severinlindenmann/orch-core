@@ -114,6 +114,6 @@ def test_device_lookup_vector(c):
     as_model = {
         "devices": {d["device_id"]: {k: v for k, v in d.items() if k != "device_id"} for d in a["list"]["devices"]}
     }
-    hit = devices.lookup(as_model, a["device_id"], a["now_ms"])
+    hit = devices.lookup(as_model, a["device_id"], a["now_ms"], {d["person"] for d in a["list"]["devices"]})
     got = {"ok": hit["device_id"]} if hit else {"error": "remote.device"}
     assert got == c["expect"], c.get("note")

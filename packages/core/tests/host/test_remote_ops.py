@@ -334,8 +334,89 @@ def test_devices_remove_and_lookup(human, served):
     dev = add_device(human, served)
     r = model(served)
     now = clock_ms(served)
-    assert devices.lookup(r, dev, now)["level_cap"] == "work"
-    assert devices.lookup(r, dev, r["devices"][dev]["expires_ms"]) is None  # expired: not listed
-    assert devices.lookup(r, "rd_" + "5" * 32, now) is None and devices.lookup(None, dev, now) is None
+    owners = devices.owner_ids(served.service.store.state.workspace.members)
+    assert devices.lookup(r, dev, now, owners)["level_cap"] == "work"
+    assert devices.lookup(r, dev, r["devices"][dev]["expires_ms"], owners) is None  # expired: not listed
+    assert devices.lookup(r, "rd_" + "5" * 32, now, owners) is None and devices.lookup(None, dev, now, owners) is None
     assert ok(call(served, "remote.device_remove", {"device_id": dev}))["data"] == {"device_id": dev, "removed": True}
+    assert model(served)["devices"] == {}
+
+
+# --- a person who is removed or stops being an owner: their devices never pass ---
+
+
+def _host_event(served, who, typ: str, **payload) -> dict[str, Any]:
+    """A person line appended by the host's own store on the worker (so the commit hook runs), like ``human.submit``."""
+    ws, service = served.lab.ws, served.service
+    ws.tick()
+
+    def run() -> dict[str, Any]:
+        store = service.store
+        old_store, ws.store = ws.store, store
+        old_check, store.append_check = store.append_check, None
+        try:
+            with store.locked():  # the state fresh (the lab's own store may have appended since)
+                return store.append(ws.person_event(who, "workspace", typ, **payload), log="workspace").event
+        finally:
+            store.append_check, ws.store = old_check, old_store
+
+    return run_on(served, run)
+
+
+def _two_owners(human, served):
+    """The first owner has a device and an open stream; a second owner exists. Returns (device, stream revoker, p2)."""
+    turn_on(human)
+    dev = add_device(human, served)
+    p2 = served.lab.add_member()
+    _host_event(served, served.lab.ws.owner, "role.changed", person=p2.ref, role="owner")
+    r = Revoker(served.service.store)
+    remote.streams(served.service).register("1" * 32, dev, r)
+    return dev, r, p2
+
+
+def _gate_open(served, dev: str, n: int) -> str | None:
+    body = {"stream_id": f"{n:032x}", "device_id": dev, "kind": "session"}
+    return run_on(served, lambda: remote.gate.open(served.service, body, clock_ms(served)))
+
+
+def test_member_removed_closes_open_stream_and_refuses_new(human, served):
+    dev, r, p2 = _two_owners(human, served)
+    assert _gate_open(served, dev, 1) == "remote.version"  # an owner's device passes the gate (R3 not built yet)
+    _host_event(served, p2, "member.removed", person=served.lab.ws.owner.ref)
+    assert r.calls == ["revoked"] and r.held == [True]  # closed inside the store lock
+    assert _gate_open(served, dev, 2) == "remote.device"
+    assert dev not in model(served)["devices"]
+
+
+def test_owner_demoted_to_member_closes_open_stream_and_refuses_new(human, served):
+    dev, r, p2 = _two_owners(human, served)
+    _host_event(served, p2, "role.changed", person=served.lab.ws.owner.ref, role="member")
+    assert r.calls == ["revoked"] and r.held == [True]
+    assert _gate_open(served, dev, 2) == "remote.device"
+    assert dev not in model(served)["devices"]
+
+
+def test_lookup_refuses_device_of_non_owner(human, served):
+    turn_on(human)
+    dev = add_device(human, served)
+    r, now = model(served), clock_ms(served)
+    me = served.lab.ws.owner.ref
+    assert devices.lookup(r, dev, now, {me})["device_id"] == dev
+    assert devices.lookup(r, dev, now, set()) is None  # layer a alone: no commit hook ran, the check still refuses
+    assert devices.lookup(r, dev, now, {"p_" + "9" * 32}) is None
+
+
+def test_device_removed_reason_member_appended_once(human, served, monkeypatch):
+    dev, _, p2 = _two_owners(human, served)
+    lines: list[tuple[str, dict[str, Any]]] = []
+    real = remote.append_host
+
+    def spy(service, typ, **payload):
+        lines.append((typ, payload))
+        return real(service, typ, **payload)
+
+    monkeypatch.setattr(remote, "append_host", spy)
+    _host_event(served, p2, "role.changed", person=served.lab.ws.owner.ref, role="member")
+    _host_event(served, p2, "role.changed", person=served.lab.ws.owner.ref, role="viewer")  # nothing left to drop
+    assert lines == [("remote.device_removed", {"device_id": dev, "reason": "member"})]
     assert model(served)["devices"] == {}

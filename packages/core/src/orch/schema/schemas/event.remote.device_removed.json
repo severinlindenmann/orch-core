@@ -224,7 +224,8 @@
       "enum": [
         "owner",
         "expired",
-        "key_rotated"
+        "key_rotated",
+        "member"
       ]
     }
   },

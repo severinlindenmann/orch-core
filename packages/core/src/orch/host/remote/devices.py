@@ -5,7 +5,7 @@ or the host applies to a list it is handed) and :func:`remove`."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -18,7 +18,7 @@ from orch.hubclient.errors import HubRefused
 
 from ..errors import HostError
 
-__all__ = ["LABEL", "build", "check_list", "export", "list_path", "lookup", "remove"]
+__all__ = ["LABEL", "build", "check_list", "export", "list_path", "lookup", "owner_ids", "remove"]
 
 LABEL = L["sig_remote_devices"]
 _ENTRY = (
@@ -35,22 +35,33 @@ def list_path(service: Any) -> Path:
     return wrk.state_dir(service) / "devices.json"
 
 
-def lookup(remote: Mapping[str, Any] | None, device_id: str, now_ms: int) -> dict[str, Any] | None:
-    """The listed, unexpired device ``device_id`` from the model's ``ws.remote``, or ``None`` (``remote.device``)."""
+def owner_ids(members: Mapping[str, Any]) -> frozenset[str]:
+    """The persons that are workspace owners right now (the model's roster)."""
+    return frozenset(p for p, m in members.items() if m.role == "owner")
+
+
+def lookup(
+    remote: Mapping[str, Any] | None, device_id: str, now_ms: int, owners: Collection[str]
+) -> dict[str, Any] | None:
+    """The listed, unexpired device ``device_id`` from the model's ``ws.remote`` whose person is a current owner
+    (``owners``, :func:`owner_ids`), or ``None`` (``remote.device``). A removed or demoted person's devices never
+    pass, whether or not the commit hook has removed them from the list yet."""
     d = ((remote or {}).get("devices") or {}).get(device_id)
-    if d is None or not now_ms < d["expires_ms"]:
+    if d is None or not now_ms < d["expires_ms"] or d["person"] not in owners:
         return None
     return {"device_id": device_id, **d}
 
 
 def build(service: Any, remote: Mapping[str, Any], now_ms: int) -> dict[str, Any]:
-    """The contract ``remote.device_list`` object of the model's devices (sorted by id)."""
+    """The contract ``remote.device_list`` object of the model's devices of current owners (sorted by id)."""
+    owners = owner_ids(service.store.state.workspace.members)
     return {
         "v": 2, "suite": 2, "kind": "remote.device_list", "hv": 0, "workspace_id": service.workspace_id,
         "version": remote.get("device_version", 0), "issued_ms": now_ms,
         "devices": [
             {k: ({"device_id": did, **d})[k] for k in _ENTRY}
             for did, d in sorted((remote.get("devices") or {}).items())
+            if d["person"] in owners
         ],
     }  # fmt: skip
 

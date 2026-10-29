@@ -23,6 +23,7 @@ CONTRACT = Path(__file__).resolve().parents[4] / "contracts" / "hub"
 DOC = json.loads((CONTRACT / "vectors_remote.json").read_text())
 NOW = 1_800_000_000_000
 DEV = "rd_" + "a1" * 16
+OWNER = "p_" + "0f" * 16
 CODE = "rc_" + "c3" * 16
 SID = "5e" * 16
 
@@ -33,7 +34,9 @@ def sid(n: int) -> str:
 
 class Store:
     def __init__(self, remote: dict[str, Any] | None) -> None:
-        self.state = SimpleNamespace(_core=SimpleNamespace(remote=remote))
+        owners = {OWNER, *(d["person"] for d in ((remote or {}).get("devices") or {}).values())}
+        members = {p: SimpleNamespace(role="owner") for p in owners}  # every device's person is an owner here
+        self.state = SimpleNamespace(workspace=SimpleNamespace(remote=remote, members=members))
         self.lock = threading.RLock()
         self.held = 0
 
@@ -48,7 +51,7 @@ class Store:
 
 
 def service(on: bool = True, until: int | None = NOW + 86_400_000, devices: dict[str, Any] | None = None):
-    devs = {DEV: {"expires_ms": NOW + 86_400_000, "level_cap": "work"}} if devices is None else devices
+    devs = {DEV: {"person": OWNER, "expires_ms": NOW + 86_400_000, "level_cap": "work"}} if devices is None else devices
     remote = {"on": on, "until_ms": until, "devices": devs, "version": 1}
     svc = SimpleNamespace(store=Store(remote), clock=lambda: NOW / 1000, workspace_id="0" * 32)
     svc.terminator = mock.Mock()  # a spy: nothing may reach the terminator or the dashboard through the gate
@@ -154,18 +157,18 @@ def test_off_answered_before_device() -> None:
 
 
 def test_device_expired_or_bad_level_is_remote_device() -> None:
-    svc = service(devices={DEV: {"expires_ms": NOW, "level_cap": "work"}})
+    svc = service(devices={DEV: {"person": OWNER, "expires_ms": NOW, "level_cap": "work"}})
     assert gate.open(svc, body(), NOW) == "remote.device"
-    svc = service(devices={DEV: {"expires_ms": NOW + 1, "level_cap": "root"}})
+    svc = service(devices={DEV: {"person": OWNER, "expires_ms": NOW + 1, "level_cap": "root"}})
     assert gate.open(svc, body(), NOW) == "remote.device"
 
 
 def test_device_read_from_the_model_every_time() -> None:
     svc = service()
     assert gate.open(svc, body(sid(1)), NOW) == "remote.version"
-    svc.store.state._core.remote["devices"].clear()  # noqa: SLF001 - the model changed (device removed)
+    svc.store.state.workspace.remote["devices"].clear()  # the model changed (device removed)
     assert gate.open(svc, body(sid(2)), NOW) == "remote.device"
-    svc.store.state._core.remote["on"] = False  # noqa: SLF001
+    svc.store.state.workspace.remote["on"] = False
     assert gate.open(svc, body(sid(3)), NOW) == "remote.off"
 
 
@@ -185,7 +188,7 @@ def test_gate_runs_under_the_store_lock() -> None:
 
 def test_limits_4_16_10(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gate, "STREAMS_ACCEPT", True)
-    devs = {f"rd_{i:032x}": {"expires_ms": NOW + 3_600_000, "level_cap": "view"} for i in range(1, 7)}
+    devs = {f"rd_{i:032x}": {"person": OWNER, "expires_ms": NOW + 3_600_000, "level_cap": "view"} for i in range(1, 7)}
     svc = service(devices=devs)
     ids = list(devs)
     n = iter(range(1, 1000))

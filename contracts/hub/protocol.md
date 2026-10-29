@@ -1783,7 +1783,7 @@ Vectors `device_list_*`, `device_lookup_*`.
 **The owner proof of a remote step** (R2, #1590; core only, the hub never sees it). The remote policy and the device list
 are folded by the workspace model from two person lines of the workspace log, `remote.changed` and
 `remote.device_added`; every other `remote.*` line (`disabled`, `code_issued`, `code_burned`, `device_removed`,
-`key_rotated`, `session_opened`, `session_closed`) is the host's record and can only reduce power. A person line of this
+`key_rotated`, `session_opened`, `session_closed`) is the host's record and can only reduce power. A `device_removed` line carries `reason` `owner`, `expired`, `key_rotated` or `member` (its person was removed or is no longer an owner); a device of a person who is not a current owner of the workspace never passes the stream gate, whatever the list says. A person line of this
 kind carries the §9.6 proof object under its own kind `remote.owner_proof` and label `orch/v2/sig/remote-owner-proof|`,
 made by the acting owner's `PK` (the backup key) over the exact event payload without `owner_proof`, bound to the
 workspace, the op (`remote.set` for `remote.changed`, `remote.device_confirm` for `remote.device_added`) and the host

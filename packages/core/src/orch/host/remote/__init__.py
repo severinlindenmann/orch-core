@@ -94,6 +94,8 @@ def on_commit(service: Any, log: str, event: dict[str, Any]) -> None:
     typ = event.get("type")
     try:
         gate.on_commit(service, "workspace", event)  # the ONE place streams close; runs once per commit
+        if typ in ("member.removed", "role.changed"):
+            _drop_non_owner_devices(service)
         if typ in ("remote.device_added", "remote.device_removed"):
             from . import devices
 
@@ -108,6 +110,21 @@ def on_commit(service: Any, log: str, event: dict[str, Any]) -> None:
             policy.ensure_sweeper(service)
     except Exception:  # noqa: BLE001
         LOG.exception("remote commit hook failed for %s", typ)
+
+
+def _drop_non_owner_devices(service: Any) -> None:
+    """A person removed or no longer an owner: close their devices' streams and record ``remote.device_removed``
+    (``reason: member``, H) for each, inside the same store hold. Idempotent: a device leaves the model with its line,
+    and the line's own commit only re-closes nothing."""
+    from . import devices
+
+    with service.store.locked():
+        owners = devices.owner_ids(service.store.state.workspace.members)
+        for did, d in sorted((remote_state(service).get("devices") or {}).items()):
+            if d["person"] in owners:
+                continue
+            gate.table(service).close_device(did, "revoked")
+            append_host(service, "remote.device_removed", device_id=did, reason="member")
 
 
 def attach(service: Any) -> None:

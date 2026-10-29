@@ -675,7 +675,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   }
   const terminalReviewMissing =
     !!review &&
-    ((profile.method === 'terminal' && (state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
+    ((profile.method !== 'click' && (state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
   const approvalCount = review ? review.items.length + (review.workspace ? 1 : 0) : 0
   const summary = review ? summarize(review) : { lines: [], unknown: false, odd: [] as string[] }
@@ -1365,10 +1365,15 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
     root.render(<Setup api={api} />)
   } catch (e) {
     const reason = report(e)
+    const used = /^(session\.|setup\.ended$)/.test(reason)
     root.render(
       <main className="setup">
-        <h1>This setup link was already used</h1>
-        <p>A setup link works only once. If you finished setup, your workspace is ready.</p>
+        <h1>{used ? 'This setup link was already used' : 'Setup could not open'}</h1>
+        <p>
+          {used
+            ? 'A setup link works only once. If you finished setup, your workspace is ready.'
+            : 'This page could not start setup. If you finished setup before, your workspace is ready.'}
+        </p>
         <p>
           <a className="primary" href="/">
             Open dashboard →

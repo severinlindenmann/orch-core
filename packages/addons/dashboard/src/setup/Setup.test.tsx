@@ -559,6 +559,18 @@ test('a used-up setup link leads to the dashboard and keeps the terminal steps b
   expect(screen.getByText('Reason: setup.ended')).toBeInTheDocument()
 })
 
+test('another bootstrap failure keeps a generic heading with the same way out', async () => {
+  document.body.innerHTML = '<div id="root"></div>'
+  const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const { mount } = await import('./Setup')
+  await mount(Promise.reject(new SetupError('setup.service_worker')))
+  expect(await screen.findByRole('heading', { name: 'Setup could not open' })).toBeInTheDocument()
+  expect(screen.queryByText('This setup link was already used')).toBeNull()
+  expect(screen.getByRole('link', { name: /Open dashboard/ })).toHaveAttribute('href', '/')
+  expect(screen.getByText('Reason: setup.service_worker')).toBeInTheDocument()
+  spy.mockRestore()
+})
+
 test('review is a compact plain summary; blanks and "set at signing" lines stay out of the details', async () => {
   const f = fake({ typed: true })
   render(<Setup api={f.api} />)

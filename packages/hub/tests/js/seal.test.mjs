@@ -71,13 +71,24 @@ test("every case of the vector file is replayed", async () => {
 
 test("the served path: fresh ephemeral per call, opens with the vector key, refuses a bad value", async () => {
   const base = DOC.cases.find((c) => c.name === "seal ok").args;
-  const f = fields(base);
+  // The vector expiry is a fixed historical value: the served path checks the real clock, so use a live one.
+  const live = Date.now() + 30 * 86400000;
+  const f = { ...fields(base), expiresMs: live };
   const one = await served.sealOrgSecret(f), two = await served.sealOrgSecret(f);
   assert.equal(one.length, two.length);
   assert.notEqual(toHex(one), toHex(two));
-  const ctx = { ...base, sealed: toHex(one) };
-  const got = await openFixed(DOC.keys.wxk_scalar, { ...ctx, hub_id: base.hub_id }, base.expires_ms - 1, base.expires_ms - 1000, DOC.consts.expiry_max_ms);
+  const ctx = { ...base, expires_ms: live, sealed: toHex(one) };
+  const got = await openFixed(DOC.keys.wxk_scalar, { ...ctx, hub_id: base.hub_id }, live - 1, live - 1000, DOC.consts.expiry_max_ms);
   assert.equal(got, base.value);
   await assert.rejects(served.sealOrgSecret({ ...f, value: "short" }), /value/);
   await assert.rejects(served.sealOrgSecret({ ...f, name: "Bad Name" }), /malformed/);
+});
+
+test("the served path refuses a past expiry and one beyond 366 days, accepts 30 days", async () => {
+  const f = fields(DOC.cases.find((c) => c.name === "seal ok").args);
+  const day = 86400000;
+  await assert.rejects(served.sealOrgSecret({ ...f, expiresMs: Date.now() - 1000 }), /malformed/);
+  await assert.rejects(served.sealOrgSecret({ ...f, expiresMs: Date.now() }), /malformed/);
+  await assert.rejects(served.sealOrgSecret({ ...f, expiresMs: Date.now() + 367 * day }), /malformed/);
+  assert.ok((await served.sealOrgSecret({ ...f, expiresMs: Date.now() + 30 * day })).length > 65);
 });

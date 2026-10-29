@@ -32,6 +32,7 @@ JSON_TYPES = {"object": dict, "array": list, "string": str, "integer": int, "boo
 @pytest.fixture
 def served(tmp_path):
     lab = Lab(tmp_path)
+    lab.ws.plan_gate_off()  # r10-P02: the fixture starts a task with no plan approval
     try:
         s = Served(lab)
     except OSError as exc:  # pragma: no cover

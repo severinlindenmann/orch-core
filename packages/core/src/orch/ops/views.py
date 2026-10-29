@@ -138,6 +138,9 @@ def next_hint(view: Any, session: str | None = None) -> str:
     t = next_task(view, session)
     if t is not None and t.state != "started" and refine_hint(view) == "orch wait":
         return "orch wait"  # run-9 J04: every open gate is complete; wait for the approval, then build in this session
+    plan = view.gates.get("plan")
+    if t is not None and plan is not None and plan.applies and not plan.approved:
+        return refine_hint(view) or "orch wait"  # r10-P02: the host refuses task start/done until the plan is approved
     if t is not None:
         if t.state == "started":
             verify = next((x["verify"] for x in view.fields["tasks"] if x["id"] == t.id), None)

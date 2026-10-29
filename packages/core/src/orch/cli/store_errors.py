@@ -85,4 +85,6 @@ def to_orch_error(e: StoreError, declared: Collection[str] = ()) -> OrchError:
     if mapped not in GLOBAL_ERRORS and mapped not in declared:
         mapped = "internal" if code_for(e.code) == "internal" else "invalid.input"
     detail = f"{e.code}: {e.detail}" if e.detail else e.code
+    if e.code == "task.plan_open" and mapped == "transition.refused":  # r10-P02: the next step is to wait
+        return OrchError(mapped, detail[:320], hint="orch wait", fix=["orch", "wait"])
     return OrchError(mapped, detail[:320])  # the legacy-store refusal lists the old files

@@ -611,7 +611,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     setStep(5)
   }
   async function approveProfile() {
-    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true, records: state?.mode !== 'finish' && profile.records !== false, trust_folder: offersTrust && (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false), trust_parent: offersTrust && !!parentConfig && profile.trust_parent === true })
+    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init !== false, records: state?.mode !== 'finish' && profile.records !== false, trust_folder: offersTrust && (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false), trust_parent: offersTrust && !!parentConfig && profile.trust_parent === true })
     if (state?.mode === 'finish' || confirmed.current) await getReview()
     else {
       const revealed = await api.call<Secrets>('secrets/reveal', {})
@@ -886,26 +886,25 @@ export function Setup({ api }: { api: SetupAPI }) {
               {offersGit && (
                 <div className="note" role="group" aria-label="Git repository">
                   <p>
-                    <strong>This folder is not a git repository.</strong> Worktrees need one.
+                    <strong>This folder does not track changes yet.</strong> Agents need that to work on several
+                    tickets at once.
                   </p>
                   <label className="toggle">
                     <span>
-                      <strong>Make it a git repository</strong>
-                      <small>
-                        Runs git init and keeps orch’s own folders out of git. None of your files is committed.
-                      </small>
+                      <strong>Set it up for me (recommended)</strong>
+                      <small>Each ticket gets its own safe copy. None of your files is changed.</small>
                     </span>
                     <input
                       type="radio"
                       name="git"
-                      checked={profile.git_init === true}
+                      checked={profile.git_init !== false}
                       onChange={() => update({ git_init: true })}
                     />
                   </label>
                   <label className="toggle">
                     <span>
-                      <strong>Continue without worktrees</strong>
-                      <small>Each ticket gets its own work folder instead.</small>
+                      <strong>Skip this</strong>
+                      <small>Agents work one ticket at a time.</small>
                     </span>
                     <input
                       type="radio"
@@ -920,13 +919,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               )}
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(1)}>Back</button>
-                {offersGit && profile.git_init === undefined ? (
-                  <button className="primary" disabled>
-                    Choose above to continue →
-                  </button>
-                ) : (
-                  next(3)
-                )}
+                {next(3)}
               </SetupFooter>
             </>
           )}
@@ -1093,7 +1086,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my
                     secret words and recovery code
                   </label>
-                  <h2>Check three recovery words</h2>
+                  <h2>One quick check</h2>
                   <div className="word-check">
                     {secrets.check_positions.map((n) => (
                       <label key={n}>
@@ -1108,7 +1101,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                       </label>
                     ))}
                   </div>
-                  <p>Only these three recovery words are checked. Five incorrect attempts end this session.</p>
+                  <p>Only {secrets.check_positions.length === 1 ? 'this recovery word is' : 'these recovery words are'} checked. Five incorrect attempts end this session.</p>
                   <SetupFooter cancel={cancel}>
                     <button
                       className="primary"

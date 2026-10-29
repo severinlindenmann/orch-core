@@ -766,7 +766,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'Z1',
         title: 'Setup in a folder without git',
         text: 'In a NEW empty folder (no git), run `orch setup`. Leave Worktrees ticked and continue to the add-on step.',
-        see: 'A box "This folder is not a git repository. Worktrees need one." with two choices; Continue stays disabled until you pick. Pick "Make it a git repository" and finish. The folder then has `.git` and a `.gitignore` with `.orch/` and `.orch-work/`; `git status` shows your own files as untracked and nothing committed.',
+        see: 'A box "This folder does not track changes yet." with two choices; "Set it up for me (recommended)" is already chosen and Continue is active. Finish with it. The folder then has `.git` and a `.gitignore` with `.orch/` and `.orch-work/`; `git status` shows your own files as untracked and nothing committed.',
       },
       {
         id: 'Z2',

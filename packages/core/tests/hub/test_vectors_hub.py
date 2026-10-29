@@ -43,6 +43,16 @@ def test_positive_and_negative_cases_both_present():
     assert any("ok" in c["expect"] for c in CASES) and any("error" in c["expect"] for c in CASES)
 
 
+def test_the_space_item_by_vectors_are_replayed():
+    names = {c["name"] for c in CASES if c["check"] == "space_item"}
+    assert {
+        "space_item_by_missing", "space_item_by_bad_kind", "space_item_by_bad_chars", "space_item_by_too_long",
+        "space_item_by_not_text", "space_item_by_agent_ok", "space_item_restored_from_ok",
+        "space_item_restored_from_bad", "space_item_body_extra_key",
+    } <= names  # fmt: skip
+    assert not {n for n in names} & set(PENDING_VECTORS)
+
+
 def test_ids_and_labels():
     ids = V["ids"]
     assert ids["hub"] == H.hub_id(pub("hk_root"))

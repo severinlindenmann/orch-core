@@ -185,6 +185,28 @@ def test_setup_token_creates_one_admin_once(w):
     assert w.call("POST", "/setup", {**body, "token": "tok-abc"})[:2] == (401, {"error": "bad_credentials"})
 
 
+def test_setup_signs_the_new_admin_in_once_with_a_browser_cookie(w):
+    f = w.env.keys.state / "setup-token"
+    f.write_text("tok-abc\n")
+    w.api.d.setup_token_file = f
+    for admin in list(w.env.acc.members("hub-admin")):
+        w.env.acc.remove_member("hub-admin", admin)
+    body = {"token": "tok-abc", "name": "boss", "password": "a long password 1"}
+    s, o, h = w.call("POST", "/setup", body)
+    assert s == 200 and o["totp_uri"].startswith("otpauth://")
+    cookie = h["Set-Cookie"]
+    assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+    tok = cookie.split(";")[0].split("=", 1)[1]
+    info = w.api.d.channels.session_info(tok)
+    assert info["user_id"] == o["user_id"] and info["scope"] == "full" and info["via"] == "setup"
+    w.browser_tokens.add(tok)  # the cookie works on a hub-admin route and on the session route
+    assert w.call("GET", "/session", token=tok)[0] == 200
+    assert w.call("GET", "/admin/users", token=tok)[0] == 200
+    # single use: the same token answers 401 and sets no cookie; a wrong token never gets a session
+    s2, _, h2 = w.call("POST", "/setup", body)
+    assert s2 == 401 and "Set-Cookie" not in h2
+
+
 def test_web_listen_takes_a_private_ip_not_a_wildcard(w):
     from orch_hub.serve import parse_web_listen
 

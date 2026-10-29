@@ -244,7 +244,12 @@ def test_the_review_of_an_adding_change_comes_from_the_host_and_lists_only_new_i
     review = got["review"]
     assert review["new"]["count"] == 1 and review["new"]["items"][0]["line"].endswith(": Second public")
     assert review["leaves"] == [{"kind": "ticket", "text": shareops.LEAVES["ticket"]}]
-    assert review["later_edits"] == shareops.LATER_EDITS and "hub_id" in review and "audience_note" in review
+    assert (
+        review["later_edits"] == shareops.LATER_EDITS
+        and "hub_id" in review
+        and "readers" in review
+        and "widened" in review
+    )
 
 
 def test_five_adding_changes_a_minute_and_each_leaves_a_log_line(served, selective, log):
@@ -288,3 +293,166 @@ def test_a_confirming_sync_checks_the_owner_again_under_the_lock(served, selecti
     before = list(selective.ops)
     assert err(req(served, "share.sync", {"expect": shown})) == "role.denied"
     assert selective.ops == before and seen
+
+
+# --- P02-sec: the confirmed grant (who may read, and the description) is part of what the owner confirmed -------------
+
+U1 = "1" * 32
+RULE_A = {"kind": "tag", "tag": "public", "audience": {"users": [U1], "groups": []}}
+RULE_B = {"kind": "tag", "tag": "extra", "audience": {"users": [], "groups": ["team-b"]}, "description": True}
+
+
+def widened_setup(served, selective):
+    res = ok(agent(served, "new", {"title": "Public note", "message": "What this is about", "label": ["public"]}))
+    key = res["key"]
+    uid = served.lab.ws.uid(key)
+    ok(rule_op(served, "share.rule_add", RULE_A))
+    ok(rule_op(served, "share.rule_add", RULE_B))  # matches nothing yet
+    assert [i.get("audience") for i in selective.opened] == [{"users": [U1], "groups": []}]
+    ok(
+        agent(served, "set", {"ref": key, "pairs": ["labels=extra"]})
+    )  # now only rule B matches: new readers, and the text
+    return uid, key
+
+
+def test_a_group_or_description_that_appears_after_the_confirmation_is_held_back_and_shown_as_widened(
+    served, selective
+):
+    widened_setup(served, selective)
+    ok(req(served, "share.sync"))  # an automatic, unconfirmed pass: the new label may follow, the new readers not
+    for item in selective.opened:
+        assert item.get("audience") in (None, {"users": [U1], "groups": []}) and "description" not in item["content"]
+    st = shareops._load(served.service)
+    (grant,) = [g for lg, g in st.confirmed.items() if lg.startswith("ticket:")]
+    assert grant["groups"] == [] and grant["description"] is False
+    review = ok(req(served, "share.preview"))["data"]["review"]
+    (w,) = review["widened"]
+    assert w["teams_added"] == ["team-b"] and w["description_added"] is True
+    assert review["readers"]["teams"] == ["team-b"]
+    sync_shown(served)  # only the owner's confirmation widens
+    item = selective.opened[-1]
+    assert item["audience"] == {"users": [], "groups": ["team-b"]}
+    assert "What this is about" in item["content"]["description"]
+
+
+def test_narrowing_still_goes_through_automatically(served, selective):
+    _uid, key = widened_setup(served, selective)
+    sync_shown(served)  # the owner confirms the wider audience and the description
+    assert selective.opened[-1]["audience"] == {"users": [], "groups": ["team-b"]}
+    ok(agent(served, "set", {"ref": key, "pairs": ["labels=public,extra"]}))  # both rules match: readers U1 + team-b
+    sync_shown(served)
+    assert selective.opened[-1]["audience"] == {"users": [U1], "groups": ["team-b"]}
+    got = ok(rule_op(served, "share.rule_remove", RULE_A))["data"]  # only B matches now: fewer readers, no new ones
+    assert got["put"] == 1
+    assert selective.opened[-1]["audience"] == {"users": [], "groups": ["team-b"]}
+
+
+def test_a_review_never_opens_a_hub_link_for_names(monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.host import shareops
+
+    def boom(service):
+        raise AssertionError("share.preview must not use the network")
+
+    monkeypatch.setattr(shareops, "_audience", boom)
+    monkeypatch.setattr(shareops, "_link", boom)
+    assert shareops._names_for(SimpleNamespace(), {"a" * 32}) == {}  # cold: the review says "a person on the hub"
+    assert shareops._names_for(SimpleNamespace(_share_names={"a" * 32: "Ben"}), {"a" * 32}) == {"a" * 32: "Ben"}
+
+
+# --- a long review is shown whole and bound whole; above the hard limit there is none -----------------
+
+
+def _item(logical, users=(), groups=(), description=False):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        logical=logical, kind="ticket", audience={"users": list(users), "groups": list(groups)},
+        payload={"description": "x"} if description else {}, line=lambda: f"line {logical}",
+    )  # fmt: skip
+
+
+def test_a_long_reader_list_is_listed_whole_not_cut():
+    from types import SimpleNamespace
+
+    service = SimpleNamespace(_share_names={})
+    users = [f"{n:032x}" for n in range(shareops.MAX_REVIEW_PEOPLE)]
+    got = shareops._readers(service, [_item("a", users)])
+    assert len(got["people"]) == shareops.MAX_REVIEW_PEOPLE and "people_total" not in got
+
+
+def test_a_widened_list_names_every_person_added():
+    from types import SimpleNamespace
+
+    service = SimpleNamespace(_share_names={})
+    users = [f"{k:032x}" for k in range(90)]
+    items = [_item(f"ticket:{k}", users, ["t-a"], True) for k in range(30)]
+    st = SimpleNamespace(sent=[i.logical for i in items], confirmed=None)
+    out = shareops._widened(service, st, items)
+    assert len(out) == 30 and len(out[0]["people_added"]) == 90
+
+
+def test_a_review_over_the_hard_limits_is_refused_in_plain_words(monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.host.errors import HostError
+
+    service = SimpleNamespace(_share_names={})
+    monkeypatch.setattr(shareops, "_selective", lambda s: (_ for _ in ()).throw(HostError("hub.not_joined", "x")))
+    many = [f"{n:032x}" for n in range(shareops.MAX_REVIEW_PEOPLE + 1)]
+    with pytest.raises(HostError, match="reaches too many people") as e:
+        shareops._review(service, [_item("a", many)], set())
+    assert str(e.value).endswith(shareops.TOO_MANY) or shareops.TOO_MANY in str(e.value)
+    st = SimpleNamespace(sent=[], confirmed=None, widened=lambda want: want)
+    wide = [_item(f"ticket:{k}", ["1" * 32]) for k in range(shareops.MAX_REVIEW_WIDENED + 1)]
+    with pytest.raises(HostError, match="reaches too many people"):
+        shareops._review(service, wide, {i.logical for i in wide}, st)
+
+
+def test_the_plan_binds_the_readers_beyond_what_a_page_would_show():
+    from orch.hubclient import shares as S
+
+    first = [f"{n:032x}" for n in range(70)]
+    fact = S.TicketFact("u1", "DEMO-1", "feature", "T", "open", (), None)
+    payload = {"key": "DEMO-1", "type": "feature", "title": "T", "status": "open", "labels": [], "deadline": None}
+    a = S._item("ticket:u1", "ticket", fact, payload, None, {"users": first, "groups": []})  # noqa: SLF001
+    b = S._item("ticket:u1", "ticket", fact, payload, None, {"users": [*first[:-1], "f" * 32], "groups": []})  # noqa: SLF001
+    assert a is not None and b is not None
+    assert S.plan_of([a]) != S.plan_of([b])  # a confirm over a view that hides the 70th reader cannot match
+
+
+# --- run-9 J03: a ticket made in the dashboard has only Requirements text ("What should be true when this is done?") --
+
+
+def test_include_the_description_shares_the_requirements_text_a_dashboard_ticket_has(served, selective):
+    """Run 9 (J03): the rule said "include the description" but the ticket's only text was its Requirements, so nothing
+    left and the confirmed grant was `description: false`. The description is the person-written text (Summary,
+    Context and Requirements); the plan, decisions and findings stay home."""
+    uid, key = served.ticket("Invoice export for Ben")
+    ok(agent(served, "section.set", {"ref": key, "section": "requirements", "message": "Ben can see the export."}))
+    ok(agent(served, "section.set", {"ref": key, "section": "plan", "message": "Agent plan stays home."}))
+    rule = {"kind": "ticket", "ticket": key, "description": True}
+    review = ok(req(served, "share.preview", {"add": rule}))["data"]["review"]
+    (leaves,) = [x["text"] for x in review["leaves"] if x["kind"] == "ticket"]
+    assert "description (summary, context and requirements)" in leaves and "no plan" in leaves  # what it is, in words
+    ok(rule_op(served, "share.rule_add", rule))
+    item = selective.opened[-1]
+    assert item["content"]["description"] == "Ben can see the export."
+    grant = shareops._load(served.service).confirmed[f"ticket:{uid}"]
+    assert grant["description"] is True
+
+
+def test_the_rule_as_share_rules_lists_it_removes_it(served, selective):
+    """Run 9 (J03): the dashboard sends back the rule as listed (with its readers and the description flag); core
+    matches the stored rule exactly, so that form must remove it and a form without them must not."""
+    _uid, key = served.ticket("Invoice export for Ben")
+    rule = {"kind": "ticket", "ticket": key, "audience": {"users": [U1], "groups": []}, "description": True}
+    ok(rule_op(served, "share.rule_add", rule))
+    (listed,) = [r for r in ok(req(served, "share.rules"))["data"]["rules"] if r["kind"] == "ticket"]
+    bare = {"kind": "ticket", "ticket": key}
+    assert err(req(served, "share.rule_remove", {"rule": bare, "expect": "p" * 43})) == "not_found"
+    as_listed = {k: v for k, v in listed.items() if k not in ("count", "describes")}
+    assert as_listed == rule
+    ok(rule_op(served, "share.rule_remove", as_listed))
+    assert [r["kind"] for r in ok(req(served, "share.rules"))["data"]["rules"]] == ["needs_you"]

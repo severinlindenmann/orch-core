@@ -296,7 +296,7 @@ function TodayInbox({ items, decisions, readOnly, locked, canAddon, viewer, atte
     }
     if (e.item.kind === 'approval') return <ApprovalRow key={row.id} {...props} />
     if (e.item.kind === 'verdict') return <VerdictRow key={row.id} {...props} />
-    if (e.item.kind === 'terminal_wait') return <TerminalWaitRow key={row.id} item={e.item} now={now} />
+    if (e.item.kind === 'terminal_wait') return <TerminalWaitRow key={row.id} item={e.item} ticket={byKey[e.item.ticket]} now={now} />
     return <NoticeRow key={row.id} item={e.item} now={now} />
   }
 

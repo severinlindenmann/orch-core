@@ -49,6 +49,7 @@ _ARGS = {
 #: what an agent may start from the CLI; the host still decides (an agent put or restore needs the owner's switch)
 _AGENT_CMDS = ("list", "get", "history", "put", "restore")
 _MAX_FILE = 190 * 1024
+AGENTS_WARNING = "Agents can copy workspace content here; the hub and its admins can read it."
 SHARE_WARNING = "The hub and its admins can read what you put here."  # same text as the host (orch.host.spaceops)
 
 
@@ -185,6 +186,10 @@ def main(
         elif a.cmd == "agents":
             if a.rest[1] not in ("on", "off"):
                 raise PubError("invalid.input", _USAGE, 2)
+            if a.rest[1] == "on" and not review_prompt(
+                f"{AGENTS_WARNING}\nTurn agents on in space {a.rest[0]}?\n", verb="continue"
+            ):
+                raise PubError("sign.cancelled", "not changed; agents stay off", 3)
             got = _call(target, "space.agents", {"space_id": a.rest[0], "on": a.rest[1] == "on"}, env)
             emit(got, "ok agents are " + ("ON: " + got["warning"] if got["agents"] else "off in this space"))
         elif a.cmd == "revoke":

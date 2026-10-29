@@ -274,8 +274,8 @@ _BY = re.compile(r"^(person|agent):[A-Za-z0-9_-]{1,64}$")
 
 def space_item_body_ok(b: Any) -> bool:
     """The body of a ``space.item`` (protocol 10.4): ``{name, size, data, by}`` and optionally ``restored_from``. ``by``
-    is who the writing host says acted (``person:<id>`` | ``agent:<session>``); it is REQUIRED, there is no item without
-    it. The hub cannot verify it."""
+    is who the writing host says acted (``person:<id>`` | ``agent:<grant id>``); it is REQUIRED, there is no item
+    without it. The hub cannot verify it."""
     if type(b) is not dict or not {"name", "size", "data", "by"} <= set(b) <= {
         "name",
         "size",

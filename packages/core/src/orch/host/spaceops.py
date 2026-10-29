@@ -501,6 +501,12 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 call, "space.restore", space_id=args["space_id"], epoch=got["epoch"], restored_from=args["item_id"],
                 agent=plan["who"] if agent else None,
             )  # fmt: skip
+            if agent:
+                hubops._audit(  # noqa: SLF001
+                    call, "space.agent_restore", space_id=args["space_id"], name=got["name"], size=got["size"],
+                    sha256=got["sha256"], session=plan["session"], agent=plan["who"], item_id=got["item_id"],
+                    restored_from=args["item_id"],
+                )  # fmt: skip
             return ok_result(got)
         if op == "space.revoke":
             got = client.revoke(args["space_id"], args["item_id"])

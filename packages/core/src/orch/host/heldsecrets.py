@@ -69,6 +69,12 @@ def held_secrets(service: WorkspaceService, grant: str | None = None) -> list[by
         for path in sorted(keys.glob("*.filekey.json")):
             for text in _walk(_json(path, service.host_uid), frozenset({"d"})):
                 add_text(text)
+    store = ws_dir / "membership" / "keys"  # WK_e (relay epoch keys), the WXK scalar, CK_s: wk-*, wxk-*, ck-*
+    if store.is_dir():
+        for path in sorted(store.glob("*.json")):
+            if path.name.startswith(("wk-", "wxk-", "ck-")):
+                for text in _walk(_json(path, service.host_uid), frozenset({"wk", "d", "ck"})):
+                    add_text(text)
     for text in _walk(_json(ws_dir / "hub" / "card-keys.json", service.host_uid), frozenset({"wxk", "ck"})):
         add_text(text)
     spaces = _json(ws_dir / "hub" / "spaces.json", service.host_uid)
@@ -89,17 +95,60 @@ def held_secrets(service: WorkspaceService, grant: str | None = None) -> list[by
     return [s for s in dict.fromkeys(out) if len(s) >= MIN_LEN]
 
 
+_RUN_B64 = re.compile(rb"[A-Za-z0-9+/_-]{16,}={0,2}")
+_RUN_HEX = re.compile(rb"(?:[0-9a-fA-F]{2}){8,}")
+
+
 def _variants(secret: bytes) -> list[bytes]:
-    std, url = base64.b64encode(secret), base64.urlsafe_b64encode(secret)
-    return [secret, std, std.rstrip(b"="), url, url.rstrip(b"=")]
+    """Raw; base64 (standard and url-safe) at each of the three alignments, only the part that does not depend on the
+    neighbouring bytes (so it matches wherever the secret sits); hex, lower and upper. Never a form under MIN_LEN."""
+    out = [secret, secret.hex().encode(), secret.hex().upper().encode()]
+    for k in (0, 1, 2):
+        for enc in (base64.b64encode, base64.urlsafe_b64encode):
+            text = enc(b"\0" * k + secret).rstrip(b"=")
+            head = (0, 2, 3)[k]  # chars that still hold bits of the padding bytes
+            tail = 0 if (len(secret) + k) % 3 == 0 else 1  # the last char holds bits of what follows
+            text = text[head : len(text) - tail]
+            if k == 0:
+                out.append(enc(secret))  # the whole padded form too
+            out.append(text)
+    return [v for v in dict.fromkeys(out) if len(v) >= MIN_LEN]
+
+
+def _decoded(data: bytes) -> list[bytes]:
+    """Base64 and hex runs of ``data`` decoded (an agent may encode a secret before it writes it)."""
+    out = []
+    for m in _RUN_HEX.finditer(data):
+        out.append(bytes.fromhex(m.group().decode()))
+    for m in _RUN_B64.finditer(data):
+        run = m.group().rstrip(b"=")
+        for pad in (0, 1, 2, 3):  # a run cut at a boundary decodes after a few characters are dropped
+            chunk = run[pad:]
+            chunk = chunk[: len(chunk) - len(chunk) % 4] if len(chunk) % 4 == 1 else chunk
+            try:
+                out.append(base64.b64decode(chunk.replace(b"-", b"+").replace(b"_", b"/") + b"=" * (-len(chunk) % 4)))
+            except ValueError:
+                continue
+    return out
 
 
 def find(data: bytes, secrets: list[bytes]) -> bool:
-    """Does ``data`` contain a held secret (raw or base64) or something shaped like a grant, a GitHub token or a
-    private key?"""
+    """Does ``data`` contain a held secret (raw, base64 at any alignment, or hex), also inside a base64 or hex run, or
+    something shaped like a grant, a GitHub token, a proxy capability or a private key?"""
     from orch.host.auth import _GRANT_BYTES
+    from orch.host.mcpshared import CAPABILITY_ANY
     from orch.tokenshape import GITHUB_TOKEN_BYTES
 
-    if _GRANT_BYTES.search(data) or GITHUB_TOKEN_BYTES.search(data) or _PEM.search(data):
-        return True
-    return any(v in data for s in secrets for v in _variants(s))
+    def shaped(d: bytes) -> bool:
+        return bool(
+            _GRANT_BYTES.search(d)
+            or GITHUB_TOKEN_BYTES.search(d)
+            or _PEM.search(d)
+            or CAPABILITY_ANY.search(d.decode("latin-1"))
+        )
+
+    variants = [v for s in secrets for v in _variants(s)]
+    for d in (data, *_decoded(data)):
+        if shaped(d) or any(v in d for v in variants):
+            return True
+    return False

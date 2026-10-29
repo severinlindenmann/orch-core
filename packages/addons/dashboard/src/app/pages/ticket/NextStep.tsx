@@ -6,7 +6,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import { openDockOn } from '@/app/terminal/dock/request'
 import type { ProgressRun } from './progress'
-import { availableActions, GATE_LABEL, policyText } from './actions'
+import { availableActions, gapOf, GATE_LABEL, policyText } from './actions'
 import { fmtDay, fmtExact, type HumanAction, type Jump, Mono, presenceLabel, type Viewer } from './shared'
 
 type Props = {
@@ -19,8 +19,10 @@ type Props = {
   run?: ProgressRun | null
   /** The run id of the ticket's open terminal wait: the agent asks something in its terminal. */
   wait?: string | null
-  /** "Start agent again" on the stopped card (absent: the card has no button). */
-  onStart?: () => void
+  /** "Ask the agent to finish" on the not-finished card (absent: the viewer may not start an agent, no button). */
+  onFinish?: () => void
+  /** "Add it myself": opens the edit sheet (absent: the viewer may not edit, no button). */
+  onEdit?: () => void
   openTerminal?: (run: string) => void
 }
 type StepId = 'understand' | 'build' | 'check' | 'done'
@@ -187,7 +189,7 @@ const APPROVE = {
 } as const
 
 /** The one thing to do next, in plain words; nothing when there is nothing to do or say. */
-function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, onStart, openTerminal = openDockOn }: Props) {
+function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, onFinish, onEdit, openTerminal = openDockOn }: Props) {
   const av = availableActions(ticket, viewer)
   const status = ticket.status as string
   const working = !!ticket.claim && ticket.claim.live !== false
@@ -226,29 +228,35 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
       </Card>
     )
   }
-  // The agent asks something in its terminal: one button to it.
+  // The plan or requirements lack something and the agent is idle (it asks in its terminal, or its run ended): say what, and offer the way on.
+  const open = (status === 'open' || status === 'in_progress' || status === 'in-progress') && !finishedOf(ticket)
+  const gap = gapOf(ticket)
+  const idle = !!wait || (!working && (run?.state === 'exited' || run?.state === 'lost'))
+  if (gap && open && idle) {
+    return (
+      <Card title={gap.title} text={gap.text}>
+        {onFinish && (
+          <Button size="sm" onClick={onFinish}>
+            Ask the agent to finish
+          </Button>
+        )}
+        {onEdit && (
+          <Button size="sm" variant="outline" onClick={onEdit}>
+            Add it myself
+          </Button>
+        )}
+      </Card>
+    )
+  }
+  // The agent asks something in its terminal and no gap is known: one button to it.
   if (wait && !finishedOf(ticket)) {
     return (
-      <Card title="The agent is waiting for you" text="It may be asking you something. Open the terminal to answer.">
+      <Card title="The agent is waiting for you" text="The agent is idle. Open it to see why.">
         <Button size="sm" onClick={() => openTerminal(wait)}>
           Open terminal
         </Button>
       </Card>
     )
-  }
-  // Owner feedback 5/14, run5 P04: only a real run that ended without finishing is "stopped early"; a ticket that never ran says nothing.
-  if ((status === 'open' || status === 'in_progress' || status === 'in-progress') && !working && (run?.state === 'exited' || run?.state === 'lost')) {
-    const stuck = (['requirements', 'plan'] as const).some((g) => ticket.gates[g].state !== 'approved' && !!ticket.gates[g].missing?.length)
-    if (stuck)
-      return (
-        <Card title="The agent stopped early" text="The agent stopped before it finished.">
-          {onStart && (
-            <Button size="sm" onClick={onStart}>
-              Start agent again
-            </Button>
-          )}
-        </Card>
-      )
   }
   if (working && !finishedOf(ticket)) {
     return (
@@ -262,11 +270,11 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
 }
 
 /** Where the ticket is (four plain steps) and the one next step for the person looking at it. */
-export function TicketProgress({ ticket, viewer, sign, jump, signing = false, run, wait, onStart, openTerminal }: Props) {
+export function TicketProgress({ ticket, viewer, sign, jump, signing = false, run, wait, onFinish, onEdit, openTerminal }: Props) {
   return (
     <div className="min-w-0 space-y-2">
       <Stepper ticket={ticket} />
-      <NextStepCard ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} run={run} wait={wait} onStart={onStart} openTerminal={openTerminal} />
+      <NextStepCard ticket={ticket} viewer={viewer} sign={sign} jump={jump} signing={signing} run={run} wait={wait} onFinish={onFinish} onEdit={onEdit} openTerminal={openTerminal} />
     </div>
   )
 }

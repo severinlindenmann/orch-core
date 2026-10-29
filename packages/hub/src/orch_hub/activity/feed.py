@@ -29,12 +29,17 @@ WORDS = {
     "space.created": "created a shared space",
     "space.member_added": "added a workspace to a shared space",
     "space.member_removed": "removed a workspace from a shared space",
+    "secret.created": "added a company secret",
+    "secret.shared": "changed which workspaces get a company secret",
+    "secret.rotated": "entered a company secret again",
+    "secret.removed": "removed a company secret",
     "space.mode_set": "changed whether a workspace edits a shared space",
     "space.archived": "archived a shared space",
     "space.unarchived": "brought a shared space back",
     "addon.allowed": "changed which add-ons a workspace may install",
     "addon.request_approved": "allowed an add-on for a workspace",
     "addon.request_refused": "turned down an add-on request",
+    "hub.settings.changed": "changed the hub's name or addresses",
     "connection.allowed": "allowed a connection",
     "connection.denied": "closed a connection",
     "connection.migrated": "carried over a connection",
@@ -53,6 +58,7 @@ AUDIT_WORDS = {
     "channel": "phones and browsers",
     "share": "shared information",
     "market_policy": "add-on rules",
+    "hub_settings": "hub name and addresses",
 }
 
 #: what an approval was about, in words (a verb the table does not know is said generically)

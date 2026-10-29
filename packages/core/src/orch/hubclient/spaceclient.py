@@ -10,6 +10,7 @@ share rules, every verified ``hub.space`` per epoch and the ``SK_e`` of every ep
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -271,7 +272,8 @@ class SpaceClient:
     def set_agents(self, sid: str, on: bool) -> bool:
         """The owner's per-space switch for agents (default Off). Needs the share rule and an unchanged member set."""
         rule = self._rule(sid)
-        SP.check_host_put(dict(rule, space_id=sid), self.sync_current(sid))
+        if on:  # Off needs no hub and no member check: it can always be done
+            SP.check_host_put(dict(rule, space_id=sid), self.sync_current(sid))
         self.st.rules[sid] = dict(rule, agents=bool(on))
         self._save(self.st)
         return bool(on)
@@ -366,7 +368,12 @@ class SpaceClient:
             sid, name, data, by=by, agent=agent, restored_from=item_id,
             guard=None if guard is None else (lambda d: guard(name, d)),
         )  # fmt: skip
-        return got | {"name": name, "restored_from": item_id, "size": len(data)}
+        return got | {
+            "name": name,
+            "restored_from": item_id,
+            "size": len(data),
+            "sha256": hashlib.sha256(data).hexdigest(),
+        }
 
     def revoke(self, sid: str, item_id: str) -> dict[str, Any]:
         if not wire.hex16(sid) or not wire.hex16(item_id):

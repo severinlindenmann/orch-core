@@ -57,17 +57,25 @@ def open_gate(view: Any) -> str | None:
     return None
 
 
+def gap_commands(view: Any, gate: str) -> list[tuple[str, str]]:
+    """``(missing item, command that supplies it)`` for everything an approval of ``gate`` still lacks, in order.
+    An artifact has no one-line command and is left out. The wording lives here, for ``fill_hint`` and the Stop hook."""
+    out: list[tuple[str, str]] = []
+    for m in view.gates[gate].missing:
+        if m == "acceptance":
+            out.append((m, "orch ac add TEXT"))
+        elif m == "tasks":
+            out.append((m, "orch task add TEXT"))
+        elif not m.startswith("artifact:"):
+            out.append((m, f"orch section set {m} -m TEXT"))
+    return out
+
+
 def fill_hint(view: Any, gate: str) -> str | None:
     """The command that supplies the first thing an approval of ``gate`` still lacks, or ``None`` when it lacks nothing
     (or lacks only an artifact, which has no one-line command)."""
-    for m in view.gates[gate].missing:
-        if m == "acceptance":
-            return "orch ac add TEXT"
-        if m == "tasks":
-            return "orch task add TEXT"
-        if not m.startswith("artifact:"):
-            return f"orch section set {m} -m TEXT"
-    return None
+    gaps = gap_commands(view, gate)
+    return gaps[0][1] if gaps else None
 
 
 CLAIM_HINT_SCAN = 40  # visible open candidates

@@ -1,5 +1,5 @@
 import { screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mockStore } from '@/api/client'
 import type { NeedsYouItem } from '@/api/types'
 import { renderApp } from '@/test/renderApp'
@@ -10,6 +10,7 @@ const wait: NeedsYouItem = { kind: 'terminal_wait', ticket: 'DEMO-0043', title: 
 describe('Today: "Agent is waiting for you" (plain words, run-13 A10)', () => {
   afterEach(() => {
     mockStore.terminalWaits = []
+    vi.restoreAllMocks()
   })
 
   it('lists the hint with an Open agent button and no word "terminal", and the header chip opens the same run', async () => {
@@ -36,5 +37,30 @@ describe('Today: "Agent is waiting for you" (plain words, run-13 A10)', () => {
     await screen.findByText(/need you/, {}, T)
     await waitFor(() => expect(screen.queryByTestId('terminal-wait-chip')).toBeNull())
     expect(screen.queryByTestId('card-terminal_wait:DEMO-0043')).toBeNull()
+  })
+
+  it('names what the plan still lacks and opens the ticket instead of the terminal', async () => {
+    const opened: string[] = []
+    const on = (e: Event) => opened.push((e as CustomEvent<string>).detail)
+    window.addEventListener('orch:dock-open', on)
+    const { user } = renderApp('/', {
+      viewer: 'p_sev',
+      setup: (s) => {
+        s.terminalWaits = [wait]
+        const real = s.ticket.bind(s)
+        vi.spyOn(s, 'ticket').mockImplementation((k: string) => {
+          const t = structuredClone(real(k))
+          if (t && k === 'DEMO-0043') t.gates.plan = { ...t.gates.plan, state: 'pending', approvals: [], missing: ['context', 'acceptance'] }
+          return t
+        })
+      },
+    })
+    await screen.findByTestId('card-terminal_wait:DEMO-0043', {}, T)
+    await waitFor(() => expect(screen.getByTestId('card-terminal_wait:DEMO-0043')).toHaveTextContent('Still missing: a short background and one check that proves it works'), T)
+    const row = screen.getByTestId('card-terminal_wait:DEMO-0043')
+    expect(within(row).queryByRole('button', { name: 'Open agent' })).toBeNull()
+    await user.click(within(row).getByRole('link', { name: 'Open ticket' }))
+    expect(opened).toEqual([])
+    window.removeEventListener('orch:dock-open', on)
   })
 })

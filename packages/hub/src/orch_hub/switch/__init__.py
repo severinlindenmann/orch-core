@@ -50,10 +50,27 @@ def clean_origin(x: Any) -> str:
     return x
 
 
+def owner_fallback_names(registry: Any, access: Any) -> dict[str, str]:
+    """``{workspace_id: "<owner>'s workspace"}`` for workspaces whose owner is a known person; one person with several
+    unnamed workspaces gets " 2", " 3" in workspace-id order. Never an id fragment."""
+    people = {u["user_id"]: P4.render_text(u["name"]) for u in access.users()}
+    seen: dict[str, int] = {}
+    out = {}
+    for ws in sorted(registry.pins()):
+        owner = registry.owner_alias(ws)
+        if owner not in people:
+            continue
+        seen[owner] = seen.get(owner, 0) + 1
+        out[ws] = f"{people[owner]}'s workspace" + (f" {seen[owner]}" if seen[owner] > 1 else "")
+    return out
+
+
 def workspace_rows(registry: Any, access: Any, user: str) -> list[dict[str, Any]]:
     """Workspaces the user has a part in: full mode by the role the access model gives; selective by being the
     admin-aliased owner (spec 8a: hub groups and hub-admins get no role there)."""
     out = []
+    fallback = owner_fallback_names(registry, access)
+    people = {u["user_id"]: P4.render_text(u["name"]) for u in access.users()}
     for ws in sorted(registry.pins()):
         st = registry.binding_state(ws)
         mode = registry.last_mode(ws)
@@ -68,10 +85,13 @@ def workspace_rows(registry: Any, access: Any, user: str) -> list[dict[str, Any]
             if role is None:
                 continue
         name = registry.display_name(ws)
+        if not name and registry.owner_alias(ws) == user:
+            name = registry.own_name(ws)  # the owner sees the label their own workspace reported, whatever its mode
         out.append(
             {
                 "workspace_id": ws,
-                "name": P4.render_text(name) if name else None,
+                "name": P4.render_text(name) if name else fallback.get(ws),
+                "owner_name": people.get(registry.owner_alias(ws)),
                 "mode": mode,
                 "role": role,
                 "online": st["status"] == "bound",

@@ -14,8 +14,8 @@ from orch_dashboard.policy import LOOPBACK
 SHOWN = "B" * 43
 REVIEW = {
     "hub_id": "ab" * 8,
-    "audience": {"read": 3, "edit": 1, "admin": 1},
-    "audience_note": "from the hub, not signed",
+    "readers": {"people": ["Ben Test"], "teams": ["team-a"], "note": "from the hub, not signed"},
+    "widened": [],
     "new": {"count": 1, "more": 0, "items": [{"logical": "t", "kind": "ticket", "line": "ticket K-2: Second"}]},
     "leaves": [{"kind": "ticket", "text": "the ticket's title, status, labels and deadline"}],
     "later_edits": "Later edits to these tickets are shared too, until you stop sharing them.",
@@ -49,7 +49,7 @@ def add(client, stub, token, plan=SHOWN, path="rule-add", headers=None):
 
 def test_the_review_is_the_hosts_closed_shape(client, token, stub, host):
     review = show(client, stub, token)["review"]
-    assert review["hub_id"] == "ab" * 8 and review["audience"] == {"read": 3, "edit": 1, "admin": 1}
+    assert review["hub_id"] == "ab" * 8 and review["readers"]["people"] == ["Ben Test"]
     assert review["new_count"] == 1 and review["new_items"] == ["ticket K-2: Second"]
     assert review["leaves"] and review["later_edits"].startswith("Later edits")
 

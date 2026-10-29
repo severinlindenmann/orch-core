@@ -17,7 +17,7 @@ import { TicketEstimate } from '../estimate/TicketEstimate'
 import { TicketFollowup } from '../schedules/FollowupStrip'
 import { estimateOn, pointsOf, pointsText } from '@/api/estimate'
 import { NeedsValue } from './Needs'
-import { ago, fmtExact, KeyRef, PersonChip, PriorityLabel, Section, useIsVisibleKey, type Viewer } from './shared'
+import { Ago, fmtExact, KeyRef, PersonChip, PriorityLabel, Section, useIsVisibleKey, type Viewer } from './shared'
 
 const isHttp = (u: string) => /^https?:\/\//i.test(u)
 
@@ -139,7 +139,7 @@ function Details({ ticket, viewer, onNavigate }: { ticket: TicketDocument; viewe
         {reviewers.length > 0 && row('Reviewers', people(reviewers))}
         {watchers.length > 0 && row('Watchers', people(watchers))}
         {row('Created', <span className="text-text-muted">{fmtExact(ticket.created_at)}</span>)}
-        {row('Updated', <span className="text-text-muted" title={fmtExact(ticket.updated_at)}>{ago(ticket.updated_at)}</span>)}
+        {row('Updated', <span className="text-text-muted" title={fmtExact(ticket.updated_at)}><Ago at={ticket.updated_at} /></span>)}
       </dl>
       <Link to="/ticket/$key" params={{ key: ticket.key }} search={{ tab: 'raw' }} replace data-testid="ticket-technical-link" onClick={onNavigate} className="mt-1 inline-block text-[12px] text-text-muted underline underline-offset-4">Technical details</Link>
     </Section>

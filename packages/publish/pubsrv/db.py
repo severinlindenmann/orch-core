@@ -3,11 +3,12 @@
 import os
 import sqlite3
 
-SCHEMA_VERSION = 4  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
+SCHEMA_VERSION = 6  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
 # 3: hub path (orch-core #898): hub_bindings, hub_cards, hub_op_revoked, hub_revoked_devices (additive only)
-# 4: shares.label / by_kind / by_name, the display columns of the company list (additive: ALTER TABLE below)
 # 4: apps (M4 #1357 S3): apps, app_versions, app_files, app_views, app_visits (additive only)
-MIGRATABLE_FROM = (2, 3)
+# 5: shares.label / by_kind / by_name, the display columns of the company list (additive: ALTER TABLE below)
+# 6: hub_narrowings, shares.pw (M4 S2 #1453: hub revoke/stop, link password) (additive only)
+MIGRATABLE_FROM = (2, 3, 4, 5)
 
 
 class SchemaError(Exception):
@@ -207,7 +208,7 @@ def init(path):
     try:
         have = conn.execute("PRAGMA user_version").fetchone()[0]
         has_tables = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone()
-        # versions 2 and 3 -> 4 only add tables (CREATE IF NOT EXISTS below), so it migrates in place
+        # versions 2 to 5 -> 6 only add tables or columns (CREATE IF NOT EXISTS / ALTER below), in place
         if (has_tables and have not in (SCHEMA_VERSION, *MIGRATABLE_FROM)) or have > SCHEMA_VERSION:
             raise SchemaError(
                 "this data dir was made by an older orch-publish (dev only, no upgrade path): "

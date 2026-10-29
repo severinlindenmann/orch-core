@@ -70,10 +70,7 @@ RISK = "Convenience signing: agents running as you, or anything that takes over 
 #: v1.6 (D-P2-27, §0.8.6 item 6): the View of a deposit-only grant carries this line (and in ``lines``)
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 #: the owner's plain-language risk of a click-issued runner grant (D-P2-27), the tier-A sentence of its View
-DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
-    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
-)
+DEPOSIT_RISK = "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 #: #1198 C7: the View of a grant whose secret is shown once in the page (sealed to the page's key) carries this line
 #: (and in ``lines``) and ``seal.purposes == ["grant.secret"]``
 REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"

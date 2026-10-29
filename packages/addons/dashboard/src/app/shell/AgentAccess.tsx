@@ -76,7 +76,8 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
     refresh()
   }
   // Nothing active and not just stopped: offer a way in whenever the runner answered (a reload after Stop, or no grant ever).
-  const idle = !live && !stopped && runner.isSuccess && !runner.isFetching
+  // P14: before agents were ever allowed here (no grant on record) the bar stays empty; the first start review signs the access.
+  const idle = !live && !stopped && runner.isSuccess && !runner.isFetching && !!grant
   if (!live && !stopped && !idle && !preparing && !extend && !askStop && !partial && queue.length === 0) return null
   // Enough access left: the pill stays hidden (Stop is on Settings > Grants) unless a stop or extend flow is under way.
   if (line.kind === 'ok' && !extend && !askStop && !partial && queue.length === 0) return null

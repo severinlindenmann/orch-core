@@ -23,6 +23,7 @@ import { DOCK_ADDON, DOCK_KEYS, useDockTicket } from '../dock/context'
 import { dockMax, DOCK_LIMITS } from '../dock/prefs'
 import type { TerminalDockProps } from '../dock/TerminalDock'
 import { ResizeHandle } from '../dock/ResizeHandle'
+import { fmtClock } from '@/lib/time'
 import { RealTerminal } from './RealTerminal'
 
 import { EXECUTION_LINE } from './executionLine'
@@ -34,6 +35,13 @@ import { useOpenTerminal } from './useOpenTerminal'
 export { EXECUTION_LINE }
 
 export { runName }
+
+/** One line above an agent's raw terminal (P15): what it is doing and since when, in the 24-hour clock of the rest of the app. */
+function agentSummary(r: Run): string {
+  if (r.state === 'starting') return 'Agent is starting'
+  if (r.state === 'running') return `Agent is working · started ${fmtClock(r.started_at)}`
+  return `Agent ended · started ${fmtClock(r.started_at)}`
+}
 
 export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits, autoPreview, request, requestDone }: TerminalDockProps & { /** Dev-only layout preview: open New terminal's preview at once. */ autoPreview?: boolean }) {
   const { workspace } = useWorkspace()
@@ -157,7 +165,10 @@ export function RealDock({ side, size, view, area, setPrefs, collapse, rightFits
               <p className="font-medium text-text">Output no longer kept</p>
               <p>{runName(current) === current.label ? <Inline>{current.label}</Inline> : runName(current)} ended{current.exit?.code != null ? ` with code ${current.exit.code}` : ''}. Its output is no longer kept.</p>
             </div>
-          ) : ws ? <RealTerminal key={current.run} ws={ws} run={current} initial={opened === current.run ? 'write' : 'read'} /> : null}
+          ) : ws ? <div className="flex h-full min-h-0 flex-col">
+            {current.kind === 'agent' && <p data-testid="dock-summary" className="shrink-0 border-b border-border bg-surface px-3 py-1 text-xs text-text-muted">{agentSummary(current)}</p>}
+            <div className="min-h-0 flex-1"><RealTerminal key={current.run} ws={ws} run={current} initial={opened === current.run ? 'write' : 'read'} /></div>
+          </div> : null}
       </div>
       {ws && agents && ticket && <StartAgentDialog key={agent ?? 'none'} ws={ws} ticket={ticket} open={!!agent} choose={agent === 'choose'} onClose={() => setAgent(null)} onStarted={(run) => setSelected(run.run)} />}
       <PreviewDialog {...terminal} />

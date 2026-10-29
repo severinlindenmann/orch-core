@@ -42,6 +42,10 @@ WORDS = {
     "hub.settings.changed": "changed the hub's name or addresses",
     "link.revoked": "revoked a shared link",
     "app.stopped": "stopped an app",
+    "hub.backup.key_set": "set up the hub backup key",
+    "hub.backup.key_confirmed": "confirmed the new hub backup words",
+    "hub.backup.made": "made a hub backup",
+    "hub.backup.downloaded": "downloaded a hub backup",
     "connection.allowed": "allowed a connection",
     "connection.denied": "closed a connection",
     "connection.migrated": "carried over a connection",
@@ -61,6 +65,7 @@ AUDIT_WORDS = {
     "share": "shared information",
     "market_policy": "add-on rules",
     "hub_settings": "hub name and addresses",
+    "hub_backup": "hub backups",
 }
 
 #: what an approval was about, in words (a verb the table does not know is said generically)

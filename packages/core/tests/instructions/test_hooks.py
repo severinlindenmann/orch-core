@@ -408,3 +408,45 @@ def test_refine_hint_says_show_not_wait_when_only_an_artifact_is_missing(monkeyp
     assert views.refine_hint(view) == "orch show"
     gate.missing = []
     assert views.refine_hint(view) == "orch wait"
+
+
+def test_next_hint_says_show_when_all_tasks_are_done_and_only_an_artifact_is_missing():
+    from types import SimpleNamespace as N
+
+    from orch.ops import views
+
+    gate = N(applies=True, approved=False, missing=["artifact:screenshot"])
+    view = N(
+        status="started",
+        questions=[],
+        tasks=[N(id="t1", state="done", leased_by=None)],
+        gates={"requirements": N(applies=True, approved=True, missing=[]), "plan": gate},
+    )
+    assert views.next_hint(view, "s1") == "orch show"
+    gate.missing = []
+    assert views.next_hint(view, "s1") == "orch wait"
+
+
+def test_submit_hint_says_show_when_only_an_artifact_is_missing():
+    from types import SimpleNamespace as N
+
+    import pytest
+
+    from orch.ops.commands import submit
+    from orch.ops.errors import OrchError
+    from orch.store import StoreError
+
+    gate = N(applies=True, approved=False, missing=["artifact:screenshot"])
+    view = N(status="started", gates={"requirements": N(applies=True, approved=True, missing=[]), "plan": gate})
+
+    def add(_ev):
+        raise StoreError("submit.incomplete", "plan not approved")
+
+    p = N(add=add, last_view=view)
+    with pytest.raises(OrchError) as e:
+        submit.build(None, p, {})
+    assert e.value.hint == "orch show"
+    gate.missing = []
+    with pytest.raises(OrchError) as e:
+        submit.build(None, p, {})
+    assert e.value.hint == "orch wait"

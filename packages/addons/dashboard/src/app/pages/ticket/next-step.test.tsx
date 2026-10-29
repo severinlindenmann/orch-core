@@ -1,7 +1,8 @@
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { TicketDocument } from '@/api/types'
+import * as gesture from '@/components/sign/trustedPress'
 import { TicketProgress } from './NextStep'
 
 afterEach(cleanup)
@@ -30,7 +31,11 @@ it('a plan the viewer may approve: one card with Approve plan and Change somethi
   expect(card).toHaveTextContent('Plan ready')
   const user = userEvent.setup()
   await user.click(within(card).getByRole('button', { name: 'Approve plan' }))
-  expect(sign).toHaveBeenLastCalledWith({ kind: 'approve', gate: 'plan' })
+  expect(sign).toHaveBeenLastCalledWith({ kind: 'approve', gate: 'plan', pressed: false }) // a synthetic click is no press (P06)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await user.click(within(card).getByRole('button', { name: 'Approve plan' }))
+  expect(sign).toHaveBeenLastCalledWith({ kind: 'approve', gate: 'plan', pressed: true })
+  vi.restoreAllMocks()
   await user.click(within(card).getByRole('button', { name: 'Change something' }))
   expect(sign).toHaveBeenLastCalledWith({ kind: 'request_changes', gate: 'plan' })
   expect(screen.getByTestId('step-understand')).toHaveAttribute('data-state', 'current')
@@ -273,7 +278,7 @@ it('while the agent works: one calm line, no buttons', async () => {
   doc.gates.plan.state = 'approved'
   show(doc)
   const line = screen.getByTestId('next-step')
-  expect(line).toHaveTextContent('Agent is working on it')
+  expect(line).toHaveTextContent(/Building: Seed configs with types · \d+ h/)
   expect(within(line).queryAllByRole('button')).toHaveLength(0)
   expect(line).not.toHaveTextContent('The agent stopped early')
 })
@@ -304,7 +309,7 @@ it('an idle agent after the plan approval: no spinner, one Start building button
 
 it('the same ticket while the agent prints (no wait): the working note, no button', async () => {
   render(<TicketProgress ticket={await approvedIdle()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait={null} onFinish={vi.fn()} />)
-  expect(screen.getByTestId('next-step')).toHaveTextContent('Agent is working on it')
+  expect(screen.getByTestId('next-step')).toHaveTextContent(/Working on it/)
   expect(screen.queryByRole('button', { name: 'Start building' })).toBeNull()
 })
 
@@ -314,4 +319,22 @@ it('agentWorking: a live claim is working only while the agent is not idle', asy
   expect(agentWorking(t)).toBe(true)
   expect(agentWorking(t, 'r_1')).toBe(false)
   expect(agentWorking({ claim: null })).toBe(false)
+})
+
+it('P15: the working line says what the agent does and counts up on its own', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  try {
+    const doc = await demo()
+    doc.status = 'in_progress' as never
+    doc.gates.requirements.state = 'approved'
+    doc.gates.plan.state = 'approved'
+    doc.claim = { session: 's', agent: 'a', live: true, since: new Date().toISOString() } as never
+    doc.tasks_state = [{ id: 'T1', text: 'Add hello.txt', verify: null, proves: [], state: 'doing', lease: { session: 's', agent: 'a', since: new Date(Date.now() - 30_000).toISOString() }, receipt: null, done_at: null }]
+    show(doc)
+    expect(screen.getByTestId('activity-line')).toHaveTextContent('Building: Add hello.txt · just now')
+    const { setClock } = await import('@/lib/time')
+    setClock(() => Date.now() + 120_000)
+    await act(async () => { await vi.advanceTimersByTimeAsync(31_000) })
+    expect(screen.getByTestId('activity-line')).toHaveTextContent('Building: Add hello.txt · 2 min')
+  } finally { vi.useRealTimers() }
 })

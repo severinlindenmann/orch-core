@@ -53,6 +53,10 @@ ACTIVITY_TYPES = (
     "hub.settings.changed",
     "link.revoked",
     "app.stopped",
+    "hub.backup.key_set",
+    "hub.backup.key_confirmed",
+    "hub.backup.made",
+    "hub.backup.downloaded",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(

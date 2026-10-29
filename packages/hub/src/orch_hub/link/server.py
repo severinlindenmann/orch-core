@@ -356,7 +356,7 @@ class LinkServer:
         started = time.monotonic()
         self._attach(ws, port)
         last_seq = 0  # R1: the w2h seq of the previous frame on THIS link (the first frame must be 1)
-        exporter = conn.exporter()
+        exporter = port._exporter  # the port's single copy: auth, h2w signing and w2h verification share it
         while not self._stop.is_set():
             first = self._t_idle
             if not self._pinned_to(ws, wsk):  # unjoined, or pinned to another key: a hard lifetime no peer frame resets

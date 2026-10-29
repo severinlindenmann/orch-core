@@ -98,7 +98,8 @@ def test_route_in_ack_replayed_on_a_new_connection_does_not_delete(rhub):  # noq
     a.route_out(e2)
     b2 = h.reopen(G.WS_B)
     assert b2.next_route_in() == e2  # in flight on b2 with re = 1
-    b2.seq = ack["o"]["seq"] - 1
+    assert "snapshot" in b2.request("snapshot_get", {})  # b2's frame 1: the replayed ack now sits at its position
+    assert ack["o"]["seq"] == b2.seq + 1
     b2.send_raw(ack)
     refused(b2, "bad_signature")
     assert h.queue.depth(G.WS_B) == 1

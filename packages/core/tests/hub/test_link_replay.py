@@ -141,3 +141,23 @@ def test_reconnect_after_the_link_dropped_starts_at_1_and_works(make_hub) -> Non
     finally:
         t.close()
     assert seen == [1, 2, 1]
+
+
+def test_failed_ack_signing_closes_the_link_and_takes_no_seq(make_hub) -> None:  # noqa: F811
+    hub = make_hub(on_request=lambda h, o: h.reply(o))
+    fail = {"on": False}
+
+    def flaky(msg: bytes) -> bytes:
+        if fail["on"]:
+            fail["on"] = False
+            raise RuntimeError("signer down")
+        return sign(msg)
+
+    with open_link(hub, sign=flaky) as link:
+        _push(hub, hub.next_seq())
+        assert link.next_route_in(wait=3.0) == b"env"
+        fail["on"] = True
+        with pytest.raises(RuntimeError):
+            link.ack_route_in()
+        assert not link.is_open  # fail closed: no frame was written, no number skipped on an open link
+        assert link._seq == 0  # noqa: SLF001

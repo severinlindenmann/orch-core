@@ -380,18 +380,19 @@ class LinkClient:
                 raise LinkError("malformed")
             if error is not None and not (type(error) is str and 0 < len(error) <= 40):
                 raise LinkError("malformed")
-            self._seq += 1
+            n = self._seq + 1  # taken only once the frame was written: a failed ack never skips a number
             o = {
                 "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
-                "workspace_id": self.workspace_id, "dir": "w2h", "seq": self._seq, "ts_ms": self._now(),
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": n, "ts_ms": self._now(),
                 "op": "route_in", "re": self._pending["seq"], "body": {} if error is None else {"error": error},
             }  # fmt: skip
             try:
                 signed = {"o": o, "sig": b64u(self._sign(link_signed_bytes(SIG_LINK, self._cb, o)))}
                 framing.write_frame(self._c, signed, timeout=self._t, max_bytes=self._max)
-            except (FrameError, LinkClosed, LinkTimeout):
+            except BaseException:  # fail closed: any failure to sign or write (a signer error too) ends the link
                 self.close()
                 raise
+            self._seq = n
             self._pending = None
 
     # --- event_deliver (h2w custodial events; protocol 8.4, 10.2) --------------------------------------------------
@@ -437,18 +438,19 @@ class LinkClient:
                 raise LinkError("malformed")
             if error is not None and not (type(error) is str and 0 < len(error) <= 40):
                 raise LinkError("malformed")
-            self._seq += 1
+            n = self._seq + 1  # taken only once the frame was written: a failed ack never skips a number
             o = {
                 "v": 2, "suite": suite.SUITE_ID, "kind": "hub.link", "hv": HV, "hub_id": self.hub_id,
-                "workspace_id": self.workspace_id, "dir": "w2h", "seq": self._seq, "ts_ms": self._now(),
+                "workspace_id": self.workspace_id, "dir": "w2h", "seq": n, "ts_ms": self._now(),
                 "op": "event_deliver", "re": self._pending_ev["seq"], "body": {} if error is None else {"error": error},
             }  # fmt: skip
             try:
                 signed = {"o": o, "sig": b64u(self._sign(link_signed_bytes(SIG_LINK, self._cb, o)))}
                 framing.write_frame(self._c, signed, timeout=self._t, max_bytes=self._max)
-            except (FrameError, LinkClosed, LinkTimeout):
+            except BaseException:  # fail closed: any failure to sign or write (a signer error too) ends the link
                 self.close()
                 raise
+            self._seq = n
             self._pending_ev = None
 
     def route_out(self, envelope: bytes) -> str:

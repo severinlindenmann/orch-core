@@ -317,8 +317,13 @@ def _edit_title(value: Any) -> dict[str, str]:
     if not isinstance(value, Mapping) or set(value) != {"was", "text"}:
         raise SequenceInvalid("title is {was, text}")
     was, text = value["was"], value["text"]
-    _one_line(was, "the current title", 200)
-    _one_line(text, "the title", 200)
+    from orch.canon.text import TextError, check_plain
+
+    try:  # one line, no TAB, no surrounding space, no invisible character: two titles never look alike
+        check_plain(text, one_line=True, limit=200, what="the title")
+        _one_line(was, "the current title", 200)  # the host's word; may predate these rules, so only the basics
+    except TextError as exc:
+        raise SequenceInvalid(str(exc)) from None
     if text == was:
         raise SequenceInvalid("the title is the one it replaces")
     return {"was": was, "text": text}

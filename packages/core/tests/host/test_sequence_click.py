@@ -248,7 +248,21 @@ def test_r7_p07_a_title_edit_alone_is_a_sequence_and_a_stale_old_title_is_refuse
     assert ok(served.client().req("ticket.get", {"ref": key}))["data"]["doc"]["title"] == "Only the title"
 
 
-@pytest.mark.parametrize("text", ["", "two\nlines", "x" * 201, "bell\x07", "Add a sequence"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "two\nlines",
+        "x" * 201,
+        "bell\x07",
+        "Add a sequence",
+        " lead",
+        "trail ",
+        "tab\there",
+        "Fix\u200b",
+        "a\u202eb",
+    ],
+)
 def test_r7_p07_the_title_is_one_line_1_to_200_and_different(text):
     from orch.host import sequence
 

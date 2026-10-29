@@ -38,3 +38,10 @@ def test_an_unchanged_title_is_no_change_and_a_newline_is_refused(data):
     with pytest.raises(HostError):
         made(data, title="two\nlines")
     assert "title" not in made(data, title="Invoice export", sections={"summary": "After"})
+
+
+def test_surrounding_space_is_trimmed_and_an_invisible_character_is_refused(data):
+    assert made(data, title="  Invoice export for Ben  ")["title"]["text"] == "Invoice export for Ben"
+    assert "title" not in made(data, title="Invoice export  ", sections={"summary": "After"})
+    with pytest.raises(HostError):
+        made(data, title="Invoice export\u200b")

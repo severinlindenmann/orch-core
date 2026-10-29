@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
+import { choicesFor, groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, SetupError, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -1257,4 +1257,16 @@ test('N2: a repos setting for the setup folder is quiet, any other project path 
     expect(summary.textContent?.includes(`Project folder: ${path}`) ?? false).toBe(shown)
     cleanup()
   }
+})
+
+test('a word check with fewer than four distinct words offers fewer buttons and still holds the right word once', () => {
+  for (const words of [['red', 'blue', 'red', 'red'], ['red', 'red', 'red'], ['red', 'blue', 'green', 'blue', 'red']]) {
+    for (let n = 1; n <= words.length; n++) {
+      const c = choicesFor(n, words)
+      expect(c).toContain(words[n - 1])
+      expect(new Set(c).size).toBe(c.length)
+      expect(c.length).toBe(Math.min(4, new Set(words).size))
+    }
+  }
+  expect(choicesFor(1, ['red', 'red'])).toEqual(['red'])
 })

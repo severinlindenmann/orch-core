@@ -296,7 +296,12 @@ test('run 8: One click is the default where core suggests it, with the risk sent
   render(<Setup api={f.api} />)
   await approval()
   expect(screen.getByLabelText(/One click on this computer/)).toBeChecked()
-  expect(screen.getByTestId('click-risk')).toHaveTextContent('Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.')
+  expect(screen.getByText('Recommended')).toBeVisible()
+  expect(screen.getByText('No typing. Best on your own computer.')).toBeVisible()
+  expect(screen.getByText(/Safest if others use this computer/)).toBeVisible()
+  const risk = screen.getByTestId('click-risk') as HTMLDetailsElement
+  expect(risk.open).toBe(false) // the longer meaning is one click away, not in the main view
+  expect(risk).toHaveTextContent('Anything running as you on this computer, including your agents, could approve for you. Choose a passphrase if the computer is shared.')
   fireEvent.click(screen.getByLabelText(/Passphrase/))
   expect(screen.queryByTestId('click-risk')).not.toBeInTheDocument()
   fireEvent.click(screen.getByLabelText(/One click on this computer/))
@@ -1213,4 +1218,12 @@ test.each([
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Your workspace is ready' })
   expect(Boolean(screen.queryByText(/Background Items Added/))).toBe(shown)
+})
+
+test('P15: no Recommended badge when One click is not available here', async () => {
+  const f = fake({ clickOff: 'not on this computer' })
+  render(<Setup api={f.api} />)
+  await approval()
+  expect(screen.queryByText('Recommended')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('click-risk')).not.toBeInTheDocument()
 })

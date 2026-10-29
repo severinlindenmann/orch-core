@@ -502,3 +502,24 @@ body:has(> #root > .setup) {
   border-radius: 999px;
   font-size: 13px;
 }
+
+.setup .badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+.setup details.click-risk {
+  margin-top: 4px;
+}
+.setup details.click-risk summary {
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
+}

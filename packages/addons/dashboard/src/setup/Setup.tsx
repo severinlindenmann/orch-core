@@ -14,6 +14,9 @@ import { Inline, Raw } from '../components/sign/visible'
 import './setup.css'
 
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
+/** The plain meaning of One click, behind "What does this mean?"; the full risk sentence stays in the review step. */
+const clickMeaningCopy =
+  'Anything running as you on this computer, including your agents, could approve for you. Choose a passphrase if the computer is shared.'
 const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
   'If setup stops before your workspace is created, these words will no longer work. Start setup again to get new ones.'
@@ -976,12 +979,15 @@ export function Setup({ api }: { api: SetupAPI }) {
                     onChange={() => update({ method, ...(method === 'click' ? { relay: false } : {}) })}
                   />
                   <span>
-                    <strong>{method === 'click' ? 'One click on this computer' : 'Passphrase'}</strong>
+                    <strong>
+                      {method === 'click' ? 'One click on this computer' : 'Passphrase'}
+                      {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
+                    </strong>
                     <small>
                       {method === 'terminal'
-                        ? 'Type your passphrase each time you approve'
+                        ? 'Type your passphrase each time. Safest if others use this computer.'
                         : state.click_available
-                          ? 'Faster, but less safe'
+                          ? 'No typing. Best on your own computer.'
                           : clickOffText(state.click_reason)}
                     </small>
                     {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
@@ -989,9 +995,12 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </label>
               ))}
               {profile.method === 'click' && state.click_available && (
-                <p className="notice" data-testid="click-risk">
-                  <Inline>{clickRiskCopy}</Inline>
-                </p>
+                <details className="click-risk" data-testid="click-risk">
+                  <summary>What does this mean?</summary>
+                  <p>
+                    <Inline>{clickMeaningCopy}</Inline>
+                  </p>
+                </details>
               )}
               <h2>How long can agents work on their own?</h2>
               <div className="segments">

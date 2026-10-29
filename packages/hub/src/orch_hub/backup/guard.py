@@ -39,19 +39,88 @@ LIVE_TABLES = (
     "org_mcp",
     "org_mcp_offer",
     "org_cleanup_pending",
-    "workspace_addon_allow",
     "addon_request",
-    "market_policy",
     "restore_pending",
 )
+#: Every restored table has ONE class (the structural rule of the review, 29 Oct): RESTRICTING rows only narrow what people may
+#: do (allow lists, block lists, ceilings, disabled / must_recover, revocations, lockouts): a restore always keeps them and,
+#: in place, takes the STRICTER of backup and live; it never deletes or stages them. GRANTING rows widen something (shares,
+#: offers, grants, company markets and keys, credentials): in place the live rows (or their intersection), on a fresh server
+#: staged OFF until an admin confirms. ``log`` = appended to (live wins), ``state`` = counters / bookkeeping lifted or
+#: carried by the restore itself. ``class_of`` raises KeyError for a table nobody classified (a test enforces it).
+CLASSES: dict[str, str] = {
+    "access.db:users": "restricting",  # fields: disabled_ms, must_recover are restricting (stricter wins); the row itself is people
+    "access.db:groups": "granting",
+    "access.db:members": "granting",
+    "access.db:grants": "granting",
+    "access.db:revoked_channels": "restricting",
+    "access.db:snapshots": "state",
+    "access.db:version_floor": "state",
+    "access.db:market_policy": "restricting",  # fields: addons.allow/block, ceiling restricting; markets/keys granting
+    "access.db:workspace_addon_allow": "restricting",
+    "access.db:addon_request": "granting",
+    "access.db:recovery_notes": "state",
+    "access.db:restore_pending": "state",
+    "access.db:org_secrets": "granting",
+    "access.db:org_secret_shares": "granting",
+    "access.db:org_secret_wraps": "granting",
+    "access.db:org_secret_use": "log",
+    "access.db:org_secrets_bundle": "state",
+    "access.db:org_skill": "granting",
+    "access.db:org_skill_offer": "granting",
+    "access.db:org_skills_bundle": "state",
+    "access.db:org_mcp": "granting",
+    "access.db:org_mcp_offer": "granting",
+    "access.db:org_mcp_bundle": "state",
+    "access.db:org_cleanup_pending": "state",
+    "channels.db:credentials": "granting",
+    "channels.db:failures": "restricting",
+    "channels.db:channels": "restricting",  # all revoked
+    "channels.db:sessions": "granting",  # emptied
+    "channels.db:pairing": "granting",  # emptied
+    "channels.db:challenges": "granting",  # emptied
+    "channels.db:pending_totp": "granting",  # emptied
+    "channels.db:push_keys": "granting",  # emptied
+    "channels.db:known_sources": "granting",  # emptied
+    "channels.db:api_origins": "state",
+    "channels.db:events": "log",
+    "channels.db:relay_purged": "state",
+    "channels.db:announcements": "state",
+    "invites.db:invites": "granting",  # unused ones never travel; fresh: new recovery links
+}
+#: stores taken whole from the live hub in place (restore.LIVE_WHOLE); every table in them is ``state`` or ``granting``
+WHOLE_STORE_CLASS = "state"
+
+
+def class_of(db: str, table: str) -> str:
+    """The class of ``db:table`` (``KeyError`` when nobody classified it)."""
+    key = f"{db}:{table}"
+    if key in CLASSES:
+        return CLASSES[key]
+    if db in (
+        "registry.db",
+        "connections.db",
+        "shares.db",
+        "spaces.db",
+        "changes.db",
+        "wk-seal.db",
+        "workspace-view.db",
+    ):
+        return WHOLE_STORE_CLASS
+    if db in ("audit.db", "activity.db"):
+        return "log"
+    raise KeyError(key)
+
+
 #: table -> what a restore does with it (the sweep the review asked for)
 POLICY = {
     "access.users": "live removals deleted, live disabled kept, all other non-admins suspended (restore.py)",
     "access.groups/members/grants": "in place: only rows the live hub still has, role = the live role; fresh: non-admins "
     "lose every group when an admin enables them (api enable)",
     "access.revoked_channels": "union with live",
-    "access.org_*, workspace_addon_allow, addon_request, market_policy": "in place: the live rows; fresh: shares and "
-    "offers pending",
+    "access.org_*, addon_request": "in place: the live rows; fresh: shares and offers pending",
+    "access.market_policy, workspace_addon_allow": "RESTRICTING: in place the stricter of backup and live; fresh: kept (company "
+    "markets and keys staged)",
     "access.snapshots/bundles": "versions lifted above the floor (version_floor)",
     "channels.credentials": "in place: the live row (totp_last too); nobody who must recover keeps a row; fresh: admins must recover",
     "channels.failures (lockouts)": "in place: the live rows",
@@ -66,7 +135,7 @@ PENDING_SCHEMA = (
     "CREATE TABLE IF NOT EXISTS restore_pending (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, "
     "a TEXT NOT NULL, b TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '')"
 )
-KINDS = ("secret_share", "secret_all", "skill_offer", "mcp_offer", "market_policy", "addon_allow", "addon_request")
+KINDS = ("secret_share", "secret_all", "skill_offer", "mcp_offer", "market_company", "addon_request")
 
 
 def _connect(path: Path, live: Path | None) -> sqlite3.Connection:
@@ -119,6 +188,7 @@ def _in_place_access(new: Path, live: Path) -> None:
             "UPDATE main.users SET disabled_ms=(SELECT l.disabled_ms FROM live.users l WHERE l.user_id=main.users.user_id) "
             "WHERE disabled_ms IS NULL AND user_id IN (SELECT user_id FROM live.users WHERE disabled_ms IS NOT NULL)"
         )
+        _merge_restricting(c)
         c.execute(
             "DELETE FROM main.groups WHERE name<>? AND name NOT IN (SELECT name FROM live.groups)", (ADMIN_GROUP,)
         )
@@ -230,27 +300,75 @@ def _fresh_access(new: Path) -> None:
         c.close()
 
 
-def _fresh_addons(c: sqlite3.Connection) -> None:
-    """The market policy goes back to the default (the official marketplace only) and the per-workspace add-on allow lists
-    and requests are emptied; what was there waits in ``restore_pending`` (JSON in ``a``)."""
-    default = MP.default_policy()
-    row = (
-        c.execute("SELECT policy FROM market_policy WHERE id=1").fetchone()
-        if _has(c, "main", "market_policy")
-        else None
+def _merge_policy(back: dict[str, Any], live: dict[str, Any]) -> dict[str, Any]:
+    """The stricter of two market policies: block lists united, allow lists and ceilings intersected (``None`` = no limit),
+    the GRANTING part (markets and keys) is the live one."""
+    ba, la = back["addons"], live["addons"]
+    if ba["allow"] is None:
+        allow = la["allow"]
+    elif la["allow"] is None:
+        allow = ba["allow"]
+    else:
+        allow = sorted(set(ba["allow"]) & set(la["allow"]))
+    if back["ceiling"] is None:
+        ceiling = live["ceiling"]
+    elif live["ceiling"] is None:
+        ceiling = back["ceiling"]
+    else:
+        ceiling = sorted(set(back["ceiling"]) & set(live["ceiling"]))
+    return MP.check_policy(
+        {
+            "markets": live["markets"],
+            "addons": {"allow": allow, "block": sorted(set(ba["block"]) | set(la["block"]))},
+            "ceiling": ceiling,
+        }
     )
-    if row is not None and json.loads(row[0]) != default:
-        c.execute("INSERT INTO restore_pending(kind,a,label) VALUES ('market_policy',?,'Add-on rules')", (row[0],))
-        c.execute(
-            "UPDATE market_policy SET version=version+1, policy=?, hash=? WHERE id=1",
-            (cj(default).decode(), MP.policy_hash(default)),
-        )
-    if _has(c, "main", "workspace_addon_allow"):
-        for ws, ids in c.execute("SELECT workspace_id, ids FROM workspace_addon_allow").fetchall():
+
+
+def _merge_restricting(c: sqlite3.Connection) -> None:
+    """In place: the market policy and the per-workspace add-on allow lists are the STRICTER of backup and live."""
+    if _has(c, "live", "market_policy") and _has(c, "main", "market_policy"):
+        b = c.execute("SELECT version, policy FROM main.market_policy WHERE id=1").fetchone()
+        lv = c.execute("SELECT version, policy FROM live.market_policy WHERE id=1").fetchone()
+        if b and lv:
+            pol = _merge_policy(json.loads(b[1]), json.loads(lv[1]))
             c.execute(
-                "INSERT INTO restore_pending(kind,a,b,label) VALUES ('addon_allow',?,?,'Add-ons allowed')", (ids, ws)
+                "UPDATE main.market_policy SET version=?, policy=?, hash=? WHERE id=1",
+                (max(b[0], lv[0]) + 1, cj(pol).decode(), MP.policy_hash(pol)),
             )
-        c.execute("DELETE FROM workspace_addon_allow")
+    if _has(c, "main", "workspace_addon_allow"):
+        live_rows = (
+            dict(c.execute("SELECT workspace_id, ids FROM live.workspace_addon_allow").fetchall())
+            if _has(c, "live", "workspace_addon_allow")
+            else {}
+        )
+        back_rows = dict(c.execute("SELECT workspace_id, ids FROM main.workspace_addon_allow").fetchall())
+        for ws in sorted(set(live_rows) | set(back_rows)):
+            if ws in live_rows and ws in back_rows:
+                ids = sorted(set(json.loads(live_rows[ws])) & set(json.loads(back_rows[ws])))
+                val = json.dumps(ids)
+            else:
+                val = live_rows.get(ws) or back_rows[ws]  # a row only narrows: whichever hub has it keeps it
+            c.execute("INSERT OR REPLACE INTO main.workspace_addon_allow VALUES (?,?)", (ws, val))
+
+
+def _fresh_addons(c: sqlite3.Connection) -> None:
+    """Fresh server. RESTRICTING rows (the allow lists, the policy's allow / block / ceiling) stay exactly as they were.
+    GRANTING rows wait in ``restore_pending``: the company markets and keys of the policy (the policy keeps the official
+    market only) and the add-on requests."""
+    if _has(c, "main", "market_policy"):
+        row = c.execute("SELECT policy FROM market_policy WHERE id=1").fetchone()
+        pol = json.loads(row[0]) if row else None
+        if pol is not None and any(m["class"] != "official" for m in pol["markets"]):
+            narrow = MP.check_policy({**pol, "markets": MP.default_policy()["markets"]})
+            c.execute(
+                "INSERT INTO restore_pending(kind,a,label) VALUES ('market_company',?,'Company add-on markets')",
+                (json.dumps(pol["markets"]),),
+            )
+            c.execute(
+                "UPDATE market_policy SET version=version+1, policy=?, hash=? WHERE id=1",
+                (cj(narrow).decode(), MP.policy_hash(narrow)),
+            )
     if _has(c, "main", "addon_request"):
         for r in c.execute("SELECT * FROM addon_request").fetchall():
             c.execute(
@@ -325,14 +443,13 @@ def confirm(a: Any, pid: int) -> dict[str, Any]:
                 "INSERT OR IGNORE INTO org_mcp_offer SELECT ?,? WHERE EXISTS (SELECT 1 FROM org_mcp WHERE name=?)",
                 (x, y, x),
             )
-        elif kind == "market_policy":
-            policy = MP.check_policy(json.loads(x))
+        elif kind == "market_company":
+            cur = json.loads(db.execute("SELECT policy FROM market_policy WHERE id=1").fetchone()[0])
+            policy = MP.check_policy({**cur, "markets": json.loads(x)})  # only the markets come back; restrictions stay
             db.execute(
                 "UPDATE market_policy SET version=version+1, policy=?, hash=? WHERE id=1",
                 (cj(policy).decode(), MP.policy_hash(policy)),
             )
-        elif kind == "addon_allow":
-            db.execute("INSERT OR REPLACE INTO workspace_addon_allow VALUES (?,?)", (y, x))
         elif kind == "addon_request":
             db.execute("INSERT OR IGNORE INTO addon_request VALUES (?,?,?,?,?,?,?)", json.loads(x))
         db.execute("DELETE FROM restore_pending WHERE id=?", (pid,))

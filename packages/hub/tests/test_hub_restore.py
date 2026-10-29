@@ -896,40 +896,124 @@ def test_L1_a_fresh_server_restore_is_audited_too(w, tmp_path):
     assert ev["backup_made_ms"] == got["made_ms"] and ev["gap_ms"] == got["gap_ms"]
 
 
-def test_L5_a_fresh_server_resets_market_policy_and_addon_lists_until_confirmed(w, tmp_path):
+def _company_policy(block=("bad-addon",), allow=None, ceiling=("network",), market=True):
+    import base64
+
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    from orch_hub.contract import market_policy as MP
+    from orch_hub.contract import suite as SU
+
+    pol = MP.default_policy()
+    if market:
+        key = base64.urlsafe_b64encode(SU.public_bytes(ec.generate_private_key(ec.SECP256R1()))).decode().rstrip("=")
+        pol["markets"] = sorted(
+            [*pol["markets"], {"url": "https://git.example.com/acme/market", "class": "company", "keys": [key]}],
+            key=lambda m: m["url"],
+        )
+    pol["addons"] = {"allow": None if allow is None else list(allow), "block": list(block)}
+    pol["ceiling"] = None if ceiling is None else list(ceiling)
+    return MP.check_policy(pol)
+
+
+def _put_policy(w, pol, version=2):
+    import json as _j
+
+    from orch_hub.contract import market_policy as MP
+
+    w.env.acc._db.execute(
+        "UPDATE market_policy SET version=?, policy=?, hash=? WHERE id=1",
+        (version, _j.dumps(pol, separators=(",", ":"), sort_keys=True), MP.policy_hash(pol)),
+    )
+
+
+def test_L5_a_fresh_server_keeps_every_restriction_and_stages_only_what_grants(w, tmp_path):
     import json as _j
 
     from orch_hub.backup import guard as GD
     from orch_hub.contract import market_policy as MP
 
-    wide = {**MP.default_policy(), "ceiling": None, "addons": {"allow": None, "block": []}}
-    wide["ceiling"] = []  # a capability ceiling an admin set
+    full = _company_policy()
+    _put_policy(w, full)
     db = w.env.acc._db
-    db.execute(
-        "UPDATE market_policy SET version=2, policy=?, hash=? WHERE id=1",
-        (_j.dumps(wide, separators=(",", ":"), sort_keys=True), MP.policy_hash(wide)),
-    )
     db.execute("INSERT INTO workspace_addon_allow VALUES (?, '[\"a\"]')", (WS,))
     db.execute("INSERT INTO addon_request VALUES (?, 'x', '1', 'person', 1, 1, 1)", (WS,))
     words, data = _backup(w)
     fresh = tmp_path / "srv" / "d"
     RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
-    assert _rows(fresh, "access.db", "SELECT * FROM workspace_addon_allow") == []
-    assert _rows(fresh, "access.db", "SELECT * FROM addon_request") == []
+    # RESTRICTING: allow lists, block list, ceiling are kept as they were
+    assert _rows(fresh, "access.db", "SELECT * FROM workspace_addon_allow") == [(WS, '["a"]')]
     pol = _j.loads(_rows(fresh, "access.db", "SELECT policy FROM market_policy")[0][0])
-    assert pol == MP.default_policy()  # the narrowest: the official marketplace only
+    assert MP.check_policy(pol) and pol["addons"] == full["addons"] and pol["ceiling"] == full["ceiling"]
+    # GRANTING: company markets and keys are dropped (official only) and wait for an admin; requests wait too
+    assert pol["markets"] == MP.default_policy()["markets"]
+    assert _rows(fresh, "access.db", "SELECT * FROM addon_request") == []
     kinds = {k for (k,) in _rows(fresh, "access.db", "SELECT kind FROM restore_pending")}
-    assert {"market_policy", "addon_allow", "addon_request"} <= kinds
+    assert kinds == {"market_company", "addon_request"}
     acc = Access(str(fresh / "access.db"))
     try:
         for i in GD.pending(acc):
             GD.confirm(acc, i["id"])
-        assert _j.loads(acc._q("SELECT policy FROM market_policy")[0][0]) == wide
-        assert acc.market_policy()["hash"] == MP.policy_hash(wide)
-        assert acc._q("SELECT * FROM workspace_addon_allow") == [(WS, '["a"]')]
+        assert _j.loads(acc._q("SELECT policy FROM market_policy")[0][0]) == full
+        assert acc.market_policy()["hash"] == MP.policy_hash(full)
         assert len(acc._q("SELECT * FROM addon_request")) == 1
     finally:
         acc.close()
+
+
+def test_L5_in_place_the_stricter_of_backup_and_live_wins_for_every_restricting_field(w):
+    import json as _j
+
+    from orch_hub.contract import market_policy as MP
+
+    _put_policy(w, _company_policy(block=("old-bad",), allow=("aa", "bb"), ceiling=("network", "pty")))
+    db = w.env.acc._db
+    db.execute('INSERT INTO workspace_addon_allow VALUES (?, \'["a","b"]\')', (WS,))
+    words, data = _backup(w)
+    live = _company_policy(block=("new-bad",), allow=("bb", "cc"), ceiling=("git_push", "pty"), market=False)
+    _put_policy(w, live, version=3)
+    db.execute('UPDATE workspace_addon_allow SET ids=\'["b","c"]\'')
+    db.execute("INSERT INTO workspace_addon_allow VALUES (?, '[\"z\"]')", ("ee" * 16,))  # only live
+    _restore(w, data, words)
+    pol = _j.loads(_rows(w.state, "access.db", "SELECT policy FROM market_policy")[0][0])
+    assert MP.check_policy(pol)
+    assert pol["addons"] == {"allow": ["bb"], "block": ["new-bad", "old-bad"]}  # allow: intersection, block: union
+    assert pol["ceiling"] == ["pty"]  # intersection
+    assert pol["markets"] == MP.default_policy()["markets"]  # granting part = live (no company market live)
+    ids = dict(_rows(w.state, "access.db", "SELECT workspace_id, ids FROM workspace_addon_allow"))
+    assert _j.loads(ids[WS]) == ["b"] and _j.loads(ids["ee" * 16]) == ["z"]
+    assert _rows(w.state, "access.db", "SELECT version FROM market_policy")[0][0] >= 3
+
+
+def test_L5_every_restored_table_has_a_class_so_a_new_table_cannot_slip_through(w):
+    from orch_hub.backup import guard as GD
+
+    _org(w)
+    words, data = _backup(w)
+    opened = B.open_backup(data, words=words, dev_mode=True, live=None)
+    seen = set()
+    for path, blob in opened.files.items():
+        if not path.endswith(".db") or "/" in path:
+            continue
+        p = w.tmp / ("probe-" + path)
+        p.write_bytes(blob)
+        c = sqlite3.connect(p)
+        try:
+            tables = {
+                n
+                for (n,) in c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            }
+        finally:
+            c.close()
+        for t in tables:
+            seen.add(f"{path}:{t}")
+            assert GD.class_of(path, t) in ("restricting", "granting", "log", "state"), f"{path}:{t} has no class"
+    assert (
+        "access.db:workspace_addon_allow" in seen and GD.class_of("access.db", "workspace_addon_allow") == "restricting"
+    )
+    assert GD.class_of("access.db", "org_secret_shares") == "granting"
+    with pytest.raises(KeyError):
+        GD.class_of("access.db", "a_table_nobody_classified")
 
 
 def test_L5_the_server_command_names_the_admins_it_prints_links_for(w, tmp_path):

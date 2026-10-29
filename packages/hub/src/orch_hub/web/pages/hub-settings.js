@@ -200,7 +200,7 @@ function restoredNotice(n, actions) {
     h("div", { class: "row" }, h("button", { type: "button", text: "Got it", onclick: () => actions.dismissRestored?.() })));
 }
 
-const PENDING_WORD = { secret_share: "Company secret shared with a workspace", secret_all: "Company secret shared with all workspaces", skill_offer: "Company skill offered to a workspace", mcp_offer: "Company server offered to a workspace", market_policy: "The add-on rules before the restore", addon_allow: "Add-ons a workspace may install", addon_request: "An add-on request" };
+const PENDING_WORD = { secret_share: "Company secret shared with a workspace", secret_all: "Company secret shared with all workspaces", skill_offer: "Company skill offered to a workspace", mcp_offer: "Company server offered to a workspace", market_company: "Company add-on markets", addon_request: "An add-on request" };
 
 /** What a restore on a new server switched off: each one is Off until an admin turns it on again with one click. */
 function pendingList(items, actions) {

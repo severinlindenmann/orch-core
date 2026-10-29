@@ -39,6 +39,7 @@ LIVE_TABLES = (
     "workspace_addon_allow",
     "addon_request",
     "market_policy",
+    "restore_pending",
 )
 #: table -> what a restore does with it (the sweep the review asked for)
 POLICY = {

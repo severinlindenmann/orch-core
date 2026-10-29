@@ -824,3 +824,17 @@ def test_a_fresh_server_deletes_the_credentials_of_everyone_who_must_recover(w, 
     left = {u for (u,) in _rows(fresh, "channels.db", "SELECT user_id FROM credentials")}
     assert w.ann not in left and w.admin not in left and w.carol not in left  # admins recover too (fresh server)
     assert _rows(fresh, "access.db", f"SELECT must_recover FROM users WHERE user_id='{w.ann}'") == [(1,)]
+
+
+# --- review of S6 (Opus, 29 Oct) -------------------------------------------------------------------------------------------------------
+
+
+def test_L2_a_pending_row_that_is_not_live_does_not_come_back(w):
+    from orch_hub.backup import guard as GD
+
+    w.env.acc._db.execute(GD.PENDING_SCHEMA)
+    w.env.acc._db.execute("INSERT INTO restore_pending(kind,a,b,label) VALUES ('secret_all','s9','','x')")
+    words, data = _backup(w)
+    w.env.acc._db.execute("DELETE FROM restore_pending")  # confirmed live after the backup
+    _restore(w, data, words)
+    assert _rows(w.state, "access.db", "SELECT * FROM restore_pending") == []

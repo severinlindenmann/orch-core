@@ -29,3 +29,22 @@ it('approve without a press (menu item, palette) never depends on the ambient fl
   render(show({ kind: 'approve', gate: 'plan', pressed: false }))
   expect(last().autoStart).toBe(false)
 })
+
+// P10: Pass is preselected only when every requirement is checked, and a preselected verdict is never started by itself.
+type Prop = { autoStart?: boolean; action?: { action: string; outcome?: string } | null; hint?: string | null; confirmLabel?: string }
+const withAc = (states: ('proven' | 'unproven')[]) =>
+  ({ ...ticket, acceptance_state: states.map((state, i) => ({ id: `AC${i + 1}`, text: `Req ${i + 1}`, state, evidence: [{ kind: 'task', ref: 'T1' }] })), tasks_state: [], artifacts: [], branch: {} }) as unknown as TicketDocument
+const showT = (t: TicketDocument) => <QueryClientProvider client={new QueryClient()}><HandoffSignDialog ticket={t} action={{ kind: 'verdict' }} ws="w" onClose={() => {}} /></QueryClientProvider>
+it('verdict: Pass is preselected when every requirement is checked, and nothing starts on its own', () => {
+  render(showT(withAc(['proven'])))
+  const p = last() as Prop
+  expect(p.action).toMatchObject({ action: 'verdict', outcome: 'pass' })
+  expect(p.confirmLabel).toBe('Pass')
+  expect(p.autoStart).toBeUndefined() // the person still presses; the dialog arms only on that press
+})
+it('verdict: nothing is preselected when a requirement is not checked; the hint says what to do', () => {
+  render(showT(withAc(['proven', 'unproven'])))
+  const p = last() as Prop
+  expect(p.action).toBeNull()
+  expect(p.hint).toBe('Pick Pass or Send back to continue')
+})

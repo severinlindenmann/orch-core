@@ -15,7 +15,7 @@ import { Ago, Mono, Pill, presenceLabel, shortHash, type TabProps, type Viewer }
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone' }
 
 function AnswerForm({ q, sign, ticketKey, onViewQuestion }: { q: QuestionStatus; sign: TabProps['sign']; ticketKey: string; onViewQuestion: (t: string | null) => void }) {
-  const [option, setOption] = useState<string | undefined>(undefined)
+  const [option, setOption] = useState<string | undefined>(q.options?.some((o) => o.key === q.recommended) ? (q.recommended ?? undefined) : undefined)
   const [text, setText] = useState('')
   const hasOptions = !!q.options?.length
   const [noting, setNoting] = useState(false)

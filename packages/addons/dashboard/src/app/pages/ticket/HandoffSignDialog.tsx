@@ -1,4 +1,4 @@
-import { VerdictEvidence, VerdictPreview } from './EvidenceView'
+import { allChecked, VerdictEvidence, VerdictPreview } from './EvidenceView'
 import { ManualAcceptanceReview } from './ManualAcceptance'
 // A ticket's human action in hand-off mode (real host): approve, request changes, verdict, answer. The form holds only
 // what the person types or picks; once they press the verb, the host prepares the request and the dialog shows the
@@ -72,7 +72,7 @@ export function HandoffSignDialog({
   const navigate = useNavigate()
   const qc = useQueryClient()
   const [text, setText] = useState('')
-  const [outcome, setOutcome] = useState<'pass' | 'fail' | null>(null)
+  const [outcome, setOutcome] = useState<'pass' | 'fail' | null>(() => (action?.kind === 'verdict' && allChecked(ticket) ? 'pass' : null))
   const radio = useRef<HTMLInputElement>(null)
   // The opening press of an approve is used once: it is kept per action object and spent when the review starts,
   // so a remount never re-arms without a new press. Approve never depends on the ambient press flag.
@@ -98,7 +98,7 @@ export function HandoffSignDialog({
       break
     case 'verdict':
       confirmLabel = outcome === 'pass' ? 'Pass' : outcome === 'fail' ? 'Send back' : 'Give verdict'
-      hint = !outcome ? 'Choose Pass or Send back' : outcome === 'fail' && !note ? 'Say what should change to continue' : null
+      hint = !outcome ? 'Pick Pass or Send back to continue' : outcome === 'fail' && !note ? 'Say what should change to continue' : null
       request = outcome ? { action: 'verdict', key: ticket.key, outcome, ...(note ? { message: text } : {}) } : null
       break
     case 'answer':
@@ -169,17 +169,17 @@ export function HandoffSignDialog({
             <legend className="sr-only">Verdict</legend>
             {(
               [
-                ['pass', 'Pass: the evidence is enough'],
-                ['fail', 'Send back · something must change'],
+                ['pass', 'Pass', allChecked(ticket) ? "Recommended: the agent's check passed" : 'The evidence is enough'],
+                ['fail', 'Send back', 'Something must change'],
               ] as const
-            ).map(([r, label], i) => (
+            ).map(([r, label, reason], i) => (
               <label key={r} className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-[13px] has-[:checked]:border-brand has-[:checked]:bg-brand-soft">
                 <input ref={i === 0 ? radio : undefined} type="radio" name="verdict" value={r} checked={outcome === r} onChange={() => setOutcome(r)} className="accent-[var(--brand)]" />
-                {label}
+                <span className="font-medium">{label}</span>
+                <span className="text-text-muted">{reason}</span>
               </label>
             ))}
           </fieldset>
-          <p className="text-[12px] text-text-muted">Pass accepts all {ticket.acceptance_state.length} criteria with the files and code shown.</p>
         </>
       )}
       {(action.kind === 'request_changes' || (action.kind === 'verdict' && !preview)) && (

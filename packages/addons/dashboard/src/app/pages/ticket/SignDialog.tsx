@@ -18,7 +18,7 @@ import { gateActionName, policyText } from './actions'
 import type { HumanAction } from './shared'
 import { queries } from '@/api/queries'
 import { handoffMode } from '@/api/features'
-import { CommitLine, VerdictEvidence, VerdictPreview } from './EvidenceView'
+import { allChecked, CommitLine, VerdictEvidence, VerdictPreview } from './EvidenceView'
 import { HandoffSignDialog } from './HandoffSignDialog'
 
 type Described = { title: string; gate?: GateName; hash: string; covers: string[]; policy?: string }
@@ -150,7 +150,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
   const navigate = useNavigate()
   const [phase, setPhase] = useState<'confirm' | 'touch' | 'sending'>('confirm')
   const [text, setText] = useState('')
-  const [result, setResult] = useState<'pass' | 'fail' | null>(null)
+  const [result, setResult] = useState<'pass' | 'fail' | null>(() => (action?.kind === 'verdict' && allChecked(ticket) ? 'pass' : null))
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<{ artifact: Artifact; acId: string } | null>(null)
   const workspaces = useQuery(queries.workspaces())
@@ -168,7 +168,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
   useEffect(() => {
     setPhase('confirm')
     setText('')
-    setResult(null)
+    setResult(action?.kind === 'verdict' && allChecked(opened) ? 'pass' : null)
     setError(null)
     setPreview(null)
   }, [action])
@@ -191,7 +191,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
       ? 'Nothing to approve yet: the requirements have no text or acceptance criteria.'
       : 'Nothing to approve yet: the plan has no text or tasks.'
     : action.kind === 'verdict' && !result
-      ? 'Choose Pass or Send back'
+      ? 'Pick Pass or Send back to continue'
       : needsText && !text.trim()
         ? 'Say what should change to continue'
         : null
@@ -199,10 +199,7 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
 
   // The commit a verdict or code review signs: the branch head when the dialog opened, in full (owner decision 2026-10-10).
   const head = opened.branch.head
-  const passLabel = `Pass on ${visible(head)} · ${diffstat(opened.branch)}: the evidence is enough`
-  const proven = ticket.acceptance_state.filter((a) => a.state === 'proven').length
-  const receipts = ticket.tasks_state.filter((t) => t.receipt).length
-  const attested = ticket.tasks_state.some((t) => t.receipt?.attested_by)
+  const passLabel = `Pass on ${visible(head)} · ${diffstat(opened.branch)}`
 
   const answerText = action.kind === 'answer' ? action.text?.trim() || undefined : undefined
   const request = (): ActionRequest => {
@@ -295,10 +292,6 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
         {action.kind === 'verdict' && !preview && (
           <>
             <p className="flex flex-wrap items-center gap-x-3 text-[13px] text-text-muted">
-              <span>
-                AC {proven}/{ticket.acceptance_state.length} evidenced · {receipts} {receipts === 1 ? 'receipt' : 'receipts'}
-                {attested && ' (agent-attested)'}
-              </span>
               <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[13px]" onClick={openEvidence} disabled={busy}>
                 Open evidence
               </Button>
@@ -311,20 +304,20 @@ function SimulatedSignDialog({ ticket, action, onClose, onOpenEvidence, onOpenCh
               <legend className="sr-only">Verdict</legend>
               {(
                 [
-                  ['pass', passLabel],
-                  ['fail', 'Send back · something must change'],
+                  ['pass', passLabel, allChecked(opened) ? "Recommended: the agent's check passed" : 'The evidence is enough'],
+                  ['fail', 'Send back', 'Something must change'],
                 ] as const
-              ).map(([r, label], i) => (
+              ).map(([r, label, reason], i) => (
                 <label
                   key={r}
                   className="flex cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-[13px] has-[:checked]:border-brand has-[:checked]:bg-brand-soft"
                 >
                   <input ref={i === 0 ? firstRadio : undefined} type="radio" id={`verdict-${r}`} name="verdict" value={r} checked={result === r} onChange={() => setResult(r)} className="accent-[var(--brand)]" />
-                  {label}
+                  <span className="font-medium">{label}</span>
+                  <span className="text-text-muted">{reason}</span>
                 </label>
               ))}
             </fieldset>
-            <p className="text-[12px] text-text-muted">Pass accepts all {ticket.acceptance_state.length} criteria with the files and code shown.</p>
           </>
         )}
 

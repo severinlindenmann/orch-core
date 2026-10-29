@@ -2183,9 +2183,11 @@ def test_repeated_patterns_are_references_not_copies():
 @pytest.mark.slow
 def test_validation_speed_of_an_event_stays_cheap():
     """Measured about 0.26 ms per event on a laptop (is_valid fast path, envelope and definitions inlined). The
-    bound is relative to a calibration loop on the same machine (a slow CI box scales both), and the best of 5
-    runs counts, so a return to $ref chains (about 6x slower: over 200x the calibration, today about 40x)
-    fails and load noise does not."""
+    bound is relative to a calibration loop on the same machine, measured interleaved round by round (a noisy
+    neighbour hits both), best of 7. The ratio is about 40x on a laptop but about 100x on the GitHub runners
+    (their JSON round trip is relatively faster), and it failed twice at 100x on 29 Oct. A return to $ref
+    chains is about 6x slower (over 240x on a laptop, about 600x on CI), so 300x keeps that signal with room
+    for the runner's own ratio."""
     import time
 
     events = [(e["type"], e) for e in ex.EVENTS.values()]
@@ -2208,10 +2210,14 @@ def test_validation_speed_of_an_event_stays_cheap():
                 V("event", e)
         return (time.process_time() - t0) / (20 * len(events))
 
-    cal = min(calibration() for _ in range(5))
-    per_event = min(validation() for _ in range(5))
-    print(f"validation {per_event * 1000:.3f} ms per event, calibration {cal * 1e6:.2f} us")
-    assert per_event < 100 * cal, f"{per_event * 1000:.2f} ms per event, calibration {cal * 1e6:.2f} us"
+    cals, vals = [], []
+    for _ in range(7):  # interleaved: each round measures both back to back
+        cals.append(calibration())
+        vals.append(validation())
+    cal, per_event = min(cals), min(vals)
+    print(f"validation {per_event * 1000:.3f} ms per event, calibration {cal * 1e6:.2f} us, {per_event / cal:.0f}x")
+    ratio = per_event / cal
+    assert ratio < 300, f"{per_event * 1000:.2f} ms per event, calibration {cal * 1e6:.2f} us ({ratio:.0f}x)"
 
 
 def test_event_schemas_repeat_the_envelope_of_event_json():

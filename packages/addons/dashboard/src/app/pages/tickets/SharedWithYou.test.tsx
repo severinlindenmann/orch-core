@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within, act } from '@testing-library/react'
 import { api } from '@/api/client'
 import { renderApp } from '@/test/renderApp'
+import { COLD } from '@/test/cold'
 
 const t = (key: string, title: string) => ({ workspace_id: 'a'.repeat(32), key, title, shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: null })
 
@@ -55,5 +56,23 @@ describe('SharedWithYou stays current', () => {
     expect(await screen.findByTestId('shared-ended')).toHaveTextContent('Anna stopped sharing Invoice export')
     expect(screen.getAllByTestId('shared-ended')).toHaveLength(1) // not "stopped sharing Mine"
     void stored
+  })
+
+  it('a row opens a view-only panel with the full text; Close returns; a vanished item says it stopped sharing', async () => {
+    const full = { ...t('D-7', 'Invoice export for Ben'), description: 'Ben can download all invoices as one CSV file.', deadline: '2026-11-01' }
+    const get = vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [full] })
+    const { user } = renderApp('/tickets')
+    await user.click(await screen.findByRole('button', { name: /Open D-7/ }, COLD))
+    const panel = await screen.findByTestId('shared-panel')
+    expect(panel).toHaveTextContent('Ben can download all invoices as one CSV file.')
+    expect(panel).toHaveTextContent('Shared by Anna')
+    expect(panel).toHaveTextContent('due 2026-11-01')
+    expect(panel).toHaveTextContent("only Anna can change it")
+    expect(within(panel).queryByRole('button', { name: /sign|edit|move/i })).toBeNull()
+    await user.click(within(panel).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByTestId('shared-panel')).toBeNull())
+    await user.click(await screen.findByRole('button', { name: /Open D-7/ }, COLD))
+    expect(await screen.findByTestId('shared-panel')).toBeInTheDocument()
+    expect(get).toHaveBeenCalled()
   })
 })

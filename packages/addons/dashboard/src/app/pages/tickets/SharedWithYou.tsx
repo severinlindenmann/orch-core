@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate, useSearch } from '@tanstack/react-router'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 import { useMe } from '@/app/useMe'
 import { hubQueries, type HubSharedTicket } from '@/api/hub'
 import { Raw } from '@/components/sign/visible'
@@ -55,7 +58,13 @@ export function SharedWithYou({ ws, limit }: { ws: string; limit?: number }) {
   const list = everything ?? []
   // a ticket that is shared again is no longer "ended"
   const notes = ended.filter((e) => !list.some((t) => idOf(t) === e.id))
-  if (!list.length && !notes.length) return null
+  const nav = useNavigate({ from: '/tickets' })
+  const openId = useSearch({ from: '/tickets' }).shared
+  const open = (id: string) => void nav({ search: (prev: Record<string, unknown>) => ({ ...prev, shared: id }) })
+  const close = () => void nav({ search: (prev: Record<string, unknown>) => { const { shared: _s, ...rest } = prev; return rest } })
+  const panel = openId ? list.find((t) => idOf(t) === openId) : undefined
+  const goneNote = openId && !panel && everything ? notes.find((e) => e.id === openId) : undefined
+  if (!list.length && !notes.length && !openId) return null
   const items = limit && !all ? list.slice(0, limit) : list
   return <section className="space-y-1" data-testid="shared-with-you" aria-label="Shared with you">
     <h2 className="text-[13px] font-medium text-text-muted">Shared with you</h2>
@@ -64,13 +73,32 @@ export function SharedWithYou({ ws, limit }: { ws: string; limit?: number }) {
       <button type="button" className="text-[12px] underline" onClick={() => dismiss(e.id)}>Dismiss</button>
     </p>)}
     {list.length > 0 && <ul className="divide-y divide-border rounded border border-border">
-      {items.map(t => <li key={t.workspace_id + t.key} className="space-y-0.5 px-3 py-2" data-testid="shared-row">
+      {items.map(t => <li key={t.workspace_id + t.key} data-testid="shared-row">
+        <button type="button" onClick={() => open(idOf(t))} aria-label={`Open ${t.key} ${t.title}`} className="block w-full space-y-0.5 px-3 py-2 text-left hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring">
         <p className="flex flex-wrap items-center gap-2"><span className="font-mono text-[12px] text-text-faint"><Raw>{t.key}</Raw></span><Raw>{t.title}</Raw>
           <Badge variant="outline">Shared by <Raw>{t.shared_by}</Raw></Badge></p>
         {t.description && <p className="whitespace-pre-line text-[13px] text-text-muted"><Raw>{t.description}</Raw></p>}
-        <p className="text-[12px] text-text-faint">{t.status.replaceAll('_', ' ')}{t.deadline ? ` · due ${t.deadline}` : ''} · read only</p>
+        <p className="text-[12px] text-text-faint">{t.status.replaceAll('_', ' ')}{t.deadline ? ` · due ${t.deadline}` : ''} · view only</p>
+        </button>
       </li>)}
     </ul>}
+    {openId && everything && <Dialog open onOpenChange={(o) => { if (!o) close() }}>
+      <DialogContent data-testid="shared-panel" showCloseButton={false}>
+        {panel ? <>
+          <DialogHeader>
+            <p className="text-[12px] text-text-faint">Shared by <Raw>{panel.shared_by}</Raw></p>
+            <DialogTitle><Raw>{panel.title}</Raw></DialogTitle>
+            <DialogDescription>{panel.status.replaceAll('_', ' ')} · {panel.deadline ? `due ${panel.deadline}` : 'no due date'}</DialogDescription>
+          </DialogHeader>
+          {panel.description && <p className="whitespace-pre-line text-[13px]"><Raw>{panel.description}</Raw></p>}
+          <p className="rounded border border-border bg-surface px-3 py-2 text-[13px] text-text-muted">This is <Raw>{panel.shared_by}</Raw>'s ticket. You can read it; only <Raw>{panel.shared_by}</Raw> can change it.</p>
+        </> : <DialogHeader>
+          <DialogTitle>{goneNote ? <><Raw>{goneNote.by}</Raw> stopped sharing this</> : 'This ticket is no longer shared with you'}</DialogTitle>
+          <DialogDescription>It is not in your list any more.</DialogDescription>
+        </DialogHeader>}
+        <Button variant="outline" size="sm" onClick={close}>Close</Button>
+      </DialogContent>
+    </Dialog>}
     {limit && list.length > limit && !all && <button type="button" className="text-[12px] text-text-muted underline" onClick={() => setAll(true)}>Show all {list.length}</button>}
   </section>
 }

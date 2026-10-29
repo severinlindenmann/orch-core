@@ -149,3 +149,13 @@ def test_an_idle_agent_is_not_listed_as_working(monkeypatch):
     assert busy["working"] == [{"uid": "u1"}]
     idle = today({"items": [], "sub_cursor": None}, _rows(), "ws", "now", "Owner", "owner", runs=_runs())
     assert idle["working"] == [] and [n["kind"] for n in idle["needs_you"]] == ["terminal_wait"]
+
+
+def test_a_finished_ticket_has_no_terminal_wait_and_is_not_counted(monkeypatch):
+    # run-11 P06: Done/Closed tickets never say "agent is waiting"; a reopened one brings the hint back
+    from orch_dashboard.adapters.today import terminal_waits
+
+    for status in ("done", "closed", "cancelled"):
+        rows = [{**_rows()[0], "status": status}]
+        assert terminal_waits(_runs(), rows, {}) == []
+    assert len(terminal_waits(_runs(), _rows(), {})) == 1

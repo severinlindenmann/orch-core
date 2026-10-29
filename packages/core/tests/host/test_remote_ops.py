@@ -177,6 +177,29 @@ def test_a_full_hub_join_closes_every_stream(human, served):
     assert r2.calls == []  # only the workspace log counts
 
 
+def test_remote_sessions_lists_the_open_streams(human, served):
+    turn_on(human)
+    table = remote.streams(served.service)
+    table.register("b" * 32, "rd_" + "2" * 32)
+    table.register("a" * 32, "rd_" + "1" * 32)
+    rows = [
+        {"stream_id": "a" * 32, "device_id": "rd_" + "1" * 32},
+        {"stream_id": "b" * 32, "device_id": "rd_" + "2" * 32},
+    ]
+    assert ok(call(served, "remote.sessions"))["data"] == {"sessions": rows}
+
+
+def test_the_commit_hook_runs_the_gate_rules_once_per_commit(human, served, monkeypatch):
+    turn_on(human)
+    seen: list[str] = []
+    real = remote.gate.StreamTable.on_commit
+    monkeypatch.setattr(
+        remote.gate.StreamTable, "on_commit", lambda self, log, ev: (seen.append(ev["type"]), real(self, log, ev))
+    )
+    ok(call(served, "remote.off"))
+    assert seen.count("remote.disabled") == 1
+
+
 def test_a_failing_revoker_never_keeps_another_stream_open(human, served):
     turn_on(human)
     table = remote.streams(served.service)

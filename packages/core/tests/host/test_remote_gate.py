@@ -16,7 +16,7 @@ from unittest import mock
 
 import pytest
 
-from orch.host.remote import gate, pump
+from orch.host.remote import enrollment, gate, pump
 from orch.hubclient.tlslink.client import LinkError
 
 CONTRACT = Path(__file__).resolve().parents[4] / "contracts" / "hub"
@@ -213,11 +213,11 @@ def test_enroll_rate_3_per_minute_and_codes() -> None:
         assert gate.open(svc, body(sid(i + 1), CODE, "enroll"), NOW, codes=codes) == "remote.version"
     assert gate.open(svc, body(sid(9), CODE, "enroll"), NOW, codes=codes) == "remote.busy"
     assert gate.open(service(on=False), body(sid(5), CODE, "enroll"), NOW) == "remote.no_code"  # default: no codes
-    gate.CODES = lambda s: {CODE: NOW + 1000}
+    gate.CODES = lambda s, now: {CODE: NOW + 1000}
     try:
         assert gate.open(service(on=False), body(sid(6), CODE, "enroll"), NOW) == "remote.version"
     finally:
-        gate.CODES = lambda s: {}  # noqa: ARG005
+        gate.CODES = enrollment.outstanding
 
 
 def test_stream_id_used_once() -> None:
@@ -298,7 +298,7 @@ def test_inbound_seq_must_follow() -> None:
         ({"type": "remote.disabled", "by": "owner"}, "remote.off"),
         ({"type": "remote.changed"}, "revoked"),
         ({"type": "remote.key_rotated"}, "revoked"),
-        ({"type": "hub.joined", "mode": "full"}, "revoked"),
+        ({"type": "hub.joined", "mode": "full"}, "remote.off"),
     ],
 )
 def test_on_commit_closes_every_stream(event: dict[str, Any], reason: str) -> None:

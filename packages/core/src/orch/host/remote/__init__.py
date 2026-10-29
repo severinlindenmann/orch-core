@@ -14,22 +14,21 @@ the host does with them:
 * ``policy`` (effective policy, the one off path, the expiry sweeper), ``devices`` (lookup, the WSK-signed export),
   ``enrollment`` (codes, the verify seam R3 calls), ``wrk`` (the key).
 
-Until R3 no stream is ever registered, so the stream table here is empty."""
+Until R3 no stream is ever registered, so the stream table (``gate.StreamTable``) is empty."""
 
 from __future__ import annotations
 
 import logging
-import threading
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from ..errors import HostError
+from . import gate
 
 if TYPE_CHECKING:
     from ..workspace import Call
 
 __all__ = [
-    "REMOTE_OPS", "REMOTE_READS", "StreamTable", "append_host", "attach", "dev_ids", "on_commit", "serve", "streams",
+    "REMOTE_OPS", "REMOTE_READS", "append_host", "attach", "dev_ids", "on_commit", "serve", "streams",
 ]  # fmt: skip
 
 LOG = logging.getLogger(__name__)
@@ -50,73 +49,9 @@ _SCHEMAS["remote.device_remove"] = {
 }
 
 
-# -- the stream table seam (T2b's ``gate.StreamTable``; this one stands in until it is merged) -----------------------
+# -- the stream table (gate.StreamTable, one per workspace) ----------------------------------------------------------
 
-
-class StreamTable:
-    """Stand-in for T2b's ``gate.StreamTable`` (same names: ``register``, ``close_all``, ``close_device``,
-    ``take_closing``) until ``host/remote/gate.py`` is merged; ``streams`` and ``_revoke`` prefer the gate when it
-    exists. Open streams and the revokers R3 registers on them (design note section 5)."""
-
-    def __init__(self) -> None:
-        self._mu = threading.Lock()
-        self._open: dict[str, tuple[str, Callable[[str], None]]] = {}
-        self._closed: list[tuple[str, str]] = []
-
-    def register(
-        self, stream_id: str, device_id: str, revoke: Callable[[str], None] | None = None, kind: str = "session"
-    ) -> None:
-        with self._mu:
-            self._open[stream_id] = (device_id, revoke or (lambda reason: None))
-
-    def _close(self, picked: list[str], reason: str) -> list[str]:
-        with self._mu:
-            gone = [(sid, self._open.pop(sid)) for sid in picked if sid in self._open]
-            self._closed.extend((sid, reason) for sid, _ in gone)
-        for sid, (_, revoke) in gone:
-            try:
-                revoke(reason)
-            except Exception:  # noqa: BLE001 - one failing revoker never keeps another stream open
-                LOG.exception("remote revoker failed for %s", sid)
-        return [sid for sid, _ in gone]
-
-    def close_all(self, reason: str) -> list[str]:
-        with self._mu:
-            picked = list(self._open)
-        return self._close(picked, reason)
-
-    def close_device(self, device_id: str, reason: str) -> list[str]:
-        with self._mu:
-            picked = [sid for sid, (dev, _) in self._open.items() if dev == device_id]
-        return self._close(picked, reason)
-
-    def take_closing(self) -> list[tuple[str, str]]:
-        with self._mu:
-            out, self._closed = self._closed, []
-        return out
-
-    def open_streams(self) -> list[dict[str, str]]:
-        with self._mu:
-            return [{"stream_id": sid, "device_id": dev} for sid, (dev, _) in sorted(self._open.items())]
-
-
-def _gate() -> Any:
-    try:
-        from . import gate
-    except ImportError:
-        return None
-    return gate
-
-
-def streams(service: Any) -> Any:
-    """The workspace's stream table: T2b's ``gate.table(service)`` when that module is there, else the stand-in."""
-    gate = _gate()
-    if gate is not None:
-        return gate.table(service)
-    table = getattr(service, "_remote_streams", None)
-    if table is None:
-        table = service._remote_streams = StreamTable()  # noqa: SLF001
-    return table
+streams = gate.table  # ``remote.streams(service)``: open streams and the revokers R3 registers on them (design note 5)
 
 
 # -- host-written log lines ------------------------------------------------------------------------------------------
@@ -158,7 +93,7 @@ def on_commit(service: Any, log: str, event: dict[str, Any]) -> None:
         return
     typ = event.get("type")
     try:
-        _revoke(service, typ, event)
+        gate.on_commit(service, "workspace", event)  # the ONE place streams close; runs once per commit
         if typ in ("remote.device_added", "remote.device_removed"):
             from . import devices
 
@@ -173,22 +108,6 @@ def on_commit(service: Any, log: str, event: dict[str, Any]) -> None:
             policy.ensure_sweeper(service)
     except Exception:  # noqa: BLE001
         LOG.exception("remote commit hook failed for %s", typ)
-
-
-def _revoke(service: Any, typ: Any, event: dict[str, Any]) -> None:
-    gate = _gate()
-    if gate is not None:
-        gate.on_commit(service, "workspace", event)  # T2b owns the rules when its module is merged
-        return
-    table = None
-    if typ in ("remote.disabled", "remote.changed", "remote.key_rotated", "remote.device_removed", "hub.joined"):
-        table = streams(service)
-    if typ == "remote.disabled" or (typ == "hub.joined" and event.get("mode") == "full"):
-        table.close_all("remote.off")
-    elif typ in ("remote.changed", "remote.key_rotated"):
-        table.close_all("revoked")  # any change, also a narrowing: sessions reopen under the new rules
-    elif typ == "remote.device_removed":
-        table.close_device(event["device_id"], "revoked")
 
 
 def attach(service: Any) -> None:
@@ -250,7 +169,7 @@ def serve(call: Call) -> dict[str, Any]:
     if op == "remote.pending":
         return ok_result({"pending": enrollment.pending_list(service, now_ms)})
     if op == "remote.sessions":
-        return ok_result({"sessions": list(getattr(streams(service), "open_streams", list)())})
+        return ok_result({"sessions": streams(service).open_streams()})
     if op == "remote.off":
         out = {"changed": policy.turn_off(service, "owner")}
     elif op == "remote.code":
@@ -274,11 +193,9 @@ def _plug() -> None:
     from .. import remotefacts
 
     remotefacts.set_pending_source(_pending_lookup)  # ``remote.device_confirm`` finds the pending device here
-    gate = _gate()
-    if gate is not None:
-        from . import enrollment
+    from . import enrollment
 
-        gate.CODES = enrollment.outstanding  # the gate's enroll check reads the outstanding codes
+    gate.CODES = enrollment.outstanding  # the gate's enroll check reads the outstanding codes
 
 
 _plug()

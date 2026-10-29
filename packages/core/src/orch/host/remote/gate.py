@@ -49,7 +49,7 @@ STREAMS_ACCEPT = False
 
 #: the outstanding enrollment codes of a workspace as ``{code_id: expires_ms}``; ``remote.enrollment`` (T2a) installs
 #: the real source (memory only). Without one no enroll stream passes (``remote.no_code``).
-CODES: Callable[[Any], Mapping[str, int]] = lambda service: {}  # noqa: E731, ARG005
+CODES: Callable[[Any, int], Mapping[str, int]] = lambda service, now_ms: {}  # noqa: E731, ARG005
 
 #: events of the workspace log that close streams: all of them, or only one device's (a close reason for each)
 _ALL = {"remote.disabled": "remote.off", "remote.changed": "revoked", "remote.key_rotated": "revoked"}
@@ -219,6 +219,11 @@ class StreamTable:
                     _log.warning("remote.revoker_failed")
         return n
 
+    def open_streams(self) -> list[dict[str, str]]:
+        """What ``remote.sessions`` shows: the open streams, by id and device."""
+        with self._mu:
+            return [{"stream_id": sid, "device_id": s.device_id} for sid, s in sorted(self._streams.items())]
+
     def take_closing(self) -> list[tuple[str, str]]:
         """The ``(stream_id, reason)`` close frames the pump still sends (call after the store lock is released)."""
         with self._mu:
@@ -275,7 +280,7 @@ class StreamTable:
         if t in _ALL:
             self.close_all(_ALL[t])
         elif t == "hub.joined" and event.get("mode") == "full":
-            self.close_all("revoked")  # D93: the model also turned remote off, whatever the premises answer
+            self.close_all("remote.off")  # D93: the model also turned remote off, whatever the premises answer
         elif t == "remote.device_removed" and type(event.get("device_id")) is str:
             self.close_device(event["device_id"], "revoked")
 
@@ -374,7 +379,7 @@ def open(  # noqa: A001 - the gate's verb, as in the contract
             body,
             seen=t.seen(sid, now_ms),
             on=model_remote.is_on(core, now_ms),
-            codes=(CODES(service) if codes is None else codes) if kind == "enroll" else {},
+            codes=(CODES(service, now_ms) if codes is None else codes) if kind == "enroll" else {},
             enrolls=t.enrolls(now_ms),
             device=(rem.get("devices") or {}).get(dev) if kind == "session" else None,
             streams_device=t.count_device(dev),

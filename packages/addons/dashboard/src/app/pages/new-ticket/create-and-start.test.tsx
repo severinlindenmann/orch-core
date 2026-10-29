@@ -165,8 +165,9 @@ describe('what is signed', () => {
     const action = await sent()
     expect(action.agent).toEqual({ hours: 168 })
     expect(action.launch).toEqual({ harness: 'claude-code', mode: 'refine' })
-    expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Then: start an agent on the new ticket.')
-    expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(230) // one line, not a paragraph
+    expect(await screen.findByTestId('not-signed-start')).toHaveTextContent('Claude Code starts on it.')
+    expect(screen.getByTestId('not-signed-start').textContent).not.toMatch(/model|mode/i) // that detail stays in the form footer
+    expect(screen.getByTestId('not-signed-start').textContent!.length).toBeLessThan(60) // one short line
     expect(screen.getByTestId('starts-agent')).toHaveTextContent('true') // the dialog's steps then say the agent starts with the access already there
   })
 

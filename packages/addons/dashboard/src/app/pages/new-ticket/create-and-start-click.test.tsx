@@ -10,6 +10,7 @@ import { routingApi } from '@/api/modelRouting'
 import { ApiError, type TicketDocument } from '@/api/types'
 import { clearMark, markOf, phaseOf } from '@/app/pages/ticket/progress'
 import * as gesture from '@/components/sign/trustedPress'
+import { EXECUTION_SHORT } from '@/app/terminal/real/executionLine'
 import { renderApp } from '@/test/renderApp'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), handoffMode: () => true }))
@@ -124,7 +125,12 @@ describe('the real click path', () => {
       env: ['TERM'], grant: { id: GRANT, until: new Date(Date.now() + 86_400_000).toISOString(), scope: 'workable' }, blocked: null, warnings: [],
     })
     s.start.mockResolvedValue({ run: { run: 'r_01M4Y46B485AXD4CBEJZ15Z1TV' } as never })
-    const { r } = await signed((dialog) => expect(within(dialog).getByTestId('not-signed-notice')).toBeInTheDocument()) // the review shows the notice in full
+    const { r } = await signed((dialog) => {
+      const notice = within(dialog).getByTestId('not-signed-notice') // the review shows the notice
+      expect(within(notice).getByTestId('not-signed-execution-line')).toHaveTextContent(EXECUTION_SHORT)
+      expect(notice).toHaveTextContent('Signing means you know this.')
+      expect(EXECUTION_SHORT).toMatch(/as you/); expect(EXECUTION_SHORT).toMatch(/this computer/); expect(EXECUTION_SHORT).toMatch(/open your files/)
+    })
     expect(notices).toHaveBeenCalled()
     await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
     expect(s.start.mock.calls[0][1]).toBe(REQ)

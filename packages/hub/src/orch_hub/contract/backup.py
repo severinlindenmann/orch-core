@@ -55,7 +55,7 @@ HEADER_FIELDS = frozenset(
 REQUIRED_FILES = ("hk_root.key", "hxk.key", "meta.json")
 #: Paths a backup never lists (design 4.2, Opus conditions 11 and 13). Rows of the stores that must not be copied
 #: (sessions, pending TOTP, pairing codes, limiter rows, switch tickets, push tokens) are removed from the copies, not by path.
-EXCLUDED_NAMES = frozenset({"setup-token", "route-queue.db"})
+EXCLUDED_NAMES = frozenset({"setup-token", "route-queue.db", "event-deliver.db"})
 EXCLUDED_DIRS = frozenset({"backups", "tmp", "logs", "state.new", "state.old"})
 EXCLUDED_SUFFIXES = (".log", ".tmp", "-wal", "-shm", "-journal", ".lock", ".pid")
 _SEGMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")

@@ -401,6 +401,7 @@ def list_cases() -> list[dict[str, Any]]:
         "setup-token",
         "route-queue.db",
         "route-queue.db-wal",
+        "event-deliver.db",
         "backups/hub-1.orchbak",
         "tmp/x",
         "logs/hub.log",

@@ -2714,7 +2714,7 @@ sorted neighbour: `keys`, `keys-x`, `keys/a` is refused) and no two paths are eq
 `size` ≤ 200 MiB and the sum ≤ 200 MiB (also the upload limit). `hk_root.key`, `hxk.key` and `meta.json` must be listed.
 The list contains every key file, `meta.json`, `op/<current>/`, `revoked/`, `tls.key`, `hub-settings.json` and a
 consistent copy (SQLite backup API) of every store, and **never**: `setup-token`; `route-queue.db` (and its `-wal`,
-`-shm`, `-journal`); anything under `backups/`, `tmp/`, `logs/`, `state.new/`, `state.old/`; `*.log`, `*.tmp`, `*.lock`,
+`-shm`, `-journal`); `event-deliver.db` (the event delivery queue; rebuilt, never restored; also with its sidecars); anything under `backups/`, `tmp/`, `logs/`, `state.new/`, `state.old/`; `*.log`, `*.tmp`, `*.lock`,
 `*.pid`. Inside the copied stores these rows are removed first: sessions, pending TOTP enrolments, pairing codes, limiter
 and failure rows, switch tickets, push tokens. The words are never in a backup. (Row removal is the writer's duty, tested
 in M4 S5; the path rules are checked by `file_list` vectors.)

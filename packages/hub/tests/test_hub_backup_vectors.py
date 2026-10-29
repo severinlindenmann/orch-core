@@ -28,7 +28,7 @@ REQUIRED = {
     "backup_dev_mismatch_at_dev_hub", "backup_other_hub_in_place", "backup_file_hash_mismatch",
     "backup_extra_file_not_in_header", "backup_symlink_entry", "tar_absolute_path", "tar_dotdot", "tar_symlink",
     "tar_hardlink", "tar_char_device", "tar_oversize_entry", "tar_extra_file", "files_excluded_setup_token",
-    "files_excluded_route_queue_db", "files_dir_of_another_with_sibling", "files_case_fold_duplicate", "files_missing_required_root_key", "floor_in_place_live_ahead",
+    "files_excluded_route_queue_db", "files_excluded_event_deliver_db", "files_dir_of_another_with_sibling", "files_case_fold_duplicate", "files_missing_required_root_key", "floor_in_place_live_ahead",
     "floor_fresh_server_unix_seconds_win", "floor_double_restore_same_backup", "floor_boundary_exact_max",
     "floor_boundary_one_over_in_place", "where_ok", "where_five_entries", "where_bad_addr_no_port",
     "where_unknown_kind", "where_name_61_long", "where_name_control_and_bidi_stripped",

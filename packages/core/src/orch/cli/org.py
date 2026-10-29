@@ -5,6 +5,7 @@
     orch org show skill|mcp NAME        a person: the full text, or the exact address, sign-in and secret name
     orch org accept skill|mcp NAME      a person: turn it on, for exactly what you were shown
     orch org decline skill|mcp NAME     a person: turn it off again
+    orch org tool SERVER TOOL on|off    a person: turn one tool of an accepted company server On or Off
 
 Everything starts Off. ``accept`` shows the item and asks on your terminal; the host accepts only the digest it showed,
 so a changed item needs a new accept. An agent can list and sync, never show, accept or decline. A company skill ranks
@@ -26,10 +27,11 @@ from orch.ops.human import review_prompt
 __all__ = ["main"]
 
 _USAGE = (
-    "usage: orch org {list | sync | show KIND NAME | accept KIND NAME | decline KIND NAME} [--json]"
+    "usage: orch org {list | sync | show KIND NAME | accept KIND NAME | decline KIND NAME | tool SERVER TOOL on|off}"
+    " [--json]"
     "  (KIND: skill | mcp)"
 )
-_ARGS = {"list": 0, "sync": 0, "show": 2, "accept": 2, "decline": 2}
+_ARGS = {"list": 0, "sync": 0, "show": 2, "accept": 2, "decline": 2, "tool": 3}
 _AGENT_OK = ("list", "sync")
 
 
@@ -98,7 +100,9 @@ def main(
         if os.name == "nt":
             raise PubError("unsupported.platform", "orch org needs POSIX filesystem semantics")
         a = _parser().parse_intermixed_args(argv)
-        if len(a.rest) != _ARGS[a.cmd] or (a.rest and a.rest[0] not in ("skill", "mcp")):
+        if len(a.rest) != _ARGS[a.cmd] or (a.cmd != "tool" and a.rest and a.rest[0] not in ("skill", "mcp")):
+            raise PubError("invalid.input", _USAGE, 2)
+        if a.cmd == "tool" and a.rest[2] not in ("on", "off"):
             raise PubError("invalid.input", _USAGE, 2)
         if (env.get("ORCH_GRANT") or env.get("ORCH_SESSION")) and a.cmd not in _AGENT_OK:
             raise PubError("op.not_allowed", "a person does this at their own terminal; an agent lists and syncs")
@@ -113,6 +117,23 @@ def main(
         elif a.cmd == "show":
             data = _call(target, "org.show", {"kind": a.rest[0], "name": a.rest[1]}, env)
             emit(data, _describe(data) + f"status: {data['status']}")
+        elif a.cmd == "tool":
+            server, tool, want = a.rest
+            args: dict[str, Any] = {"server": server, "tool": tool, "on": want == "on"}
+            if want == "on":  # always on the owner's terminal, for exactly the pin that was shown
+                shown = _call(target, "org.show", {"kind": "mcp", "name": server}, env)
+                row = next((t for t in shown.get("tools", []) if t["name"] == tool), None)
+                if row is None:
+                    raise PubError("not_found", f"no tool {tool!r} seen on {server!r} yet: let an agent list its tools")
+                text = (
+                    f"Tool {tool!r} of company server {server!r}\n  description: {row['description'] or '(none)'}\n"
+                    "  Its results are untrusted text from your company's server.\n"
+                )
+                if not review_prompt(text + "Let agents of this workspace use this tool?"):
+                    raise PubError("sign.cancelled", "not turned on; nothing changed", 3)
+                args["pin"] = row["pin"]
+            data = _call(target, "org.tool", args, env)
+            emit(data, f"ok {server} {tool} is {want.capitalize()}")
         elif a.cmd == "decline":
             data = _call(target, "org.decline", {"kind": a.rest[0], "name": a.rest[1]}, env)
             emit(data, f"ok {a.rest[1]} is Off")

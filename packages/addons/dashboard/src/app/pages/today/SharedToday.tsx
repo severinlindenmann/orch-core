@@ -20,7 +20,7 @@ export function SharedToday({ ws }: { ws: string | undefined }) {
               <span className="block truncate text-[13px]"><Raw>{t.title}</Raw></span>
               <span className="block text-[12px] text-text-faint"><Raw>{t.shared_by}</Raw> · {t.status.replaceAll('_', ' ')}</span>
             </span>
-            <Link to="/tickets" className="shrink-0 rounded border border-border px-2 py-0.5 text-[12px] hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring">Read</Link>
+            <Link to="/tickets" search={{ shared: `${t.workspace_id}:${t.key}` }} className="shrink-0 rounded border border-border px-2 py-0.5 text-[12px] hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring">Read</Link>
           </li>
         ))}
       </ul>

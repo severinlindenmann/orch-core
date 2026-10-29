@@ -226,10 +226,12 @@ def verify_org_secrets(
     pinned: Mapping[str, Any] | None,
     revoked_op_certs: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
-    """The same rules for ``hub.org_secrets`` (own label and kind). ``pinned`` is the held ``o`` (as for the
-    other bundles) or ``{"version", "digest"}`` of the bundle the host last verified (see :func:`secrets_digest`; the bundle itself is not kept, only the wraps a served
-    server uses). A lower version is ``stale_bundle``; the same version with other bytes is ``bundle_conflict``. A
-    repeated secret name or id is ``malformed`` for the whole bundle."""
+    """The same rules for ``hub.org_secrets`` (own label and kind).
+
+    ``pinned`` is the held ``o`` (as for the other bundles) or ``{"version", "digest"}`` of the bundle the host last
+    verified (see :func:`secrets_digest`; the host keeps only the wraps a served server uses, not the bundle). A lower
+    version is ``stale_bundle``; the same version with other bytes is ``bundle_conflict``. A repeated secret name or id
+    is ``malformed`` for the whole bundle."""
     o = _verify("hub.org_secrets", signed, held, workspace_id, dev_mode, None, revoked_op_certs)
     if pinned is not None:
         same = wire.cj(o) == wire.cj(dict(pinned)) if "secrets" in pinned else secrets_digest(o) == pinned["digest"]

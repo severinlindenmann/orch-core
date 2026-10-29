@@ -3,9 +3,10 @@
 import os
 import sqlite3
 
-SCHEMA_VERSION = 3  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
+SCHEMA_VERSION = 4  # 2: workspaces.delegation_json replaces card_seq/card_json (design 2.6b)
 # 3: hub path (orch-core #898): hub_bindings, hub_cards, hub_op_revoked, hub_revoked_devices (additive only)
-MIGRATABLE_FROM = 2
+# 4: apps (M4 #1357 S3): apps, app_versions, app_files, app_views, app_visits (additive only)
+MIGRATABLE_FROM = (2, 3)
 
 
 class SchemaError(Exception):
@@ -95,6 +96,56 @@ CREATE TABLE IF NOT EXISTS views(
   share_id TEXT NOT NULL REFERENCES shares(id),
   until_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS apps(
+  id TEXT PRIMARY KEY,
+  owner_ws TEXT NOT NULL,  -- no FK: tombstones outlive an unbind
+  slug TEXT NOT NULL UNIQUE,  -- a slug is never freed, a removed app keeps its row
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('page','app','form')),
+  access TEXT NOT NULL CHECK(access IN ('public','password','company','group')),
+  audience TEXT,
+  pw TEXT,  -- the password record (JSON) of the live version, never a plain password
+  state TEXT NOT NULL CHECK(state IN ('staged','running','stopped','removed')),
+  live_version INTEGER,
+  created_ms INTEGER NOT NULL,
+  updated_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS apps_owner ON apps(owner_ws);
+CREATE TABLE IF NOT EXISTS app_versions(
+  app_id TEXT NOT NULL REFERENCES apps(id),
+  version INTEGER NOT NULL,
+  meta_json TEXT NOT NULL,
+  meta_hash TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'staged' CHECK(state IN ('staged','committed')),
+  approved_by_person TEXT,
+  approved_ms INTEGER,
+  created_ms INTEGER NOT NULL,
+  committed_ms INTEGER,
+  PRIMARY KEY(app_id, version)
+);
+CREATE TABLE IF NOT EXISTS app_files(
+  app_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  path TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  present INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(app_id, version, path),
+  FOREIGN KEY(app_id, version) REFERENCES app_versions(app_id, version)
+);
+CREATE TABLE IF NOT EXISTS app_views(
+  view_id TEXT PRIMARY KEY,
+  app_id TEXT NOT NULL REFERENCES apps(id),
+  until_ms INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS app_views_app ON app_views(app_id);
+CREATE TABLE IF NOT EXISTS app_visits(
+  app_id TEXT NOT NULL REFERENCES apps(id),
+  day INTEGER NOT NULL,
+  n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(app_id, day)
+);
 """
 
 
@@ -134,8 +185,8 @@ def init(path):
     try:
         have = conn.execute("PRAGMA user_version").fetchone()[0]
         has_tables = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table'").fetchone()
-        # version 2 -> 3 only adds tables (CREATE IF NOT EXISTS below), so it migrates in place
-        if (has_tables and have not in (SCHEMA_VERSION, MIGRATABLE_FROM)) or have > SCHEMA_VERSION:
+        # versions 2 and 3 -> 4 only add tables (CREATE IF NOT EXISTS below), so it migrates in place
+        if (has_tables and have not in (SCHEMA_VERSION, *MIGRATABLE_FROM)) or have > SCHEMA_VERSION:
             raise SchemaError(
                 "this data dir was made by an older orch-publish (dev only, no upgrade path): "
                 "stop the server and delete the data dir, then start again"

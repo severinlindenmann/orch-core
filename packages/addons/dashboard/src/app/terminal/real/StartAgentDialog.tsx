@@ -15,7 +15,7 @@ import {
   TERMINAL_ONLY, LOGIN_NOTICE, worktreeLine, type AgentArgs, type AgentMode, type AgentPreview, type Harness, type Runner,
 } from '@/api/agents'
 import { clickReady, DEPOSIT_RISK, depositViewOk, type ClickAction } from '@/api/click'
-import { newIdem, type Run } from '@/api/runs'
+import { newIdem, runsApi, type Run } from '@/api/runs'
 import { ApiError } from '@/api/types'
 import { ClickSignPanel } from '@/components/sign/ClickSignPanel'
 import { storyOf } from '@/components/sign/story'
@@ -75,6 +75,8 @@ export interface StartInitial {
   note?: string
   /** The idem of an earlier Start whose answer was lost: a retry then returns that run, never a second one. */
   idem?: string
+  /** The id of an idle run to stop right before the start ("Ask the agent to finish"): nothing is stopped if the person cancels. */
+  stopFirst?: string
 }
 
 const lastKey = (ws: string) => `orch.dashboard.start-agent.harness.${ws}`
@@ -124,6 +126,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
   const [anchor] = useState<HTMLElement | null>(() => lastTrigger())
   // One idem per opening, kept for every retry of Start (the run id is `r_` + its ULID).
   const [idem] = useState(() => initial?.idem ?? newIdem())
+  const stoppedRef = useRef(false)
   const [harness, setHarness] = useState<Harness>(initial?.harness ?? lastHarness(ws))
   const [mode, setMode] = useState<AgentMode>(initial?.mode ?? 'work')
   const [model, setModel] = useState(initial?.model ?? '')
@@ -226,6 +229,10 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
     setError('')
     setNote('')
     try {
+      if (initial?.stopFirst && !stoppedRef.current) {
+        await runsApi.stop(ws, initial.stopFirst)
+        stoppedRef.current = true
+      }
       await consent.grant() // never rejects; a refusal only leaves Claude Code's own question
       const { run } = await agentsApi.start(ws, at.args, at.data.spec, idem)
       if (ackRef.current.shownFull.length) void ackRef.current.acknowledge(ackRef.current.shownFull) // starting with the full notice on screen counts as reading it

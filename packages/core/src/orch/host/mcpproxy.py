@@ -15,6 +15,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 import threading
 import time
 import urllib.parse
@@ -120,23 +121,58 @@ def _dumps(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
 
 
-def _secret_forms(value: str) -> list[str]:
+SCRUB_MIN = 8  # a form shorter than this is never redacted (it would mangle ordinary output)
+_PERCENT = re.compile(r"%([0-9A-Fa-f]{2})")
+
+
+def _b64_middles(raw: bytes) -> set[str]:
+    """The base64 text of ``raw`` at all three byte alignments, cut to the part that does not depend on what comes
+    before or after it (the whole characters inside the value)."""
+    out: set[str] = set()
+    for enc in (base64.b64encode, base64.urlsafe_b64encode):
+        for k in range(3):
+            text = enc(b"\0" * k + raw).decode().rstrip("=")
+            start = -(-4 * k // 3)
+            end = 4 * (k + len(raw)) // 3
+            out.add(text[start:end])
+    return out
+
+
+def _secret_forms(value: str) -> re.Pattern | None:
+    """One pattern for every way a secret can show up: plain, percent-encoded (any hex case), hex, base64."""
     raw = value.encode()
-    forms = {value, urllib.parse.quote(value, safe="")}
+    plain = {value, raw.hex(), raw.hex().upper(), *_b64_middles(raw)}
     for enc in (base64.b64encode, base64.urlsafe_b64encode):
         padded = enc(raw).decode()
-        forms.add(padded)
-        forms.add(padded.rstrip("="))
-    forms.discard("")
-    return sorted(forms, key=len, reverse=True)
+        plain.update((padded, padded.rstrip("=")))
+    percent = {
+        urllib.parse.quote(value),
+        urllib.parse.quote(value, safe=""),
+        urllib.parse.quote_plus(value),
+    }
+    parts = []
+    for form in sorted((f for f in plain if len(f) >= SCRUB_MIN), key=len, reverse=True):
+        parts.append(re.escape(form))
+    for form in sorted((f for f in percent if len(f) >= SCRUB_MIN and "%" in f), key=len, reverse=True):
+        pieces = _PERCENT.split(form)  # literal, hex, literal, hex, ...
+        parts.append(
+            "".join(
+                re.escape(x) if i % 2 == 0 else "%" + "".join(f"[{c.lower()}{c.upper()}]" for c in x)
+                for i, x in enumerate(pieces)
+            )
+        )
+    for form in percent:  # no escape in it: the same as a plain form
+        if "%" not in form and len(form) >= SCRUB_MIN:
+            parts.append(re.escape(form))
+    return re.compile("|".join(parts)) if parts else None
 
 
-def _scrub(obj: Any, forms: list[str]) -> Any:
+def _scrub(obj: Any, forms: re.Pattern | None) -> Any:
+    if forms is None:
+        return obj
+
     def fix(text: str) -> str:
-        for form in forms:
-            if form in text:
-                text = text.replace(form, "[redacted]")
-        return text
+        return forms.sub("[redacted]", text)
 
     if type(obj) is str:
         return fix(obj)

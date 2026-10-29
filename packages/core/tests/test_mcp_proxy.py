@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import socket
 import threading
 import time
@@ -965,3 +966,48 @@ def test_up_refuses_a_dropped_capability(env):
     with pytest.raises(mcpproxy._Refuse):
         env.proxy._up(obj, "crm", env.records["w1"][0], None)
     assert not env.ups
+
+
+# -- review fix 2: every encoding of a secret is scrubbed ---------------------------------------------------------
+
+VAL = "pässw/ord+x y=1&z~k"
+
+
+def _hex_case(text: str, fn) -> str:
+    return re.sub(r"%[0-9A-Fa-f]{2}", lambda m: fn(m.group(0)), text)
+
+
+def test_scrub_percent_forms_in_any_hex_case():
+    forms = mcpproxy._secret_forms(VAL)
+    for base in (
+        urllib.parse.quote(VAL),
+        urllib.parse.quote(VAL, safe=""),
+        urllib.parse.quote_plus(VAL),
+    ):
+        for text in (base, _hex_case(base, str.lower), _hex_case(base, str.upper)):
+            assert mcpproxy._scrub(f"a {text} b", forms) == "a [redacted] b", text
+
+
+def test_scrub_hex_forms():
+    forms = mcpproxy._secret_forms(VAL)
+    h = VAL.encode().hex()
+    assert mcpproxy._scrub(f"x{h}y", forms) == "x[redacted]y"
+    assert mcpproxy._scrub(f"x{h.upper()}y", forms) == "x[redacted]y"
+
+
+@pytest.mark.parametrize("alignment", range(6))
+@pytest.mark.parametrize("enc", [base64.b64encode, base64.urlsafe_b64encode])
+def test_scrub_base64_at_every_alignment(alignment, enc):
+    forms = mcpproxy._secret_forms(VAL)
+    whole = enc(bytes(range(97, 97 + alignment)) + VAL.encode() + b"\xff\xfe\x01").decode()
+    out = mcpproxy._scrub(whole, forms)
+    assert "[redacted]" in out
+    assert out.count("[redacted]") == 1
+
+
+def test_scrub_never_redacts_short_forms():
+    forms = mcpproxy._secret_forms("abc")
+    assert forms is None
+    assert mcpproxy._scrub("abc abc", forms) == "abc abc"
+    forms = mcpproxy._secret_forms("abcdefgh")
+    assert mcpproxy._scrub("ab abcdefgh", forms) == "ab [redacted]"

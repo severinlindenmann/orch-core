@@ -46,7 +46,7 @@ export function ChangeDialog({ plan, onClose }: { plan: StartPlan; onClose: () =
  * Under the review, outside the signed content: the start is NOT part of what the person signs. It uses their agent
  * access and happens in the dashboard once the ticket exists.
  */
-export function NotSignedBlock({ plan, notice = false }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** Kept for callers: the steps above now say what is and is not approved. */ coreSaysSo?: boolean; /** The "runs as you" notice is not read yet: shown in full here, as the Start agent dialog would, and signing counts as reading it. */ notice?: boolean }) {
+export function NotSignedBlock({ plan, notice = false }: { plan: Pick<StartPlan, 'shown' | 'choices' | 'choice'>; /** Kept for callers: the steps above now say what is and is not approved. */ coreSaysSo?: boolean; /** The "runs as you" notice is not read yet: its short version (EXECUTION_SHORT) is shown here, and signing counts as reading it. */ notice?: boolean }) {
   const { choice } = plan
   return (
     <>

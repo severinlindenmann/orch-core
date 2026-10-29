@@ -143,7 +143,7 @@ describe('the real click path', () => {
       const notice = within(dialog).getByTestId('not-signed-notice') // the review shows the notice
       expect(within(notice).getByTestId('not-signed-execution-line')).toHaveTextContent(EXECUTION_SHORT)
       expect(notice).toHaveTextContent('Signing means you know this.')
-      expect(EXECUTION_SHORT).toMatch(/as you/); expect(EXECUTION_SHORT).toMatch(/this computer/); expect(EXECUTION_SHORT).toMatch(/run commands and open your files/)
+      expect(EXECUTION_SHORT).toMatch(/as you/); expect(EXECUTION_SHORT).toMatch(/this computer/); expect(EXECUTION_SHORT).toMatch(/run commands and open your files and keys/)
     })
     expect(notices).toHaveBeenCalled()
     await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)

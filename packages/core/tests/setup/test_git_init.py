@@ -55,7 +55,9 @@ def test_the_review_names_git_init_and_the_repo_it_declares(tmp):
     r = reveal(f)
     post(f, "secrets/confirm", {"words": words_for(r)})
     rv = post(f, "review")[1]
-    assert any(x["id"] == "git" and "git init" in x["text"] and "none of your files" in x["text"] for x in rv["flags"])
+    git = next(x for x in rv["flags"] if x["id"] == "git")
+    assert "git init" not in git["text"] and ".orch" not in git["text"] and "Your files stay as they are" in git["text"]
+    assert "git init" in git["detail"] and ".orch-work/" in git["detail"] and "None of your files" in git["detail"]
     settings = next(i for i in rv["items"] if i["id"] == "settings")
     assert settings["type"] == "settings.changed" and settings["fields"]["set"]["repos"] == {
         "work": {"path": str(tmp.work)}

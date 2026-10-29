@@ -2,7 +2,7 @@ import { emptyState } from "./feel.js";
 // Connected workspaces and their availability.
 import { ago, chip, h, text } from "./ui.js";
 
-const nameOf = (end) => (end && end.name ? text(end.name) : "Another workspace");
+const nameOf = (end) => (end && end.name ? text(end.name) : end && end.owner_name ? text(end.owner_name + "'s workspace") : "Another workspace");
 
 const modeName = (w) => w.mode === "full" ? "Everything" : "Only what I choose";
 const personName = (p) => text(typeof p === "string" ? p : p?.name ?? p?.alias ?? p?.user_id ?? "unknown");
@@ -22,7 +22,7 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
   return [h("h2", { text: nameOf(w) }),
     h("dl", { class: "facts" },
       h("dt", { text: "Status" }), h("dd", {}, statusView(w, now)),
-      h("dt", { text: "Owner" }), h("dd", { text: personName(roles?.owner ?? owner) }),
+      h("dt", { text: "Owner" }), h("dd", { text: personName(roles?.owner ?? owner ?? w.owner_name) }),
       h("dt", { text: "Runs on" }), h("dd", {}, hostView(w)),
       h("dt", { text: "orch version" }), h("dd", {}, versionView(w, hub)),
       h("dt", { text: "Mode" }), h("dd", {}, chip(modeName(w)), small(w.mode === "full"
@@ -40,37 +40,67 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
     button("Open " + nameOf(w), () => actions.open?.(w), { class: "pri" })].filter(Boolean);
 }
 
-/** The suggestion is text only: the link is copied unchanged. */
-export function connectWorkspaceView(link, actions = {}) {
-  const suggestion = h("p", { class: "small muted", "aria-live": "polite" });
-  const choices = ["Only what I choose", "Everything"].map((mode) => button(mode, () => select(mode)));
-  function select(mode) {
-    suggestion.textContent = "Suggested: " + mode + ". The workspace owner confirms the mode with one click in Mission Control.";
-    choices.forEach((b) => b.setAttribute("aria-pressed", String(b.textContent === mode)));
-  }
-  select("Only what I choose");
+/** The link is copied unchanged; after Copy the page says what to do next. */
+export function connectWorkspaceView(link, actions = {}, { people = [], selected = null } = {}) {
+  const next = h("p", { class: "small muted", "aria-live": "polite" });
+  const NEXT = "Now open your workspace, go to Settings › Hub › Connect a hub, and paste.";
   const copy = button("Copy", async () => {
-    try { copy.textContent = await actions.copy?.(link.link) ? "Copied" : "Could not copy. Select the link to copy it."; }
-    catch { copy.textContent = "Could not copy. Select the link to copy it."; }
+    let ok = false;
+    try { ok = !!(await actions.copy?.(link.link)); } catch { ok = false; }
+    copy.textContent = ok ? "Copied ✓" : "Could not copy. Select the link to copy it.";
+    next.textContent = ok ? NEXT : "";
   });
-  const expires = new Date(link.expires_ms);
-  const time = String(expires.getHours()).padStart(2, "0") + ":" + String(expires.getMinutes()).padStart(2, "0");
+  const clock = (ms) => { const d = new Date(ms); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
+  const input = h("input", { class: "grow", readonly: true, value: link.link, "aria-label": "Connect link" });
+  const until = h("p", { text: "Works once, for 30 minutes (until " + clock(link.expires_ms) + ")" });
+  const problem = h("p", { role: "alert" });
+  // Only people the hub knows are offered, and the hub rejects anyone else (the workspace host never picks its owner).
+  const choices2 = people.filter((p) => p && typeof p.user_id === "string");
+  const who = choices2.length ? h("div", {},
+    h("label", { for: "ws-owner", text: "Whose workspace is this?" }),
+    h("select", { id: "ws-owner", onchange: async (e) => {
+      problem.textContent = "";
+      const select = e.target;
+      select.disabled = true;
+      try {
+        const next = await actions.connect?.(select.value);
+        if (next) { input.value = next.link; until.textContent = "Works once, for 30 minutes (until " + clock(next.expires_ms) + ")"; }
+      } catch { problem.textContent = "Could not create a link for this person. Please try again."; }
+      finally { select.disabled = false; }
+    } }, choices2.map((p) => h("option", { value: p.user_id, selected: p.user_id === selected ? true : null, text: text(p.name ?? "Unnamed") }))),
+    small("You open the hub from it as this person.")) : null;
   return h("section", { class: "card ws-connect", "aria-label": "Connect a workspace" },
     h("h2", { text: "Connect a workspace" }),
-    h("p", { text: "Open this link in the workspace’s Mission Control, under Settings > Hub > Connect." }),
-    h("div", { class: "row" }, h("input", { class: "grow", readonly: true, value: link.link, "aria-label": "Connect link" }), copy),
-    h("p", { text: "Works once, for 30 minutes (until " + time + ")" }),
-    h("div", { class: "ws-segment", role: "group", "aria-label": "Suggested mode" }, small("Suggested mode"), ...choices), suggestion);
+    who,
+    h("div", { class: "row" }, input, copy),
+    next, until, problem);
 }
 
-/** data: {workspaces, handoffs, admin: rows|null, hub, actions}. */
+/** Workspaces in `rows` whose id is not in `known` (a Set of ids). */
+export const newWorkspaces = (known, rows) => (rows ?? []).filter((w) => w.workspace_id && !known.has(w.workspace_id));
+
+/** The green message that replaces the used link box once a workspace has joined. */
+export function joinedBannerView(row, actions = {}) {
+  return h("div", { class: "banner ok ws-joined", role: "status", "data-joined": row.workspace_id },
+    h("div", { class: "row" },
+      h("div", { class: "grow" }, h("b", { text: "✓ " + nameOf(row) + " joined" }), small("It is online now. You can open it from here.")),
+      button("Open " + nameOf(row), () => actions.open?.(row), { class: "pri" })));
+}
+
+/** data: {workspaces, handoffs, admin: rows|null, hub, actions, joined?: rows that joined while the page was open}. */
 export function workspacesView(data, now = Date.now()) {
   const actions = data.actions ?? {};
   const connectBox = h("div");
+  const joined = data.joined ?? [];
+  for (const row of joined) connectBox.append(joinedBannerView(row, actions));
   const connect = button("Connect a workspace", async () => {
     connect.disabled = true;
     connectBox.textContent = "";
-    try { connectBox.append(connectWorkspaceView(await actions.connect(), actions)); }
+    try {
+      const people = (await actions.people?.()) ?? [];
+      const mine = people.find((x) => x.user_id === data.self)?.user_id ?? people[0]?.user_id ?? null;
+      connectBox.append(connectWorkspaceView(await actions.connect(mine), actions, { people, selected: mine }));
+    }
     catch { connectBox.append(h("p", { role: "alert", text: "Could not create a link. Please try again." })); }
     finally { connect.disabled = false; }
   }, { class: "pri" });
@@ -80,13 +110,14 @@ export function workspacesView(data, now = Date.now()) {
     h("thead", {}, h("tr", {}, ["Workspace", "Status", "orch version", "Runs on", "Actions"].map((label) => h("th", { scope: "col", text: label })))),
     h("tbody", {}, data.workspaces.map((w) => {
       const n = waitingFor.get(w.workspace_id) ?? 0;
-      return h("tr", { "data-workspace": w.workspace_id },
+      return h("tr", { "data-workspace": w.workspace_id, class: joined.some((j) => j.workspace_id === w.workspace_id) ? "row-new" : "" },
         h("td", {}, h("b", { text: nameOf(w) }), h("div", {}, chip(modeName(w), w.mode === "full" ? "full" : "sel")),
+          w.owner_name ? small("Owner: " + text(w.owner_name)) : null,
           w.mode === "selective" ? small("Personal: only its owner") : null,
           n ? small(n + (n === 1 ? " hand-off is" : " hand-offs are") + " waiting for this workspace") : null),
         h("td", {}, statusView(w, now)), h("td", {}, versionView(w, data.hub)), h("td", {}, hostView(w)),
         h("td", {}, h("div", { class: "ws-actions" }, button("Details", () => actions.details?.(w)), button("Open", () => actions.open?.(w)))));
-    })))) : emptyState("workspaces");
+    })))) : emptyState(data.admin != null ? "workspaces" : "workspaces-member");
   const older = data.workspaces.filter((w) => ["older", "unsupported"].includes(w.version_state));
   const left = (data.admin ?? []).filter((w) => w.status === "unbound");
   const leftView = data.admin != null ? h("details", {}, h("summary", { text: "Show left workspaces (" + left.length + ")" }),

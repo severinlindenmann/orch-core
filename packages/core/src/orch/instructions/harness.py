@@ -25,6 +25,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from .agents_md import render_agents_md
+from .hooks import STOP_HOOK_COMMAND
 from .skills import builtin_skills
 
 __all__ = [
@@ -97,6 +98,7 @@ def plugin_files() -> dict[str, str]:
                     "hooks": [{"type": "command", "command": "orch instructions hook waiting"}],
                 }
             ],
+            "Stop": [{"hooks": [{"type": "command", "command": STOP_HOOK_COMMAND}]}],
         }
     }
     files["hooks/hooks.json"] = json.dumps(hooks, indent=2) + "\n"

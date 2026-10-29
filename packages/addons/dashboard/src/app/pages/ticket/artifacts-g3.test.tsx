@@ -9,7 +9,7 @@ afterEach(() => vi.restoreAllMocks())
 async function artifactsTab(key = 'DEMO-0041') {
   const r = renderApp(`/ticket/${key}`)
   await screen.findByRole('heading', { level: 1 }, T)
-  await r.user.click(screen.getByRole('tab', { name: /Artifacts/ }))
+  await r.user.click(screen.getByRole('tab', { name: /Results/ }))
   await screen.findByRole('list', { name: 'Artifacts' }, T)
   return r
 }

@@ -43,6 +43,7 @@ class Registry:
             ("commit", "TEXT"),
             ("host", "TEXT"),
             ("name", "TEXT"),
+            ("own_name", "TEXT"),
             ("last_seen_ms", "INTEGER"),
             ("peer_addr", "TEXT"),
         ):
@@ -224,12 +225,13 @@ class Registry:
 
         with self.lock, self._db:
             self._db.execute(
-                'UPDATE workspace SET version=?, "commit"=?, host=?, name=? WHERE workspace_id=?',
+                'UPDATE workspace SET version=?, "commit"=?, host=?, name=?, own_name=? WHERE workspace_id=?',
                 (
                     render_text(body["version"])[:32],
                     render_text(body["commit"])[:40],
                     "" if self._mode_locked(ws) else render_text(body["host"])[:80],
                     "" if self._mode_locked(ws) else render_text(body["name"])[:80],
+                    render_text(body["name"])[:80],  # for the owner alone (own_name); never shown to anyone else
                     ws,
                 ),
             )
@@ -253,6 +255,13 @@ class Registry:
         it private, like ``host``). ``None`` when there is none: callers show a friendly fallback, never an id."""
         with self.lock:
             row = self._db.execute("SELECT name FROM workspace WHERE workspace_id=?", (ws,)).fetchone()
+        return row[0] if row and isinstance(row[0], str) and row[0] else None
+
+    def own_name(self, ws: str) -> str | None:
+        """The label the workspace reported, whatever its mode. Only the workspace's owner may be shown this (callers
+        check ``owner_alias``); hub admins and groups get ``display_name`` only."""
+        with self.lock:
+            row = self._db.execute("SELECT own_name FROM workspace WHERE workspace_id=?", (ws,)).fetchone()
         return row[0] if row and isinstance(row[0], str) and row[0] else None
 
     def status(self, ws: str) -> dict[str, Any]:

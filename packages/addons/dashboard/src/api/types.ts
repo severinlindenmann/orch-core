@@ -68,6 +68,9 @@ export interface Workspace {
   /** Gate policies. `code.applies` says where the code review gate is on (the other gates always apply). */
   gates: Record<GateName, { approvers: string; count: number; not?: string; applies?: CodeReviewApplies }>
   addons: Record<string, WorkspaceAddon>
+  /** A real host: what the server serves for this workspace (`/api/workspaces`). Kept on the data so a feature that turns on
+   *  (an add-on's page) changes it and the shell redraws its menu at once, not at the next unrelated render. */
+  features?: string[]
   counts: Partial<Record<Status, number>>
   needs_you: number
   /** Whether the owner turned the (simulated) relay link on: folded from relay.connected / relay.stopped. */

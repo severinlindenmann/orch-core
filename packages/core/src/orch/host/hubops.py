@@ -1005,6 +1005,7 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                 "mode": model["mode"],  # the link carries wk_seal only in full mode
             }
             service.__dict__.pop("_hub_profile_sent", None)
+            service.__dict__.pop("_hub_status_sent", None)  # a (re)connect: tell the hub again
             transport = _transport(service, model["hub_id"], link)
             try:
                 r = _connect(state, plan, model, service, wsk_pub, sign, now, save, transport, aliases)
@@ -1127,6 +1128,36 @@ def _stop_peers(service: Any) -> None:
     logsyncops.start(service)  # V3 C14: eligible (full, bound, sealed) -> a pass now; else the sender ends
 
 
+def _send_status(service: Any, state: Any, hub_link: Any) -> None:
+    """Tell the hub this workspace's version, host and name (display only). Kept per hub as the last body that was
+    DELIVERED: a failure is logged (no secret in it) and retried on the next link use, a changed name or mode is
+    sent again, and a (re)connect clears the mark (R14b: it was one attempt, errors swallowed)."""
+    import logging
+    import socket
+
+    import orch
+
+    body = {
+        "version": orch.__version__,
+        "commit": "",
+        "host": socket.gethostname()[:80] if state.mode == "full" else "",  # selective keeps its host name private
+        "name": _workspace_name(service) if state.mode == "full" else "",  # and its workspace name
+    }
+    sent = service.__dict__.setdefault("_hub_status_sent", {})
+    if type(sent) is not dict:
+        sent = service.__dict__["_hub_status_sent"] = {}
+    if sent.get(state.hub_id) == body:
+        return
+    try:
+        hub_link.call("status_put", body)
+    except Exception as exc:  # noqa: BLE001 - display only: never fails the op, but is not silent either
+        logging.getLogger("orch.host.hubops").warning(
+            "hub status not delivered (%s); will retry on the next hub link", getattr(exc, "code", type(exc).__name__)
+        )
+        return
+    sent[state.hub_id] = body
+
+
 def _snapshot_link(
     service: Any,
     state: Any,
@@ -1151,25 +1182,7 @@ def _snapshot_link(
         transport, hub_id=state.hub_id, workspace_id=service.workspace_id, hk_op_pub=hk_op, sign=sign,
         mode=state.mode, now_ms=lambda: int(service.clock() * 1000),
     )  # fmt: skip
-    try:
-        import socket
-
-        import orch
-
-        sent = service.__dict__.setdefault("_hub_status_sent", set())
-        if state.hub_id not in sent:
-            sent.add(state.hub_id)  # one attempt, including failures on older hubs/fake transports
-            hub_link.call(
-                "status_put",
-                {
-                    "version": orch.__version__,
-                    "commit": "",
-                    "host": socket.gethostname()[:80] if state.mode == "full" else "",
-                    "name": _workspace_name(service) if state.mode == "full" else "",  # selective keeps it private
-                },
-            )
-    except Exception:
-        pass
+    _send_status(service, state, hub_link)
     try:
         if send_profile:
             profile = _load_profile(service)
@@ -1178,8 +1191,12 @@ def _snapshot_link(
             if sent.get(state.hub_id) != digest:
                 hub_link.call("profile_put", profile)
                 service.__dict__.setdefault("_hub_profile_sent", {})[state.hub_id] = digest
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 - display only; logged, retried on the next link use
+        import logging
+
+        logging.getLogger("orch.host.hubops").warning(
+            "hub profile not delivered (%s)", getattr(exc, "code", type(exc).__name__)
+        )
     return hub_link, transport
 
 

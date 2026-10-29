@@ -130,7 +130,7 @@ describe('the shared list', () => {
     await waitFor(() => expect(list).toHaveTextContent('Export report as PDF'))
     expect(within(list).getAllByRole('button', { name: 'Stop sharing' })).toHaveLength(1)
     expect(document.body.textContent).not.toMatch(/Shared ticket 1|Stop sharing this ticket/)
-    expect(screen.getByText('Every ticket of type feature · 1 ticket')).toBeTruthy()
+    expect(screen.getByText('All tickets of type feature · 1 ticket')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: 'Stop sharing' })).toHaveLength(2) // one rule row + one ticket row
   })
 })
@@ -217,22 +217,25 @@ describe('stop sharing by a rule', () => {
     const add = vi.spyOn(api, 'addHubRule').mockResolvedValue({ synced: true, pending: null, put: 1 })
     vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
       ...NOW, new: 1, plan: 'N'.repeat(43),
-      review: { hub_id: 'ab12cd34ef56ab12', readers: { people: ['Ben'], teams: [], note: 'from the hub, not signed', info: null }, widened: [{ line: 'ticket DEMO-0001: Old', people_added: ['Ana'], teams_added: [], description_added: false }], new_count: 1, new_more: 0,
+      review: { hub_id: 'ab12cd34ef56ab12', readers: { people: ['Ben Test'], teams: [], note: 'from the hub, not signed', info: 'Team membership is managed by the hub admin.' }, widened: [{ line: 'ticket DEMO-0001: Old', people_added: ['Ana'], teams_added: [], description_added: false }], new_count: 1, new_more: 0,
         new_items: ['ticket DEMO-0050: Later public note'], leaves: ['the ticket title, status, labels and deadline'],
         later_edits: 'Later edits to these tickets are shared too, until you stop sharing them.' },
     }))
     mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
     await user.click(await screen.findByTestId('hub-rule-add'))
     await user.type(screen.getByTestId('hub-rule-value'), 'team')
+    await user.click(await screen.findByTestId('hub-rule-person-' + 'b'.repeat(32))) // Ben Test, from the hub
+    expect(screen.getByTestId('hub-rule-description')).toBeChecked() // the description goes along unless unticked
     await waitFor(() => expect(screen.getByTestId('hub-share-review')).toBeEnabled())
     await user.click(screen.getByTestId('hub-share-review'))
     const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
-    expect(within(dialog).getByTestId('hub-add-readers')).toHaveTextContent('Who will see it: Ben')
+    expect(within(dialog).getByTestId('hub-add-readers')).toHaveTextContent('Who will see it: Ben Test')
     const wide = within(dialog).getByTestId('hub-add-widened')
-    expect(wide).toHaveTextContent('Also shared more widely: one ticket.')
-    expect(wide.textContent).not.toContain('Ana')
-    await user.click(within(wide).getByTestId('hub-add-widened-info'))
-    expect(await screen.findByText(/DEMO-0001: Old/)).toBeTruthy()
+    expect(wide).toHaveTextContent('Reaches more now: Old')
+    expect(wide).toHaveTextContent('adds Ana')
+    expect(within(dialog).queryByText('Team membership is managed by the hub admin.')).toBeNull() // behind the i
+    await user.click(within(dialog).getByTestId('hub-add-readers-info'))
+    expect(await screen.findByText('Team membership is managed by the hub admin.')).toBeTruthy()
     await user.keyboard('{Escape}')
     expect(within(dialog).getByTestId('hub-add-new')).toHaveTextContent('1 new item leaves')
     expect(within(dialog).getByTestId('hub-add-later')).toHaveTextContent('Later edits to these tickets are shared too')
@@ -247,29 +250,9 @@ describe('stop sharing by a rule', () => {
     expect(add).not.toHaveBeenCalled()
     press.mockReturnValue(true)
     fireEvent.click(within(dialog).getByTestId('hub-add-go'))
-    await waitFor(() => expect(add).toHaveBeenCalledWith(WS.id, { kind: 'type', value: 'team' }, 'N'.repeat(43)))
+    await waitFor(() => expect(add).toHaveBeenCalledWith(WS.id, { kind: 'type', value: 'team', audience: { users: ['b'.repeat(32)], groups: [] }, description: true }, 'N'.repeat(43)))
     expect(await within(dialog).findByTestId('hub-add-done')).toHaveTextContent('Shared.')
     expect(within(dialog).getByTestId('hub-flow-cancel')).toHaveTextContent('Done')
-  })
-
-  it('the readers info line sits behind the small i', async () => {
-    const user = userEvent.setup()
-    vi.spyOn(api, 'getHubPreview').mockImplementation(async () => ({
-      ...NOW, new: 1, plan: 'N'.repeat(43),
-      review: { hub_id: 'ab12', new_count: 1, new_more: 0, new_items: [], leaves: [], later_edits: null,
-        readers: { people: ['Ben'], teams: ['sales'], note: 'from the hub, not signed', info: 'Team membership is managed by the hub admin.' } },
-    }))
-    mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
-    await user.click(await screen.findByTestId('hub-rule-add'))
-    await user.type(screen.getByTestId('hub-rule-value'), 'team')
-    await waitFor(() => expect(screen.getByTestId('hub-share-review')).toBeEnabled())
-    await user.click(screen.getByTestId('hub-share-review'))
-    const dialog = await screen.findByRole('dialog', { name: 'Review sharing change' })
-    const readers = await within(dialog).findByTestId('hub-add-readers')
-    expect(readers).toHaveTextContent('Ben, sales')
-    expect(readers.textContent).not.toContain('managed by the hub admin')
-    await user.click(within(readers).getByTestId('hub-add-readers-info'))
-    expect(await screen.findByText('Team membership is managed by the hub admin.')).toBeTruthy()
   })
 
   it('an older host without the review says so and offers no button', async () => {

@@ -598,6 +598,53 @@ def audience_get(c: OpContext) -> dict[str, Any]:
     return {"people": people, "teams": teams}
 
 
+def shared_get(c: OpContext) -> dict[str, Any]:
+    """P02: the shared TICKETS other workspaces of this hub have shared with the owner of the calling workspace (through
+    their owner-signed audience, never as a role). The viewer is always the calling workspace's owner alias; the answer
+    is built by ``ShareService.list_shared`` (the one read rule), skips the viewer's own workspace and names who shared
+    it. Display data for the host's Tickets list; it grants nothing. No argument."""
+    from ..contract.phase4 import strip_text
+
+    if c.shares is None or c.access is None:
+        raise Refused("unavailable")
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        viewer = _owner_user(c)
+        names = {u["user_id"]: u["name"] for u in c.access.users()}
+        sources = [
+            (ws, c.registry.owner_alias(ws))
+            for ws in sorted(c.registry.pins())
+            if ws != c.workspace_id and c.registry.mode(ws) == "selective"
+        ]
+    out: list[dict[str, Any]] = []
+    for ws, owner in sources:
+        if owner is None or owner == viewer:
+            continue
+        for it in c.shares.list_shared(viewer, ws):
+            o = it["item"]
+            if o["item_kind"] != "ticket":
+                continue
+            content = o["content"]
+            out.append(
+                {
+                    "workspace_id": ws,
+                    "item_id": o["item_id"],
+                    "shared_by": strip_text(names.get(owner, "someone on the hub"))[:80],
+                    "key": content["key"],
+                    "type": content["type"],
+                    "title": content["title"],
+                    "status": content["status"],
+                    "labels": content["labels"],
+                    "deadline": content["deadline"],
+                    "description": content.get("description"),
+                }
+            )
+            if len(out) >= 100:
+                return {"items": out}
+    return {"items": out}
+
+
 def status_put(c: OpContext) -> dict[str, Any]:
     if c.registry.pin(c.workspace_id) is None:
         raise Refused("unknown_workspace")
@@ -675,6 +722,7 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "profile_put": profile_put,
     "directory_get": directory_get,
     "audience_get": audience_get,
+    "shared_get": shared_get,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

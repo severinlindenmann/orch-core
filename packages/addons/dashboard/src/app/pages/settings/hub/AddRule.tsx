@@ -6,8 +6,8 @@ import { ApiError } from '@/api/types'
 import { trustedPress } from '@/components/sign/trustedPress'
 import { WorkspaceLine } from '@/components/sign/WorkspaceLine'
 import { Raw } from '@/components/sign/visible'
-import { InfoDrawer } from '@/components/InfoDrawer'
 import { Button } from '@/components/ui/button'
+import { InfoDrawer } from '@/components/InfoDrawer'
 import { caveat } from './shared'
 import type { HubWorkspace } from './StopSharing'
 
@@ -23,6 +23,12 @@ function refusal(e: unknown): string {
   if (code === 'host.busy') return 'Too many sharing changes. Wait a minute, then try again.'
   if (code === 'invalid.input') return 'What would be shared changed meanwhile. Close this and look again.'
   return 'Could not share. Try again.'
+}
+
+/** "Who will see it: Ben Test, team finance" / "Only you": names from the hub, not signed (the host words the list). */
+function who(r: { people: string[]; teams: string[] }): string {
+  const names = [...r.people, ...r.teams.map(t => 'team ' + t)]
+  return names.length ? 'Who will see it: ' + names.join(', ') : 'Only you can see it.'
 }
 
 export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; onDone?: () => void }) {
@@ -44,17 +50,14 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: stri
     ).finally(() => setBusy(false))
   }
   return <div className="space-y-2" data-testid="hub-add-review">
-    <p data-testid="hub-add-rule">Rule: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}</p>
+    <p data-testid="hub-add-rule">Tickets: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}{rule.value !== null && rule.description ? ' · with description' : ''}</p>
     <WorkspaceLine workspace={{ id: workspace.id, name: workspace.name, prefix: workspace.prefix }} many testId="hub-review-workspace" />
-    <p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>
-    {review.readers && (review.readers.people.length > 0 || review.readers.teams.length > 0) && <div className="flex items-center gap-1" data-testid="hub-add-readers">
-      <p>Who will see it: <Raw>{[...review.readers.people, ...review.readers.teams].join(', ')}</Raw></p>
-      {review.readers.info && <InfoDrawer testId="hub-add-readers-info"><p>{review.readers.info}</p></InfoDrawer>}
-    </div>}
-    {review.widened && review.widened.length > 0 && <div className="flex items-center gap-1" data-testid="hub-add-widened">
-      <p>Also shared more widely: {review.widened.length === 1 ? 'one ticket' : `${review.widened.length} tickets`}.</p>
-      <InfoDrawer testId="hub-add-widened-info">{review.widened.map((w, i) => <p key={i}><Raw>{w.line}</Raw>{' now with '}<Raw>{[...w.people_added, ...w.teams_added, ...(w.description_added ? ['its description'] : [])].join(', ')}</Raw></p>)}</InfoDrawer>
-    </div>}
+    <div className="flex items-center gap-1" data-testid="hub-add-readers">
+      <p><Raw>{who(review.readers)}</Raw></p>
+      <InfoDrawer testId="hub-add-readers-info"><p>{review.readers.note ?? 'From the hub, not signed.'}</p>{review.readers.info && <p>{review.readers.info}</p>}</InfoDrawer>
+    </div>
+    {review.widened.map((w, i) => <p key={i} data-testid="hub-add-widened" className="text-warning">Reaches more now: <Raw>{w.line.replace(/^ticket [^:]+:\s*/, '')}</Raw>{w.people_added.length + w.teams_added.length > 0 && <> · adds <Raw>{[...w.people_added, ...w.teams_added.map(t => 'team ' + t)].join(', ')}</Raw></>}{w.description_added && ' · now with its description'}</p>)}
+    <InfoDrawer testId="hub-add-details"><p data-testid="hub-add-hub">Hub: <Raw>{review.hub_id ?? 'unknown'}</Raw></p>{after.plan && <p>Plan: <Raw>{after.plan}</Raw></p>}</InfoDrawer>
     <p data-testid="hub-add-new">{review.new_count} new {review.new_count === 1 ? 'item leaves' : 'items leave'} this computer.</p>
     {review.leaves.map((t, i) => <p key={i} data-testid="hub-add-leaves">What leaves: <Raw>{t}</Raw></p>)}
     {review.later_edits && <p data-testid="hub-add-later">{review.later_edits}</p>}

@@ -58,7 +58,8 @@ and a write that commits consumes the blobs it used (also when the answer is a r
 them.
 
 **Redaction** (D-P2-10). Every result is passed through the request's :class:`~orch.host.auth.Redactor` before it is
-stored or sent, and so is every error.
+stored or sent, and so is every error. Only what leaves the host: the worker's internal answer of a
+:data:`TWO_PHASE_OPS` op (a plan the second phase verifies, signs or sends) is never redacted, its final answer is.
 
 **Visibility** (F6): :class:`Viewer` holds the hooks the later reads use (``ticket.query``, ``needs``,
 ``session.list``, ``diff``, ``artifact.get``, ``sub.open``: H6a, H6b, H3b1, H4a2). The registry reads already filter
@@ -148,6 +149,25 @@ NOT_SERVED: dict[str, str] = {
     "import.v1": "import v1 runs in direct mode before registration (D-P2-9)",
 }
 PERSON_READS = frozenset({"doctor", "instructions.sync"})
+#: the network ops: the worker returns a plan (``{"plan": ...}``, ``{"defer": ...}``) or an idem replay's answer, and
+#: :meth:`RegistryBackend._execute` runs the plan off the worker
+PLAN_OPS = frozenset(
+    HUB_NETWORK_OPS | SHARE_NETWORK_OPS | SPACE_NETWORK_OPS | ORG_NETWORK_OPS | PEER_NETWORK_OPS
+    | MARKET_NETWORK_OPS | PUBLISH_NETWORK_OPS | {"publish.list"}
+    | (set(WORKTREE_OPS) - {"worktree.list", "worktree.diff"})
+)  # fmt: skip
+
+
+def plain(value: Any) -> Any:
+    """A plan as the second phase gets it: a deep copy into plain dicts and lists (the worker's read-only views of
+    the store, ``mappingproxy`` and tuples, must not be read from another thread), every string and key unchanged."""
+    if isinstance(value, Mapping):
+        return {str(k): plain(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [plain(v) for v in value]
+    return value
+
+
 #: registry reads for P and G: the session-start hook runs in the agent's own session (column G, a verified grant), so
 #: it must not be a person-only read (run 6, #1067: ``instructions.hook is not allowed here`` at every agent start)
 #: Column N (an agent with no verified grant) is excluded on purpose: the hook shows the person, claim and unread
@@ -172,6 +192,14 @@ GIT_OPS: dict[str, int] = {"diff": 1}
 #: ``quick/1`` (H11f, #308): ``quick.list``, a registry read that the host answers itself in the three phases of a git
 #: read (:mod:`orch.host.quick`); columns P, G and N like ``ticket.query``
 QUICK_OPS: dict[str, int] = {"quick.list": 1}
+#: every op answered in two phases: the worker's answer is internal (a plan, a checked launch, a pending read) and the
+#: second phase on the event loop acts on it. Redaction is for what LEAVES the host (answers and errors): the worker's
+#: answer of these ops is never redacted, because a random base64url key, signature or payload in it can look like a
+#: token and would be rewritten before it is verified, signed or sent; the second phase's answer is redacted instead.
+TWO_PHASE_OPS = frozenset(
+    PLAN_OPS | set(GIT_OPS) | set(QUICK_OPS) | {"sub.open", "run.sub", "run.stop"} | set(TERM_OPS)
+    | set(TRANSCRIPT_OPS) | set(AGENT_OPS) | set(GRANT_OPS)
+)  # fmt: skip
 #: registry ops served in the ``wait`` phase (parked on the bus, answered ``host.restarting`` by a drain)
 WAIT_OPS = frozenset({"wait"})
 _TOPIC = r"^(?:workspace|tickets|needs|ticket:(?:(?:[A-Z][A-Z0-9]{0,15}-)?[0-9]{1,9}|[0-7][0-9A-HJKMNP-TV-Z]{25}))$"
@@ -496,58 +524,12 @@ class RegistryBackend:
                     "outcome.unknown", f"{op} did not finish in time; ask outcome.get with its idem"
                 ) from None
             raise HostError("timeout", f"{op} did not finish within {timeout_ms} ms") from None
-        if op in GIT_OPS or op in QUICK_OPS:
-            return await self._git_read(call, result)
-        if op == "sub.open":
-            return self._register(call, result)
-        if op == "run.sub":
-            return await self._register_runs(call, result)
-        if op in TERM_OPS or op == "run.stop":
-            return await terms.complete(call, result)
-        if op in TRANSCRIPT_OPS:  # focus/1: the runner reads the transcript
-            from . import transcripts
-
-            return await transcripts.complete(call, result)
-        if op in AGENT_OPS:  # H11c: the launch intent, the worktree, the spawn
-            from . import agents
-
-            return await agents.complete(call, result)
-        if op in GRANT_OPS:  # H11c: the runner grant table and the runner, on the event loop
-            from . import runnergrants
-
-            return await runnergrants.complete(call, result)
-        if op in WORKTREE_OPS and op not in ("worktree.list", "worktree.diff"):  # H11d: runner git, then registration
-            from . import worktrees
-
-            return await worktrees.execute(call, result)
-        if op in PUBLISH_NETWORK_OPS or op == "publish.list":  # P5: the server calls, off the workspace worker
-            from . import publishing
-
-            return await publishing.execute(call, result)
-        if op in HUB_NETWORK_OPS:  # V3 C2a: the hub link, off the workspace worker
-            from . import hubops
-
-            return await hubops.execute(call, result)
-        if op in SHARE_NETWORK_OPS:  # V3 C6: the hub link, off the workspace worker
-            from . import shareops
-
-            return await shareops.execute(call, result)
-        if op in MARKET_NETWORK_OPS:  # V3 G2: DNS and git, off the workspace worker, no lock held
-            from . import marketops
-
-            return await marketops.execute(call, result)
-        if op in SPACE_NETWORK_OPS:  # V3 C13: the hub link, off the workspace worker
-            from . import spaceops
-
-            return await spaceops.execute(call, result)
-        if op in ORG_NETWORK_OPS:  # M3 H-2: the hub link (org.sync), off the workspace worker
-            from . import orgops
-
-            return await orgops.execute(call, result)
-        if op in PEER_NETWORK_OPS:  # V3 C12: peer.send / peer.reply, the hub link off the worker
-            from . import peerops
-
-            return await peerops.execute(call, result)
+        if op in TWO_PHASE_OPS:  # the worker handed over its plan unredacted: redact what the second phase ANSWERS
+            redactor = Redactor((call.frame.get("auth") or {}).get("grant"), op)
+            try:
+                return redactor.obj(await self._second_phase(call, op, result))
+            except HostError as exc:
+                raise redactor.error(exc) from None
         if op == "sub.close":
             bus = call.service.bus
             closed = bus is not None and bus.close(call.session, call.frame["args"]["sub"])
@@ -688,6 +670,67 @@ class RegistryBackend:
         finally:
             bus.unwatch(watch)
 
+    async def _second_phase(self, call: Call, op: str, result: Any) -> dict[str, Any]:
+        """The second phase of a :data:`TWO_PHASE_OPS` op, on the worker's UNREDACTED answer (its plan)."""
+        if op in GIT_OPS or op in QUICK_OPS:
+            return await self._git_read(call, result)
+        if op == "sub.open":
+            return self._register(call, result)
+        if op == "run.sub":
+            return await self._register_runs(call, result)
+        if op in TERM_OPS or op == "run.stop":
+            return await terms.complete(call, result)
+        if op in TRANSCRIPT_OPS:  # focus/1: the runner reads the transcript
+            from . import transcripts
+
+            return await transcripts.complete(call, result)
+        if op in AGENT_OPS:  # H11c: the launch intent, the worktree, the spawn
+            from . import agents
+
+            return await agents.complete(call, result)
+        if op in GRANT_OPS:  # H11c: the runner grant table and the runner, on the event loop
+            from . import runnergrants
+
+            return await runnergrants.complete(call, result)
+        return await self._execute(call, op, result)
+
+    @staticmethod
+    async def _execute(call: Call, op: str, planned: dict[str, Any]) -> dict[str, Any]:
+        """The second phase of a :data:`PLAN_OPS` op, off the workspace worker, on the worker's UNREDACTED plan."""
+        if op in WORKTREE_OPS and op not in ("worktree.list", "worktree.diff"):  # H11d: runner git, then registration
+            from . import worktrees
+
+            return await worktrees.execute(call, planned)
+        if op in PUBLISH_NETWORK_OPS or op == "publish.list":  # P5: the server calls, off the workspace worker
+            from . import publishing
+
+            return await publishing.execute(call, planned)
+        if op in HUB_NETWORK_OPS:  # V3 C2a: the hub link, off the workspace worker
+            from . import hubops
+
+            return await hubops.execute(call, planned)
+        if op in SHARE_NETWORK_OPS:  # V3 C6: the hub link, off the workspace worker
+            from . import shareops
+
+            return await shareops.execute(call, planned)
+        if op in MARKET_NETWORK_OPS:  # V3 G2: DNS and git, off the workspace worker, no lock held
+            from . import marketops
+
+            return await marketops.execute(call, planned)
+        if op in SPACE_NETWORK_OPS:  # V3 C13: the hub link, off the workspace worker
+            from . import spaceops
+
+            return await spaceops.execute(call, planned)
+        if op in ORG_NETWORK_OPS:  # M3 H-2: the hub link (org.sync), off the workspace worker
+            from . import orgops
+
+            return await orgops.execute(call, planned)
+        if op in PEER_NETWORK_OPS:  # V3 C12: peer.send / peer.reply, the hub link off the worker
+            from . import peerops
+
+            return await peerops.execute(call, planned)
+        raise AssertionError(f"{op} has no second phase")  # pragma: no cover - PLAN_OPS lists only the above
+
     # -- on the worker thread
     def serve(self, call: Call, step: Any = None) -> dict[str, Any]:
         from orch.ops.commands.wait import Parked
@@ -774,6 +817,8 @@ class RegistryBackend:
                 result = self.human.serve(call, redactor)
             else:
                 result = self._registry(call, redactor, step)
+            if op in TWO_PHASE_OPS:
+                return plain(result)  # internal: run() redacts the second phase's answer, never the data it acts on
             return redactor.obj(result)
         except HostError as exc:
             raise redactor.error(exc) from None

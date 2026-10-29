@@ -1,6 +1,8 @@
 // The Published page (M4 #1357, S1 #1452): the company's shared links and apps, read only. The rows come from orch-publish
 // through the hub (GET /admin/published); this page never shows a link address, a token or a password. Every piece of text a
-// workspace wrote goes in with textContent. Revoke, extend and the app actions arrive with the next slices (no dead buttons).
+// workspace wrote goes in with textContent. The hub can only NARROW (S2, #1453): "Revoke link" and "Stop app", one click, no
+// dialog. Anything that widens (extend, add a password, start, change who can open it) is shown as words naming the
+// workspace ("Approve in Product"), never as a hub button.
 import { emptyState, loading } from "../feel.js";
 import { h, text } from "../ui.js";
 
@@ -21,32 +23,41 @@ const ACCESS = { public: "Public", password: "Password", company: "Company only"
 const KIND = { page: "Page", app: "Web app", form: "Form" };
 const live = (r) => r.state === "live" || r.state === "running";
 
-function linksTable(links, now) {
+const approveIn = (r) => h("div", { class: "small muted", "data-approve": r.id, text: "Extend or add a password: approve in " + text(r.workspace) });
+
+function linksTable(links, now, act) {
   const rows = [...links].sort((a, b) => Number(live(b)) - Number(live(a)));
   return h("div", { class: "card" }, h("table", { class: "grid" },
-    h("thead", {}, h("tr", {}, ["What", "From", "Until", "Opened"].map((c) => h("th", { text: c })))),
+    h("thead", {}, h("tr", {}, ["What", "From", "Until", "Opened", ""].map((c) => h("th", { text: c })))),
     h("tbody", {}, rows.map((r) => h("tr", { "data-link": r.id, class: live(r) ? "" : "muted" },
       h("td", {}, h("b", { text: text(r.label) }), " ", r.has_password ? tag("password") : null,
         h("div", { class: "small muted", text: "by " + who(r) })),
       h("td", {}, text(r.workspace)),
       h("td", { class: "small" }, r.state === "revoked" ? tag("revoked") : r.state === "expired" ? tag("expired") : until(r.expires_ms, now)),
-      h("td", { class: "small", text: r.views + (r.views === 1 ? " time" : " times") }))))));
+      h("td", { class: "small", text: r.views + (r.views === 1 ? " time" : " times") }),
+      h("td", {}, r.state === "live" && act ? [
+        h("button", { type: "button", class: "danger", "data-revoke": r.id, text: "Revoke link", onclick: () => act("links/" + r.id + "/revoke", "Link revoked. People who already downloaded the files keep their copy.") }),
+        approveIn(r)] : null))))));
 }
 
-function appsTable(apps) {
+function appsTable(apps, act) {
   const rows = [...apps].sort((a, b) => Number(live(b)) - Number(live(a)));
   return h("div", { class: "card" }, h("table", { class: "grid" },
-    h("thead", {}, h("tr", {}, ["App", "From", "Who can open it", "Version", "Visits"].map((c) => h("th", { text: c })))),
+    h("thead", {}, h("tr", {}, ["App", "From", "Who can open it", "Version", "Visits", ""].map((c) => h("th", { text: c })))),
     h("tbody", {}, rows.map((r) => h("tr", { "data-app": r.id, class: live(r) ? "" : "muted" },
       h("td", {}, h("b", { text: text(r.app_name) }), " ", tag(KIND[r.kind] ?? "App"),
         h("div", { class: "small " + (r.state === "running" ? "" : "muted"), text: r.state === "running" ? "running" : r.state === "stopped" ? "stopped" : "removed" })),
       h("td", {}, text(r.workspace), h("div", { class: "small muted", text: "by " + who(r) })),
       h("td", {}, tag(ACCESS[r.access] ?? "Public", r.access === "public" ? "warn" : "")),
       h("td", { class: "small", text: "v" + r.version }),
-      h("td", { class: "small", text: r.visits_30d + " (30 days)" }))))));
+      h("td", { class: "small", text: r.visits_30d + " (30 days)" }),
+      h("td", {}, r.state === "running" && act ? [
+        h("button", { type: "button", class: "danger", "data-stop": r.id, text: "Stop app", onclick: () => act("apps/" + r.id + "/stop", "App stopped. People who already opened it keep what they saved.") }),
+        h("div", { class: "small muted", "data-approve": r.id, text: "Start again or change who can open it: approve in " + text(r.workspace) })] : null))))));
 }
 
-export function publishedView(data, { now = Date.now(), tab } = {}) {
+/** `act(path, doneWords)`: POST /admin/published/<path>; absent in a read-only view (the buttons are then not drawn). */
+export function publishedView(data, { now = Date.now(), tab, act } = {}) {
   const links = data.links ?? [], apps = data.apps ?? [], hidden = data.hidden ?? [];
   let current = tab ?? (apps.length ? "apps" : "links");
   const body = h("div", { class: "published-body" });
@@ -57,7 +68,7 @@ export function publishedView(data, { now = Date.now(), tab } = {}) {
         h("button", { type: "button", role: "tab", "data-pubtab": id, "aria-selected": String(current === id), class: current === id ? "active" : "", text: label, onclick: () => { current = id; draw(); } })));
     const list = current === "apps" ? apps : links;
     body.replaceChildren(list.length
-      ? (current === "apps" ? appsTable(apps) : linksTable(links, now))
+      ? (current === "apps" ? appsTable(apps, act) : linksTable(links, now, act))
       : emptyState(current === "apps" ? "published-apps" : "published-links"));
   };
   draw();
@@ -80,7 +91,13 @@ export async function publishedPage(d) {
     const r = await d.api("GET", "/admin/published");
     if (r.status === 403 && r.body.error === "reauth_required") return d.reauthView();
     if (r.status !== 200) return d.shell("published", h("h1", { text: "Published" }), h("p", { role: "alert", text: "Cannot read what is published. " + d.say(r.body.error) }), h("button", { type: "button", text: "Try again", onclick: () => publishedPage(d) }));
-    d.shell("published", d.state.notice, publishedView(r.body));
+    // Revoke / Stop: one click, then the list is read again and a notice says what happened
+    const act = async (path, done) => {
+      const x = await d.api("POST", "/admin/published/" + path);
+      d.state.notice = x.status === 200 ? d.banner("ok", x.body.result === "unchanged" ? "Already ended" : done, null) : d.banner("bad", "Not changed", d.say(x.body.error ?? "unavailable"));
+      await publishedPage(d);
+    };
+    d.shell("published", d.state.notice, publishedView(r.body, { act }));
     d.state.notice = null;
   } finally { finish(); }
 }

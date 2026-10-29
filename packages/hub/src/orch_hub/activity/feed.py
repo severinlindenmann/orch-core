@@ -40,6 +40,8 @@ WORDS = {
     "addon.request_approved": "allowed an add-on for a workspace",
     "addon.request_refused": "turned down an add-on request",
     "hub.settings.changed": "changed the hub's name or addresses",
+    "link.revoked": "revoked a shared link",
+    "app.stopped": "stopped an app",
     "hub.backup.key_set": "set up the hub backup key",
     "hub.backup.key_confirmed": "confirmed the new hub backup words",
     "hub.backup.made": "made a hub backup",

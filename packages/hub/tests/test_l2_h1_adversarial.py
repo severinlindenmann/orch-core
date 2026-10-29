@@ -43,6 +43,8 @@ def test_a_pairing_token_reaches_nothing_beyond_pair_bind_sign_out(w):  # noqa: 
             "change_id",
             "name",
             "space_id",
+            "share_id",
+            "app_id",
         ):
             path = path.replace("{" + k + "}", cid if k == "channel_id" else "ab" * 16)
         s, o, _ = w.call(rt.method, path, {} if rt.method != "GET" else None, token=tok)

@@ -44,6 +44,7 @@ def offline(monkeypatch):
 @pytest.mark.parametrize(
     "argv",
     [["share", "ps_" + "0" * 32, "--yes"], ["send", "ps_" + "0" * 32], ["revoke", "0" * 32], ["register"],
+     ["extend", "0" * 32, "--days", "3"], ["password", "0" * 32],
      ["setup", "--server", SERVER, "--share", SHARE]],
 )  # fmt: skip
 def test_an_agent_can_not_share_send_revoke_register_or_set_up(offline, argv):
@@ -59,7 +60,9 @@ def test_an_agent_refusal_in_json(offline):
 @pytest.mark.parametrize(
     "argv",
     [[], ["bogus"], ["prepare"], ["prepare", "TST-0001"], ["share"], ["share", "a", "b"], ["revoke"], ["discard"],
-     ["setup"], ["setup", "--server", SERVER], ["list", "a", "b"], ["prepare", "TST-0001", "a.md", "--days", "x"]],
+     ["setup"], ["setup", "--server", SERVER], ["list", "a", "b"], ["extend"], ["extend", "a" * 32],
+     ["extend", "a" * 32, "--days", "0"], ["extend", "a" * 32, "--days", "31"], ["password"], ["password", "a", "b"],
+     ["prepare", "TST-0001", "a.md", "--days", "x"]],
 )  # fmt: skip
 def test_a_malformed_command_prints_the_usage_and_touches_nothing(offline, argv):
     code, out = run(argv, {})
@@ -115,6 +118,10 @@ class Rec:
         if op == "publish.send":
             return {"share_id": "a" * 32, "ticket": "TST-0001", "kind": "secret", "expires_at": "2026-10-25T10:00:00Z",
                     "link": f"{SHARE}/s/{'a' * 32}#t={self.token}", "view_limit": 0, "shown_once": True}  # fmt: skip
+        if op == "publish.password":
+            return {"share_id": args["share_id"], "password": "bada-fobu-gele-kimo-ruzi", "shown_once": True}
+        if op == "publish.extend":
+            return {"share_id": args["share_id"], "expires_at": "2026-10-25T10:00:00Z"}
         return {}
 
     def sign(self, target, op, args):
@@ -359,3 +366,32 @@ def test_revoke_asks_first_and_yes_skips_the_question(rec, monkeypatch):
     asked.clear()
     code, out = run(["revoke", "b" * 32, "--yes"], {})
     assert code == 0 and asked == [] and rec.calls[-1] == ("publish.revoke", {"share_id": "b" * 32})
+
+
+def test_extend_sends_the_days_and_nothing_else(rec):
+    code, out = run(["extend", "a" * 32, "--days", "30"], {})
+    assert code == 0 and rec.calls == [("publish.extend", {"share_id": "a" * 32, "days": 30})]
+    assert "ok publish extended" in out
+
+
+def test_the_password_goes_to_the_terminal_only(rec):
+    code, out = run(["password", "a" * 32], {})
+    assert code == 0 and rec.calls == [("publish.password", {"share_id": "a" * 32})]
+    (shown,) = rec.shown
+    assert "bada-fobu-gele-kimo-ruzi" in shown and "shown once" in shown
+    assert "bada" not in out and "the password is on your terminal only" in out
+    code, out = run(["password", "a" * 32], {}, as_json=True)
+    doc = json.loads(out)
+    assert doc["data"]["password_shown"] is True and "password" not in doc["data"] and "bada" not in out
+
+
+def test_a_password_that_cannot_be_shown_is_not_printed_anywhere_else(rec, monkeypatch):
+    def broken(text):
+        raise human.NoPrompt("no terminal")
+
+    monkeypatch.setattr(human, "show_secret", broken)
+    code, out = run(["password", "a" * 32], {})
+    assert code == 1 and "bada" not in out and "orch publish password " + "a" * 32 in out
+    monkeypatch.setattr(publish, "_tty_ok", lambda: False)
+    code, out = run(["password", "a" * 32], {})
+    assert code == 5 and "nothing was set" in out

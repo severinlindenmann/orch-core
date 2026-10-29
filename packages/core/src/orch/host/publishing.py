@@ -64,11 +64,26 @@ PUBLISH_OPS: dict[str, int] = {
     "publish.list": 1,
     "publish.discard": 1,
     "publish.register": 1,
+    "publish.extend": 1,
+    "publish.password": 1,
 }
 REGISTER_PER_MINUTE = 3
-WRITE_OPS = frozenset({"publish.prepare", "publish.send", "publish.revoke", "publish.discard", "publish.register"})
+WRITE_OPS = frozenset(
+    {
+        "publish.prepare",
+        "publish.send",
+        "publish.revoke",
+        "publish.discard",
+        "publish.register",
+        "publish.extend",
+        "publish.password",
+    }
+)
 #: the ops that talk to the server (their network half runs off the workspace worker, in :func:`execute`)
-NETWORK_OPS = frozenset({"publish.send", "publish.revoke", "publish.register"})
+NETWORK_OPS = frozenset({"publish.send", "publish.revoke", "publish.register", "publish.extend", "publish.password"})
+#: M4 S2 (#1453): the longest a link can be extended to, counted from now (orch-publish enforces the same bound)
+EXTEND_MAX_DAYS = 30
+PASSWORD_WORDS = 5
 PUBLISH_CAPS = ["publish/1"]
 ADDON = "publish"
 PER_MINUTE = 10
@@ -109,6 +124,21 @@ _SCHEMAS = {
         "additionalProperties": False,
     },
     "publish.revoke": {
+        "type": "object",
+        "properties": {"share_id": _SHARE},
+        "required": ["share_id"],
+        "additionalProperties": False,
+    },
+    # `days` is a JSON integer 1..30 and nothing else (no bool, no float); the server bounds it again
+    "publish.extend": {
+        "type": "object",
+        "properties": {"share_id": _SHARE, "days": {"type": "integer", "minimum": 1, "maximum": EXTEND_MAX_DAYS}},
+        "required": ["share_id", "days"],
+        "additionalProperties": False,
+    },
+    # no `password`, no `record`, no `remove`: the host draws the password and builds the record itself (C5), and
+    # taking a password away would widen access, so there is no such request
+    "publish.password": {
         "type": "object",
         "properties": {"share_id": _SHARE},
         "required": ["share_id"],
@@ -630,6 +660,8 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         plan["record"] = rec
         plan["hub"] = _hub_route(service)
         return plan
+    if op in ("publish.extend", "publish.password"):
+        return _plan_link(call, plan, op, args)
     meta = _load_stage(service, args["staged_id"])
     view = _ticket(call, meta["ticket"]["uid"])
     _may_share(call, view)
@@ -648,6 +680,45 @@ def _plan(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         plan["reg"] = _delegation(call)
         _plan_card(call, plan)
     return plan
+
+
+def _plan_link(call: Call, plan: dict[str, Any], op: str, args: dict[str, Any]) -> dict[str, Any]:
+    """``publish.extend`` / ``publish.password`` on a link the host itself shared (M4 S2, #1453). Column P only (the
+    caller ran :func:`_person`). Extending a link makes it reachable for longer, so it needs what sharing needs: the
+    ticket owner, a workspace owner or a maintainer (:func:`_may_share`). A password replaces the one in use, so
+    it needs the same. Neither op takes a password or a record from the caller."""
+    rec = next((r for r in _records(call.service) if r.get("id") == args["share_id"]), None)
+    if rec is None:
+        raise HostError("not_found", "no such share")
+    view = _ticket(call, rec["ticket"])  # a ticket the person may not see is not theirs to act on
+    if rec.get("state") != "live":
+        raise HostError("publish.changed", "this link is not live: share the files again")
+    _may_share(call, view)  # extend and password alike: seeing the ticket is not enough to change a live link
+    if op == "publish.extend":
+        _rate(call, "extend")
+        plan["days"] = args["days"]
+    else:
+        _rate(call, "password")
+        plan["password"], plan["pw"] = _new_password()  # drawn here, in the host; the plain text never leaves the call
+    plan["record"] = rec
+    plan["hub"] = _hub_route(call.service)
+    return plan
+
+
+_CONSONANTS, _VOWELS = "bdfgklmnprstvz", "aeiou"
+
+
+def _new_password() -> tuple[str, dict[str, Any]]:
+    """A generated password (never typed, never chosen by a caller) and its C5 record. Five words of two pronounceable
+    syllables each, about 61 bits; the record is scrypt n=32768 r=8 p=1 with a 16-byte salt (contracts/hub/protocol.md
+    11.4.1). Only the record is sent to orch-publish."""
+    from orch.publishclient import approval as ap
+
+    words = [
+        "".join(secrets.choice(_CONSONANTS) + secrets.choice(_VOWELS) for _ in range(2)) for _ in range(PASSWORD_WORDS)
+    ]
+    password = "-".join(words)
+    return password, ap.password_record(password, secrets.token_bytes(16))
 
 
 def _plan_card(call: Call, plan: dict[str, Any]) -> None:
@@ -702,7 +773,7 @@ def _discard(call: Call, args: dict[str, Any]) -> dict[str, Any]:
 
 def _row(rec: dict[str, Any]) -> dict[str, Any]:
     keys = ("id", "ticket", "kind", "state", "expires_at", "view_limit", "views", "files", "created_at", "server")
-    return {k: rec.get(k) for k in keys}
+    return {**{k: rec.get(k) for k in keys}, "has_password": rec.get("has_password") is True}
 
 
 def _list(call: Call, args: dict[str, Any]) -> dict[str, Any]:
@@ -932,6 +1003,10 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             return ok_result(_register(call, plan))
         if plan["op"] == "publish.revoke":
             return ok_result(_revoke(call, plan))
+        if plan["op"] == "publish.extend":
+            return ok_result(_extend(call, plan))
+        if plan["op"] == "publish.password":
+            return ok_result(_set_password(call, plan))
         if plan["op"] == "publish.list":
             return ok_result(_live(call, plan))
         return ok_result(_send(call, plan))
@@ -1113,6 +1188,43 @@ def _revoke(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         _save_records(service, rows)
     _audit(call, "publish.revoke", share=rec["id"], ticket=rec.get("ticket"))
     return {"share_id": rec["id"], "state": "revoked"}
+
+
+def _extend(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    from orch.publishclient import flow
+
+    service = call.service
+    rec = plan["record"]
+    client = _client(service, rec.get("server") or plan["cfg"]["server"], plan["hub"])
+    got = flow.extend(client, service.workspace_id, rec["id"], plan["days"])
+    expires_ms = got.get("expires_ms")
+    if type(expires_ms) is not int or expires_ms <= 0:
+        from orch.publishclient import PublishError
+
+        raise PublishError("bad_reply", 200, method="POST")
+    with _MU:
+        rows = [
+            {**r, "expires_at": _iso(expires_ms / 1000)} if r.get("id") == rec["id"] else r for r in _records(service)
+        ]
+        _save_records(service, rows)
+    _audit(call, "publish.extend", share=rec["id"], ticket=rec.get("ticket"), days=plan["days"])
+    return {"share_id": rec["id"], "expires_at": _iso(expires_ms / 1000)}
+
+
+def _set_password(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
+    """Send the record; the plain password goes back to this one call and nowhere else (not the log, the audit file,
+    the record store or an error)."""
+    from orch.publishclient import flow
+
+    service = call.service
+    rec = plan["record"]
+    client = _client(service, rec.get("server") or plan["cfg"]["server"], plan["hub"])
+    flow.set_password(client, service.workspace_id, rec["id"], plan["pw"])
+    with _MU:
+        rows = [{**r, "has_password": True} if r.get("id") == rec["id"] else r for r in _records(service)]
+        _save_records(service, rows)
+    _audit(call, "publish.password", share=rec["id"], ticket=rec.get("ticket"))
+    return {"share_id": rec["id"], "password": plan["password"], "shown_once": True}
 
 
 def _live(call: Call, plan: dict[str, Any]) -> dict[str, Any]:

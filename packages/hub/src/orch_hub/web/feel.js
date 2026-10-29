@@ -12,7 +12,7 @@ export function skeletonPlan(kind) {
 export function emptyWords(kind) {
   return ({
     home: ["Nothing needs you", "All approvals are done. New ones show up here by themselves."],
-    workspaces: ["No workspaces yet", "Press “Connect a workspace”, copy the link and paste it in the workspace under Settings › Hub."],
+    workspaces: ["No workspaces yet", "Press “Connect a workspace”, copy the link and paste it in the workspace under Settings, then Hub."],
     "workspaces-member": ["No workspaces yet", "Ask your hub admin for a link, then paste it in the workspace under Settings › Hub."],
     account: ["No phones or browsers yet", "To add a phone, open the phone app and choose Pair a phone."],
     services: ["No services yet", "Ask your IT person to set up services on this hub, then check again."],

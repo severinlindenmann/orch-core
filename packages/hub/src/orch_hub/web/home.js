@@ -39,8 +39,22 @@ export function workspaceStatus(w) {
   return "offline since " + (Number.isNaN(date.getTime()) ? "an unknown time" : date.toLocaleString());
 }
 
+/** A brand-new hub shows one thing: connect a workspace. No signing or developer widgets yet. */
+function firstRunHome(d) {
+  const notice = d.notice?.nodeType ? d.notice : d.notice ? h("div", { class: "banner", role: "status", text: text(d.notice) }) : null;
+  const added = newChannelsNotice(d.newChannels, { remove: (c) => d.actions?.removeChannel(c.channel_id), dismiss: () => d.actions?.dismissNew?.() });
+  return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,
+    h("p", { class: "company-summary muted", text: "Nothing connected yet." }),
+    h("section", { class: "card first-run", "aria-labelledby": "first-run-heading" },
+      h("h2", { id: "first-run-heading", text: "Connect your first workspace" }),
+      h("p", { text: "Open your workspace, go to Settings, then Hub, and paste the one-time link there. Your hub admin can give you the link." }),
+      d.user?.is_admin && d.actions?.connect ? h("button", { class: "pri", text: "Get a one-time link", onclick: () => d.actions.connect() }) : null,
+      note("Approvals appear here as soon as a workspace is connected."))].filter(Boolean);
+}
+
 /** Person home only; the driver owns navigation and the manual decision form. */
 export function homeView(d) {
+  if (!(d.workspaces ?? []).length && !(d.channels ?? []).length && !(d.items ?? []).length) return firstRunHome(d);
   const health = homeSummary(d.workspaces ?? [], d.items ?? [], d.offline ?? []);
   const workspaces = health.rows;
   const byId = new Map(workspaces.map((w) => [w.workspace_id, w]));

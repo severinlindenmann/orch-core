@@ -63,3 +63,15 @@ test("with a selective workspace the needs card says quietly that only shared it
   const full = homeView({ workspaces: [{ workspace_id: "f", name: "F", mode: "full", online: true }], items: [], actions: {} });
   assert.doesNotMatch(text(full), /Only items you share appear here/);
 });
+
+test("first-run home shows only the connect card", () => {
+  const out = homeView({ user: { name: "Anna", is_admin: true }, workspaces: [], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: { connect() {} } });
+  const text = out.map((n) => n.textContent).join(" ");
+  assert.match(text, /Connect your first workspace/);
+  assert.match(text, /Get a one-time link/);
+  assert.doesNotMatch(text, /Where you can sign|Register this browser|Needs you|My workspaces/);
+  const withWs = homeView({ user: { name: "Anna" }, workspaces: [{ workspace_id: "a", name: "P", online: true }], items: [], channels: [], thisBrowser: { state: "unregistered" }, actions: {} });
+  const t2 = withWs.map((n) => n.textContent).join(" ");
+  assert.match(t2, /Where you can sign/);
+  assert.doesNotMatch(t2, /Connect your first workspace/);
+});

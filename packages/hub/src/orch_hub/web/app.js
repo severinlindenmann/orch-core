@@ -637,10 +637,10 @@ async function home() {
       newChannels: state.newChannels,
       thisBrowser: mine ? { state: "active", label: state.me.label } : dead ? { state: "dead", label: state.me?.label } : { state: "unregistered" },
       notice: state.notice,
-      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
+      actions: { review: (it) => navigate("#/w/" + it.workspace_id + "/item/" + encodeURIComponent(it.key || it.item_id)), open: (id) => navigate("#/w/" + id), connect: () => navigate("#/workspaces"), register: () => registerView(), removeChannel, forgetLocal, dismissNew },
     };
     liveItems = { user_id: user.user_id, items: homeData.items };
-    shell("home", homeView(homeData), advancedForm(workspaces));
+    shell("home", homeView(homeData), workspaces.some((w) => w.can_start) ? advancedForm(workspaces) : null);
     state.notice = null;
   } finally { finishLoading(); }
 }
@@ -681,6 +681,10 @@ async function signOut() {
   loginView();
 }
 
+async function registerRoute() { // a hub with no workspace has no Home signing card: register a browser from here
+  if (!(await refresh())) return loginView();
+  registerView();
+}
 function registerView(err) {
   const label = h("input", { id: "label", value: "This browser", maxlength: 60 });
   const pw = h("input", { id: "pw2", type: "password", autocomplete: "current-password", required: true });
@@ -1193,7 +1197,7 @@ async function renderRoute() {
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);
       else if (route.workspace) await workspacePage(route);
-      else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones }[route.kind] ?? pageRender(route.kind) ?? home)();
+      else await ({ home, approvals, workspaces, services, admin, activity, account, handoffs, phones, register: registerRoute }[route.kind] ?? pageRender(route.kind) ?? home)();
     }
   } catch { loginView("Something went wrong. Please sign in again."); }
   finally { routing = false; }

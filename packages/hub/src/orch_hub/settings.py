@@ -84,3 +84,34 @@ def save(state: Path, settings: dict[str, Any]) -> None:
     """Validate, then write atomically as 0600 (an invalid value never reaches the disk)."""
     clean = validate(settings)
     write_atomic(state / SETTINGS_FILE, (json.dumps(clean, indent=2, sort_keys=True) + "\n").encode())
+
+
+def where_answer(state: Path) -> dict[str, Any]:
+    """The ``hub_where`` reply (protocol 10.9) built from the settings file only: the entries that have a link address, in
+    file order (at most 4), and the name. A missing or damaged file, or nothing with a link, is ``unavailable``: the
+    host keeps what it holds. The reply is validated with the same checker the host replays."""
+    from .contract.hub import Refused
+    from .contract.where import check_hub_where
+
+    try:
+        s = load(state)
+    except SettingsError:
+        s = None
+    if s is None:
+        raise Refused("unavailable")
+    entries = [{"kind": a["kind"], "link": a["link"]} for a in s["addresses"] if a["link"] is not None]
+    seen: set[str] = set()
+    entries = [e for e in entries if not (e["link"] in seen or seen.add(e["link"]))]
+    if not entries:
+        raise Refused("unavailable")
+    return check_hub_where({"addresses": entries, "name": s["name"]})
+
+
+def serve_origins(state: Path) -> tuple[frozenset[str], str] | None:
+    """What ``serve`` takes from the file after install (Opus condition 5): the exact console origins (every advertised
+    web address) and the API origin the phone pairs with (the FIRST address; changing it is its own, later step). None when
+    there is no settings file (a hub started by hand keeps its start arguments). A damaged file raises."""
+    s = load(state)
+    if s is None:
+        return None
+    return frozenset(a["web"] for a in s["addresses"]), s["addresses"][0]["web"]

@@ -73,6 +73,9 @@ EVENT_FIELDS: dict[str, dict[str, Any]] = {
     },
     # D14 (§7.1): the hub-wide marketplace policy was replaced; hub-wide, so no scope tag. The version it produced and its hash.
     "market_policy": {"version": _int_min(1), "policy_hash": _b64u_n(32), "actor_user_id": _hex16},
+    # M4 (#1461, cond 23): an admin changed the hub's name/company ("general") or the addresses it advertises
+    # ("addresses"); hub-wide (no scope tag). It says which setting and who, never the value.
+    "hub_settings": {"change": _enum("general", "addresses"), "actor_user_id": _hex16},
     # p4 (§10.2b): a selective workspace shared, replaced or revoked an item, or the hub purged its items at unbind or a
     # mode switch (scoped to that workspace). Per-change field rules in _share_rule.
     "share": {

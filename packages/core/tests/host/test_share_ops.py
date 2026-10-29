@@ -384,21 +384,25 @@ def manual_auto(monkeypatch):
     return m
 
 
-def settle(served, quick, *, need=1, timeout=10.0):
-    """Wait until the workspace's auto thread has finished ``need`` more passes (and is idle)."""
+def settle(served, quick, *, timeout=10.0):
+    """Wait until a finished auto pass has seen every commit made so far, and the thread is idle.
+
+    Not "one more pass than now": the pass a commit wakes may already have finished when this is called (debounce
+    0.1 s, a slow test thread), and then no further pass ever comes (CI flake 29 Oct, "passes=3, wanted 4")."""
     import time
 
     svc = served.h.host.services[served.wid]
     a = quick.state_of(svc)
     assert a is not None, "the auto thread is not armed"
-    target = a.passes + need
+    with a.cv:
+        target = a.marks  # every commit so far has marked (on_commit runs inside the commit)
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         with a.cv:
-            if a.passes >= target and a.dirty_since is None:
+            if a.covered >= target and a.dirty_since is None:
                 return a
         time.sleep(0.02)
-    raise AssertionError(f"no auto pass finished (passes={a.passes}, wanted {target})")
+    raise AssertionError(f"no auto pass covered the commits (covered={a.covered}, marks={target}, passes={a.passes})")
 
 
 def test_an_edit_to_a_shared_ticket_goes_out_as_a_higher_version_without_a_sync(served, selective, quick_auto):
@@ -413,15 +417,35 @@ def test_an_edit_to_a_shared_ticket_goes_out_as_a_higher_version_without_a_sync(
     assert selective.count("share_revoke") == 0
 
 
-def test_a_burst_of_edits_is_one_debounced_pass(served, selective, quick_auto, monkeypatch):
-    monkeypatch.setattr(quick_auto, "DEBOUNCE_S", 0.5)
+def test_a_burst_of_edits_is_one_debounced_pass(served, selective, manual_auto):
+    """On the manual clock: the edits come half a debounce apart, so each one moves the deadline and only the quiet
+    after the last one lets the pass run. (On the wall clock with a 0.5 s debounce, a test thread slower than 0.5 s
+    between two edits made a second pass, CI flake 29 Oct "[1, 2, 3] == [1, 2]".)"""
+    from orch.host import shareauto
+
     _, key = labelled(served, "Public note", "public")
     ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
     for n in range(4):
         ok(agent(served, "set", {"ref": key, "pairs": [f"title=Edit {n}"]}))
-    settle(served, quick_auto)
+        a = manual_auto.step(served, shareauto.DEBOUNCE_S / 2)  # inside the debounce: no pass yet
+        assert a.passes == 0
+    a = manual_auto.step(served, shareauto.DEBOUNCE_S)  # quiet for a whole debounce: the one pass
+    assert a.passes == 1
     assert [i["item_version"] for i in selective.opened] == [1, 2]
     assert selective.opened[1]["content"]["title"] == "Edit 3"
+
+
+def test_settle_also_counts_a_pass_that_finished_before_it_was_called(served, selective, quick_auto):
+    """Repro of the settle race (CI 29 Oct, "no auto pass finished (passes=3, wanted 4)"): the pass a commit woke can
+    finish before the test starts to wait; settle must still return."""
+    _, key = labelled(served, "Public note", "public")
+    ok(rule_op(served, "share.rule_add", {"kind": "tag", "tag": "public"}))
+    a = quick_auto.state_of(served.h.host.services[served.wid])
+    ok(agent(served, "set", {"ref": key, "pairs": ["title=Renamed note"]}))
+    with a.cv:  # the pass has run and the thread is idle before settle is called
+        assert a.cv.wait_for(lambda: a.covered >= a.marks and a.dirty_since is None, timeout=10)
+    settle(served, quick_auto, timeout=2.0)
+    assert [i["item_version"] for i in selective.opened] == [1, 2]
 
 
 def test_a_ticket_that_stops_matching_is_revoked(served, selective, quick_auto):

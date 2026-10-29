@@ -54,6 +54,12 @@ class _Auto:
         self.not_before = 0.0
         self.backoff = RETRY_MIN_S
         self.passes = 0  # finished passes (tests wait on it)
+        #: commits seen (``mark``) and how many of them the last finished pass had seen when it started: a pass covers a
+        #: commit only if it started after it (tests wait for ``covered >= marks``; counting passes raced a pass that
+        #: finished before the test began to count, CI flake 29 Oct)
+        self.marks = 0
+        self.covered = 0
+        self._taking = 0
         self.last: dict[str, Any] | str | None = None
         self.thread = threading.Thread(
             target=self._loop, name=f"orch-shareauto-{service.workspace_id[:8]}", daemon=True
@@ -64,6 +70,7 @@ class _Auto:
             if self.dirty_since is None:
                 self.dirty_since = now
             self.last_touch = now
+            self.marks += 1
             self.cv.notify_all()
 
     def _wait_due(self) -> bool:
@@ -76,6 +83,7 @@ class _Auto:
                 due = max(min(self.last_touch + DEBOUNCE_S, self.dirty_since + MAX_WAIT_S), self.not_before)  # type: ignore[operator]
                 if now >= due:
                     self.dirty_since = None
+                    self._taking = self.marks
                     return True
                 self.cv.wait(due - now if _TIMED else None)
             return False
@@ -110,6 +118,7 @@ class _Auto:
             with self.cv:
                 self.last = result
                 self.passes += 1
+                self.covered = self._taking
                 self.cv.notify_all()
 
 

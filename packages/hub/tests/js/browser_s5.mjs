@@ -36,11 +36,18 @@ try {
   await page.fill("#pw", HUB_PW);
   await page.fill("#code", CODE_SIGNIN);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByText("This browser cannot sign yet").waitFor();
-  await shot("home-unregistered");
-
-  // register: needs password + a later code again
-  await page.getByRole("button", { name: "Register this browser" }).click();
+  if (process.env.S5_STOP === "register") {
+    // no workspace on this hub, so Home shows only "Connect your first workspace" (P11); register from #/register
+    await page.getByRole("heading", { name: "Connect your first workspace" }).waitFor();
+    assert((await page.getByText("Where you can sign").count()) === 0, "first-run home has no signing card");
+    await shot("home-first-run");
+    await page.goto(HUB_URL + "/#/register");
+  } else {
+    await page.getByText("This browser cannot sign yet").waitFor();
+    await shot("home-unregistered");
+    // register: needs password + a later code again
+    await page.getByRole("button", { name: "Register this browser" }).click();
+  }
   await page.getByRole("heading", { name: "Register this browser" }).waitFor();
   await page.fill("#pw2", HUB_PW);
   await page.fill("#code2", CODE_SIGNIN); // the code that signed us in must be refused

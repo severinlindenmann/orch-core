@@ -138,17 +138,17 @@ export const codeReviewWaits = (t: Pick<TicketDocument, 'status' | 'verdict' | '
 
 // B11 (#14): what an approval of requirements or plan still lacks (core's `missing` / a gate.incomplete refusal), in words.
 const MISSING_WORDS: Record<string, string> = {
-  summary: 'Summary',
-  context: 'Context',
-  requirements: 'Requirements',
-  out_of_scope: 'Out of scope',
-  acceptance: 'one acceptance check',
-  plan: 'Plan',
-  decisions: 'Decisions',
-  tasks: 'one task',
+  summary: 'a summary',
+  context: 'a short background',
+  requirements: 'the requirements',
+  out_of_scope: 'what is not included',
+  acceptance: 'one check that proves it works',
+  plan: 'the plan',
+  decisions: 'why the plan is built this way',
+  tasks: 'one step',
 }
 
-/** "Context, Out of scope and one acceptance check"; an artifact is "the artifact NAME"; an unknown id is said as it is. */
+/** "a short background, what is not included and one check that proves it works"; an artifact is "the artifact NAME"; an unknown id is said as it is. */
 export function missingWords(missing: readonly string[]): string {
   const w = missing.map((m) => MISSING_WORDS[m] ?? (m.startsWith('artifact:') ? `the artifact ${m.slice('artifact:'.length)}` : m.replace(/_/g, ' ')))
   return w.length <= 1 ? (w[0] ?? '') : `${w.slice(0, -1).join(', ')} and ${w[w.length - 1]}`
@@ -160,5 +160,5 @@ export function missingOf(message: string | null | undefined): string[] | null {
   return m ? m[1].split(',').map((x) => x.trim()).filter(Boolean) : null
 }
 
-/** "Add Context, Out of scope and one acceptance check first." */
+/** "Add a short background, what is not included and one check that proves it works first." */
 export const addFirst = (missing: readonly string[]) => `Add ${missingWords(missing)} first.`

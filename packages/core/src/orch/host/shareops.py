@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator
 
+from orch.canon.text import clean_line
+
 from . import shareauto
 from .errors import HostError
 
@@ -47,11 +49,13 @@ if TYPE_CHECKING:
 __all__ = ["NETWORK_OPS", "SHARE_OPS", "SHARE_READS", "execute", "serve", "sync_now", "tickets_for"]
 
 SHARE_READS = frozenset({"share.rules", "share.preview"})
+#: a read that asks the hub (off the worker, like the writes): the hub people and teams the owner may name as readers
+SHARE_NET_READS = frozenset({"share.audience"})
 SHARE_OPS: dict[str, int] = {
     "share.rules": 1, "share.preview": 1, "share.rule_add": 1, "share.rule_remove": 1, "share.revoke": 1,
-    "share.sync": 1,
+    "share.sync": 1, "share.audience": 1,
 }  # fmt: skip
-NETWORK_OPS = frozenset({"share.rule_add", "share.rule_remove", "share.revoke", "share.sync"})
+NETWORK_OPS = frozenset({"share.rule_add", "share.rule_remove", "share.revoke", "share.sync", "share.audience"})
 #: The two ops that only take sharing away. Like ``workspace.cosmetic.set`` (cosmeticops) they are unsigned owner
 #: actions the dashboard may send with one click as the session's person (column P, owner role, never a relay); they
 #: share one rate limit and each writes a security-log line naming the person.
@@ -72,10 +76,14 @@ LEAVES = {
 }
 LATER_EDITS = "Later edits to these tickets are shared too, until you stop sharing them."
 _MU = threading.Lock()
+_NAMES = {"type": "array", "items": {"type": "string"}, "maxItems": 64}
 _RULE = {
     "type": "object",
     "properties": {"kind": {"enum": ["needs_you", "questions", "type", "ticket", "tag"]}, "type": {"type": "string"},
-                   "ticket": {"type": "string"}, "tag": {"type": "string"}},
+                   "ticket": {"type": "string"}, "tag": {"type": "string"},
+                   "audience": {"type": "object", "required": ["users", "groups"], "additionalProperties": False,
+                                "properties": {"users": _NAMES, "groups": _NAMES}},
+                   "description": {"type": "boolean"}},
     "required": ["kind"],
     "additionalProperties": False,
 }  # fmt: skip
@@ -102,6 +110,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "additionalProperties": False,
     },  # fmt: skip
     "share.sync": {"type": "object", "properties": {"expect": _PLAN}, "additionalProperties": False},
+    "share.audience": {"type": "object", "properties": {}, "additionalProperties": False},
 }
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
 
@@ -276,8 +285,21 @@ def ticket_fact(store: Any, state: Any, uid: str, t: Any) -> Any:
     return TicketFact(
         uid, t.key, t.type, t.title, t.status, tuple(t.fields.get("labels", ())),
         due if isinstance(due, str) else None, qs, needs, gates, state.workspace.roster_v,
-        (seq, head) if seq and head else None,
+        (seq, head) if seq and head else None, _description_of(store, uid),
     )  # fmt: skip
+
+
+def _description_of(store: Any, uid: str) -> str:
+    """The ticket's Summary and Context text from ``body.md`` (checked against the log by the store), or ``""``: a body
+    that does not match its log, or cannot be read, is no description at all (fail closed). Only the rules that say
+    "include the description" ever use it."""
+    from orch.store.errors import StoreError
+
+    try:
+        texts = store.body_sections(uid)
+    except (StoreError, OSError):
+        return ""
+    return "\n\n".join(x.strip() for x in (texts.get("summary", ""), texts.get("context", "")) if x.strip())
 
 
 def _plan(items: list[Any]) -> str:
@@ -291,26 +313,90 @@ def _rows(items: list[Any], limit: int = 100) -> dict[str, Any]:
     return {"count": len(items), "items": rows, "more": max(0, len(items) - limit), "plan": _plan(items)}
 
 
-def _review(service: WorkspaceService, want: list[Any], had: set[str]) -> dict[str, Any]:
+def _leaves(kind: str, items: list[Any]) -> str:
+    if kind == "ticket" and any("description" in i.payload for i in items if i.kind == "ticket"):
+        return "the ticket's title, status, labels, deadline and description; no comments or files"
+    return LEAVES[kind]
+
+
+def _names_for(service: WorkspaceService, ids: set[str]) -> dict[str, str]:
+    """Display names for these hub users, from the in-memory cache only. A review is built on the workspace worker where
+    nothing may touch the network, so it never asks the hub: the cache is filled by ``share.audience`` (the share form
+    loads it before a person can pick anybody). Until then, and for anyone never listed, the caller shows
+    "a person on the hub"."""
+    return dict(getattr(service, "_share_names", {}))
+
+
+#: Hard limits of one review. Below them the review lists EVERYONE (the page shows the first names and "and N more", the
+#: full list behind the small "i") and the owner's confirmation (the plan digest over the items, audiences included)
+#: binds all of it; above them there is no review: the host refuses in plain words, nothing is cut silently.
+MAX_REVIEW_PEOPLE, MAX_REVIEW_WIDENED = 500, 200
+TOO_MANY = "This rule reaches too many people. Narrow it to share."
+
+
+def _readers(service: WorkspaceService, items: list[Any]) -> dict[str, Any]:
+    """Who can read these items at the hub besides the owner, by NAME (from the hub, not signed): the people and teams
+    their audiences name. A person whose name the host does not know is "a person on the hub", never an id alone."""
+    users: set[str] = set()
+    groups: set[str] = set()
+    for i in items:
+        if i.audience:
+            users |= set(i.audience["users"])
+            groups |= set(i.audience["groups"])
+    names = _names_for(service, users)
+    return {
+        "people": sorted(clean_line(names.get(u) or "a person on the hub") for u in users),
+        "teams": sorted(groups),
+        "note": "from the hub, not signed",
+        "info": "Team membership is managed by the hub admin." if groups else None,  # shown behind the small "i"
+    }
+
+
+def _widened(service: WorkspaceService, st: Any, items: list[Any]) -> list[dict[str, Any]]:
+    """Already-shared items that this change would make reach more people or carry their description: each with who is
+    added, in names. An automatic pass never does this; only the owner's confirmation can."""
+    from orch.hubclient import shares as S
+
+    names = _names_for(service, {u for i in items if i.audience for u in i.audience["users"]})
+    known = {lg: dict(S.EMPTY_GRANT) for lg in st.sent} if st.confirmed is None else st.confirmed
+    out = []
+    for i in items:
+        g = known[i.logical]
+        aud = i.audience or {"users": [], "groups": []}
+        out.append({
+            "line": i.line(),
+            "people_added": sorted(
+                clean_line(names.get(u) or "a person on the hub") for u in aud["users"] if u not in g["users"]
+            ),
+            "teams_added": sorted(x for x in aud["groups"] if x not in g["groups"]),
+            "description_added": "description" in i.payload and not g["description"],
+        })  # fmt: skip
+    return out
+
+
+def _review(service: WorkspaceService, want: list[Any], had: set[str], st: Any = None) -> dict[str, Any]:
     """The owner's review of an adding change, all from the host (the page adds no words): the hub, who can read there
     (the pinned group snapshot, "from the hub, not signed"), ONLY the items that would newly leave (not already
     confirmed and sent), what leaves per kind of item, and that later edits follow."""
-    from orch.hubclient import snapshot
-
     state = None
     try:
         state = _selective(service)
     except HostError:
         pass
-    roles = (snapshot.pinned_view(state) or {}).get("roles", {}) if state is not None else {}
     new = [i for i in want if i.logical not in had]
-    kinds = sorted({i.kind for i in new})
+    wide = st.widened(want) if st is not None else []
+    leaving = new + wide
+    people = {u for i in leaving if i.audience for u in i.audience["users"]}
+    if len(people) > MAX_REVIEW_PEOPLE or len(wide) > MAX_REVIEW_WIDENED:
+        raise HostError("invalid.input", TOO_MANY)
+    widened = _widened(service, st, wide) if wide else []
+    kinds = sorted({i.kind for i in leaving})
     return {
         "hub_id": getattr(state, "hub_id", None),
-        "audience": {r: sum(1 for v in roles.values() if v == r) for r in ("read", "edit", "admin")} if roles else None,
-        "audience_note": "from the hub, not signed",
+        "readers": _readers(service, leaving),
+        "widened": widened,
         "new": _rows(new),
-        "leaves": [{"kind": k, "text": LEAVES[k]} for k in kinds if k in LEAVES],
+        "leaves": [{"kind": k, "text": _leaves(k, leaving)} for k in kinds if k in LEAVES],
         "later_edits": LATER_EDITS,
     }
 
@@ -356,7 +442,7 @@ def _read(call: Call, op: str, args: dict[str, Any]) -> dict[str, Any]:
         out["new"] = len(now - had)
         out["revoked"] = len(had - now)
         out["rules"] = [S.describe(r) for r in rules]
-        out["review"] = _review(call.service, want, had)
+        out["review"] = _review(call.service, want, had, st)
         return ok_result(out)
     except HubRefused:
         raise HostError("invalid.input", f"{op}: the rule is not valid") from None
@@ -532,6 +618,27 @@ def _add_audit(service: WorkspaceService, call: Call, args: dict[str, Any], coun
     return out
 
 
+def _audience(service: WorkspaceService) -> dict[str, Any]:
+    """The hub's people and teams for the share form (``audience_get`` over a short link). Display data, "from the hub,
+    not signed": the names are remembered here only to word the next review; only ids go into a signed audience."""
+    from orch.hubclient.errors import HubRefused
+
+    from . import hubops
+
+    closer = _link(service)
+    try:
+        got = closer.call("audience_get", {})
+    except HubRefused as exc:
+        raise hubops._refused(exc.code) from None  # noqa: SLF001
+    except OSError:
+        raise HostError("hub.unreachable", "the hub cannot be reached; try again when it is back") from None
+    finally:
+        closer.close()
+    people = [p for p in got.get("people", []) if isinstance(p, dict) and isinstance(p.get("user_id"), str)]
+    service._share_names = {p["user_id"]: str(p.get("name", ""))[:80] for p in people}  # noqa: SLF001
+    return {"people": people, "teams": got.get("teams", []), "note": "from the hub, not signed"}
+
+
 def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     from orch.hubclient import shares as S
     from orch.hubclient.errors import HubRefused
@@ -541,6 +648,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
 
     op, args, service = plan["op"], plan["args"], call.service
     try:
+        if op == "share.audience":
+            return ok_result(_audience(service))
         if op == "share.sync":
             got = sync_now(service, call.viewer, args.get("expect"), lambda: _owner_fresh(call))
             more = {**_add_audit(service, call, args), "count": got.get("put")} if "expect" in args else {}
@@ -587,7 +696,9 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             if op in REDUCE_OPS:
                 selected = st.auto_wanted(selected)
             else:
-                _approve(st, [i for i in selected if i.logical not in st.withdrawn], args["expect"])
+                confirmed = [i for i in selected if i.logical not in st.withdrawn]
+                _review(service, confirmed, set(st.sent), st)  # over the hard limits: refused, never confirmed unseen
+                _approve(st, confirmed, args["expect"])
             got = _sync_locked(service, st, selected)
         more = {"person": call.viewer} if op in REDUCE_OPS else {}
         if op == "share.rule_add":

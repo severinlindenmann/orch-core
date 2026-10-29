@@ -391,6 +391,27 @@ class Channels:
         self._guard(go)
         return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
 
+    def open_setup_session(self, user_id: str) -> dict[str, Any]:
+        """A ``full`` (browser) session for the first admin, opened by the hub's one-time setup (the installer's single-use
+        token file proved the person, and they have just chosen the password). Called only from ``/setup``, in the same
+        request that consumes the token. ``via`` is ``setup``: audit tells it from a password sign-in; it is not a
+        switch session, so it is not limited to ``SWITCH_HANDLERS``."""
+        u = self._known_user(user_id)
+        token = secrets.token_urlsafe(32)
+        now = self._now()
+
+        def go() -> None:
+            with self._tx() as db:
+                db.execute("DELETE FROM sessions WHERE expires_ms <= ?", (now,))
+                db.execute(
+                    "INSERT INTO sessions(token_hash, user_id, created_ms, expires_ms, scope, login_ms, via) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    (_sha(token), u, now, now + SESSION_TTL_MS, "full", now, "setup"),
+                )
+
+        self._guard(go)
+        return {"token": token, "user_id": u, "expires_ms": now + SESSION_TTL_MS}
+
     def open_session(self, user_id: str) -> dict[str, Any]:
         """A ``full`` (browser) session for a user the hub itself has just authenticated by other means (a one-time switch
         ticket from the user's workspace). No password, no TOTP, no failure counters touched.

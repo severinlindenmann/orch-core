@@ -255,8 +255,9 @@ def plan(
         flags.append(
             {
                 "id": "git",
-                "text": "Make this folder a git repository (git init), and keep .orch/ and .orch-work/ out of it. "
-                "It gets one empty first commit, none of your files.",
+                "text": "Keep a history of changes in this folder. Your files stay as they are.",
+                "detail": "This runs git init, keeps .orch/ and .orch-work/ out of the repository, and makes one empty "
+                "first commit. None of your files is committed.",
             }
         )
     if profile.get("records") and facts is None:  # a new workspace only

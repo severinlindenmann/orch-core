@@ -207,3 +207,33 @@ def test_selective_link_binding_paths_clear_stored_host(hub, op):
         c.request("binding_put", {"object": G.binding(seq=2, mode="selective")})
     assert hub.registry.mode(G.WS_A) == "selective"
     assert hub.registry.status(G.WS_A)["host"] == ""
+
+
+def test_a_selective_workspace_has_no_public_name_but_the_list_gives_the_owner_and_only_the_owner_the_label(tmp_path):
+    w = Web(tmp_path)
+    try:
+        w.reg.add(WS_SEL, "selective", owner=w.ann)
+        w.reg.ws[WS_SEL]["own_name"] = "Ann private label"
+        w.reg.ws[WS]["owner"] = w.admin
+        ann, admin = w.login(w.ann), w.login(w.admin)
+        mine = next(
+            r for r in w.call("GET", "/me/workspaces", token=ann)[1]["workspaces"] if r["workspace_id"] == WS_SEL
+        )
+        assert mine["name"] == "Ann private label" and mine["owner_name"] == "ann"
+        # the hub admin's list: no public name, so the owner-based fallback; the private label is never sent
+        row = next(
+            r for r in w.call("GET", "/admin/workspaces", token=admin)[1]["workspaces"] if r["workspace_id"] == WS_SEL
+        )
+        assert row["name"] == "ann's workspace" and row["owner_name"] == "ann"
+        assert "Ann private label" not in str(w.call("GET", "/admin/workspaces", token=admin)[1])
+        assert "Ann private label" not in str(w.call("GET", "/admin/connections", token=admin)[1])
+    finally:
+        w.close()
+
+
+def test_registry_keeps_own_name_apart_from_the_public_name(hub):
+    c = hub.open(first=True)
+    c.request("join", hub.join_body(mode="selective"))
+    c.request("status_put", STATUS)
+    assert hub.registry.display_name(G.WS_A) is None
+    assert hub.registry.own_name(G.WS_A) == render_text(STATUS["name"])

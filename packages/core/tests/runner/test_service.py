@@ -90,7 +90,7 @@ def test_tier_a_restart_if_stale_still_looks_at_the_loaded_release_file(tmp_path
 def test_tier_a_risk_text_and_card_are_the_decided_words() -> None:
     text = enablement.risk_text("ACME", WID, True)
     assert text == enablement.risk_text("ACME", WID, True, None)
-    assert enablement.CARD_TEXT in text and "run as you" in text and "SSH keys" in text
+    assert enablement.CARD_TEXT in text and "work as you" in text and "SSH keys" in text
     assert enablement.card_text() == enablement.CARD_TEXT
 
 
@@ -185,7 +185,7 @@ def test_tier_b_agent_tier_reads_the_system(monkeypatch, tmp_path) -> None:
 def test_tier_b_risk_text_names_the_agent_user_and_does_not_say_you() -> None:
     text = enablement.risk_text("ACME", WID, True, "orch-agent-sev")
     assert "run as orch-agent-sev. It cannot read your keys." in text
-    assert "run as you" not in text and "can run commands and read your files" not in text
+    assert "run as you" not in text and "can run programs and open your files" not in text
     assert "and open terminals" in text
     assert "--no-terminals" in enablement.risk_text("ACME", WID, False, "orch-agent-sev")
     assert enablement.card_text("orch-agent-sev") != enablement.CARD_TEXT

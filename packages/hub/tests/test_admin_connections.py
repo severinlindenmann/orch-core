@@ -42,6 +42,7 @@ def test_selective_recipient_and_unbound_workspaces(w):
     assert next(row for row in result["workspaces"] if row["workspace_id"] == WS_OTHER) == {
         "workspace_id": WS_OTHER,
         "name": "Sender",
+        "owner_name": "ann",
     }  # no presence claim: the map says only who may send to whom
 
 

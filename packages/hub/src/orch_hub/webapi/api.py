@@ -60,10 +60,11 @@ from ..contract.hub import HV, Refused, channel_proof_bytes
 from ..invites import Invite, InviteError, proof_digest
 from ..relay.client import RelayError
 from ..spaces.service import SpaceError
-from ..switch import SwitchError, clean_return_to, workspace_rows
+from ..switch import SwitchError, clean_return_to, owner_fallback_names, workspace_rows
 from ..versions import MIN_PHONE_VERSION, MIN_SUPPORTED_VERSION, version_state, workspace_status
 from .changes_api import ChangeHandlers, confirmed
 from .org_api import OrgHandlers
+from .settings_api import SettingsHandlers, settings_routes
 from .static import StaticSite
 
 MAX_BODY = 64 * 1024
@@ -258,6 +259,7 @@ class WebDeps:
     changes: Any = (
         None  # orch_hub.changes.Changes: access changes that need the owner; None = those routes answer ``unavailable``
     )
+    settings_file: Path | None = None  # hub-settings.json; None = "not configured"
     user_invites: Any = (
         None  # orch_hub.invites.Invites (join / reset / recovery links); None = those routes are ``unavailable``
     )
@@ -316,6 +318,13 @@ ROUTES: tuple[Route, ...] = (
         "session",
         "needs_you",
         "Needs-you items (full: workspace view; selective: shared items)",
+    ),
+    _r(
+        "GET",
+        "/me/shared",
+        "session",
+        "my_shared",
+        "Tickets shared with me (optionally of one workspace): who shared, and for the owner with whom",
     ),
     _r(
         "GET", "/workspaces/{workspace_id}/items/{item_id}", "session", "item", "One ticket, question or needs-you item"
@@ -532,6 +541,7 @@ ROUTES: tuple[Route, ...] = (
     _r("DELETE", "/admin/mcp-servers/{name}", "admin", "a_mcp_delete", "Remove a remote MCP server"),
     _r("PUT", "/admin/mcp-servers/{name}/offers", "admin", "a_mcp_offer", "Set the workspaces a server is offered to"),
     _r("POST", "/admin/mcp-servers/{name}/check", "admin", "a_mcp_check", "Check a server now (no credential sent)"),
+    *settings_routes(_r),
 )
 #: handler -> the session scopes that may call it (protocol §6.4). ``full`` is the browser's cookie session; ``pairing``
 #: (password + TOTP from the app) may only read the card, register a phone, bind and sign out; ``channel`` is bound to
@@ -573,6 +583,7 @@ SWITCH_HANDLERS = frozenset(
         "my_workspaces",
         "my_handoffs",
         "needs_you",
+        "my_shared",
         "item",
         "switch_ticket",
         "rail",
@@ -722,7 +733,7 @@ def _groups_detail(groups: list[str]) -> dict[str, Any]:
 _NEED_KINDS = ("needs_you", "question")  # the shared item kinds that are a wait (a shared ticket is not)
 
 
-class WebApi(ChangeHandlers, OrgHandlers):
+class WebApi(ChangeHandlers, OrgHandlers, SettingsHandlers):
     def __init__(self, deps: WebDeps) -> None:
         if deps.behind_edge and not deps.trusted_peers:
             raise ValueError("web API behind the edge needs trusted_peers (the edge's addresses)")
@@ -1038,8 +1049,13 @@ class WebApi(ChangeHandlers, OrgHandlers):
             self.d.access.add_member(ADMIN_GROUP, uid)
             self.d.channels.set_password(uid, b["password"])
             t = self.d.channels.new_totp(uid)
+            # the admin exists by now: a failure here leaves the token file, but /setup answers not_allowed from then on
+            s = self.d.channels.open_setup_session(uid)
             f.unlink(missing_ok=True)  # single use
-        return 200, {"user_id": uid, "totp_secret": t["secret"], "totp_uri": t["uri"]}
+        ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
+        attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
+        cookie = [("Set-Cookie", attrs + ("; Secure" if self.d.secure_cookies else ""))]
+        return 200, {"user_id": uid, "totp_secret": t["secret"], "totp_uri": t["uri"]}, cookie
 
     def _h_hub_card(self, c: Ctx, p: dict, q: dict, b: dict | None):
         """Public: the held card and the ``hub.api_origin`` that names this hub's own API origin (§6.4, L2B-1)."""
@@ -1312,7 +1328,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
         gates, qs = f1.get("gates"), f1.get("questions")
         return type(gates) is dict and type(qs) is dict and len(gates) + len(qs) == 1
 
-    def _shared_row(self, ws: dict[str, Any], it: dict[str, Any]) -> dict[str, Any]:
+    def _shared_row(self, ws: dict[str, Any], it: dict[str, Any], user_id: str) -> dict[str, Any]:
         o = it["item"]
         content = o["content"]
         return _render(
@@ -1329,7 +1345,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
                 "summary_only": o["item_kind"] == "needs_you",
                 "chain": o.get("chain"),  # §10.2b, as verified by D9 (display data; the hub build is the authority)
                 "f1": o.get("f1"),
-                "signable": self._shared_signable(o),
+                # H2: only the owner alias may sign; a reader (audience) never gets a sign button, on any route
+                "signable": self.d.registry.owner_alias(ws["workspace_id"]) == user_id and self._shared_signable(o),
             }
         )
 
@@ -1350,7 +1367,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
                 if it["item"]["item_kind"] == "question"
             }
             return [
-                self._shared_row(ws, it)
+                self._shared_row(ws, it, user_id)
                 for it in shared
                 if not (
                     it["item"]["item_kind"] == "needs_you"
@@ -1368,6 +1385,38 @@ class WebApi(ChangeHandlers, OrgHandlers):
             if ws["workspace_id"] == workspace_id:
                 return len(self._needs_rows(ws, user_id) or [])
         return 0
+
+    def _h_my_shared(self, c: Ctx, p: dict, q: dict, b: dict | None):
+        """Shared TICKETS of selective workspaces that the CALLER may read, nothing more. ``list_shared`` is the only
+        gate: it answers with the caller's own identity (the owner sees all, anyone else only what a verified, owner-signed
+        audience names them or their team in; hub-admins and role holders get nothing by role). Nothing here widens it;
+        an unknown, full-mode or unbound workspace answers an empty list, like a workspace the caller has no part in."""
+        if self.d.shares is None:
+            raise ApiError("unavailable")
+        only = q.get("workspace_id")
+        if only is not None:
+            _hex32(only)
+        people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
+        rows: list[dict[str, Any]] = []
+        for ws in sorted(self.d.registry.pins()):
+            if (only is not None and ws != only) or self.d.registry.mode(ws) != "selective":
+                continue
+            owner = self.d.registry.owner_alias(ws)
+            for it in self.d.shares.list_shared(c.user_id, ws):
+                if it["item"]["item_kind"] != "ticket":
+                    continue
+                row = self._shared_row({"workspace_id": ws}, it, c.user_id)
+                aud = it["item"].get("audience")
+                if owner == c.user_id:  # the person who shared sees the audience ([] = only you), never "shared by me"
+                    users = aud.get("users", []) if type(aud) is dict else []
+                    groups = aud.get("groups", []) if type(aud) is dict else []
+                    row["shared_with"] = [people[u] for u in users if u in people] + [
+                        "Team: " + P4.render_text(g) for g in groups
+                    ]
+                else:
+                    row["shared_by"] = people.get(owner)
+                rows.append(row)
+        return 200, {"items": rows}
 
     def _h_needs_you(self, c: Ctx, p: dict, q: dict, b: dict | None):
         items: list[dict[str, Any]] = []
@@ -1405,7 +1454,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
             for it in self.d.shares.list_shared(c.user_id, ws["workspace_id"]):
                 if it["item"]["item_id"] == p["item_id"]:
                     return 200, {
-                        **self._shared_row(ws, it),
+                        **self._shared_row(ws, it, c.user_id),
                         "content": _render(it["item"]["content"]),
                         "item_hash": it["hash"],
                     }
@@ -1952,13 +2001,16 @@ class WebApi(ChangeHandlers, OrgHandlers):
 
     def _h_a_workspaces(self, c: Ctx, p: dict, q: dict, b: dict | None):
         reg, out = self.d.registry, []
+        people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
+        fallback = owner_fallback_names(reg, self.d.access)
         for ws in sorted(reg.pins()):
             st = reg.binding_state(ws)
             card_name = reg.display_name(ws)
             out.append(
                 {
                     "workspace_id": ws,
-                    "name": P4.render_text(card_name) if type(card_name) is str and card_name else None,
+                    "name": P4.render_text(card_name) if type(card_name) is str and card_name else fallback.get(ws),
+                    "owner_name": people.get(reg.owner_alias(ws)),
                     "mode": reg.last_mode(ws),
                     "status": st["status"] if st else None,
                     "left_ms": reg.unbound_ms(ws) if st and st["status"] == "unbound" else None,
@@ -1974,6 +2026,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
             raise ApiError("unavailable")  # an empty map would say "nobody can reach anyone": say nothing instead
         reg = self.d.registry
         workspaces = []
+        people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
+        fallback = owner_fallback_names(reg, self.d.access)
         for ws in sorted(reg.pins()):
             if reg.mode(ws) is None:
                 continue
@@ -1981,7 +2035,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
             workspaces.append(
                 {
                     "workspace_id": ws,
-                    "name": P4.render_text(name) if type(name) is str and name else None,
+                    "name": P4.render_text(name) if type(name) is str and name else fallback.get(ws),
+                    "owner_name": people.get(reg.owner_alias(ws)),
                 }
             )
         edges = [
@@ -2160,7 +2215,9 @@ class WebApi(ChangeHandlers, OrgHandlers):
             raise ApiError("unavailable")
         # the workspace's owner on the hub: the admin who mints the link, or the user they pick (V3-D19)
         owner = b.get("owner_user", c.user_id)
-        if type(owner) is not str or not any(u["user_id"] == owner for u in self.d.access.users()):
+        if type(owner) is not str or not any(
+            u["user_id"] == owner and not u["disabled"] for u in self.d.access.users()
+        ):
             raise ApiError("malformed")
         code, expires = self.d.invites.mint(self.d.now_ms(), owner_user=owner)
         try:

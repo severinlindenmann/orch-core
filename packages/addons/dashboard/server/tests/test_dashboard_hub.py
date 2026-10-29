@@ -174,6 +174,8 @@ def test_module_never_names_a_hub_write():
         "hub.status",
         "share.rules",
         "share.preview",
+        "share.audience",
+        "hub.shared",
         "hub.connect",
         "hub.refresh",
         "hub.link",
@@ -186,7 +188,7 @@ def test_module_never_names_a_hub_write():
     assert src.count("write=True") == 4
     assert set(re.findall(r"\"(share\.[a-z_]+)\"", src)) == {"share.rules", "share.preview", "share.revoke",
                                                              "share.rule_remove", "share.rule_add",
-                                                             "share.sync"}  # fmt: skip
+                                                             "share.sync", "share.audience"}  # fmt: skip
     assert "hubclient" not in src and "import orch" not in src
 
 
@@ -406,3 +408,135 @@ def test_refresh_is_refused_for_a_local_session_that_is_not_a_full_one(monkeypat
     monkeypatch.setattr(hub, "full_session", lambda auth, token: False)
     res = refresh(connect_client(link, gw=PausedGw))
     assert res.status_code in (401, 403) and link.calls == []
+
+
+def test_the_audience_list_is_a_closed_shape_of_names_ids_and_team_counts():
+    raw = {
+        "people": [
+            {"user_id": "a" * 32, "name": "Ben Test", "email": "x"},
+            {"user_id": "zz", "name": "Bad"},
+            {"name": "x"},
+        ],
+        "teams": [{"group": "team-a", "members": 3, "list": ["a" * 32]}, {"group": "Bad Name", "members": 1}],
+        "secret": 1,
+    }
+    got = client(Link({"share.audience": raw})).get(f"/api/w/{WS}/hub/share/audience").json()
+    assert got == {"people": [{"user_id": "a" * 32, "name": "Ben Test"}], "teams": [{"group": "team-a", "members": 3}],
+                   "note": "from the hub, not signed"}  # fmt: skip
+
+
+def test_a_rule_with_readers_reaches_the_host_in_core_s_form_and_a_notes_rule_may_not_have_them():
+    link = Link({"share.preview": PREVIEW})
+    rule = {
+        "kind": "tag",
+        "value": "public",
+        "audience": {"users": ["a" * 32], "groups": ["team-a"]},
+        "description": True,
+    }
+    r = client(link).post(f"/api/w/{WS}/hub/share/preview", json={"add": rule})
+    assert r.status_code == 200
+    aud = {"users": ["a" * 32], "groups": ["team-a"]}
+    assert link.calls[0] == (
+        "share.preview",
+        {"add": {"kind": "tag", "tag": "public", "audience": aud, "description": True}},
+    )
+    body = {"add": {"kind": "needs_you", "description": True}}
+    bad = client(link).post(f"/api/w/{WS}/hub/share/preview", json=body)
+    assert bad.status_code == 422
+    worse = client(link).post(f"/api/w/{WS}/hub/share/preview",
+                              json={"add": {**rule, "audience": {"users": ["nope"], "groups": []}}})  # fmt: skip
+    assert worse.status_code == 422
+
+
+def test_the_review_shows_readers_by_name_and_the_widened_items():
+    raw = {**PREVIEW, "review": {"hub_id": "ab12cd34ef56ab12", "new": {"count": 0, "items": []}, "leaves": [],
+                                 "readers": {"people": ["Ben Test"], "teams": ["team-a"], "note": "from the hub"},
+                                 "widened": [{"line": "ticket PRD-1: T", "people_added": ["Ben Test"],
+                                              "teams_added": [], "description_added": True}]}}  # fmt: skip
+    got = (
+        client(Link({"share.preview": raw}))
+        .post(f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "needs_you"}})
+        .json()
+    )
+    assert (
+        got["review"]["readers"]["people"] == ["Ben Test"] and got["review"]["widened"][0]["description_added"] is True
+    )
+
+
+def test_shared_with_you_is_a_closed_read_only_shape():
+    good = {
+        "workspace_id": "w" * 32, "key": "DEMO-0007", "title": "Invoice export", "shared_by": "Anna",
+        "status": "open", "type": "feature", "deadline": None, "description": "Export invoices as CSV.",
+        "labels": ["x"], "item_id": "i",
+    }  # fmt: skip
+    raw = {"items": [good, {**good, "key": "bad key"}, {**good, "shared_by": None}, "x"], "extra": 1}
+    link = Link({"hub.shared": raw})
+    got = client(link).get(f"/api/w/{WS}/hub/shared").json()
+    assert got == {"items": [{"workspace_id": "w" * 32, "key": "DEMO-0007", "title": "Invoice export",
+                              "shared_by": "Anna", "status": "open", "type": "feature", "deadline": None,
+                              "description": "Export invoices as CSV."}]}  # fmt: skip
+    assert link.calls == [("hub.shared", None)]
+
+
+def _review_of(**over):
+    review = {"hub_id": "ab12cd34ef56ab12", "new": {"count": 0, "items": []}, "leaves": [],
+              "readers": {"people": ["Ben"], "teams": [], "note": "n", "info": "i"}, "widened": [], **over}  # fmt: skip
+    got = client(Link({"share.preview": {**PREVIEW, "review": review}})).post(
+        f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "needs_you"}}
+    )
+    return got.json()["review"]
+
+
+def test_review_passes_readers_with_info_and_widened():
+    got = _review_of(
+        widened=[
+            {"line": "ticket PRD-1: T", "people_added": ["Ana"], "teams_added": [], "description_added": True, "x": 1}
+        ]
+    )
+    assert got["readers"] == {"people": ["Ben"], "teams": [], "note": "n", "info": "i"}
+    assert got["widened"] == [
+        {"line": "ticket PRD-1: T", "people_added": ["Ana"], "teams_added": [], "description_added": True}
+    ]
+
+
+@pytest.mark.parametrize(
+    "over",
+    [
+        {
+            "widened": [{"line": "ticket PRD-1: T", "people_added": [], "teams_added": [], "description_added": False}]
+            * 201
+        },
+        {
+            "widened": [
+                {"line": "ticket PRD-1: T", "people_added": [], "teams_added": [], "description_added": False},
+                "x",
+            ]
+        },
+        {"widened": [{"line": 5}]},
+        {"widened": [{"line": "ticket PRD-1: T", "people_added": ["Ana", 7], "teams_added": []}]},
+        {"widened": None},
+        {"widened": "x"},
+        {"readers": {"people": [f"P{i}" for i in range(501)], "teams": []}},
+        {"readers": {"people": ["Ben", 5], "teams": []}},
+        {"readers": {"people": ["Ben"]}},
+        {"readers": None},
+    ],
+)
+def test_a_cut_or_malformed_readers_or_widened_list_means_no_review(over):
+    assert _review_of(**over) is None
+
+
+def test_a_long_review_below_the_hard_limits_is_passed_on_whole():
+    row = {"line": "ticket PRD-1: T", "people_added": [f"A{i}" for i in range(500)], "teams_added": [],
+           "description_added": False}  # fmt: skip
+    got = _review_of(readers={"people": [f"P{i}" for i in range(500)], "teams": [], "note": "n"}, widened=[row] * 200)
+    assert len(got["readers"]["people"]) == 500 and len(got["widened"]) == 200
+    assert len(got["widened"][0]["people_added"]) == 500
+
+
+def test_a_review_without_readers_or_widened_keys_means_no_review():
+    review = {"hub_id": "ab12cd34ef56ab12", "new": {"count": 0, "items": []}, "leaves": []}
+    got = client(Link({"share.preview": {**PREVIEW, "review": review}})).post(
+        f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "needs_you"}}
+    )
+    assert got.json()["review"] is None

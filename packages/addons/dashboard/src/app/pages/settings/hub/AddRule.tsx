@@ -24,7 +24,7 @@ function refusal(e: unknown): string {
   return 'Could not share. Try again.'
 }
 
-export function AddRuleReview({ ws, workspace, rule, after }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined }) {
+export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; onDone?: () => void }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -38,7 +38,7 @@ export function AddRuleReview({ ws, workspace, rule, after }: { ws: string; work
     setBusy(true)
     setError('')
     api.addHubRule(ws, rule, after.plan).then(
-      got => { setDone(got); void qc.invalidateQueries({ queryKey: ['hub', ws] }) },
+      got => { setDone(got); onDone?.(); void qc.invalidateQueries({ queryKey: ['hub', ws] }) },
       err => setError(refusal(err)),
     ).finally(() => setBusy(false))
   }

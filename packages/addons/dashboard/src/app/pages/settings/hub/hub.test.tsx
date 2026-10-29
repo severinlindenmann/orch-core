@@ -170,7 +170,7 @@ describe('stopping sharing one ticket', () => {
     expect(within(dialog).queryByRole('textbox')).toBeNull()
     expect(within(dialog).queryByTestId('hub-backup-input')).toBeNull()
     for (const code of document.querySelectorAll('code')) expect(code.textContent).not.toContain('orch hub')
-    await view.user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await view.user.click(within(dialog).getByRole('button', { name: 'Keep sharing' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Stop sharing this ticket' })).toBeNull(), T)
   })
 

@@ -58,7 +58,7 @@ def _run(c: dict) -> dict:
         if c["kind"] == "seal":
             wxk_pub = bytes.fromhex(DOC["keys"]["wxk_pub"])
             rest = [a[k] for k in FIELDS] + [a["value"]]
-            sealed = O._seal_with_ephemeral(EPH, wxk_pub, *rest)
+            sealed = sealing._seal_with_ephemeral(EPH, wxk_pub, *O.wrap_inputs(*rest))
             return {"sealed": sealed.hex()}
         if c["kind"] == "open":
             value = O.open_org_secret(

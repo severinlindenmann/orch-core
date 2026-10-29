@@ -23,7 +23,7 @@ async function joinUntilSigned() {
   const view = renderApp('/w/DEMO/settings/hub')
   await view.user.click(await screen.findByTestId('hub-connect', {}, T))
   fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: LINK } })
-  const btn = await screen.findByRole('button', { name: 'Sign and join the hub' }, T)
+  const btn = await screen.findByRole('button', { name: 'Connect' }, T)
   await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
   trustedPresses()
   fireEvent.pointerDown(btn)
@@ -66,5 +66,36 @@ describe('the join waits for the hub', () => {
     const failed = await screen.findByTestId('hub-connect-failed', {}, T)
     expect(failed.textContent).toContain("Couldn't connect. Try again.")
     expect(failed.textContent).not.toContain('hub.unreachable')
+  })
+})
+
+describe('P10: a short join dialog', () => {
+  const open = async () => {
+    const view = renderApp('/w/DEMO/settings/hub')
+    await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+    return view
+  }
+  it('the Standalone page does not mention a backup key and the link hint is one sentence', async () => {
+    const view = await open()
+    expect(document.body.textContent).not.toMatch(/backup key/i)
+    expect(document.body.textContent).toContain('Paste the connect link from your hub admin.')
+    expect(document.activeElement).toBe(await screen.findByTestId('hub-link-text', {}, T))
+    view.unmount()
+  })
+  it('shows one mode box, the choice only after "Choose another option", and the caveat only for Everything', async () => {
+    const view = await open()
+    fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: LINK } })
+    const box = await screen.findByTestId('hub-mode-box', {}, T)
+    expect(box.textContent).toContain('Recommended. The hub sees only what you share. You can change this later.')
+    expect(screen.queryByTestId('hub-mode-full')).toBeNull()
+    expect(screen.queryByText('What the hub has already read cannot be taken back.')).toBeNull()
+    expect(screen.queryByText('You choose what to share.')).toBeNull()
+    await view.user.click(screen.getByTestId('hub-mode-other'))
+    expect(screen.getByText('What the hub can see')).toBeTruthy()
+    expect(screen.queryByTestId('hub-mode-box')).toBeNull()
+    await view.user.click(screen.getByTestId('hub-mode-full'))
+    expect(screen.getByText('What the hub has already read cannot be taken back.')).toBeTruthy()
+    await view.user.click(screen.getByTestId('hub-mode-selective'))
+    expect(screen.queryByText('What the hub has already read cannot be taken back.')).toBeNull()
   })
 })

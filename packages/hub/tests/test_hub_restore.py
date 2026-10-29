@@ -362,7 +362,7 @@ def test_a_dev_backup_does_not_restore_onto_a_real_server_and_the_reverse(w, tmp
     rdata = next((tmp_path / "real" / "backups").iterdir()).read_bytes()
     with pytest.raises(RS.RestoreError) as e:  # a dev server (the default) refuses a real hub's backup
         RS.restore(tmp_path / "s1" / "d", rdata, words, dev_mode=True)
-    assert e.value.code == "dev_mismatch" and not (tmp_path / "s1").exists() or True
+    assert e.value.code == "dev_mismatch"
     assert not (tmp_path / "s1" / "d.new").exists() and not (tmp_path / "s1" / "d").exists()
     dwords, ddata = _backup(w)
     with pytest.raises(RS.RestoreError) as e:  # and a real server refuses the dev backup

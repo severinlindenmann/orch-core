@@ -65,6 +65,10 @@ export interface ClaudeTrust {
   offered: boolean
   why_not: string
   parent_config: string
+  /** A Claude Code start asks for the consent in its sign card: not given yet, and the host can take it (no "trust anyway"). */
+  agent_needs_consent?: boolean
+  /** Why the consent cannot be given for a start ("" when it can, or is given already). */
+  agent_why_not?: string
 }
 
 /** What `runner` says on `/api/workspaces`, `/api/me` and the identity (host `whoami.runner`, cap `run/1`); null: the host does not say. */

@@ -35,7 +35,7 @@ from orch.tokenshape import GITHUB_TOKEN_BYTES, GITHUB_TOKEN_SHAPE, is_key_value
 
 from .columns import GrantState
 from .errors import HostError
-from .mcpshared import CAPABILITY_SHAPE
+from .mcpshared import CAPABILITY_ANY, CAPABILITY_SHAPE
 
 __all__ = [
     "AuthView",
@@ -378,7 +378,7 @@ class Redactor:
         for secret in self.secrets:
             text = text.replace(secret, REDACTED)
         text = GRANT_SHAPE.sub(REDACTED, text)
-        text = CAPABILITY_SHAPE.sub(REDACTED, text)
+        text = CAPABILITY_ANY.sub(REDACTED, text)
         if not signature:
             text = GITHUB_TOKEN_SHAPE.sub(REDACTED, text)
         return _PEM.sub(REDACTED, text)

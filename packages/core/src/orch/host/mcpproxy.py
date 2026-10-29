@@ -23,7 +23,7 @@ import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
-from .mcpshared import CAPABILITY_SHAPE, new_capability, server_name_ok, tool_pin, tool_view
+from .mcpshared import CAPABILITY_ANY, new_capability, server_name_ok, tool_pin, tool_view
 
 __all__ = ["Proxy"]
 
@@ -35,6 +35,7 @@ HEADER_MAX = 16 * 1024
 HEADERS_MAX = 64
 BODY_MAX = 1024 * 1024
 READ_TIMEOUT = 10.0
+HEADER_TIMEOUT = 2.0  # the whole header block, before anyone has proven anything
 RESPONSE_MAX = 4 * 1024 * 1024
 UPSTREAM_TIMEOUT = 30
 CALLS_PER_MINUTE = 60
@@ -71,7 +72,7 @@ class _Redact(logging.Filter):
         self._held = held
 
     def scrub(self, text: str) -> str:
-        text = CAPABILITY_SHAPE.sub("[redacted]", text)
+        text = CAPABILITY_ANY.sub("[redacted]", text)
         for value in sorted(self._held(), key=len, reverse=True):
             if value:
                 text = text.replace(value, "[redacted]")
@@ -136,7 +137,7 @@ def _dumps(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
 
 
-SCRUB_MIN = 8  # a form shorter than this is never redacted (it would mangle ordinary output)
+SCRUB_MIN = 8  # a derived form shorter than this is never redacted (the exact value always is)
 _PERCENT = re.compile(r"%([0-9A-Fa-f]{2})")
 
 
@@ -165,8 +166,9 @@ def _secret_forms(value: str) -> re.Pattern | None:
         urllib.parse.quote(value, safe=""),
         urllib.parse.quote_plus(value),
     }
-    parts = []
-    for form in sorted((f for f in plain if len(f) >= SCRUB_MIN), key=len, reverse=True):
+    plain.discard(value)
+    parts = [re.escape(value)] if value else []  # the exact value is always scrubbed, whatever its length
+    for form in sorted((f for f in plain if len(f) >= SCRUB_MIN and f != value), key=len, reverse=True):
         parts.append(re.escape(form))
     for form in sorted((f for f in percent if len(f) >= SCRUB_MIN and "%" in f), key=len, reverse=True):
         pieces = _PERCENT.split(form)  # literal, hex, literal, hex, ...
@@ -300,8 +302,7 @@ class Proxy:
         with self._lock:
             for key in [k for k, c in self._caps.items() if c.run == run]:
                 self._drop(key)
-            if not any(c.run == run for c in self._caps.values()):  # counters stay while a capability is live
-                self._runs.pop(run, None)
+            self._runs.pop(run, None)
 
     def revoke_workspace(self, ws: str) -> None:
         with self._lock:
@@ -423,7 +424,7 @@ class Proxy:
         except ValueError:
             raise _Refuse(403, "forbidden") from None
         try:
-            raw = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), READ_TIMEOUT)
+            raw = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), HEADER_TIMEOUT)
         except TimeoutError:
             raise _Refuse(408, "timeout") from None
         except (asyncio.LimitOverrunError, asyncio.IncompleteReadError):
@@ -474,7 +475,6 @@ class Proxy:
         if name not in cap.servers:
             raise _Refuse(403, "forbidden")
         self._count(cap)  # the request counts before anything else is asked or decided
-        record = self._check_served(cap, name)
         length = headers.get("content-length")
         if length is None:
             raise _Refuse(411, "length required")
@@ -488,10 +488,8 @@ class Proxy:
             raise _Refuse(408, "timeout") from None
         except asyncio.IncompleteReadError:
             raise _Refuse(400, "bad request") from None
-        with self._lock:
-            if not self._live(cap):
-                self._drop(key)
-                raise _Refuse(401, "unauthorized")
+        self._require_live(cap, name)
+        record = self._check_served(cap, name)
         bearer, secret_value = self._credentials(cap, record)  # after the body: nothing waits between check and use
         status, payload = await self._rpc(key, cap, name, record, bearer, body)
         if payload is not None and secret_value:
@@ -574,14 +572,22 @@ class Proxy:
 
     # -- JSON-RPC -------------------------------------------------------------------------------------------------
 
-    def _live(self, cap: _Cap) -> bool:
-        """Caller holds the lock. True while this very capability is registered and its binding is still live."""
-        return self._caps.get(cap.key) is cap and self._binding_is(cap.ws, cap.hub_id, cap.binding_seq)
+    def _require_live(self, cap: _Cap, name: str) -> None:
+        """401 (and the capability is dropped) when this very capability is no longer registered or its binding is
+        gone; 403 when this server was taken away from it."""
+        with self._lock:
+            if self._caps.get(cap.key) is not cap or not self._binding_is(cap.ws, cap.hub_id, cap.binding_seq):
+                self._drop(cap.key)
+                raise _Refuse(401, "unauthorized")
+            if name not in cap.servers:
+                raise _Refuse(403, "forbidden")
 
     def _up(self, cap: _Cap, name: str, record: dict, bearer: str | None) -> Any:
         with self._lock:
             if self._caps.get(cap.key) is not cap:
                 raise _Refuse(401, "unauthorized")
+            if name not in cap.servers:
+                raise _Refuse(403, "forbidden")
             held = cap.upstreams.get(name)
             if held is not None and held[1] == bearer:
                 return held[0]
@@ -593,20 +599,20 @@ class Proxy:
             cap.upstreams[name] = (up, bearer)
             return up
 
-    def _post(self, cap: _Cap, up: Any, message: dict) -> Any:
-        """Runs in the worker thread: the capability is checked again immediately before the post."""
-        with self._lock:
-            if not self._live(cap):
-                self._drop(cap.key)
-                raise _Refuse(401, "unauthorized")
-        return up.post(message, timeout=UPSTREAM_TIMEOUT)
+    def _post(self, cap: _Cap, name: str, up: Any, message: dict) -> Any:
+        """Runs in the worker thread: the capability is checked again immediately before the post, and once more when
+        the answer is back (a revoke meanwhile drops the answer)."""
+        self._require_live(cap, name)
+        msgs = up.post(message, timeout=UPSTREAM_TIMEOUT)
+        self._require_live(cap, name)
+        return msgs
 
     async def _forward(self, key: str, cap: _Cap, name: str, up: Any, message: dict) -> list[dict]:
-        if cap.inflight.get(name, 0) >= INFLIGHT_MAX:
+        if sum(cap.inflight.values()) >= INFLIGHT_MAX:  # across all its servers: one capability cannot fill the pool
             raise _Refuse(429, "too many calls")
         cap.inflight[name] = cap.inflight.get(name, 0) + 1
         try:
-            msgs = await asyncio.get_running_loop().run_in_executor(self._pool, self._post, cap, up, message)
+            msgs = await asyncio.get_running_loop().run_in_executor(self._pool, self._post, cap, name, up, message)
         except _Refuse:
             raise
         except Exception:

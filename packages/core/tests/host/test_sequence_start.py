@@ -71,7 +71,7 @@ def test_sequence_view_marks_last_grant_and_launch(human, tmp_path):
     assert got["headline"] == "Create ticket and start agent"
     assert DEPOSIT_RISK in got["risk_lines"]
     assert "Agents can run as you for 8 hours" in got["risk_lines"]
-    assert any("Then: start an agent on the new ticket." in line for line in got["lines"])
+    assert any("Then: the agent starts on the new ticket." in line for line in got["lines"])
     assert sequence.steps(rig.intent)[-1]["op"] == "grant"
 
 

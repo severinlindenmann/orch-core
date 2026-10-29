@@ -69,7 +69,13 @@ async function sealWith(ephPriv, ephPub, f) {
   return concat(ephPub, ct);
 }
 
+// A wrap that is already expired, or that outlives the 366-day cap, is refused before any key is made. Only this served
+// entry checks the clock; the test seam calls sealWith directly with the fixed historical expiries of the vectors.
+const EXPIRY_MAX_MS = 366 * 86400000;
+
 export async function sealOrgSecret(f) {
+  const now = Date.now();
+  if (!Number.isSafeInteger(f.expiresMs) || f.expiresMs <= now || f.expiresMs > now + EXPIRY_MAX_MS) throw new Error("malformed");
   const eph = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
   const ephPub = new Uint8Array(await crypto.subtle.exportKey("raw", eph.publicKey));
   return sealWith(eph.privateKey, ephPub, f);

@@ -51,6 +51,10 @@ ACTIVITY_TYPES = (
     "addon.request_approved",
     "addon.request_refused",
     "hub.settings.changed",
+    "hub.backup.key_set",
+    "hub.backup.key_confirmed",
+    "hub.backup.made",
+    "hub.backup.downloaded",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(

@@ -86,25 +86,35 @@ async function open(storage: Record<string, string> = {}) {
 }
 const sent = async () => JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
 const createOnly = async (r: { user: { click: (e: Element) => Promise<void> } }, sheet: HTMLElement) => {
-  await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
-  await r.user.click(await screen.findByRole('menuitem', { name: 'Create without starting' }, T))
+  await r.user.click(await within(sheet).findByRole('button', { name: 'Create ticket' }, T))
 }
 const startBtn = (sheet: HTMLElement) => within(sheet).findByRole('button', { name: 'Create and start' }, T)
 
 beforeEach(() => { clearMark(WS(), 'DEMO-0044'); GRANT = { ...GRANT, until: inHours(48) }; setup() })
 
 describe('the form', () => {
-  it('offers Create and start as the main button, Create without starting in the menu, and a quiet agent summary', async () => {
+  it('offers Create and start as the main button, a visible Create ticket beside it, and a quiet agent summary', async () => {
     const { r, sheet } = await open()
     await startBtn(sheet)
     expect(within(sheet).queryByTestId('agent-line')).toBeNull()
     expect(sheet).not.toHaveTextContent('will draft a plan')
     expect(within(sheet).getByTestId('nt-agent-summary')).toHaveTextContent('Claude Code · Write requirements and plan')
     expect(within(sheet).queryByRole('button', { name: 'Change' })).toBeNull()
+    // P06: both ways are visible buttons; the menu keeps only the agent choice
+    expect(within(sheet).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
     await r.user.click(within(sheet).getByRole('button', { name: 'More ways to create' }))
-    expect(await screen.findByRole('menuitem', { name: 'Create without starting' }, T)).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: 'Choose agent…' })).toBeInTheDocument()
+    expect(await screen.findByRole('menuitem', { name: 'Choose agent…' }, T)).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Create without starting' })).toBeNull()
     expect(screen.queryByRole('menuitem', { name: 'Create and start' })).toBeNull()
+  })
+
+  it('P06: Enter in Title moves to the requirements and submits nothing', async () => {
+    const { r, sheet } = await open()
+    const title = within(sheet).getByLabelText('Title')
+    await r.user.click(title)
+    await r.user.keyboard('{Enter}')
+    expect(within(sheet).getByLabelText(/^What should be true/)).toHaveFocus()
+    expect(screen.queryByTestId('nt-summary')).toBeNull()
   })
 
   it('a risk-notices answer without `acknowledged` counts as not read and does not crash the form', async () => {
@@ -134,7 +144,6 @@ describe('the form', () => {
     expect(await screen.findByTestId('nt-lead')).toHaveTextContent('No agent starts. You can start one later.')
     expect(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`)).toBeNull() // nothing was written
     expect(await startBtn(sheet)).toBeInTheDocument()
-    expect(within(sheet).queryByRole('button', { name: 'Create ticket' })).toBeNull()
   })
 
   it('the main button keeps its choice: with start=false stored, Create ticket is main and the menu start is used once', async () => {
@@ -142,8 +151,7 @@ describe('the form', () => {
     const stored = JSON.stringify({ start: false, harness: 'claude-code', mode: 'work', model: '' })
     const { r, sheet } = await open({ [key]: stored })
     expect(await within(sheet).findByRole('button', { name: 'Create ticket' }, T)).toBeInTheDocument()
-    await r.user.click(within(sheet).getByRole('button', { name: 'More ways to create' }))
-    await r.user.click(await screen.findByRole('menuitem', { name: 'Create and start' }, T))
+    await r.user.click(within(sheet).getByRole('button', { name: 'Create and start' }))
     expect(await screen.findByTestId('not-signed-start')).toBeInTheDocument()
     expect(JSON.parse(localStorage.getItem(key) ?? '{}').start).toBe(false) // the menu did not change the default
     cleanup()

@@ -84,7 +84,7 @@ def open_gates(view: Any) -> list[str]:
 def refine_hint(view: Any) -> str | None:
     """While a gate is open: the command that fills the first gap of any open gate, else ``orch wait`` (every open gate
     is complete and waits for the person, who approves it in the dashboard; the same session builds afterwards, run-9
-    J04). ``None`` when no gate is open. A gap that is only an artifact has no command and also means wait."""
+    J04). ``None`` when no gate is open. A gap that is only an artifact has no command: ``orch show``."""
     gates = open_gates(view)
     if not gates:
         return None
@@ -148,7 +148,7 @@ def next_hint(view: Any, session: str | None = None) -> str:
         if g is None:
             return "orch submit"
         # an incomplete gate cannot be approved yet; a complete one is approved by the person in Approvals: no question
-        return fill_hint(view, g) or "orch wait"
+        return fill_hint(view, g) or ("orch show" if gate_missing(view, g) else "orch wait")
     g = open_gate(view)
     if (
         g is not None

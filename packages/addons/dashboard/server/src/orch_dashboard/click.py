@@ -69,8 +69,7 @@ SUBMITTED = "the request is submitted"  # cancelled/expired never get here: send
 # constants (orch.click.protocol); a View of a deposit grant that lacks either is not shown.
 DEPOSIT_LINE = "The secret goes to your orch runner on this machine and is never shown"
 DEPOSIT_RISK = (
-    "Anything that takes over the dashboard can give agents standing authority to act for you on tickets for as long "
-    "as the grant lasts (up to 7 days, the length you choose); you can stop it at any time."
+    "Whoever controls this dashboard could use this access while it lasts. You can stop it any time."
 )
 #: core's constants (orch.click.protocol REVEAL_LINE, REVEAL_RISK): a shown-secret View that lacks either is not shown
 REVEAL_LINE = "The secret is shown once, on this page, only to you. orch keeps only a fingerprint of it"

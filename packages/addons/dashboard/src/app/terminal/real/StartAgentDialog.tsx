@@ -555,7 +555,7 @@ export function RunnerGrantCard({ ws, runner, loading, blocked, onChanged, initi
   const hostSettings = useQuery({ ...queries.hostSettings(ws), retry: false })
   const maxHours = grantDefaultHours({ grant_hours: hostSettings.data?.grant_hours ?? workspace?.grant_hours })
   const maxKnown = !workspaces.isPending && !hostSettings.isPending // until both answered, the maximum is a guess: show nothing about it
-  const riskText = maxKnown ? DEPOSIT_RISK.replace('up to 7 days', `up to ${hoursText(maxHours)}`) : DEPOSIT_RISK.replace(' (up to 7 days, the length you choose)', ' (the length you choose)')
+  const riskText = DEPOSIT_RISK // P14: core's one short sentence, verbatim (the length is chosen in the review above it)
   // Shown in full until acknowledged once (kept per person and workspace); an unreadable answer counts as not acknowledged.
   const qcRisk = useQueryClient()
   const ackQ = useQuery({ queryKey: ['risk-notices', ws], queryFn: () => agentsApi.riskNotices(ws), retry: false, enabled: !!sheet })

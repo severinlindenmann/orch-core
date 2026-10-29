@@ -90,8 +90,7 @@ describe('the real click path', () => {
     const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
     await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
     await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
-    await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
-    await r.user.click(await screen.findByRole('menuitem', { name: 'Create without starting' }, T))
+    await r.user.click(await within(sheet).findByRole('button', { name: 'Create ticket' }, T))
     const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
     expect(await within(dialog).findByText('No agent starts. You can start one later.', {}, T)).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
@@ -229,7 +228,7 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: never armed by C
   expect(action).toMatchObject({ action: 'new_sequence', launch: { harness: expect.any(String), mode: expect.any(String) } })
   if (needsGrant) {
     expect(action).toHaveProperty('agent.hours', 168) // the workspace's access setting (#1555), here 168 h; the mocked signer's line below is its own
-    expect(panel).toHaveTextContent('standing authority')
+    expect(panel).toHaveTextContent('could use this access while it lasts')
     const button = screen.getByRole('button', { name: 'Sign and start agent' })
     expect(screen.queryByTestId('sign-arm-status')).not.toBeInTheDocument()
     expect(button).toBeDisabled()

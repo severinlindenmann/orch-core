@@ -10,7 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { cn } from '@/lib/utils'
 import { sectionTitle } from './Overview'
-import { ActorIcon, agentName, ago, fmtExact, fmtTime, Mono, Pill, type TabProps, type Viewer } from './shared'
+import { ActorIcon, agentName, Ago, fmtExact, fmtTime, Mono, Pill, type TabProps, type Viewer } from './shared'
 
 const CORE_PREFIXES = new Set(['ticket', 'status', 'people', 'claim', 'lease', 'task', 'artifact', 'question', 'gate', 'verdict', 'handoff', 'log', 'section', 'edit', 'projection', 'restore'])
 /** Why core refused an agent, in plain words (the code stays beside it for tools). */
@@ -201,7 +201,7 @@ function Timeline({ events, viewer }: { events: OrchEvent[]; viewer: Viewer }) {
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px]">
                   <span className="text-[13px] font-medium text-text">{e.actor.kind === 'agent' ? `${agentName(e.actor.id)} for ${viewer.name(e.actor.for)}` : e.actor.kind === 'host' ? 'orch' : e.actor.kind === 'addon' ? e.actor.id : viewer.name(e.actor.id)}</span>
                   <Pill>{e.type}</Pill>
-                  <span className="text-text-faint" title={fmtExact(e.at)}>{ago(e.at)}</span>
+                  <span className="text-text-faint" title={fmtExact(e.at)}><Ago at={e.at} /></span>
                   <Mono className="text-[11px] text-text-faint">seq {e.seq}</Mono>
                   <SigStatus e={e} />
                 </div>
@@ -239,7 +239,7 @@ export function SessionRefusals({ items, viewer }: { items: TicketRefusal[]; vie
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <span className="text-[13px] font-medium text-text">{`${agentName(r.agent)} for ${viewer.name(r.for)}`}</span>
               <Mono className="text-[11px] text-text-faint">{r.session}</Mono>
-              <span className="text-text-faint" title={fmtExact(r.at)}>{ago(r.at)}</span>
+              <span className="text-text-faint" title={fmtExact(r.at)}><Ago at={r.at} /></span>
               <Pill>{r.code}</Pill>
             </div>
             <p className="mt-0.5 text-[13px] text-text-muted">{`Refused: ${refusalWords(r)}`}</p>
@@ -297,7 +297,7 @@ function SectionEdits({ ticket, viewer }: { ticket: TicketDocument; viewer: View
           <ol className="space-y-0.5 text-[12px] text-text-muted">
             {revs.map((r) => (
               <li key={r.seq}>
-                {viewer.name(r.by)} · <span title={fmtExact(r.at)}>{ago(r.at)}</span> · {r.via === 'external' ? 'outside orch' : 'edit'} · {r.hash ? <Mono>{r.hash.replace('sha256:', '').slice(0, 12)}</Mono> : 'section removed'}
+                {viewer.name(r.by)} · <span title={fmtExact(r.at)}><Ago at={r.at} /></span> · {r.via === 'external' ? 'outside orch' : 'edit'} · {r.hash ? <Mono>{r.hash.replace('sha256:', '').slice(0, 12)}</Mono> : 'section removed'}
               </li>
             ))}
           </ol>
@@ -348,7 +348,7 @@ function Changes({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer })
             <select className={selectCls} value={label === 'From' ? from : to} onChange={(e) => (label === 'From' ? setFromRev(Number(e.target.value)) : setToRev(Number(e.target.value)))}>
               {revs.map((r) => (
                 <option key={r.rev} value={r.rev}>
-                  r{r.rev} · {ago(r.at)}
+                  r{r.rev} · <Ago at={r.at} />
                 </option>
               ))}
             </select>

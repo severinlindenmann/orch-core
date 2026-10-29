@@ -170,14 +170,23 @@ def test_module_never_names_a_hub_write():
     calls = re.findall(r"\.call\(\s*\"([a-z_.]+)\"", src)
     # connect: C11's one write; addon.list: a read (the join-pause check); member.list: the owner check of the
     # one-click share reductions
-    allowed = {"hub.status", "share.rules", "share.preview", "hub.connect", "hub.link", "addon.list", "member.list"}
+    allowed = {
+        "hub.status",
+        "share.rules",
+        "share.preview",
+        "share.audience",
+        "hub.connect",
+        "hub.link",
+        "addon.list",
+        "member.list",
+    }
     assert set(calls) <= allowed
     # the other writes: `reduce` (only the two ops that take sharing away) and `add` (the two click-only ops that
     # share more: a full local session, an owner, a plan this session was shown; see test_hub_share_add)
     assert src.count("write=True") == 3
     assert set(re.findall(r"\"(share\.[a-z_]+)\"", src)) == {"share.rules", "share.preview", "share.revoke",
                                                              "share.rule_remove", "share.rule_add",
-                                                             "share.sync"}  # fmt: skip
+                                                             "share.sync", "share.audience"}  # fmt: skip
     assert "hubclient" not in src and "import orch" not in src
 
 
@@ -331,3 +340,56 @@ def test_connect_failure_is_the_hosts_own_answer_and_never_says_connected():
     res = connect(connect_client(link))
     assert res.status_code >= 400 and "connected" not in res.text.lower().replace("not connected", "")
     assert res.json()["error"]["code"] == "hub.unreachable"
+
+
+def test_the_audience_list_is_a_closed_shape_of_names_ids_and_team_counts():
+    raw = {
+        "people": [
+            {"user_id": "a" * 32, "name": "Ben Test", "email": "x"},
+            {"user_id": "zz", "name": "Bad"},
+            {"name": "x"},
+        ],
+        "teams": [{"group": "team-a", "members": 3, "list": ["a" * 32]}, {"group": "Bad Name", "members": 1}],
+        "secret": 1,
+    }
+    got = client(Link({"share.audience": raw})).get(f"/api/w/{WS}/hub/share/audience").json()
+    assert got == {"people": [{"user_id": "a" * 32, "name": "Ben Test"}], "teams": [{"group": "team-a", "members": 3}],
+                   "note": "from the hub, not signed"}  # fmt: skip
+
+
+def test_a_rule_with_readers_reaches_the_host_in_core_s_form_and_a_notes_rule_may_not_have_them():
+    link = Link({"share.preview": PREVIEW})
+    rule = {
+        "kind": "tag",
+        "value": "public",
+        "audience": {"users": ["a" * 32], "groups": ["team-a"]},
+        "description": True,
+    }
+    r = client(link).post(f"/api/w/{WS}/hub/share/preview", json={"add": rule})
+    assert r.status_code == 200
+    aud = {"users": ["a" * 32], "groups": ["team-a"]}
+    assert link.calls[0] == (
+        "share.preview",
+        {"add": {"kind": "tag", "tag": "public", "audience": aud, "description": True}},
+    )
+    body = {"add": {"kind": "needs_you", "description": True}}
+    bad = client(link).post(f"/api/w/{WS}/hub/share/preview", json=body)
+    assert bad.status_code == 422
+    worse = client(link).post(f"/api/w/{WS}/hub/share/preview",
+                              json={"add": {**rule, "audience": {"users": ["nope"], "groups": []}}})  # fmt: skip
+    assert worse.status_code == 422
+
+
+def test_the_review_shows_readers_by_name_and_the_widened_items():
+    raw = {**PREVIEW, "review": {"hub_id": "ab12cd34ef56ab12", "new": {"count": 0, "items": []}, "leaves": [],
+                                 "readers": {"people": ["Ben Test"], "teams": ["team-a"], "note": "from the hub"},
+                                 "widened": [{"line": "ticket PRD-1: T", "people_added": ["Ben Test"],
+                                              "teams_added": [], "description_added": True}]}}  # fmt: skip
+    got = (
+        client(Link({"share.preview": raw}))
+        .post(f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "needs_you"}})
+        .json()
+    )
+    assert (
+        got["review"]["readers"]["people"] == ["Ben Test"] and got["review"]["widened"][0]["description_added"] is True
+    )

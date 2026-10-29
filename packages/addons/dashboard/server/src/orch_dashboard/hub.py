@@ -45,7 +45,7 @@ import re
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from . import reads
 from .adapters.addons import display
@@ -110,12 +110,28 @@ class LinkBody(BaseModel):
         return self
 
 
+HubUserId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
+HubGroup = Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9-]{0,39}$")]
+
+
+class Audience(BaseModel):
+    """Who besides the owner may read the shared tickets on the hub (P02): hub user ids and team names. The ids are
+    what core signs; the names the page shows come from `GET /hub/share/audience` (from the hub, not signed)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    users: list[HubUserId] = Field(default_factory=list, max_length=32)
+    groups: list[HubGroup] = Field(default_factory=list, max_length=16)
+
+
 class Rule(BaseModel):
-    """One share rule, as core's `share.preview` and `orch hub share rule` take it (exactly one value, or none)."""
+    """One share rule, as core's `share.preview` and `orch hub share rule` take it (exactly one value, or none). A
+    type, tag or ticket rule may also carry the `audience` and whether the `description` is included."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
     kind: Literal["type", "tag", "ticket", "questions", "needs_you"]
     value: RuleValue | None = None
+    audience: Audience | None = None
+    description: bool | None = None
 
     @model_validator(mode="after")
     def shape(self):
@@ -126,10 +142,17 @@ class Rule(BaseModel):
                 raise ValueError("the value has invisible characters, outer spaces or a leading dash")
             if self.kind == "ticket" and not TICKET_KEY.fullmatch(self.value):
                 raise ValueError("a ticket rule names a ticket key")
+        if self.value is None and (self.audience is not None or self.description is not None):
+            raise ValueError("only a type, tag or ticket rule has readers or a description")
         return self
 
     def host(self) -> dict:
-        return {"kind": self.kind} if self.value is None else {"kind": self.kind, self.kind: self.value}
+        out: dict = {"kind": self.kind} if self.value is None else {"kind": self.kind, self.kind: self.value}
+        if self.audience is not None:
+            out["audience"] = {"users": list(self.audience.users), "groups": list(self.audience.groups)}
+        if self.description is not None:
+            out["description"] = self.description
+        return out
 
 
 class PreviewBody(BaseModel):
@@ -245,11 +268,14 @@ def _rule_row(raw) -> dict | None:
     value = display(raw.get(kind)) if kind in ("type", "tag", "ticket") else None
     if kind in ("type", "tag", "ticket") and value is None:
         return None
+    aud = raw.get("audience") if isinstance(raw.get("audience"), dict) else {}
     return {
         "kind": kind,
         "value": value,
         "count": _int(raw.get("count")) or 0,
         "describes": display(raw.get("describes")),
+        "readers": (len(aud.get("users") or []) + len(aud.get("groups") or [])) if aud else 0,
+        "description": raw.get("description") is True,
     }
 
 
@@ -286,6 +312,52 @@ def share_view(rules, preview) -> dict:
     }
 
 
+def _names(raw, n: int) -> list[str]:
+    return [t[:80] for t in (raw if isinstance(raw, list) else [])[:n] if isinstance(t, str) and display(t) is not None]
+
+
+def _readers_view(raw) -> dict:
+    """Who can read the new items at the hub, by name (from the hub, not signed): closed fields."""
+    raw = raw if isinstance(raw, dict) else {}
+    note = raw.get("note")
+    return {
+        "people": _names(raw.get("people"), 64),
+        "teams": _names(raw.get("teams"), 32),
+        "note": note[:80] if isinstance(note, str) else None,
+    }
+
+
+def _widened_view(raw) -> list[dict]:
+    """Items already shared that this change makes reach more people or carry their description."""
+    out = []
+    for w in (raw if isinstance(raw, list) else [])[:20]:
+        if isinstance(w, dict) and isinstance(w.get("line"), str):
+            out.append({
+                "line": w["line"][:300],
+                "people_added": _names(w.get("people_added"), 32),
+                "teams_added": _names(w.get("teams_added"), 16),
+                "description_added": w.get("description_added") is True,
+            })  # fmt: skip
+    return out
+
+
+def audience_view(raw) -> dict:
+    """`share.audience`: the hub's people (id, name) and teams (name, member count only). Display data, not signed."""
+    raw = raw if isinstance(raw, dict) else {}
+    people = []
+    for p in (raw.get("people") if isinstance(raw.get("people"), list) else [])[:200]:
+        name = display(p.get("name")) if isinstance(p, dict) else None
+        uid = p.get("user_id") if isinstance(p, dict) else None
+        if name is not None and isinstance(uid, str) and re.fullmatch(r"[0-9a-f]{32}", uid):
+            people.append({"user_id": uid, "name": name[:80]})
+    teams = []
+    for t in (raw.get("teams") if isinstance(raw.get("teams"), list) else [])[:50]:
+        g = t.get("group") if isinstance(t, dict) else None
+        if isinstance(g, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", g):
+            teams.append({"group": g, "members": _int(t.get("members")) or 0})
+    return {"people": people, "teams": teams, "note": "from the hub, not signed"}
+
+
 def _review_view(raw) -> dict | None:
     """The host's review of an adding change, closed fields only; the page shows these words and adds none."""
     if not isinstance(raw, dict):
@@ -296,12 +368,11 @@ def _review_view(raw) -> dict | None:
         line = display(r.get("line")) if isinstance(r, dict) else None
         if line is not None:
             rows.append(line[:300])
-    aud = raw.get("audience") if isinstance(raw.get("audience"), dict) else None
     hub_id = raw.get("hub_id")
     return {
         "hub_id": hub_id if isinstance(hub_id, str) and HUB_ID.fullmatch(hub_id) else None,
-        "audience": {r: _int(aud.get(r)) or 0 for r in ROLES} if aud else None,
-        "audience_note": display(raw.get("audience_note"))[:80] if isinstance(raw.get("audience_note"), str) else None,
+        "readers": _readers_view(raw.get("readers")),
+        "widened": _widened_view(raw.get("widened")),
         "new_count": _int(new.get("count")) or 0,
         "new_more": _int(new.get("more")) or 0,
         "new_items": rows,
@@ -413,6 +484,12 @@ def register(app: FastAPI, gateway: Gateway):
         # the host writes the security-log line (person, op); this is the dashboard's own line of the same click
         log.warning("sharing taken away from the dashboard: %s (%s) by %s", op, kind, person)
         return got
+
+    @app.get("/api/w/{ws}/hub/share/audience")
+    def hub_share_audience(ws: str = Depends(reads.workspace)):
+        """The people and teams of the hub the owner may name as readers (the host asks the hub; owners only)."""
+        link = link_for(ws, "share.audience")
+        return audience_view(link.call("share.audience"))
 
     @app.post("/api/w/{ws}/hub/share/revoke")
     def hub_share_revoke(body: RevokeBody, request: Request, ws: str = Depends(reads.workspace)):

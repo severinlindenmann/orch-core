@@ -124,7 +124,6 @@ function GiveToolAccess({ workspace, onChanged }: { workspace: Workspace; onChan
   )
 }
 
-/** Agent access as the host gives it to this person: an owner sees everyone's, anyone else their own. Stopping is one step: a reason (optional) and one sign button. */
 /** The default of the New ticket button: start an agent or only create (P09). The same per-person, per-workspace choice the form keeps. */
 export function StartDefault({ ws, person }: { ws: string; person: string }) {
   const key = agentPrefKey(person, ws)
@@ -137,6 +136,7 @@ export function StartDefault({ ws, person }: { ws: string; person: string }) {
   )
 }
 
+/** Agent access as the host gives it to this person: an owner sees everyone's, anyone else their own. Stopping is one step: a reason (optional) and one sign button. */
 export function HostGrants({ workspace }: { workspace: Workspace }) {
   const [ended, setEnded] = useState(false)
   const grants = useQuery(queries.hostGrants(workspace.id, !ended))

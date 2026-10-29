@@ -43,6 +43,7 @@ from typing import Any, Protocol
 
 from .. import __version__ as hub_version
 from ..access import Access, AccessError
+from ..access.orgcleanup import org_cleanup
 from ..access.store import ADMIN_GROUP, check_name
 from ..activity.feed import feed as activity_feed
 from ..changes import ChangeError
@@ -1946,6 +1947,9 @@ class WebApi(ChangeHandlers, OrgHandlers, SecretHandlers):
             raise ApiError("not_left")
         for grant in self.d.access.grants(ws):
             self.d.access.revoke(ws, grant["group"], actor=c.user_id)
+        org_cleanup(self.d.access).drop(
+            ws
+        )  # its company secrets, skills and tool servers go with it (retried if it fails)
         reg.forget(ws)
         if self.d.connections is not None:  # no connection to or from it, and no counts about it, outlive the workspace
             self.d.connections.forget_workspace(ws)

@@ -130,6 +130,16 @@ def _require_pin(c: OpContext) -> dict[str, str]:
     return pin
 
 
+def _require_not_pending(c: OpContext) -> None:
+    """Company content is served only when no cleanup of this workspace is pending (a drop that failed is retried)."""
+    access = getattr(c, "access", None)
+    if access is not None:
+        from ..access.orgcleanup import org_cleanup
+
+        if org_cleanup(access).is_pending(c.workspace_id):
+            raise Refused("unavailable")
+
+
 def _require_bound(c: OpContext) -> None:
     st = c.registry.binding_state(c.workspace_id)
     if st is None:
@@ -312,12 +322,13 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         ):
             c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
 
-    def drop_secrets() -> None:
-        # a workspace that left (or is joining afresh) keeps no share and no wrap: one transaction in the store
+    def drop_org_content() -> None:
+        # a workspace that left (or is joining afresh) keeps no company secret, skill or tool server; a failed drop stays
+        # pending and is retried, and nothing is served to that workspace meanwhile
         if c.access is not None and (kind == "hub.unbound" or held is None or held.get("status") != "bound"):
-            from ..access.orgsecrets import org_secrets
+            from ..access.orgcleanup import org_cleanup
 
-            org_secrets(c.access).drop_workspace(c.workspace_id)
+            org_cleanup(c.access).drop(c.workspace_id)
 
     steps: list[tuple[str, Callable[[], None]]] = [
         ("wk_seal retire", locked(lambda: _sync_wk_seals(c, state))),
@@ -325,7 +336,7 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         ("view drop", locked(lambda: _drop_view(c, state))),
         ("downstream binding", lambda: c.downstream.binding(c.workspace_id, obj)),
         ("spaces on_unbind", leave_spaces),
-        ("org secrets drop", drop_secrets),
+        ("org content drop", drop_org_content),
     ]
     for name, step in steps:
         try:
@@ -349,6 +360,7 @@ def org_skills_get(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:
         _require_pin(c)
         _require_bound(c)
+        _require_not_pending(c)
         mode = c.registry.mode(c.workspace_id)
     fn = getattr(c.snapshots, "org_skills", None)
     if fn is None:
@@ -362,6 +374,7 @@ def mcp_servers_get(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:
         _require_pin(c)
         _require_bound(c)
+        _require_not_pending(c)
         mode = c.registry.mode(c.workspace_id)
     fn = getattr(c.snapshots, "mcp_servers", None)
     if fn is None:
@@ -375,6 +388,7 @@ def org_secrets_get(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:
         _require_pin(c)
         _require_bound(c)
+        _require_not_pending(c)
         mode = c.registry.mode(c.workspace_id)
     fn = getattr(c.snapshots, "org_secrets", None)
     if fn is None:

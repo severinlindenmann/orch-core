@@ -50,6 +50,8 @@ export interface SignPopoverProps {
   children?: ReactNode
   /** The caller read `trustedPress(e.nativeEvent)` in its own click/keydown handler: true opens the host's review at once, false keeps the idle box. Absent: the ambient press flag decides (legacy). A remount without it prepares nothing. */
   autoStart?: boolean
+  /** Open straight on the host's review whatever carried the opening click (a menu item, a keyboard activation): prepare only, never armed, so Sign is still the person's own press (r10-P09). Use it only where the person's own explicit action opened this popover. */
+  prepareOnOpen?: boolean
   /** With `autoStart`: the opening press also starts the 1 s arm (one click signs after the countdown). Never for a review with risk lines (they need their own press). */
   armOnStart?: boolean
   /** Choices that are part of what is signed (agent access length): shown above the review in every state but signing. A change of `action` needs a new key on this component, which prepares again. */
@@ -145,9 +147,9 @@ export function SignPopover(p: SignPopoverProps) {
       // P06: an explicit `autoStart` (read in the caller's own handler) replaces the ambient flag, which is consumed either way.
       const ambient = takeTrustedPress()
       const open = p.autoStart ?? ambient
-      if (!open && !sequenceStart) return
+      if (!open && !sequenceStart && !p.prepareOnOpen) return
       started.current = true
-      const arm = p.autoStart === undefined ? ambient : open && p.armOnStart === true
+      const arm = !open ? false : p.autoStart === undefined ? ambient : p.armOnStart === true
       void click.start(p.action, 0, sequenceStart ? false : arm)
     }
   })

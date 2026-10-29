@@ -3,7 +3,12 @@
 
 To add a feature: write ``webapi/xxx_api.py``, then add ONE ``Feature(...)`` line to :data:`FEATURES` below. ``api.py``
 builds the ``WebApi`` bases, the ROUTES table and the STATUS table from this list; it needs no edit. (This module never
-imports ``api``, so no import cycle appears.) The order is the order of the mixin bases and of the routes."""
+imports ``api``, so no import cycle appears.) The order is the order of the mixin bases and of the routes.
+
+A route's ``handler`` name maps to the mixin method ``_h_<handler>``. New refusal codes go in the feature's ``status``
+(code -> HTTP status), merged into STATUS. A route not named in api.py's session-scope tables (``_PAIR``, ``_CHAN``)
+is reachable only from a full browser session, which is right for admin pages; only a route that a pairing or channel
+session must reach needs a line there."""
 
 from __future__ import annotations
 

@@ -35,6 +35,7 @@ _BLOCKED6 = (
     ipaddress.ip_network("2001::/32"),  # Teredo
     ipaddress.ip_network("::/96"),  # IPv4-compatible (deprecated)
 )
+_GLOBAL6 = ipaddress.ip_network("2000::/3")
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
@@ -59,7 +60,7 @@ def address_ok(ip: str) -> bool:
     if isinstance(addr, ipaddress.IPv6Address):
         if addr.ipv4_mapped is not None:
             addr = addr.ipv4_mapped
-        elif any(addr in net for net in _BLOCKED6):
+        elif addr not in _GLOBAL6 or any(addr in net for net in _BLOCKED6):  # IPv6 only inside 2000::/3
             return False
     if isinstance(addr, ipaddress.IPv4Address) and addr in _CGNAT:
         return False

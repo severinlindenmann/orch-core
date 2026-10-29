@@ -37,6 +37,18 @@ export type HubRule =
   | { kind: 'needs_you' | 'questions'; value: null }
   | { kind: 'type' | 'tag' | 'ticket'; value: string; audience?: HubAudience; description?: boolean }
 
+/** `GET /api/w/<ws>/hub/shared`: tickets other workspaces of the hub shared with this owner. Read-only. */
+export interface HubSharedTicket {
+  workspace_id: string
+  key: string
+  title: string
+  shared_by: string
+  status: string
+  type: string
+  deadline: string | null
+  description: string | null
+}
+
 /** `GET /api/w/<ws>/hub/share/audience`: the hub's people and teams to choose from. From the hub, not signed. */
 export interface HubAudienceList {
   people: { user_id: string; name: string }[]
@@ -118,6 +130,7 @@ export const hubServed = (ws: string | undefined): boolean => hasFeature('hub', 
 
 export const hubQueries = {
   status: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'status'], queryFn: () => api.getHubStatus(ws), staleTime: 15_000, retry: false }),
+  shared: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'shared'], queryFn: () => api.getHubShared(ws), staleTime: 30_000, retry: false, refetchOnWindowFocus: false }),
   audience: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'audience'], queryFn: () => api.getHubAudience(ws), staleTime: 60_000, retry: false }),
   share: (ws: string) => queryOptions({ queryKey: ['hub', ws, 'share'], queryFn: () => api.getHubShare(ws), retry: false }),
 }

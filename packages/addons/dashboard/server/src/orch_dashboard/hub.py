@@ -341,6 +341,29 @@ def _widened_view(raw) -> list[dict]:
     return out
 
 
+def shared_view(raw) -> dict:
+    """`hub.shared`: tickets other workspaces of the hub shared with this owner, read-only display data (closed fields,
+    cleaned text). It grants nothing and the page never offers an action on these rows."""
+    raw = raw if isinstance(raw, dict) else {}
+    items = []
+    for r in (raw.get("items") if isinstance(raw.get("items"), list) else [])[:100]:
+        if not isinstance(r, dict):
+            continue
+        by, key, title = display(r.get("shared_by")), display(r.get("key")), display(r.get("title"))
+        if by is None or key is None or title is None or not TICKET_KEY.fullmatch(key):
+            continue
+        text = display(r.get("description")) if isinstance(r.get("description"), str) else None
+        status, kind = display(r.get("status")), display(r.get("type"))
+        deadline = display(r.get("deadline")) if isinstance(r.get("deadline"), str) else None
+        items.append({
+            "workspace_id": r.get("workspace_id") if isinstance(r.get("workspace_id"), str) else "",
+            "key": key, "title": title[:200], "shared_by": by[:80],
+            "status": (status or "")[:20], "type": (kind or "")[:20],
+            "deadline": deadline[:10] if deadline else None, "description": text[:4000] if text else None,
+        })  # fmt: skip
+    return {"items": items}
+
+
 def audience_view(raw) -> dict:
     """`share.audience`: the hub's people (id, name) and teams (name, member count only). Display data, not signed."""
     raw = raw if isinstance(raw, dict) else {}
@@ -484,6 +507,11 @@ def register(app: FastAPI, gateway: Gateway):
         # the host writes the security-log line (person, op); this is the dashboard's own line of the same click
         log.warning("sharing taken away from the dashboard: %s (%s) by %s", op, kind, person)
         return got
+
+    @app.get("/api/w/{ws}/hub/shared")
+    def hub_shared(ws: str = Depends(reads.workspace)):
+        """Tickets other workspaces shared with this workspace's owner through the hub (read-only; owners only)."""
+        return shared_view(link_for(ws, "hub.shared").call("hub.shared"))
 
     @app.get("/api/w/{ws}/hub/share/audience")
     def hub_share_audience(ws: str = Depends(reads.workspace)):

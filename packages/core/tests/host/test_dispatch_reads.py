@@ -135,6 +135,7 @@ def args_for(op: str, ref: str) -> dict:
         "host.status",
         "hub.status",
         "hub.directory",
+        "hub.shared",
         "share.rules",
         "share.preview",
         "share.audience",

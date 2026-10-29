@@ -1,7 +1,7 @@
 // A simulated hub for the mockup and its tests (V3 A7). Scenario by address: `?hub=standalone|selective|full|offline|nottold`
 // (kept for the tab). Reads are fixed by the scenario. Stopping sharing (a ticket, a rule) is a plain owner click; a
 // join and a leave are signed by One click with the backup key and change the scenario (see the click routes below).
-import type { HubAudienceList, HubPreview, HubRule, HubShare, HubStatus } from '@/api/hub'
+import type { HubAudienceList, HubSharedTicket, HubPreview, HubRule, HubShare, HubStatus } from '@/api/hub'
 import { BACKUP_KEY_LINE, CLICK_RISK, type ClickViewAnswer } from '@/api/click'
 import { fail, ok, type MockRouter } from './router'
 
@@ -68,6 +68,10 @@ function mockShare(): HubShare {
   }
 }
 
+export const MOCK_SHARED_WITH_YOU: HubSharedTicket[] = [
+  { workspace_id: 'a'.repeat(32), key: 'DEMO-0007', title: 'Invoice export for Ben', shared_by: 'Anna', status: 'open', type: 'feature', deadline: '2026-11-06', description: 'Export invoices as CSV.' },
+]
+
 export const MOCK_AUDIENCE: HubAudienceList = {
   people: [{ user_id: 'b'.repeat(32), name: 'Ben Test' }, { user_id: 'c'.repeat(32), name: 'Carla Test' }],
   teams: [{ group: 'finance', members: 4 }],
@@ -110,6 +114,7 @@ function mockPreview(body: { add?: HubRule; remove?: HubRule } | null): HubPrevi
 export function registerHubRoutes(r: MockRouter) {
   r.add('GET', '/api/w/:ws/hub', () => ok(mockHubStatus()))
   r.add('GET', '/api/w/:ws/hub/share', () => ok(mockShare()))
+  r.add('GET', '/api/w/:ws/hub/shared', () => ok({ items: scenario() === 'selective' || scenario() === 'full' ? MOCK_SHARED_WITH_YOU : [] }))
   r.add('GET', '/api/w/:ws/hub/share/audience', () => ok(MOCK_AUDIENCE))
   r.add('POST', '/api/w/:ws/hub/share/preview', (_s, c) => ok(mockPreview(c.body as { add?: HubRule; remove?: HubRule } | null)))
   // Stopping sharing: a plain owner click (the server's full-session and owner checks are its own tests).

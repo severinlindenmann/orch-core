@@ -126,3 +126,47 @@ def test_audience_get_is_refused_where_sharing_is_not_possible(shub):
     acc.close()
     h2 = shub()  # no access wired: nothing to list
     refused(h2.join(), "audience_get", {}, "unavailable")
+
+
+# --- shared_get: what other workspaces shared with the owner of the calling workspace ------------------------------------
+
+WS_BEN = "b" * 32
+
+
+def ben_ctx(h, acc):
+    """Ben's own workspace calling the hub: a registry view where WS_BEN is bound and owned by Ben, WS_A is the real one."""
+    from types import SimpleNamespace
+
+    from orch_hub.link import ops
+
+    real = h.svc._reg
+    reg = SimpleNamespace(
+        lock=real.lock,
+        pins=lambda: [G.WS_A, WS_BEN],
+        pin=lambda ws: {"wsk_pub": "x"},
+        binding_state=lambda ws: {"status": "bound"},
+        mode=lambda ws: "selective" if ws == G.WS_A else "full",
+        owner_alias=lambda ws: BEN if ws == WS_BEN else real.owner_alias(ws),
+    )
+    return ops.OpContext(
+        hub_id="h", workspace_id=WS_BEN, link_wsk_pub=b"", body={}, registry=reg, invites=None, snapshots=None,
+        publish=None, downstream=None, now_ms=0, dev_mode=True, access=acc, shares=h.svc,
+    )  # fmt: skip
+
+
+def test_shared_get_lists_only_tickets_the_signed_audience_names_with_who_shared_them(shub):
+    from orch_hub.link import ops
+
+    acc = access()
+    h = shub(access=acc)
+    c = h.join()
+    content = {**V4.TICKET_CONTENT, "description": "Export invoices as CSV."}
+    c.request("share_put", ticket_body(IT1, content=content, audience={"users": [BEN], "groups": []}))
+    c.request("share_put", ticket_body(IT2))  # no audience: Anna only
+    got = ops.shared_get(ben_ctx(h, acc))["items"]
+    assert [(i["item_id"], i["shared_by"], i["description"]) for i in got] == [(IT1, "Anna", "Export invoices as CSV.")]
+    assert set(got[0]) == {"workspace_id", "item_id", "shared_by", "key", "type", "title", "status", "labels",
+                           "deadline", "description"}  # fmt: skip
+    acc.set_disabled(BEN, True)
+    assert ops.shared_get(ben_ctx(h, acc))["items"] == []  # the read rule is the one of list_shared
+    acc.close()

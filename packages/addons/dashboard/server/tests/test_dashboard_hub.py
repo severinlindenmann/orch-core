@@ -175,6 +175,7 @@ def test_module_never_names_a_hub_write():
         "share.rules",
         "share.preview",
         "share.audience",
+        "hub.shared",
         "hub.connect",
         "hub.link",
         "addon.list",
@@ -393,3 +394,18 @@ def test_the_review_shows_readers_by_name_and_the_widened_items():
     assert (
         got["review"]["readers"]["people"] == ["Ben Test"] and got["review"]["widened"][0]["description_added"] is True
     )
+
+
+def test_shared_with_you_is_a_closed_read_only_shape():
+    good = {
+        "workspace_id": "w" * 32, "key": "DEMO-0007", "title": "Invoice export", "shared_by": "Anna",
+        "status": "open", "type": "feature", "deadline": None, "description": "Export invoices as CSV.",
+        "labels": ["x"], "item_id": "i",
+    }  # fmt: skip
+    raw = {"items": [good, {**good, "key": "bad key"}, {**good, "shared_by": None}, "x"], "extra": 1}
+    link = Link({"hub.shared": raw})
+    got = client(link).get(f"/api/w/{WS}/hub/shared").json()
+    assert got == {"items": [{"workspace_id": "w" * 32, "key": "DEMO-0007", "title": "Invoice export",
+                              "shared_by": "Anna", "status": "open", "type": "feature", "deadline": None,
+                              "description": "Export invoices as CSV."}]}  # fmt: skip
+    assert link.calls == [("hub.shared", None)]

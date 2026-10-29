@@ -332,6 +332,7 @@ const click = {
   getHubApproval: (ws: string, id: string) => call<import('./hubsign').HubApprovalState>(`${w(ws)}/hub/approve/${encodeURIComponent(id)}`),
   getHubStatus: (ws: string) => call<import('./hub').HubStatus>(`${w(ws)}/hub`),
   getHubShare: (ws: string) => call<import('./hub').HubShare>(`${w(ws)}/hub/share`),
+  getHubShared: (ws: string) => call<{ items: import('./hub').HubSharedTicket[] }>(`${w(ws)}/hub/shared`),
   getHubAudience: (ws: string) => call<import('./hub').HubAudienceList>(`${w(ws)}/hub/share/audience`),
   getHubPreview: (ws: string, body: { add?: import('./hub').HubRule; remove?: import('./hub').HubRule }) =>
     call<import('./hub').HubPreview>(`${w(ws)}/hub/share/preview`, 'POST', body),

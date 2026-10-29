@@ -41,6 +41,8 @@ describe('the join waits for the hub', () => {
     expect((await screen.findByTestId('hub-connect-waiting', {}, T)).textContent).toContain('Connected, but the hub has not confirmed yet.')
     const reads = hubStatus.mock.calls.length
     expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(screen.queryByTestId('hub-mode-other')).toBeNull() // once signed the mode can no longer be changed
+    expect(screen.queryByTestId('hub-mode-full')).toBeNull()
     expect(success).not.toHaveBeenCalled() // no "Connected" before the hub said so
     expect(refresh).not.toHaveBeenCalled()
     expect(hubStatus.mock.calls.length).toBe(reads) // and the page behind is not read while the add-on is paused

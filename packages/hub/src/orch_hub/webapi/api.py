@@ -1045,7 +1045,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
             self.d.access.add_member(ADMIN_GROUP, uid)
             self.d.channels.set_password(uid, b["password"])
             t = self.d.channels.new_totp(uid)
-            s = self.d.channels.open_setup_session(uid)  # before the token is consumed: a failure leaves it usable
+            s = self.d.channels.open_setup_session(uid)  # the admin exists by now: a failure here leaves the token file, but /setup answers not_allowed from then on
             f.unlink(missing_ok=True)  # single use
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
         attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"

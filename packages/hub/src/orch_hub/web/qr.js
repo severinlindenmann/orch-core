@@ -1,7 +1,30 @@
-// QR code encoder for the authenticator setup (otpauth:// URI) and the QR drawn as SVG with createElementNS.
-// The encoder below (to `encode`) is a trimmed copy of uqr 0.1.x (MIT), itself based on Project Nayuki's QR Code
-// generator library (MIT): "Copyright (c) Project Nayuki", "Copyright (c) 2023 Anthony Fu". The permission notice of the
-// MIT license applies to this copy. Only the renderers were removed; nothing is loaded from a network.
+// QR code encoder for the authenticator setup (otpauth:// URI), drawn as SVG with createElementNS.
+// The encoder below (down to `encode`) is a trimmed copy of uqr (MIT), based on Project Nayuki's QR Code generator
+// library. Only the renderers were removed; nothing is loaded from a network. The license of the copied code:
+//
+// MIT License
+//
+// Copyright (c) Project Nayuki
+// Copyright (c) 2023 Anthony Fu <https://github.com/antfu>
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 var QrCodeDataType = /* @__PURE__ */ ((QrCodeDataType2) => {
   QrCodeDataType2[QrCodeDataType2["Border"] = -1] = "Border";
   QrCodeDataType2[QrCodeDataType2["Data"] = 0] = "Data";
@@ -669,7 +692,7 @@ function getDataAt(data, x, y, defaults = false) {
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 /** Draw `text` as a QR code in an <svg> (white tiles with a quiet zone, black modules). No HTML string sink is used. */
-export function qrSvg(text, { label = "QR code", border = 2 } = {}) {
+export function qrSvg(text, { label = "QR code", border = 4 } = {}) {
   const m = encode(String(text), { ecc: "M", border }).data;
   const n = m.length;
   const svg = document.createElementNS(SVG_NS, "svg");

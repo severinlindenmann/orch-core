@@ -243,4 +243,15 @@ describe('the real dock', () => {
     expect(await screen.findByText(/runner grant ended/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^Stop/ })).toBeInTheDocument()
   })
+  it('P15: an agent run has a one-line summary above its terminal; a shell does not', async () => {
+    list = { ...list, runs: [run('AG', { kind: 'agent', harness: 'claude-code', ticket: 'DEMO-0001' })] }
+    mount()
+    expect(await screen.findByTestId('dock-summary')).toHaveTextContent(/^Agent is working · started \d{2}:\d{2}$/)
+    expect(screen.getByTestId('term')).toBeInTheDocument()
+    cleanup()
+    list = { ...list, runs: [run('SH')] }
+    mount()
+    await screen.findByTestId('term')
+    expect(screen.queryByTestId('dock-summary')).toBeNull()
+  })
 })

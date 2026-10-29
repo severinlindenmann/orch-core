@@ -26,6 +26,9 @@ WORDS = {
     "mcp.saved": "saved a company tool server",
     "mcp.removed": "removed a company tool server",
     "mcp.offered": "changed which workspaces get a company tool server",
+    "space.created": "created a shared space",
+    "space.member_added": "added a workspace to a shared space",
+    "space.member_removed": "removed a workspace from a shared space",
     "secret.created": "added a company secret",
     "secret.shared": "changed which workspaces get a company secret",
     "secret.rotated": "entered a company secret again",
@@ -37,6 +40,10 @@ WORDS = {
     "addon.request_approved": "allowed an add-on for a workspace",
     "addon.request_refused": "turned down an add-on request",
     "hub.settings.changed": "changed the hub's name or addresses",
+    "hub.backup.key_set": "set up the hub backup key",
+    "hub.backup.key_confirmed": "confirmed the new hub backup words",
+    "hub.backup.made": "made a hub backup",
+    "hub.backup.downloaded": "downloaded a hub backup",
     "connection.allowed": "allowed a connection",
     "connection.denied": "closed a connection",
     "connection.migrated": "carried over a connection",
@@ -56,6 +63,7 @@ AUDIT_WORDS = {
     "share": "shared information",
     "market_policy": "add-on rules",
     "hub_settings": "hub name and addresses",
+    "hub_backup": "hub backups",
 }
 
 #: what an approval was about, in words (a verb the table does not know is said generically)

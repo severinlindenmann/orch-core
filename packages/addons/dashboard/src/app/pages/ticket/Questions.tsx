@@ -10,7 +10,7 @@ import { InfoDrawer } from '@/components/InfoDrawer'
 import { Prose } from '@/components/sign/visible'
 import { canAnswer } from './actions'
 import { QuestionOptions } from './QuestionOptions'
-import { ago, Mono, Pill, presenceLabel, shortHash, type TabProps, type Viewer } from './shared'
+import { Ago, Mono, Pill, presenceLabel, shortHash, type TabProps, type Viewer } from './shared'
 
 const VIA: Record<string, string> = { cli: 'CLI', dashboard: 'dashboard', phone: 'phone' }
 
@@ -94,7 +94,7 @@ function QuestionCard({ q, viewer, sign, ticketKey, agentLive, isNew }: { q: Que
         <span className="text-[12px] text-text-muted">
           to <span className="text-text">{viewer.name(q.to)}</span>
           {q.asked_by ? ` · asked by ${viewer.name(q.asked_by)}` : ''}
-          {q.asked_at ? ` · ${ago(q.asked_at)}` : ''}
+          {q.asked_at ? <> · <Ago at={q.asked_at} /></> : null}
         </span>
         {/* Plain words on the card (owner rule, run-13): the ids only behind the small "i". */}
         <InfoDrawer className="ml-auto">
@@ -121,7 +121,7 @@ function QuestionCard({ q, viewer, sign, ticketKey, agentLive, isNew }: { q: Que
           </p>
           {chosen && answered.text && <p className="mt-0.5 text-text-muted">{answered.text}</p>}
           <p className="mt-1 text-[12px] text-text-muted">
-            {viewer.name(answered.by)}{answered.at ? ` · ${ago(answered.at)}` : ''}
+            {viewer.name(answered.by)}{answered.at ? <> · <Ago at={answered.at} /></> : null}
             {/* Only a host that says how it came in: nothing is made up for one that does not. */}
             {answered.via ? ` · via ${VIA[answered.via]}` : ''}
             {answered.presence ? ` · ${presenceLabel(answered.presence)}` : ''}

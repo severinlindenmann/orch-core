@@ -41,8 +41,17 @@ it('with 15 to 60 minutes left it says when access ends and offers Allow agents'
   expect(screen.getByRole('button', { name: 'More information' })).toBeTruthy()
   expect(await screen.findByRole('button', { name: 'Complete runner' })).toBeInTheDocument()
 })
-it('with no agent access (also after a reload) it says agents cannot start yet', async () => {
+it('P14: before agents were ever allowed (no grant on record) the top bar stays empty', async () => {
   runner.grant = null
+  const view = show()
+  await waitFor(() => expect(vi.mocked(agentsApi.runner)).toHaveBeenCalled())
+  await new Promise(r => setTimeout(r, 50))
+  expect(view.container.querySelector('.agent-access')?.textContent ?? '').toBe('')
+  expect(screen.queryByText("Agents can't start yet")).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Allow agents' })).not.toBeInTheDocument()
+})
+it('with an expired agent access (also after a reload) it says agents cannot start yet', async () => {
+  runner.grant = { id: 'runner', scope: 'workable', until: '2026-10-15T12:45:00Z' } as Runner['grant']
   show()
   expect(await screen.findByRole('group', { name: 'Agent access' })).toHaveTextContent("Agents can't start yet")
   expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeInTheDocument()
@@ -61,8 +70,9 @@ it('while the runner is starting it says agents are getting ready, with no butto
     expect(screen.queryByRole('button', { name: 'Allow agents' })).not.toBeInTheDocument()
     setClock(() => now + 61_000)
     await vi.advanceTimersByTimeAsync(6_000)
-    await waitFor(() => expect(screen.getByRole('group', { name: 'Agent access' })).toHaveTextContent("Agents can't start yet"))
-    expect(screen.getByRole('button', { name: 'Allow agents' })).toBeInTheDocument()
+    // P14: no grant was ever on record, so the bar goes quiet instead of saying agents cannot start
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Agent access' })).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Allow agents' })).not.toBeInTheDocument()
   } finally { vi.useRealTimers(); setClock(() => now) }
 })
 it('the getting-ready note is hidden once a live grant arrives', async () => {

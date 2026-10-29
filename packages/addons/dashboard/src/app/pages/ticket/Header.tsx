@@ -30,8 +30,8 @@ import { BlockedByConnection } from './Needs'
 import { availableActions, gapOf, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
 import { useTicketEdit } from './EditTicket'
 import type { AgentMode } from '@/api/agents'
-import { clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
-import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
+import { agentWorking, clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
+import { Ago, agentName, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false)
@@ -52,7 +52,7 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 /** Who is working on the ticket, in one line. Claiming is the agents' job, so people get no Claim/Release here. */
-export function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+export function AgentStatus({ ticket, viewer, wait }: { ticket: TicketDocument; viewer: Viewer; /** the agent is idle at its prompt (run-9 J04) */ wait?: string }) {
   // A claim the host marks not live (ended by Done or Close, lapsed, grant over) is history: nobody is working (run 8, 8).
   const c = ticket.claim?.live === false ? null : ticket.claim
   const subagents = new Set(ticket.tasks_state.flatMap((t) => (t.lease && t.lease.session !== c?.session ? [t.lease.session] : []))).size
@@ -62,7 +62,7 @@ export function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer
       <span className="min-w-0 truncate">
         {c ? (
           <>
-            <span className="text-text">{agentName(c.agent)}</span> is working for <span className="text-text">{viewer.name(c.for)}</span>
+            <span className="text-text">{agentName(c.agent)}</span> {agentWorking(ticket, wait) ? 'is working' : 'may be waiting for the next step'} for <span className="text-text">{viewer.name(c.for)}</span>
             {' · '}since {fmtClock(c.since)}
             {subagents > 0 && ` · ${subagents} ${subagents === 1 ? 'subagent' : 'subagents'}`}
           </>
@@ -78,7 +78,6 @@ const START_AGENT = 'start-agent'
 
 /** The person-visible reason no agent can start now (an agent works on it already), or null. A lapsed claim is history. */
 export const WORKING_REASON = 'An agent is already working on this ticket'
-const agentWorks = (t: TicketDocument) => !!t.claim && t.claim.live !== false
 
 export interface StartAgent {
   /** "Start agent" is part of this ticket's actions (the addon or core's agent.start is available here). */
@@ -117,7 +116,7 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
     ? !!workspace && hasFeature('agent_start', workspace.id) && !finished
     : !!workspace && addonActive(workspace, START_AGENT) && canSpawnAgent(pkg, workspace.addons[START_AGENT]) && !finished
   const roleBlocked = real ? !can(viewer.role, 'ticket.act') : !r.allowed(START_AGENT, 'start')
-  const reason = roleBlocked ? VIEWER_REASON : agentWorks(ticket) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
+  const reason = roleBlocked ? VIEWER_REASON : agentWorking(ticket) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
   const run = () => {
     setMode(undefined)
     setStopFirst(undefined)
@@ -142,7 +141,7 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
 }
 
 export interface ShareTicket {
-  /** "Share with the hub…" / "Stop sharing this ticket" is part of this ticket's actions (owner, hub joined in share-some mode). */
+  /** "Share with the hub" / "Stop sharing" is part of this ticket's actions (owner, hub joined in share-some mode). */
   shown: boolean
   /** The hub already has this ticket: the item stops sharing instead. */
   shared: boolean
@@ -221,7 +220,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, signing 
           </DropdownMenuItem>
         )}
         {av.approve.map((g) => (
-          <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g })}>
+          <DropdownMenuItem key={g} onSelect={() => sign({ kind: 'approve', gate: g, pressed: false })}>
             <Check />
             Approve {gateActionName(g)}
             {isNext(`approve:${g}`) && <Next />}
@@ -257,7 +256,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, signing 
         {share?.shown && (
           <DropdownMenuItem onSelect={share.run} data-testid="share-ticket-item">
             <Share2 />
-            {share.shared ? 'Stop sharing this ticket' : 'Share with the hub…'}
+            {share.shared ? 'Stop sharing' : 'Share with the hub'}
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
@@ -295,7 +294,7 @@ function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = fal
     )
   // The next-step card under the header owns Approve and Give verdict (B6): one place for the one next thing.
   if (p && (p.kind === 'approve' || p.kind === 'verdict')) return null
-  if (!p) return !busy && !idle && agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
+  if (!p) return !busy && !idle && agentWorking(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
   const run = () => {
     if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
     else start.run()
@@ -323,7 +322,7 @@ const RESOLUTION: Record<ClosedInfo['resolution'], string> = {
  * A closed ticket reads like any other (host v1.4): this says why and when. `duplicate_of` may name a ticket you cannot
  * open (it would answer "not found"), so it is plain text, never a link and never a title.
  */
-function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string) => string }) {
+export function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string) => string }) {
   return (
     <section aria-label="Closed" data-testid="closed-notice" className="space-y-1 rounded-md border border-border bg-surface-2 px-3 py-2 text-[13px] text-text-muted">
       <p>
@@ -335,7 +334,7 @@ function ClosedNotice({ closed, name }: { closed: ClosedInfo; name: (id: string)
           </>
         )}
         {closed.by && ` · by ${name(closed.by)}`}
-        {closed.at && ` · ${ago(closed.at)}`}
+        {closed.at && <> · <Ago at={closed.at} /></>}
       </p>
       {closed.text && <p className="whitespace-pre-wrap text-text">{closed.text}</p>}
     </section>
@@ -455,6 +454,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     queryFn: () => (home ? api.listTickets(home, { parent: ticket.key }) : []),
     enabled: ticket.type === 'epic' && !!home,
   })
+  const { run, wait } = useTicketAgent(ticket, home)
   const start = useStartAgent(ticket, viewer)
   const share = useShareTicket(ticket, viewer)
   const { startable, canStart, run: startPlain, runWith } = start
@@ -474,7 +474,6 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
   }, [ticket.key])
   const av = availableActions(ticket, viewer)
   const edit = useTicketEdit()
-  const { run, wait } = useTicketAgent(ticket, home)
   const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict || !!wait
   const mark = useMark(home ?? '', ticket.key)
   const tracking = !!mark || run?.state === 'starting' || run?.state === 'running'
@@ -485,7 +484,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     const t = setInterval(() => setTick(Date.now()), 1000)
     return () => clearInterval(t)
   }, [tracking])
-  const phase = phaseOf(ticket, { needsYou, mark, run, now: tracking ? tick : Date.now() })
+  const phase = phaseOf(ticket, { needsYou, mark, run, wait, now: tracking ? tick : Date.now() })
   useEffect(() => {
     if (phase.kind === 'working' && home) clearMark(home, ticket.key)
   }, [phase.kind, home, ticket.key])
@@ -572,7 +571,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       )}
 
       <BlockedByConnection ticket={ticket} />
-      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} />}
+      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} />}
     </header>
   )
 }

@@ -25,6 +25,7 @@ from .access.cli import ACCESS_FILE
 from .access.orgcleanup import org_cleanup
 from .activity import ActivityLog
 from .audit import open_log
+from .backup.service import BackupService
 from .changes import Changes
 from .channels import Channels
 from .channels.pushkeys import PushKeyStore
@@ -412,6 +413,8 @@ def serve(
         if notifier is not None:
             notifier.restart_pass_async()  # a revoked channel's relay cleanup that a crash left undone
 
+        backup_svc = BackupService(keys, audit=audit, activity=activity)
+
         def _retry() -> None:  # D9-1 share purge, D9/D15 wrap retire and view drop: retried while the hub runs
             while not stop.wait(30):
                 shares.retry_pending()
@@ -421,6 +424,10 @@ def serve(
                 try:
                     changes.sweep()  # access changes past their 14 days expire (and say so in the activity)
                 except Exception:  # noqa: BLE001, S110  # the next tick (or the next page load) sweeps again
+                    pass
+                try:
+                    backup_svc.tick()  # the daily backup (once a key is set)
+                except Exception:  # noqa: BLE001, S110  # tried again after an hour; the page lists what exists
                     pass
 
         threading.Thread(target=_retry, name="state-retry", daemon=True).start()

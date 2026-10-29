@@ -72,6 +72,7 @@ W2H_OPS: dict[str, str | None] = {
     "switch_redeem": None,
     "rail_get": None,
     "owner_get": None,
+    "hub_where": None,
     "status_put": None,  # R14b: this list lacked the display ops, so a real link refused them as unknown_op
     "addon_request": None,
     "profile_put": None,
@@ -105,6 +106,7 @@ _REPLY: dict[str, Callable[[dict[str, Any]], bool]] = {
     "rail_get": lambda b: (
         set(b) == {"hub", "user_id", "workspaces"} and type(b["hub"]) is dict and type(b["workspaces"]) is list
     ),
+    "hub_where": lambda b: set(b) == {"addresses", "name"} and type(b["addresses"]) is list and type(b["name"]) is str,
     "owner_get": lambda b: set(b) == {"user_id"} and type(b["user_id"]) is str,
     "shared_get": lambda b: set(b) == {"items"} and type(b["items"]) is list,
     "audience_get": lambda b: set(b) == {"people", "teams"} and type(b["people"]) is list and type(b["teams"]) is list,

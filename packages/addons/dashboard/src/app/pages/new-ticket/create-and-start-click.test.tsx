@@ -68,10 +68,10 @@ async function signed(beforeSign?: (dialog: HTMLElement) => void) {
   await r.user.click(await within(sheet).findByRole('button', { name: 'Create and start' }, T))
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
-  expect(api.prepareClick).not.toHaveBeenCalled() // opening the dialog prepares nothing
-  // the trusted press of the outcome button prepares; the review then shows and its armed Sign signs
-  fireEvent.click(await within(dialog).findByRole('button', { name: 'Sign and start agent' }, T))
+  // run-9 J04: the dialog opens straight on the host's review (prepared without a press, so never armed); the one
+  // press on its Sign signs exactly that review
   await within(dialog).findByTestId('click-panel', {}, T)
+  expect(api.prepareClick).toHaveBeenCalledTimes(1)
   expect(s.sign).not.toHaveBeenCalled()
   const go = within(dialog).getByRole('button', { name: 'Sign and start agent' })
   await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })
@@ -90,8 +90,7 @@ describe('the real click path', () => {
     const sheet = await screen.findByRole('dialog', { name: 'New ticket' }, T)
     await r.user.type(await within(sheet).findByLabelText('Title', {}, T), 'Export CSV')
     await r.user.type(within(sheet).getByLabelText(/^What should be true/), 'Empty months export a header row')
-    await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
-    await r.user.click(await screen.findByRole('menuitem', { name: 'Create without starting' }, T))
+    await r.user.click(await within(sheet).findByRole('button', { name: 'Create ticket' }, T))
     const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
     expect(await within(dialog).findByText('No agent starts. You can start one later.', {}, T)).toBeInTheDocument()
     expect(within(dialog).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
@@ -199,7 +198,7 @@ describe('the real click path', () => {
   })
 })
 
-it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant needs the second press', async (minutes) => {
+it.each([null, 14, 15, 16])('one review with %s minutes access: never armed by Create and start, one press in the sign box signs', async (minutes) => {
   const { DEPOSIT_RISK } = await import('@/api/click')
   vi.spyOn(gesture, 'takeTrustedPress').mockReturnValueOnce(true)
   const shown = view()
@@ -229,7 +228,7 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
   expect(action).toMatchObject({ action: 'new_sequence', launch: { harness: expect.any(String), mode: expect.any(String) } })
   if (needsGrant) {
     expect(action).toHaveProperty('agent.hours', 168) // the workspace's access setting (#1555), here 168 h; the mocked signer's line below is its own
-    expect(panel).toHaveTextContent('standing authority')
+    expect(panel).toHaveTextContent('could use this access while it lasts')
     const button = screen.getByRole('button', { name: 'Sign and start agent' })
     expect(screen.queryByTestId('sign-arm-status')).not.toBeInTheDocument()
     expect(button).toBeDisabled()
@@ -245,6 +244,14 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: only a grant nee
   } else {
     expect(action).not.toHaveProperty('agent')
     expect(panel).not.toHaveTextContent(DEPOSIT_RISK)
+    // Opus r9-build 1: the "Create and start" click (a trusted press) never arms the review: nothing signs by itself
+    await new Promise(resolve => setTimeout(resolve, ARM_MS + 400))
+    expect(s.sign).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('sign-arm-status')).not.toBeInTheDocument()
+    const button = screen.getByRole('button', { name: 'Sign and start agent' })
+    await waitFor(() => expect(button).toBeEnabled(), { timeout: ARM_MS + 3000 })
+    fireEvent.pointerDown(button)
+    fireEvent.click(button)
   }
   await waitFor(() => expect(s.sign).toHaveBeenCalledTimes(1), T)
   await waitFor(() => expect(s.start).toHaveBeenCalledWith(expect.any(String), REQ), T)

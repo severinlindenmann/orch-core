@@ -72,6 +72,7 @@ def test_sequence_view_marks_last_grant_and_launch(human, tmp_path):
     assert DEPOSIT_RISK in got["risk_lines"]
     assert got["risk_lines"] == [DEPOSIT_RISK]  # r7-P10: one warning
     assert any("Then: the agent starts on the new ticket." in line for line in got["lines"])
+    assert not any("Then: the agent starts" in n for n in got["content"]["notes"])  # P14: technical details only
     assert sequence.steps(rig.intent)[-1]["op"] == "grant"
 
 

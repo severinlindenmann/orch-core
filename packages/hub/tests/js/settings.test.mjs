@@ -87,11 +87,11 @@ test("Address: Save sends the phone address first, the chosen ones after it, and
     { kind: "private", host: "100.71.188.237" }, { kind: "office", host: "10.1.1.4" }] }]);
 });
 
-test("Address: a hub that only answers on this server shows the install line instead of a picker", () => {
+test("Address: a hub that only answers on this server says plainly who to ask instead of showing a picker", () => {
   const view = hubSettingsView({ ...DEMO, can_change_addresses: false });
   const a = card(view, "address");
   assert.deepEqual(byTag(a, "button"), []); assert.deepEqual(byTag(a, "select"), []);
-  assert.match(a.textContent, /install the hub again with that address/);
+  assert.match(a.textContent, /Addresses can't be changed on this page\. To add or change one, ask the person who installed this hub\./);
 });
 
 test("addressBody and hostOf: the phone address is kept as it is, blanks are dropped, IPv6 loses its brackets", () => {
@@ -123,7 +123,7 @@ test("the page asks the admin route, sends non-admins home and shows an error in
   const calls = []; const shown = [];
   assert.equal(await hubSettingsPage(dev({ is_admin: false }, async () => { throw new Error("no call"); })), "home");
   await hubSettingsPage(dev({ is_admin: true }, async (m, p) => { calls.push([m, p]); return { status: 200, body: DEMO }; }, { shown }));
-  assert.deepEqual(calls, [["GET", "/admin/settings"]]);
+  assert.deepEqual(calls, [["GET", "/admin/settings"], ["GET", "/admin/backup"]]);   // M4 S5: the Backup card has its own read
   assert.equal(shown[0][0], "hub-settings"); assert.match(shown[0][1], /Hub name/);
   await hubSettingsPage(dev({ is_admin: true }, async () => ({ status: 500, body: { error: "unavailable" } }), { shown }));
   assert.match(shown[1][1], /Cannot read the settings\. Why: unavailable/);

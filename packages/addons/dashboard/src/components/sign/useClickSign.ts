@@ -75,9 +75,12 @@ export function settledAs(prepared: ClickPrepared, signed: ClickSigned): { state
   return { state, request }
 }
 
-/** `minLeadS`: the host's minimum scheduling lead when the page knows it (the schedules list), for a "too soon" refusal. */
-export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done', state: HandoffState | null, request: HandoffRequest | null) => void, minLeadS?: number): ClickRun {
+/** `minLeadS`: the host's minimum scheduling lead when the page knows it (the schedules list), for a "too soon" refusal.
+ *  `opts.refetchOnDone` (default true): read the pages behind the dialog again after a signature. */
+export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done', state: HandoffState | null, request: HandoffRequest | null) => void, minLeadS?: number, opts: { refetchOnDone?: boolean } = {}): ClickRun {
   const qc = useQueryClient()
+  const refetching = useRef(opts.refetchOnDone !== false)
+  refetching.current = opts.refetchOnDone !== false
   const leadNow = useRef(minLeadS)
   leadNow.current = minLeadS
   const [phase, setPhaseState] = useState<ClickPhase>('idle')
@@ -105,6 +108,9 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     setPhaseState(p)
   }, [])
   const refetch = useCallback(() => {
+    // `refetchOnDone: false`: the step is only the first half of something (a hub join waits for the hub to confirm), and
+    // the pages behind the dialog are refused until then. The caller reads them once, when the whole thing is done.
+    if (!refetching.current) return
     for (const k of refetchKeys) void qc.invalidateQueries({ queryKey: [k] })
   }, [qc])
   const fail = useCallback(

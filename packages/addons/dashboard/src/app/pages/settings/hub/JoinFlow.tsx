@@ -4,6 +4,7 @@
 // link's code and address). Both modes use this review and one-click flow.
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { useQueryClient } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { api } from '@/api/client'
 import { ApiError } from '@/api/types'
@@ -63,8 +64,8 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
         ? <ModeChoice mode={mode} onChange={setMode} />
         : <div className="space-y-1" data-testid="hub-mode-box">
           <div className={'rounded-md border p-3 ' + violet}>
-            <p className="font-semibold">{mode === 'full' ? 'Everything' : 'Only what I choose'}</p>
-            <p className="text-sm text-text-muted">{mode === 'full' ? 'The hub can read every ticket, file and note, now and later.' : 'Recommended. The hub sees only what you share. You can change this later.'}</p>
+            <p className="font-semibold">{mode === 'full' ? 'Everything' : 'Only what I choose'}{mode !== 'full' && <span className="font-normal text-text-muted"> · recommended</span>}</p>
+            <p className="text-sm text-text-muted">{mode === 'full' ? 'The hub can read every ticket and file.' : 'You pick the tickets. Everything else stays on this computer.'}</p>
           </div>
           {!signed && <button type="button" data-testid="hub-mode-other" className="text-sm underline" onClick={() => setChoosing(true)}>Choose another option</button>}
         </div>}
@@ -83,11 +84,13 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
  *  nothing on the page is read before that. A hub that is slow gets plain words and one "Check again". */
 function ConnectStage({ ws, info, mode, onClose }: { ws: string; info: HubLinkInfo; mode: 'selective' | 'full'; onClose: () => void }) {
   const refresh = useHubRefresh(ws)
+  const qc = useQueryClient()
   const [state, setState] = useState<'idle' | 'working' | 'waiting' | 'failed'>('idle')
   const [why, setWhy] = useState('')
   const started = useRef(false)
   const done = () => {
     refresh()
+    void qc.invalidateQueries() // the hub confirmed: the whole page behind the dialog is read once, now
     toast.success(mode === 'full' ? 'Connected. The hub can read everything in this workspace.' : 'Connected. The hub sees only what you choose to share.')
     onClose()
   }

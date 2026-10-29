@@ -19,12 +19,13 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); setHubScenario(null); setMockConfirmAfter(0); vi.restoreAllMocks() })
 
-async function joinUntilSigned() {
+async function joinUntilSigned(beforeSign?: () => void) {
   const view = renderApp('/w/DEMO/settings/hub')
   await view.user.click(await screen.findByTestId('hub-connect', {}, T))
   fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: LINK } })
   const btn = await screen.findByRole('button', { name: 'Connect' }, T)
   await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
+  beforeSign?.()
   trustedPresses()
   fireEvent.pointerDown(btn)
   fireEvent.click(btn)
@@ -71,6 +72,21 @@ describe('the join waits for the hub', () => {
   })
 })
 
+describe('P18: nothing behind the dialog is read before the hub confirmed', () => {
+  it('Today and Agent access are not read after the signature, only once after "Connected"', async () => {
+    setMockConfirmAfter(1)
+    const today = vi.spyOn(api, 'getToday')
+    const grants = vi.spyOn(api, 'listHostGrants')
+    let before = [0, 0]
+    await joinUntilSigned(() => { before = [today.mock.calls.length, grants.mock.calls.length] })
+    await screen.findByTestId('hub-connect-waiting', {}, T)
+    expect([today.mock.calls.length, grants.mock.calls.length]).toEqual(before) // signed, hub silent: no read, so no 409
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
+    await waitFor(() => expect(today.mock.calls.length).toBeGreaterThan(before[0]), T) // read once the hub confirmed
+  })
+})
+
 describe('P10: a short join dialog', () => {
   const open = async () => {
     const view = renderApp('/w/DEMO/settings/hub')
@@ -88,7 +104,7 @@ describe('P10: a short join dialog', () => {
     const view = await open()
     fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: LINK } })
     const box = await screen.findByTestId('hub-mode-box', {}, T)
-    expect(box.textContent).toContain('Recommended. The hub sees only what you share. You can change this later.')
+    expect(box.textContent).toContain('recommended')
     expect(screen.queryByTestId('hub-mode-full')).toBeNull()
     expect(screen.queryByText('What the hub has already read cannot be taken back.')).toBeNull()
     expect(screen.queryByText('You choose what to share.')).toBeNull()

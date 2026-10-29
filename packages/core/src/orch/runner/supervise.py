@@ -144,6 +144,8 @@ class SpawnSpec:
     trusted: tuple[str, str] | None = field(default=None, compare=False)
     #: accepted company skills for the rules file (M3 H-3): ``[{name, text, digest}]``, re-checked by ``rules.prepare``
     company_skills: tuple[dict[str, str], ...] = field(default=(), compare=False)
+    #: the company MCP proxy of the run (M3 H-4): ``{port, capability, servers}``, re-checked by ``mcpconfig.prepare``
+    org_mcp: dict[str, Any] | None = field(default=None, compare=False)
 
     def check(self) -> None:
         def bad(what: str) -> SpawnError:

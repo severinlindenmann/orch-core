@@ -1531,7 +1531,8 @@ item_hash = "sha256:" + hex(H("orch/v2/hub-share-item|" || cj(signed share.item)
   - `needs_you` `{type: question | gate | verdict | review | handoff, title, deadline}`;
   - `ticket` `{key, type (ticket type), title, status (status list), labels (sorted unique label tokens ≤ 32),
     deadline, description?}` (`description` optional, ticket only: 1 to 4000 bytes, multi-line text rule; the host puts
-    the ticket's Summary and Context there only when the owner's rule says "include the description"; vectors
+    the ticket's Summary, Context and Requirements there only when the owner's rule says "include the description";
+    plan, decisions, findings, comments and files never; vectors
     `share_item_description_*`);
   - `question` `{key, type (the ticket's type), id (Q<n>), title (the ticket's title), text (≤ 2000 bytes, multi-line),
     deadline}`;

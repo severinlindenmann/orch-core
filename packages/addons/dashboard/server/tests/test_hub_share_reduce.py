@@ -71,6 +71,20 @@ def test_a_rule_removal_sends_the_plan_that_was_shown(client, token, stub, host)
     assert args == {"rule": {"kind": "ticket", "ticket": "PRD-0014"}, "expect": PLAN}
 
 
+def test_a_rule_removal_carries_the_readers_and_description_the_row_listed(client, token, stub, host):
+    """Run 9 (J03): core matches a removal exactly, so the rule goes to the host with its readers and flag."""
+    aud = {"users": ["a" * 32], "groups": ["team-a"]}
+    body = {"rule": {"kind": "ticket", "value": "PW-0001", "audience": aud, "description": True}, "expect": PLAN}
+    r = client.post(f"/api/w/{stub.ws}/hub/share/rule-remove", json=body, headers=hdr(token))
+    assert r.status_code == 200
+    ((op, args, _w, _),) = writes(host)
+    assert op == "share.rule_remove"
+    assert args == {
+        "rule": {"kind": "ticket", "ticket": "PW-0001", "audience": aud, "description": True},
+        "expect": PLAN,
+    }
+
+
 def test_removing_a_rule_the_host_does_not_have_is_refused_and_not_logged(client, token, stub, host, caplog):
     from orch_dashboard.errors import HostError
 

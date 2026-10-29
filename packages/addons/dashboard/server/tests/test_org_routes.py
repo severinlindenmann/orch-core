@@ -201,3 +201,15 @@ def test_an_older_host_degrades(client, token, stub, gateway, monkeypatch):
     monkeypatch.setattr(gateway, "enabled", lambda ws: old)
     r = client.get(f"/api/w/{stub.ws}/org", headers=hdr(token, write=False))
     assert r.status_code == 200 and r.json()["available"] is False
+
+
+def test_a_tool_that_cannot_be_shown_whole_cannot_be_switched_on():
+    """approved view == pinned view: a withheld description, title or schema makes the tool unswitchable."""
+    from orch_dashboard.org_routes import _tools
+
+    pin = "sha256:" + "a" * 64
+    good = {"name": "t", "description": "ok", "inputSchema": {"type": "object"}, "pin": pin, "status": "off"}
+    assert _tools([good])[0]["pin"] == pin
+    for bad in ({"description": "a\u200bb"}, {"title": "x\u202e"}, {"inputSchema": None}):
+        row = _tools([{**good, **bad}])[0]
+        assert row["status"] == "too_long" and row["pin"] == ""

@@ -135,11 +135,19 @@ def _tools(raw) -> list[dict]:
         if not pin:
             continue
         desc, title = t.get("description"), t.get("title")
+        shown_title = _str(title, 200) if title is not None else None
+        shown_desc = _block(desc, MAX_DESC) if desc is not None else None
+        schema = _schema_text(t.get("inputSchema"))
+        if (title is not None and shown_title is None) or (desc is not None and shown_desc is None) or schema is None:
+            # approved view == pinned view: a tool whose pinned fields cannot all be shown can never be switched on
+            out.append({"name": name, "title": None, "description": None, "input_schema": None, "pin": "",
+                        "status": "too_long"})  # fmt: skip
+            continue
         out.append({
             "name": name,
-            "title": _str(title, 200) if title is not None else None,
-            "description": _block(desc, MAX_DESC) if desc is not None else None,
-            "input_schema": _schema_text(t.get("inputSchema")),
+            "title": shown_title,
+            "description": shown_desc,
+            "input_schema": schema,
             "pin": pin,
             "status": t["status"],
         })  # fmt: skip

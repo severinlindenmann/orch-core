@@ -14,7 +14,7 @@ import { Inline, Raw } from '../components/sign/visible'
 import './setup.css'
 
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
-const terminalStepCopy = "One step needs your terminal: you'll type yes once."
+const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
   'If setup fails before your workspace is created, these secret words and recovery code will no longer work. Run orch setup again to get new ones.'
 const expiredCopy =
@@ -28,7 +28,7 @@ export function reasonOf(e: unknown): string {
 }
 /** The cause in plain words; the code itself stays under "Technical details". */
 export function plainReason(code: string): string {
-  if (code === 'session.required' || code === 'session.expired') return 'This page no longer has its link to your terminal. This happens after a reload or when the session ran out.'
+  if (code === 'session.required' || code === 'session.expired') return 'This page has lost its link to orch. This happens after a reload or when the session ran out.'
   if (code === 'setup.ended') return 'This setup was already finished or stopped.'
   if (code === 'setup.token' || code === 'setup.unavailable') return 'The link to your terminal could not be used.'
   if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this computer.'
@@ -350,8 +350,7 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
   return (
     <section className="confirm-words" role="status" aria-label="Final check">
       <p>
-        <strong>Continue in the setup window on this computer.</strong> Compare these words with it. If all three match in this order, type yes in that window
-        and press Enter.
+        <strong>Continue in the setup window on this computer.</strong> Compare these words with it. If all three match in this order, press Enter in that window.
       </p>
       <ol className="words word-tiles" aria-label="Your three words">
         {(words ?? []).map((w, i) => (
@@ -363,7 +362,7 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
       <small className="words-wait">Waiting for you in the setup window…</small>
       <details>
         <summary>Are the words different?</summary>
-        <p>Do not type yes. Close the setup window, then run orch setup again to start over with new words.</p>
+        <p>Do not press Enter. Close the setup window, then run orch setup again to start over with new words.</p>
       </details>
     </section>
   )
@@ -612,7 +611,7 @@ export function Setup({ api }: { api: SetupAPI }) {
     setStep(5)
   }
   async function approveProfile() {
-    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init === true, records: state?.mode !== 'finish' && profile.records !== false, trust_folder: offersTrust && (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false), trust_parent: offersTrust && !!parentConfig && profile.trust_parent === true })
+    await api.call('profile', { ...profile, git_init: offersGit && profile.git_init !== false, records: state?.mode !== 'finish' && profile.records !== false, trust_folder: offersTrust && (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false), trust_parent: offersTrust && !!parentConfig && profile.trust_parent === true })
     if (state?.mode === 'finish' || confirmed.current) await getReview()
     else {
       const revealed = await api.call<Secrets>('secrets/reveal', {})
@@ -676,7 +675,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   }
   const terminalReviewMissing =
     !!review &&
-    (((state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
+    ((profile.method !== 'click' && (state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
   const approvalCount = review ? review.items.length + (review.workspace ? 1 : 0) : 0
   const summary = review ? summarize(review) : { lines: [], unknown: false, odd: [] as string[] }
@@ -887,26 +886,25 @@ export function Setup({ api }: { api: SetupAPI }) {
               {offersGit && (
                 <div className="note" role="group" aria-label="Git repository">
                   <p>
-                    <strong>This folder is not a git repository.</strong> Worktrees need one.
+                    <strong>This folder does not track changes yet.</strong> Agents need that to work on several
+                    tickets at once.
                   </p>
                   <label className="toggle">
                     <span>
-                      <strong>Make it a git repository</strong>
-                      <small>
-                        Runs git init and keeps orch’s own folders out of git. None of your files is committed.
-                      </small>
+                      <strong>Set it up for me (recommended)</strong>
+                      <small>Each ticket gets its own safe copy. None of your files is changed.</small>
                     </span>
                     <input
                       type="radio"
                       name="git"
-                      checked={profile.git_init === true}
+                      checked={profile.git_init !== false}
                       onChange={() => update({ git_init: true })}
                     />
                   </label>
                   <label className="toggle">
                     <span>
-                      <strong>Continue without worktrees</strong>
-                      <small>Each ticket gets its own work folder instead.</small>
+                      <strong>Skip this</strong>
+                      <small>Agents work one ticket at a time.</small>
                     </span>
                     <input
                       type="radio"
@@ -921,13 +919,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               )}
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(1)}>Back</button>
-                {offersGit && profile.git_init === undefined ? (
-                  <button className="primary" disabled>
-                    Choose above to continue →
-                  </button>
-                ) : (
-                  next(3)
-                )}
+                {next(3)}
               </SetupFooter>
             </>
           )}
@@ -1094,7 +1086,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my
                     secret words and recovery code
                   </label>
-                  <h2>Check three recovery words</h2>
+                  <h2>One quick check</h2>
                   <div className="word-check">
                     {secrets.check_positions.map((n) => (
                       <label key={n}>
@@ -1109,7 +1101,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                       </label>
                     ))}
                   </div>
-                  <p>Only these three recovery words are checked. Five incorrect attempts end this session.</p>
+                  <p>Only {secrets.check_positions.length === 1 ? 'this recovery word is' : 'these recovery words are'} checked. Five incorrect attempts end this session.</p>
                   <SetupFooter cancel={cancel}>
                     <button
                       className="primary"
@@ -1236,10 +1228,10 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <li>Click {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} below.</li>
                     <li>Return to the terminal window where you started orch setup. Leave this page open to compare the three words.</li>
                     <li>
-                      Check the terminal shows <Words words={review.fingerprint} />. If it does, type yes there.
+                      Check the terminal shows <Words words={review.fingerprint} />. If it does, press Enter there.
                     </li>
                   </ol>
-                  <p>If any word is different, do not type yes. Close the terminal window and run orch setup again.</p>
+                  <p>If any word is different, do not press Enter. Close the terminal window and run orch setup again.</p>
                 </div>
               )}
               {terminalReviewMissing && (
@@ -1373,10 +1365,27 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
     root.render(<Setup api={api} />)
   } catch (e) {
     const reason = report(e)
+    const used = /^(session\.|setup\.ended$)/.test(reason)
     root.render(
       <main className="setup">
-        <h1>Open setup from your terminal</h1>
-        <p>{expiredCopy}</p>
+        <h1>{used ? 'This setup link was already used' : 'Setup could not open'}</h1>
+        <p>
+          {used
+            ? 'A setup link works only once. If you finished setup, your workspace is ready.'
+            : 'This page could not start setup. If you finished setup before, your workspace is ready.'}
+        </p>
+        <p>
+          <a className="primary" href="/">
+            Open dashboard →
+          </a>
+        </p>
+        <details>
+          <summary>Need to set up again?</summary>
+          <p>
+            In your terminal, press Enter for a fresh link, or run <code>orch setup</code>. It starts a new session with
+            new secret words and a new recovery code.
+          </p>
+        </details>
         <Reason reason={reason} />
       </main>,
     )

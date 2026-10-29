@@ -513,9 +513,9 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
       },
       {
         id: 'V3',
-        title: 'Only create, and it is remembered',
-        text: 'Press "Only create" on a new ticket and sign. Open New ticket again.',
-        see: 'The ticket is created and no agent starts. "Only create" is now the first button, "Create and open another" is back, and "Create and start agent" is the second button.',
+        title: 'Only create, used once',
+        text: 'Choose "Create without starting" from the small arrow menu on a new ticket and sign. Open New ticket again.',
+        see: 'The signing box says "Creates the ticket. No agent starts." and its button reads "Sign and create ticket". The ticket is created and no agent starts. The first button is unchanged: the menu choice is used once.',
       },
       {
         id: 'V4',
@@ -766,7 +766,7 @@ export const ADDON_SECTIONS: ChecklistSection[] = [
         id: 'Z1',
         title: 'Setup in a folder without git',
         text: 'In a NEW empty folder (no git), run `orch setup`. Leave Worktrees ticked and continue to the add-on step.',
-        see: 'A box "This folder is not a git repository. Worktrees need one." with two choices; Continue stays disabled until you pick. Pick "Make it a git repository" and finish. The folder then has `.git` and a `.gitignore` with `.orch/` and `.orch-work/`; `git status` shows your own files as untracked and nothing committed.',
+        see: 'A box "This folder does not track changes yet." with two choices; "Set it up for me (recommended)" is already chosen and Continue is active. Finish with it. The folder then has `.git` and a `.gitignore` with `.orch/` and `.orch-work/`; `git status` shows your own files as untracked and nothing committed.',
       },
       {
         id: 'Z2',

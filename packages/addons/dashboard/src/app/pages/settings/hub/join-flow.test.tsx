@@ -1,0 +1,70 @@
+// P06: the join dialog says "Connected" and closes only after the hub has confirmed its first settings.
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
+import { toast } from 'sonner'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { api } from '@/api/client'
+import * as sealed from '@/api/sealed'
+import * as gesture from '@/components/sign/trustedPress'
+import { setHubScenario, setMockConfirmAfter, setMockConnectError, setMockOneClick, setMockVault } from '@/mocks/hub'
+import { trustedPresses } from '@/test/hostHarness'
+import { renderApp } from '@/test/renderApp'
+
+void gesture
+const T = { timeout: 4000 }
+const LINK = 'http://10.0.0.5:8106/c#h1.9f3c1ab277de40c8aa11bb22cc33dd44.7QK2M9XD.10.0.0.5:8105'
+beforeAll(async () => { await Promise.all([import('@/app/pages/settings'), import('@/app/pages/tickets')]) }, 60000)
+beforeEach(() => {
+  setHubScenario('standalone'); setMockOneClick(true); setMockVault(true); setMockConnectError(null); setMockConfirmAfter(0)
+  vi.spyOn(sealed, 'seal').mockResolvedValue({ v: 1, alg: 'P256-HKDF-SHA256-A256GCM', epk: 'e', ct: 'c' } as sealed.Envelope)
+})
+afterEach(() => { cleanup(); setHubScenario(null); setMockConfirmAfter(0); vi.restoreAllMocks() })
+
+async function joinUntilSigned() {
+  const view = renderApp('/w/DEMO/settings/hub')
+  await view.user.click(await screen.findByTestId('hub-connect', {}, T))
+  fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: LINK } })
+  const btn = await screen.findByRole('button', { name: 'Sign and join the hub' }, T)
+  await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
+  trustedPresses()
+  fireEvent.pointerDown(btn)
+  fireEvent.click(btn)
+  return view
+}
+
+describe('the join waits for the hub', () => {
+  it('stays open while the hub has not confirmed, then Check again confirms, toasts and closes', async () => {
+    setMockConfirmAfter(1)
+    const success = vi.spyOn(toast, 'success')
+    const refresh = vi.spyOn(api, 'refreshHub')
+    const hubStatus = vi.spyOn(api, 'getHubStatus')
+    await joinUntilSigned()
+    expect((await screen.findByTestId('hub-connect-waiting', {}, T)).textContent).toContain('Connected, but the hub has not confirmed yet.')
+    const reads = hubStatus.mock.calls.length
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(success).not.toHaveBeenCalled() // no "Connected" before the hub said so
+    expect(refresh).not.toHaveBeenCalled()
+    expect(hubStatus.mock.calls.length).toBe(reads) // and the page behind is not read while the add-on is paused
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(success).toHaveBeenCalledTimes(1)
+  })
+
+  it('a hub that is still silent keeps the dialog open with the same button', async () => {
+    setMockConfirmAfter(99)
+    const success = vi.spyOn(toast, 'success')
+    await joinUntilSigned()
+    fireEvent.click(await screen.findByRole('button', { name: 'Check again' }, T))
+    await waitFor(() => expect(screen.getByTestId('hub-connect-waiting')).toBeTruthy(), T)
+    expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy()
+    expect(success).not.toHaveBeenCalled()
+  })
+
+  it('a real error is said in plain words, without the code prefix', async () => {
+    setMockConnectError('The hub is not reachable.')
+    await joinUntilSigned()
+    const failed = await screen.findByTestId('hub-connect-failed', {}, T)
+    expect(failed.textContent).toContain("Couldn't connect. Try again.")
+    expect(failed.textContent).not.toContain('hub.unreachable')
+  })
+})

@@ -222,6 +222,15 @@ class Auth:
     def login_kind(self, token):
         return self.kind
 
+    def switch_workspace(self, token):
+        return None
+
+    def listener_of(self, token):
+        return "loopback"
+
+    def passkey_session(self, token):
+        return True
+
     def stepup_take(self, token, action, digest):
         return False, None  # no passkey step-up was made
 
@@ -384,3 +393,16 @@ def test_refresh_from_a_remote_session_is_refused_before_the_host_is_asked():
     link = Link({"hub.refresh": {"snapshot": {"version": 2}}, "addon.list": PAUSED})
     res = refresh(connect_client(link, kind="remote", gw=PausedGw))
     assert res.status_code == 403 and res.json()["error"]["code"] == "passkey.stepup_required" and link.calls == []
+
+
+def test_refresh_passes_on_a_real_refusal_instead_of_saying_not_confirmed():
+    link = Link({"hub.refresh": fail("role.denied"), "addon.list": PAUSED})
+    got = refresh(connect_client(link, gw=PausedGw))
+    assert got.status_code >= 400 and got.json()["error"]["code"] == "role.denied"
+
+
+def test_refresh_is_refused_for_a_local_session_that_is_not_a_full_one(monkeypatch):
+    link = Link({"hub.refresh": {"snapshot": {"version": 2}}, "addon.list": PAUSED})
+    monkeypatch.setattr(hub, "full_session", lambda auth, token: False)
+    res = refresh(connect_client(link, gw=PausedGw))
+    assert res.status_code in (401, 403) and link.calls == []

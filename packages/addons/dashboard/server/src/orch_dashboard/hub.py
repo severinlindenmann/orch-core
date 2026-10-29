@@ -335,6 +335,10 @@ def preview_view(raw) -> dict:
     }
 
 
+#: host codes that only mean "the hub did not answer (yet)"; every other refusal is shown as a failure
+NOT_ANSWERED = {"hub.unreachable", "host.timeout", "timeout"}
+
+
 def _confirmed(got) -> bool:
     """The hub's first snapshot is pinned (the host answers its version); without one the add-on stays paused."""
     v = got.get("snapshot_version") if isinstance(got, dict) else None
@@ -504,13 +508,18 @@ def register(app: FastAPI, gateway: Gateway):
         """Ask the host for the hub's first (or newest) snapshot again, for a join the hub had not confirmed yet (the
         add-on stays paused until it is pinned). Same gate as connect: a session that was not opened on this computer
         is refused; nothing here weakens the pause, the host lifts it only when a verified snapshot is pinned."""
-        if app.state.auth.login_kind(request.state.token) != LOCAL:
+        token = request.state.token
+        auth = app.state.auth
+        if auth.login_kind(token) != LOCAL:
             raise stepup_required("checking with your hub")
+        if not full_session(auth, token):  # a switch session or a read-only one never asks the hub
+            raise refused("Sign in on this computer to check with your hub.")
         link = link_for(ws, "hub.refresh", paused_ok=True)
         try:
             got = link.call("hub.refresh", {}, write=True, idem=new_idem())
         except HostError as exc:
-            if exc.error.get("code") in ("hub.not_joined", "not_found", "peer.denied", "addon.disabled"):
-                raise
+            if exc.error.get("code") not in NOT_ANSWERED:
+                raise  # role.denied, op.not_allowed, a snapshot that does not verify...: a real failure, said as one
+            log.info("hub refresh: no answer from the hub (%s)", exc.error.get("code"))
             return {"confirmed": False}  # the hub did not answer (yet): the page says so and offers the same button
         return {"confirmed": _confirmed({"snapshot_version": ((got or {}).get("snapshot") or {}).get("version")})}

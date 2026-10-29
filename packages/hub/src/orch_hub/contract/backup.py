@@ -122,7 +122,7 @@ def is_excluded(path: str) -> bool:
         segs[0] in EXCLUDED_DIRS
         or segs[-1] in EXCLUDED_NAMES
         or any(segs[-1].endswith(x) for x in EXCLUDED_SUFFIXES)
-        or segs[-1].startswith("route-queue.db")
+        or segs[-1].startswith(("route-queue.db", "event-deliver.db"))
     )
 
 

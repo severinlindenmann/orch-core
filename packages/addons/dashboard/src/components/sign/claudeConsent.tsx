@@ -2,7 +2,7 @@
 // without Claude Code's own "trust this folder" question is recorded here, AFTER the person's own signature settled and
 // before the agent starts (POST claude-trust, owner on a local session only: the host refuses anyone else). Never with
 // "trust anyway" (allow_parent is false). Where the host cannot offer it, one plain reason replaces the line.
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
@@ -25,6 +25,8 @@ export interface ClaudeConsent {
   setTicked: (on: boolean) => void
   /** Records the consent once when asked and ticked; null when there is nothing to do. Never rejects. */
   grant: () => Promise<void> | null
+  /** The line is on screen: only then may the choice be recorded (fail closed on any quiet or instant path). */
+  markShown: () => void
   /** The host has not answered yet (an owner on a local session is asked). */
   pending: boolean
 }
@@ -34,22 +36,25 @@ export function useClaudeConsent(ws: string | undefined, active: boolean): Claud
   const q = useQuery({ ...queries.claudeTrust(ws ?? ''), enabled: active && !!ws })
   const [ticked, setTicked] = useState(true)
   const sent = useRef(false)
+  const shown = useRef(false)
   const t = q.data
   const on = active && !!ws && !!t?.available
   const asks = on && t?.agent_needs_consent === true
   const refused = on && t?.agent_needs_consent === false ? (t.agent_why_not ?? '') : ''
   const grant = () => {
-    if (!asks || !ticked || sent.current || !ws) return null
+    if (!asks || !shown.current || !ticked || sent.current || !ws) return null
     sent.current = true
     return api.grantClaudeTrust(ws, false).then(
       () => { void qc.invalidateQueries({ queryKey: ['claude-trust', ws] }) },
       (e: unknown) => { toast.message(`Claude Code may still ask about the folder. ${e instanceof Error ? e.message : ''}`.trim()) },
     )
   }
-  return { asks, refused, ticked, setTicked, grant, pending: active && !!ws && q.isPending && q.fetchStatus !== 'idle' }
+  return { asks, refused, ticked, setTicked, grant, markShown: () => { shown.current = true }, pending: active && !!ws && q.isPending && q.fetchStatus !== 'idle' }
 }
 
 export function ClaudeConsentLine({ c }: { c: ClaudeConsent }) {
+  const { markShown } = c
+  useEffect(() => { if (c.asks) markShown() }, [c.asks, markShown])
   if (c.refused) return <p data-testid="claude-consent-refused" className="text-xs leading-5 text-text-muted">{c.refused}</p>
   if (!c.asks) return null
   return (

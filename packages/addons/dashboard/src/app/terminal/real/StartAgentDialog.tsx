@@ -329,6 +329,7 @@ function StartAgent({ ws, ticket, onClose, onStarted, initial, choose }: { ws: s
         action={{ action: 'runner_grant', hours, scope: 'workable' }}
         startsAgent
         claudeCode={harness === 'claude-code'}
+        consent={consent}
         anchor={anchor}
         controls={accessSelect}
         doneToast=""

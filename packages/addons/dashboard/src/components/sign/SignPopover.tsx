@@ -20,7 +20,7 @@ import { storyOf } from './story'
 import { takeTrustedPress, trustedPress } from './trustedPress'
 import { HubAddonPanel, HubSettingsPanel } from './HubSignPanel'
 import { hubSettingsSplit, isAddonGrant } from '@/api/hubsign'
-import { ClaudeConsentLine, isOwner, useClaudeConsent } from './claudeConsent'
+import { ClaudeConsentLine, isOwner, useClaudeConsent, type ClaudeConsent } from './claudeConsent'
 
 /**
  * How a settled signature was made. `unsignedShown` is true only on the one-click path, when the `unsigned` slot was
@@ -75,6 +75,8 @@ export interface SignPopoverProps {
   initialFocus?: () => HTMLElement | null
   /** This signature starts a Claude Code agent: an owner is asked, in one preselected line, to let it open the ticket's folder without asking. */
   claudeCode?: boolean
+  /** The caller's own consent state (it showed the line itself or hands it over): this popover then makes none. */
+  consent?: ClaudeConsent
   /** The person asked to approve in the hub instead (an optional extra, A1/FB15): show the hub panel, sign nothing here. */
   forceHub?: boolean
   /** The host's minimum scheduling lead in seconds, for a "too soon" refusal. Default: the schedules list's
@@ -121,7 +123,8 @@ export function SignPopover(p: SignPopoverProps) {
   callbacks.current = p
   const router = useRouter({ warn: false })
   const me = useMe(p.ws).data
-  const consent = useClaudeConsent(p.ws, !!p.claudeCode && !!here && isOwner(here, me?.person))
+  const own = useClaudeConsent(p.ws, !p.consent && !!p.claudeCode && !!here && isOwner(here, me?.person))
+  const consent = p.consent ?? own
   consentRef.current = consent
   const sequenceStart = p.action?.action === 'new_sequence' && !!p.action.launch
   // D2 grant terms come from the signer's conditional sequence, never the proposed browser action.

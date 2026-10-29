@@ -44,6 +44,8 @@ export function clickOffText(_code: string): string {
 }
 /** Finish could not open the dashboard (r11-P01): the workspace is ready, the page keeps working, Try again. */
 const openFailedCopy = 'The dashboard did not open yet. Your workspace is safe. Press “Try again” to open it.'
+/** "Try again" reaches this setup only for a few minutes: the way out after that, in plain words. */
+const openFailedLater = 'If this keeps failing, run orch setup again in your project folder. Your workspace stays as it is.'
 function Reason({ reason, plain }: { reason: string; plain?: string }) {
   return (
     <>
@@ -781,6 +783,7 @@ export function Setup({ api }: { api: SetupAPI }) {
           {error}
         </p>
       )}
+      {error && openFailed && <p>{openFailedLater}</p>}
       {error && reason && (
         <Reason reason={reason} plain={openFailed ? plainReason('setup.dashboard_unavailable') : undefined} />
       )}

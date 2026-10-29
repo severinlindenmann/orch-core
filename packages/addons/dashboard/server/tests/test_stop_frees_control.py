@@ -167,6 +167,7 @@ def setup_sock(state):
     path = state / "setup" / "setup.sock"
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.bind(str(path))
+    os.chmod(path, 0o600)  # what the setup server makes it
     sock.listen(64)
     stop = threading.Event()
 
@@ -295,3 +296,42 @@ def test_during_the_hold_the_network_listener_stops_at_once(state, setup_sock, b
     bound["on"] = False
     thread.join(timeout=SLOW_SHUTDOWN + 5)
     assert not thread.is_alive()
+
+
+def held_then(state, slow_server, change):
+    """Stop while a live setup is bound, then apply ``change``: the hold must end (the server exits)."""
+    thread, ctl = start(state)
+    cli.control(ctl, "stop")
+    time.sleep(0.3)
+    assert thread.is_alive()
+    change()
+    thread.join(timeout=SLOW_SHUTDOWN + 5)
+    assert not thread.is_alive()
+
+
+def test_the_hold_needs_the_same_checks_as_the_setup_proxy(state, slow_server, setup_sock, bound, monkeypatch):
+    """r11-P01b L1: a setup socket open to group/other is not a setup this server trusts: the hold ends."""
+    path, _ = setup_sock
+    assert cli.setup_alive(path)
+    held_then(state, slow_server, lambda: os.chmod(path, 0o666))
+
+
+def test_a_setup_socket_held_by_another_user_ends_the_hold(state, slow_server, setup_sock, bound, monkeypatch):
+    from orch_dashboard.adapters import setup as adapter
+
+    def other_user():
+        def deny(sock, uid):
+            raise PermissionError("peer.denied")
+
+        monkeypatch.setattr(adapter, "check_uid", deny)
+
+    held_then(state, slow_server, other_user)
+
+
+def test_a_failing_liveness_check_still_ends_the_hold(state, slow_server, setup_sock, bound, monkeypatch):
+    """r11-P01b I3: whatever the check raises, the hold ends (try/finally)."""
+
+    def broken(*_a, **_k):
+        raise RuntimeError("boom")
+
+    held_then(state, slow_server, lambda: monkeypatch.setattr(cli, "setup_alive", broken))

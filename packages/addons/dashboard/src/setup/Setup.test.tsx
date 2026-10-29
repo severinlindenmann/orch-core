@@ -1376,6 +1376,7 @@ test('r11-P01: a Finish that cannot open the dashboard says so in plain words an
     expect(text).not.toMatch(/terminal/i)
     expect(screen.getByRole('alert').textContent).not.toMatch(/http|500/)
     expect(text).toContain('The page could not start the dashboard on this computer. Nothing was lost.')
+    expect(text).toContain('If this keeps failing, run orch setup again in your project folder.')
   }
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
   await waitFor(() => expect(assign).toHaveBeenCalledWith('/'))

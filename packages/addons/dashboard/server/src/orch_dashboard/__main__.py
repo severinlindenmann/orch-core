@@ -29,6 +29,7 @@ from pathlib import Path
 
 import uvicorn
 
+from .adapters.setup import connect_setup
 from .app import create_app
 from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
 from .front import Front, PeerChecked
@@ -607,9 +608,11 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
 
     def exit_after_setup():
         deadline = time.monotonic() + SETUP_HOLD
-        while not server.should_exit and setup_bound() and time.monotonic() < deadline:
-            time.sleep(SETUP_POLL)
-        exit_now()
+        try:
+            while not server.should_exit and setup_bound() and time.monotonic() < deadline:
+                time.sleep(SETUP_POLL)
+        finally:  # whatever goes wrong in the check, the hold ends
+            exit_now()
 
     def retire():
         """Close the control socket and remove its path if it is still ours (a new server may have bound it). Once."""
@@ -665,16 +668,12 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
 
 
 def setup_alive(path, timeout=0.5):
-    """The setup process listens on ``path``: an AF_UNIX connect, closed at once. Missing, refused, not a socket,
-    timeout -> False."""
+    """The setup process listens on ``path``, with the same checks as the setup proxy (``connect_setup``: a 0600 socket
+    of this user in a private folder, peer is this user), closed at once. Anything else or any error -> False."""
     try:
-        if not stat.S_ISSOCK(path.lstat().st_mode):
-            return False
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(timeout)
-            sock.connect(str(path))
+        connect_setup(path, timeout).close()
         return True
-    except OSError:
+    except Exception:
         return False
 
 

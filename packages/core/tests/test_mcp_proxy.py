@@ -6,8 +6,10 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import socket
 import threading
+import time
 import urllib.parse
 
 import pytest
@@ -119,7 +121,7 @@ def env():
         tool_policy=lambda ws, s: e.policy.get((ws, s), {}),
         isolated=e.iso,
         secret=lambda ws, n: e.secret_value,
-        binding=lambda ws: getattr(e, "bindings", {}).get(ws, 1),
+        binding=lambda ws: getattr(e, "bindings", {}).get(ws, ("h1", 1)),
         on_seen=lambda *a: e.seen.append(a),
         clock=e.clock,
     )
@@ -167,7 +169,7 @@ def rpc(env, cap, method, params=None, rid=1, name="crm", **kw):
 
 def mint(env, ws="w1", run="r1", names=("crm",)):
     recs = [r for r in env.records[ws] if r["name"] in names]
-    return env.proxy.mint(ws, 1, run, recs)
+    return env.proxy.mint(ws, 1, run, recs, hub_id="h1")
 
 
 def turn_on(env, *tools, ws="w1", server="crm"):
@@ -261,11 +263,11 @@ def test_non_loopback_peer_refused():
 
 def test_mint_validation(env):
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", [])
+        env.proxy.mint("w1", 1, "r1", [], hub_id="h1")
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", [{"name": "orch-x", "digest": "d"}])
+        env.proxy.mint("w1", 1, "r1", [{"name": "orch-x", "digest": "d"}], hub_id="h1")
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", [{"name": "Bad Name", "digest": "d"}])
+        env.proxy.mint("w1", 1, "r1", [{"name": "Bad Name", "digest": "d"}], hub_id="h1")
     assert mcpproxy.CAPABILITY_SHAPE.fullmatch(mint(env))
 
 
@@ -846,14 +848,14 @@ def test_close_drops_everything():
         tool_policy=lambda w, s: {},
         isolated=e.iso,
         secret=lambda w, n: None,
-        binding=lambda w: 1,
+        binding=lambda w: ("h1", 1),
         clock=e.clock,
     )
 
     async def go():
         port = await p.start()
         assert await p.start() == port
-        cap = p.mint("w1", 1, "r1", e.records["w1"])
+        cap = p.mint("w1", 1, "r1", e.records["w1"], hub_id="h1")
         up = FakeUp()
         p._caps[p._hash(cap)].upstreams["crm"] = (up, None)
         await p.close()
@@ -886,26 +888,28 @@ def test_a_revoke_between_the_epoch_read_and_the_mint_refuses_the_mint(env):
     epoch = env.proxy.epoch("w1")
     env.proxy.revoke_workspace("w1")  # the unbind lands after the caller read served, before it mints
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", env.records["w1"], epoch=epoch)
+        env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h1", epoch=epoch)
     assert env.proxy._caps == {}  # noqa: SLF001
-    assert env.proxy.mint("w1", 1, "r1", env.records["w1"], epoch=env.proxy.epoch("w1"))  # a fresh epoch works
+    assert env.proxy.mint(
+        "w1", 1, "r1", env.records["w1"], hub_id="h1", epoch=env.proxy.epoch("w1")
+    )  # a fresh epoch works
 
 
 def test_a_mint_for_a_binding_that_is_not_live_is_refused(env):
-    env.bindings = {"w1": 2}
+    env.bindings = {"w1": ("h1", 2)}
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", env.records["w1"])
+        env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h1")
     env.bindings = {"w1": None}
     with pytest.raises(ValueError):
-        env.proxy.mint("w1", 1, "r1", env.records["w1"])
+        env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h1")
 
 
 def test_a_changed_binding_makes_the_old_capability_401_and_drops_it(env):
     cap = mint(env)
     assert rpc(env, cap, "ping")[0] == 200
-    env.bindings = {"w1": 2}  # rebound
+    env.bindings = {"w1": ("h1", 2)}  # rebound
     assert rpc(env, cap, "ping")[0] == 401
-    env.bindings = {"w1": 1}  # even a return to the old number does not bring it back
+    env.bindings = {"w1": ("h1", 1)}  # even a return to the old number does not bring it back
     assert rpc(env, cap, "ping")[0] == 401 and env.proxy._caps == {}  # noqa: SLF001
 
 
@@ -914,4 +918,223 @@ def test_an_unbound_workspace_or_a_failing_binding_lookup_is_401(env):
         cap = mint(env)
         env.proxy._binding = lambda ws, v=value: (_ for _ in ()).throw(v) if isinstance(v, Exception) else v  # noqa: SLF001
         assert rpc(env, cap, "ping")[0] == 401
-        env.proxy._binding = lambda ws: 1  # noqa: SLF001
+        env.proxy._binding = lambda ws: ("h1", 1)  # noqa: SLF001
+
+
+# -- review fix 1: the capability is checked again when the request is forwarded ---------------------------------
+
+
+def _half_send(env, cap, then):
+    """Send the headers, run ``then()``, send the body: returns (status, body)."""
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}).encode()
+    head = (
+        f"POST /m/crm HTTP/1.1\r\nHost: 127.0.0.1:{env.port}\r\nAuthorization: Bearer {cap}\r\n"
+        f"Content-Length: {len(body)}\r\n\r\n"
+    )
+    with socket.create_connection(("127.0.0.1", env.port), timeout=5) as s:
+        s.sendall(head.encode())
+        time.sleep(0.2)
+        then()
+        s.sendall(body)
+        blob = b""
+        while chunk := s.recv(65536):
+            blob += chunk
+    return int(blob.split(b" ")[1])
+
+
+@pytest.mark.parametrize("how", ["run", "workspace", "binding"])
+def test_a_revoke_between_headers_and_body_forwards_nothing(env, how):
+    cap = mint(env)
+    env.bindings = {"w1": ("h1", 1)}
+
+    def revoke():
+        if how == "run":
+            env.proxy.revoke_run("r1")
+        elif how == "workspace":
+            env.proxy.revoke_workspace("w1")
+        else:
+            env.bindings = {"w1": None}
+
+    assert _half_send(env, cap, revoke) == 401
+    assert all(not up.posts for up in env.ups)
+    assert rpc(env, cap, "ping")[0] == 401
+
+
+def test_up_refuses_a_dropped_capability(env):
+    cap = mint(env)
+    obj = next(iter(env.proxy._caps.values()))
+    env.proxy.revoke_run("r1")
+    assert cap
+    with pytest.raises(mcpproxy._Refuse):
+        env.proxy._up(obj, "crm", env.records["w1"][0], None)
+    assert not env.ups
+
+
+# -- review fix 2: every encoding of a secret is scrubbed ---------------------------------------------------------
+
+VAL = "pässw/ord+x y=1&z~k"
+
+
+def _hex_case(text: str, fn) -> str:
+    return re.sub(r"%[0-9A-Fa-f]{2}", lambda m: fn(m.group(0)), text)
+
+
+def test_scrub_percent_forms_in_any_hex_case():
+    forms = mcpproxy._secret_forms(VAL)
+    for base in (
+        urllib.parse.quote(VAL),
+        urllib.parse.quote(VAL, safe=""),
+        urllib.parse.quote_plus(VAL),
+    ):
+        for text in (base, _hex_case(base, str.lower), _hex_case(base, str.upper)):
+            assert mcpproxy._scrub(f"a {text} b", forms) == "a [redacted] b", text
+
+
+def test_scrub_hex_forms():
+    forms = mcpproxy._secret_forms(VAL)
+    h = VAL.encode().hex()
+    assert mcpproxy._scrub(f"x{h}y", forms) == "x[redacted]y"
+    assert mcpproxy._scrub(f"x{h.upper()}y", forms) == "x[redacted]y"
+
+
+@pytest.mark.parametrize("alignment", range(6))
+@pytest.mark.parametrize("enc", [base64.b64encode, base64.urlsafe_b64encode])
+def test_scrub_base64_at_every_alignment(alignment, enc):
+    forms = mcpproxy._secret_forms(VAL)
+    whole = enc(bytes(range(97, 97 + alignment)) + VAL.encode() + b"\xff\xfe\x01").decode()
+    out = mcpproxy._scrub(whole, forms)
+    assert "[redacted]" in out
+    assert out.count("[redacted]") == 1
+
+
+def test_scrub_never_redacts_short_forms():
+    forms = mcpproxy._secret_forms("abc")
+    assert forms is None
+    assert mcpproxy._scrub("abc abc", forms) == "abc abc"
+    forms = mcpproxy._secret_forms("abcdefgh")
+    assert mcpproxy._scrub("ab abcdefgh", forms) == "ab [redacted]"
+
+
+# -- review fix 4: arguments are checked against the pinned schema ---------------------------------------------------
+
+STRICT = {
+    "type": "object",
+    "properties": {"q": {"type": "string"}},
+    "required": ["q"],
+    "additionalProperties": False,
+}
+
+
+@pytest.mark.parametrize(
+    ("arguments", "ok"),
+    [
+        ({"q": "x"}, True),
+        ({}, False),  # a required key is missing
+        ({"q": "x", "extra": 1}, False),  # additionalProperties: false
+        ([1], False),  # not an object
+        ("str", False),
+        (None, False),
+    ],
+)
+def test_call_arguments_against_the_pinned_schema(env, arguments, ok):
+    t = tool("echo", schema=STRICT)
+    turn_on(env, t)
+    env.up_factory = lambda rec, bearer: FakeUp(tools=[t])
+    cap = mint(env)
+    st, body, _ = rpc(env, cap, "tools/call", {"name": "echo", "arguments": arguments})
+    posts = [m for up in env.ups for m in up.posts if m.get("method") == "tools/call"]
+    if ok:
+        assert st == 200 and "result" in body and len(posts) == 1
+    else:
+        assert body["error"] == {"code": -32602, "message": "invalid params"} and not posts
+
+
+# -- review fix 5: an agent cannot slow the host ---------------------------------------------------------------------
+
+
+def test_connection_cap_answers_503_beyond_32(env):
+    socks = []
+    try:
+        for _ in range(mcpproxy.CONNECTIONS_MAX):
+            socks.append(socket.create_connection(("127.0.0.1", env.port), timeout=5))
+        time.sleep(0.3)
+        extra = socket.create_connection(("127.0.0.1", env.port), timeout=5)
+        socks.append(extra)
+        assert extra.recv(4096).startswith(b"HTTP/1.1 503")
+    finally:
+        for s in socks:
+            s.close()
+    time.sleep(0.3)
+    assert rpc(env, mint(env), "ping")[0] == 200  # slots are freed again
+
+
+def test_a_request_counts_before_the_served_check(env):
+    cap = mint(env)
+
+    def boom(ws):
+        raise RuntimeError("down")
+
+    env.proxy._served = boom
+    codes = [rpc(env, cap, "ping", rid=i)[0] for i in range(mcpproxy.CALLS_PER_MINUTE + 1)]
+    assert codes[:3] == [503, 503, 503] and codes[-1] == 429
+
+
+def test_served_and_policy_are_asked_once_per_request(env):
+    t = tool("echo")
+    turn_on(env, t)
+    env.up_factory = lambda rec, bearer: FakeUp(tools=[t])
+    cap = mint(env)
+    calls = {"served": 0, "policy": 0}
+    served, policy = env.proxy._served, env.proxy._tool_policy
+
+    def count_served(ws):
+        calls["served"] += 1
+        return served(ws)
+
+    def count_policy(ws, s):
+        calls["policy"] += 1
+        return policy(ws, s)
+
+    env.proxy._served, env.proxy._tool_policy = count_served, count_policy
+    assert rpc(env, cap, "tools/call", {"name": "echo", "arguments": {}})[0] == 200
+    assert calls == {"served": 1, "policy": 1}
+
+
+def test_upstream_posts_run_in_the_proxys_own_bounded_pool(env):
+    names = []
+    env.up_factory = lambda rec, bearer: FakeUp(on_post=lambda m: names.append(threading.current_thread().name))
+    cap = mint(env)
+    assert rpc(env, cap, "initialize", {})[0] == 200
+    assert names and all(n.startswith("orch-mcp") for n in names)
+    assert env.proxy._pool._max_workers == 8
+    pool = env.proxy._pool
+    asyncio.run(env.proxy.close())
+    assert pool._shutdown
+
+
+# -- review fix 6: the 24 h cap also runs on the wall clock ----------------------------------------------------------
+
+
+def test_capability_expires_on_the_wall_clock_even_if_the_monotonic_one_stood_still(env):
+    wall = {"now": 5_000_000.0}
+    env.proxy._wall = lambda: wall["now"]
+    cap = mint(env)
+    assert rpc(env, cap, "ping")[0] == 200
+    wall["now"] += mcpproxy.CAPABILITY_TTL - 1
+    assert rpc(env, cap, "ping")[0] == 200
+    wall["now"] += 2  # the laptop slept: monotonic did not move
+    assert rpc(env, cap, "ping")[0] == 401
+    assert not env.proxy._caps
+
+
+# -- review fix 8: the binding is (hub_id, binding_seq); the capability shape is redacted by the host -------------
+
+
+def test_a_binding_to_another_hub_with_the_same_number_kills_the_capability(env):
+    cap = mint(env)
+    assert rpc(env, cap, "ping")[0] == 200
+    env.bindings = {"w1": ("h2", 1)}  # left hub h1, joined h2: the sequence number alone would say yes
+    assert rpc(env, cap, "ping")[0] == 401
+    with pytest.raises(ValueError):
+        env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h1")
+    assert env.proxy.mint("w1", 1, "r1", env.records["w1"], hub_id="h2")

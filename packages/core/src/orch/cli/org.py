@@ -60,6 +60,12 @@ def _target(env: Mapping[str, str]) -> Any:
     return target
 
 
+def _block(text: str) -> str:
+    """A server-controlled, possibly multi-line text: every continuation line is indented under a fixed marker, so it
+    can never look like a line of the review itself."""
+    return "\n      | ".join(plain(text).splitlines() or [""])
+
+
 def _describe(shown: dict[str, Any]) -> str:
     """The text a person decides on. Everything the hub or a server wrote goes through ``plain`` (no escape sequence or
     control character can redraw the prompt)."""
@@ -73,7 +79,7 @@ def _describe(shown: dict[str, Any]) -> str:
         sign_in = "no sign-in" if item["auth"] == "none" else f"company secret {plain(item['secret'])!r}"
         body = (
             f"Company tool server {plain(item['name'])!r}\n  address: {plain(item['url'])}\n  sign-in: {sign_in}\n"
-            f"  for: {plain(item['description']) or '(not said)'}\n  every tool starts Off.\n"
+            f"  for: {_block(item['description']) or '(not said)'}\n  every tool starts Off.\n"
         )
     return body + "\n" + "".join(f"- {n}\n" for n in shown["notes"]) + f"  digest {item['digest'][:23]}...\n"
 
@@ -89,8 +95,8 @@ def _tool_text(row: dict[str, Any], server: str) -> str:
         return f"Tool {name!r} of company server {plain(server)!r} is too long to review; it stays off.\n"
     lines = [f"Tool {name!r} of company server {plain(server)!r}"]
     if row.get("title"):
-        lines.append(f"  title: {plain(row['title'])}")
-    lines.append(f"  description: {plain(row['description']) or '(none)'}")
+        lines.append(f"  title: {_block(row['title'])}")
+    lines.append(f"  description: {_block(row['description']) or '(none)'}")
     lines.append("  input schema (this is pinned too):")
     lines.extend("    " + ln for ln in _schema_text(row).splitlines())
     lines.append("  Its results are untrusted text from your company's server.")

@@ -58,7 +58,9 @@ class Hub(SimpleNamespace):
 
 @pytest.fixture
 def world(monkeypatch):
-    state = SimpleNamespace(records=[record()], seq=3, asked=0, secret_calls=[], iso=False, policy={}, ups=[])
+    state = SimpleNamespace(
+        records=[record()], hub_id="h1", seq=3, asked=0, secret_calls=[], iso=False, policy={}, ups=[]
+    )
     state.service = SimpleNamespace(workspace_id=WS)
     state.call = SimpleNamespace(service=state.service)
 
@@ -67,7 +69,7 @@ def world(monkeypatch):
         return {"skills": [], "mcp": list(state.records)}
 
     monkeypatch.setattr(orgstate, "served", served)
-    monkeypatch.setattr(orgstate, "_state", lambda svc: SimpleNamespace(binding_seq=state.seq))
+    monkeypatch.setattr(orgstate, "_state", lambda svc: SimpleNamespace(hub_id=state.hub_id, binding_seq=state.seq))
     monkeypatch.setattr(orgstate, "isolated", lambda svc: state.iso)
     monkeypatch.setattr(orgstate, "tool_policy", lambda svc, server: state.policy)
     monkeypatch.setattr(orgmcp, "org_secret", lambda svc, name: state.secret_calls.append(name))
@@ -139,7 +141,7 @@ def test_the_capability_is_bound_to_workspace_binding_seq_run_and_servers(world)
         hub = fake_hub(world)
         await launch(world, hub)
         (cap,) = hub.org_mcp._caps.values()  # noqa: SLF001
-        assert (cap.ws, cap.binding_seq, cap.run, list(cap.servers)) == (WS, 3, "r_1", ["crm"])
+        assert (cap.ws, cap.hub_id, cap.binding_seq, cap.run, list(cap.servers)) == (WS, "h1", 3, "r_1", ["crm"])
         await hub.org_mcp.close()
 
     asyncio.run(go())
@@ -325,7 +327,9 @@ def test_tier_a_never_asks_for_a_secret(world):
     async def go():
         hub = fake_hub(world)
         hub.org_mcp_services[WS] = world.service
-        cap = hub.org_mcp.mint(WS, 3, "r_x", world.records)  # forced: bypasses the served filter on purpose
+        cap = hub.org_mcp.mint(
+            WS, 3, "r_x", world.records, hub_id="h1"
+        )  # forced: bypasses the served filter on purpose
         port = await hub.org_mcp.start()
         status = await post(port, cap)
         await hub.org_mcp.close()
@@ -393,6 +397,16 @@ def test_the_binding_callback_follows_the_hub_state(world, monkeypatch):
     hub = fake_hub(world)
     proxy = hub.org_mcp
     hub.org_mcp_services[WS] = world.service
-    assert proxy._binding(WS) == 3 and proxy._binding("nobody") is None  # noqa: SLF001
+    assert proxy._binding(WS) == ("h1", 3) and proxy._binding("nobody") is None  # noqa: SLF001
     monkeypatch.setattr(orgstate, "_state", lambda svc: (_ for _ in ()).throw(RuntimeError("hub.not_joined")))
     assert proxy._binding(WS) is None  # noqa: SLF001
+
+
+def test_the_host_redactor_and_request_check_know_the_capability_shape():
+    from orch.host.auth import Redactor, secret_in_request
+    from orch.host.mcpshared import new_capability
+
+    cap = new_capability()
+    grant = "gr_01J9ZP0000000000000000000H." + "z" * 43
+    assert cap not in Redactor(grant).text(f"x {cap} y") and "[redacted]" in Redactor(grant).text(f"x {cap} y")
+    assert secret_in_request({"args": {"a": [cap]}, "auth": {}})

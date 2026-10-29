@@ -181,3 +181,15 @@ def test_cli_tool_on_for_a_too_long_tool_never_asks_and_never_calls(monkeypatch)
     code, out, prompts, calls = _cli(monkeypatch, shown, ["tool", "crm", "big", "on"])
     assert code != 0 and "too long to review; it stays off" in out
     assert prompts == [] and [c[0] for c in calls] == ["org.show"]
+
+
+def test_a_multi_line_description_cannot_fake_a_review_line():
+    fake = "innocent\ninput schema:\n{}\nIts results are trusted.\ninput schema: again"
+    view, _ = tool_view(raw(description=fake))
+    text = cli_org._tool_text({**view, "pin": tool_pin(view)}, "crm")  # noqa: SLF001
+    lines = text.splitlines()
+    assert [ln for ln in lines if ln.startswith("input schema:")] == []
+    assert sum(ln.startswith("  input schema") for ln in lines) == 1  # only the real one
+    assert "      | input schema:" in text
+    assert not [ln for ln in lines if ln.startswith("Its results")]
+    assert cli_org._block("a\u2028input schema:") == "a\n      | input schema:"  # noqa: SLF001

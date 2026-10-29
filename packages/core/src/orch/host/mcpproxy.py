@@ -10,11 +10,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import collections
+import concurrent.futures
 import hashlib
 import hmac
 import ipaddress
 import json
 import logging
+import re
 import threading
 import time
 import urllib.parse
@@ -38,6 +40,8 @@ UPSTREAM_TIMEOUT = 30
 CALLS_PER_MINUTE = 60
 CALLS_PER_CAPABILITY = 2000
 INFLIGHT_MAX = 4
+CONNECTIONS_MAX = 32
+POOL_WORKERS = 8
 TOOLS_MAX = 200
 TOOLS_BYTES_MAX = 256 * 1024
 ALLOWED_METHODS = ("initialize", "ping", "tools/list", "tools/call")
@@ -93,16 +97,27 @@ class _Cap:
     """One capability record (held under its hash only)."""
 
     def __init__(
-        self, key: str, ws: str, binding_seq: int, run: str, servers: dict[str, str], expires_at: float
+        self,
+        key: str,
+        ws: str,
+        hub_id: str,
+        binding_seq: int,
+        run: str,
+        servers: dict[str, str],
+        expires_at: float,
+        wall_expires_at: float,
     ) -> None:
         self.key = key
         self.ws = ws
+        self.hub_id = hub_id
         self.binding_seq = binding_seq
         self.run = run
         self.servers = servers
         self.expires_at = expires_at
+        self.wall_expires_at = wall_expires_at  # the monotonic clock stops in sleep; the wall clock does not
         self.upstreams: dict[str, tuple[Any, str | None]] = {}
         self.pins: dict[str, dict[str, str]] = {}  # server -> latest {tool: pin} (present once listed)
+        self.schemas: dict[str, dict[str, Any]] = {}  # server -> {tool: pinned inputSchema}, same moment as pins
         self.inflight: dict[str, int] = {}
         self.calls = 0
         self.list_n = 0
@@ -120,23 +135,58 @@ def _dumps(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
 
 
-def _secret_forms(value: str) -> list[str]:
+SCRUB_MIN = 8  # a form shorter than this is never redacted (it would mangle ordinary output)
+_PERCENT = re.compile(r"%([0-9A-Fa-f]{2})")
+
+
+def _b64_middles(raw: bytes) -> set[str]:
+    """The base64 text of ``raw`` at all three byte alignments, cut to the part that does not depend on what comes
+    before or after it (the whole characters inside the value)."""
+    out: set[str] = set()
+    for enc in (base64.b64encode, base64.urlsafe_b64encode):
+        for k in range(3):
+            text = enc(b"\0" * k + raw).decode().rstrip("=")
+            start = -(-4 * k // 3)
+            end = 4 * (k + len(raw)) // 3
+            out.add(text[start:end])
+    return out
+
+
+def _secret_forms(value: str) -> re.Pattern | None:
+    """One pattern for every way a secret can show up: plain, percent-encoded (any hex case), hex, base64."""
     raw = value.encode()
-    forms = {value, urllib.parse.quote(value, safe="")}
+    plain = {value, raw.hex(), raw.hex().upper(), *_b64_middles(raw)}
     for enc in (base64.b64encode, base64.urlsafe_b64encode):
         padded = enc(raw).decode()
-        forms.add(padded)
-        forms.add(padded.rstrip("="))
-    forms.discard("")
-    return sorted(forms, key=len, reverse=True)
+        plain.update((padded, padded.rstrip("=")))
+    percent = {
+        urllib.parse.quote(value),
+        urllib.parse.quote(value, safe=""),
+        urllib.parse.quote_plus(value),
+    }
+    parts = []
+    for form in sorted((f for f in plain if len(f) >= SCRUB_MIN), key=len, reverse=True):
+        parts.append(re.escape(form))
+    for form in sorted((f for f in percent if len(f) >= SCRUB_MIN and "%" in f), key=len, reverse=True):
+        pieces = _PERCENT.split(form)  # literal, hex, literal, hex, ...
+        parts.append(
+            "".join(
+                re.escape(x) if i % 2 == 0 else "%" + "".join(f"[{c.lower()}{c.upper()}]" for c in x)
+                for i, x in enumerate(pieces)
+            )
+        )
+    for form in percent:  # no escape in it: the same as a plain form
+        if "%" not in form and len(form) >= SCRUB_MIN:
+            parts.append(re.escape(form))
+    return re.compile("|".join(parts)) if parts else None
 
 
-def _scrub(obj: Any, forms: list[str]) -> Any:
+def _scrub(obj: Any, forms: re.Pattern | None) -> Any:
+    if forms is None:
+        return obj
+
     def fix(text: str) -> str:
-        for form in forms:
-            if form in text:
-                text = text.replace(form, "[redacted]")
-        return text
+        return forms.sub("[redacted]", text)
 
     if type(obj) is str:
         return fix(obj)
@@ -156,22 +206,26 @@ class Proxy:
         tool_policy: Callable[[str, str], dict[str, str]],
         isolated: Callable[[str], bool],
         secret: Callable[[str, str], str | None],
-        binding: Callable[[str], int | None],
+        binding: Callable[[str], tuple[str, int] | None],
         on_seen: Callable[[str, str, str, list[dict]], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        wall: Callable[[], float] = time.time,
     ) -> None:
         self._upstream = upstream
         self._served = served
         self._tool_policy = tool_policy
         self._isolated = isolated
         self._secret = secret
-        self._binding = binding  # ws -> the live binding_seq, None = not bound (checked on every request)
+        self._binding = binding  # ws -> the live (hub_id, binding_seq), None = not bound (checked on every request)
         self._epoch: dict[str, int] = {}  # per workspace; revoke_workspace bumps it
         self._on_seen = on_seen
         self._clock = clock
+        self._wall = wall
         self.port: int | None = None
         self._server: asyncio.base_events.Server | None = None
         self._lock = threading.RLock()
+        self._conns = 0  # open connections (event loop thread only)
+        self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=POOL_WORKERS, thread_name_prefix="orch-mcp")
         self._caps: dict[str, _Cap] = {}
         self._iso: dict[str, tuple[bool, float]] = {}
         self._runs: dict[str, collections.deque] = {}
@@ -191,13 +245,15 @@ class Proxy:
         with self._lock:
             return self._epoch.get(ws, 0)
 
-    def _binding_is(self, ws: str, binding_seq: int) -> bool:
+    def _binding_is(self, ws: str, hub_id: str, binding_seq: int) -> bool:
         try:
-            return self._binding(ws) == binding_seq
+            return self._binding(ws) == (hub_id, binding_seq)
         except Exception:
             return False
 
-    def mint(self, ws: str, binding_seq: int, run: str, servers: list[dict], *, epoch: int | None = None) -> str:
+    def mint(
+        self, ws: str, binding_seq: int, run: str, servers: list[dict], *, hub_id: str, epoch: int | None = None
+    ) -> str:
         """Raises ``ValueError`` when the workspace was revoked since ``epoch`` was read, or when ``binding_seq`` is not
         the live binding: a revoke racing a mint can never leave a usable capability."""
         if not servers:
@@ -211,10 +267,12 @@ class Proxy:
         with self._lock:
             if epoch is not None and epoch != self._epoch.get(ws, 0):
                 raise ValueError("revoked")
-            if not self._binding_is(ws, binding_seq):
+            if not self._binding_is(ws, hub_id, binding_seq):
                 raise ValueError("not bound")
             key = self._hash(cap)
-            self._caps[key] = _Cap(key, ws, binding_seq, run, names, self._clock() + CAPABILITY_TTL)
+            self._caps[key] = _Cap(
+                key, ws, hub_id, binding_seq, run, names, self._clock() + CAPABILITY_TTL, self._wall() + CAPABILITY_TTL
+            )
         return cap
 
     def _drop(self, key: str) -> None:
@@ -235,7 +293,8 @@ class Proxy:
         with self._lock:
             for key in [k for k, c in self._caps.items() if c.run == run]:
                 self._drop(key)
-            self._runs.pop(run, None)
+            if not any(c.run == run for c in self._caps.values()):  # counters stay while a capability is live
+                self._runs.pop(run, None)
 
     def revoke_workspace(self, ws: str) -> None:
         with self._lock:
@@ -251,6 +310,7 @@ class Proxy:
                 del cap.servers[name]
                 held = cap.upstreams.pop(name, None)
                 cap.pins.pop(name, None)
+                cap.schemas.pop(name, None)
                 if held is not None:
                     self._close_up(held[0])
                 if not cap.servers:
@@ -266,7 +326,7 @@ class Proxy:
             cap = self._caps.get(key)
             if cap is None or not hmac.compare_digest(cap.key, key):
                 raise _Refuse(401, "unauthorized")
-            if self._clock() >= cap.expires_at:
+            if self._clock() >= cap.expires_at or self._wall() >= cap.wall_expires_at:
                 self._drop(key)
                 raise _Refuse(401, "unauthorized")
             return key, cap
@@ -295,6 +355,7 @@ class Proxy:
             self._runs.clear()
             self._held.clear()
         self.port = None
+        self._pool.shutdown(wait=False, cancel_futures=True)
         log.removeFilter(self._filter)
 
     # -- HTTP -----------------------------------------------------------------------------------------------------
@@ -314,6 +375,22 @@ class Proxy:
             pass
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        if self._conns >= CONNECTIONS_MAX:
+            try:
+                await self._send(writer, 503, {"error": "busy"})
+            finally:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            return
+        self._conns += 1
+        try:
+            await self._handle_one(reader, writer)
+        finally:
+            self._conns -= 1
+
+    async def _handle_one(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
             status, payload = await self._serve(reader, writer)
         except _Refuse as exc:
@@ -379,14 +456,16 @@ class Proxy:
         if not auth.startswith("Bearer ") or len(auth) > 200:
             raise _Refuse(401, "unauthorized")
         key, cap = self._lookup(auth[7:])
-        if not self._binding_is(cap.ws, cap.binding_seq):  # valid only for the live binding, on every request
+        if not self._binding_is(
+            cap.ws, cap.hub_id, cap.binding_seq
+        ):  # valid only for the live binding, on every request
             with self._lock:
                 self._drop(key)
             raise _Refuse(401, "unauthorized")
         if name not in cap.servers:
             raise _Refuse(403, "forbidden")
+        self._count(cap)  # the request counts before anything else is asked or decided
         record = self._check_served(cap, name)
-        bearer, secret_value = self._credentials(cap, record)
         length = headers.get("content-length")
         if length is None:
             raise _Refuse(411, "length required")
@@ -400,6 +479,11 @@ class Proxy:
             raise _Refuse(408, "timeout") from None
         except asyncio.IncompleteReadError:
             raise _Refuse(400, "bad request") from None
+        with self._lock:
+            if not self._live(cap):
+                self._drop(key)
+                raise _Refuse(401, "unauthorized")
+        bearer, secret_value = self._credentials(cap, record)  # after the body: nothing waits between check and use
         status, payload = await self._rpc(key, cap, name, record, bearer, body)
         if payload is not None and secret_value:
             payload = _scrub(payload, _secret_forms(secret_value))
@@ -462,24 +546,41 @@ class Proxy:
 
     # -- JSON-RPC -------------------------------------------------------------------------------------------------
 
+    def _live(self, cap: _Cap) -> bool:
+        """Caller holds the lock. True while this very capability is registered and its binding is still live."""
+        return self._caps.get(cap.key) is cap and self._binding_is(cap.ws, cap.hub_id, cap.binding_seq)
+
     def _up(self, cap: _Cap, name: str, record: dict, bearer: str | None) -> Any:
-        held = cap.upstreams.get(name)
-        if held is not None and held[1] == bearer:
-            return held[0]
-        if held is not None:
-            self._close_up(held[0])
-            cap.pins.pop(name, None)
-        up = self._upstream(record, bearer)
-        cap.upstreams[name] = (up, bearer)
-        return up
+        with self._lock:
+            if self._caps.get(cap.key) is not cap:
+                raise _Refuse(401, "unauthorized")
+            held = cap.upstreams.get(name)
+            if held is not None and held[1] == bearer:
+                return held[0]
+            if held is not None:
+                self._close_up(held[0])
+                cap.pins.pop(name, None)
+                cap.schemas.pop(name, None)
+            up = self._upstream(record, bearer)
+            cap.upstreams[name] = (up, bearer)
+            return up
+
+    def _post(self, cap: _Cap, up: Any, message: dict) -> Any:
+        """Runs in the worker thread: the capability is checked again immediately before the post."""
+        with self._lock:
+            if not self._live(cap):
+                self._drop(cap.key)
+                raise _Refuse(401, "unauthorized")
+        return up.post(message, timeout=UPSTREAM_TIMEOUT)
 
     async def _forward(self, key: str, cap: _Cap, name: str, up: Any, message: dict) -> list[dict]:
-        self._count(cap)
         if cap.inflight.get(name, 0) >= INFLIGHT_MAX:
             raise _Refuse(429, "too many calls")
         cap.inflight[name] = cap.inflight.get(name, 0) + 1
         try:
-            msgs = await asyncio.to_thread(up.post, message, timeout=UPSTREAM_TIMEOUT)
+            msgs = await asyncio.get_running_loop().run_in_executor(self._pool, self._post, cap, up, message)
+        except _Refuse:
+            raise
         except Exception:
             log.warning("company server %s did not answer", name)
             return []
@@ -521,6 +622,7 @@ class Proxy:
         if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or type(msg.get("method")) is not str:
             return 200, _rpc_error(None, -32600, "invalid request")
         method = msg["method"]
+        memo: dict = {}  # per request: the policy is asked once
         params = msg.get("params")
         if params is not None and not isinstance(params, dict):
             return 200, _rpc_error(msg.get("id"), -32602, "invalid params")
@@ -541,8 +643,8 @@ class Proxy:
         if method == "initialize":
             return 200, await self._initialize(key, cap, name, up, rid, params)
         if method == "tools/list":
-            return 200, await self._tools_list(key, cap, name, record, up, rid)
-        return 200, await self._tools_call(key, cap, name, up, rid, params)
+            return 200, await self._tools_list(key, cap, name, record, up, rid, memo)
+        return 200, await self._tools_call(key, cap, name, up, rid, params, memo)
 
     async def _initialize(self, key: str, cap: _Cap, name: str, up: Any, rid: Any, params: dict) -> dict:
         asked = params.get("protocolVersion")
@@ -612,6 +714,7 @@ class Proxy:
             if problem is None:
                 tools.append(row)
         cap.pins[name] = {t["name"]: t["pin"] for t in tools}
+        cap.schemas[name] = {t["name"]: t["inputSchema"] for t in tools}
         if self._on_seen is not None:
             try:
                 self._on_seen(cap.ws, name, str(record.get("digest", "")), seen_rows)
@@ -619,30 +722,37 @@ class Proxy:
                 pass
         return tools, None
 
-    def _policy(self, cap: _Cap, name: str) -> dict[str, str]:
+    def _policy(self, cap: _Cap, name: str, memo: dict) -> dict[str, str]:
+        """The tool policy, asked at most once per request (``memo`` is the request's)."""
+        if "policy" in memo:
+            return memo["policy"]
+        memo["policy"] = self._policy_now(cap, name)
+        return memo["policy"]
+
+    def _policy_now(self, cap: _Cap, name: str) -> dict[str, str]:
         try:
             policy = self._tool_policy(cap.ws, name)
         except Exception:
             return {}
         return policy if isinstance(policy, dict) else {}
 
-    async def _tools_list(self, key: str, cap: _Cap, name: str, record: dict, up: Any, rid: Any) -> dict:
+    async def _tools_list(self, key: str, cap: _Cap, name: str, record: dict, up: Any, rid: Any, memo: dict) -> dict:
         tools, error = await self._fetch_tools(key, cap, name, record, up, rid)
         if error is not None or tools is None:
             return error or _rpc_error(rid, -32603, "the company server did not answer")
-        policy = self._policy(cap, name)
+        policy = self._policy(cap, name, memo)
         shown = []
         for t in tools:
             if policy.get(t["name"]) == t["pin"]:
                 shown.append({k: v for k, v in t.items() if k != "pin"})  # the view the pin covers
         return {"jsonrpc": "2.0", "id": rid, "result": {"tools": shown}}
 
-    async def _tools_call(self, key: str, cap: _Cap, name: str, up: Any, rid: Any, params: dict) -> dict:
+    async def _tools_call(self, key: str, cap: _Cap, name: str, up: Any, rid: Any, params: dict, memo: dict) -> dict:
         tool = params.get("name")
         off = _rpc_error(rid, -32602, "this tool is off")
         if type(tool) is not str:
             return _rpc_error(rid, -32602, "invalid params")
-        if tool not in self._policy(cap, name):
+        if tool not in self._policy(cap, name, memo):
             return off
         if name not in cap.pins:
             cap.list_n += 1
@@ -652,18 +762,20 @@ class Proxy:
             if error is not None:
                 return _rpc_error(rid, -32603, "the company server did not answer")
         pin = cap.pins.get(name, {}).get(tool)
-        if pin is None or self._policy(cap, name).get(tool) != pin:
+        if pin is None or self._policy(cap, name, memo).get(tool) != pin:
             return off
         day = time.strftime("%Y-%m-%d", time.gmtime())
         with self._lock:
             k = (cap.ws, name, tool, day)
             self._usage[k] = self._usage.get(k, 0) + 1
-        arguments = params.get("arguments")
+        arguments = params.get("arguments", {})
+        if not self._arguments_ok(arguments, cap.schemas.get(name, {}).get(tool)):
+            return _rpc_error(rid, -32602, "invalid params")
         message = {
             "jsonrpc": "2.0",
             "id": rid,
             "method": "tools/call",
-            "params": {"name": tool, "arguments": arguments if isinstance(arguments, dict) else {}},
+            "params": {"name": tool, "arguments": arguments},
         }
         answer = self._answer(await self._forward(key, cap, name, up, message), rid)
         if answer is None:
@@ -675,6 +787,20 @@ class Proxy:
             return _rpc_error(rid, -32603, "the company server did not answer")
         clean = {k: result[k] for k in ("content", "structuredContent", "isError") if k in result}
         return {"jsonrpc": "2.0", "id": rid, "result": clean}
+
+    @staticmethod
+    def _arguments_ok(arguments: Any, schema: Any) -> bool:
+        """Three cheap checks against the pinned schema (not a full validation)."""
+        if not isinstance(arguments, dict):
+            return False
+        if not isinstance(schema, dict):
+            return True
+        props = schema.get("properties")
+        props = props if isinstance(props, dict) else {}
+        if schema.get("additionalProperties") is False and any(k not in props for k in arguments):
+            return False
+        required = schema.get("required")
+        return not isinstance(required, list) or all(k in arguments for k in required if type(k) is str)
 
     def _served_record(self, cap: _Cap, name: str) -> dict:
         return {"name": name, "digest": cap.servers.get(name, "")}

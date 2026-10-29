@@ -52,7 +52,7 @@ function mount(action: Parameters<typeof HubStep>[0]['action'] = JOIN) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><TooltipProvider><HubStep ws={WS} action={action} onClose={vi.fn()} /></TooltipProvider></QueryClientProvider>)
 }
 const input = async () => (await screen.findByTestId('hub-backup-input', {}, T)) as HTMLInputElement
-const signBtn = () => screen.getByRole('button', { name: 'Sign and join the hub' })
+const signBtn = () => screen.getByRole('button', { name: 'Connect' })
 async function press() {
   await waitFor(() => expect(signBtn()).toBeEnabled(), { timeout: ARM_MS + 3000 })
   trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)

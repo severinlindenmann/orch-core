@@ -4,7 +4,7 @@ import type { TicketSummary } from './types'
 
 /** Client text, never host text (12.11 "Rules and strings"). Whenever `runner.enabled`, whatever `terminals` says. */
 export const DASHBOARD_EXECUTION_LINE =
-  'Dashboard execution: agents and terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run commands and read your files and keys.'
+  'Agents and terminals you start here work as you on this computer. They can run programs and open your files, including secret keys, and so can anything that takes over this dashboard. Only continue on a computer you trust.'
 /** The export warning is this sentence with the exact remote URL between the two parts (the URL is drawn through `Raw`). */
 export const EXPORT_WARNING = { before: 'Push publishes every ticket in this workspace to ', after: ', restricted ones included.' } as const
 /** The private-remote line, the same way. */

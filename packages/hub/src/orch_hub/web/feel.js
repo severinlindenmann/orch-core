@@ -12,7 +12,8 @@ export function skeletonPlan(kind) {
 export function emptyWords(kind) {
   return ({
     home: ["Nothing needs you", "All approvals are done. New ones show up here by themselves."],
-    workspaces: ["No workspaces yet", "Connect the first one with a one-time link. Ask your hub admin for a link, then open it in the workspace’s Mission Control (Settings › Hub › Connect)."],
+    workspaces: ["No workspaces yet", "Press “Connect a workspace”, copy the link and paste it in the workspace under Settings, then Hub."],
+    "workspaces-member": ["No workspaces yet", "Ask your hub admin for a link, then paste it in the workspace under Settings, then Hub."],
     account: ["No phones or browsers yet", "To add a phone, open the phone app and choose Pair a phone."],
     services: ["No services yet", "Ask your IT person to set up services on this hub, then check again."],
     handoffs: ["No hand-offs yet", "Send a hand-off from a workspace to see its progress here."],
@@ -173,12 +174,13 @@ export function replaceContent(container, nodes, preserve = true) {
 export const UNDO_DURATION = 5000;
 export const retryDelay = (attempt) => Math.min(15000, 2000 * 2 ** Math.max(0, attempt));
 export const itemKey = (item) => JSON.stringify([item.workspace_id, item.item_id ?? item.key]);
-export function searchEntries({ admin = false, workspaces = [], items = [], people = [] }) {
+export function searchEntries({ admin = false, workspaces = [], items = [], people = [], shared = [] }) {
   const pages = [["Home", "home"], ["Workspaces", "workspaces"], ...(admin ? [["Services", "services"], ["Admin", "admin"]] : [])];
   return [
     ...pages.map(([label, page]) => ({ group: "Pages", label, hash: "#/" + page })),
     ...workspaces.map((w) => ({ group: "Workspaces", label: w.name || w.id, hash: "#/w/" + encodeURIComponent(w.id) })),
     ...items.map((it) => ({ group: "Tickets and items", label: [it.key, it.title ?? it.kind].filter(Boolean).join(" · "), hash: "#/w/" + encodeURIComponent(it.workspace_id) + "/item/" + encodeURIComponent(it.key || it.item_id) })),
+    ...shared.map((it) => ({ group: "Shared tickets", label: [it.key, it.title].filter(Boolean).join(" · ") + (it.shared_by ? " · shared by " + it.shared_by : ""), hash: "#/w/" + encodeURIComponent(it.workspace_id) })),
     ...(admin ? people.map((p) => ({ group: "People", label: p.name || p.user_id, hash: "#/admin" })) : []),
     ...(admin ? [{ group: "Actions", label: "Connect a workspace", hash: "#/admin", action: "connect" }] : []),
   ];

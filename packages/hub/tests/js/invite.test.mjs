@@ -60,7 +60,9 @@ test("the proof digest is SHA-256(label || challenge || SHA-256(token)), as the 
   assert.equal(got, PROOF_VECTOR, "the same vector as tests/test_invites.py: both sides compute the same bytes");
 });
 
-test("join: two passwords, one request, the secret on the person's own screen, then sign in", async () => {
+test("join: two passwords, one request, the secret on the person's own screen, then sign in", async (t) => {
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async () => {} } } });
+  t.after(() => { delete globalThis.navigator; });
   const d = deps({
     "/invite/peek": { status: 200, body: { kind: "join", name: "Dora\u202e", needs_proof: false } },
     "/invite/redeem": { status: 200, body: { kind: "join", recovery: false, user_id: ME, name: "Dora", totp_secret: "JBSWY3DPEHPK3PXP", totp_uri: "otpauth://x" } },
@@ -81,7 +83,9 @@ test("join: two passwords, one request, the secret on the person's own screen, t
   assert.deepEqual(d.calls[1], ["POST", "/invite/redeem", { token: TOKEN, password: "a long enough password" }]);
   assert.equal(d.finishedCount, 1);
   assert.equal(byId(box, "invite-secret").textContent, "JBSWY3DPEHPK3PXP");
-  assert.match(box.textContent, /shown only once/);
+  assert.match(box.textContent, /6-digit code each time you sign in/);
+  assert.equal(box.textContent.match(/only once/g)?.length, 1, "'only once' is said one time");
+  assert.equal(box.all().filter((n) => n.tag === "button" && /^Copy/.test(n.textContent)).length, 1, "one Copy button");
   assert.match(box.textContent, /groups afterwards/);
   assert.equal(pw.value, "", "the typed password is wiped");
   assert.match(box.textContent, /already signed in/);

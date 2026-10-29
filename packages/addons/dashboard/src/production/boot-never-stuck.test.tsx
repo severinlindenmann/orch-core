@@ -68,7 +68,10 @@ it('a first answer that takes 8 s still opens the app, no failure screen', async
   mount()
   await act(async () => { await vi.advanceTimersByTimeAsync(8_100) })
   expect(await screen.findByRole('navigation', { name: 'Main' })).toBeInTheDocument()
-  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  // The boot's own screens only: once the app is open, a page inside it (Today, fed [] by this stub) may show its own
+  // load error, which is not what this test is about and made it flaky by shard order.
+  expect(screen.queryByText('The workspace did not start')).not.toBeInTheDocument()
+  expect(screen.queryByText('Getting your workspace ready…')).not.toBeInTheDocument()
 })
 
 it('a host that never starts: after the retry window the plain failure screen with Try again; the code only under Details', async () => {

@@ -1998,7 +1998,7 @@ hub.audit {v, suite, kind: "hub.audit", hv, hub_id, op_cert_id, seq ≥ 1, prev:
   otherwise (vectors `audit_share_*`); `channel` (p4) `{channel_id, user_id, change: register | revoke | renew, factor,
   actor_user_id | null, nonce}`, hub-wide (`scope_tag` null; `actor_user_id` null = the operator at the hub terminal,
   there is no `unrevoke`, §6.2; `renew` = a new certificate for the same channel key, the factor unchanged, recorded BEFORE it is issued and refusing the renewal when the chain cannot be written. **Contract text only in V3: no hub renews**, the certificate lasts 31 days and then the phone pairs again); `grant` `{group, workspace_id, role | null, actor_user_id, nonce}`; `membership`
-  `{group, user_id, added, actor_user_id, nonce}`; `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `hub_settings` (M4, #1461) `{change: general | addresses, actor_user_id, nonce}`, hub-wide (`scope_tag` null; an admin changed the hub's name or company, or the addresses it advertises: it names which setting and who, never the value; written BEFORE the change is saved, and the change is refused when the chain cannot be written); `hub_backup` (M4 S5, §17) `{change: key_set | key_confirmed | made | downloaded, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the backup key was set or replaced, a backup was made, or one was handed out; `actor_user_id` null = the schedule or the hub terminal; never a key, a word or a file name); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
+  `{group, user_id, added, actor_user_id, nonce}`; `market_policy` (D14, §7.1) `{version ≥ 1, policy_hash: b64u(32), actor_user_id, nonce}`, hub-wide (`scope_tag` null; the version the change produced and the hash of the new policy, the actor is always a hub-admin); `hub_settings` (M4, #1461) `{change: general | addresses, actor_user_id, nonce}`, hub-wide (`scope_tag` null; an admin changed the hub's name or company, or the addresses it advertises: it names which setting and who, never the value; written BEFORE the change is saved, and the change is refused when the chain cannot be written); `hub_backup` (M4 S5, §17) `{change: key_set | key_confirmed | made | downloaded, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the backup key was set or replaced, a backup was made, or one was handed out; `actor_user_id` null = the schedule or the hub terminal; never a key, a word or a file name); `hub_restore` (M4 S6, §17.8) `{backup_made_ms, gap_ms ≥ 0, op_seq ≥ 1, actor_user_id: hex16 | null, nonce}`, hub-wide (`scope_tag` null; the hub is restored from a backup made at `backup_made_ms`, `gap_ms` ago, issuing `op_seq`; written before the swap); `space` `{space_id, epoch, change: create | add | remove | unbind | delete,
   workspace_id | null, actor_user_id | null, nonce}`. The acting admin's `UK` signature on a grant or membership change is
   the custodial event it came from (spec §10); the audit record points at it, it does not replace it. **Every event of every type carries `nonce`, 32 random bytes
   inside the event; no type is exempt.** Records carry the event's hash to every tenant, so an event without a nonce
@@ -2730,6 +2730,13 @@ App operations are classified **only** through `app_route` over the raw request 
 `days`); agents cannot extend (the host answers `op.not_allowed`). **Stop** keeps the files; **remove** deletes files and
 form rows, and the slug stays taken.
 
+**S2 as built (#1453).** `share.extend` also requires the link to be live and the new end to be later than the old one
+(`not_longer`, 400). `share.password` takes only `{"pw": <C5 record>}`: `null`, a string and any record with other parameters
+are `malformed`, because taking a password away widens access and there is no route for it. A link with a password asks for it
+on the open form (`p`, after the token, rate limit and KDF slot first; a wrong password is not a view). The host's
+`publish.extend` is column P (ticket owner, owner or maintainer); the person's signed note over the extension is not built in
+S2. A hub narrowing is recorded at publish (`hub_narrowings`) and the workspace's share list shows `narrowed_by: "hub"`.
+
 **The approval on both paths (Opus condition 2, S0 CHANGE).** Apps publish through the hub **and** on the direct v2 §12.1
 path, so a workspace with no hub can publish a public app and hub-optional holds. The approval of §11.3 is the same
 object on both paths; what differs is one field and one hash:
@@ -3293,7 +3300,7 @@ workspace refuses the restored hub as stale (§5 step 7, §7):
 
 ```
 in place     v = max(live, backup) + 1000
-fresh server v = max(backup + 1000, unix seconds now)
+fresh server v = max(backup + 1000, clock)    clock = unix MILLISECONDS now (the hub passes milliseconds)
 every v      v ≤ 2^53 − 1, else the restore is refused (backup_invalid / seq_overflow)
 ```
 
@@ -3301,8 +3308,26 @@ The clock value must be an integer (not a boolean or a float) in 0 .. 2^53 − 1
 too. Restoring the same backup twice therefore climbs twice (`live` after the first restore is the first result), and a workspace
 that accepted the first accepts the second. The restore never reissues a user or channel certificate for non-admin users:
 people the backup brought back stay suspended until an admin turns each on in People; the op certificate of the backup is
-revoked live before the restore; `revoked/` and the access removals of the live hub are merged, never dropped. (Those steps
-are M4 S6; the floor and the checks above are the contract.)
+revoked live before the restore; `revoked/` and the access removals of the live hub are merged, never dropped.
+
+The clock is in milliseconds (the contract function only takes the larger of two integers): seconds would fall below a live
+counter that earlier in-place restores had already pushed up by thousands. 1.9e12 is far below 2^53.
+
+**Never widen, never revive (M4 S6).** In place the result is a subset of the live hub: the org secrets, shares, wraps, skill and MCP offers, add-on requests of `access.db`, and the registry, connections, shares, spaces, changes, wk-seal and workspace-view stores, are the LIVE ones; grants and group members are intersected with the live rows (the role is the live role); every surviving person keeps the LIVE password and TOTP. Restricting rows (add-on allow lists, the policy's allow / block / ceiling, `disabled`, `must_recover`, revocations, lockouts) are never dropped: in place the stricter of backup and live, on a fresh server kept as they were; only granting rows are live-or-staged. On a fresh server every org secret share, "shared with all" flag and skill or MCP offer is switched off into `restore_pending` until an admin turns it on again, and every admin must use a one-time recovery link.
+
+**What the hub does (M4 S6).** Every check of §17.5 and the floor pass before anything is written. The listed files are written
+under `<state>.new` (0700/0600), then made safe: people removed or disabled in the live hub stay removed or disabled, a
+hub-admin demoted live is not one again, live channel revocations are added, every other non-admin is suspended (disabled; an
+admin enabling them sets `must_recover`), every channel is revoked (also in `revoked_channels`) and every session, pairing code
+and challenge dropped, the backup's op certificate is revoked, and the hub rotates to `op_seq`/`card_seq` of the floor with a UK
+certificate only for the admins and no channel certificate. A new `version_floor` row of the access store lifts the next
+version of every snapshot and org bundle above the `snapshot_seq` floor. Kept from the live hub, never taken from the backup:
+the backup key file, the audit chain and activity history (appended to), `hub-settings.json` and `tls.key` (in place), the kept
+backups and the setup token. The restore is audited (`hub_restore`, see the audit events: the backup's `made_ms`, the `gap_ms` since then and the
+new `op_seq`) before the live op certificate is revoked; the swap is two renames (`<state>` to `<state>.old`, `<state>.new`
+to `<state>`) that the next start completes or undoes, and `<state>.old` goes after the first good start. No restore while an
+update or a remove runs (and the reverse): one `flock` per state dir. Refusal codes: `wrong_backup_key`, `backup_invalid` (§17.9),
+`other_hub`, `dev_mismatch`, `dev_refused`, `restore_busy`, `no_admin` (nobody would be able to sign in), `restore_failed`.
 
 ### 17.9 Reasons
 

@@ -123,6 +123,7 @@ def bob_writes(ws, marker, *, filled: bool = False):
 
 
 def test_a_foreign_unapproved_command_never_runs(ws, cli, tmp_path):
+    ws.plan_gate_off()  # no plan approval here: the plan gate is off (r10-P02), verify trust is what is tested
     marker = tmp_path / "M"
     bob_writes(ws, marker)
     assert cli("claim", "1").code == 0
@@ -143,6 +144,7 @@ def test_the_task_list_says_whose_command_it_is_and_whether_the_caller_may_run_i
 
 
 def test_the_callers_own_command_runs_without_an_approval(ws, cli, tmp_path):
+    ws.plan_gate_off()  # no plan approval here: the plan gate is off (r10-P02), verify trust is what is tested
     marker = tmp_path / "M"
     assert cli("new", "A ticket").code == 0 and cli("claim", "1").code == 0
     assert cli("task", "add", "do it", "--verify", touch(marker)).code == 0
@@ -188,7 +190,8 @@ def test_a_command_added_after_the_approval_does_not_run(ws, cli, tmp_path):
     assert bob("release").code == 0
     assert cli("claim", "1").code == 0
     for tid in ("T1", "T2"):
-        assert cli("task", "start", tid).code == 0
+        r = cli.j("task", "start", tid)  # r10-P02: the task change re-opened the plan: no build until it is approved
+        assert (r.code, r.err_code) == (3, "transition.refused") and "plan is not approved" in r.out, r.out
         r = cli.j("task", "done", tid, "--run")
         assert (r.code, r.err_code) == (3, "verify.unapproved"), (tid, r.out)
         assert "no person approved it" in r.doc["error"]["message"]
@@ -252,6 +255,7 @@ def owner_grant(ws: Ws) -> str:
 
 def test_a_command_written_under_a_since_revoked_grant_is_foreign_even_to_the_same_person(ws, cli, tmp_path):
     """#420 review finding 1: G1 writes, G1 is revoked (say it leaked), G2 of the same person must not run it."""
+    ws.plan_gate_off()  # no plan approval here: the plan gate is off (r10-P02), verify trust is what is tested
     marker = tmp_path / "M"
     assert cli("new", "A").code == 0 and cli("claim", "1").code == 0
     assert cli("task", "add", "x", "--verify", touch(marker)).code == 0  # written under G1
@@ -300,6 +304,7 @@ def person_rewrites_verify(ws: Ws, cmd: str, tid: str = "T1") -> None:
 
 def test_a_command_written_by_a_person_is_own_for_that_person_and_foreign_to_anothers_grant(ws, cli, tmp_path):
     """A person's own edit carries no grant: it is "own" for that person's agents and refused for another person's."""
+    ws.plan_gate_off()  # no plan approval here: the plan gate is off (r10-P02), verify trust is what is tested
     marker = tmp_path / "M"
     assert cli("new", "A ticket").code == 0 and cli("claim", "1").code == 0
     assert cli("task", "add", "do it", "--verify", "true").code == 0
@@ -337,7 +342,9 @@ def test_changing_an_existing_tasks_verify_after_the_approval_does_not_run(ws, c
     assert bob("claim", "1").code == 0
     rewrite_verify(ws, bob.env_kw["ORCH_GRANT"], BOB_SESSION, ws.people["bob"].ref, touch(changed))
     assert bob("release").code == 0
-    assert cli("claim", "1").code == 0 and cli("task", "start", "T1").code == 0
+    assert cli("claim", "1").code == 0
+    r = cli.j("task", "start", "T1")  # r10-P02: the verify change re-opened the plan: no build until it is approved
+    assert (r.code, r.err_code) == (3, "transition.refused") and "plan is not approved" in r.out, r.out
     r = cli.j("task", "done", "T1", "--run")
     assert (r.code, r.err_code) == (3, "verify.unapproved"), r.out
     assert "approval is outdated" in r.doc["error"]["message"]
@@ -346,6 +353,7 @@ def test_changing_an_existing_tasks_verify_after_the_approval_does_not_run(ws, c
 
 def test_an_unattended_caller_never_runs_an_unapproved_command(ws, cli, tmp_path):
     """End to end: the same session without a grant (no person) under the claim, the command its person wrote."""
+    ws.plan_gate_off()  # no plan approval here: the plan gate is off (r10-P02), verify trust is what is tested
     marker = tmp_path / "M"
     assert cli("new", "A").code == 0 and cli("claim", "1").code == 0
     assert cli("task", "add", "x", "--verify", touch(marker)).code == 0

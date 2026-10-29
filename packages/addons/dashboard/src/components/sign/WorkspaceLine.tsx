@@ -12,13 +12,13 @@ export function WorkspaceLine({ workspace, many, always = false, folded = false,
   many: boolean
   /** The arm or the risk state: shown whatever the number of workspaces. */
   always?: boolean
-  /** Under a small "Details" instead of on the main surface (only when not `always`: a risk state keeps it in view). */
+  /** Under a small "Details" instead of on the main surface, also in a risk state (hub join, opened inside that workspace's own page; the line stays one click away, never dropped). */
   folded?: boolean
   /** What the View acts on (its ticket key), from the View only. */
   target?: string | null
   testId?: string
 }) {
-  if ((!many && !always) || !workspace?.id || !workspace.prefix) return null
+  if ((!many && !always && !folded) || !workspace?.id || !workspace.prefix) return null
   const line = (
     <p data-testid={testId} className="text-[12px] text-text-muted">
       Workspace <Raw>{workspace.prefix}</Raw> · <span className="font-mono" data-ws-id>{uuid8(workspace.id)}</span>
@@ -26,6 +26,6 @@ export function WorkspaceLine({ workspace, many, always = false, folded = false,
       {target && <> · <span data-testid={`${testId}-target`}><Raw>{target}</Raw></span></>}
     </p>
   )
-  if (!folded || always) return line
+  if (!folded) return line
   return <details data-testid={`${testId}-fold`} className="text-[12px] text-text-muted"><summary className="cursor-pointer">Details</summary>{line}</details>
 }

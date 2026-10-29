@@ -16,7 +16,7 @@ import threading
 import time
 
 import pytest
-from channels_helpers import PW
+from channels_helpers import PW, wall_codes
 from webapi_helpers import Web
 
 from orch_hub import restart as RS
@@ -24,7 +24,7 @@ from orch_hub import serve as SV
 from orch_hub import settings as S
 from orch_hub.access import Access
 from orch_hub.channels import Channels
-from orch_hub.channels.service import CHANNELS_FILE, totp_code
+from orch_hub.channels.service import CHANNELS_FILE
 from orch_hub.contract import audit as AU
 from orch_hub.keys import HubKeys
 from orch_hub.webapi import settings_api as SA
@@ -656,7 +656,7 @@ def running(tmp_path):
 
 def _admin_cookie(r):
     origin = f"http://127.0.0.1:{r['port']}"
-    code = totp_code(r["secret"], int(time.time()) // 30)
+    (code,) = wall_codes(r["secret"])
     s, o, cookie = _http(
         r["port"], "POST", "/session", {"user_id": r["user"], "password": PW, "totp": code}, origin=origin
     )
@@ -720,7 +720,7 @@ def test_serve_with_bind_all_restarts_and_the_next_start_reads_the_new_file(tmp_
         time.sleep(0.05)
     port = int(out.getvalue().split("orch-hub web port=")[1].split()[0])
     origin = f"http://127.0.0.1:{port}"
-    code = totp_code(base64.b32decode(b32 + "=" * (-len(b32) % 8)), int(time.time()) // 30)
+    (code,) = wall_codes(base64.b32decode(b32 + "=" * (-len(b32) % 8)))
     s, o, cookie = _http(port, "POST", "/session", {"user_id": user, "password": PW, "totp": code}, origin=origin)
     assert s == 200, o
     body = {"addresses": [{"kind": "server", "host": "127.0.0.1"}]}  # drop the office address
@@ -774,7 +774,7 @@ def test_the_real_serve_hook_refuses_an_http_origin_behind_the_edge(tmp_path):
         time.sleep(0.05)
     port = int(out.getvalue().split("orch-hub web port=")[1].split()[0])
     origin, host = "https://hub.example.com:443", "hub.example.com:443"
-    code = totp_code(base64.b32decode(b32 + "=" * (-len(b32) % 8)), int(time.time()) // 30)
+    (code,) = wall_codes(base64.b32decode(b32 + "=" * (-len(b32) % 8)))
     s, o, cookie = _http(
         port, "POST", "/session", {"user_id": user, "password": PW, "totp": code}, origin=origin, host=host
     )

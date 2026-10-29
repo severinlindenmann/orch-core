@@ -59,7 +59,6 @@ from jsonschema import Draft202012Validator
 from . import frames
 from ._socket import pidfd_pid_now
 from .custody import ensure_private_dir, read_json, write_private
-from .enable import _default_run
 from .errors import HostError
 from .transport import Credentials, Session
 
@@ -126,13 +125,27 @@ def _iso(t: float | None = None) -> str:
 # -- the main-PID check ------------------------------------------------------------------------------------------------
 
 
+#: the time limit of the person's manager query: it runs in the serialized accept loop of the runner listener
+SYSTEMCTL_SECONDS = 3
+
+
+def _user_query(argv: list[str]) -> Any:
+    """The H7 command runner (it refuses under pytest and with ``ORCH_NO_SERVICE_MANAGER=1``), with its own
+    short time limit instead of the 30 s of the install commands."""
+    if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("ORCH_NO_SERVICE_MANAGER") == "1":
+        raise OSError(f"{argv[0]} refused: the service manager is off (a test, or ORCH_NO_SERVICE_MANAGER=1)")
+    return subprocess.run(  # noqa: S603 - fixed binary, fixed arguments
+        argv, capture_output=True, text=True, timeout=SYSTEMCTL_SECONDS, check=False
+    )
+
+
 def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platform: str | None = None) -> int | None:
     """The runner unit's main PID from the person's service manager, or ``None``. ``run`` defaults to the H7 command
     runner, which refuses under pytest and with ``ORCH_NO_SERVICE_MANAGER=1`` (so a test never reaches launchctl)."""
     # lazy: orch.runner.service imports orch.host.enable, which imports back into the host package
     from orch.runner.service import LAUNCHD_LABEL, SYSTEMD_NAME
 
-    run = run or _default_run
+    run = run or _user_query
     platform = platform or sys.platform
     try:
         if platform == "darwin":
@@ -145,7 +158,7 @@ def main_pid(uid: int, run: Callable[[list[str]], Any] | None = None, *, platfor
             found = re.fullmatch(r"\s*([0-9]+)\s*", res.stdout or "") if res.returncode == 0 else None
         else:
             return None
-    except OSError:
+    except (OSError, subprocess.SubprocessError):  # a hung manager (TimeoutExpired) is a denial, never a wait
         return None
     pid = int(found.group(1)) if found else 0
     return pid if pid > 1 else None
@@ -156,7 +169,6 @@ SYSTEMCTL = ("/usr/bin/systemctl", "/bin/systemctl")
 
 #: the environment and time limit of the system manager query: it runs in the serialized accept loop
 SYSTEMCTL_ENV = {"PATH": "/usr/bin:/bin", "LC_ALL": "C"}
-SYSTEMCTL_SECONDS = 3
 
 
 def _system_query(argv: list[str]) -> Any:

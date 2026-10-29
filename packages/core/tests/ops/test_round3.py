@@ -12,6 +12,7 @@ from tests.ops.test_task_ac import claimed, fill_and_approve, py
 
 
 def test_skip_worktree_and_assume_unchanged_files_count_as_a_dirty_tree(ws, cli):
+    ws.plan_gate_off()  # r10-P02: no plan approval in this test; an agent builds only after one
     repo = ws.repo()
     claimed(cli)
     cli("task", "add", "t", "--verify", py("print(1)"))

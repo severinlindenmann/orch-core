@@ -93,17 +93,27 @@ describe('buildEdit: the title (r7-P07)', () => {
 })
 
 describe('the ticket page edit', () => {
-  it('opens the edit window from the heading, with the title selected, and signs a new title once', async () => {
+  it('renaming from the heading is one short step: new title, Save, the one review (r10-P09)', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
-    const dialog = await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)
+    const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
+    expect(within(dialog).queryByRole('button', { name: /Review and sign/ })).toBeNull() // not the long form
     const field = within(dialog).getByLabelText('Title')
     await waitFor(() => expect(field).toHaveFocus(), T)
     await user.type(field, ' v2')
-    await user.click(within(dialog).getByRole('button', { name: /^Review and sign \(1 change\)$/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
     expect(sent).toMatchObject({ action: 'edit_sequence', key: 'DEMO-0043' })
     expect(sent.title).toMatch(/ v2$/)
+  })
+  it('the rename says so when the title is unchanged, and offers the full form', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Rename DEMO-0043' }, T)
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
+    expect(await within(dialog).findByText('The title is the same as before.')).toBeInTheDocument()
+    await user.click(within(dialog).getByRole('button', { name: 'Edit text, checks, repositories and people' }))
+    expect(await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)).toBeInTheDocument()
   })
   it('edits text, a criterion and the people, then asks for ONE signature', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')

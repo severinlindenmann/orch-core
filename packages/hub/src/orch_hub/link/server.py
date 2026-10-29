@@ -30,6 +30,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Self
 
+from ..backup.hubop import FENCE as RESTORE_FENCE
 from ..contract import hub as H
 from ..contract import suite as S
 from ..contract.canon import CanonError, b64u, unb64u, unhex
@@ -432,6 +433,8 @@ class LinkServer:
     def _run(self, ws: str, wsk: bytes, o: dict[str, Any], now: int, same: bool = False) -> dict[str, Any]:
         handler = ops.HANDLERS.get(o["op"])
         try:
+            if RESTORE_FENCE.is_set():
+                raise Refused("restore_busy")  # a restore is swapping the state dir; the host retries
             if handler is None:
                 raise Refused("unknown_op")  # an op of a later phase: in the table, not served yet
             if o["op"] != "join" and self._reg.pin(ws) is None:

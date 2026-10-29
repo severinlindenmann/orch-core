@@ -85,3 +85,21 @@ for (const failure of ['endpoint', 'websocket', 'SIGTERM', 'SIGINT', 'close']) {
     assert.equal(signals.listenerCount('exit'), 0)
   })
 }
+
+test('a slow Chrome (port file after 30 s) is still waited for; giving up only after the deadline', async () => {
+  let t = 0
+  let reads = 0
+  const page = { type: 'page', webSocketDebuggerUrl: 'ws://x' }
+  const got = await waitForDevTools('unused', {
+    now: () => t,
+    pause: async (ms) => { t += ms },
+    read: () => { reads += 1; if (t < 30_000) throw new Error('absent'); return '9222\n/devtools/browser/x' },
+    fetcher: async () => ({ ok: true, json: async () => [page] }),
+  })
+  assert.equal(got, page)
+  t = 0
+  await assert.rejects(waitForDevTools('unused', {
+    now: () => t, pause: async (ms) => { t += ms }, read: () => { throw new Error('absent') }, deadlineMs: 5_000,
+  }), /did not become ready/)
+  assert.ok(t >= 5_000)
+})

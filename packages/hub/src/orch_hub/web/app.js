@@ -315,7 +315,7 @@ async function landFromTicket(t) {
   const name = renderText(p.body.name ?? "you");
   const plan = landingPlan(p.body);
   if (plan === "redeem") return redeemTicket(t, false);
-  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "This workspace was connected for " + name + ". Nothing happens until you continue." }),
+  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You opened the hub from your workspace. Nothing happens until you continue." }),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { text: "Cancel", onclick: () => loginView() })));
   const cur = renderText(p.body.signed_in_as?.name ?? "someone else");
   return plain(h("h1", { text: "Different person" }), h("p", { text: "You are signed in as " + cur + " here. This link is for " + name + "." }),
@@ -1278,7 +1278,7 @@ async function renderRoute() {
       const route = parseRoute(location.hash);
       if (route.kind === "ticket") await landFromTicket(route.token);
       else if (route.kind === "setup") setupView(route.token);
-      else if (route.kind === "invite") show(inviteView(route.token, { api, say, signIn: () => loginView(), finished: () => history.replaceState(null, "", location.pathname) }));
+      else if (route.kind === "invite") show(inviteView(route.token, { api, say, signIn: () => loginView(), openHub: () => afterLogin(), finished: () => history.replaceState(null, "", location.pathname) }));
       else if (route.kind === "access") await accessView(route.workspace, route.key);
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);

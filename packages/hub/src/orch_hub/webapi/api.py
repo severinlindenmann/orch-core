@@ -46,6 +46,7 @@ from ..access import Access, AccessError
 from ..access.orgcleanup import org_cleanup
 from ..access.store import ADMIN_GROUP, check_name
 from ..activity.feed import feed as activity_feed
+from ..backup.hubop import FENCE as RESTORE_FENCE
 from ..changes import ChangeError
 from ..channels import Channels
 from ..channels.cli import pair_link
@@ -843,6 +844,8 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             raise ApiError("unknown_op")
         if self._hosts and headers.get("host", "") not in self._hosts:
             raise ApiError("not_allowed")
+        if method != "GET" and RESTORE_FENCE.is_set():
+            raise ApiError("restore_busy")  # a restore is swapping the state dir: no write may land in the old one
         cookie_token = self._cookie(headers.get("cookie", ""), self._cookie_name)
         auth = headers.get("authorization", "")
         bearer = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
@@ -1030,8 +1033,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             out["token"] = s["token"]
             return 200, out, []
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
-        attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
-        return 200, out, [("Set-Cookie", attrs + ("; Secure" if self.d.secure_cookies else ""))]
+        return 200, out, [self._session_cookie(s["token"], ttl)]
 
     def _h_setup(self, c: Ctx, p: dict, q: dict, b: dict | None):
         """Prototype: the installer's token file is the proof; a right token makes one hub-admin and is deleted."""
@@ -1058,9 +1060,13 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             s = self.d.channels.open_setup_session(uid)
             f.unlink(missing_ok=True)  # single use
         ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
-        attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
-        cookie = [("Set-Cookie", attrs + ("; Secure" if self.d.secure_cookies else ""))]
+        cookie = [self._session_cookie(s["token"], ttl)]
         return 200, {"user_id": uid, "totp_secret": t["secret"], "totp_uri": t["uri"]}, cookie
+
+    def _session_cookie(self, token: str, ttl: int) -> tuple[str, str]:
+        """The one browser session cookie: HttpOnly, SameSite=Strict, Secure when the hub serves https."""
+        attrs = f"{self._cookie_name}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
+        return ("Set-Cookie", attrs + ("; Secure" if self.d.secure_cookies else ""))
 
     def _h_hub_card(self, c: Ctx, p: dict, q: dict, b: dict | None):
         """Public: the held card and the ``hub.api_origin`` that names this hub's own API origin (§6.4, L2B-1)."""
@@ -1874,7 +1880,12 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         out = self._guarded_credentials(  # the sign-in caps: per source, concurrency of the hashing, network aggregate
             c, list, lambda: inv.redeem(b["token"], lambda row: self._apply_invite(row, b["password"], proof))
         )
-        return 200, out, []
+        if out.get("kind") != "join" or out.get("recovery"):
+            return 200, out, []  # a reset or recovery signs in with the new password and code
+        # A new person: the link proved them and they chose the password in this request, so they are signed in (once).
+        s = self.d.channels.open_invite_session(out["user_id"])
+        ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
+        return 200, out, [self._session_cookie(s["token"], ttl)]
 
     def _apply_invite(self, row: Invite, password: str, proof: Any) -> dict[str, Any]:
         """The account change, run by ``Invites.redeem`` inside the claim's transaction: whatever raises here leaves the

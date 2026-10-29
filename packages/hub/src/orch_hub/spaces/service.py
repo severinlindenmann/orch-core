@@ -199,7 +199,9 @@ class SpaceService:
         if self._on_change is not None:
             self._on_change(ev)
 
-    def create(self, name: str, members: list[str], actor: str) -> dict[str, Any]:
+    def create(
+        self, name: str, members: list[str], actor: str, kind: str | None = None, purpose: str = ""
+    ) -> dict[str, Any]:
         if type(name) is not str or not name or len(name) > 64 or not name.isprintable():
             raise SpaceError("malformed", "name")
         if not members or len(members) > SP.MAX_MEMBERS or any(not H._hex16(w) for w in members):
@@ -210,9 +212,12 @@ class SpaceService:
                     raise SpaceError("unknown_workspace", w)
             self._authorize(actor, members)
             space_id = os.urandom(16).hex()
-            return self._new_epoch(
+            rec = self._new_epoch(
                 space_id, 1, None, members, name=name, change="create", workspace_id=None, actor=actor
             )
+            if kind is not None:  # what the console's dialog said the space is for (not signed, not secret)
+                self.store.set_meta(space_id, kind, purpose)
+            return rec
 
     @staticmethod
     def _sid(space_id: Any) -> str:
@@ -353,6 +358,41 @@ class SpaceService:
                 }
             )
         return out
+
+    def read_items(self, space_id: str, limit: int = 300) -> list[dict[str, Any]]:
+        """Admin read (option B: the hub holds every ``SK_e`` and may open what it stores). Newest first, at most ``limit``
+        rows. Each row: ``item_id``, ``seq``, ``ws`` (the author as the hub recorded it), ``revoked`` and ``item`` (the
+        verified inner ``space.item`` object, or None when revoked or when it does not verify against the pins). The
+        hub signs nothing here and changes nothing."""
+        with self._lock:
+            self._current(self._sid(space_id))
+            rows = sorted(self.store.items(space_id).items(), key=lambda kv: -kv[1]["seq"])[:limit]
+            epochs: dict[int, tuple[list[str], bytes] | None] = {}
+            out = []
+            for item_id, r in rows:
+                item = None
+                if not r["revoked"]:
+                    if r["epoch"] not in epochs:
+                        row = self.store.epoch_row(space_id, r["epoch"])
+                        epochs[r["epoch"]] = None if row is None else (row[0], row[1])
+                    ep, sealed = epochs[r["epoch"]], self.store.sealed(space_id, item_id)
+                    if ep is not None and sealed:
+                        try:
+                            item = SP.verify_item(
+                                sealed,
+                                sk=ep[1],
+                                space_id=space_id,
+                                epoch=r["epoch"],
+                                item_id=item_id,
+                                members=ep[0],
+                                wsk_pubs=self._pins(ep[0]),
+                                hub_id=self.hub_id,
+                                dev_mode=self._dev,
+                            )
+                        except Refused:
+                            item = None
+                out.append({"item_id": item_id, "seq": r["seq"], "ws": r["ws"], "revoked": r["revoked"], "item": item})
+            return out
 
     # --- link side: the ops of §10.4 -----------------------------------------------------------------------------
 

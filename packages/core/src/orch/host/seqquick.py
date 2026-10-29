@@ -26,6 +26,7 @@ __all__ = [
     "MAX_CHECKS",
     "gate_expect",
     "grant_line",
+    "grant_note",
     "grant_payload",
     "grant_step",
     "payloads",
@@ -102,6 +103,14 @@ def grant_line(agent: Mapping[str, Any]) -> str:
         f"{span(agent['hours'])} from when you sign. The grant is signed last; its secret goes to your orch "
         "runner or your own terminal, never to the dashboard."
     )
+
+
+def grant_note(agent: Mapping[str, Any]) -> str:
+    """The plain sentence for the grant (r7-P10): the reach and the length, nothing more. The route of the secret and
+    when the grant is signed are in :func:`grant_line`, which the technical details carry. No clock."""
+    from .signcontent import span
+
+    return f"Agents may work on any ticket you allow, not only this one, for {span(agent['hours'])}."
 
 
 def validate(intent: Any, bad: type[Exception]) -> dict[str, Any]:

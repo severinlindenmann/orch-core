@@ -329,7 +329,7 @@ def test_a_quick_task_with_a_grant_signs_after_its_press_mode_review(click, serv
     v = click.view(p["request_id"])
     assert v["view"]["confirm"] == {"kind": "click", "mode": "press"}
     assert v["view"]["op"] == "grant" and v["view"]["risk_lines"]
-    assert "Agents may work on any ticket they are allowed to work on" in "\n".join(v["view"]["lines"])
+    assert "Agents may work on any ticket you allow, not only this one, for 8 hours." in "\n".join(v["view"]["lines"])
     click.mono.t += 2
     out = click.sign(p["request_id"], v["view_digest"])
     assert click.signatures == 9

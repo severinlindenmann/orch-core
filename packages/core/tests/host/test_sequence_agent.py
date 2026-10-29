@@ -213,13 +213,16 @@ def test_i5_the_review_says_the_start_is_not_signed_and_names_the_grant(human, t
     notes = sequence.build_content(first, verified=True)["notes"]
     joined = "\n".join(notes)
     assert "Not signed: the agent start" in joined
-    assert "Agents may work on any ticket they are allowed to work on" in joined
+    assert "Agents may work on any ticket you allow, not only this one, for 8 hours." in joined
+    assert "never to the dashboard" not in joined and "mode:" not in joined  # r7-P10: those are technical details
     assert "Typed word" not in joined and "GRANT" not in joined
     assert "Nothing here approves the requirements or the plan" in joined
-    assert any("5 steps" in n for n in notes)
+    assert not any("steps" in n for n in notes)
     assert "Create DEMO-" in content["headline"]
     text = signer.render(first, lambda w: ("ws", "ORCH"))
     assert "Not signed: the agent start" in text and "5 signatures, ONE confirmation" in text
+    assert "One confirmation signs all 5 steps." in text  # the technical details carry the note
+    assert "never to the dashboard" in text  # and the full grant sentence (secret route)
     assert not any(
         "Not signed" in n for n in sequence.build_content(Rig(human, tmp_path / "b").first(), verified=True)["notes"]
     )  # a ticket without the agent part says nothing about a start
@@ -246,10 +249,12 @@ def test_review_digest_stable_across_minutes(monkeypatch, click, served, human):
     ]
     for intent in intents:
         base = sequence.extra_lines(intent)
-        assert any("from when you sign" in n for n in base)
+        full = sequence.extra_lines(intent, full=True)
+        assert any("from when you sign" in n for n in full)  # r7-P10: the technical details keep the full sentence
         for dt in (61, 3600):
             monkeypatch.setattr(time, "time", lambda dt=dt: t0 + dt)
             assert sequence.extra_lines(intent) == base
+            assert sequence.extra_lines(intent, full=True) == full
         monkeypatch.undo()
 
     click.signer._execution = lambda entry: True

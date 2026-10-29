@@ -1302,11 +1302,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
             f"Adds {len(intent['images'])} screenshot{'s' if len(intent['images']) != 1 else ''}. "
             "The dashboard shows each one from the file you pasted and checks its digest against the one signed."
         )
-    content.setdefault("notes", []).append(
-        f"One confirmation signs all {n} steps. If the ticket changes meanwhile, "
-        "signing stops and what is already signed stays."
-    )
-    return content
+    return content  # "One confirmation signs all N steps ..." is in the technical details (r7-P10)
 
 
 def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -> dict[str, Any]:
@@ -1323,11 +1319,16 @@ def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -
         "Settings are signed first, then the add-on is turned on. If signing stops in between, "
         "the settings stay and the add-on stays off."
     )
-    notes.append(
-        f"One confirmation signs all {n} steps. If the workspace changes meanwhile, "
+    return content  # "One confirmation signs all N steps ..." is in the technical details (r7-P10)
+
+
+def steps_line(intent: Mapping[str, Any], n: int) -> str:
+    """What one confirmation does for a sequence (technical details, r7-P10)."""
+    what = "workspace" if intent["kind"] == ADDON else "ticket"
+    return (
+        f"One confirmation signs all {n} steps. If the {what} changes meanwhile, "
         "signing stops and what is already signed stays."
     )
-    return content
 
 
 def technical_lines(intent: Mapping[str, Any]) -> list[str]:
@@ -1342,7 +1343,7 @@ def technical_lines(intent: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def extra_lines(intent: Mapping[str, Any]) -> list[str]:
+def extra_lines(intent: Mapping[str, Any], *, full: bool = False) -> list[str]:
     """The steps that are not events of the plain review, in words (the plain view and the full review show them):
     the two gate approvals, which bind the content shown, and the grant, honestly about its reach (Opus change 5).
     A new ticket with an agent part: the grant sentence, and that the start itself is NOT signed (U4, I5)."""
@@ -1351,15 +1352,20 @@ def extra_lines(intent: Mapping[str, Any]) -> list[str]:
     if intent["kind"] == KIND:
         if "launch" in intent:
             launch = intent["launch"]
+            grant = seqquick.grant_line if full else seqquick.grant_note
             return [
-                *([seqquick.grant_line(intent["agent"])] if "agent" in intent else []),
-                f"Agent: {launch['harness']}; mode: {launch['mode']}; model: {launch.get('model', 'default')}.",
+                *([grant(intent["agent"])] if "agent" in intent else []),
+                *(
+                    [f"Agent: {launch['harness']}; mode: {launch['mode']}; model: {launch.get('model', 'default')}."]
+                    if full
+                    else []
+                ),
                 "Then: the agent starts on the new ticket.",
             ]
         if "agent" not in intent:
             return []
         return [
-            seqquick.grant_line(intent["agent"]),
+            (seqquick.grant_line if full else seqquick.grant_note)(intent["agent"]),
             "Not signed: the agent start. After the ticket exists, the dashboard may start an agent that uses this "
             "access; that start is not part of this confirmation. Nothing here approves the requirements or the plan.",
         ]
@@ -1370,7 +1376,7 @@ def extra_lines(intent: Mapping[str, Any]) -> list[str]:
         "The task still ends with your own verdict: nothing closes it for you.",
     ]
     if intent["agent"] is not None:
-        out.append(seqquick.grant_line(intent["agent"]))
+        out.append((seqquick.grant_line if full else seqquick.grant_note)(intent["agent"]))
     return out
 
 

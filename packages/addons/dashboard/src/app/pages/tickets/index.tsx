@@ -154,7 +154,7 @@ export function TicketsPage() {
   const rows = useMemo(() => (pool ?? []).filter((t) => !search.status?.length || search.status.includes(t.status)), [pool, search.status])
   const [grouping, setGrouping] = useTicketsGroup(me?.person)
   const dirty = hasFilters(search)
-  const sharedOnly = ((useQuery({ ...hubQueries.shared(wsId!), enabled: !!wsId }).data?.items) ?? []).length > 0
+  const hasShared = ((useQuery({ ...hubQueries.shared(wsId!), enabled: !!wsId }).data?.items) ?? []).length > 0
   const grouped = grouping.group === 'epic' && hasEpics(everything)
   const filtering = dirty || !!search.status?.length
   const groups = useMemo(() => (grouped ? groupByEpic(everything, rows, filtering) : null), [grouped, everything, rows, filtering])
@@ -346,7 +346,7 @@ export function TicketsPage() {
             </>
           ) : (
             <>
-              <p className="text-[13px] text-text">{sharedOnly ? 'You have no tickets of your own yet.' : 'No tickets yet.'}</p>
+              <p className="text-[13px] text-text">{hasShared ? 'You have no tickets of your own yet.' : 'No tickets yet.'}</p>
               {can(role, 'ticket.create') && (
                 <Button size="sm" className="mt-2" onClick={openNewTicket}>
                   New ticket

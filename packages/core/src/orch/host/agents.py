@@ -35,8 +35,10 @@ It is sent as a pin ``{path, dev, ino}``; the trampoline compares it before ``fc
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -93,6 +95,8 @@ _SCHEMAS = {
                     "required": ["ticket", "harness", "mode", "spec"], "additionalProperties": False},
 }  # fmt: skip
 _VALIDATORS = {op: Draft202012Validator(s) for op, s in _SCHEMAS.items()}
+
+LOG = logging.getLogger(__name__)
 
 
 def _validate(op: str, args: Any) -> None:
@@ -792,6 +796,9 @@ async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
     if launch.get("run_grant"):
         payload["run_grant"] = True
         payload["workspace_id"] = wid
+    skills = await _company_skills(call, launch["argv"])
+    if skills:
+        payload["company_skills"] = skills
     await hub.intent(
         wid, fields, payload, idem=data["idem"], spec=data["spec"], after_request=data.get("after_request")
     )
@@ -814,6 +821,32 @@ async def _launch(call: Call, hub: RunnerHub, data: dict[str, Any]) -> dict[str,
             await hub.fail(run, "launch.cwd_changed")
             raise HostError("launch.cwd_changed", "the created worktree is not where the preview said")
     return await hub.dispatch(run, payload, audit=True)
+
+
+async def _company_skills(call: Call, argv: list[str]) -> list[dict[str, str]]:
+    """The company skills the owner accepted, for a launch that has the rules file (a Claude Code ticket work folder).
+    Every other launch (Codex, a worktree, a repo, the workspace root, a shell) gets none: they have no appended system
+    prompt file, and a company skill goes nowhere else. Any doubt (no hub, a file the host will not trust) is none."""
+    from orch.runner import rules
+
+    from . import orgstate
+    from .launch import RULES_FLAG, RULES_PLACEHOLDER
+
+    at = argv.index(RULES_PLACEHOLDER) if argv.count(RULES_PLACEHOLDER) == 1 else -1
+    if at <= 0 or argv[at - 1] != RULES_FLAG:
+        return []
+    try:
+        served = await asyncio.to_thread(orgstate.served, call.service)
+    except Exception:  # noqa: BLE001 - the agent starts without company skills rather than not at all
+        return []
+    out = []
+    for s in served["skills"]:
+        one = {"name": s["name"], "text": s["text"], "digest": s["digest"]}
+        if rules.company_problem([one]) is not None:  # the runner would refuse the whole spawn: drop this skill instead
+            LOG.warning("a company skill the runner would refuse was left out of a launch (%s)", s["name"])
+            continue
+        out.append(one)
+    return out
 
 
 def make_workdir(call: Call, key: str, expect: str | None) -> dict[str, Any]:

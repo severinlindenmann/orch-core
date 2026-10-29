@@ -14,7 +14,7 @@ class Node_ {
   all() { return [this, ...this.children.flatMap((c) => c.all())]; }
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
-const { skillsView, skillProblem } = await import("../../src/orch_hub/web/skills.js");
+const { skillsView, skillProblem } = await import("../../src/orch_hub/web/pages/skills.js");
 const find = (n, pred) => n.all().filter(pred);
 const data = {
   max_chars: 2400,

@@ -803,3 +803,59 @@ describe('prefilled by the New ticket form (initial)', () => {
     expect(s.start.mock.calls[0][3]).toBe('idem-from-review')
   })
 })
+
+// P03-sec: ONE consent state. The folder consent is recorded only when its line was on screen and still ticked.
+describe('the Claude Code folder consent', () => {
+  const trust = { available: true, on: false, config: 'missing' as const, offered: true, why_not: '', parent_config: '', agent_needs_consent: true, agent_why_not: '' }
+  let grant: ReturnType<typeof vi.spyOn>
+  beforeEach(() => {
+    vi.spyOn(api, 'getWorkspaces').mockResolvedValue([{ id: WS, grant_hours: 168, click: { custody: 'convenience', enabled: true, available: true }, members: [{ person: 'p_me', role: 'owner' }] }] as unknown as Awaited<ReturnType<typeof api.getWorkspaces>>)
+    vi.spyOn(api, 'getMe').mockResolvedValue({ person: 'p_me' } as Awaited<ReturnType<typeof api.getMe>>)
+    vi.spyOn(api, 'getClaudeTrust').mockResolvedValue(trust)
+    grant = vi.spyOn(api, 'grantClaudeTrust').mockResolvedValue({ on: true })
+  })
+  async function signAccess(tick: boolean) {
+    s.runner.mockResolvedValue({ runner: runner() })
+    s.preview.mockResolvedValue(preview({ spec: null, grant: null, blocked: { code: 'launch.no_grant', message: null, detail: {} } }))
+    const { onStarted } = mount()
+    await screen.findByTestId('agent-access', {}, T)
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await prepareAccess()
+    const line = await screen.findByTestId('claude-consent', {}, T)
+    if (!tick) fireEvent.click(within(line).getByRole('checkbox'))
+    s.runner.mockResolvedValue({ runner: runner({ grant: { id: GRANT, until: SOON, scope: 'workable' } }) })
+    s.preview.mockResolvedValue(preview())
+    const sign = screen.getByRole('button', { name: /^Sign and start agent$/ })
+    await waitFor(() => expect(sign).toBeEnabled(), { timeout: ARM_MS + 2000 })
+    fireEvent.pointerDown(sign)
+    fireEvent.click(sign)
+    await waitFor(() => expect(onStarted).toHaveBeenCalledWith(run), { timeout: 8000 })
+  }
+  it('signing the access with the line shown and ticked records the consent once', async () => {
+    await signAccess(true)
+    expect(grant).toHaveBeenCalledTimes(1)
+    expect(grant).toHaveBeenCalledWith(WS, false)
+  }, 15000)
+  it('signing the access with the line unticked records nothing, and the agent still starts', async () => {
+    await signAccess(false)
+    expect(grant).not.toHaveBeenCalled()
+    expect(s.start).toHaveBeenCalledTimes(1)
+  }, 15000)
+  it('access already there: the line is in the form, ticked, and Start records it first', async () => {
+    mount()
+    const line = await screen.findByTestId('claude-consent', {}, T)
+    expect(within(line).getByRole('checkbox')).toBeChecked()
+    await waitFor(() => expect(screen.getByTestId('agent-start')).toBeEnabled(), T)
+    fireEvent.click(screen.getByTestId('agent-start'))
+    await waitFor(() => expect(s.start).toHaveBeenCalledTimes(1), T)
+    expect(grant).toHaveBeenCalledTimes(1)
+  })
+  it('the instant path (nothing to read) shows no line and records nothing: the form opens instead', async () => {
+    s.notices.mockResolvedValue({ acknowledged: { start_agent: true } })
+    const { onStarted } = mount(vi.fn(), vi.fn(), {})
+    expect(await screen.findByTestId('claude-consent', {}, T)).toBeInTheDocument()
+    expect(onStarted).not.toHaveBeenCalled()
+    expect(grant).not.toHaveBeenCalled()
+  })
+})

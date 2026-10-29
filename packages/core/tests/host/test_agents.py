@@ -525,3 +525,39 @@ def test_a_runner_that_lost_the_grant_behind_the_hosts_back_gives_the_access_ste
     assert "runner holds" not in str(got) and "Agent access" in str(got)
     assert preview(c, ticket=key, harness="codex", mode="work")["blocked"]["detail"] == {"reason": "none"}
     assert ok(c.call("whoami", {}))["data"]["runner"]["grant"] is None
+
+
+def test_company_skills_reach_only_the_rules_file_of_a_claude_code_ticket_agent(ready, monkeypatch):
+    """M3 H-3 end to end: accepted company skills are in the rules file the runner writes (below the rules), a Codex
+    run of the same ticket gets nothing, and the harness receives no skill text in its argv or environment."""
+    from orch.host import orgstate
+    from orch.hubclient.orgbundles import skill_digest
+
+    text = "Write invoice numbers as INV-2026-0001.\n## Steps\n1. Ask for the number."  # a normal skill with a heading
+    monkeypatch.setattr(
+        orgstate, "served",
+        lambda service: {
+            "skills": [{"name": "invoices", "text": text, "digest": skill_digest("invoices", text)}],
+            "mcp": [],
+        },
+    )  # fmt: skip
+    w = ready
+    c = w.conn()
+    _, key = w.ticket()
+    pre = preview(c, ticket=key, harness="claude-code", mode="work")
+    assert pre["blocked"] is None
+    ok(start(c, ticket=key, harness="claude-code", mode="work", spec=pre["spec"]))
+    argv, env = read_out(w, "claude")
+    path = argv[argv.index("--append-system-prompt-file") + 1]
+    body = Path(path).read_text()
+    assert "### Company skill: invoices" in body and text in body
+    opening = body[body.index("~~~~orch-skill-") :].splitlines()[0]
+    bare = opening.split("orch-skill-")[0]  # the fence closes with the bare tilde run
+    assert body.count(opening) == 1 and body.count("(end of " + opening.split("~")[-1] + ")") == 1  # its sentinel
+    assert body.index(opening) < body.index("## Steps") < body.rindex("\n" + bare + "\n")  # inside its fence
+    assert body.index("rules of the orch workspace") < body.index("## Company skills from your company hub")
+    assert not any(text in a for a in argv) and not any(text in v for v in env.values())  # not in argv or environment
+    pre2 = preview(c, ticket=key, harness="codex", mode="work")
+    ok(start(c, ticket=key, harness="codex", mode="work", spec=pre2["spec"]))
+    cargv, cenv = read_out(w, "codex")
+    assert not any("invoices" in a for a in cargv) and not any(text in v for v in cenv.values())

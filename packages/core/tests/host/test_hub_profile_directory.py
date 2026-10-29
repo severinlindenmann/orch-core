@@ -93,7 +93,7 @@ def test_hub_profile_send_failure_retries_until_success(monkeypatch):
     monkeypatch.setattr(hubops, "_load_profile", lambda *args: hubops._DEFAULT_PROFILE)
     for _ in range(3):
         hubops._snapshot_link(service, state, b"key", lambda x: x, True)
-    assert calls == ["status_put", "profile_put", "profile_put"]
+    assert calls == ["status_put", "profile_put", "status_put", "profile_put"]  # each retried once, then both kept
     canonical = json.dumps(hubops._DEFAULT_PROFILE, sort_keys=True, separators=(",", ":")).encode()
     assert service._hub_profile_sent == {"hub": hashlib.sha256(canonical).hexdigest()}
 

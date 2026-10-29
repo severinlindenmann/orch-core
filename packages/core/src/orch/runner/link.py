@@ -181,6 +181,17 @@ def _harness_of(argv: list[str], config: RunnerConfig | None = None) -> str | No
     return {"claude": "claude-code", "codex": "codex"}.get(os.path.basename(prog))
 
 
+def _company_skills(raw: Any) -> tuple[dict[str, str], ...]:
+    """The ``company_skills`` of a spawn: absent is none; anything not acceptable refuses the spawn (it would run
+    without, or with something other than, what the owner accepted)."""
+    if raw is None:
+        return ()
+    bad = rules.company_problem(raw)
+    if bad is not None:
+        raise SpawnError("invalid.input", f"spawn: company_skills are not acceptable ({bad})")
+    return tuple(dict(x) for x in raw)
+
+
 def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerConfig, grants: GrantStore) -> SpawnSpec:
     """A ``spawn`` command as the :class:`SpawnSpec` the supervisor starts: the registry argv, the environment
     (allow-list, ``pass_env``, host-chosen fixed values) and, for an agent, ``ORCH_GRANT`` from the grant store and
@@ -221,6 +232,7 @@ def spawn_spec(args: Mapping[str, Any], own: Mapping[str, str], config: RunnerCo
     return SpawnSpec(
         str(args.get("run")), str(args.get("workspace_id")), str(kind), argv, env, dict(args.get("cwd") or {}),
         int(args.get("cols") or 120), int(args.get("rows") or 40), trusted,
+        _company_skills(args.get("company_skills")),
     )  # fmt: skip
 
 
@@ -528,7 +540,9 @@ class HostLink:
         if cmd == "spawn":
             spec = spawn_spec(args, self.env, self.config(), self.grants)
             spec.check()
-            spec = dataclasses.replace(spec, argv=rules.prepare(self._rules_base(), spec.run, spec.argv, spec.env))
+            spec = dataclasses.replace(
+                spec, argv=rules.prepare(self._rules_base(), spec.run, spec.argv, spec.env, spec.company_skills)
+            )
             spec = dataclasses.replace(spec, argv=transcript.prepare(spec.run, spec.argv))
             if spec.trusted is not None:
                 self._trusted[spec.run] = spec.trusted

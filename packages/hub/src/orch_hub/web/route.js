@@ -1,4 +1,7 @@
 // Fragment routes contain data only; malformed links fall back to Home.
+// The pages of pages/ are routable by their own name; app.js registers them from the generated list.
+const pagePaths = new Set();
+export function registerPages(paths) { for (const p of paths) if (/^[a-z][a-z0-9-]{0,31}$/.test(p)) pagePaths.add(p); }
 export function parseRoute(hash) {
   const value = String(hash ?? "");
   let m = /^#setup=([\w-]+)$/.exec(value);
@@ -7,8 +10,10 @@ export function parseRoute(hash) {
   if (m) return { kind: "invite", token: m[1] };
   m = /^#t=([A-Za-z0-9._-]{8,128})$/.exec(value);
   if (m) return { kind: "ticket", token: m[1] };
-  m = /^#\/(home|approvals|workspaces|services|admin|activity|account|handoffs|connections|phones|skills|addons|mcp|spaces)$/.exec(value);
+  m = /^#\/(home|approvals|workspaces|services|admin|activity|account|handoffs|phones)$/.exec(value);
   if (m) return { kind: m[1] };
+  m = /^#\/([a-z][a-z0-9-]{0,31})$/.exec(value);
+  if (m && pagePaths.has(m[1])) return { kind: m[1] };
   m = /^#\/w\/([0-9a-f]{32})(?:\/(item|addon|settings|access)\/([^/]+))?$/.exec(value);
   if (!m) return { kind: "home" };
   try {

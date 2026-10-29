@@ -10,6 +10,8 @@ import pytest
 
 from orch import privdir
 
+pytestmark = pytest.mark.real_private_group
+
 UID, GID = 1000, 1000
 
 

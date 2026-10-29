@@ -396,14 +396,6 @@ def test_macos_tmp_and_tmpdir_prefixes_are_refused():
         assert not os.path.exists(os.path.realpath(path))
 
 
-@pytest.fixture(autouse=True)
-def _shared_group(monkeypatch):
-    """The test user's real group may be a private one (Linux CI); these tests mean a shared group."""
-    from orch import privdir
-
-    monkeypatch.setattr(privdir, "_is_private_group", lambda uid, gid: False)
-
-
 def test_an_ancestor_group_writable_by_the_users_private_group_passes(tmp_path, monkeypatch):
     from orch import privdir
 

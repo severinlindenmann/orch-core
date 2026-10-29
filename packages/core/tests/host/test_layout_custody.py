@@ -19,14 +19,6 @@ from tests.store.helpers import WS
 UID = os.getuid()
 
 
-@pytest.fixture(autouse=True)
-def _shared_group(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The test user's real group may be a private one (Linux CI); these tests mean a shared group."""
-    from orch import privdir
-
-    monkeypatch.setattr(privdir, "_is_private_group", lambda uid, gid: False)
-
-
 def _tree(tmp_path: Path, mode: int = 0o700) -> Path:
     project = tmp_path / "proj"
     for d in ("events", "tickets", ".state"):

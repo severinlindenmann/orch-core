@@ -40,11 +40,16 @@ def child_env(tmp_path: Path, **extra: str) -> dict[str, str]:
 
 
 @pytest.fixture(autouse=True)
-def _privdir_cache_clear():
-    """The private-group answer is cached for 30 s; no test sees another's."""
+def _privdir_group(request, monkeypatch):
+    """Is the test user's primary group "private"? By default no: every test sees a SHARED group, so a group-writable
+    directory is refused on macOS (staff) and on a Linux CI runner (user-private group) alike. A test that means the
+    private-group rule sets its own answer (``monkeypatch.setattr(privdir, "_is_private_group", ...)``), or, to run the
+    real lookup against a fake passwd/group database, is marked ``@pytest.mark.real_private_group``."""
     from orch import privdir
 
     privdir._cache.clear()
+    if request.node.get_closest_marker("real_private_group") is None:
+        monkeypatch.setattr(privdir, "_is_private_group", lambda uid, gid: False)
     yield
     privdir._cache.clear()
 

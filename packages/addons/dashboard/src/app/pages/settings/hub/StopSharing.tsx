@@ -115,7 +115,7 @@ export function StopRule({ ws, workspace, rule, after, onClose, onDone, error, o
     <p data-testid="hub-rule-review-rule">Rule: <Raw>{rule.kind}</Raw>{rule.value !== null && <> · <Raw>{rule.value}</Raw></>}</p>
     {error ? <div role="alert"><p className="text-danger">{error}</p>{onRetry && <Button data-testid="hub-rule-preview-retry" variant="outline" size="sm" onClick={onRetry}>Try again</Button>}</div>
       : !after || now.isPending ? <p role="status">Loading the preview…</p> : <div data-testid="hub-rule-review-what">
-      <p>{after.revoked === 0 ? 'No tickets stop being shared' : `${after.revoked} ${after.revoked === 1 ? 'ticket stops' : 'tickets stop'} being shared`}.</p>
+      <p>{after.revoked === 0 ? 'Nothing stops being shared' : `${after.revoked} ${after.revoked === 1 ? 'item stops' : 'items stop'} being shared`}.</p>
       {stops.length > 0 && <ul className="space-y-1">{stops.slice(0, 20).map((i, n) => <li key={n}><Raw>{i.line}</Raw></li>)}</ul>}
       {stops.length > 20 && <p>and {stops.length - 20} more</p>}
       {widens && <div data-testid="hub-rule-review-new">

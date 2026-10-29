@@ -87,6 +87,19 @@ describe('P18: nothing behind the dialog is read before the hub confirmed', () =
   })
 })
 
+describe('P18: closing while the hub is silent', () => {
+  it('reads the hub status again when the person closes the waiting dialog', async () => {
+    setMockConfirmAfter(99)
+    const hubStatus = vi.spyOn(api, 'getHubStatus')
+    await joinUntilSigned()
+    await screen.findByTestId('hub-connect-waiting', {}, T)
+    const reads = hubStatus.mock.calls.length
+    fireEvent.click(screen.getByTestId('hub-connect-close'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull(), T)
+    await waitFor(() => expect(hubStatus.mock.calls.length).toBeGreaterThan(reads), T)
+  })
+})
+
 describe('P10: a short join dialog', () => {
   const open = async () => {
     const view = renderApp('/w/DEMO/settings/hub')

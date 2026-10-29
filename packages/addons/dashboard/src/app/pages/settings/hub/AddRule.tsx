@@ -13,7 +13,7 @@ import { caveat } from './shared'
 import type { HubWorkspace } from './StopSharing'
 
 // Sharing MORE is a plain click, no signature and no typed word: a click-only host op (owner, full local session, the
-// plan of the preview this session was shown). Every sentence of the review comes from the host's preview
+// plan of the preview this session was shown). The review's facts come from the host's preview (readers, widened items, counts, what leaves); the page adds only labels (the ticket title, the hub name from the cached status, the workspace name)
 // (`review`): which hub, who can read there, only the NEW items, what leaves per item, and that later edits follow.
 // The list of items stays behind one small click. A changed plan shows the review again; nothing is auto-confirmed.
 

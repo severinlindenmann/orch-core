@@ -107,10 +107,11 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     live.current.phase = p
     setPhaseState(p)
   }, [])
-  const refetch = useCallback(() => {
+  const refetch = useCallback((success = false) => {
     // `refetchOnDone: false`: the step is only the first half of something (a hub join waits for the hub to confirm), and
-    // the pages behind the dialog are refused until then. The caller reads them once, when the whole thing is done.
-    if (!refetching.current) return
+    // the pages behind the dialog are refused until then. Only the success path skips; a refusal, cancel, expiry or
+    // unknown outcome reads as before. The caller reads the pages once, when the whole thing is done.
+    if (success && !refetching.current) return
     for (const k of refetchKeys) void qc.invalidateQueries({ queryKey: [k] })
   }, [qc])
   const fail = useCallback(
@@ -206,7 +207,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         const got = await (delay ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed, delay) : sealed ? api.signClick(where, open.request_id, view.view_digest, revealKey, sealed) : api.signClick(where, open.request_id, view.view_digest, revealKey))
         if (got.state === 'held' && got.deadline_ms) {
           trackHold(where, open.request_id, got.deadline_ms / 1000, () => {
-            refetch()
+            refetch(true)
             const as = settledAs(open, { state: 'submitted', duplicate: false })
             settled.current?.('done', as.state, as.request)
           })
@@ -216,7 +217,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         if (!mounted.current) return
         setSigned(got)
         setPhase('done')
-        refetch()
+        refetch(true)
         const as = settledAs(open, got)
         settled.current?.('done', as.state, as.request)
       } catch (e) {
@@ -254,7 +255,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
           stopped = true
           setSigned({ state: 'submitted', duplicate: false })
           setPhase('done')
-          refetch()
+          refetch(true)
           const as = settledAs(prepared, { state: 'submitted', duplicate: false })
           settled.current?.('done', as.state, as.request)
         } else if (got.state === 'cancelled' || got.state === 'expired') {

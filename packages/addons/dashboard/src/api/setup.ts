@@ -100,6 +100,7 @@ export interface Progress {
   done: boolean
   error: { code: string; message: string; finishable: boolean } | null
   retry: string[]
+  reasons?: Record<string, string>
   workspace: { id: string; prefix: string } | null
 }
 export class SetupError extends Error {

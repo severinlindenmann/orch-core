@@ -1317,6 +1317,19 @@ export function Setup({ api }: { api: SetupAPI }) {
               </li>
             ))}
           </ol>
+          {progress?.steps.some((s) => s.id === 'trust' && s.status === 'skipped') && (
+            <div className="progress-note" role="note">
+              Claude Code will ask once to trust this folder. Say yes there.
+              {progress.reasons?.trust && (
+                <details>
+                  <summary>Why?</summary>
+                  <p>
+                    <Inline>{progress.reasons.trust}</Inline>
+                  </p>
+                </details>
+              )}
+            </div>
+          )}
           {progress?.error && (
             <>
               <p role="alert" className="warning">

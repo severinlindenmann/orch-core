@@ -1150,11 +1150,10 @@ class RealPorts:
 
         if not claude_installed(self.env):  # J01-06: the sign card of the first Claude Code start asks again
             return (
-                "Claude Code is not installed on this computer yet. Install it any time: starting a Claude Code agent "
-                "asks again, and no terminal question is needed."
+                "Claude Code is not installed on this computer yet. Once it is, it asks once to trust this folder."
             )
         return refusal(self.env, root, allow_parent=allow_parent) or (
-            "Claude Code is not set up yet (never started here): starting an agent asks again, in the sign card."
+            "Claude Code has not been started on this computer yet, so orch could not answer for you."
         )
 
     def records_setup(self, wid: str, root: Path) -> None:

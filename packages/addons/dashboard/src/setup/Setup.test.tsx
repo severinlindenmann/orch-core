@@ -88,6 +88,7 @@ function fake(
     stateError?: boolean
     failure?: boolean
     done?: boolean
+    trust?: 'skipped' | 'done'
     click?: boolean
     clickOff?: string
     relayUnavailable?: boolean
@@ -162,7 +163,11 @@ function fake(
     if (path === 'create') result = { run_id: 'demo-run' }
     if (path.startsWith('progress'))
       result = {
-        steps: [{ id: 'genesis', label: 'Create workspace', status: options.failure ? 'failed' : options.running ? 'doing' : 'todo' }],
+        steps: [
+          { id: 'genesis', label: 'Create workspace', status: options.failure ? 'failed' : options.running ? 'doing' : 'todo' },
+          ...(options.trust ? [{ id: 'trust', label: 'Letting Claude Code trust this folder', status: options.trust }] : []),
+        ],
+        reasons: options.trust === 'skipped' ? { trust: 'Claude Code has not been started on this computer yet, so orch could not answer for you.' } : {},
         done: !!options.done,
         waiting: options.waiting,
         error: options.failure
@@ -422,6 +427,29 @@ test('a service-worker-controlled page refuses the exchange', async () => {
     if (previous) Object.defineProperty(navigator, 'serviceWorker', previous)
     else Reflect.deleteProperty(navigator, 'serviceWorker')
   }
+})
+
+async function finishFinishMode(f: ReturnType<typeof fake>) {
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
+  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+}
+
+test('r10-P10: a skipped Claude Code trust step is said on the progress page, with the plain reason behind Why?', async () => {
+  await finishFinishMode(fake({ finish: true, done: true, trust: 'skipped' }))
+  expect(screen.getByText('Claude Code will ask once to trust this folder. Say yes there.')).toBeInTheDocument()
+  expect(screen.getByText('Why?')).toBeInTheDocument()
+  expect(screen.getByText(/has not been started on this computer yet/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Open your workspace →' })).toBeEnabled()
+})
+
+test('r10-P10: no trust note when the step was done or not asked for', async () => {
+  await finishFinishMode(fake({ finish: true, done: true, trust: 'done' }))
+  expect(screen.queryByText(/Claude Code will ask once to trust this folder/)).toBeNull()
 })
 
 test('successful progress offers the workspace, while finish mode never reveals secrets', async () => {

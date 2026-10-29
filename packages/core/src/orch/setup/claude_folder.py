@@ -265,7 +265,11 @@ def trust_folder(env: Mapping[str, str], root: str | os.PathLike[str], *, allow_
         try:
             st = os.lstat(cfg)
             doc = json.loads(Path(cfg).read_bytes().decode("utf-8"))
-            projects = doc.get("projects") if isinstance(doc, dict) else None
+            if not isinstance(doc, dict):
+                return False
+            projects = doc.get("projects")
+            if projects is None:  # Claude Code has not opened a project yet: it writes the file without the key
+                projects = doc["projects"] = {}
             if not isinstance(projects, dict):
                 return False
             entry = projects.get(real)

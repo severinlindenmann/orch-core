@@ -286,6 +286,23 @@
   color: var(--danger);
   background: var(--danger-soft);
 }
+.setup .progress-note {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--warning);
+  border-radius: 8px;
+  background: var(--warning-soft);
+  font-size: 13px;
+}
+.setup .progress-note summary {
+  cursor: pointer;
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+.setup .progress-note p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+}
 .setup .open-workspace {
   margin-top: 32px;
 }

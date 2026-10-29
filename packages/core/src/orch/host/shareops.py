@@ -74,6 +74,8 @@ LEAVES = {
     "summary": "the type, a one-line title and the deadline",
     "question": "the full question (up to 2000 bytes)",
 }
+#: The body sections that make up a ticket's shared description (only under a rule that says "include the description").
+DESCRIPTION_SECTIONS = ("summary", "context", "requirements")
 LATER_EDITS = "Later edits to these tickets are shared too, until you stop sharing them."
 _MU = threading.Lock()
 _NAMES = {"type": "array", "items": {"type": "string"}, "maxItems": 64}
@@ -290,16 +292,19 @@ def ticket_fact(store: Any, state: Any, uid: str, t: Any) -> Any:
 
 
 def _description_of(store: Any, uid: str) -> str:
-    """The ticket's Summary and Context text from ``body.md`` (checked against the log by the store), or ``""``: a body
-    that does not match its log, or cannot be read, is no description at all (fail closed). Only the rules that say
-    "include the description" ever use it."""
+    """The ticket's person-written text, Summary, Context and Requirements, from ``body.md`` (checked against the log
+    by the store), or ``""``: a body that does not match its log, or cannot be read, is no description at all (fail
+    closed). A ticket made in the dashboard has only Requirements ("What should be true when this is done?"). The
+    plan, decisions, findings, comments and files never leave. Only the rules that say "include the description" use
+    it."""
     from orch.store.errors import StoreError
 
     try:
         texts = store.body_sections(uid)
     except (StoreError, OSError):
         return ""
-    return "\n\n".join(x.strip() for x in (texts.get("summary", ""), texts.get("context", "")) if x.strip())
+    parts = (texts.get(k, "") for k in DESCRIPTION_SECTIONS)
+    return "\n\n".join(x.strip() for x in parts if x.strip())
 
 
 def _plan(items: list[Any]) -> str:
@@ -315,7 +320,10 @@ def _rows(items: list[Any], limit: int = 100) -> dict[str, Any]:
 
 def _leaves(kind: str, items: list[Any]) -> str:
     if kind == "ticket" and any("description" in i.payload for i in items if i.kind == "ticket"):
-        return "the ticket's title, status, labels, deadline and description; no comments or files"
+        return (
+            "the ticket's title, status, labels, deadline and description (summary, context and requirements); "
+            "no plan, comments or files"
+        )
     return LEAVES[kind]
 
 

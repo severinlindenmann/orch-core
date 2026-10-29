@@ -64,6 +64,10 @@ export interface HubRuleRow {
   describes: string | null
   /** People and teams besides you who can read what the rule shares (0: only you). */
   readers?: number
+  /** The reader ids as core stores the rule (null: none, or not shown): Stop sharing sends the rule back exactly. */
+  audience?: HubAudience | null
+  /** false: the readers could not be read back, so the rule cannot be sent back exactly and Stop sharing is off. */
+  removable?: boolean
   /** The ticket description is shared too. */
   description?: boolean
 }

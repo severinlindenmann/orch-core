@@ -482,3 +482,39 @@ def test_a_review_with_too_many_names_in_all_is_refused_before_it_can_hit_the_fr
     # 30 readers + 30 people added on each of two widened tickets: 90 names in all, each part below its own limit
     with pytest.raises(HostError, match="reaches too many people"):
         shareops._review(service, items, {i.logical for i in items}, st)
+
+
+# --- run-9 J03: a ticket made in the dashboard has only Requirements text ("What should be true when this is done?") --
+
+
+def test_include_the_description_shares_the_requirements_text_a_dashboard_ticket_has(served, selective):
+    """Run 9 (J03): the rule said "include the description" but the ticket's only text was its Requirements, so nothing
+    left and the confirmed grant was `description: false`. The description is the person-written text (Summary,
+    Context and Requirements); the plan, decisions and findings stay home."""
+    uid, key = served.ticket("Invoice export for Ben")
+    ok(agent(served, "section.set", {"ref": key, "section": "requirements", "message": "Ben can see the export."}))
+    ok(agent(served, "section.set", {"ref": key, "section": "plan", "message": "Agent plan stays home."}))
+    rule = {"kind": "ticket", "ticket": key, "description": True}
+    review = ok(req(served, "share.preview", {"add": rule}))["data"]["review"]
+    (leaves,) = [x["text"] for x in review["leaves"] if x["kind"] == "ticket"]
+    assert "description (summary, context and requirements)" in leaves and "no plan" in leaves  # what it is, in words
+    ok(rule_op(served, "share.rule_add", rule))
+    item = selective.opened[-1]
+    assert item["content"]["description"] == "Ben can see the export."
+    grant = shareops._load(served.service).confirmed[f"ticket:{uid}"]
+    assert grant["description"] is True
+
+
+def test_the_rule_as_share_rules_lists_it_removes_it(served, selective):
+    """Run 9 (J03): the dashboard sends back the rule as listed (with its readers and the description flag); core
+    matches the stored rule exactly, so that form must remove it and a form without them must not."""
+    _uid, key = served.ticket("Invoice export for Ben")
+    rule = {"kind": "ticket", "ticket": key, "audience": {"users": [U1], "groups": []}, "description": True}
+    ok(rule_op(served, "share.rule_add", rule))
+    (listed,) = [r for r in ok(req(served, "share.rules"))["data"]["rules"] if r["kind"] == "ticket"]
+    bare = {"kind": "ticket", "ticket": key}
+    assert err(req(served, "share.rule_remove", {"rule": bare, "expect": "p" * 43})) == "not_found"
+    as_listed = {k: v for k, v in listed.items() if k not in ("count", "describes")}
+    assert as_listed == rule
+    ok(rule_op(served, "share.rule_remove", as_listed))
+    assert [r["kind"] for r in ok(req(served, "share.rules"))["data"]["rules"]] == ["needs_you"]

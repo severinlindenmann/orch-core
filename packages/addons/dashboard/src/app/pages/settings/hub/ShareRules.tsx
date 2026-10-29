@@ -35,6 +35,25 @@ function ruleLine(r: HubShare['rules'][number], titleOf: (key: string) => string
   const what = r.kind === 'type' ? `All tickets of type ${r.value}` : `All tickets tagged ${r.value}`
   return `${what} · ${r.count ? `${r.count} ${r.count === 1 ? 'ticket' : 'tickets'}` : 'none yet, future matches shared'}`
 }
+/** The rule exactly as core stores it (core matches a removal exactly; run 9: a rule with its description flag was
+ *  sent without it and core answered 404). */
+function asStored(r: HubShare['rules'][number]): HubRule {
+  return { kind: r.kind, value: r.value, ...(r.audience ? { audience: r.audience } : {}), ...(r.description ? { description: true } : {}) } as HubRule
+}
+type Fact = { key: string; type: string; labels: string[] }
+/** Shared tickets that keep their own row: a ticket is left out only when its one-ticket rule is the ONLY rule that
+ *  shares it (that rule's row is then its one Stop sharing). A type or label rule that also shares it, a ticket
+ *  whose kind and labels are not known here, or a rule row that cannot be stopped keeps the row. */
+function unruled(share: HubShare, facts: Fact[] | undefined): string[] {
+  const rules = share.rules
+  return share.tickets.filter(key => {
+    // a one-ticket rule whose Stop sharing is off (readers not readable) leaves the ticket's own row stoppable
+    if (!rules.some(r => r.kind === 'ticket' && r.value === key && r.removable !== false)) return true
+    const t = facts?.find(f => f.key === key)
+    return !t || rules.some(r => (r.kind === 'type' && r.value === t.type) || (r.kind === 'tag' && r.value !== null && t.labels.includes(r.value)))
+  })
+}
+
 export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: HubWorkspace; onBack: () => void }) {
   const share = useQuery(hubQueries.share(ws))
   const [adding, setAdding] = useState(false)
@@ -66,9 +85,10 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
             <p className="text-xs text-text-muted">{r.readers ? `Readable by ${r.readers} ${r.readers === 1 ? 'person or team' : 'people and teams'} besides you` : 'Only you'}{r.description ? ' · description included' : ''}</p>
             <InfoDrawer testId={'hub-rule-details-' + i}><Raw>{r.value ?? ''}</Raw></InfoDrawer>
           </div>
-          <Action id={'hub-rule-remove-' + i} onClick={() => { const rule = { kind: r.kind, value: r.value } as HubRule; setRemove(rule); setReview({ remove: rule }); setAdding(false) }}>Stop sharing</Action>
+          {r.removable === false && <p className="text-xs text-text-muted" data-testid={'hub-rule-unreadable-' + i}>Could not read who sees this rule. Try again later.</p>}
+          <Action id={'hub-rule-remove-' + i} disabled={r.removable === false} onClick={() => { const rule = asStored(r); setRemove(rule); setReview({ remove: rule }); setAdding(false) }}>Stop sharing</Action>
         </div>)}
-        {share.data.tickets_complete && share.data.tickets.length > 0 && <ul className="space-y-2" data-testid="hub-ticket-list">{share.data.tickets.map((ticket, i) => <li key={ticket} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
+        {share.data.tickets_complete && unruled(share.data, tickets.data).length > 0 && <ul className="space-y-2" data-testid="hub-ticket-list">{unruled(share.data, tickets.data).map((ticket, i) => <li key={ticket} className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
           <div className="flex min-w-0 items-center gap-1"><p><bdi><Raw>{titleOf(ticket) ?? ticket}</Raw></bdi></p><InfoDrawer testId={'hub-ticket-details-' + i}><Raw>{ticket}</Raw></InfoDrawer></div>
           <Action id={'hub-ticket-revoke-' + i} onClick={() => setRevoke(ticket)}>Stop sharing</Action>
         </li>)}</ul>}

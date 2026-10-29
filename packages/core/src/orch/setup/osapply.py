@@ -125,6 +125,14 @@ def _hung_tree(root: int) -> str:
     return "\n".join(lines)
 
 
+def _bounded(text: str, head: int = 300, tail: int = 2000) -> str:
+    """A failed step's output for the report: its start and its END (#1308: a cut at 300 characters dropped what a hung
+    step waited for, which :func:`_spawn` puts last)."""
+    if len(text) <= head + tail:
+        return text
+    return f"{text[:head]}\n  [...]\n{text[-tail:]}"
+
+
 def _spawn(argv: list[str]) -> RunResult:
     if argv[0] not in _ALLOWED:
         raise ValueError(f"{argv[0]} is not one of the fixed binaries")
@@ -400,7 +408,7 @@ class _Apply:
         self.res.actions.append(what or " ".join(argv))
         out = self.ex.run(argv)
         if out.rc != 0:
-            self.res.fail(f"'{' '.join(argv)}' failed ({out.rc}): {out.out.strip()[:300]}")
+            self.res.fail(f"'{' '.join(argv)}' failed ({out.rc}): {_bounded(out.out.strip())}")
         return out
 
     def put(self, path: str, content: str, mode: int, *, replace: bool = False) -> bool:

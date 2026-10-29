@@ -8,16 +8,14 @@ from __future__ import annotations
 
 import os
 import subprocess
-import time
 from pathlib import Path
 
 import pytest
-from channels_helpers import PW
+from channels_helpers import PW, wall_codes
 from test_browser_s5 import NODE, playwright_path
 from test_serve_wired import host_link, hub  # noqa: F401  (the wired hub fixture)
 
 from orch_hub.access import ADMIN_GROUP, Access
-from orch_hub.channels.service import totp_code
 
 pytestmark = pytest.mark.slow
 
@@ -27,15 +25,14 @@ def test_services_and_workspaces_pages_in_a_browser(hub):  # noqa: F811
     acc = Access(str(hub["state"] / "access.db"))
     acc.add_member(ADMIN_GROUP, hub["user"])
     acc.close()
-    while (time.time() % 30) > 20:
-        time.sleep(0.5)
+    (code_signin,) = wall_codes(hub["secret"], (-1,), left_s=10)  # the run stays inside this step
     env = {
         **os.environ,
         "NODE_PATH": playwright_path(),
         "HUB_URL": f"http://127.0.0.1:{hub['web'].port}",
         "HUB_USER": hub["user"],
         "HUB_PW": PW,
-        "CODE_SIGNIN": totp_code(hub["secret"], int(time.time()) // 30 - 1),
+        "CODE_SIGNIN": code_signin,
     }
     script = Path(__file__).parent / "js" / "browser_r11.mjs"
     # The page opens on an empty Workspaces list; the script prints JOIN_NOW, we join a stub workspace, it must show up by itself.

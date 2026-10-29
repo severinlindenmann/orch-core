@@ -28,7 +28,7 @@ export function reasonOf(e: unknown): string {
 }
 /** The cause in plain words; the code itself stays under "Technical details". */
 export function plainReason(code: string): string {
-  if (code === 'session.required' || code === 'session.expired') return 'This page no longer has its link to your terminal. This happens after a reload or when the session ran out.'
+  if (code === 'session.required' || code === 'session.expired') return 'This page has lost its link to orch. This happens after a reload or when the session ran out.'
   if (code === 'setup.ended') return 'This setup was already finished or stopped.'
   if (code === 'setup.token' || code === 'setup.unavailable') return 'The link to your terminal could not be used.'
   if (code.startsWith('client:') || code.startsWith('http.')) return 'The page could not reach orch on this computer.'
@@ -1367,8 +1367,20 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
     const reason = report(e)
     root.render(
       <main className="setup">
-        <h1>Open setup from your terminal</h1>
-        <p>{expiredCopy}</p>
+        <h1>This setup link was already used</h1>
+        <p>A setup link works only once. If you finished setup, your workspace is ready.</p>
+        <p>
+          <a className="primary" href="/">
+            Open dashboard →
+          </a>
+        </p>
+        <details>
+          <summary>Need to set up again?</summary>
+          <p>
+            In your terminal, press Enter for a fresh link, or run <code>orch setup</code>. It starts a new session with
+            new secret words and a new recovery code.
+          </p>
+        </details>
         <Reason reason={reason} />
       </main>,
     )

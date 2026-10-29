@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import { groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
-import { SetupAPI, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
+import { SetupAPI, SetupError, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
   phase: 'profile',
@@ -500,7 +500,7 @@ function failing(status: number, code?: string) {
 }
 
 test('the cause is in plain words and the code sits under Technical details', () => {
-  expect(plainReason('session.required')).toMatch(/no longer has its link to your terminal/)
+  expect(plainReason('session.required')).toMatch(/lost its link to orch/)
   expect(plainReason('whatever')).toBe('Setup could not go on.')
   for (const code of ['session.required', 'setup.ended', 'setup.token', 'http.502', 'client: Error: x']) expect(plainReason(code)).not.toMatch(/session\.|setup\.|http\./)
 })
@@ -545,6 +545,18 @@ test('a bootstrap failure on mount shows its reason without fragments', async ()
   expect(await screen.findByText('Reason: client: Error: boom')).toBeInTheDocument()
   expect(document.body.textContent).not.toContain('SECRET')
   spy.mockRestore()
+})
+
+test('a used-up setup link leads to the dashboard and keeps the terminal steps behind a small link', async () => {
+  document.body.innerHTML = '<div id="root"></div>'
+  const { mount } = await import('./Setup')
+  await mount(Promise.reject(new SetupError('setup.ended')))
+  expect(await screen.findByRole('heading', { name: 'This setup link was already used' })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: /Open dashboard/ })).toHaveAttribute('href', '/')
+  const again = screen.getByText('Need to set up again?').closest('details')!
+  expect(again).not.toHaveAttribute('open')
+  expect(again).toHaveTextContent('press Enter for a fresh link')
+  expect(screen.getByText('Reason: setup.ended')).toBeInTheDocument()
 })
 
 test('review is a compact plain summary; blanks and "set at signing" lines stay out of the details', async () => {

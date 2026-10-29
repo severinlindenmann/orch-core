@@ -1056,7 +1056,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     />
                   </label>
                   {profile.method === 'click' && (
-                    <p>Phone approvals are not available with One click yet. Choose Terminal to use them.</p>
+                    <p>Phone approvals are not available with One click yet. Choose Passphrase to use them.</p>
                   )}
                 </>
               )}

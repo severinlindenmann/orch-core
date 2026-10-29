@@ -107,6 +107,12 @@ describe('the form', () => {
     expect(screen.queryByRole('menuitem', { name: 'Create and start' })).toBeNull()
   })
 
+  it('a risk-notices answer without `acknowledged` counts as not read and does not crash the form', async () => {
+    s.notices.mockResolvedValue({} as never)
+    const { sheet } = await open()
+    expect(await startBtn(sheet)).toBeInTheDocument()
+  })
+
   it('Choose agent… opens the shared picker; the footer summary follows the choice, which is remembered for this workspace', async () => {
     const { r, sheet } = await open()
     await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))

@@ -305,7 +305,7 @@ async function landFromTicket(t) {
   const name = renderText(p.body.name ?? "you");
   const plan = landingPlan(p.body);
   if (plan === "redeem") return redeemTicket(t, false);
-  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "You came from a workspace. Nothing happens until you continue." }),
+  if (plan === "confirm") return plain(h("h1", { text: "Continue as " + name + "?" }), h("p", { class: "muted", text: "This workspace was connected for " + name + ". Nothing happens until you continue." }),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Continue", onclick: () => redeemTicket(t, false) }), h("button", { text: "Cancel", onclick: () => loginView() })));
   const cur = renderText(p.body.signed_in_as?.name ?? "someone else");
   return plain(h("h1", { text: "Different person" }), h("p", { text: "You are signed in as " + cur + " here. This link is for " + name + "." }),
@@ -412,8 +412,12 @@ async function workspaces(joined = [], known = null) {
       const actions = {
         open: (w) => { closeDialog(); return openWorkspace({ id: w.workspace_id, name: w.name ?? "Workspace" }); },
         copy: copyText,
-        connect: async () => {
-          const r = await api("POST", "/admin/connect", {});
+        people: async () => { // the real, active people of this hub (admin-only route); the hub rejects anyone else
+          const r = await api("GET", "/admin/users");
+          return r.status === 200 ? (r.body.users ?? []).filter((u) => !u.disabled) : [];
+        },
+        connect: async (ownerUser) => {
+          const r = await api("POST", "/admin/connect", ownerUser ? { owner_user: ownerUser } : {});
           if (r.status < 200 || r.status >= 300 || typeof r.body.link !== "string" || !Number.isFinite(r.body.expires_ms)) throw new Error("connect failed");
           return r.body;
         },
@@ -430,7 +434,7 @@ async function workspaces(joined = [], known = null) {
         },
       };
       const rows = ws.status === 200 ? ws.body.workspaces ?? [] : [];
-      shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions, joined }));
+      shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions, joined, self: state.user.user_id }));
       // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
       clearInterval(workspacesTimer);
       const seen = known ?? new Set(rows.map((w) => w.workspace_id));
@@ -789,7 +793,7 @@ async function accessView(wsId, raw) {
   const action = { type: "grant.requested", log: "workspace", ...terms };
   shell("home", h("div", {}, back,
     h("h1", { text: "Approve agent access" }),
-    h("p", { class: "sentence", text: grantSentence(terms, mine.name ?? wsId.slice(0, 8)) }),
+    h("p", { class: "sentence", text: grantSentence(terms, mine.name ?? "A workspace") }),
     h("dl", { class: "facts" }, grantFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("div", { class: "row" }, h("button", { class: "pri", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
@@ -811,7 +815,7 @@ async function addonView(wsId, raw) {
   const action = { type: "addon.requested", log: "workspace", ...terms };
   shell("home", h("div", {}, back,
     h("h1", { text: "Approve an add-on" }),
-    h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? wsId.slice(0, 8)) + " asks to install and turn on " + renderText(terms.name) + "." }),
+    h("p", { class: "sentence", text: "The workspace " + renderText(mine.name ?? "A workspace") + " asks to install and turn on " + renderText(terms.name) + "." }),
     h("dl", { class: "facts" }, addonFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("p", { class: "small muted", text: "Approving here lets the workspace's computer install exactly this package. You can check the fingerprint against the one shown in the workspace." }),
     h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
@@ -838,13 +842,13 @@ async function settingsView(wsId, raw) {
   const action = { type: "settings.changed", log: "workspace", set: terms };
   shell("home", h("div", {}, back,
     h("h1", { text: "Change workspace settings" }),
-    h("p", { class: "sentence", text: "This link asks to change how long things are held in " + renderText(mine.name ?? wsId.slice(0, 8)) + ". Check the change below; nothing happens until you approve." }),
+    h("p", { class: "sentence", text: "This link asks to change how long things are held in " + renderText(mine.name ?? "A workspace") + ". Check the change below; nothing happens until you approve." }),
     h("dl", { class: "facts" }, settingsFacts(terms).flatMap(([k, v]) => [h("dt", { text: k }), h("dd", { text: v })])),
     h("div", { class: "row" }, h("button", { class: "pri", "data-sign": "", text: "Review and approve", onclick: () => startSign(wsId, action) }))));
 }
 
 function advancedForm(workspaces) {
-  const ws = h("select", {}, workspaces.filter((w) => w.can_start).map((w) => h("option", { value: w.workspace_id, text: renderText(w.name ?? w.workspace_id.slice(0, 8)) })));
+  const ws = h("select", {}, workspaces.filter((w) => w.can_start).map((w) => h("option", { value: w.workspace_id, text: renderText(w.name ?? "A workspace") })));
   const type = h("select", {}, Object.keys(DECISIONS).filter((t) => t !== "question.answered").map((t) => h("option", { value: t, text: t })));
   const inputs = Object.fromEntries(["log", "question", "gate", "outcome", "hash", "option", "text"].map((k) => [k, h("input", { id: "f-" + k })]));
   const go = h("button", { class: "pri", "data-sign": "", text: "Review", onclick: () => {

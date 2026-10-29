@@ -60,7 +60,7 @@ from ..contract.hub import HV, Refused, channel_proof_bytes
 from ..invites import Invite, InviteError, proof_digest
 from ..relay.client import RelayError
 from ..spaces.service import SpaceError
-from ..switch import SwitchError, clean_return_to, workspace_rows
+from ..switch import SwitchError, clean_return_to, owner_fallback_names, workspace_rows
 from ..versions import MIN_PHONE_VERSION, MIN_SUPPORTED_VERSION, version_state, workspace_status
 from .changes_api import ChangeHandlers, confirmed
 from .org_api import OrgHandlers
@@ -1951,13 +1951,16 @@ class WebApi(ChangeHandlers, OrgHandlers):
 
     def _h_a_workspaces(self, c: Ctx, p: dict, q: dict, b: dict | None):
         reg, out = self.d.registry, []
+        people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
+        fallback = owner_fallback_names(reg, self.d.access)
         for ws in sorted(reg.pins()):
             st = reg.binding_state(ws)
             card_name = reg.display_name(ws)
             out.append(
                 {
                     "workspace_id": ws,
-                    "name": P4.render_text(card_name) if type(card_name) is str and card_name else None,
+                    "name": P4.render_text(card_name) if type(card_name) is str and card_name else fallback.get(ws),
+                    "owner_name": people.get(reg.owner_alias(ws)),
                     "mode": reg.last_mode(ws),
                     "status": st["status"] if st else None,
                     "left_ms": reg.unbound_ms(ws) if st and st["status"] == "unbound" else None,
@@ -1973,6 +1976,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
             raise ApiError("unavailable")  # an empty map would say "nobody can reach anyone": say nothing instead
         reg = self.d.registry
         workspaces = []
+        people = {u["user_id"]: P4.render_text(u["name"]) for u in self.d.access.users()}
+        fallback = owner_fallback_names(reg, self.d.access)
         for ws in sorted(reg.pins()):
             if reg.mode(ws) is None:
                 continue
@@ -1980,7 +1985,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
             workspaces.append(
                 {
                     "workspace_id": ws,
-                    "name": P4.render_text(name) if type(name) is str and name else None,
+                    "name": P4.render_text(name) if type(name) is str and name else fallback.get(ws),
+                    "owner_name": people.get(reg.owner_alias(ws)),
                 }
             )
         edges = [
@@ -2159,7 +2165,9 @@ class WebApi(ChangeHandlers, OrgHandlers):
             raise ApiError("unavailable")
         # the workspace's owner on the hub: the admin who mints the link, or the user they pick (V3-D19)
         owner = b.get("owner_user", c.user_id)
-        if type(owner) is not str or not any(u["user_id"] == owner for u in self.d.access.users()):
+        if type(owner) is not str or not any(
+            u["user_id"] == owner and not u["disabled"] for u in self.d.access.users()
+        ):
             raise ApiError("malformed")
         code, expires = self.d.invites.mint(self.d.now_ms(), owner_user=owner)
         try:

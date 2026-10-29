@@ -33,7 +33,8 @@ test("railRows keeps the closed shape and marks workspaces without an origin", (
   ] });
   assert.equal(rows.length, 2);
   assert.deepEqual(rows[0], { id: "a".repeat(32), name: "Product", role: "owner", online: true, badge: 3, canOpen: true });
-  assert.equal(rows[1].name, "bbbbbbbb");
+  assert.equal(rows[1].name, "A workspace");
+  assert.equal(railRows({ workspaces: [{ workspace_id: "c".repeat(32), name: null, owner_name: "Ben Test" }] })[0].name, "Ben Test's workspace");
   assert.equal(rows[1].badge, 0);
   assert.equal(rows[1].canOpen, false);
   assert.deepEqual(railRows(null), []);
@@ -42,7 +43,8 @@ test("railRows keeps the closed shape and marks workspaces without an origin", (
 test("initials, colour and safeUrl", () => {
   assert.equal(initials("Acme hub"), "AH");
   assert.equal(initials("Product"), "PR");
-  assert.equal(initials("", "ff00"), "FF");
+  assert.equal(initials("", "ff00"), "W"); // never a piece of an id
+  assert.equal(initials("Ben Test's workspace"), "BT");
   assert.match(colour("x"), /^c[0-3]$/);
   assert.equal(colour("same"), colour("same"));
   assert.equal(safeUrl("http://127.0.0.1:5/switch#t=abc"), "http://127.0.0.1:5/switch#t=abc");

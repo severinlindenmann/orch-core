@@ -149,7 +149,8 @@ def test_nothing_served_means_no_org_mcp_and_no_proxy(world):
     world.records = []
     hub = Hub()
     start(world, hub)
-    assert "org_mcp" not in hub.payloads[0] and getattr(hub, "org_mcp", None) is None
+    assert "org_mcp" not in hub.payloads[0]
+    assert getattr(hub, "org_mcp", None) is None or hub.org_mcp.port is None  # no listener was started
 
 
 @pytest.mark.parametrize(
@@ -162,7 +163,7 @@ def test_codex_worktree_repo_root_and_shell_launches_get_nothing(world, harness,
     hub = Hub()
     start(world, hub, argv=argv)
     assert "org_mcp" not in hub.payloads[0]
-    assert getattr(hub, "org_mcp", None) is None  # not even a listener
+    assert getattr(hub, "org_mcp", None) is None or hub.org_mcp.port is None  # not even a listener
 
 
 def test_a_misplaced_or_doubled_placeholder_gets_nothing(world):
@@ -364,3 +365,34 @@ def test_host_stop_closes_the_listener_and_drops_every_capability(world):
             await post(org["port"], org["capability"])
 
     asyncio.run(go())
+
+
+def test_a_revoke_landing_while_the_launch_reads_served_leaves_no_capability(world, monkeypatch):
+    """The TOCTOU: served is read, an unbind/rebind revokes the workspace, then the mint happens. The epoch read first
+    makes the mint refuse, so the agent starts without company MCP and nothing usable exists."""
+    hub = fake_hub(world)
+    real = orgstate.served
+
+    def served_then_revoked(svc):
+        out = real(svc)
+        orgmcp.revoke_workspace(hub, WS)
+        return out
+
+    monkeypatch.setattr(orgstate, "served", served_then_revoked)
+
+    async def go():
+        await launch(world, hub)
+        assert "org_mcp" not in hub.payloads[0]
+        assert hub.org_mcp._caps == {}  # noqa: SLF001
+        await hub.org_mcp.close()
+
+    asyncio.run(go())
+
+
+def test_the_binding_callback_follows_the_hub_state(world, monkeypatch):
+    hub = fake_hub(world)
+    proxy = hub.org_mcp
+    hub.org_mcp_services[WS] = world.service
+    assert proxy._binding(WS) == 3 and proxy._binding("nobody") is None  # noqa: SLF001
+    monkeypatch.setattr(orgstate, "_state", lambda svc: (_ for _ in ()).throw(RuntimeError("hub.not_joined")))
+    assert proxy._binding(WS) is None  # noqa: SLF001

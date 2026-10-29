@@ -67,6 +67,15 @@ def proxy_for(hub: RunnerHub, *, _upstream: Callable[[dict, str | None], Any] | 
         s = svc(ws)
         return None if s is None else org_secret(s, name)
 
+    def binding(ws: str) -> int | None:
+        s = svc(ws)
+        if s is None:
+            return None
+        try:
+            return int(orgstate._state(s).binding_seq)  # noqa: SLF001 - HostError (not joined) is "not bound"
+        except Exception:  # noqa: BLE001
+            return None
+
     def seen(ws: str, server: str, digest: str, tools: list[dict]) -> None:
         s = svc(ws)
         if s is not None:
@@ -78,6 +87,7 @@ def proxy_for(hub: RunnerHub, *, _upstream: Callable[[dict, str | None], Any] | 
         tool_policy=policy,
         isolated=isolated,
         secret=secret,
+        binding=binding,
         on_seen=seen,
     )
     hub.org_mcp = proxy  # type: ignore[attr-defined]
@@ -106,6 +116,11 @@ async def launch_mcp(call: Any, hub: RunnerHub, run: str, argv: list[str]) -> di
     if not _placeholder_ok(argv):
         return None
     service = call.service
+    if getattr(hub, "org_mcp", None) is None:
+        proxy_for(hub)  # make it now: the epoch below must be read before anything else
+    proxy = hub.org_mcp  # type: ignore[attr-defined]
+    hub.org_mcp_services[service.workspace_id] = service  # type: ignore[attr-defined]
+    epoch = proxy.epoch(service.workspace_id)  # BEFORE reading served: a revoke after this refuses the mint
     got = await asyncio.to_thread(_served_now, service)
     if got is None:
         return None
@@ -119,12 +134,10 @@ async def launch_mcp(call: Any, hub: RunnerHub, run: str, argv: list[str]) -> di
     if not keep:
         return None
     try:
-        proxy = proxy_for(hub)
         port = await proxy.start()
-        hub.org_mcp_services[service.workspace_id] = service  # type: ignore[attr-defined]
-        cap = proxy.mint(service.workspace_id, seq, run, keep)
-    except Exception:  # noqa: BLE001
-        LOG.warning("the company MCP proxy could not start; the agent starts without it")
+        cap = proxy.mint(service.workspace_id, seq, run, keep, epoch=epoch)
+    except Exception:  # noqa: BLE001 - also a mint refused by a revoke or a changed binding: no company MCP
+        LOG.warning("the company MCP proxy could not mint; the agent starts without it")
         return None
     return {"port": port, "capability": cap, "servers": [r["name"] for r in keep]}
 

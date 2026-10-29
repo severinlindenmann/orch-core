@@ -120,6 +120,7 @@ def env():
         tool_policy=lambda ws, s: e.policy.get((ws, s), {}),
         isolated=e.iso,
         secret=lambda ws, n: e.secret_value,
+        binding=lambda ws: getattr(e, "bindings", {}).get(ws, 1),
         on_seen=lambda *a: e.seen.append(a),
         clock=e.clock,
     )
@@ -249,7 +250,7 @@ def test_non_loopback_peer_refused():
         def get_extra_info(self, key):
             return ("10.1.2.3", 5555)
 
-    p = Proxy(upstream=None, served=None, tool_policy=None, isolated=None, secret=None)
+    p = Proxy(upstream=None, served=None, tool_policy=None, isolated=None, secret=None, binding=None)
     with pytest.raises(mcpproxy._Refuse) as exc:
         asyncio.run(p._serve(None, W()))
     assert exc.value.status == 403
@@ -848,6 +849,7 @@ def test_close_drops_everything():
         tool_policy=lambda w, s: {},
         isolated=e.iso,
         secret=lambda w, n: None,
+        binding=lambda w: 1,
         clock=e.clock,
     )
 
@@ -878,3 +880,41 @@ def test_pin_covers_the_title_the_agent_sees(env):
     assert env.seen[-1][3][0]["title"] == "Delete every customer"
     called = rpc(env, cap, "tools/call", {"name": "echo", "arguments": {}}, rid=2)[1]
     assert called["error"]["code"] == -32602
+
+
+# -- capability lifetime: the live binding epoch (T5b) -----------------------------------------------------------------
+
+
+def test_a_revoke_between_the_epoch_read_and_the_mint_refuses_the_mint(env):
+    epoch = env.proxy.epoch("w1")
+    env.proxy.revoke_workspace("w1")  # the unbind lands after the caller read served, before it mints
+    with pytest.raises(ValueError):
+        env.proxy.mint("w1", 1, "r1", env.records["w1"], epoch=epoch)
+    assert env.proxy._caps == {}  # noqa: SLF001
+    assert env.proxy.mint("w1", 1, "r1", env.records["w1"], epoch=env.proxy.epoch("w1"))  # a fresh epoch works
+
+
+def test_a_mint_for_a_binding_that_is_not_live_is_refused(env):
+    env.bindings = {"w1": 2}
+    with pytest.raises(ValueError):
+        env.proxy.mint("w1", 1, "r1", env.records["w1"])
+    env.bindings = {"w1": None}
+    with pytest.raises(ValueError):
+        env.proxy.mint("w1", 1, "r1", env.records["w1"])
+
+
+def test_a_changed_binding_makes_the_old_capability_401_and_drops_it(env):
+    cap = mint(env)
+    assert rpc(env, cap, "ping")[0] == 200
+    env.bindings = {"w1": 2}  # rebound
+    assert rpc(env, cap, "ping")[0] == 401
+    env.bindings = {"w1": 1}  # even a return to the old number does not bring it back
+    assert rpc(env, cap, "ping")[0] == 401 and env.proxy._caps == {}  # noqa: SLF001
+
+
+def test_an_unbound_workspace_or_a_failing_binding_lookup_is_401(env):
+    for value in (None, RuntimeError("boom")):
+        cap = mint(env)
+        env.proxy._binding = lambda ws, v=value: (_ for _ in ()).throw(v) if isinstance(v, Exception) else v  # noqa: SLF001
+        assert rpc(env, cap, "ping")[0] == 401
+        env.proxy._binding = lambda ws: 1  # noqa: SLF001

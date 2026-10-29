@@ -993,6 +993,12 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
     save = lambda s: _save_state(service, s)  # noqa: E731
     model, state = plan["model"], plan["state"]
     _quiesce_logsync(service, plan)
+    if plan["op"] == "hub.unbind" or (plan["op"] == "hub.connect" and plan.get("kind") != "seal"):
+        # a binding is about to change (connect/rebind, unbind, leave): capabilities of the old one go first, before
+        # any state is written. The proxy also checks the live binding on every request, so this is the early half.
+        from . import orgmcp
+
+        orgmcp.revoke_workspace(service, service.workspace_id)
     try:
         if plan["op"] == "hub.connect":
             aliases = [{"person_id": p, "user_id": u} for p, u in sorted(model.get("aliases", {}).items())]

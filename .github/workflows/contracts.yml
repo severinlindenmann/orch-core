@@ -42,7 +42,7 @@ jobs:
             # producer of vectors_hub*.json (test_vectors, test_hub_policy_vectors); consumer of core's F1 vectors and origin_http
             tests: >-
               tests/test_vectors.py tests/test_hub_policy_vectors.py tests/test_origin_http_vectors.py tests/test_core_crosscheck.py
-              tests/test_question_spec.py tests/test_webapi_core.py tests/test_org_secrets_vectors.py
+              tests/test_question_spec.py tests/test_webapi_core.py tests/test_org_secrets_vectors.py tests/test_org_secrets_bundle_vectors.py
           - package: relay
             tests: tests/test_origin_http_vectors.py tests/test_proto.py tests/test_push_vectors.py tests/test_hub_accounts_vectors.py
           - package: publish

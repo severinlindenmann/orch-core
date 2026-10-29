@@ -312,12 +312,20 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         ):
             c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
 
+    def drop_secrets() -> None:
+        # a workspace that left (or is joining afresh) keeps no share and no wrap: one transaction in the store
+        if c.access is not None and (kind == "hub.unbound" or held is None or held.get("status") != "bound"):
+            from ..access.orgsecrets import org_secrets
+
+            org_secrets(c.access).drop_workspace(c.workspace_id)
+
     steps: list[tuple[str, Callable[[], None]]] = [
         ("wk_seal retire", locked(lambda: _sync_wk_seals(c, state))),
         ("share sync", locked(lambda: _sync_shares(c, state))),
         ("view drop", locked(lambda: _drop_view(c, state))),
         ("downstream binding", lambda: c.downstream.binding(c.workspace_id, obj)),
         ("spaces on_unbind", leave_spaces),
+        ("org secrets drop", drop_secrets),
     ]
     for name, step in steps:
         try:
@@ -359,6 +367,35 @@ def mcp_servers_get(c: OpContext) -> dict[str, Any]:
     if fn is None:
         raise Refused("unavailable")
     return {"bundle": fn(c.workspace_id, mode)}
+
+
+def org_secrets_get(c: OpContext) -> dict[str, Any]:
+    """M3 (#1431): the signed bundle of sealed company secrets of the LINK's workspace (never a caller-named one). The hub
+    cannot open the wraps; the host asks for them only in tier B (host side)."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        mode = c.registry.mode(c.workspace_id)
+    fn = getattr(c.snapshots, "org_secrets", None)
+    if fn is None:
+        raise Refused("unavailable")
+    return {"bundle": fn(c.workspace_id, mode)}
+
+
+def secret_use(c: OpContext) -> dict[str, Any]:
+    """M3 (#1433): counts only. How often a secret was used on one UTC day, for the admin's "used N times this week". Bounded,
+    rate limited per workspace, only for a secret shared with the link's workspace; display data, never an authority."""
+    if c.access is None:
+        raise Refused("unavailable")
+    _require_pin(c)
+    _require_bound(c)
+    from ..access.orgsecrets import org_secrets
+
+    try:
+        org_secrets(c.access).record_use(c.workspace_id, c.body["secret_id"], c.body["day"], c.body["n"], c.now_ms)
+    except AccessError:
+        raise Refused("malformed") from None
+    return {}
 
 
 def publish_out(c: OpContext) -> dict[str, Any]:
@@ -645,6 +682,8 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "status_put": status_put,
     "org_skills_get": org_skills_get,
     "mcp_servers_get": mcp_servers_get,
+    "org_secrets_get": org_secrets_get,
+    "secret_use": secret_use,
     "profile_put": profile_put,
     "directory_get": directory_get,
 }

@@ -79,6 +79,13 @@ export function PersonChip({ id, viewer, role }: { id: string; viewer: Viewer; r
 
 // One formatter for the whole dashboard (src/lib/time.ts); these names stay for the ticket page's callers.
 export { fmtDateTime as fmtTime, fmtDay, fmtClock, fmtExact, fmtWhen as ago } from '@/lib/time'
+import { fmtWhen } from '@/lib/time'
+import { useNow } from '@/lib/useNow'
+
+/** "just now", "3 min ago": counts up on its own (one shared 30 s clock), no reload needed. */
+export function Ago({ at }: { at: string }) {
+  return <>{fmtWhen(at, useNow())}</>
+}
 
 /** Viewport at least `min` px wide (the ticket rail sits next to the content from 1280 px; below it is a sheet). */
 /** Room for the wide layout? Reads the page's layout width (the window minus a right-hand terminal dock). */

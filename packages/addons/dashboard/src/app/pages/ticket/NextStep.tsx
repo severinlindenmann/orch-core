@@ -6,6 +6,8 @@ import { trustedPress } from '@/components/sign/trustedPress'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { openDockOn } from '@/app/terminal/dock/request'
+import { useNow } from '@/lib/useNow'
+import { activityLine } from './activity'
 import { agentWorking, type ProgressRun } from './progress'
 import { availableActions, gapOf, GATE_LABEL, policyText } from './actions'
 import { fmtDay, fmtExact, type HumanAction, type Jump, Mono, presenceLabel, type Viewer } from './shared'
@@ -194,6 +196,7 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
   const av = availableActions(ticket, viewer)
   const status = ticket.status as string
   const working = agentWorking(ticket, wait)
+  const now = useNow()
   const gate = APPROVE_ORDER.find((g) => av.approve.includes(g))
   if (gate) {
     const c = APPROVE[gate]
@@ -274,7 +277,7 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
     return (
       <p data-testid="next-step" className="flex items-center gap-2 px-1 text-[13px] text-text-muted">
         <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-        Agent is working on it
+        <span data-testid="activity-line">{activityLine(ticket, stepStates(ticket), run, now) ?? 'Agent is working on it'}</span>
       </p>
     )
   }

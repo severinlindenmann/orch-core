@@ -1108,3 +1108,18 @@ def test_upstream_posts_run_in_the_proxys_own_bounded_pool(env):
     pool = env.proxy._pool
     asyncio.run(env.proxy.close())
     assert pool._shutdown
+
+
+# -- review fix 6: the 24 h cap also runs on the wall clock ----------------------------------------------------------
+
+
+def test_capability_expires_on_the_wall_clock_even_if_the_monotonic_one_stood_still(env):
+    wall = {"now": 5_000_000.0}
+    env.proxy._wall = lambda: wall["now"]
+    cap = mint(env)
+    assert rpc(env, cap, "ping")[0] == 200
+    wall["now"] += mcpproxy.CAPABILITY_TTL - 1
+    assert rpc(env, cap, "ping")[0] == 200
+    wall["now"] += 2  # the laptop slept: monotonic did not move
+    assert rpc(env, cap, "ping")[0] == 401
+    assert not env.proxy._caps

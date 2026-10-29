@@ -97,7 +97,14 @@ class _Cap:
     """One capability record (held under its hash only)."""
 
     def __init__(
-        self, key: str, ws: str, binding_seq: int, run: str, servers: dict[str, str], expires_at: float
+        self,
+        key: str,
+        ws: str,
+        binding_seq: int,
+        run: str,
+        servers: dict[str, str],
+        expires_at: float,
+        wall_expires_at: float,
     ) -> None:
         self.key = key
         self.ws = ws
@@ -105,6 +112,7 @@ class _Cap:
         self.run = run
         self.servers = servers
         self.expires_at = expires_at
+        self.wall_expires_at = wall_expires_at  # the monotonic clock stops in sleep; the wall clock does not
         self.upstreams: dict[str, tuple[Any, str | None]] = {}
         self.pins: dict[str, dict[str, str]] = {}  # server -> latest {tool: pin} (present once listed)
         self.schemas: dict[str, dict[str, Any]] = {}  # server -> {tool: pinned inputSchema}, same moment as pins
@@ -199,6 +207,7 @@ class Proxy:
         binding: Callable[[str], int | None],
         on_seen: Callable[[str, str, str, list[dict]], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        wall: Callable[[], float] = time.time,
     ) -> None:
         self._upstream = upstream
         self._served = served
@@ -209,6 +218,7 @@ class Proxy:
         self._epoch: dict[str, int] = {}  # per workspace; revoke_workspace bumps it
         self._on_seen = on_seen
         self._clock = clock
+        self._wall = wall
         self.port: int | None = None
         self._server: asyncio.base_events.Server | None = None
         self._lock = threading.RLock()
@@ -256,7 +266,9 @@ class Proxy:
             if not self._binding_is(ws, binding_seq):
                 raise ValueError("not bound")
             key = self._hash(cap)
-            self._caps[key] = _Cap(key, ws, binding_seq, run, names, self._clock() + CAPABILITY_TTL)
+            self._caps[key] = _Cap(
+                key, ws, binding_seq, run, names, self._clock() + CAPABILITY_TTL, self._wall() + CAPABILITY_TTL
+            )
         return cap
 
     def _drop(self, key: str) -> None:
@@ -310,7 +322,7 @@ class Proxy:
             cap = self._caps.get(key)
             if cap is None or not hmac.compare_digest(cap.key, key):
                 raise _Refuse(401, "unauthorized")
-            if self._clock() >= cap.expires_at:
+            if self._clock() >= cap.expires_at or self._wall() >= cap.wall_expires_at:
                 self._drop(key)
                 raise _Refuse(401, "unauthorized")
             return key, cap

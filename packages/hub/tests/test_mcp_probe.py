@@ -279,3 +279,26 @@ def test_the_admin_api_lists_status_and_checks_admin_only(tmp_path):
         assert mcp_probes(w.api.d.access).status("crm")["status"] == "not_checked"
     finally:
         w.close()
+
+
+def test_dns_lookups_are_capped_so_stuck_resolvers_cannot_pile_up(monkeypatch):
+    import orch_hub.access.mcpprobe as M
+
+    monkeypatch.setattr(M, "TIMEOUT_S", 0.05)
+    gate = threading.Event()
+    started = []
+
+    def stuck(h, p):
+        started.append(1)
+        gate.wait(5)
+        return [PUB]
+
+    try:
+        res = [probe(URL, _resolve=stuck, _connect=None) for _ in range(9)]  # type: ignore[arg-type]
+        assert [r["detail"] for r in res[:8]] == ["timeout"] * 8
+        assert res[8]["status"] == "failing" and res[8]["detail"] == "busy"
+        assert len(started) == 8
+    finally:
+        gate.set()
+        time.sleep(0.1)
+    assert probe(URL, _resolve=lambda h, p: [PUB], _connect=lambda *a: FakeConn(http(200), []))["status"] == "reachable"

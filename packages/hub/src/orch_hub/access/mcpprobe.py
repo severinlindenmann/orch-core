@@ -61,6 +61,16 @@ class _Fail(Exception):
         self.detail = detail
 
 
+_lookups = threading.BoundedSemaphore(8)  # running DNS lookups, hub-wide: a lookup cannot be interrupted
+
+
+def _counted(fn: Callable[[], None]) -> None:
+    try:
+        fn()
+    finally:
+        _lookups.release()
+
+
 def _resolve(host: str, port: int) -> list[str]:
     infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     return sorted({str(i[4][0]) for i in infos})
@@ -153,7 +163,9 @@ def _run(url: str, resolve: Callable, connect: Callable) -> tuple[str, str]:
         except BaseException as e:  # noqa: BLE001
             box["err"] = e
 
-    t = threading.Thread(target=look, daemon=True)
+    if not _lookups.acquire(blocking=False):
+        raise _Fail("busy")  # too many lookups are stuck already; do not start another thread
+    t = threading.Thread(target=_counted, args=(look,), daemon=True)
     t.start()
     t.join(TIMEOUT_S)
     if t.is_alive():

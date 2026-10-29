@@ -139,7 +139,7 @@ describe('a hub step by click', () => {
     mount()
     await input()
     expect(screen.getByText('demo-hub-id').closest('details')).not.toHaveAttribute('open')
-    expect(screen.getByText('What you sign')).toBeTruthy()
+    expect(screen.getByText('What this changes')).toBeTruthy()
   })
 
   it('a failed leave has a plain error, closed details, Cancel and a working retry', async () => {

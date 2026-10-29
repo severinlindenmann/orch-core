@@ -137,15 +137,20 @@ export function ReposSection({ workspace, data, onSettled }: { workspace: Worksp
                       <Mono><Raw>{r.name}</Raw></Mono>
                       {r.check && (
                         <span data-testid={`repo-check-${r.name}`} className={TONE[r.check.state] ?? 'text-text-muted'}>
-                          {repoCheckWords(r.check)}
+                          {r.check.state === 'present' ? 'Ready' : repoCheckWords(r.check)}
                         </span>
                       )}
                     </div>
-                    {r.path && <div className="break-all text-text-muted"><Raw>{r.path}</Raw></div>}
-                    <div className="flex flex-wrap gap-x-3 text-text-faint">
-                      <span>{r.default_branch === null ? 'no main branch set' : <>main branch <Raw>{r.default_branch}</Raw></>}</span>
-                      {r.remote && <span className="min-w-0 break-all"><Raw>{r.remote}</Raw></span>}
-                    </div>
+                    {/* r11-P15: the main row is the name and a status word; folder, branch and remote one click away */}
+                    <details data-testid={`repo-details-${r.name}`} className="text-[12px] text-text-muted">
+                      <summary className="cursor-pointer">Details</summary>
+                      {r.path && <div className="break-all"><Raw>{r.path}</Raw></div>}
+                      {r.check?.state === 'present' && <div>{repoCheckWords(r.check)}</div>}
+                      <div className="flex flex-wrap gap-x-3 text-text-faint">
+                        <span>{r.default_branch === null ? 'No main branch set' : <>Main branch <Raw>{r.default_branch}</Raw></>}</span>
+                        {r.remote && <span className="min-w-0 break-all"><Raw>{r.remote}</Raw></span>}
+                      </div>
+                    </details>
                   </div>
                   {mayEdit && (
                     <div className="flex gap-1">

@@ -1339,7 +1339,9 @@ export function Setup({ api }: { api: SetupAPI }) {
             </p>
             )
           )}
-          <p><small>Your Mac may say 'Background Items Added' for orch. That's expected. Leave it on.</small></p>
+          {state?.os === 'darwin' && (
+            <p><small>Your Mac may say 'Background Items Added' for orch. That's expected. Leave it on.</small></p>
+          )}
           <ol className="progress">
             {groupProgress(progress?.steps ?? []).map((s) => (
               <li key={s.id}>

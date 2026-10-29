@@ -168,3 +168,15 @@ def test_the_sign_line_names_a_passphrase_only_when_one_was_chosen():
     assert "passphrase" not in sign_line("7", True)
     assert "7 item(s) you read on the setup page." in sign_line("7", True)
     assert sign_line("7", False).rstrip().endswith("with one passphrase.")
+
+
+def test_the_state_names_the_os_of_the_machine_running_setup(tmp):
+    from orch.setup.flow import SetupFlow
+    from orch.setup.osfacts import _platform
+
+    from .conftest import make_env
+
+    f = SetupFlow(make_env(tmp))
+    f.launch(str(tmp.work))
+    st = f.dispatch("GET", "state", {}, None)[1]
+    assert st["os"] == _platform() and st["os"] in ("linux", "darwin", "windows")

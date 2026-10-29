@@ -96,6 +96,7 @@ function fake(
     complete?: boolean
     defaults?: boolean
     suggested?: Record<string, unknown>
+    os?: string
   } = {},
 ) {
   const calls: { path: string; body: unknown }[] = []
@@ -111,6 +112,7 @@ function fake(
         ...(options.clickOff !== undefined ? { click_available: false, click_reason: options.clickOff } : {}),
         ...(options.relayUnavailable ? { relay: { available: false, enabled: false } } : {}),
         ...(options.noGit ? { git: { repo: false } } : {}),
+        ...(options.os ? { os: options.os } : {}),
         mode: options.finish ? 'finish' : 'new',
         missing: options.finish && !options.complete ? ['addon:worktrees', 'runner_grant'] : [],
         ...(options.complete ? { complete: true } : {}),
@@ -1196,4 +1198,19 @@ test('the recovery page uses one name, recovery words, and names no terminal com
   const text = document.body.textContent ?? ''
   expect(text).not.toMatch(/secret words|recovery code/i)
   expect(screen.getByText(/these words will no longer work/)).not.toHaveTextContent('orch setup')
+})
+
+test.each([
+  ['darwin', true],
+  ['linux', false],
+  [undefined, false],
+])('the Background Items note shows only on a Mac (os %s)', async (os, shown) => {
+  const f = fake({ done: true, os })
+  render(<Setup api={f.api} />)
+  await reveal()
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+  expect(Boolean(screen.queryByText(/Background Items Added/))).toBe(shown)
 })

@@ -143,6 +143,12 @@ TABLE: dict[tuple[str, str], tuple[str, str]] = {
     (POST, W + "/hub/share/rule-remove"): (ALLOWED, "turning off: owner, plain click, no signature, full session only"),
     (POST, W + "/hub/share/rule-add"): (REFUSED, "sharing more is decided on this computer"),
     (POST, W + "/hub/share/sync"): (REFUSED, "sharing more is decided on this computer"),
+    (GET, W + "/org"): (ALLOWED, "company offers: names and status"),
+    (GET, W + "/org/item"): (ALLOWED, "a read; the host answers the owner only"),
+    (POST, W + "/org/accept"): (REFUSED, "turning a company item on is decided on this computer"),
+    (POST, W + "/org/decline"): (ALLOWED, "turning off: owner, plain click, full session only"),
+    (POST, W + "/org/sync"): (ALLOWED, "fetches the offers; grants nothing"),
+    (POST, W + "/org/tool"): (ALLOWED, "owner, plain click; turning ON is refused unless the session is local"),
     (POST, W + "/hub/link"): (ALLOWED, "reads the link's hub card; nothing is signed or kept"),
     (POST, W + "/hub/connect"): (STEP_UP, "the second half of a hub join"),
     # --- the passkey step-up ceremony and the passkey store (R1-6)

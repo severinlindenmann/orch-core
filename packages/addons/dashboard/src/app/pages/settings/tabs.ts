@@ -9,6 +9,7 @@ export const TABS = [
   { id: 'skills', label: 'Skills' },
   { id: 'connections', label: 'Connections' },
   { id: 'hub', label: 'Hub' },
+  { id: 'company', label: 'Company' },
 ] as const
 
 /** The reduced settings of a real host (M4, #306): the rest of the mockup's tabs have no host operation behind them yet. */
@@ -23,6 +24,8 @@ export const HOST_TABS = [
   { id: 'devices', label: 'Devices' },
   /** Only while a hub is connected. */
   { id: 'hub', label: 'Hub', feature: 'hub' },
+  /** Company skills and tools the hub offers: the same condition as the Hub tab. */
+  { id: 'company', label: 'Company', feature: 'hub' },
 ] as const
 
 /** The tabs this build shows: the mockup's, or the reduced ones on a real host. */

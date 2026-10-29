@@ -1161,7 +1161,7 @@ def _send_status(service: Any, state: Any, hub_link: Any) -> None:
         "version": orch.__version__,
         "commit": "",
         "host": socket.gethostname()[:80] if state.mode == "full" else "",  # selective keeps its host name private
-        "name": _workspace_name(service) if state.mode == "full" else "",  # and its workspace name
+        "name": _workspace_name(service),  # the workspace name is display-only and owner-chosen: sent in every mode
     }
     sent = service.__dict__.setdefault("_hub_status_sent", {})
     if type(sent) is not dict:

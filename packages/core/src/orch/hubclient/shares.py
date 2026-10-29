@@ -186,7 +186,7 @@ class TicketFact:
     #: ``(seq, head)`` of the ticket's log, read in the same locked snapshot as the fields above (C6r3-2): the chain
     #: claim of an item then always describes the content it carries. ``None``: not known (the builder refuses).
     chain: tuple[int, str] | None = None
-    description: str = ""  # the ticket's Summary and Context text (shared only when the rule says so)
+    description: str = ""  # the ticket's Summary, Context and Requirements text (shared only when the rule says so)
 
 
 @dataclass(frozen=True)

@@ -70,7 +70,7 @@ def test_sequence_view_marks_last_grant_and_launch(human, tmp_path):
     assert got["confirm"] == {"kind": "click", "mode": "press"}
     assert got["headline"] == "Create ticket and start agent"
     assert DEPOSIT_RISK in got["risk_lines"]
-    assert "Agents can run as you for 8 hours" in got["risk_lines"]
+    assert got["risk_lines"] == [DEPOSIT_RISK]  # r7-P10: one warning
     assert any("Then: the agent starts on the new ticket." in line for line in got["lines"])
     assert sequence.steps(rig.intent)[-1]["op"] == "grant"
 
@@ -222,7 +222,7 @@ def test_daily_op_cannot_hide_grant_in_risk_table():
     assert "grant" not in ONE_PRESS_OPS
     for op in ONE_PRESS_OPS:
         lines = risk_lines(op, [{"type": "grant.issued", "hours": 8}], deposit=True)
-        assert "Agents can run as you for 8 hours" in lines
+        assert lines == [DEPOSIT_RISK]
 
 
 @pytest.mark.parametrize("at_sign", [False, True])

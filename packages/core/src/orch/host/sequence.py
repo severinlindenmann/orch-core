@@ -242,10 +242,10 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     from orch.schema import SECTIONS_BY_TYPE
 
     base = {"v", "kind", "ticket", "ticket_type", "head", "sections"}
-    if not base <= set(intent) <= base | {"acceptance", "tasks", "people", "links", "images"}:
+    if not base <= set(intent) <= base | {"title", "acceptance", "tasks", "people", "links", "images"}:
         raise SequenceInvalid(
-            "an edit has exactly v, kind, ticket, ticket_type, head, sections, acceptance, tasks, links, images "
-            "and people"
+            "an edit has exactly v, kind, ticket, ticket_type, head, sections, title, acceptance, tasks, links, "
+            "images and people"
         )
     if intent["v"] != VERSION:
         raise SequenceInvalid("this signer does not know that sequence")
@@ -292,6 +292,8 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
         "head": head,
         "sections": out_sections,
     }
+    if "title" in intent:
+        out["title"] = _edit_title(intent["title"])
     if "acceptance" in intent:
         out["acceptance"] = _edit_acceptance(intent["acceptance"])
     if "tasks" in intent:
@@ -307,6 +309,24 @@ def _validate_edit(intent: Mapping[str, Any]) -> dict[str, Any]:
     if not steps(out):
         raise SequenceInvalid("nothing changes")
     return out
+
+
+def _edit_title(value: Any) -> dict[str, str]:
+    """A new title for the ticket: the title the person reviewed (``was``, bound by the event's base_rev) and the new
+    one, both one line of 1 to 200 characters, and different."""
+    if not isinstance(value, Mapping) or set(value) != {"was", "text"}:
+        raise SequenceInvalid("title is {was, text}")
+    was, text = value["was"], value["text"]
+    from orch.canon.text import TextError, check_plain
+
+    try:  # one line, no TAB, no surrounding space, no invisible character: two titles never look alike
+        check_plain(text, one_line=True, limit=200, what="the title")
+        _one_line(was, "the current title", 200)  # the host's word; may predate these rules, so only the basics
+    except TextError as exc:
+        raise SequenceInvalid(str(exc)) from None
+    if text == was:
+        raise SequenceInvalid("the title is the one it replaces")
+    return {"was": was, "text": text}
 
 
 def _edit_acceptance(value: Any) -> dict[str, Any]:
@@ -697,7 +717,9 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
 
             out.append(seqquick.grant_step(intent["agent"]))
         return out
-    # EDIT: pasted screenshots, sections, acceptance, tasks, links, then people (owner last)
+    # EDIT: the title, pasted screenshots, sections, acceptance, tasks, links, then people (owner last)
+    if "title" in intent:
+        out.append({"op": "set", "args": {"pairs": [f"title={intent['title']['text']}"]}, "kind": "title", "ref": True})
     out.extend(_image_steps(intent))
     for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
         out.append(
@@ -822,6 +844,12 @@ def expected_payload(intent: Mapping[str, Any], k: int, person: str) -> dict[str
             "label": img["alt"],
             "sha256": img["sha256"],
             "bytes": img["bytes"],
+        }
+    if step["kind"] == "title":
+        return {
+            "type": "ticket.updated",
+            "base_rev": {"ticket.title": canon.value_hash(intent["title"]["was"])},
+            "set": {"ticket.title": intent["title"]["text"]},
         }
     if step["kind"] == "links":
         return {
@@ -1200,9 +1228,13 @@ def expand(prepared: Mapping[str, Any]) -> dict[str, Any]:
                 new_material[key] = copy.deepcopy(material[key])
     if intent["kind"] == ADDON and material.get("before"):
         new_material["before"] = copy.deepcopy(material["before"])  # the host's current settings (unsigned, labelled)
-    if intent["kind"] == EDIT and "links" in intent:
-        # the links the person reviewed: bound by the base_rev of the links event (the hash of exactly this value)
-        new_material["before"] = {"ticket.links": copy.deepcopy(intent["links"]["was"])}
+    if intent["kind"] == EDIT and ("links" in intent or "title" in intent):
+        # what the person reviewed: bound by the base_rev of that event (the hash of exactly this value)
+        new_material["before"] = {}
+        if "title" in intent:
+            new_material["before"]["ticket.title"] = intent["title"]["was"]
+        if "links" in intent:
+            new_material["before"]["ticket.links"] = copy.deepcopy(intent["links"]["was"])
     from orch.host import review
 
     new_material["review"] = [review.of(e, new_material) for e in events]
@@ -1252,8 +1284,12 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         content.setdefault("notes", []).extend(extra_lines(intent))
     elif intent["kind"] == EDIT:
         content["headline"] = f"Edit {key}"
-        content["subline"] = "its text, acceptance checks, tasks, repositories and people, as shown below"
+        content["subline"] = "its title, text, acceptance checks, tasks, repositories and people, as shown below"
         notes = content.setdefault("notes", [])
+        if "title" in intent:
+            notes.append(
+                f"Title: {signcontent.one(intent['title']['was'])} -> {signcontent.one(intent['title']['text'])}"
+            )
         if intent["sections"]:
             names = ", ".join(signcontent.one(sid.replace("_", " ").capitalize()) for sid in intent["sections"])
             notes.append(f"Replaces the whole current text of: {names}.")
@@ -1302,11 +1338,7 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
             f"Adds {len(intent['images'])} screenshot{'s' if len(intent['images']) != 1 else ''}. "
             "The dashboard shows each one from the file you pasted and checks its digest against the one signed."
         )
-    content.setdefault("notes", []).append(
-        f"One confirmation signs all {n} steps. If the ticket changes meanwhile, "
-        "signing stops and what is already signed stays."
-    )
-    return content
+    return content  # "One confirmation signs all N steps ..." is in the technical details (r7-P10)
 
 
 def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -> dict[str, Any]:
@@ -1323,11 +1355,16 @@ def _addon_content(content: dict[str, Any], intent: Mapping[str, Any], n: int) -
         "Settings are signed first, then the add-on is turned on. If signing stops in between, "
         "the settings stay and the add-on stays off."
     )
-    notes.append(
-        f"One confirmation signs all {n} steps. If the workspace changes meanwhile, "
+    return content  # "One confirmation signs all N steps ..." is in the technical details (r7-P10)
+
+
+def steps_line(intent: Mapping[str, Any], n: int) -> str:
+    """What one confirmation does for a sequence (technical details, r7-P10)."""
+    what = "workspace" if intent["kind"] == ADDON else "ticket"
+    return (
+        f"One confirmation signs all {n} steps. If the {what} changes meanwhile, "
         "signing stops and what is already signed stays."
     )
-    return content
 
 
 def technical_lines(intent: Mapping[str, Any]) -> list[str]:
@@ -1342,7 +1379,7 @@ def technical_lines(intent: Mapping[str, Any]) -> list[str]:
     ]
 
 
-def extra_lines(intent: Mapping[str, Any]) -> list[str]:
+def extra_lines(intent: Mapping[str, Any], *, full: bool = False) -> list[str]:
     """The steps that are not events of the plain review, in words (the plain view and the full review show them):
     the two gate approvals, which bind the content shown, and the grant, honestly about its reach (Opus change 5).
     A new ticket with an agent part: the grant sentence, and that the start itself is NOT signed (U4, I5)."""
@@ -1351,15 +1388,20 @@ def extra_lines(intent: Mapping[str, Any]) -> list[str]:
     if intent["kind"] == KIND:
         if "launch" in intent:
             launch = intent["launch"]
+            grant = seqquick.grant_line if full else seqquick.grant_note
             return [
-                *([seqquick.grant_line(intent["agent"])] if "agent" in intent else []),
-                f"Agent: {launch['harness']}; mode: {launch['mode']}; model: {launch.get('model', 'default')}.",
+                *([grant(intent["agent"])] if "agent" in intent else []),
+                *(
+                    [f"Agent: {launch['harness']}; mode: {launch['mode']}; model: {launch.get('model', 'default')}."]
+                    if full
+                    else []
+                ),
                 "Then: the agent starts on the new ticket.",
             ]
         if "agent" not in intent:
             return []
         return [
-            seqquick.grant_line(intent["agent"]),
+            (seqquick.grant_line if full else seqquick.grant_note)(intent["agent"]),
             "Not signed: the agent start. After the ticket exists, the dashboard may start an agent that uses this "
             "access; that start is not part of this confirmation. Nothing here approves the requirements or the plan.",
         ]
@@ -1370,7 +1412,7 @@ def extra_lines(intent: Mapping[str, Any]) -> list[str]:
         "The task still ends with your own verdict: nothing closes it for you.",
     ]
     if intent["agent"] is not None:
-        out.append(seqquick.grant_line(intent["agent"]))
+        out.append((seqquick.grant_line if full else seqquick.grant_note)(intent["agent"]))
     return out
 
 
@@ -1456,6 +1498,8 @@ def intent_lines(intent: Mapping[str, Any], clean: Callable[[Any], str]) -> list
         return lines
     if intent["kind"] == EDIT:
         lines = [f"edit: {clean(one(intent['ticket']['key']))}", f"type: {clean(intent['ticket_type'])}"]
+        if "title" in intent:
+            lines.append(f"title: {clean(one(intent['title']['was']))} -> {clean(one(intent['title']['text']))}")
         for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
             lines.append(f"section {clean(sid)} (replaces the current text):")
             lines += ["| " + clean(line) for line in intent["sections"][sid]["text"].split("\n")]

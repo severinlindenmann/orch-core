@@ -38,14 +38,14 @@ test("qrSvg builds an svg with createElementNS only", () => {
 });
 
 test("the panel shows the QR first and the key behind Can't scan", () => {
-  const out = totpPanel(URI, "JBSWY3DPEHPK3PXP", { userId: "ab".repeat(16) });
+  const out = totpPanel(URI, "JBSWY3DPEHPK3PXP");
   const all = out.all();
   assert.ok(all.some((n) => n.tag === "svg"));
   const details = all.find((n) => n.tag === "details");
   assert.equal(details.getAttribute("open"), null, "the key is folded while a QR is shown");
   assert.match(details.textContent, /Can't scan\? Show the key/);
   assert.equal(all.find((n) => n.attrs.id === "new-totp").textContent, "JBSWY3DPEHPK3PXP");
-  assert.ok(details.all().some((n) => n.attrs.id === "new-user-id"), "the user id stays reachable, folded");
+  assert.ok(!out.textContent.match(/user id/i), "no user id: the name signs in");
   assert.ok(!out.textContent.includes("Write these down"));
 });
 

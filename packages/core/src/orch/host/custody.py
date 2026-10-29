@@ -18,6 +18,7 @@ from typing import Any
 
 from orch.layout import STORE_DIR
 from orch.market import ADDONS
+from orch.privdir import others_can_write
 from orch.store.fsio import write_atomic
 
 from ._unix import UnsafePath, check_acl
@@ -69,7 +70,7 @@ def _check_component(fd: int, path: Path, host_uid: int, *, last: bool) -> bool:
     if info.st_uid not in {0, host_uid}:
         raise unsafe(f"{path}: owner {info.st_uid}, expected root or {host_uid}")
     sticky = info.st_uid == 0 and bool(mode & stat.S_ISVTX)
-    if mode & 0o022 and (last or not sticky):
+    if others_can_write(info, host_uid) and (last or not sticky):
         raise unsafe(f"{path}: writable by another principal")
     try:
         check_acl(fd, {0, host_uid})
@@ -129,7 +130,7 @@ def ensure_private_dir(path: Path, host_uid: int, *, create: bool = True) -> Pat
         raise unsafe(f"{path}: not a directory")
     if info.st_uid != host_uid:
         raise unsafe(f"{path}: owner {info.st_uid}, expected {host_uid}")
-    if stat.S_IMODE(info.st_mode) & 0o022:
+    if others_can_write(info, host_uid):
         raise unsafe(f"{path}: writable by another principal")
     if stat.S_IMODE(info.st_mode) != 0o700:
         fd = os.open(path, _FLAGS)
@@ -247,13 +248,13 @@ def check_workspace_files(state_dir: Path, workspace_id: str, root: Path, host_u
     if _lstat_owned(hosts, host_uid) is not None:
         for name in os.listdir(hosts):
             item = _lstat_owned(hosts / name, host_uid)
-            if item is not None and stat.S_IMODE(item.st_mode) & 0o022:
+            if item is not None and others_can_write(item, host_uid):
                 raise unsafe(f"{hosts / name}: writable by another principal")
     base = Path(root) / STORE_DIR
     item = _lstat_owned(base, host_uid)
     if item is None:
         raise unsafe(f"{base}: the store directory is missing")
-    if not stat.S_ISDIR(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o022:
+    if not stat.S_ISDIR(item.st_mode) or others_can_write(item, host_uid):
         raise unsafe(f"{base}: writable by another principal")
     try:  # the ACL (macOS) and the owner, on the opened directory itself, as for every component of the root path
         dfd = os.open(base, _FLAGS)
@@ -267,5 +268,5 @@ def check_workspace_files(state_dir: Path, workspace_id: str, root: Path, host_u
         os.close(dfd)
     for name in ("events", "tickets", ".state"):
         item = _lstat_owned(base / name, host_uid)
-        if item is not None and (not stat.S_ISDIR(item.st_mode) or stat.S_IMODE(item.st_mode) & 0o022):
+        if item is not None and (not stat.S_ISDIR(item.st_mode) or others_can_write(item, host_uid)):
             raise unsafe(f"{base / name}: writable by another principal")

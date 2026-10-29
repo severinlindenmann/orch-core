@@ -75,7 +75,36 @@ describe('buildEdit: what the person changed, as one typed action', () => {
   })
 })
 
+describe('buildEdit: the title (r7-P07)', () => {
+  const titled = { ...ticket, title: 'Invoice export' }
+  it('is nothing when the title is as it was, one extra step when it changed', () => {
+    expect(buildEdit(titled, { ...none, title: ' Invoice export ' }, true)).toEqual({ nothing: true })
+    expect(buildEdit(titled, { ...none, title: 'Invoice export for Ben' }, true)).toEqual({
+      steps: 1,
+      action: { action: 'edit_sequence', key: 'DEMO-0001', head_seq: 7, title: 'Invoice export for Ben' },
+    })
+    expect(buildEdit(titled, { ...none, title: 'New', sections: { summary: 'New summary' } }, true)).toMatchObject({ steps: 2, action: { title: 'New' } })
+  })
+  it('refuses an empty, multi-line or overlong title in words', () => {
+    expect(buildEdit(titled, { ...none, title: '  ' }, true)).toHaveProperty('problem')
+    expect(buildEdit(titled, { ...none, title: 'a\nb' }, true)).toHaveProperty('problem')
+    expect(buildEdit(titled, { ...none, title: 'x'.repeat(201) }, true)).toHaveProperty('problem')
+  })
+})
+
 describe('the ticket page edit', () => {
+  it('opens the edit window from the heading, with the title selected, and signs a new title once', async () => {
+    const { user } = renderApp('/ticket/DEMO-0043')
+    await user.click(await screen.findByRole('button', { name: /^Change the title: Load tariff tables/ }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Edit DEMO-0043' }, T)
+    const field = within(dialog).getByLabelText('Title')
+    await waitFor(() => expect(field).toHaveFocus(), T)
+    await user.type(field, ' v2')
+    await user.click(within(dialog).getByRole('button', { name: /^Review and sign \(1 change\)$/ }))
+    const sent = JSON.parse((await screen.findByTestId('sent-action')).textContent ?? '{}')
+    expect(sent).toMatchObject({ action: 'edit_sequence', key: 'DEMO-0043' })
+    expect(sent.title).toMatch(/ v2$/)
+  })
   it('edits text, a criterion and the people, then asks for ONE signature', async () => {
     const { user } = renderApp('/ticket/DEMO-0043')
     await screen.findByRole('heading', { level: 1, name: /Load tariff tables/ }, T)

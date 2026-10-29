@@ -295,7 +295,7 @@ const START_EVENT = 'orch:start-agent'
 function useTicketAgent(ticket: TicketDocument, home: string | undefined) {
   const runs = useQuery({ ...runQueries.list(home ?? ''), enabled: isRealHost() && !!home })
   const today = useQuery({ ...queries.today(home ?? ''), enabled: isRealHost() && !!home })
-  return { run: newestRun(runs.data as Parameters<typeof newestRun>[0], ticket.key), wait: terminalWaitFor(today.data?.needs_you ?? [], ticket.key) }
+  return { run: newestRun(runs.data?.runs, ticket.key), wait: terminalWaitFor(today.data?.needs_you ?? [], ticket.key) }
 }
 
 /** The stepper and the next-step card, told what the ticket's agent really did (never ran / waiting / ended early). */

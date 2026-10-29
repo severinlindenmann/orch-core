@@ -41,7 +41,7 @@ it('the header wiring: a terminal_wait in Today for the ticket makes the pill re
   doc.gates.requirements = { ...doc.gates.requirements, state: 'pending', approvals: [], missing: ['context'] }
   const viewer = { person: 'nobody', role: 'viewer' as const, members: [], name: (id: string | null | undefined) => String(id), ready: true }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
-  client.setQueryData(['runs', 'w1'], [{ ticket: 'PW-0002', kind: 'agent', state: 'running', started_at: new Date().toISOString() }])
+  client.setQueryData(['runs', 'w1'], { runs: [{ ticket: 'PW-0002', kind: 'agent', state: 'running', started_at: new Date().toISOString() }], runner: null, truncated: false })
   client.setQueryData(['today', 'w1'], { needs_you: items, read_only_open: [], waiting_on_others: { count: 0, people: [] } })
   render(
     <QueryClientProvider client={client}>
@@ -58,7 +58,7 @@ async function stoppedWith(role: 'owner' | 'viewer') {
   doc.gates.requirements = { ...doc.gates.requirements, state: 'pending', approvals: [], missing: ['context'] }
   const viewer = { person: 'nobody', role, members: [], name: (id: string | null | undefined) => String(id), ready: true }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
-  client.setQueryData(['runs', 'w1'], [{ ticket: 'PW-0002', kind: 'agent', state: 'exited', started_at: new Date().toISOString() }])
+  client.setQueryData(['runs', 'w1'], { runs: [{ ticket: 'PW-0002', kind: 'agent', state: 'exited', started_at: new Date().toISOString() }], runner: null, truncated: false })
   client.setQueryData(['today', 'w1'], { needs_you: [], read_only_open: [], waiting_on_others: { count: 0, people: [] } })
   render(
     <QueryClientProvider client={client}>

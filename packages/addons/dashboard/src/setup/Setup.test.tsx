@@ -83,6 +83,7 @@ function fake(
     finish?: boolean
     attempts?: number
     typed?: boolean
+    noTty?: boolean
     waiting?: string
     running?: boolean
     stateError?: boolean
@@ -155,6 +156,7 @@ function fake(
               ],
             }
           : {}),
+        ...(options.noTty ? { tty_confirm: false, fingerprint: null } : {}),
       }
     if (path === 'finish') result = { url: '/', workspace_id: 'ws-new-2' }
     if (path === 'create') result = { run_id: 'demo-run' }
@@ -271,6 +273,25 @@ test('1236: an unknown or empty One click reason gets a generic plain sentence, 
   expect(screen.queryByText(/some_reason/)).not.toBeInTheDocument()
 })
 
+test('P01: One click with a runner grant has no terminal box and no terminal wait; Create runs straight away', async () => {
+  const f = fake({ typed: true, noTty: true, suggested: { method: 'click' } })
+  render(<Setup api={f.api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
+  fireEvent.click(screen.getByLabelText(/Let agents start on this computer now/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  expect(screen.queryByRole('heading', { name: 'Check your terminal after you click' })).toBeNull()
+  expect(screen.queryByText(/type yes/i)).toBeNull()
+  expect(screen.getByRole('button', { name: 'Create workspace' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+  await screen.findByRole('heading', { name: 'Setting up your workspace' })
+  expect(screen.queryByRole('heading', { name: 'Confirm in your terminal' })).toBeNull()
+  expect(f.calls.some((c) => c.path === 'create')).toBe(true)
+})
+
 test('run 8: One click is the default where core suggests it, with the risk sentence before Continue; Terminal stays selectable', async () => {
   const f = fake({ suggested: { method: 'click' } })
   render(<Setup api={f.api} />)
@@ -310,7 +331,7 @@ test('long runner access is one plain click after the review; digest and fingerp
   expect(document.querySelector('.review-summary')).toHaveTextContent('may work for 3 days')
   expect(screen.queryByText(/scope workable/)).toBeNull() // the raw values are only in the technical details
   expect(screen.getByText(/Return to the terminal window where you started orch setup/)).toBeInTheDocument()
-  expect(screen.getByText(/Check the terminal shows/)).toHaveTextContent('demo not real. If it does, type yes there.')
+  expect(screen.getByText(/Check the terminal shows/)).toHaveTextContent('demo not real. If it does, press Enter there.')
   // everything signed stays inspectable, collapsed in one disclosure
   expect(screen.getByText(/^Everything you approve \(/).closest('details')).not.toHaveAttribute('open')
   expect(screen.getByText("this machine's runner, never shown")).toBeInTheDocument()
@@ -318,12 +339,13 @@ test('long runner access is one plain click after the review; digest and fingerp
   expect(screen.queryByLabelText(/Type/)).toBeNull()
   // B11: the terminal asks only after Create; the review says so instead of "confirm in your terminal" now
   expect(screen.getByRole('heading', { name: 'Check your terminal after you click' })).toBeInTheDocument()
+  expect(screen.queryByText(/type yes/i)).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await screen.findByRole('heading', { name: 'Confirm in your terminal' })
   // three large tiles, in order; the browser draws no imitation of the terminal
   expect(within(screen.getByRole('list', { name: 'Your three words' })).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['demo', 'not', 'real'])
   expect(screen.getByText(/Continue in the setup window on this computer/)).toBeInTheDocument()
-  expect(screen.getByText(/type yes in that window and press Enter/)).toBeInTheDocument()
+  expect(screen.getByText(/press Enter in that window/)).toBeInTheDocument()
   expect(screen.getByText('Waiting for you in the setup window…')).toBeInTheDocument()
   expect(screen.getByText('Are the words different?').closest('details')).not.toHaveAttribute('open')
   expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({

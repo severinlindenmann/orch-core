@@ -14,7 +14,7 @@ import { Inline, Raw } from '../components/sign/visible'
 import './setup.css'
 
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
-const terminalStepCopy = "One step needs your terminal: you'll type yes once."
+const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
   'If setup fails before your workspace is created, these secret words and recovery code will no longer work. Run orch setup again to get new ones.'
 const expiredCopy =
@@ -350,8 +350,7 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
   return (
     <section className="confirm-words" role="status" aria-label="Final check">
       <p>
-        <strong>Continue in the setup window on this computer.</strong> Compare these words with it. If all three match in this order, type yes in that window
-        and press Enter.
+        <strong>Continue in the setup window on this computer.</strong> Compare these words with it. If all three match in this order, press Enter in that window.
       </p>
       <ol className="words word-tiles" aria-label="Your three words">
         {(words ?? []).map((w, i) => (
@@ -363,7 +362,7 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
       <small className="words-wait">Waiting for you in the setup window…</small>
       <details>
         <summary>Are the words different?</summary>
-        <p>Do not type yes. Close the setup window, then run orch setup again to start over with new words.</p>
+        <p>Do not press Enter. Close the setup window, then run orch setup again to start over with new words.</p>
       </details>
     </section>
   )
@@ -676,7 +675,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   }
   const terminalReviewMissing =
     !!review &&
-    (((state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
+    ((profile.method === 'terminal' && (state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
       (review.tty_confirm && review.fingerprint?.length !== 3))
   const approvalCount = review ? review.items.length + (review.workspace ? 1 : 0) : 0
   const summary = review ? summarize(review) : { lines: [], unknown: false, odd: [] as string[] }
@@ -1236,10 +1235,10 @@ export function Setup({ api }: { api: SetupAPI }) {
                     <li>Click {state.mode === 'finish' ? 'Finish setup' : 'Create workspace'} below.</li>
                     <li>Return to the terminal window where you started orch setup. Leave this page open to compare the three words.</li>
                     <li>
-                      Check the terminal shows <Words words={review.fingerprint} />. If it does, type yes there.
+                      Check the terminal shows <Words words={review.fingerprint} />. If it does, press Enter there.
                     </li>
                   </ol>
-                  <p>If any word is different, do not type yes. Close the terminal window and run orch setup again.</p>
+                  <p>If any word is different, do not press Enter. Close the terminal window and run orch setup again.</p>
                 </div>
               )}
               {terminalReviewMissing && (

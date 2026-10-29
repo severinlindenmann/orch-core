@@ -188,6 +188,11 @@ literal `orch/v2/hub-…|` names.
 | `h_channel_id` | `orch/v2/id/channel\|` | hash | `channel_id` | 2.3 |
 | `h_hub_event_digest` | `orch/v2/hub-event-digest\|` | hash | what the channel key signs | 8 |
 | `h_hub_publish_request` | `orch/v2/hub-publish-request\|` | hash | what the owner's approval names | 11 |
+| `h_publish_request_direct` | `orch/v2/publish-request\|` | hash | what the owner's approval names on the direct v2 12.1 path (M4) | 11.4 |
+| `h_app_meta` | `orch/v2/app-meta\|` | hash | the stored meta of one app version (`meta_hash`, M4) | 11.4 |
+| `h_app_reach` | `orch/v2/app-reach\|` | hash | the approved reach list of one app version (`reach_hash`, M4) | 11.4 |
+| `sig_hub_release_narrow` | `orch/v2/hub-release-narrow\|` | `HK_op` | `cj(o)` of `hub.release_narrow` (revoke a link, stop an app; M4) | 11.6 |
+| `sig_hub_app_pass` | `orch/v2/hub-app-pass\|` | `HK_op` | `cj(o)` of `hub.app_pass` (single-use pass into a company/group app; M4) | 11.8 |
 
 HKDF labels (not signed bytes, so outside the prefix-free table; `info` = label followed by `|` fields, v2 §3): `orch/v2/space-item` (item key of a space and epoch), `orch/v2/space-item-msg` (one item), `orch/v2/hub-view` (the view key of a workspace and epoch, §10.7) and `orch/v2/hub-view-msg` (one view page) and `orch/v2/hub-share-msg` (one shared item under its item key). Reused unchanged: `orch/v2/sig/host-event|` and `orch/v2/event|` (ticket-format §5.5, verified by the hub in §10.7, never signed by it), `orch/v2/seal-aad|`, `orch/v2/publish|` (`WSK`, v2 §12.1, the direct path only), `orch/v2/sig/ws-event|` (owner device, ticket-format §5.3),
 `orch/v2/sig/device-cert|` (`PK`, v2 §6.1).
@@ -1829,6 +1834,9 @@ hub never forwarded, stays hidden from it. Only a later, explicit owner opt-in c
 (or `null`), `revoked`, `bytes`, `public_url`, which **MUST be `null` in `hv: 0`** (orch-publish has no public kind; a non-null value is a violation, vector `admin_read_row_with_public_url`). A later `hv` may add it for live public releases only, never for a URL that carries a token or grants access; any other field is a
 violation (`check_admin_read_row`, vectors `admin_read_row_*`).
 
+**M4 (#1357).** S1 replaces the release row above by the rows of §11.5 (links and apps); this paragraph and the vectors
+`admin_read_row_*` go with it. Until S1 lands the row above is what orch-publish returns.
+
 ### 10.7 The hub's workspace view: `log_sync` (phase 4, V3-D23)
 
 **Why.** The hub builds custodial events "from its own `WK_e` view of the workspace" (spec §5): the log head for
@@ -2311,7 +2319,8 @@ The owner's local-key authorisation of **one exact request**, signed at the host
 
 ```
 approval = {"o": {"v": 2, "suite": 2, "kind": "hub.publish_approval", "hv": 0, "workspace_id", "hub_id",
-                  "device_id", "request_hash", "access": "public"},
+                  "device_id", "request_hash", "access"},        // M4: hub_id is null on the direct path; access is any of
+                                                      // public|password|company|group (11.4), the request's own
             "device_cert": <v2 §6.1 device_cert, signed by the owner's PK>,
             "pk_pub": <b64u, the owner's PK>,
             "sig": b64u(Sign(dk_sig, "orch/v2/sig/hub-publish-approval|" || cj(o)))}
@@ -2345,12 +2354,227 @@ included. Vectors: `publish_approval_reused_on_second_request` (same body, fresh
 `publish_approval_replayed_with_its_request` (`replay`), `publish_approval_attached_by_hub` and
 `publish_approval_stripped_by_hub` (`bad_signature`).
 
+**M4 amendment.** The approval is path-agnostic (§11.4): `hub_id` is `null` on the direct v2 §12.1 path, whose `request_hash`
+uses `orch/v2/publish-request|` and no hub part; and `access` may be any of `public`, `password`, `company`, `group`. For an
+app commit, rollback or start the approval is required whatever the access.
+
 Requests for `secret` or `sealed` access keep the v2 path: the host evaluates the charter (spec §5.5, §8 "the agent
 `publish(...)` path is unchanged") and no approval is needed. An approval on such a request is still verified, and its
 `access` (`"public"`) then mismatches → `bad_approval`.
 
 **Full mode** (phase 3+): until custodial signing (phase 4), a dev full-mode workspace uses the same owner approval
 (V3-D3); from phase 4 the approval is a custodial signature carried the same way (spec §8), defined then as a new `hv`.
+
+### 11.4 Published: links and apps (M4, #1357; vectors `vectors_published.json`)
+
+M4 adds shared **apps** (kind `page`, `app`, `form`: static files, no server code) next to the existing token links, and
+a company list of both. orch-publish stays the source of truth; the hub is a window with two narrowing buttons
+(§11.6). This section and §11.5 to §11.9 are the contract; `contracts/hub/vectors_published.json` pins it
+(`make_vectors_published.py`), and orch-hub, orch-publish and orch-core each replay **every** section of it against their
+own copy of the rules (`orch_hub.contract.published`, `pubsrv/published.py`, `orch/hubclient/published.py`). The hub
+contract version stays `hv: 0`: the design's name "hv1" for the new rows means "the M4 revision of this document", not a
+second wire version (an `hv` bump would make every existing verifier refuse every existing object). Nothing here is a
+second signing scheme: the new signed kinds are ordinary §2.2 objects.
+
+**Authority (unchanged from V3-D4).** Widening needs a person at the workspace: publish, update, rollback, start, a wider
+access, a new reach. Narrowing (revoke a link, stop an app) may also come from a hub admin (§11.6). The hub never signs
+anything that widens exposure.
+
+**Slugs (C7 neighbour, condition 11).** An app lives at `/a/<slug>/`. `slug` matches `[a-z0-9-]{3,40}` (`slug`) and is not
+`s`, `a`, `v`, `api`, `pass`, `rows`, `v1`, `v2` (`reserved_slug`; the one- and two-letter names are already too short, the
+list still names them so a later change of the length cannot free them). A slug is never freed after the app is removed.
+
+**The version meta.** A version is uploaded in two steps that serve nothing by themselves: `PUT
+/v1/ws/{ws}/apps/{id}/versions/{n}` (the meta, signed by `WSK` like every request) and `PUT .../versions/{n}/files/{path}`
+(the bytes). The meta has exactly these members and nothing else:
+
+```
+meta = {slug, name (1..60, one line, text rule §8.5), kind: page|app|form, access: public|password|company|group,
+        audience, pw, reach[], files[{path, size, sha256 (hex)}], label (1..80, one line), ticket (ULID | null)}
+audience: null for public and password; "company" for company; "group:<hub group>" or "ws:<workspace_id>" for group
+pw:       the password record (§11.4.1) for access "password", null otherwise
+reach:    strictly sorted, duplicate-free canonical origins (§11.7), at most 8, none of them the hub's or publish's own host
+files:    sorted by path (strictly), 1..500, relative paths of segments [A-Za-z0-9_~+@-][A-Za-z0-9._~+@-]* (so no .., no
+          dot-file, no empty segment, no backslash), size 0..50 000 000, and `index.html` is present
+```
+
+`meta_hash = b64u(H("orch/v2/app-meta|" || cj(meta)))` and `reach_hash = b64u(H("orch/v2/app-reach|" || cj(reach)))`. The
+meta hash covers **every** member, the files list with its sha256 and the password record included (vectors
+`meta_hash_cases`: one variant per member, no two hashes equal).
+
+**Commit, rollback and start (C3).** Three requests carry the same body and are the only ones that make a version live:
+
+```
+POST /v1/ws/{ws}/apps/{id}/commit | rollback | start
+body = {op: "commit"|"rollback"|"start" (the route's), app_id (the route's), version ≥ 1, meta_hash, reach_hash, access, audience}
+```
+
+`rollback` names an older stored version; `start` names the version to run again. **Every one of them needs the owner's
+approval (§11.3), whatever the access** (`approval_required`; the old rule "only public access" is gone for these
+routes). The approval grants exactly the body's `access`, and `request_hash` names the whole request, so the body's
+`meta_hash`, `reach_hash`, `access`, `audience` and `version` are all inside what the owner signed (vectors
+`approval_for_company_used_for_public`, `approval_mismatched_reach_hash`, `approval_other_manifest`,
+`approval_other_version`). orch-publish records `approved_by_person` = the approval's `person_id`.
+
+Before it serves a byte, orch-publish recomputes `meta_hash` and `reach_hash` from the **stored** meta and compares them,
+`access` and `audience` with the body (`meta_mismatch`), then recomputes size and sha256 of every stored file and compares
+the set with the meta's list: a missing, extra or changed file is `file_mismatch`, and a version whose files are not all
+stored is `file_mismatch` too. The meta and file `PUT`s alone serve nothing. The stored meta is validated as above
+(`reserved_slug`, `slug`, `name`, `kind`, `access`, `audience`, `password`, `files`, `files_order`, `no_index`, `label`,
+`ticket`, and the reach codes of §11.7).
+
+**Routes and who needs what.** The routes of orch-publish for this contract, and whether the owner's approval is required:
+
+| Route | `op` | Approval |
+|---|---|---|
+| `PUT /v1/ws/{ws}/apps/{id}/versions/{n}` (meta), `PUT .../versions/{n}/files/{path}` | `app.meta`, `app.file` | no |
+| `POST .../apps/{id}/commit`, `.../rollback`, `.../start` | `app.commit`, `app.rollback`, `app.start` | **yes** |
+| `POST .../apps/{id}/stop`, `DELETE .../apps/{id}` | `app.stop`, `app.remove` | no (narrowing; `WSK` only) |
+| `POST /v1/ws/{ws}/shares/{id}/extend` `{days}` | `share.extend` | no (`WSK` plus the person's signed note at the host) |
+| `POST /v1/ws/{ws}/shares/{id}/password` `{pw}` | `share.password` | no (narrowing; `WSK`) |
+
+`id` and `ws` are 32 lower-case hex digits; a target with a query, `%`, `//` or a dot segment is not a route (vectors
+`route_cases`). **Extend** takes `{"days": 1..30}` and sets the expiry to `now + days` (never more than 30 days from now,
+`days`); agents cannot extend (the host answers `op.not_allowed`). **Stop** keeps the files; **remove** deletes files and
+form rows, and the slug stays taken.
+
+**The approval on both paths (Opus condition 2, S0 CHANGE).** Apps publish through the hub **and** on the direct v2 §12.1
+path, so a workspace with no hub can publish a public app and hub-optional holds. The approval of §11.3 is the same
+object on both paths; what differs is one field and one hash:
+
+| | hub path | direct path |
+|---|---|---|
+| `o.hub_id` | the forwarding hub's id | `null` |
+| `request_hash` | §11.3 (`orch/v2/hub-publish-request\|`, with `hub_id`) | `H("orch/v2/publish-request\|" ‖ suite ‖ workspace_id ‖ u64(ts) ‖ nonce ‖ lp16(METHOD) ‖ lp16(host) ‖ lp16(target) ‖ H(body))`, the same fields and no hub part |
+| the approval travels in | `Orch-Owner-Approval`, inside the `WSK` bytes of §11.1 | `Orch-Owner-Approval`; `WSK` signs the v2 §12.1 bytes, which do not cover it (an approval stripped on the way is only `approval_required`, one attached by a third party names an exact request and nothing else) |
+
+An approval for one path never verifies on the other (`other_hub`; the request hashes also differ, vectors
+`hub_approval_on_direct_path`, `direct_approval_on_hub_path`, `direct_approval_with_the_hub_path_request_hash`). **Whether
+orch-publish admits direct requests at all is its own configuration, owned by slice S3**; §11.2's "Direct requests (V3-D36):
+there are none" describes today's server, and S3 must amend it together with the owner's decision before the direct route is
+switched on. This slice only fixes the approval's bytes so that S3 and S4 build to one contract.
+
+Order of the approval step for an app request, after the signature and nonce steps of §11.2 (hub path) or v2 §12.1 (direct):
+the route is one that takes an approval and has no query (`malformed`); the body parses and is a valid release body whose
+`op` and `app_id` are the route's (`malformed`); the workspace is the route's (`other_workspace`); an approval is present
+(`approval_required`); the approval verifies as §11.3 steps 1 to 7 with `hub_id` as above, `request_hash` as above and
+`access` = the body's.
+
+#### 11.4.1 The password record (C5, condition 8)
+
+Passwords are **generated** by the host (5 words for a link, 6 for an app, shown once). The host sends only the record:
+
+```
+pw = {"alg": "scrypt", "n": 32768, "r": 8, "p": 1, "salt": b64u(16 bytes), "dk": b64u(32 bytes)}
+dk = scrypt(UTF-8(password), salt, n, r, p, dklen 32)
+```
+
+Exactly these members and exactly these parameters, else `malformed` (a weaker record is refused, a heavier one is a memory
+attack on the server). orch-publish compares with a constant-time compare; a password over 256 bytes, an empty one or a
+non-string never reaches the KDF. A verifier takes a rate-limit check and a KDF slot **before** calling the KDF, a wrong
+password is not a view, and the password arrives by `POST` to publish's own gate page, never in a query, never logged
+(S3). Vectors `password_record_cases`, `password_verify_cases`.
+
+### 11.5 Admin read rows for links and apps (C1, S1 implements)
+
+The rows of the company list replace the §10.6 release row (S1 removes the old row check and its `admin_read_row_*`
+vectors; scope, canonical target, window and signature of §10.6 are unchanged). A row is one of two shapes, told apart by
+`type`, with **exactly** these members:
+
+```
+link: workspace_id, id, type "link", kind secret|once, state live|expired|revoked, created_ms, expires_ms (int|null), bytes,
+      label, ticket (ULID|null), by_kind person|agent, by_name (str|null), views, has_password (bool)
+app:  workspace_id, id, type "app", kind page|app|form, state running|stopped|removed, created_ms, updated_ms, bytes, label,
+      ticket, by_kind, by_name, slug, name, access, has_password, version, visits_30d
+```
+
+`label` (≤ 80), `name` (≤ 60) and `by_name` (≤ 60) follow the text rule of §8.5; `by_name` is asserted by the workspace and
+display only. `has_password` is a bool; for an app it is `true` exactly when `access` is `password`. **A row never carries**
+a token or its hash, a link with its token, a password record, a path, any content, a URL, or any other member (`malformed`;
+vectors `row_cases`, named `row_*_with_token`, `..._with_password_record`, `..._with_a_path`, `..._with_content`). The
+console renders the text members through `render_text` (§8.4). Rows of a workspace outside the scope (full mode, bound to
+the calling hub, current `WSK`) are never emitted, at orch-publish **and** at the hub (`not_bound`, vectors
+`row_scope_cases`: a selective workspace's rows are refused).
+
+### 11.6 The hub's narrowing: `hub.release_narrow` (C2, condition 7)
+
+A hub admin may **revoke a link or stop an app** of a full-mode workspace bound to the hub, and nothing else. The hub
+signs, under `HK_op`, `orch/v2/hub-release-narrow|`:
+
+```
+hub.release_narrow {v, suite, kind: "hub.release_narrow", hv, hub_id, workspace_id, target: "share"|"app", id (32 hex),
+                    action: "revoke"|"stop", ts_ms, nonce (b64u 32 bytes)}
+PUT /v2/hub/narrow    body = the signed object, no other header
+```
+
+`action` is `revoke` exactly for a `share` and `stop` exactly for an `app`; every other action (`start`, `extend`, `remove`,
+...) or pairing is `malformed`. Checks at orch-publish, in order (a signature always before the nonce store):
+
+| # | Check | Refusal |
+|---|---|---|
+| 1 | envelope, `kind`, `v`, `hv` (`wrong_suite` for the suite), the exact field set and types, the action/target pairing | `malformed`, `wrong_suite` |
+| 2 | `\|now − ts_ms\| ≤ 120 s` | `stale_timestamp` |
+| 3 | the held, current hub card for `hub_id`, verified again for this request | `unknown_hub` |
+| 4 | the signature under that card's `HK_op` | `bad_hub_signature` |
+| 5 | the nonce is unseen for this hub; then recorded | `replay` |
+| 6 | the workspace has a binding, status `bound`, under its card's **current** `WSK` (`not_bound`), to this hub (`other_hub`), in `mode: "full"` (`not_bound`) | `not_bound`, `other_hub` |
+| 7 | the target exists (`not_found`) and belongs to `workspace_id` | `not_found`, `other_workspace` |
+
+The workspace sees the narrowing in its own list and activity. The hub keeps an activity record (`link.revoked`,
+`app.stopped`: ids and labels only). Vectors `narrow_*` (`narrow_start_refused`, `narrow_other_workspace`,
+`narrow_selective_refused`, `narrow_replay`, and the rest).
+
+### 11.7 Reach origins and the app CSP (C7, condition 10)
+
+`reach` lists the origins the app's page may fetch from. Each entry is a **canonical https origin**, `https://<name>[:<port>]`:
+lower case, ASCII, no path (not even `/`), query, fragment or userinfo, the default port not spelled out, a port in
+1..65535. Refused, with the code in brackets: any `*` (`wildcard`); a scheme other than `https`, so `http:`, `data:`,
+`javascript:`, `blob:`, `ws:` and a bare host (`https_only`); `user@` (`userinfo`); a path, query, fragment or backslash
+(`path`); an IP literal in any spelling, `127.0.0.1`, `127.1`, `0x7f.0.0.1`, `2130706433`, `[::1]` (`ip_literal`: a last label
+that starts with a digit is never a name); `localhost`, a one-word host or a name under `.local`, `.internal`, `.lan`, `.home`,
+`.corp`, `.intranet`, `.private`, `.localhost` (`not_remote`); a host equal to the host of the hub or of orch-publish itself,
+**whatever the port** (cookies do not separate ports: `forbidden_origin`); anything else not in canonical form (`origin`).
+A list is strictly sorted with no duplicates (`reach_order`) and has at most 8 entries (`reach`). The workspace's own
+`settings.publish.app_reach` must also contain every entry (S4); the owner approves the list per version (it is inside
+`meta_hash` and `reach_hash`).
+
+The policy of one view is built by a pure function both sides share (vectors `csp_cases`):
+
+```
+base = the configured share origin + the view path, "http(s)://host[:port]/a/<slug>/v/<view id>/" (never taken from a Host header)
+CSP  = "sandbox allow-scripts allow-forms allow-popups allow-downloads; default-src 'none'; script-src B 'unsafe-inline';
+        style-src B 'unsafe-inline'; img-src B; font-src B; connect-src B R1 R2 ...; form-action B; base-uri 'none';
+        frame-ancestors 'none'"          (B = base, R = the reach entries; one line)
+```
+
+`base` must match `https?://host[:port](/segment)*/` with segments of `[A-Za-z0-9._~-]` (so nothing in it can end a CSP
+source: `base`). There is no `allow-same-origin`, `allow-top-navigation` or `allow-popups-to-escape-sandbox`: each app runs as an
+opaque origin. The CSP limits background requests only; navigation, `window.open` and links can still send data, which the
+release review and the threat notes say plainly.
+
+### 11.8 The pass into a company or group app: `hub.app_pass` (C6, condition 19)
+
+For `access: company` or `group` publish asks the hub who may open. The hub signs, under `HK_op`, `orch/v2/hub-app-pass|`:
+
+```
+hub.app_pass {v, suite, kind: "hub.app_pass", hv, hub_id, workspace_id, app_id, audience, nonce (b64u 32 bytes), exp_ms}
+```
+
+It names **no person and no user**. Publish issued `nonce` for this app (`pass_nonces`, single use). Checks, in order:
+envelope and fields (`malformed`, `wrong_suite`) -> the held hub card (`unknown_hub`) and `HK_op` signature
+(`bad_hub_signature`) -> the app's workspace is bound to this hub under its current `WSK`, any mode (`not_bound`,
+`other_hub`) -> the app exists (`not_found`) in that workspace (`other_workspace`) -> its access is `company` or `group`
+(`not_company_app`) -> `audience` equals the stored audience (`audience_mismatch`) -> `exp_ms > now` (`expired`) and `exp_ms −
+now ≤ 60 s` (`pass_too_long`) -> the nonce was issued for this app (`bad_nonce`), is unspent (`replay`) and not past its own
+`until_ms` (`expired`). The caller spends the nonce in the same transaction. The hub sends the pass only to the publish
+origin of its own configuration (S5). The hub decides who is in the company, so a compromised hub can over-grant company and
+group apps (and only those); that is said in the release review text and in §13.
+
+### 11.9 Codes added by M4
+
+`meta_mismatch` (409), `file_mismatch` (409), `not_found` (404), `expired` (401), `pass_too_long` (400), `bad_nonce` (401),
+`not_company_app` (403), `audience_mismatch` (403), and the validation codes of §11.4 and §11.7. All other refusals reuse
+§14.
 
 ## 12. Who verifies what (summary)
 
@@ -2474,6 +2698,11 @@ bind of a non-phone channel), `challenge_invalid` (400, `session_ref` of another
 `cert_expired` (403, told only to a holder of the key or a channel session), `forbidden_role` (403, a channel session
 outside its scope), `replay` (409, an older push key).
 
+M4 (§11.4 to §11.9): `meta_mismatch`, `file_mismatch`, `not_found`, `expired`, `pass_too_long`, `bad_nonce`, `not_company_app`,
+`audience_mismatch`, `reserved_slug`, `slug`, `name`, `kind`, `access`, `audience`, `password`, `files`, `files_order`, `no_index`,
+`label`, `ticket`, `wildcard`, `https_only`, `userinfo`, `path`, `ip_literal`, `not_remote`, `forbidden_origin`, `origin`, `reach`, `reach_order`,
+`days`.
+
 Reused: `malformed`, `wrong_suite`, `bad_signature`, `cert_invalid`, `cert_expired`, `revoked`, `other_workspace`,
 `other_person`, `stale_timestamp`, `unknown_workspace`, `replay`, `stale_card`. HTTP statuses for publish are in §11.2;
 link errors travel as `{"error": code}` reply bodies; host-side refusals are local (logged, never sent back as content).
@@ -2516,6 +2745,11 @@ plus `selective_build`. D15b: orch-core builds the `log_sync_proj_*` pages (its 
 must equal `page_ticket_with_proj` byte for byte) and the hub runs `proj_build`; both run `workspace_roster_v*` (hub: `project_workspace`, core: its replay's
 `roster_v`). The hub also runs `hub_join`. #1198 C8 (§5, §9.6): orch-core runs `card_reader`, `hub_reader`, `owner_proof`,
 `owner_proof_recorded`, `joined_payload` and `left_payload`; the hub runs all of them and `owner_proof_join`. Each case carries its `phase`; the L2 cases name their finding in `note`. The cross-repo contract job (V3-D8) runs from phase 2.
+
+**`vectors_published.json`** (M4, #1357 S0; `make_vectors_published.py`): the sections `slug_cases`, `origin_cases`, `reach_cases`,
+`csp_cases`, `password_record_cases`, `password_verify_cases`, `meta_cases`, `meta_hash_cases`, `commit_cases`, `route_cases`,
+`extend_cases`, `row_cases`, `row_scope_cases`, `approval_cases` (both paths), `narrow_cases` and `pass_cases`, with `required`
+naming the cases an implementation must not lose. orch-hub, orch-publish and orch-core each replay every section.
 
 ## 16. Decided here, and open points for L2
 

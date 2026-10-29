@@ -18,6 +18,9 @@ import { ModeChoice } from './ModeChoice'
 const LINK = /^https?:\/\/\S+\/c#h1\.[0-9a-f]{32}\.[A-Za-z0-9_-]{1,64}(\.[^\s~]+)?(~[0-9a-f]{32})?$/
 
 export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
+  const refreshHub = useHubRefresh(ws)
+  // Closing after the signature (waiting, failed or confirmed) reads the hub status again: allowed while paused.
+  const leave = () => { refreshHub(); onClose() }
   const oneClick = useOneClick(ws)
   const [failed, setFailed] = useState(false)
   const [text, setText] = useState('')
@@ -43,7 +46,7 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
     return () => { alive = false }
   }, [ws, link, valid])
 
-  if (signed && info) return <Flow title="Connect a hub" onClose={onClose} finish="here"><ConnectStage ws={ws} info={info} mode={mode} onClose={onClose} /></Flow>
+  if (signed && info) return <Flow title="Connect a hub" onClose={leave} finish="here"><ConnectStage ws={ws} info={info} mode={mode} onClose={leave} /></Flow>
 
   return <Flow title="Connect a hub" onClose={onClose} finish="here">
     {!failed && <div className="space-y-1">

@@ -185,7 +185,7 @@ describe('stop sharing by a rule', () => {
     const { dialog } = await ruleReview()
     expect(within(dialog).getByTestId('hub-rule-review-rule')).toHaveTextContent('Rule: type · feature')
     const what = within(dialog).getByTestId('hub-rule-review-what')
-    expect(what).toHaveTextContent('1 ticket stops being shared.')
+    expect(what).toHaveTextContent('1 item stops being shared.')
     expect(what).toHaveTextContent('ticket DEMO-0043: Export report as PDF')
     expect(what).not.toHaveTextContent('DEMO-0045')
     fireEvent.click(within(dialog).getByTestId('hub-rule-details'))

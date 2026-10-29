@@ -31,6 +31,25 @@ describe('the ticket Actions menu and sharing', () => {
     expect(screen.queryByRole('menuitem', { name: /Share with the hub|Stop sharing/ })).toBeNull()
   })
 
+  it('offers nothing when the workspace has not joined a hub', async () => {
+    await openMenu('nottold')
+    await new Promise(r => setTimeout(r, 300))
+    expect(screen.queryByRole('menuitem', { name: /Share with the hub|Stop sharing/ })).toBeNull()
+  })
+
+  it('offers nothing on a closed ticket', async () => {
+    setHubScenario('selective')
+    const view = renderApp('/ticket/DEMO-0042', {
+      setup: store => {
+        const real = store.ticket.bind(store)
+        vi.spyOn(store, 'ticket').mockImplementation(key => { const t = real(key); if (t && key === 'DEMO-0042') t.status = 'closed'; return t })
+      },
+    })
+    await view.user.click(await screen.findByRole('button', { name: /Actions/ }, T))
+    await new Promise(r => setTimeout(r, 300))
+    expect(screen.queryByRole('menuitem', { name: /Share with the hub|Stop sharing/ })).toBeNull()
+  })
+
   it('offers nothing to a viewer who is not the owner', async () => {
     await openMenu('selective', { viewer: 'p_tom' })
     await new Promise(r => setTimeout(r, 300))

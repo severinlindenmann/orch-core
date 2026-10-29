@@ -10,7 +10,7 @@ export function AccessSelect({ hours, onHours, lengths, prefix, agentName, disab
   const until = new Date(nowMs() + hours * 3_600_000).toISOString()
   return (
     <div className="space-y-1.5" data-testid="agent-access">
-      <p className="text-[13px] text-text">Agents may work for you for {lengths.find(([h]) => h === hours)?.[1] ?? `${hours} hours`}.</p>
+      <p className="text-[13px] text-text">Agents may work for you{prefix ? ` in ${prefix}` : ''} for {lengths.find(([h]) => h === hours)?.[1] ?? `${hours} hours`}.</p>
       <details className="space-y-1.5" data-testid="access-lengths">
         <summary className="flex cursor-pointer items-center gap-1 text-[12px] text-text-muted">Other lengths <ChevronDown className="size-3.5 shrink-0" aria-hidden /></summary>
         <Label htmlFor={id} className="text-[13px] text-text">Give agents access for</Label>

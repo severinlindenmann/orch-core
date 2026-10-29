@@ -293,6 +293,10 @@ def _value(service: WorkspaceService, name: str) -> str | None:
         drop_cache(service)
         return None
     key = (service.workspace_id, e["id"], e["version"], e["wxk_version"])
+    wxk = _wxk(service)
+    if wxk is None or wxk[1] != e["wxk_version"]:
+        drop_cache(service)  # the workspace key moved on: nothing opened with the old one stays
+        return None
     now = service.clock()
     with _MU:
         hit = _CACHE.get(key)
@@ -301,9 +305,6 @@ def _value(service: WorkspaceService, name: str) -> str | None:
                 _count(service, e["id"], now_ms)
                 return hit[0]
             del _CACHE[key]
-    wxk = _wxk(service)
-    if wxk is None or wxk[1] != e["wxk_version"]:
-        return None
     try:
         v = orgsecrets.open_org_secret(
             wxk[0], str(state.hub_id), service.workspace_id, e["id"], e["version"], e["wxk_version"], e["expires_ms"],

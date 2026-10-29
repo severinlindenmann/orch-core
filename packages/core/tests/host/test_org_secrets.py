@@ -490,7 +490,7 @@ def test_a_wrap_for_the_old_workspace_key_after_a_rotation_gives_none_and_needs_
     w.org.secrets = [w.entry()]
     sec_sync(w)
     assert get(w) == VALUE
-    orgsecrets.drop_cache(w.service)
+    assert orgsecrets._CACHE  # the value is cached: the rotation must still win  # noqa: SLF001
     # the workspace's key moves to the next version: the old wrap stops opening
     real = spaceops._wxk
     spaceops._wxk = lambda service: (real(service)[0], w.wxk_version + 1)  # noqa: SLF001

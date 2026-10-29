@@ -320,16 +320,19 @@ def _leaves(kind: str, items: list[Any]) -> str:
 
 
 def _names_for(service: WorkspaceService, ids: set[str]) -> dict[str, str]:
-    """Display names for these hub users. The cache is in memory only: after a restart a miss re-asks the hub
-    (``audience_get``, display data, not signed); if that fails the caller falls back to "a person on the hub"."""
-    names = dict(getattr(service, "_share_names", {}))
-    if ids - set(names):
+    """Display names for these hub users. The cache is in memory only. Only a COLD cache (after a restart) asks the hub
+    once (``audience_get``, display data, not signed), and a failed ask is not repeated for 5 minutes: a person who is
+    never listed (disabled, past the cap) must not cost a hub call per review, and reads use no network otherwise.
+    Unknown ids fall back to "a person on the hub"."""
+    import time
+
+    if not hasattr(service, "_share_names") and time.monotonic() - getattr(service, "_share_names_tried", -1e9) > 300:
+        service._share_names_tried = time.monotonic()  # noqa: SLF001
         try:
             _audience(service)
         except Exception:  # noqa: BLE001  (names are decoration; the review still works without them)
             pass
-        names = dict(getattr(service, "_share_names", {}))
-    return names
+    return dict(getattr(service, "_share_names", {}))
 
 
 def _readers(service: WorkspaceService, items: list[Any]) -> dict[str, Any]:

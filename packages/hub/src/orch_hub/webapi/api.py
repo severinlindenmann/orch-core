@@ -1319,7 +1319,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
         gates, qs = f1.get("gates"), f1.get("questions")
         return type(gates) is dict and type(qs) is dict and len(gates) + len(qs) == 1
 
-    def _shared_row(self, ws: dict[str, Any], it: dict[str, Any]) -> dict[str, Any]:
+    def _shared_row(self, ws: dict[str, Any], it: dict[str, Any], user_id: str) -> dict[str, Any]:
         o = it["item"]
         content = o["content"]
         return _render(
@@ -1336,7 +1336,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
                 "summary_only": o["item_kind"] == "needs_you",
                 "chain": o.get("chain"),  # §10.2b, as verified by D9 (display data; the hub build is the authority)
                 "f1": o.get("f1"),
-                "signable": self._shared_signable(o),
+                # H2: only the owner alias may sign; a reader (audience) never gets a sign button, on any route
+                "signable": self.d.registry.owner_alias(ws["workspace_id"]) == user_id and self._shared_signable(o),
             }
         )
 
@@ -1357,7 +1358,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
                 if it["item"]["item_kind"] == "question"
             }
             return [
-                self._shared_row(ws, it)
+                self._shared_row(ws, it, user_id)
                 for it in shared
                 if not (
                     it["item"]["item_kind"] == "needs_you"
@@ -1395,10 +1396,8 @@ class WebApi(ChangeHandlers, OrgHandlers):
             for it in self.d.shares.list_shared(c.user_id, ws):
                 if it["item"]["item_kind"] != "ticket":
                     continue
-                row = self._shared_row({"workspace_id": ws}, it)
+                row = self._shared_row({"workspace_id": ws}, it, c.user_id)
                 row["shared_by"] = people.get(owner)
-                if owner != c.user_id:
-                    row["signable"] = False  # H2: only the owner alias may sign; a reader never gets a sign button
                 aud = it["item"].get("audience")
                 if owner == c.user_id and type(aud) is dict:  # only the person who shared sees the audience
                     row["shared_with"] = [people[u] for u in aud.get("users", []) if u in people] + [
@@ -1443,7 +1442,7 @@ class WebApi(ChangeHandlers, OrgHandlers):
             for it in self.d.shares.list_shared(c.user_id, ws["workspace_id"]):
                 if it["item"]["item_id"] == p["item_id"]:
                     return 200, {
-                        **self._shared_row(ws, it),
+                        **self._shared_row(ws, it, c.user_id),
                         "content": _render(it["item"]["content"]),
                         "item_hash": it["hash"],
                     }

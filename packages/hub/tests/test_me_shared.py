@@ -1,6 +1,7 @@
 """P02 (d): GET /me/shared lists the shared TICKETS the CALLER may read, asked with the caller's own identity."""
 
 import pytest
+from test_webapi_core import _CHAIN, _f1
 from webapi_helpers import WS, WS_SEL, Web, shared_item
 
 
@@ -45,3 +46,12 @@ def test_everyone_else_gets_nothing_not_even_an_error(w):
 def test_malformed_workspace_and_no_session(w):
     assert get(w, w.ben, "?workspace_id=zz")[:2] == (400, {"error": "malformed"})
     assert w.call("GET", "/me/shared")[0] == 401
+
+
+def test_a_reader_never_gets_signable_on_the_single_item_route_either(w):
+    ids = "11" * 16
+    w.shares.items[(w.ben, WS_SEL)] = [shared_item(ids, "question", chain=_CHAIN, f1=_f1())]
+    w.shares.items[(w.ann, WS_SEL)] = [shared_item(ids, "question", chain=_CHAIN, f1=_f1())]
+    route = f"/workspaces/{WS_SEL}/items/{ids}"
+    assert w.call("GET", route, token=w.login(w.ann))[1]["signable"] is True
+    assert w.call("GET", route, token=w.login(w.ben))[1].get("signable", False) is False

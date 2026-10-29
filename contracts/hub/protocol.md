@@ -1574,7 +1574,7 @@ hub.space      {v, suite, kind: "hub.space", hv, hub_id, op_cert_id, space_id, e
 hub.space_wrap {v, suite, kind: "hub.space_wrap", hv, hub_id, op_cert_id, space_id, epoch, workspace_id,
                 wxk_version ≥ 1, sealed: b64u, dev}                        signed by HK_op, label sig_hub_space_wrap
 space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, members_hash: b64u(32), item_id,
-                workspace_id (the author), created_ms, body: object (opaque to the contract), dev}
+                workspace_id (the author), created_ms, body: {name, size, data, by, restored_from?}, dev}
                                                                             signed by the author's WSK, sig_space_item
 ```
 
@@ -1594,6 +1594,17 @@ space.item     {v, suite, kind: "space.item", hv, hub_id, space_id, epoch, membe
   into a space of another hub, or shown to another member set fails (vectors `space_item_resealed_into_later_epoch`,
   `space_item_from_other_hub`, `space_item_members_hash_mismatch`); a hub that shows two member lists for one epoch is
   caught by the author's own hash. "No backfill" is therefore enforced by the authors' signatures, not only by hub policy.
+- **The item body** (hub M3 spaces, SP-1) is closed: `{name: text, size: int ≥ 0, data: b64u, by, restored_from?}`.
+  `by` is REQUIRED and matches `^(person|agent):[A-Za-z0-9_-]{1,64}$`: who the writing host says acted, `person:<person
+  id>` or `agent:<id of the agent's verified grant>`. The host sets it from the verified call, never from arguments. It
+  is signed with the item, but the hub and readers cannot check it (a host may lie about who acted): a reader shows it
+  as a fixed word (person / agent / unknown), labelled "as the workspace says". `restored_from` is optional, an item id
+  (`hex16`): the item this one is a restore of (same name, same bytes; the restoring host's `WSK` signs it, so a
+  restore is a new item of its author, never a console action). An item without `by`, with a malformed `by` or
+  `restored_from`, or with any other body key is `malformed`, at the author, at the hub's `space_put` and at every
+  reader; there is no legacy form. Vectors: `space_item_by_missing`, `space_item_by_bad_kind`, `space_item_by_bad_chars`,
+  `space_item_by_too_long`, `space_item_by_not_text`, `space_item_by_agent_ok`, `space_item_restored_from_ok`,
+  `space_item_restored_from_bad`, `space_item_body_extra_key`.
 - **An item** is sealed with SALTED-AEAD (v2 §5.1) under a key derived through HKDF, never `SK_e` itself:
   `base = HKDF(SK_e, salt = 32 zero bytes, info = "orch/v2/space-item|" space_id "|" epoch)`; per item
   `key = HKDF(base, salt16, "orch/v2/space-item-msg")`; `sealed = salt16 || AES-256-GCM(key, 12 zero bytes,

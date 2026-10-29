@@ -36,8 +36,9 @@ class SpaceLink(Protocol):
 
 @dataclass
 class SpaceState:
-    """``rules``: space_id -> ``{"members"}``. ``spaces``: space_id -> ``{"records": {epoch: hub.space}, "keys":
-    {epoch: b64u SK_e}, "current": epoch}``."""
+    """``rules``: space_id -> ``{"members", "hub_id", "warned", "agents"}`` (the owner's yes to one member list on one
+    hub, after the warning, and the separate switch for agents). ``spaces``: space_id -> ``{"records": {epoch:
+    hub.space}, "keys": {epoch: b64u SK_e}, "current": epoch}``."""
 
     rules: dict[str, dict[str, Any]] = field(default_factory=dict)
     spaces: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -50,7 +51,16 @@ class SpaceState:
         if type(d) is not dict or set(d) != {"rules", "spaces"} or any(type(d[k]) is not dict for k in d):
             raise HubRefused("malformed")
         for sid, r in d["rules"].items():
-            if not wire.hex16(sid) or type(r) is not dict or set(r) != {"members"} or type(r["members"]) is not list:
+            ok = (
+                wire.hex16(sid)
+                and type(r) is dict
+                and set(r) == {"members", "hub_id", "warned", "agents"}
+                and type(r["members"]) is list
+                and wire.hex16(r["hub_id"])
+                and r["warned"] is True
+                and type(r["agents"]) is bool
+            )
+            if not ok:
                 raise HubRefused("malformed")
         for sid, s in d["spaces"].items():
             ok = (
@@ -66,6 +76,16 @@ class SpaceState:
         return cls(
             rules={k: dict(v) for k, v in d["rules"].items()}, spaces={k: dict(v) for k, v in d["spaces"].items()}
         )
+
+
+def _by_kind(by: Any) -> str:
+    """``by`` is the writer's own claim: shown as a fixed word, never as text."""
+    if type(by) is str:
+        if by.startswith("person:"):
+            return "person"
+        if by.startswith("agent:"):
+            return "agent"
+    return "unknown"
 
 
 def _code(exc: LinkError) -> HubRefused:
@@ -226,41 +246,69 @@ class SpaceClient:
 
     # --- writes -----------------------------------------------------------------------------------------------------
 
-    def share(self, sid: str, members: list[str]) -> list[str]:
-        """The owner approves exactly ``members``, the list they were SHOWN. The hub's current set must equal it: if
-        the hub added (or removed) anyone since, nothing is stored (``members_changed``) and the owner looks again.
-        The rule stored is the caller's list, never the hub's."""
+    def share(self, sid: str, members: list[str], *, understood: bool) -> list[str]:
+        """The owner approves exactly ``members``, the list they were SHOWN, after the warning that the hub and its
+        admins can read what is put here (``understood``). The hub's current set must equal it: if the hub added (or
+        removed) anyone since, nothing is stored (``members_changed``) and the owner looks again. The rule stored is
+        the caller's list, never the hub's, tied to THIS hub, with agents Off (a new share always resets them)."""
         want = sorted(set(members))
-        if not want or len(want) != len(members) or any(not wire.hex16(w) for w in want):
+        if understood is not True or not want or len(want) != len(members) or any(not wire.hex16(w) for w in want):
             raise HubRefused("malformed")
         cur = self.sync_current(sid)
         if sorted(cur["members"]) != want:
             raise HubRefused("members_changed")
-        self.st.rules[sid] = {"members": want}
+        self.st.rules[sid] = {"members": want, "hub_id": self.hub_id, "warned": True, "agents": False}
         self._save(self.st)
         return want
 
-    def put(self, sid: str, name: str, data: bytes) -> dict[str, Any]:
-        """Share one named file. Refused locally, before anything is sent: ``not_shared`` (no rule), ``members_changed``
-        (a member the owner did not approve), ``no_key``, ``too_large``. A ``stale_epoch`` is refreshed and retried
-        once (re-sealed under the new key)."""
+    def _rule(self, sid: str) -> dict[str, Any]:
+        """The owner's rule for ``sid``, or ``not_shared`` (none, or given for another hub)."""
+        rule = self.st.rules.get(sid)
+        if rule is None or rule["hub_id"] != self.hub_id:
+            raise HubRefused("not_shared")
+        return rule
+
+    def set_agents(self, sid: str, on: bool) -> bool:
+        """The owner's per-space switch for agents (default Off). Needs the share rule and an unchanged member set."""
+        rule = self._rule(sid)
+        SP.check_host_put(dict(rule, space_id=sid), self.sync_current(sid))
+        self.st.rules[sid] = dict(rule, agents=bool(on))
+        self._save(self.st)
+        return bool(on)
+
+    def put(
+        self, sid: str, name: str, data: bytes, *, by: str, agent: bool = False, restored_from: str | None = None,
+        guard: Callable[[bytes], None] | None = None,
+    ) -> dict[str, Any]:  # fmt: skip
+        """Share one named file; ``by`` is who acted (``person:<id>`` | ``agent:<id>``, set by the host from the
+        caller, never from arguments). Refused locally, before anything is sent: ``not_shared`` (no rule, or a rule
+        given for another hub), ``agents_off`` (an agent, and the owner's switch is Off), whatever ``guard`` raises
+        (the host's content and volume checks for an agent), ``members_changed`` (a member the owner did not approve),
+        ``no_key``, ``too_large``. A ``stale_epoch`` is refreshed and retried once (re-sealed under the new key)."""
         if len(data) > SP.MAX_FILE:
             raise HubRefused("too_large")  # before anything is signed or sealed
-        if sid not in self.st.rules:
-            raise HubRefused("not_shared")
+        rule = self._rule(sid)
+        if agent:
+            if not rule["agents"]:
+                raise HubRefused("agents_off")
+            if guard is not None:
+                guard(data)
         for attempt in (0, 1):
             cur = self.sync_current(sid)
-            SP.check_host_put(dict(self.st.rules[sid], space_id=sid), cur)
+            SP.check_host_put(dict(rule, space_id=sid), cur)
             key = self.st.spaces[sid]["keys"].get(str(cur["epoch"]))
             if key is None:
                 raise HubRefused("no_key")
+            body = {"name": name, "size": len(data), "data": b64u(data), "by": by}
+            if restored_from is not None:
+                body["restored_from"] = restored_from
             item_id, signed = SP.build_item(
                 hub_id=self.hub_id,
                 space_id=sid,
                 epoch=cur["epoch"],
                 members=list(cur["members"]),
                 workspace_id=self.me,
-                body={"name": name, "size": len(data), "data": b64u(data)},
+                body=body,
                 created_ms=self._now(),
                 dev=self._dev,
                 sign=self._sign,
@@ -276,6 +324,49 @@ class SpaceClient:
                 raise
             return {"item_id": item_id, "seq": reply["seq"], "epoch": cur["epoch"]}
         raise HubRefused("stale_epoch")
+
+    def history(self, sid: str, name: str) -> dict[str, Any]:
+        """Every verified version of ``name`` in the space, newest first by the author's signed clock: no content.
+        ``by`` is what the writing workspace says (the hub cannot check it) mapped to ``person`` | ``agent`` |
+        ``unknown``. A revoked item carries no name, so it cannot be listed under one: it is only counted."""
+        items, refused = self.read_items(sid)
+        rows = [
+            {
+                "item_id": i["item_id"], "created_ms": i["created_ms"], "author": i["author"],
+                "by": _by_kind(i["body"].get("by")), "revoked": False, "size": i["body"].get("size"),
+                **({"restored_from": i["body"]["restored_from"]} if "restored_from" in i["body"] else {}),
+            }
+            for i in items
+            if not i["revoked"] and i["body"].get("name") == name
+        ]  # fmt: skip
+        rows.sort(key=lambda r: (r["created_ms"], r["item_id"]), reverse=True)
+        return {
+            "versions": rows, "revoked_unnamed": sum(1 for i in items if i["revoked"]), "refused": refused,
+            "mine": self.me,
+        }  # fmt: skip
+
+    def restore(
+        self, sid: str, item_id: str, *, by: str, agent: bool = False, guard: Callable[[str, bytes], None] | None = None
+    ) -> dict[str, Any]:
+        """Put the bytes of one of OUR OWN live, verified items again as a NEW item (same name, ``by`` = the restorer,
+        ``restored_from`` = the source). Anything else (not found, another author, revoked, unverifiable) is
+        ``not_restorable``."""
+        if not wire.hex16(sid) or not wire.hex16(item_id):
+            raise HubRefused("malformed")
+        items, _ = self.read_items(sid)
+        src = next((i for i in items if i["item_id"] == item_id), None)
+        if src is None or src["revoked"] or src["author"] != self.me:
+            raise HubRefused("not_restorable")
+        name = src["body"]["name"]
+        try:
+            data = unb64u(src["body"]["data"])
+        except EncodingError:
+            raise HubRefused("not_restorable") from None
+        got = self.put(
+            sid, name, data, by=by, agent=agent, restored_from=item_id,
+            guard=None if guard is None else (lambda d: guard(name, d)),
+        )  # fmt: skip
+        return got | {"name": name, "restored_from": item_id, "size": len(data)}
 
     def revoke(self, sid: str, item_id: str) -> dict[str, Any]:
         if not wire.hex16(sid) or not wire.hex16(item_id):

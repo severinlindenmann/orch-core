@@ -35,6 +35,7 @@ from orch.tokenshape import GITHUB_TOKEN_BYTES, GITHUB_TOKEN_SHAPE, is_key_value
 
 from .columns import GrantState
 from .errors import HostError
+from .mcpshared import CAPABILITY_ANY, CAPABILITY_SHAPE
 
 __all__ = [
     "AuthView",
@@ -50,6 +51,7 @@ __all__ = [
 
 GRANT_SHAPE = re.compile(r"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")
 _GRANT_BYTES = re.compile(rb"gr_[0-7][0-9A-HJKMNP-TV-Z]{25}\.[A-Za-z0-9_-]{43}")
+_CAPABILITY_BYTES = re.compile(CAPABILITY_SHAPE.pattern.encode())
 _PEM = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)", re.S)
 #: mapping keys whose values are key material or a grant secret's hash: never returned (§0.5 derived fields)
 SECRET_KEYS = frozenset(
@@ -295,10 +297,15 @@ def secret_in_request(frame: Mapping[str, Any]) -> bool:
     args, sigs = _split_signatures(frame)  # the signatures get the grant-shape and secret checks only, below
     for part in (args, frame.get("opts"), frame.get("files")):
         for text in _strings(part):
-            if GRANT_SHAPE.search(text) or GITHUB_TOKEN_SHAPE.search(text) or (secret is not None and secret in text):
+            if (
+                GRANT_SHAPE.search(text)
+                or CAPABILITY_SHAPE.search(text)
+                or GITHUB_TOKEN_SHAPE.search(text)
+                or (secret is not None and secret in text)
+            ):
                 return True
     for text in sigs:
-        if GRANT_SHAPE.search(text) or (secret is not None and secret in text):
+        if GRANT_SHAPE.search(text) or CAPABILITY_SHAPE.search(text) or (secret is not None and secret in text):
             return True
     inline = [
         (name, spec.get("b64") if isinstance(spec, Mapping) else None)
@@ -324,10 +331,15 @@ def secret_in_request(frame: Mapping[str, Any]) -> bool:
                 rest, taken = split
                 data = rest.encode()
                 for value in taken:  # key material: the grant checks still apply, the GitHub-token shape does not
-                    if _GRANT_BYTES.search(value.encode()) or (secret is not None and secret in value):
+                    if (
+                        _GRANT_BYTES.search(value.encode())
+                        or _CAPABILITY_BYTES.search(value.encode())
+                        or (secret is not None and secret in value)
+                    ):
                         return True
         if (
             _GRANT_BYTES.search(data)
+            or _CAPABILITY_BYTES.search(data)
             or GITHUB_TOKEN_BYTES.search(data)
             or (secret is not None and secret.encode() in data)
         ):
@@ -366,6 +378,7 @@ class Redactor:
         for secret in self.secrets:
             text = text.replace(secret, REDACTED)
         text = GRANT_SHAPE.sub(REDACTED, text)
+        text = CAPABILITY_ANY.sub(REDACTED, text)
         if not signature:
             text = GITHUB_TOKEN_SHAPE.sub(REDACTED, text)
         return _PEM.sub(REDACTED, text)

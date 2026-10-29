@@ -40,7 +40,7 @@ def host(monkeypatch):
 
 @pytest.mark.parametrize(
     "argv",
-    [["put", SID, "f.txt"], ["share", SID], ["revoke", SID, WS1],
+    [["share", SID], ["revoke", SID, WS1], ["agents", SID, "on"],
      ["accept", SID, "--epoch", "2", "--prev-members", WS1, "--members", f"{WS1},{WS2}"]],
 )  # fmt: skip
 def test_an_agent_cannot_write(host, argv):
@@ -83,7 +83,8 @@ def test_share_shows_the_members_and_sends_exactly_that_list(host):
     assert run(["share", SID])[0] == 0
     prompt = host.asked[-1]
     assert WS1 in prompt and WS2 in prompt and "epoch 3" in prompt
-    assert host.called[-1] == ("space.share", {"space_id": SID, "members": [WS1, WS2]})
+    assert host.called[-1] == ("space.share", {"space_id": SID, "members": [WS1, WS2], "understood": True})
+    assert prompt.startswith("The hub and its admins can read what you put here.")  # the warning comes BEFORE the ask
     host.yes = False
     n = len(host.called)
     assert run(["share", SID])[0] == 3 and host.called[n:] == [("space.list", {})]  # not approved: nothing stored
@@ -131,3 +132,54 @@ def test_accept_prompt_shows_the_signed_hashes(host):
     prompt = host.asked[-1]
     assert members_hash([WS1])[:16] in prompt and members_hash(sorted([WS1, WS2]))[:16] in prompt
     assert "hub admin" in prompt
+
+
+def test_an_agent_may_put_restore_and_ask_for_history_the_host_decides(host, tmp_path):
+    f = tmp_path / "r.txt"
+    f.write_bytes(b"x")
+    host.reply["space.put"] = {"item_id": "i" * 32, "seq": 1, "epoch": 1}
+    host.reply["space.restore"] = {"item_id": "j" * 32, "name": "n", "restored_from": WS1}
+    host.reply["space.history"] = {"versions": []}
+    env = {"ORCH_GRANT": "g"}
+    for argv in (["put", SID, str(f)], ["restore", SID, WS1], ["history", SID, "n"]):
+        assert run(argv, env)[0] == 0
+    assert [c[0] for c in host.called] == ["space.put", "space.restore", "space.history"]
+    assert host.asked == []  # nobody is asked: the owner's switch is what lets an agent in
+
+
+def test_agents_switch_asks_nothing_and_sends_on_off(host):
+    host.reply["space.agents"] = {"space_id": SID, "agents": True, "warning": "Agents can copy workspace content here"}
+    code, out = run(["agents", SID, "on"], as_json=False)
+    assert code == 0 and host.called[-1] == ("space.agents", {"space_id": SID, "on": True}) and "Agents can copy" in out
+    host.reply["space.agents"] = {"space_id": SID, "agents": False, "warning": "w"}
+    assert run(["agents", SID, "off"])[0] == 0 and host.called[-1][1]["on"] is False
+    assert run(["agents", SID, "maybe"])[0] == 2
+
+
+def test_restore_sends_the_item(host):
+    host.reply["space.restore"] = {"item_id": "j" * 32, "name": "plan.md", "restored_from": WS1}
+    assert run(["restore", SID, WS1])[0] == 0 and host.called[-1] == (
+        "space.restore",
+        {"space_id": SID, "item_id": WS1},
+    )
+
+
+def test_history_strips_control_characters_from_what_another_workspace_wrote(host):
+    evil = "x\x1b[31mred\x07\u202egnp.exe\n\r\x00" + "y" * 300
+    host.reply["space.history"] = {
+        "versions": [
+            {"item_id": "a" * 32, "created_ms": 5, "author": evil, "by": evil, "revoked": False, "size": 3},
+            {"item_id": "b" * 32, "created_ms": 4, "author": WS1, "by": "person", "revoked": False, "size": 3,
+             "restored_from": "a" * 32},
+        ],
+        "revoked_unnamed": 0,
+    }  # fmt: skip
+    for as_json in (False, True):
+        code, out = run(["history", SID, "n"], as_json=as_json)
+        assert code == 0
+        shown = out if not as_json else json.loads(out)["data"]["versions"][0]["author"]
+        for bad in ("\x1b", "\x07", "\u202e", "\x00", "\r"):
+            assert bad not in shown
+        assert len(shown) < 700
+    text = run(["history", SID, "n"], as_json=False)[1]
+    assert "restored from " + "a" * 32 in text and text.count("\n") <= 4

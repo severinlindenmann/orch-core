@@ -118,6 +118,8 @@ def test_the_route_is_admin_only_read_only_and_carries_no_secret(w, state):
     s, o, _ = w.call("GET", "/admin/settings", token=w.login(w.ann))
     assert (s, o) == (403, {"error": "forbidden_role"})
     assert w.call("GET", "/admin/settings")[0] == 401
+    pairing = w.login(w.admin, "app")  # a phone's pairing session never reaches an admin route
+    assert w.call("GET", "/admin/settings", token=pairing)[0] in (401, 403)
     tok = w.login(w.admin)
     s, o, _ = w.call("GET", "/admin/settings", token=tok)
     assert s == 200 and o["configured"] is True
@@ -126,7 +128,7 @@ def test_the_route_is_admin_only_read_only_and_carries_no_secret(w, state):
         {"kind": "private", "web": "http://100.64.1.2:8100"},
         {"kind": "server", "web": "http://127.0.0.1:8100"},
     ]
-    assert [m["id"] for m in o["sign_in"]] == ["password", "passkey", "company"] and o["sign_in"][0]["on"] is True
+    assert [m["id"] for m in o["sign_in"]] == ["password"] and o["sign_in"][0]["on"] is True
     blob = json.dumps(o).lower()
     for word in ('password":', "token", "secret", "key", "setup"):
         assert word not in blob.replace("passkey", "").replace("sign_in", ""), word

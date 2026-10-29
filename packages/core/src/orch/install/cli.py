@@ -8,6 +8,7 @@ import os
 import secrets
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -239,24 +240,32 @@ def write_hub_settings(data: Path, *, address: str, domain: str | None, port: in
     """Seed ``hub-settings.json`` (the hub's own words and the addresses it advertises) with the address chosen now.
 
     The hub validates the same shape when it reads it (``orch_hub.settings``). A re-run keeps the name and company an
-    admin already set and replaces only the addresses; nothing secret goes in. The file is 0600, written atomically."""
+    admin already set (a damaged, linked or foreign old file resets them to the defaults)
+    and replaces only the addresses; nothing secret goes in. The file is 0600, written atomically."""
     f = data / "hub-settings.json"
     name, company = "Hub", ""
-    try:
-        old = json.loads(f.read_text())
-        if isinstance(old.get("name"), str) and isinstance(old.get("company"), str):
-            name, company = old["name"], old["company"]
+    try:  # no-follow open; a link, a foreign owner or a non-regular file is not trusted: defaults
+        fd = os.open(f, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            st = os.fstat(fd)
+            if stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid() and not st.st_mode & 0o077:
+                with os.fdopen(fd, closefd=False) as fh:
+                    old = json.load(fh)
+                if isinstance(old.get("name"), str) and isinstance(old.get("company"), str):
+                    name, company = old["name"], old["company"]
+        finally:
+            os.close(fd)
     except (OSError, ValueError, AttributeError):
         pass
     link = P.HUB_LINK_PORT
     loop = address in ("localhost", P.ADDRESS_LOOPBACK)
-    host = P.ADDRESS_LOOPBACK if loop else address
+    host = P.ADDRESS_LOOPBACK if loop else (f"[{address}]" if ":" in address else address)
     addrs = [{"kind": hub_address_kind(address), "web": f"http://{host}:{port}", "link": f"{host}:{link}"}]
     if not loop:  # a network install also answers on the computer itself
         addrs.append(
             {"kind": "server", "web": f"http://{P.ADDRESS_LOOPBACK}:{port}", "link": f"{P.ADDRESS_LOOPBACK}:{link}"}
         )
-    if domain:
+    if domain:  # the scheme of a domain address (http here) is revisited in S2 with the address picker
         addrs.append({"kind": "public", "web": f"http://{domain}:{port}", "link": None})
     body = {"v": 1, "name": name, "company": company, "addresses": addrs}
     tmp = f.with_name(f".{f.name}.tmp")

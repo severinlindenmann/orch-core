@@ -353,3 +353,17 @@ def test_hub_install_seeds_hub_settings_with_the_chosen_address_and_keeps_edits_
     assert (again["name"], again["company"]) == ("Acme", "Acme AG")
     assert again["addresses"] == [{"kind": "server", "web": "http://127.0.0.1:8100", "link": "127.0.0.1:8105"}]
     assert cli.hub_address_kind("192.168.1.5") == "office" and cli.hub_address_kind("8.8.8.8") == "public"
+
+
+def test_hub_settings_ignores_a_linked_old_file_and_brackets_ipv6(home, tmp_path):
+    ctx, out, err, _ = make(home)
+    f = ctx.layout.data("hub") / "hub-settings.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps({"name": "Evil", "company": "X"}))
+    f.symlink_to(other)
+    cli.write_hub_settings(f.parent, address="fd00::5", domain=None, port=8100)
+    body = json.loads(f.read_text())
+    assert (body["name"], body["company"]) == ("Hub", "")
+    assert body["addresses"][0]["web"] == "http://[fd00::5]:8100" and body["addresses"][0]["link"] == "[fd00::5]:8105"
+    assert json.loads(other.read_text())["name"] == "Evil"  # the link target is untouched

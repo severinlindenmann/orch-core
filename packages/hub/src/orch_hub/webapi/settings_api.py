@@ -9,12 +9,8 @@ from typing import Any
 from ..contract.phase4 import render_text
 from ..settings import SettingsError, load
 
-#: how people sign in today (read only: password + code is the one method, so it cannot be turned off)
-SIGN_IN = (
-    {"id": "password", "label": "Name + password + 6-digit code", "note": "For everyone", "on": True},
-    {"id": "passkey", "label": "Passkey (Touch ID / Face ID)", "note": "Later", "on": False},
-    {"id": "company", "label": "Company login (Microsoft Entra / Google)", "note": "Later", "on": False},
-)
+#: how people sign in today (read only: password + code is the one method, so it cannot be turned off; later methods are not listed)
+SIGN_IN = ({"id": "password", "label": "Name + password + 6-digit code", "note": "For everyone", "on": True},)
 
 
 def settings_routes(r: Any) -> tuple[Any, ...]:

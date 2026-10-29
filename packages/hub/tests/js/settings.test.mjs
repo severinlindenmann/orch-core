@@ -22,8 +22,6 @@ export const DEMO = {
   addresses: [{ kind: "private", web: "http://100.71.188.237:8100" }, { kind: "server", web: "http://127.0.0.1:8100" }, { kind: "office", web: "http://192.168.60.30:8100" }],
   sign_in: [
     { id: "password", label: "Name + password + 6-digit code", note: "For everyone", on: true },
-    { id: "passkey", label: "Passkey (Touch ID / Face ID)", note: "Later", on: false },
-    { id: "company", label: "Company login (Microsoft Entra / Google)", note: "Later", on: false },
   ],
 };
 
@@ -33,7 +31,7 @@ test("the page registers as hub-settings for admins (settings is a route of orch
 
 test("the read card shows name, company, every address in plain words and the sign-in rows", () => {
   const t = hubSettingsView(DEMO).textContent;
-  for (const s of ["Acme Hub", "Acme AG", "Private network (VPN)", "http://100.71.188.237:8100", "On this server", "on the server itself, use this one", "Office network", "http://192.168.60.30:8100", "chosen when the hub was installed", "Name + password + 6-digit code", "Passkey"]) assert.ok(t.includes(s), s);
+  for (const s of ["Acme Hub", "Acme AG", "Private network (VPN)", "http://100.71.188.237:8100", "On this server", "on the server itself, use this one", "Office network", "http://192.168.60.30:8100", "chosen when the hub was installed", "Name + password + 6-digit code"]) assert.ok(t.includes(s), s);
   assert.match(t, /Public address\s*Not set up/);          // a kind without an address says so
   assert.doesNotMatch(t, /NetBird|WireGuard|Tailscale/i);   // owner rule: never a VPN product name
 });

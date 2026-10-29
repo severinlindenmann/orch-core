@@ -142,7 +142,7 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
 }
 
 export interface ShareTicket {
-  /** "Share with the hub…" / "Stop sharing this ticket" is part of this ticket's actions (owner, hub joined in share-some mode). */
+  /** "Share with the hub" / "Stop sharing" is part of this ticket's actions (owner, hub joined in share-some mode). */
   shown: boolean
   /** The hub already has this ticket: the item stops sharing instead. */
   shared: boolean
@@ -257,7 +257,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, share, signing 
         {share?.shown && (
           <DropdownMenuItem onSelect={share.run} data-testid="share-ticket-item">
             <Share2 />
-            {share.shared ? 'Stop sharing this ticket' : 'Share with the hub…'}
+            {share.shared ? 'Stop sharing' : 'Share with the hub'}
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>

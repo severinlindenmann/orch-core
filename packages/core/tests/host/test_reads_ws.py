@@ -587,6 +587,7 @@ def agent(w, c, op, args, grant=None, session=SESSION):
 
 
 def test_session_list_has_the_claims_and_leases_of_the_session(w):
+    w.lab.ws.plan_gate_off()  # r10-P02: no plan approval before the build in this test
     uid, key = w.ticket()
     c = w.client()
     agent(w, c, "claim", {"ref": key})

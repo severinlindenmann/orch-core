@@ -24,6 +24,15 @@ const WHY = {
   confirm_denied: "Only the session that made the new words can confirm them. Make new words again from this session.",
   backup_not_found: "That backup is not on this server any more.",
   backup_failed: "The backup could not be made.",
+  wrong_backup_key: "Those words do not open this backup.",
+  words: "The 24 words are not right. Check each word.",
+  backup_invalid: "This file is not a backup of this hub, or it was changed.",
+  other_hub: "This backup belongs to another hub.",
+  dev_mismatch: "This backup is of a different kind of hub (test or real).",
+  dev_refused: "This backup is of a different kind of hub (test or real).",
+  restore_busy: "Another big action is running on this hub (a restore, an update or a removal). Try again when it is done.",
+  no_admin: "After this restore nobody could sign in as an admin, so it was not done.",
+  restore_failed: "The restore could not be done. Nothing was changed.",
 };
 
 const row = (label, note, on) => h("div", { class: "list-row row" },
@@ -128,16 +137,19 @@ export function wordsMayShow(loc = globalThis.location, privateWebs = []) {
 }
 
 /** Password + code, then one button. `onSubmit({password, totp})` resolves nothing; the page re-renders afterwards. */
-function stepUpForm(id, label, onSubmit) {
+function stepUpForm(id, label, onSubmit, withWords = false) {
+  const wordsBox = withWords ? h("textarea", { id: id + "-words", rows: "3", autocomplete: "off", spellcheck: "false", "aria-label": "The 24 backup words" }) : null;
   const pw = h("input", { id: id + "-pw", type: "password", autocomplete: "current-password", "aria-label": "Password" });
   const code = h("input", { id: id + "-totp", inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6", "aria-label": "6-digit code" });
   const go = h("button", { type: "button", class: "primary", text: label, onclick: async () => {
     const body = { password: pw.value ?? "", totp: String(code.value ?? "").trim() };
+    if (wordsBox) { body.words = String(wordsBox.value ?? ""); wordsBox.value = ""; }
     pw.value = ""; code.value = "";
     await onSubmit(body);
   } });
   return h("div", { class: "stepup", "data-stepup": id },
     h("p", { class: "small muted", text: STEP_UP }),
+    wordsBox ? h("div", { class: "field" }, h("label", { for: id + "-words", text: "The 24 backup words" }), wordsBox) : null,
     h("div", { class: "field" }, h("label", { for: id + "-pw", text: "Password" }), pw),
     h("div", { class: "field" }, h("label", { for: id + "-totp", text: "6-digit code" }), code), go);
 }
@@ -164,14 +176,49 @@ function backupRows(b, actions) {
       h("div", { class: "grow" }, h("b", { text: text(when(x.made_ms)) }), h("div", { class: "small muted", text: Math.max(1, Math.round(x.size / 1024)) + " KB" })));
     const slot = h("div", { class: "stepup-slot" });
     row.append(h("button", { type: "button", text: "Download", onclick: () => slot.replaceChildren(stepUpForm("dl-" + x.name.slice(4, 12), "Download", (c) => actions.download?.(x.name, c))) }));
+    if (actions.restore) row.append(h("button", { type: "button", text: "Restore", onclick: () => slot.replaceChildren(restorePanel(x, actions)) }));
     return h("div", {}, row, slot);
   }));
+}
+
+const RESTORE_WORDS = "This puts the hub back to how it was when this backup was made. Everything changed since then is lost. People who are not admins are switched off until you turn each one on again. Every phone and browser has to sign in or pair again. Workspaces keep working on their own.";
+const NO_RESTORE_HERE = "For safety the 24 words are not typed on this address, because it is not private. Run this on the server itself:";
+
+/** The restore step for one kept backup: the words, the password and a code, one red button. Plain words, no typed confirmation. */
+function restorePanel(x, actions) {
+  if (actions.wordsMayShow === false) return h("div", { class: "restore" }, h("p", { class: "small muted", text: NO_RESTORE_HERE }), h("code", { class: "mono cli-line", text: "orch-hub restore FILE" }));
+  return h("div", { class: "restore", "data-restore": x.name },
+    h("p", { class: "small", text: "Restore the backup of " + text(when(x.made_ms)) + "?" }),
+    h("p", { class: "small muted", text: RESTORE_WORDS }),
+    stepUpForm("rs-" + x.name.slice(4, 12), "Restore this backup", (c) => actions.restore?.(x.name, c), true));
+}
+
+/** The notice after a restore: what happened, what to check. */
+function restoredNotice(n, actions) {
+  return h("div", { class: "banner warn", role: "status", "data-restored": "1" },
+    h("b", { text: "Restored from the backup of " + text(when(n.made_ms)) }),
+    h("p", { class: "small", text: "Changes made after it are gone. Check People and Workspaces. " + (n.suspended ? text(n.suspended) + (n.suspended === 1 ? " person is" : " people are") + " switched off: turn each one on again in People." : "") }),
+    h("div", { class: "row" }, h("button", { type: "button", text: "Got it", onclick: () => actions.dismissRestored?.() })));
+}
+
+const PENDING_WORD = { secret_share: "Company secret shared with a workspace", secret_all: "Company secret shared with all workspaces", skill_offer: "Company skill offered to a workspace", mcp_offer: "Company server offered to a workspace", market_company: "Company add-on markets", addon_request: "An add-on request" };
+
+/** What a restore on a new server switched off: each one is Off until an admin turns it on again with one click. */
+function pendingList(items, actions) {
+  return h("div", { class: "banner warn", "data-restore-pending": "1" },
+    h("b", { text: "Switched off by the restore" }),
+    h("p", { class: "small", text: "These were shared before the backup was made. They stay off until you turn each one on again." }),
+    h("ul", { class: "list" }, items.map((x) => h("li", { class: "list-row row", "data-pending-id": String(x.id) },
+      h("div", { class: "grow" }, h("b", { text: text(x.label) }), h("div", { class: "small muted", text: text(PENDING_WORD[x.kind] ?? "Shared item") })),
+      h("button", { type: "button", text: "Turn on", onclick: () => actions.confirmPending?.(x.id) })))));
 }
 
 function backupCard(b, actions) {
   const card = h("div", { class: "card", "data-card": "backup" }, h("h2", { text: "Backup" }));
   if (actions.words) card.append(wordsPanel(actions.words, actions));
-  else if (b.key_pending) {  // after a reload: the words are gone, but the older backups are still waiting for "saved"
+  if (b.restored) card.append(restoredNotice(b.restored, actions));
+  if (b.pending?.length) card.append(pendingList(b.pending, actions));
+  if (b.key_pending) {  // after a reload: the words are gone, but the older backups are still waiting for "saved"
     card.append(h("div", { class: "banner", role: "status", "data-pending": "1" },
       h("b", { text: "New backup words are not confirmed yet" }),
       h("p", { class: "small", text: "Backups made with the older words are kept until you confirm that you saved the new words." }),
@@ -256,6 +303,13 @@ export async function hubSettingsPage(d, detected = [], words = null) {
         if (x.status === 200) { d.state.notice = d.banner("ok", "Backups are set up", null); return hubSettingsPage(d, [], x.body.words); }
         backupNote(x, ""); return hubSettingsPage(d);
       },
+      restore: async (name, c) => {
+        const x = await d.api("POST", "/admin/backup/restore", { name, ...c });
+        if (x.status === 202) { d.state.notice = d.banner("ok", "Restored. The hub is restarting: sign in again.", null); await comesBack(d); return d.refresh().then(() => hubSettingsPage(d)); }
+        backupNote(x, "Restored"); await hubSettingsPage(d);
+      },
+      confirmPending: async (id) => { backupNote(await d.api("POST", "/admin/backup/restore/pending/confirm", { id }), "Turned on"); await hubSettingsPage(d); },
+      dismissRestored: async () => { await d.api("POST", "/admin/backup/restored/dismiss", {}); await hubSettingsPage(d); },
       makeBackup: async () => { backupNote(await d.api("POST", "/admin/backups", {}), "Backup made"); await hubSettingsPage(d); },
       download: async (name, c) => {
         const x = await d.api("POST", "/admin/backups/download", { name, ...c });

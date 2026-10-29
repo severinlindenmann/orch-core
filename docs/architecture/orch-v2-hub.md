@@ -200,7 +200,8 @@ front-page warning name both. That is why the split layout is the recommendation
   relay (§6.3, with the hub in place of the host). D49's "unlocked phone can sign" becomes "unlocked phone with a live
   hub session can ask the hub to sign".
 - **Browser.** The hub serves the person's home (all workspaces, one needs-you list) and the admin console. A
-  workspace's Mission Control stays reachable through the hub for users whose role allows it.
+  workspace's Mission Control stays reachable through the hub for users whose role allows it, only where the
+  workspace turned remote access on and only end to end from an enrolled device (`orch-v2-hub-remote.md`, D84–D93).
 - **Strongly bound channel.** A channel holds a non-exportable key bound to one user: the iPhone's Secure Enclave key,
   or a passkey (WebAuthn) in the browser. Every custodial signature needs a fresh signature from that key over the
   event digest (§5). A session token, cookie or Mission Control token only shows and routes. An agent that steals one

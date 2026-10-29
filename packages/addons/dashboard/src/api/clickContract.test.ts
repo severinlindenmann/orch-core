@@ -42,6 +42,14 @@ describe('click contract 4', () => {
     expect(riskLinesOf(view({ risk_lines: undefined }))).toEqual([])
   })
 
+  it('Already done for a new ticket names it and opens it, with no Try again', () => {
+    const p = clickProblem(new ApiError(409, { code: 'intent.done', message: 'x', retryable: false, summary: '[{"raw":1}]', ticket: { key: 'DEMO-0007', title: 'Plan the launch' } }))
+    expect(p.next).toBe('open')
+    expect(p.ticket).toEqual({ key: 'DEMO-0007', title: 'Plan the launch' })
+    expect(p.body).toBe('“Plan the launch” (DEMO-0007) was already created.')
+    expect(p.body).not.toContain('raw')
+  })
+
   it('a contract.mismatch refusal is one plain line, with nothing to retry', () => {
     for (const e of [
       new ApiError(409, { code: 'contract.mismatch', message: 'client 4, signer 3', retryable: false }),

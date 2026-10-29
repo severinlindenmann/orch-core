@@ -94,6 +94,7 @@ class Code(StrEnum):
     TASK_LEASED = "task.leased"
     TASK_STATE = "task.state"
     TASK_BAD_RECEIPT = "task.bad_receipt"
+    TASK_PLAN_OPEN = "task.plan_open"
     ARTIFACT_EXISTS = "artifact.exists"
     ARTIFACT_UNKNOWN = "artifact.unknown"
     ARTIFACT_BAD_REPLACES = "artifact.bad_replaces"

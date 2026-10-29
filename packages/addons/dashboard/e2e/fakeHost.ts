@@ -4,6 +4,7 @@ import onePressOps from '../../../../contracts/core/click_one_press_ops.json' wi
 // Every request is recorded in `calls`, so the spec can prove what the page asked for (the staged id in the hand-off) and that
 // nothing was signed by the page. The hand-off requests carry hashes that recompute, like the real server's.
 import fs from 'node:fs'
+import { orgHandle } from '../src/mocks/org'
 import http from 'node:http'
 import path from 'node:path'
 
@@ -96,6 +97,8 @@ export class FakeServer {
   port = 0
   /** One click switched on for the workspace (V3-D38): the page signs through /click/* instead of the terminal hand-off. */
   clickOn = false
+  /** The hub feature (the Hub and Company tabs) and the mock company offers behind it. */
+  hubOn = false
   clickSigned = new Set<string>()
   /** Settings switches (run 13 UE): Claude Code folder trust and the records timer. */
   trustOn = false
@@ -136,12 +139,17 @@ export class FakeServer {
       return
     }
     if (p === '/api/host') return json({})
-    const features = this.clickOn ? [...FEATURES, 'click'] : FEATURES
+    const features = [...FEATURES, ...(this.clickOn ? ['click'] : []), ...(this.hubOn ? ['hub'] : [])]
     if (p === '/api/session') return json({ features, workspaces: { [WS]: features } })
     if (p === '/api/workspaces') return json([{ id: WS, prefix: 'DEMO', name: 'Dev workspace', members: [{ person: OWNER, name: 'Sev', role: 'owner', devices: 1 }], needs_you: 0, host_state: 'ok', features, click: this.clickOn ? { custody: 'convenience', enabled: true, available: true, switchable: true } : null }])
     if (p === '/api/me') return json([{ person: OWNER, name: 'Sev', role: 'owner', tier: 'A', workspace: WS }])
     const m = /^\/api\/w\/[0-9a-f]{32}\/(.*)$/.exec(p)
     const rest = m?.[1] ?? ''
+    if (this.hubOn && rest.startsWith('org')) {
+      const reply = orgHandle(method, rest, url.searchParams, body)
+      if (reply) return json(reply.json, reply.status)
+    }
+    if (this.hubOn && rest === 'hub') return json({ mode: 'standalone', joined: false, hub_id: null, member: false, link: null, reachable: null, not_told: false, owed: 0, reseal_needed: false, key_change_pending: false, log_sync_stuck: false, groups: null, snapshot_version: null })
     if (rest === 'market' && method === 'GET') {
       const l = marketList() // a package whose grant was signed shows as installed (Off until turned on)
       for (const m of l.markets) for (const a of m.addons) if (this.installedNames.has(a.id) && !a.installed) a.installed = { version: a.version, state: 'disabled' }

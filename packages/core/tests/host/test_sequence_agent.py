@@ -12,7 +12,7 @@ from orch.host.sequence import Aborted
 from tests.host import human_helpers
 from tests.host.dispatch_helpers import SESSION
 from tests.host.test_sequence import Rig, doc, intent_of
-from tests.host.test_sequence_quick import click_prepare, quick
+from tests.host.test_sequence_quick import _quick_on, click_prepare, quick  # noqa: F401
 
 lab, served, human = human_helpers.lab, human_helpers.served, human_helpers.human
 from tests.host.test_click import click  # noqa: E402,F401
@@ -231,3 +231,31 @@ def test_i6_the_grant_is_exactly_what_start_agent_uses_today_a_workable_runner_g
     ev = next(e for _, evs, _ in rig.submitted for e in evs if e["type"] == "grant.issued")
     assert (ev["scope"], ev["verbs"], ev["label"], ev["hours"]) == ("workable", "agent", "runner", 3)
     assert out["landed"] == 5
+
+
+def test_review_digest_stable_across_minutes(monkeypatch, click, served, human):  # noqa: F811
+    """J04-01: the review text holds no wall clock, so a View built a minute later has the same digest."""
+    import time
+
+    from tests.host.test_sequence_quick import quick
+
+    t0 = time.time()
+    intents = [
+        sequence.validate_intent(intent_of(agent=AGENT)),
+        sequence.validate_intent(quick(agent=AGENT)),
+    ]
+    for intent in intents:
+        base = sequence.extra_lines(intent)
+        assert any("from when you sign" in n for n in base)
+        for dt in (61, 3600):
+            monkeypatch.setattr(time, "time", lambda dt=dt: t0 + dt)
+            assert sequence.extra_lines(intent) == base
+        monkeypatch.undo()
+
+    click.signer._execution = lambda entry: True
+    p = click_prepare(click, quick(agent=AGENT))
+    v = click.view(p["request_id"])
+    monkeypatch.setattr(time, "time", lambda: t0 + 61)
+    click.mono.t += 61
+    out = click.sign(p["request_id"], v["view_digest"])
+    assert out["grant"].startswith("gr_")

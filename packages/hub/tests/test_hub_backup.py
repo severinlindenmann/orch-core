@@ -189,8 +189,9 @@ def test_the_words_are_shown_once_with_no_store_and_are_nowhere_else(w, caplog):
         ("http://127.0.0.1:9000", True),
         ("http://localhost:9000", True),
         ("http://[::1]:9000", True),
-        ("http://100.64.1.2:9000", True),  # the private network (VPN)
-        ("http://100.127.255.254:9000", True),
+        ("http://100.64.1.2:9000", True),  # this hub's own private-network (VPN) address (given below)
+        ("http://100.127.255.254:9000", False),  # another address of the same range: not this hub's
+        ("http://100.64.1.2:9001", False),  # the same host on another port
         ("https://hub.example:9443", True),
         ("http://192.168.1.5:9000", False),  # office network, plain http
         ("http://10.0.0.5:9000", False),
@@ -203,7 +204,7 @@ def test_the_words_are_shown_once_with_no_store_and_are_nowhere_else(w, caplog):
     ],
 )
 def test_words_are_only_for_loopback_https_or_the_private_network(origin, ok):
-    assert BA.safe_to_show_words(origin) is ok
+    assert BA.safe_to_show_words(origin, frozenset({"http://100.64.1.2:9000"})) is ok
 
 
 def test_a_plain_http_office_address_gets_a_refusal_and_nothing_is_made(w):
@@ -696,3 +697,29 @@ def test_the_server_command_refuses_when_its_output_is_not_a_terminal(w, monkeyp
     assert "terminal" in capsys.readouterr().err and lines == []
     assert not (w.state / SN.KEY_FILE).exists() and not (w.state / "backups").exists()
     assert BCLI.run(args, out=lines.append, now_ms=w.clock, tty=lambda: True) == 0  # the same call at a terminal works
+
+
+def test_a_plain_http_private_range_address_is_trusted_only_when_it_is_the_settings_private_address(w, state_file=None):
+    from orch_hub import settings as ST
+
+    mine, other = "http://100.64.1.2:9000", "http://100.64.9.9:9000"
+    for o in (mine, other):
+        w.api.allow_origin(o)
+    ST.save(
+        w.state,
+        {
+            "v": 1,
+            "name": "H",
+            "company": "",
+            "addresses": [{"kind": "private", "web": mine, "link": "100.64.1.2:9005"}],
+        },
+    )
+    w.api.d.settings_file = w.state / ST.SETTINGS_FILE
+    tok = w.login(w.admin)
+    good = w.creds(w.admin)
+    assert w.call("POST", "/admin/backup/key", good, token=tok, origin=other, host="100.64.9.9:9000")[:2] == (
+        403,
+        {"error": "insecure_origin"},
+    )
+    assert not (w.state / SN.KEY_FILE).exists()
+    assert w.call("POST", "/admin/backup/key", good, token=tok, origin=mine, host="100.64.1.2:9000")[0] == 200

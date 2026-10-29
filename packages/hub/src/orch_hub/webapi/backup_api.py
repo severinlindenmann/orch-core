@@ -16,8 +16,7 @@ from typing import Any
 
 from ..backup.service import CLI_LINE, KEEP, BackupError, BackupService
 from ..contract.canon import b64u
-
-_NET_100 = ipaddress.ip_network("100.64.0.0/10")  # the company's private network (VPN) range
+from ..settings import SettingsError, load
 
 #: codes this feature adds to the API's STATUS table (the rest are existing ones)
 STATUS = {
@@ -58,9 +57,10 @@ def backup_routes(r: Any) -> tuple[Any, ...]:
     )
 
 
-def safe_to_show_words(origin: str | None) -> bool:
-    """May the 24 words be shown on a console opened from this origin? Loopback, https, or the private-network (VPN)
-    range: yes. A plain-http office or public address: no (the words would cross the network in clear)."""
+def safe_to_show_words(origin: str | None, private_webs: frozenset[str] = frozenset()) -> bool:
+    """May the 24 words be shown on a console opened from this origin? Loopback and https: yes. A plain-http origin only
+    when it IS this hub's own private-network (VPN) address from ``hub-settings.json`` (``private_webs``); not any other
+    address of that range, not an office or public address (the words would cross a network in clear)."""
     if type(origin) is not str:
         return False
     try:
@@ -75,10 +75,11 @@ def safe_to_show_words(origin: str | None) -> bool:
     if host == "localhost":
         return True
     try:
-        ip = ipaddress.ip_address(host)
+        if ipaddress.ip_address(host).is_loopback:
+            return True
     except ValueError:
         return False
-    return ip.is_loopback or (ip.version == 4 and ip in _NET_100)
+    return origin in private_webs
 
 
 def _err(code: str) -> Exception:
@@ -99,6 +100,14 @@ class BackupHandlers:
         if self.d.keys is None:
             raise _err("unavailable")
         return BackupService(self.d.keys, audit=self.d.audit, activity=self.d.activity, now_ms=self.d.now_ms)
+
+    def _private_webs(self) -> frozenset[str]:
+        """The web addresses of kind ``private`` in the hub's settings file (what the install chose); none if unreadable."""
+        try:
+            s = load(self.d.settings_file.parent) if self.d.settings_file is not None else None
+        except SettingsError:
+            return frozenset()
+        return frozenset(a["web"] for a in (s["addresses"] if s else ()) if a["kind"] == "private")
 
     def _stepup(self, c: Any, b: dict | None, *extra: str) -> dict:
         """The password and a current code in THIS request (A8-3); the same caps and limiter as every sign-in check."""
@@ -126,7 +135,9 @@ class BackupHandlers:
         }
 
     def _h_a_backup_key(self, c: Any, p: dict, q: dict, b: dict | None):
-        if not safe_to_show_words(c.origin):  # before any code is spent: nothing is made, nothing is shown
+        if not safe_to_show_words(
+            c.origin, self._private_webs()
+        ):  # before any code is spent: nothing is made, nothing is shown
             raise _err("insecure_origin")
         self._stepup(c, b)
         words = ""

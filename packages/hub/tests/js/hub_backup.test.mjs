@@ -92,10 +92,13 @@ test("Replace the backup key explains that old backups go and asks for the passw
   assert.equal(inputs(c).length, 2);
 });
 
-test("wordsMayShow: this computer, https and the private network (100.64/10) only", () => {
-  const at = (protocol, hostname) => wordsMayShow({ protocol, hostname });
-  for (const [p, h_] of [["http:", "127.0.0.1"], ["http:", "localhost"], ["http:", "[::1]"], ["http:", "100.64.0.1"], ["http:", "100.127.1.1"], ["https:", "hub.example"]]) assert.equal(at(p, h_), true, h_);
-  for (const [p, h_] of [["http:", "192.168.1.5"], ["http:", "10.0.0.5"], ["http:", "100.128.0.1"], ["http:", "100.63.0.1"], ["http:", "hub.example"], ["http:", "203.0.113.9"], ["file:", "x"]]) assert.equal(at(p, h_), false, h_);
+test("wordsMayShow: this computer, https and this hub's OWN private-network address only", () => {
+  const mine = ["http://100.64.1.2:8100"];
+  const at = (protocol, hostname, port = "8100") => wordsMayShow({ protocol, hostname, origin: `${protocol}//${hostname}:${port}` }, mine);
+  for (const [p, h_] of [["http:", "127.0.0.1"], ["http:", "localhost"], ["http:", "[::1]"], ["http:", "100.64.1.2"], ["https:", "hub.example"]]) assert.equal(at(p, h_), true, h_);
+  for (const [p, h_] of [["http:", "100.64.9.9"], ["http:", "100.127.1.1"], ["http:", "192.168.1.5"], ["http:", "10.0.0.5"], ["http:", "hub.example"], ["http:", "203.0.113.9"], ["file:", "x"]]) assert.equal(at(p, h_), false, h_);
+  assert.equal(at("http:", "100.64.1.2", "9999"), false);   // same host, another port: not the address in the settings
+  assert.equal(wordsMayShow({ protocol: "http:", hostname: "100.64.1.2", origin: "http://100.64.1.2:8100" }, []), false);
   assert.equal(wordsMayShow(null), false);
 });
 

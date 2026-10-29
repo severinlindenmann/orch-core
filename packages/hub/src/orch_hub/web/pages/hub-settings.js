@@ -114,17 +114,16 @@ const STEP_UP = "Type your password and a new 6-digit code from your authenticat
 const NO_WORDS_HERE = "For safety the 24 words are not shown on this address, because it is not private. Run this on the server itself:";
 const NAMES = new RegExp("^hub-[0-9a-f]{8}-\\d{8}T\\d{6}Z\\.orchbak$");
 
-/** Is the console opened where the 24 words may be shown: this computer, https, or the private network (VPN, 100.64/10)? */
-export function wordsMayShow(loc = globalThis.location) {
+/** Is the console opened where the 24 words may be shown: this computer, https, or this hub's own private-network (VPN)
+ *  address (`privateWebs` = the web addresses of kind private from the settings; not the whole 100.64/10 range)? */
+export function wordsMayShow(loc = globalThis.location, privateWebs = []) {
   if (!loc) return false;
   if (loc.protocol === "https:") return true;
   if (loc.protocol !== "http:") return false;
   const host = String(loc.hostname ?? "").replace(/^\[|\]$/g, "");
-  if (host === "localhost" || host === "::1") return true;
-  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
-  if (!m) return false;
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  return a === 127 || (a === 100 && b >= 64 && b <= 127);
+  if (host === "localhost" || host === "::1" || /^127\.\d+\.\d+\.\d+$/.test(host)) return true;
+  const origin = loc.origin ?? (loc.protocol + "//" + (loc.host ?? ""));
+  return privateWebs.includes(origin);
 }
 
 /** Password + code, then one button. `onSubmit({password, totp})` resolves nothing; the page re-renders afterwards. */
@@ -238,7 +237,7 @@ export async function hubSettingsPage(d, detected = [], words = null) {
     const actions = {
       detected,
       words,
-      wordsMayShow: wordsMayShow(),
+      wordsMayShow: wordsMayShow(globalThis.location, (r.body.addresses ?? []).filter((a) => a.kind === "private").map((a) => a.web)),
       copy: async (t) => { try { await globalThis.navigator?.clipboard?.writeText(t); return true; } catch { return false; } },
       wordsSaved: async () => { await d.api("POST", "/admin/backup/key/confirm", {}); await hubSettingsPage(d); },
       setKey: async (c) => {

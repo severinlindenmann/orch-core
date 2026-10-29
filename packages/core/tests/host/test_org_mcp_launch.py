@@ -69,7 +69,7 @@ def world(monkeypatch):
     monkeypatch.setattr(orgstate, "served", served)
     monkeypatch.setattr(orgstate, "_state", lambda svc: SimpleNamespace(binding_seq=state.seq))
     monkeypatch.setattr(orgstate, "isolated", lambda svc: state.iso)
-    monkeypatch.setattr(orgstate, "tool_policy", lambda svc, server: state.policy, raising=False)
+    monkeypatch.setattr(orgstate, "tool_policy", lambda svc, server: state.policy)
     monkeypatch.setattr(orgmcp, "org_secret", lambda svc, name: state.secret_calls.append(name))
     return state
 

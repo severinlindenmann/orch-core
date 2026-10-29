@@ -38,17 +38,6 @@ def org_secret(service: Any, name: str) -> str | None:
     return None
 
 
-def _tool_policy(service: Any, server: str) -> dict[str, str]:
-    fn = getattr(orgstate, "tool_policy", None)  # arrives with the org.tool slice; none yet means nothing is On
-    return fn(service, server) if fn is not None else {}
-
-
-def _record_seen(service: Any, server: str, digest: str, tools: list[dict]) -> None:
-    fn = getattr(orgstate, "record_seen", None)
-    if fn is not None:
-        fn(service, server, digest, tools)
-
-
 def proxy_for(hub: RunnerHub, *, _upstream: Callable[[dict, str | None], Any] | None = None) -> Proxy:
     """The hub's proxy, made on first use. ``_upstream`` is a test seam for the very first call only."""
     existing = getattr(hub, "org_mcp", None)
@@ -68,7 +57,7 @@ def proxy_for(hub: RunnerHub, *, _upstream: Callable[[dict, str | None], Any] | 
 
     def policy(ws: str, server: str) -> dict[str, str]:
         s = svc(ws)
-        return {} if s is None else _tool_policy(s, server)
+        return {} if s is None else orgstate.tool_policy(s, server)
 
     def isolated(ws: str) -> bool:
         s = svc(ws)
@@ -81,7 +70,7 @@ def proxy_for(hub: RunnerHub, *, _upstream: Callable[[dict, str | None], Any] | 
     def seen(ws: str, server: str, digest: str, tools: list[dict]) -> None:
         s = svc(ws)
         if s is not None:
-            _record_seen(s, server, digest, tools)
+            orgstate.record_seen(s, server, digest, tools)
 
     proxy = Proxy(
         upstream=_upstream or (lambda rec, bearer: Upstream(rec["url"], bearer)),

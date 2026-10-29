@@ -591,6 +591,8 @@ def test_exec_self_closes_every_descriptor_and_starts_without_the_old_origins(tm
 
 def _http(port, method, path, body=None, cookie=None, origin=None, host=None):
     h = {"X-Orch-Csrf": "1", "Content-Type": "application/json"}
+    if host:
+        h["Host"] = host
     if origin:
         h["Origin"] = origin
     if cookie:
@@ -728,3 +730,64 @@ def test_serve_with_bind_all_restarts_and_the_next_start_reads_the_new_file(tmp_
     assert not t.is_alive() and result == [0] and execs == [1]  # serve returned (all closed), THEN the restart ran
     assert [a["kind"] for a in S.load(state)["addresses"]] == ["server"]
     assert SV._link_endpoint(state, "x:1") == "127.0.0.1:18105"  # the connect link follows the file
+
+
+def test_an_ipv6_phone_address_from_the_install_keeps_every_save_working(w, state):
+    v6 = {"kind": "server", "web": "http://[::1]:8100", "link": "[::1]:8105"}
+    restarts = _wired(w, state)
+    S.save(state, {**UP, "addresses": [v6]})
+    tok = w.login(w.admin)
+    s, o, _ = _put_addrs(w, tok, {"kind": "server", "host": "::1"}, {"kind": "office", "host": "10.0.0.7"})
+    assert s == 202, o
+    assert S.load(state)["addresses"][0] == v6 and restarts == [1]  # kept verbatim, then the new one
+    gone = {**UP, "addresses": [{**v6, "kind": "office", "web": "http://10.9.9.9:8100", "link": "10.9.9.9:8105"}]}
+    S.save(state, gone)  # a primary the machine no longer has: still kept, still saves
+    assert _put_addrs(w, tok, {"kind": "office", "host": "10.9.9.9"}, S_ENTRY)[0] == 202
+
+
+def test_the_real_serve_hook_refuses_an_http_origin_behind_the_edge(tmp_path):
+    state = tmp_path / "hub"
+    keys = HubKeys.init(state)
+    acc = Access(str(state / "access.db"))
+    user = keys.issue_uk(None)["o"]["user_id"]
+    acc.add_user(user, "ann")
+    acc.add_member("hub-admin", user)
+    ch = Channels(keys, acc, state / CHANNELS_FILE, dev_mode=True)
+    ch.set_password(user, PW)
+    b32 = ch.new_totp(user)["secret"]
+    ch.close()
+    acc.close()
+    edge = {"kind": "public", "web": "https://hub.example.com:443", "link": "127.0.0.1:18105"}
+    S.save(state, {**UP, "addresses": [edge]})
+    stop, out, result, execs = threading.Event(), io.StringIO(), [], []
+    t = threading.Thread(
+        target=lambda: result.append(
+            SV.serve(state, "127.0.0.1:0", "http://127.0.0.1:9", [], web_listen="127.0.0.1:0", bind_all=True,
+                     behind_edge=True, trusted_peers=frozenset({"127.0.0.1"}), stop=stop, out=out,
+                     restart_exec=lambda: execs.append(1))
+        ),
+        daemon=True,
+    )  # fmt: skip
+    t.start()
+    end = time.monotonic() + 15
+    while "orch-hub web port=" not in out.getvalue() and time.monotonic() < end:
+        time.sleep(0.05)
+    port = int(out.getvalue().split("orch-hub web port=")[1].split()[0])
+    origin, host = "https://hub.example.com:443", "hub.example.com:443"
+    code = totp_code(base64.b32decode(b32 + "=" * (-len(b32) % 8)), int(time.time()) // 30)
+    s, o, cookie = _http(
+        port, "POST", "/session", {"user_id": user, "password": PW, "totp": code}, origin=origin, host=host
+    )
+    assert s == 200, o
+    before = (state / S.SETTINGS_FILE).read_bytes()
+    body = {
+        "addresses": [
+            {"kind": "public", "host": "hub.example.com", "scheme": "https"},
+            {"kind": "server", "host": "127.0.0.1"},
+        ]
+    }
+    s, o, _ = _http(port, "PUT", "/admin/settings/addresses", body, cookie.split(";")[0], origin, host)
+    assert (s, o) == (400, {"error": "malformed"})
+    assert (state / S.SETTINGS_FILE).read_bytes() == before and not execs
+    stop.set()
+    t.join(15)

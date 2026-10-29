@@ -148,6 +148,17 @@ def _host_of(web: str) -> str:
     return web.split("://", 1)[1].rsplit(":", 1)[0].strip("[]")
 
 
+def _is_installed(a: Any, entry: dict[str, Any]) -> bool:
+    """The request names the entry the install made (same kind, host and scheme, nothing else)."""
+    return (
+        type(a) is dict
+        and set(a) <= {"kind", "host", "scheme"}
+        and a.get("kind") == entry["kind"]
+        and a.get("host") == _host_of(entry["web"])
+        and a.get("scheme", "http") == entry["web"].split(":", 1)[0]
+    )
+
+
 def _port(addr: str) -> int:
     m = _PORT.search(addr)
     assert m is not None  # the settings validator guarantees host:port
@@ -272,6 +283,8 @@ class SettingsHandlers:
                     if a.get("scheme", "http") != pub["web"].split(":", 1)[0]:
                         raise _err("malformed")
                     entries.append(pub)
+                elif _is_installed(a, primary):  # the phone address is kept verbatim, never re-validated
+                    entries.append(primary)
                 else:
                     entries.append(_entry(a, web_port, link_port, ctl))
             if pub is not None and pub not in entries:

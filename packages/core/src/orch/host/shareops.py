@@ -320,7 +320,10 @@ def _rows(items: list[Any], limit: int = 100) -> dict[str, Any]:
 
 def _leaves(kind: str, items: list[Any]) -> str:
     if kind == "ticket" and any("description" in i.payload for i in items if i.kind == "ticket"):
-        return "the ticket's title, status, labels, deadline and description; no comments or files"
+        return (
+            "the ticket's title, status, labels, deadline and description (summary, context and requirements); "
+            "no plan, comments or files"
+        )
     return LEAVES[kind]
 
 

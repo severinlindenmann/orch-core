@@ -270,6 +270,7 @@ def _rule_row(raw) -> dict | None:
     if kind in ("type", "tag", "ticket") and value is None:
         return None
     aud = raw.get("audience") if isinstance(raw.get("audience"), dict) else {}
+    ids = _audience_ids(aud) if aud else None
     return {
         "kind": kind,
         "value": value,
@@ -277,8 +278,10 @@ def _rule_row(raw) -> dict | None:
         "describes": display(raw.get("describes")),
         "readers": (len(aud.get("users") or []) + len(aud.get("groups") or [])) if aud else 0,
         # the reader ids as core stores them: Stop sharing sends the rule back exactly (core matches a removal
-        # exactly); a malformed or over-long list is left out, so that removal is refused, never another rule's
-        "audience": _audience_ids(aud) if aud else None,
+        # exactly). A present but malformed or over-long list (or a non-object) is no form the page could send back:
+        # the row is not removable here, so a bare rule of the same kind and value is never removed in its place
+        "audience": ids,
+        "removable": ids is not None or ("audience" not in raw),
         "description": raw.get("description") is True,
     }
 

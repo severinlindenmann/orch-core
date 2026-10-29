@@ -433,6 +433,9 @@ def test_include_the_description_shares_the_requirements_text_a_dashboard_ticket
     ok(agent(served, "section.set", {"ref": key, "section": "requirements", "message": "Ben can see the export."}))
     ok(agent(served, "section.set", {"ref": key, "section": "plan", "message": "Agent plan stays home."}))
     rule = {"kind": "ticket", "ticket": key, "description": True}
+    review = ok(req(served, "share.preview", {"add": rule}))["data"]["review"]
+    (leaves,) = [x["text"] for x in review["leaves"] if x["kind"] == "ticket"]
+    assert "description (summary, context and requirements)" in leaves and "no plan" in leaves  # what it is, in words
     ok(rule_op(served, "share.rule_add", rule))
     item = selective.opened[-1]
     assert item["content"]["description"] == "Ben can see the export."

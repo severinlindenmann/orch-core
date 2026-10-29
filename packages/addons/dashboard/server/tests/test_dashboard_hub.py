@@ -551,12 +551,18 @@ def test_a_rule_row_carries_its_readers_and_description_so_stop_sharing_sends_th
     rules = {"rules": [{**stored, "count": 1, "describes": "the ticket"}], "shared": 1, "refused_items": []}
     link = Link({"share.rules": rules, "share.preview": PREVIEW})
     (row,) = client(link).get(f"/api/w/{WS}/hub/share").json()["rules"]
-    assert row["audience"] == aud and row["readers"] == 2 and row["description"] is True
+    assert row["audience"] == aud and row["readers"] == 2 and row["description"] is True and row["removable"] is True
     sent = {k: row[k] for k in ("kind", "value", "audience", "description")}  # what ShareRules.tsx sends back
     assert hub.Rule.model_validate(sent).host() == stored  # the remove route's body -> core's stored form
 
 
-BAD_AUDIENCES = [{"users": ["nope"], "groups": []}, {"users": "x"}, {"users": ["a" * 32] * 33, "groups": []}]
+BAD_AUDIENCES = [
+    {"users": ["nope"], "groups": []},
+    {"users": "x"},
+    {"users": ["a" * 32] * 33, "groups": []},
+    "not an object",
+    {},
+]
 
 
 @pytest.mark.parametrize("aud", BAD_AUDIENCES)
@@ -564,4 +570,12 @@ def test_a_malformed_audience_in_a_rule_row_is_left_out_so_a_removal_fails_close
     rules = {"rules": [{"kind": "tag", "tag": "public", "audience": aud, "count": 0}], "shared": 0}
     link = Link({"share.rules": rules, "share.preview": PREVIEW})
     (row,) = client(link).get(f"/api/w/{WS}/hub/share").json()["rules"]
-    assert row["audience"] is None
+    assert row["audience"] is None and row["removable"] is False  # never sent back as a bare rule
+
+
+def test_a_rule_without_readers_is_removable():
+    rules = {"rules": [{"kind": "tag", "tag": "public", "count": 0}], "shared": 0}
+    (row,) = (
+        client(Link({"share.rules": rules, "share.preview": PREVIEW})).get(f"/api/w/{WS}/hub/share").json()["rules"]
+    )
+    assert row["audience"] is None and row["removable"] is True

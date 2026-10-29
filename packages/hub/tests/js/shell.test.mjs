@@ -145,7 +145,7 @@ test("a failed first read of the workspaces never turns the existing ones into j
     api: async (m, path) => path === "/me/workspaces" ? reads[Math.min(n++, 3)] : { status: 200, body: {} },
     workspacesView: (data) => { renders.push(data); return []; }, shell() {}, closeDialog() {}, openWorkspace() {}, dialog() {}, workspaceDetailsView() {}, h() {}, copyText() {}, pollLive() {},
     newWorkspaces: (known, rows) => (rows ?? []).filter((w) => !known.has(w.workspace_id)), clearInterval() {}, document: { hidden: false },
-    setInterval: (fn) => { timers.push(fn); return timers.length; }, viewRevision: 0, workspacesTimer: 0 });
+    setInterval: (fn) => { timers.push(fn); return timers.length; }, viewRevision: 0, workspacesTimer: 0, canAdmin: () => false });
   vm.runInContext(source.slice(source.indexOf("async function workspaces("), source.indexOf("async function copyText")), context);
   await context.workspaces();                 // first read fails: nothing known yet
   await timers.at(-1)();                       // first good poll: drawn, not announced as a join

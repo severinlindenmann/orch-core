@@ -542,6 +542,15 @@ def floor_cases() -> list[dict[str, Any]]:
         NOW_S,
         err("backup_invalid", "fields"),
     )
+    for nm, bad in (("bool", True), ("float", 1.5), ("negative", -1), ("over_max", M + 1), ("string", "1")):
+        fc("floor_now_s_" + nm, None, b, bad, err("backup_invalid", "fields"), "now_s must be an int in 0..2^53-1")
+    fc(
+        "floor_now_s_zero_ok",
+        {"op_seq": 1, "card_seq": 1, "snapshot_seq": 1},
+        b,
+        0,
+        {"ok": {"op_seq": 1007, "card_seq": 1012, "snapshot_seq": 1040}},
+    )
     return cs
 
 

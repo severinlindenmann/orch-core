@@ -2740,7 +2740,8 @@ fresh server v = max(backup + 1000, unix seconds now)
 every v      v ≤ 2^53 − 1, else the restore is refused (backup_invalid / seq_overflow)
 ```
 
-Restoring the same backup twice therefore climbs twice (`live` after the first restore is the first result), and a workspace
+The clock value must be an integer (not a boolean or a float) in 0 .. 2^53 − 1, else `backup_invalid` / `fields`, in place
+too. Restoring the same backup twice therefore climbs twice (`live` after the first restore is the first result), and a workspace
 that accepted the first accepts the second. The restore never reissues a user or channel certificate for non-admin users:
 people the backup brought back stay suspended until an admin turns each on in People; the op certificate of the backup is
 revoked live before the restore; `revoked/` and the access removals of the live hub are merged, never dropped. (Those steps

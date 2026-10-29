@@ -337,6 +337,8 @@ def restore_floor(live: dict[str, int] | None, backup: dict[str, int], now_s: in
     """The new ``op_seq``, ``card_seq`` and ``snapshot_seq`` after a restore, each above everything ever issued:
     in place ``max(live, backup) + 1000`` (a second restore of the same backup climbs again), on a fresh server
     ``max(backup + 1000, unix seconds)``. Every result must stay below 2^53 (else ``backup_invalid``/``seq_overflow``)."""
+    if type(now_s) is not int or not 0 <= now_s <= MAX_SAFE_INT:
+        raise _invalid("fields")
     out: dict[str, int] = {}
     for k in SEQ_FIELDS:
         b = backup[k]

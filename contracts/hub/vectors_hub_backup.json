@@ -2640,6 +2640,120 @@
   },
   {
    "args": {
+    "backup": {
+     "card_seq": 12,
+     "op_seq": 7,
+     "snapshot_seq": 40
+    },
+    "live": null,
+    "now_s": true
+   },
+   "check": "restore_floor",
+   "expect": {
+    "error": "backup_invalid",
+    "reason": "fields"
+   },
+   "name": "floor_now_s_bool",
+   "note": "now_s must be an int in 0..2^53-1"
+  },
+  {
+   "args": {
+    "backup": {
+     "card_seq": 12,
+     "op_seq": 7,
+     "snapshot_seq": 40
+    },
+    "live": null,
+    "now_s": 1.5
+   },
+   "check": "restore_floor",
+   "expect": {
+    "error": "backup_invalid",
+    "reason": "fields"
+   },
+   "name": "floor_now_s_float",
+   "note": "now_s must be an int in 0..2^53-1"
+  },
+  {
+   "args": {
+    "backup": {
+     "card_seq": 12,
+     "op_seq": 7,
+     "snapshot_seq": 40
+    },
+    "live": null,
+    "now_s": -1
+   },
+   "check": "restore_floor",
+   "expect": {
+    "error": "backup_invalid",
+    "reason": "fields"
+   },
+   "name": "floor_now_s_negative",
+   "note": "now_s must be an int in 0..2^53-1"
+  },
+  {
+   "args": {
+    "backup": {
+     "card_seq": 12,
+     "op_seq": 7,
+     "snapshot_seq": 40
+    },
+    "live": null,
+    "now_s": 9007199254740992
+   },
+   "check": "restore_floor",
+   "expect": {
+    "error": "backup_invalid",
+    "reason": "fields"
+   },
+   "name": "floor_now_s_over_max",
+   "note": "now_s must be an int in 0..2^53-1"
+  },
+  {
+   "args": {
+    "backup": {
+     "card_seq": 12,
+     "op_seq": 7,
+     "snapshot_seq": 40
+    },
+    "live": null,
+    "now_s": "1"
+   },
+   "check": "restore_floor",
+   "expect": {
+    "error": "backup_invalid",
+    "reason": "fields"
+   },
+   "name": "floor_now_s_string",
+   "note": "now_s must be an int in 0..2^53-1"
+  },
+  {
+   "args": {
+    "backup": {
+     "card_seq": 12,
+     "op_seq": 7,
+     "snapshot_seq": 40
+    },
+    "live": {
+     "card_seq": 1,
+     "op_seq": 1,
+     "snapshot_seq": 1
+    },
+    "now_s": 0
+   },
+   "check": "restore_floor",
+   "expect": {
+    "ok": {
+     "card_seq": 1012,
+     "op_seq": 1007,
+     "snapshot_seq": 1040
+    }
+   },
+   "name": "floor_now_s_zero_ok"
+  },
+  {
+   "args": {
     "answer": {
      "addresses": [
       {

@@ -665,6 +665,7 @@ function registerView(err) {
       const button = form.querySelector("[type=submit]");
       if (offline || button.disabled) return;
       const out = await busyButton(button, () => registerBrowser(label.value.trim() || "This browser", pw.value, code.value.trim()));
+      if (out === undefined) return; // a second submit while the first is still running: that one decides, not this one
       pw.value = code.value = "";
       if (out) return registerView(out);
       state.notice = banner("ok", "This browser is ready", "It holds a signing key for you. You can remove it any time.");
@@ -689,6 +690,7 @@ async function registerBrowser(label, password, totp) {
     if (!o || o.kind !== "hub.channel_cert" || o.user_id !== me0.userId || o.key_pub !== gen.keyPub || o.channel_id !== gen.channelId || o.factor !== "password+totp" || o.hub_id !== begun.body.challenge.hub_id)
       return "The hub's certificate did not match. Nothing was kept.";
     await saveChannel({ pair: gen.pair, keyPub: gen.keyPub, channelId: gen.channelId, userId: me0.userId, hubId: o.hub_id, label });
+    if ((await loadChannel())?.channelId !== gen.channelId) return "This browser could not keep the key here."; // say "ready" only when the key is really stored
     return null;
   } catch (e) {
     return e instanceof ChannelError || e instanceof CanonError ? "This browser could not create or keep a key here." : "Something went wrong. Nothing was kept.";

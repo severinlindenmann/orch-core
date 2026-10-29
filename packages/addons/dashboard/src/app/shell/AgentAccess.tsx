@@ -74,7 +74,7 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
   }
   // Nothing active and not just stopped: offer a way in whenever the runner answered (a reload after Stop, or no grant ever).
   const idle = !live && !stopped && runner.isSuccess && !runner.isFetching
-  if (!live && !stopped && !idle && !extend && !askStop && !partial && queue.length === 0) return null
+  if (!live && !stopped && !idle && !preparing && !extend && !askStop && !partial && queue.length === 0) return null
   // Enough access left: the pill stays hidden (Stop is on Settings > Grants) unless a stop or extend flow is under way.
   if (line.kind === 'ok' && !extend && !askStop && !partial && queue.length === 0) return null
   const pill = 'flex min-h-11 min-w-0 shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-text transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9'

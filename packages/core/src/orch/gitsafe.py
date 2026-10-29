@@ -128,6 +128,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from orch.gitread.refs import branch_ok as _branch_ok  # #561's validator, moved to gitread by #565
+from orch.privdir import others_can_write
 
 __all__ = [
     "ALLOWED", "ALLOWED_SUB", "HARDEN", "INVARIANT", "ISOLATION", "KNOWN_EXEC", "LAND_OPS", "NEUTRAL", "OPS", "PINNED",
@@ -917,7 +918,7 @@ def _check_path(path: str, what: str, *, must_exist: bool) -> None:
         raise Unsafe(f"the repository's {what} cannot be checked") from None
     if stat.S_ISLNK(st.st_mode):
         raise Unsafe(f"the repository's {what} is a symlink")
-    if st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) & 0o022:
+    if st.st_uid != os.geteuid() or others_can_write(st, os.geteuid()):
         raise Unsafe(f"the repository's {what} is not owned by this user or is writable by others")
 
 

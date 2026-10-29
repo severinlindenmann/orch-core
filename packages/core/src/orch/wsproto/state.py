@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from orch import oslock
+from orch.privdir import others_can_write
 
 __all__ = [
     "FileHolderStore",
@@ -125,7 +126,7 @@ def _check_ancestor(fd: int, shown: Path, uid: int) -> None:
     if st.st_uid not in (0, uid):
         raise StateError(f"{shown}: owner {st.st_uid}, expected root or {uid}")
     sticky = st.st_uid == 0 and bool(mode & stat.S_ISVTX)
-    if mode & 0o022 and not sticky:
+    if others_can_write(st, uid) and not sticky:
         raise StateError(f"{shown}: writable by another principal")
 
 

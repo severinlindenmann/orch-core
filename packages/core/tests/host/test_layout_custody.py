@@ -19,6 +19,14 @@ from tests.store.helpers import WS
 UID = os.getuid()
 
 
+@pytest.fixture(autouse=True)
+def _shared_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The test user's real group may be a private one (Linux CI); these tests mean a shared group."""
+    from orch import privdir
+
+    monkeypatch.setattr(privdir, "_is_private_group", lambda uid, gid: False)
+
+
 def _tree(tmp_path: Path, mode: int = 0o700) -> Path:
     project = tmp_path / "proj"
     for d in ("events", "tickets", ".state"):
@@ -35,6 +43,17 @@ def test_a_private_dot_orch_passes(tmp_path: Path) -> None:
 @pytest.mark.parametrize("mode", [0o770, 0o707, 0o777])
 def test_a_writable_dot_orch_is_refused(tmp_path: Path, mode: int) -> None:
     project = _tree(tmp_path, mode)
+    with pytest.raises(HostError, match=r"\.orch: writable by another principal"):
+        custody.check_workspace_files(tmp_path / "state", "w" * 32, project, UID)
+
+
+def test_a_dot_orch_group_writable_by_the_private_group_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from orch import privdir
+
+    monkeypatch.setattr(privdir, "_is_private_group", lambda uid, gid: True)
+    project = _tree(tmp_path, 0o775)
+    custody.check_workspace_files(tmp_path / "state", "w" * 32, project, UID)
+    os.chmod(project / ".orch", 0o777)
     with pytest.raises(HostError, match=r"\.orch: writable by another principal"):
         custody.check_workspace_files(tmp_path / "state", "w" * 32, project, UID)
 

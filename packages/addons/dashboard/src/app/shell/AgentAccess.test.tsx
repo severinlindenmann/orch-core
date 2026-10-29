@@ -50,6 +50,28 @@ it('with no agent access (also after a reload) it says agents cannot start yet',
   expect(screen.getByRole('heading', { name: 'Allow agents' })).toBeInTheDocument()
   expect(await screen.findByRole('button', { name: 'Complete new grant' })).toBeInTheDocument()
 })
+it('while the runner is starting it says agents are getting ready, with no button, then falls back after a minute', async () => {
+  runner = { enabled: true, connected: false, grant: null } as unknown as Runner
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  try {
+    show()
+    const group = await screen.findByRole('group', { name: 'Agent access' })
+    expect(group).toHaveTextContent('Getting agents ready…')
+    expect(group).not.toHaveTextContent("Agents can't start yet")
+    expect(screen.queryByRole('button', { name: 'Allow agents' })).not.toBeInTheDocument()
+    setClock(() => now + 61_000)
+    await vi.advanceTimersByTimeAsync(6_000)
+    await waitFor(() => expect(screen.getByRole('group', { name: 'Agent access' })).toHaveTextContent("Agents can't start yet"))
+    expect(screen.getByRole('button', { name: 'Allow agents' })).toBeInTheDocument()
+  } finally { vi.useRealTimers(); setClock(() => now) }
+})
+it('the getting-ready note is hidden once a live grant arrives', async () => {
+  runner = { enabled: true, connected: false, grant: null } as unknown as Runner
+  const view = show()
+  expect(await screen.findByText('Getting agents ready…')).toBeInTheDocument()
+  runner = { enabled: true, connected: true, grant: { id: 'runner', scope: 'workable', until: '2026-10-16T20:00:00Z' } } as Runner
+  await waitFor(() => expect(view.container.querySelector('.agent-access')?.textContent ?? '').toBe(''), { timeout: 5_000 })
+})
 it('the Stop review says whose access and until when in plain words, the id only under Technical details', async () => {
   show()
   await stopFromPill()

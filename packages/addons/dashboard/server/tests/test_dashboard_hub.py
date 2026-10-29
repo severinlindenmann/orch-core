@@ -132,6 +132,16 @@ def test_preview_passes_one_rule_to_the_host():
     assert link.calls[1] == ("share.preview", {"remove": {"kind": "ticket", "ticket": "PRD-0014"}})
 
 
+def test_the_hosts_too_many_people_refusal_reaches_the_page_in_its_own_words():
+    """A review over the host's hard limits (core shareops.TOO_MANY) is relayed with its code and plain sentence: the
+    page matches the sentence, so the relay must not reword or drop it."""
+    too_many = "This rule reaches too many people. Narrow it to share."
+    link = Link({"share.preview": fail("invalid.input", too_many)})
+    res = client(link).post(f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "type", "value": "Bug"}})
+    assert res.status_code == 400
+    assert res.json()["error"]["code"] == "invalid.input" and too_many in res.json()["error"]["message"]
+
+
 @pytest.mark.parametrize("body", [
     {"add": {"kind": "type", "value": "x"}, "remove": {"kind": "type", "value": "y"}},
     {"add": {"kind": "type"}}, {"add": {"kind": "needs_you", "value": "x"}},
@@ -540,3 +550,42 @@ def test_a_review_without_readers_or_widened_keys_means_no_review():
         f"/api/w/{WS}/hub/share/preview", json={"add": {"kind": "needs_you"}}
     )
     assert got.json()["review"] is None
+
+
+def test_a_rule_row_carries_its_readers_and_description_so_stop_sharing_sends_the_rule_core_has():
+    """Run 9 (J03): core matches a rule removal exactly; the row had only a readers COUNT, so the page sent
+    `{kind, value}` for a rule stored with `description: true` and core answered not_found (HTTP 404). The row carries
+    the reader ids and the flag, and that row, sent back, reaches the host as the stored rule."""
+    aud = {"users": ["a" * 32], "groups": ["team-a"]}
+    stored = {"kind": "ticket", "ticket": "PW-0001", "audience": aud, "description": True}
+    rules = {"rules": [{**stored, "count": 1, "describes": "the ticket"}], "shared": 1, "refused_items": []}
+    link = Link({"share.rules": rules, "share.preview": PREVIEW})
+    (row,) = client(link).get(f"/api/w/{WS}/hub/share").json()["rules"]
+    assert row["audience"] == aud and row["readers"] == 2 and row["description"] is True and row["removable"] is True
+    sent = {k: row[k] for k in ("kind", "value", "audience", "description")}  # what ShareRules.tsx sends back
+    assert hub.Rule.model_validate(sent).host() == stored  # the remove route's body -> core's stored form
+
+
+BAD_AUDIENCES = [
+    {"users": ["nope"], "groups": []},
+    {"users": "x"},
+    {"users": ["a" * 32] * 33, "groups": []},
+    "not an object",
+    {},
+]
+
+
+@pytest.mark.parametrize("aud", BAD_AUDIENCES)
+def test_a_malformed_audience_in_a_rule_row_is_left_out_so_a_removal_fails_closed(aud):
+    rules = {"rules": [{"kind": "tag", "tag": "public", "audience": aud, "count": 0}], "shared": 0}
+    link = Link({"share.rules": rules, "share.preview": PREVIEW})
+    (row,) = client(link).get(f"/api/w/{WS}/hub/share").json()["rules"]
+    assert row["audience"] is None and row["removable"] is False  # never sent back as a bare rule
+
+
+def test_a_rule_without_readers_is_removable():
+    rules = {"rules": [{"kind": "tag", "tag": "public", "count": 0}], "shared": 0}
+    (row,) = (
+        client(Link({"share.rules": rules, "share.preview": PREVIEW})).get(f"/api/w/{WS}/hub/share").json()["rules"]
+    )
+    assert row["audience"] is None and row["removable"] is True

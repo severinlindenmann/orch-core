@@ -420,3 +420,101 @@ def test_the_plan_binds_the_readers_beyond_what_a_page_would_show():
     b = S._item("ticket:u1", "ticket", fact, payload, None, {"users": [*first[:-1], "f" * 32], "groups": []})  # noqa: SLF001
     assert a is not None and b is not None
     assert S.plan_of([a]) != S.plan_of([b])  # a confirm over a view that hides the 70th reader cannot match
+
+
+USERS = [f"{n:032x}" for n in range(1, 33)]
+
+
+def test_a_confirm_over_a_selection_with_one_reader_replaced_is_not_what_you_were_shown(served, selective):
+    labelled(served, "Public note", "public")
+    rule = {"kind": "tag", "tag": "public", "audience": {"users": USERS, "groups": []}}
+    other = {**rule, "audience": {"users": [*USERS[:-1], "f" * 32], "groups": []}}  # the last reader is somebody else
+    base = len(ok(req(served, "share.rules"))["data"]["rules"])  # the default needs-you rule
+    shown = ok(req(served, "share.preview", {"add": rule}))["data"]["plan"]
+    elsewhere = ok(req(served, "share.preview", {"add": other}))["data"]["plan"]
+    assert shown != elsewhere
+    res = req(served, "share.rule_add", {"rule": rule, "expect": elsewhere})
+    assert err(res) == "invalid.input" and "not what you were shown" in res["error"]["message"]
+    assert selective.ops == [] and len(ok(req(served, "share.rules"))["data"]["rules"]) == base
+    assert ok(req(served, "share.rule_add", {"rule": rule, "expect": shown}))  # the plan that was shown goes through
+
+
+def test_an_over_limit_confirm_with_the_matching_plan_is_refused_and_saves_nothing(served, selective, monkeypatch):
+    labelled(served, "Public note", "public")
+    rule = {"kind": "tag", "tag": "public", "audience": {"users": USERS[:3], "groups": []}}
+    base = len(ok(req(served, "share.rules"))["data"]["rules"])
+    shown = ok(req(served, "share.preview", {"add": rule}))["data"]["plan"]  # within the limits when it was shown
+    monkeypatch.setattr(shareops, "MAX_REVIEW_PEOPLE", 2)  # ... and over them at the confirm
+    res = req(served, "share.rule_add", {"rule": rule, "expect": shown})
+    assert err(res) == "invalid.input" and res["error"]["message"] == shareops.TOO_MANY
+    assert selective.ops == [] and len(ok(req(served, "share.rules"))["data"]["rules"]) == base
+
+
+def test_a_review_counts_distinct_teams_and_refuses_above_the_limit(monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.host.errors import HostError
+
+    service = SimpleNamespace(_share_names={})
+    monkeypatch.setattr(shareops, "_selective", lambda s: (_ for _ in ()).throw(HostError("hub.not_joined", "x")))
+    monkeypatch.setattr(shareops, "_rows", lambda items: {})  # the item rows are not under test
+    teams = [f"team-{n}" for n in range(shareops.MAX_REVIEW_TEAMS)]
+    got = shareops._review(service, [_item("a", (), teams)], set())
+    assert len(got["readers"]["teams"]) == shareops.MAX_REVIEW_TEAMS  # at the limit: listed whole
+    with pytest.raises(HostError) as e:
+        shareops._review(service, [_item("a", (), [*teams, "one-more"])], set())
+    assert shareops.TOO_MANY in str(e.value)
+
+
+def test_a_review_with_too_many_names_in_all_is_refused_before_it_can_hit_the_frame_limit(monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.host.errors import HostError
+    from orch.hubclient.tlslink import framing
+
+    assert shareops.MAX_REVIEW_NAMES * 250 < framing.MAX_FRAME  # a name of 250 bytes each still fits one frame
+    service = SimpleNamespace(_share_names={})
+    monkeypatch.setattr(shareops, "_selective", lambda s: (_ for _ in ()).throw(HostError("hub.not_joined", "x")))
+    monkeypatch.setattr(shareops, "MAX_REVIEW_NAMES", 40)
+    users = [f"{n:032x}" for n in range(30)]
+    items = [_item(f"ticket:{k}", users) for k in range(2)]
+    st = SimpleNamespace(sent=[i.logical for i in items], confirmed=None, widened=lambda want: want)
+    # 30 readers + 30 people added on each of two widened tickets: 90 names in all, each part below its own limit
+    with pytest.raises(HostError, match="reaches too many people"):
+        shareops._review(service, items, {i.logical for i in items}, st)
+
+
+# --- run-9 J03: a ticket made in the dashboard has only Requirements text ("What should be true when this is done?") --
+
+
+def test_include_the_description_shares_the_requirements_text_a_dashboard_ticket_has(served, selective):
+    """Run 9 (J03): the rule said "include the description" but the ticket's only text was its Requirements, so nothing
+    left and the confirmed grant was `description: false`. The description is the person-written text (Summary,
+    Context and Requirements); the plan, decisions and findings stay home."""
+    uid, key = served.ticket("Invoice export for Ben")
+    ok(agent(served, "section.set", {"ref": key, "section": "requirements", "message": "Ben can see the export."}))
+    ok(agent(served, "section.set", {"ref": key, "section": "plan", "message": "Agent plan stays home."}))
+    rule = {"kind": "ticket", "ticket": key, "description": True}
+    review = ok(req(served, "share.preview", {"add": rule}))["data"]["review"]
+    (leaves,) = [x["text"] for x in review["leaves"] if x["kind"] == "ticket"]
+    assert "description (summary, context and requirements)" in leaves and "no plan" in leaves  # what it is, in words
+    ok(rule_op(served, "share.rule_add", rule))
+    item = selective.opened[-1]
+    assert item["content"]["description"] == "Ben can see the export."
+    grant = shareops._load(served.service).confirmed[f"ticket:{uid}"]
+    assert grant["description"] is True
+
+
+def test_the_rule_as_share_rules_lists_it_removes_it(served, selective):
+    """Run 9 (J03): the dashboard sends back the rule as listed (with its readers and the description flag); core
+    matches the stored rule exactly, so that form must remove it and a form without them must not."""
+    _uid, key = served.ticket("Invoice export for Ben")
+    rule = {"kind": "ticket", "ticket": key, "audience": {"users": [U1], "groups": []}, "description": True}
+    ok(rule_op(served, "share.rule_add", rule))
+    (listed,) = [r for r in ok(req(served, "share.rules"))["data"]["rules"] if r["kind"] == "ticket"]
+    bare = {"kind": "ticket", "ticket": key}
+    assert err(req(served, "share.rule_remove", {"rule": bare, "expect": "p" * 43})) == "not_found"
+    as_listed = {k: v for k, v in listed.items() if k not in ("count", "describes")}
+    assert as_listed == rule
+    ok(rule_op(served, "share.rule_remove", as_listed))
+    assert [r["kind"] for r in ok(req(served, "share.rules"))["data"]["rules"]] == ["needs_you"]

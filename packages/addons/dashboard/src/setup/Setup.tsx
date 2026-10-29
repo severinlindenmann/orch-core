@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   SetupAPI,
@@ -14,11 +14,14 @@ import { Inline, Raw } from '../components/sign/visible'
 import './setup.css'
 
 const clickRiskCopy = 'Faster, less safe: anything using this computer as you, including your agents, could approve for you. Choose this only on your own computer.'
+/** The plain meaning of One click, behind "What does this mean?"; the full risk sentence stays in the review step. */
+const clickMeaningCopy =
+  'Anything running as you on this computer, including your agents, could approve for you. Choose a passphrase if the computer is shared.'
 const terminalStepCopy = "One step needs your terminal: you'll press Enter once."
 const voidCopy =
-  'If setup fails before your workspace is created, these secret words and recovery code will no longer work. Run orch setup again to get new ones.'
+  'If setup stops before your workspace is created, these words will no longer work. Start setup again to get new ones.'
 const expiredCopy =
-  'This session has ended. In your terminal, press Enter to open a fresh setup link (or run orch setup again). It starts a new session with new secret words and a new recovery code.'
+  'This session has ended. In your terminal, press Enter to open a fresh setup link (or run orch setup again). It starts a new session with new recovery words.'
 /** A short, secret-free cause for the "session ended" copy: the API code, or `client: Name: message`. */
 export function reasonOf(e: unknown): string {
   if (e instanceof SetupError) return e.code
@@ -89,14 +92,25 @@ export function summarize(review: Review): { lines: string[]; unknown: boolean; 
     else if (item.type === 'settings.changed' && only('set') && f?.set && typeof f.set === 'object' && !Array.isArray(f.set)) {
       const set = f.set as Record<string, unknown>
       const okHours = !('grant_hours' in set) || typeof set.grant_hours === 'number'
-      if (!Object.keys(set).every((k) => k === 'grant_hours') || !okHours) odd(item.title)
+      // `repos` is quiet only when it declares exactly the setup folder (made a repository by the git flag); any
+      // other project path is a decision the person must see.
+      const repos = set.repos
+      const repoPaths =
+        repos && typeof repos === 'object' && !Array.isArray(repos)
+          ? Object.values(repos as Record<string, unknown>).map((r) => (r && typeof r === 'object' ? (r as { path?: unknown }).path : undefined))
+          : undefined
+      const hasGit = review.flags.some((fl) => fl.id === 'git')
+      const quietRepo = !!repoPaths && repoPaths.length === 1 && repoPaths[0] === review.workspace?.dir && hasGit
+      if (!Object.keys(set).every((k) => k === 'grant_hours' || k === 'repos') || !okHours || (repos !== undefined && !repoPaths)) odd(item.title)
       else {
+        if (repoPaths && !quietRepo) for (const rp of repoPaths) odd(`Project folder: ${typeof rp === 'string' ? rp : 'unknown'}`)
         if (typeof set.grant_hours === 'number') lines.push(`Agents may work for you for up to ${duration(set.grant_hours)}`)
       }
     } else odd(item.title)
   }
   for (const flag of review.flags) {
     if (flag.id === 'custody' || flag.id === 'terminal' || flag.id === 'records' || flag.id === 'trust') lines.push(flag.text)
+    else if (flag.id === 'git') continue // shown as the 'Safe copies' row on the card; its detail stays in the fold
     else if (flag.id !== 'runner' && flag.id !== 'terminals') odd(flag.text) // a flag this page does not know is shown
   }
   if (addons.length) lines.push(`Add-ons: ${addons.join(', ')}`)
@@ -132,16 +146,37 @@ export function reviewFacts(review: Review): Fact[] {
   if (agents !== undefined) facts.push({ icon: '✦', label: 'Agents', value: agents })
   const addons = review.items.filter((i) => i.type === 'addon.granted' && i.id !== 'addon:dashboard').map((i) => i.title)
   if (addons.length) facts.push({ icon: '⊞', label: 'Add-ons', value: addons })
+  if (has('git')) facts.push({ icon: '⧉', label: 'Safe copies', value: 'Each ticket gets its own safe copy of this folder. None of your files are changed, except .gitignore.' })
   if (has('records')) facts.push({ icon: '◷', label: 'History', value: 'Tickets are saved on this computer only' })
   return facts
 }
+/** The four buttons of one word check: the right word and three other distinct words of the same list, shuffled. */
+export function choicesFor(n: number, recoveryWords: string[]): string[] {
+  const right = recoveryWords[n - 1]
+  const others = [...new Set(recoveryWords.filter((w) => w !== right))]
+  for (let i = others.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[others[i], others[j]] = [others[j], others[i]]
+  }
+  const all = [right, ...others.slice(0, 3)]
+  for (let i = all.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[all[i], all[j]] = [all[j], all[i]]
+  }
+  return all
+}
 const prefixOk = (p: string) => /^[A-Z][A-Z0-9]{1,7}$/.test(p)
 /** A ticket prefix from a workspace name: first letters, capitals, letters and digits only ("Marketing Department" gives
- * MARK, "Personal Workspace" gives PW); empty or unusable names fall back to PW. */
+ * MARK, "Personal Workspace" gives PW); empty or unusable names fall back to MW (My workspace). */
 export function suggestPrefix(name: string): string {
   const words = name.toUpperCase().match(/[A-Z0-9]+/g) ?? []
   const p = (words.length >= 2 ? words.map((w) => w[0]).join('') : (words[0] ?? '').slice(0, 4)).slice(0, 8)
-  return prefixOk(p) ? p : 'PW'
+  return prefixOk(p) ? p : 'MW'
+}
+/** The default workspace name for a person: "<name>'s workspace", or "My workspace" while no name is typed. */
+export function defaultWorkspaceName(name: string): string {
+  const n = name.trim()
+  return n ? `${n}'s workspace` : 'My workspace'
 }
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
@@ -184,7 +219,7 @@ function Words({ words }: { words: string[] | null }) {
     </span>
   )
 }
-const pausedCopy = 'The setup in your terminal has ended. Run orch setup again to start a new session with new secret words.'
+const pausedCopy = 'The setup in your terminal has ended. Run orch setup again to start a new session with new recovery words.'
 const steps = ['Welcome', 'You', 'What agents can do', 'Approval', 'Check words', 'Review']
 /** Finish setup has two screens: what exists and what to add, then the review. */
 const finishSteps = ['Your workspace', 'Review']
@@ -362,7 +397,7 @@ export function ConfirmWords({ words }: { words: string[] | null }) {
       <small className="words-wait">Waiting for you in the setup window…</small>
       <details>
         <summary>Are the words different?</summary>
-        <p>Do not press Enter. Close the setup window, then run orch setup again to start over with new words.</p>
+        <p>Do not press Enter. Close the setup window, then run orch setup again to start over with new recovery words.</p>
       </details>
     </section>
   )
@@ -371,8 +406,8 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
     name: '',
-    workspace_name: 'Personal Workspace',
-    prefix: 'PW',
+    workspace_name: 'My workspace',
+    prefix: 'MW',
     addons: [],
     method: 'terminal',
     agent_hours: 8,
@@ -382,8 +417,14 @@ export function Setup({ api }: { api: SetupAPI }) {
   })
   const [step, setStep] = useState(0)
   const [prefixEdited, setPrefixEdited] = useState(false)
+  const [workspaceEdited, setWorkspaceEdited] = useState(false)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
   const [words, setWords] = useState<Record<string, string>>({})
+  // The word check is a tap: the choices are made once per set of words and stay while the page re-renders.
+  const choices = useMemo(
+    () => Object.fromEntries((secrets?.check_positions ?? []).map((n) => [n, choicesFor(n, secrets?.recovery_words ?? [])])),
+    [secrets],
+  )
   const [review, setReview] = useState<Review>()
   const [run, setRun] = useState<string>()
   const [progress, setProgress] = useState<Progress>()
@@ -598,7 +639,7 @@ export function Setup({ api }: { api: SetupAPI }) {
       drop()
     }
   }, [api])
-  // Worktrees need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
+  // Work copies need a git repository: a new workspace in a folder without git offers to make one (nothing is committed)
   const offersTrust = state?.mode === 'new' && state.claude?.available === true
   const parentConfig = state?.claude?.parent_config ?? ''
   const offersGit = state?.mode === 'new' && state.git?.repo === false && profile.addons.includes('worktrees')
@@ -642,16 +683,18 @@ export function Setup({ api }: { api: SetupAPI }) {
       setEnded(true)
       api.forget()
       setError(expiredCopy)
-    } else setError(`Those words did not match. ${result.attempts_left} attempts left.`)
+    } else setError(
+        `That was not the right word. Look at the highlighted number in the list. ${result.attempts_left} ${result.attempts_left === 1 ? 'try' : 'tries'} left.`,
+      )
   }
   async function copyRecovery() {
     try {
       await navigator.clipboard.writeText(secrets!.recovery_words.join(' '))
-      setNotice('Recovery code copied. We will try to clear your clipboard in 60 seconds.')
+      setNotice('Recovery words copied. We will try to clear your clipboard in 60 seconds.')
       // Do not retain the secret in a timer closure, or read unrelated clipboard contents.
       setTimeout(clearClipboard, 60_000)
     } catch {
-      setNotice('Copy is unavailable. Write down the recovery code or print it.')
+      setNotice('Copy is unavailable. Write down the recovery words or print them.')
     }
   }
   async function finish() {
@@ -723,7 +766,7 @@ export function Setup({ api }: { api: SetupAPI }) {
             'You',
             'What may agents do here?',
             'How do you want to approve things?',
-            'Your secret words',
+            'Your recovery words',
             'Review your setup',
           ][step]
   return (
@@ -793,7 +836,16 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <label>
                 Your name
-                <input autoComplete="name" value={profile.name} onChange={(e) => update({ name: e.target.value })} />
+                <input autoComplete="name" value={profile.name} onChange={(e) => {
+                    const name = e.target.value
+                    // Until the person edits them, the workspace name and prefix follow "Your name" (Anna Test: "Anna Test's workspace", AT).
+                    const patch: Partial<Profile> = { name }
+                    if (!workspaceEdited) patch.workspace_name = defaultWorkspaceName(name)
+                    // Once the workspace name was edited by hand, the prefix follows that name, not the person's.
+                    if (!prefixEdited) patch.prefix = suggestPrefix(workspaceEdited ? profile.workspace_name : name)
+                    update(patch)
+                  }}
+                />
               </label>
               <label>
                 Workspace name
@@ -801,6 +853,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   value={profile.workspace_name}
                   onChange={(e) => {
                     const workspace_name = e.target.value
+                    setWorkspaceEdited(true)
                     update(prefixEdited ? { workspace_name } : { workspace_name, prefix: suggestPrefix(workspace_name) })
                   }}
                 />
@@ -821,7 +874,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               <div className="ticket-preview" aria-label="Ticket number preview">
                 {[1, 2, 3].map((n) => (
                   <span className="chip" key={n}>
-                    {profile.prefix.trim() || 'PW'}-{String(n).padStart(4, '0')}
+                    {profile.prefix.trim() || 'MW'}-{String(n).padStart(4, '0')}
                   </span>
                 ))}
               </div>
@@ -875,7 +928,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                           addons: e.target.checked
                             ? [...profile.addons, a.id]
                             : profile.addons.filter((id) => id !== a.id),
-                          // ticking Worktrees again asks the git question again
+                          // ticking Work copies again asks the git question again
                           ...(a.id === 'worktrees' ? { git_init: undefined } : {}),
                         })
                       }
@@ -884,7 +937,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   ),
                 )}
               {offersGit && (
-                <div className="note" role="group" aria-label="Git repository">
+                <div className="note" role="group" aria-label="Safe copies">
                   <p>
                     <strong>This folder does not track changes yet.</strong> Agents need that to work on several
                     tickets at once.
@@ -892,7 +945,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   <label className="toggle">
                     <span>
                       <strong>Set it up for me (recommended)</strong>
-                      <small>Each ticket gets its own safe copy. None of your files is changed.</small>
+                      <small>Each ticket gets its own safe copy. None of your files are changed, except .gitignore.</small>
                     </span>
                     <input
                       type="radio"
@@ -936,12 +989,15 @@ export function Setup({ api }: { api: SetupAPI }) {
                     onChange={() => update({ method, ...(method === 'click' ? { relay: false } : {}) })}
                   />
                   <span>
-                    <strong>{method === 'click' ? 'One click on this computer' : 'Passphrase'}</strong>
+                    <strong>
+                      {method === 'click' ? 'One click on this computer' : 'Passphrase'}
+                      {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
+                    </strong>
                     <small>
                       {method === 'terminal'
-                        ? 'Type your passphrase each time you approve'
+                        ? 'Type your passphrase each time. Safest if others use this computer.'
                         : state.click_available
-                          ? 'Faster, but less safe'
+                          ? 'No typing. Best on your own computer.'
                           : clickOffText(state.click_reason)}
                     </small>
                     {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
@@ -949,9 +1005,12 @@ export function Setup({ api }: { api: SetupAPI }) {
                 </label>
               ))}
               {profile.method === 'click' && state.click_available && (
-                <p className="notice" data-testid="click-risk">
-                  <Inline>{clickRiskCopy}</Inline>
-                </p>
+                <details className="click-risk" data-testid="click-risk">
+                  <summary>What does this mean?</summary>
+                  <p>
+                    <Inline>{clickMeaningCopy}</Inline>
+                  </p>
+                </details>
               )}
               <h2>How long can agents work on their own?</h2>
               <div className="segments">
@@ -997,7 +1056,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                     />
                   </label>
                   {profile.method === 'click' && (
-                    <p>Phone approvals are not available with One click yet. Choose Terminal to use them.</p>
+                    <p>Phone approvals are not available with One click yet. Choose Passphrase to use them.</p>
                   )}
                 </>
               )}
@@ -1067,41 +1126,42 @@ export function Setup({ api }: { api: SetupAPI }) {
                     </section>
                   )}
                   <section className="recovery-print">
-                    <h2>Recovery code</h2>
+                    <h2>Recovery words</h2>
                     <ol className="recovery">
                       {secrets.recovery_words.map((word, i) => (
-                        <li key={i}>
+                        <li key={i} className={secrets.check_positions.includes(i + 1) ? 'check' : undefined}>
                           <span>{i + 1}</span> {word}
                         </li>
                       ))}
                     </ol>
                   </section>
                   <div className="segments">
-                    <button onClick={() => void copyRecovery()}>Copy recovery code</button>
-                    <button onClick={() => window.print()}>Print recovery code</button>
+                    <button onClick={() => void copyRecovery()}>Copy recovery words</button>
+                    <button onClick={() => window.print()}>Print recovery words</button>
                   </div>
                   <p role="status">{notice}</p>
                   <p className="warning">{voidCopy}</p>
                   <label>
                     <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I saved my
-                    secret words and recovery code
+                    recovery words
                   </label>
-                  <h2>One quick check</h2>
-                  <div className="word-check">
-                    {secrets.check_positions.map((n) => (
-                      <label key={n}>
-                        Word {n}
-                        <input
-                          autoComplete="off"
-                          autoCorrect="off"
-                          spellCheck={false}
-                          value={words[String(n)] ?? ''}
-                          onChange={(e) => setWords({ ...words, [String(n)]: e.target.value })}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                  <p>Only {secrets.check_positions.length === 1 ? 'this recovery word is' : 'these recovery words are'} checked. Five incorrect attempts end this session.</p>
+                  {secrets.check_positions.map((n) => (
+                    <div key={n} className="word-check" role="group" aria-label={`Word ${n}`}>
+                      <h2>Tap word {n} to confirm</h2>
+                      <div className="word-choices">
+                        {(choices[n] ?? []).map((w) => (
+                          <button
+                            key={w}
+                            type="button"
+                            aria-pressed={words[String(n)] === w}
+                            onClick={() => setWords({ ...words, [String(n)]: w })}
+                          >
+                            {w}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                   <SetupFooter cancel={cancel}>
                     <button
                       className="primary"
@@ -1213,6 +1273,11 @@ export function Setup({ api }: { api: SetupAPI }) {
                 ))}
                 {review.flags.filter((f) => f.detail).map((f) => (
                   <section className="review-item" key={`detail-${f.id}`}>
+                    {f.id === 'git' && (
+                      <p>
+                        <Raw>{f.text}</Raw>
+                      </p>
+                    )}
                     <p>
                       <Raw>{f.detail ?? ""}</Raw>
                     </p>
@@ -1293,7 +1358,9 @@ export function Setup({ api }: { api: SetupAPI }) {
             </p>
             )
           )}
-          <p><small>Your Mac may say 'Background Items Added' for orch. That's expected. Leave it on.</small></p>
+          {state?.os === 'darwin' && (
+            <p><small>Your Mac may say 'Background Items Added' for orch. That's expected. Leave it on.</small></p>
+          )}
           <ol className="progress">
             {groupProgress(progress?.steps ?? []).map((s) => (
               <li key={s.id}>
@@ -1390,7 +1457,7 @@ export async function mount(session: Promise<SetupAPI> = bootstrapSetup()) {
           <summary>Need to set up again?</summary>
           <p>
             In your terminal, press Enter for a fresh link, or run <code>orch setup</code>. It starts a new session with
-            new secret words and a new recovery code.
+            new recovery words.
           </p>
         </details>
         <Reason reason={reason} />

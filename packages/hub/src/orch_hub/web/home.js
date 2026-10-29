@@ -66,13 +66,13 @@ export function homeView(d) {
   const mode = (it) => it.mode ?? byId.get(it.workspace_id)?.mode;
   const summary = (it) => it.summary_only || (!it.signable && mode(it) === "selective");
   const items = health.items;
-  const shortName = (w, id) => text(w?.name || "A workspace");
+  const shortName = (w, id) => text(w?.name || (w?.owner_name ? w.owner_name + "'s workspace" : "A workspace"));
   const workspaceName = (id) => shortName(byId.get(id), id);
   const needs = h("section", { class: "card needs-you", "aria-labelledby": "needs-heading" },
     h("div", { class: "section-head row" }, h("h2", { id: "needs-heading", class: "grow", text: "Needs you" }), chip(String(items.length))),
     workspaces.some((w) => w.mode === "selective") ? h("p", { class: "small muted only-shared" }, "Only items you share appear here ",
       h("details", { class: "info" }, h("summary", { "aria-label": "More about what appears here", text: "i" }),
-        h("p", { class: "small muted", text: "A workspace you joined with Only what I choose sends the hub just what you share. Other questions are still waiting in that workspace, so its own count can be higher." }))) : null,
+        h("p", { class: "small muted", text: "A workspace that shares only what you choose sends the hub just what you share. Other questions are still waiting in that workspace, so its own count can be higher." }))) : null,
     items.length ? workspaces.filter((w) => items.some((it) => it.workspace_id === w.workspace_id)).map((w) => h("section", { class: "workspace-needs", "data-live-key": w.workspace_id },
       h("h3", { text: workspaceName(w.workspace_id) }),
       items.filter((it) => it.workspace_id === w.workspace_id).map((it) => h("article", { class: "list-row row", "data-live-key": itemKey(it) },
@@ -94,13 +94,14 @@ export function homeView(d) {
       : emptyState("workspaces"));
   const browser = d.thisBrowser;
   const active = browser?.state === "active";
+  const fromWorkspace = browser?.state === "from_workspace";
   const local = h("div", { class: "browser-card" },
     h("b", { text: active ? "This browser holds a signing key for you" : "This browser cannot sign yet" }),
-    active ? note("Name: " + text(browser.label || "this browser")) : note("Browser not registered"),
-    !active ? note(browser?.state === "dead" ? "The key is missing here or was removed at the hub. Register again to sign here."
+    active ? note("Name: " + text(browser.label || "this browser")) : fromWorkspace ? note("You came here from a workspace") : note("This browser has no signing key yet"),
+    fromWorkspace ? note("Sign in here once with your password and code. Then you can set up signing in this browser.") : !active ? note(browser?.state === "dead" ? "The key is missing here or was removed at the hub. Register again to sign here."
       : "Registering gives this browser a signing key for you. Signing needs the key; being signed in only lets you look.") : null,
     browser?.state === "dead" ? h("button", { text: "Forget the key in this browser", onclick: () => d.actions.forgetLocal() }) : null,
-    !active ? h("button", { class: "pri", text: "Register this browser", onclick: () => d.actions.register() }) : null);
+    !active && !fromWorkspace ? h("button", { class: "pri", text: "Register this browser", onclick: () => d.actions.register() }) : null);
   const signing = h("section", { class: "card", "aria-labelledby": "signing-heading" },
     h("h2", { id: "signing-heading", text: "Where you can sign" }), local,
     (d.channels ?? []).map((c) => h("div", { class: "list-row row" },
@@ -110,6 +111,6 @@ export function homeView(d) {
   const notice = d.notice?.nodeType ? d.notice : d.notice ? h("div", { class: "banner", role: "status", text: text(d.notice) }) : null;
   const added = newChannelsNotice(d.newChannels, { remove: (c) => d.actions?.removeChannel(c.channel_id), dismiss: () => d.actions?.dismissNew?.() });
   return [h("h1", { text: "Hello, " + text(d.user?.name ?? "you") }), notice, ...added,
-    h("p", { class: "company-summary", text: health.online + " workspaces online, " + health.offline + " offline, " + health.waiting + " things need you" }),
+    h("p", { class: "company-summary", text: health.online + (health.online === 1 ? " workspace" : " workspaces") + " online, " + health.offline + " offline, " + health.waiting + (health.waiting === 1 ? " thing needs you" : " things need you") }),
     h("div", { class: "home-grid" }, needs, h("div", { class: "home-side" }, spaces, signing))].filter(Boolean);
 }

@@ -107,6 +107,12 @@ describe('the form', () => {
     expect(screen.queryByRole('menuitem', { name: 'Create and start' })).toBeNull()
   })
 
+  it('a risk-notices answer without `acknowledged` counts as not read and does not crash the form', async () => {
+    s.notices.mockResolvedValue({} as never)
+    const { sheet } = await open()
+    expect(await startBtn(sheet)).toBeInTheDocument()
+  })
+
   it('Choose agent… opens the shared picker; the footer summary follows the choice, which is remembered for this workspace', async () => {
     const { r, sheet } = await open()
     await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
@@ -125,7 +131,7 @@ describe('the form', () => {
     const { r, sheet } = await open()
     await createOnly(r, sheet)
     expect((await sent()).agent).toBeUndefined()
-    expect(await screen.findByTestId('nt-lead')).toHaveTextContent('Creates the ticket. No agent starts.')
+    expect(await screen.findByTestId('nt-lead')).toHaveTextContent('No agent starts. You can start one later.')
     expect(localStorage.getItem(`orch.dashboard.new-ticket.agent.p_sev.${WS()}`)).toBeNull() // nothing was written
     expect(await startBtn(sheet)).toBeInTheDocument()
     expect(within(sheet).queryByRole('button', { name: 'Create ticket' })).toBeNull()

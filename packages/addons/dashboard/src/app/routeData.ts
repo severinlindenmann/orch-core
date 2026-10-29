@@ -11,7 +11,7 @@ import type { QueryClient } from '@tanstack/react-query'
 import { addonActive } from '@/api/addons'
 import { can, roleOf } from '@/api/permissions'
 import { isRealHost } from '@/api/features'
-import { running, uuid8, workspaceByAddress } from '@/api/workspaces'
+import { isRunning, running, uuid8, workspaceByAddress } from '@/api/workspaces'
 import type { AddonContribution, AddonPackage, AddonSlot, Workspace } from '@/api/types'
 import { bindsAddonState } from '@/addon-ui/slots'
 import { ticketsServerParams, type TicketsSearch } from './pages/tickets/search'
@@ -108,7 +108,7 @@ export function pageLoader(parts: (s: PageScope) => Ensure[], chunks: (() => Pro
     const data = async () => {
       const [list, pkgs] = await Promise.all([workspaces(qc).catch(() => []), addons(qc).catch(() => [])])
       const ws = pickWorkspace(list, context.urls)
-      if (!ws) return
+      if (!ws || !isRunning(ws)) return // a paused or switched-off host refuses every read: the shell shows its ready card
       // The viewer's own entry in the workspace the page shows: a person has a different id in each workspace.
       const person = await me(qc, ws.id).catch(() => undefined)
       const owner = can(roleOf(ws, person?.person), 'settings')

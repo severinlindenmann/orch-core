@@ -328,3 +328,18 @@ def test_a_result_that_lands_after_forget_is_not_kept():
     p2.check_now("crm", URL)
     assert p2.status("crm", URL + "2")["status"] == "not_checked"  # an answer about another address
     assert p2.status("crm", URL)["status"] == "reachable"
+
+
+def test_an_ipv6_literal_host_is_bracketed_in_the_host_header():
+    sent: list[bytes] = []
+    res = probe(
+        "https://[2001:4860::1]/mcp",
+        _resolve=lambda h, p: [h],
+        _connect=lambda ip, port, host, t: FakeConn(http(200), sent),
+    )
+    assert res["status"] == "reachable" and b"Host: [2001:4860::1]\r\n" in sent[0]
+    sent.clear()
+    probe(
+        "https://[2001:4860::1]:8443/", _resolve=lambda h, p: [h], _connect=lambda i, p, h, t: FakeConn(http(200), sent)
+    )
+    assert b"Host: [2001:4860::1]:8443\r\n" in sent[0]

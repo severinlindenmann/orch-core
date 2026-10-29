@@ -189,7 +189,8 @@ def _once(connect: Callable, ip: str, port: int, host: str, method: str, target:
         raise _Fail("timeout")
     conn = connect(ip, port, host, left)
     try:
-        return _ask(conn, method, host if port == 443 else f"{host}:{port}", target, deadline)
+        shown = f"[{host}]" if ":" in host else host  # an IPv6 literal is bracketed in the Host header
+        return _ask(conn, method, shown if port == 443 else f"{shown}:{port}", target, deadline)
     finally:
         try:
             conn.close()

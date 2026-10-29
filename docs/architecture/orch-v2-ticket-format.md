@@ -1960,6 +1960,7 @@ these codes; they are the stable `error.code` strings of §10.4 for these refusa
 | `task.leased` | §10.1 A4 another session holds the task lease |
 | `task.state` | §5.4.1 the task event is not allowed from the task's state |
 | `task.bad_receipt` | §5.4.1 receipt command differs from `verify.cmd`, or the exit is not 0 |
+| `task.plan_open` | §5.4.1 an agent starts or finishes a task, or adds an artifact naming a task, while the plan gate applies and is not approved at its current generation |
 | `artifact.exists` | §6 the artifact name is taken (use `artifact.replaced`) |
 | `artifact.unknown` | §6 no such artifact name |
 | `artifact.bad_replaces` | §6 `replaces` is not the current digest |

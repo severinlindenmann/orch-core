@@ -181,6 +181,7 @@ def test_set_refusals(ws, cli):
 
 
 def test_apply_runs_a_batch_in_order_on_the_state_the_earlier_items_made(ws, cli):
+    ws.plan_gate_off()  # r10-P02: no plan approval in this test; an agent builds only after one
     claimed(cli)
     doc = batch(
         {"op": "ac.add", "text": "it works"},
@@ -269,6 +270,7 @@ def test_apply_input_errors(ws, cli):
 
 
 def test_apply_needs_a_claim_for_task_items_and_supports_dry_run(ws, cli):
+    ws.plan_gate_off()  # r10-P02: no plan approval in this test; an agent builds only after one
     claimed(cli)
     cli("task", "add", "x")
     cli("release")

@@ -62,6 +62,21 @@ class Ws(Env):
             self.store.close()
             self.store = old
 
+    def plan_gate_off(self) -> None:
+        """r10-P02: an agent starts and finishes tasks only after the plan is approved. Tests about tasks, receipts
+        and verify trust (not about the plan gate) turn the plan gate off for every ticket type of this workspace."""
+        from orch.model.types import default_policies
+
+        plan = {**default_policies()["plan"], "applies": "off"}
+        old, self.store = self.store, self.other()
+        try:
+            self.store.append(
+                self.person_event(self.owner, "workspace", "policy.changed", gates={"plan": plan}), log="workspace"
+            )
+        finally:
+            self.store.close()
+            self.store = old
+
     def narrow_grant(self, verbs: list[str], *, hours: int = 8) -> str:
         """A grant for the owner that lists operation names (a CI grant); returns the ``ORCH_GRANT`` value."""
         from orch import canon

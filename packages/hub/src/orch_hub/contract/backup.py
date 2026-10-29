@@ -336,7 +336,8 @@ def open_backup(data: bytes, *, words: str, dev_mode: bool, live: dict[str, Any]
 def restore_floor(live: dict[str, int] | None, backup: dict[str, int], now_s: int) -> dict[str, int]:
     """The new ``op_seq``, ``card_seq`` and ``snapshot_seq`` after a restore, each above everything ever issued:
     in place ``max(live, backup) + 1000`` (a second restore of the same backup climbs again), on a fresh server
-    ``max(backup + 1000, unix seconds)``. Every result must stay below 2^53 (else ``backup_invalid``/``seq_overflow``)."""
+    ``max(backup + 1000, clock)``. ``now_s`` is a clock value in any unit the caller keeps (the hub passes unix MILLISECONDS,
+    protocol §17.8: seconds can fall below a live counter that earlier restores pushed up). Every result must stay below 2^53 (else ``backup_invalid``/``seq_overflow``)."""
     if type(now_s) is not int or not 0 <= now_s <= MAX_SAFE_INT:
         raise _invalid("fields")
     out: dict[str, int] = {}

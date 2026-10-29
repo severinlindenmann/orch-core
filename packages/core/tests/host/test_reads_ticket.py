@@ -691,6 +691,7 @@ def test_closed_seq_and_event_id_name_the_closing_event(w):
 
 
 def test_source_equals_the_latest_branch_pushed_and_a_receipt_follows_it(w):
+    w.lab.ws.plan_gate_off()  # r10-P02: no plan approval before the build in this test
     h = Human(w)
     uid, key = w.ticket("source")
     h.agent("claim", {"ref": key})

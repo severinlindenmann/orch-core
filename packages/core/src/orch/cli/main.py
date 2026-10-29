@@ -419,8 +419,13 @@ def main(
             stream.write(render.redact(text, secrets) + "\n")
 
         hosted = False
+        # The Stop hook must never block by its exit code (a harness treats exit 2 as "block", whatever
+        # stop_hook_active says): every failure of `instructions hook stop` is an exit 0 with no output.
+        is_stop = args[:3] == ["instructions", "hook", "stop"]
 
         def fail(e: OrchError, op: Operation | None) -> int:
+            if is_stop:
+                return 0
             envelope = render.error_envelope(e, op)
             if as_json:
                 emit(render.dumps(envelope), out)
@@ -478,13 +483,18 @@ def main(
             else:
                 res = run(parsed, ctx, records, hooks)
             # a hook outside a workspace is silent
-            if isinstance(res.data, dict) and isinstance(res.data.get("raw"), str):
+            if (
+                is_stop
+                and op.name == "instructions.hook"
+                and isinstance(res.data, dict)
+                and isinstance(res.data.get("raw"), str)
+            ):
                 emit(res.data["raw"], out)  # the Stop hook answers the harness in its own JSON
             elif not (isinstance(res.data, dict) and res.data.get("silent") is True):
                 emit(render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res), out)
             if session and op.is_write and not parsed.dry_run and not hosted:
                 records.succeeded_write(session)
-            return res.exit
+            return 0 if is_stop else res.exit
         except OrchError as e:
             session = env.get("ORCH_SESSION") or None
             if op is not None and parsed is not None and not hosted:

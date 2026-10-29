@@ -157,7 +157,7 @@ def test_the_plugin_runs_exactly_these_hooks():
         "orch instructions hook session-start",
         "orch instructions hook pre-compact",
         "orch instructions hook waiting",
-        "orch instructions hook stop --input -",
+        "orch instructions hook stop --input - 2>/dev/null || exit 0",
     ]
     assert hooks["SessionStart"][0]["matcher"] == "startup|resume|clear|compact"  # re-injected after compaction
 
@@ -317,3 +317,41 @@ def test_stop_never_pins_a_genesis_and_is_silent_outside_a_workspace(ws, tmp_pat
     out, err = io.StringIO(), io.StringIO()
     code = main(["instructions", "hook", "stop", "--input", "-"], env={"HOME": str(other)}, stdout=out, stderr=err)
     assert (code, out.getvalue(), err.getvalue()) == (0, "", "")
+
+
+def test_the_registered_stop_command_can_never_exit_2(ws, tmp_path):
+    import subprocess
+
+    from orch.instructions.hooks import STOP_HOOK_COMMAND
+
+    # an "orch" that answers like an old build (usage error, exit 2) behind the registered command string
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "orch"
+    fake.write_text("#!/bin/sh\necho 'usage: unknown event' >&2\nexit 2\n")
+    fake.chmod(0o755)
+    r = subprocess.run(
+        ["sh", "-c", STOP_HOOK_COMMAND], input=b"{}", env={"PATH": f"{bin_dir}:/usr/bin:/bin"}, capture_output=True
+    )
+    assert (r.returncode, r.stdout, r.stderr) == (0, b"", b"")
+
+
+def test_every_error_of_the_stop_event_is_exit_0_without_output(ws):
+    # an unknown input file, a bad option and an unreadable workspace all stay silent with exit 0
+    for argv in (
+        ["instructions", "hook", "stop", "--input", "/nonexistent/x"],
+        ["instructions", "hook", "stop", "--bogus"],
+        ["instructions", "hook", "stop", "--input", "-", "--json", "--bogus"],
+    ):
+        out, err = io.StringIO(), io.StringIO()
+        assert main(argv, env=ws.env(), stdout=out, stderr=err, now=lambda: ws.clock[0]) == 0, argv
+        assert (out.getvalue(), err.getvalue()) == ("", ""), argv
+    # other events keep their exit codes
+    out, err = io.StringIO(), io.StringIO()
+    assert main(["instructions", "hook", "nope"], env=ws.env(), stdout=out, stderr=err) != 0
+
+
+def test_the_raw_print_rule_is_only_for_the_stop_event(ws):
+    out = io.StringIO()
+    main(["instructions", "hook", "session-start"], env=ws.env(), stdout=out, stderr=io.StringIO())
+    assert not out.getvalue().startswith("{")

@@ -12,6 +12,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { SignPopover } from '@/components/sign/SignPopover'
 import { RunnerGrantCard } from '@/app/terminal/real/StartAgentDialog'
 
+const PREPARING_MS = 60_000
+
 /** How long is left, in the words the pill uses: "3 days left", "5 hours left", "20 min left". */
 export function timeLeft(ms: number): string {
   if (ms >= 36 * 3_600_000) return `${Math.round(ms / 86_400_000)} days left`
@@ -22,7 +24,9 @@ export function timeLeft(ms: number): string {
 /** Runner state is authoritative for access on this machine; grant.list supplies signed start times and terminal grants. */
 export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** Dev layout preview only: start in the stopped state. */ previewStopped?: boolean }) {
   const me = useMe(ws)
-  const runner = useQuery({ ...runnerQuery(ws), refetchInterval: 15_000 })
+  const [mountedAt] = useState(nowMs)
+  const [preparingNow, setPreparingNow] = useState(false)
+  const runner = useQuery({ ...runnerQuery(ws), refetchInterval: preparingNow ? 3_000 : 15_000 })
   const grants = useQuery(queries.hostGrants(ws, true))
   const qc = useQueryClient()
   const [now, setNow] = useState(nowMs)
@@ -39,6 +43,14 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
   const live = grant && Date.parse(grant.until) > now ? grant : null
   const stopped = (attempted || stoppedHere) && runner.isSuccess && !runner.isFetching && !live
   const line = accessLine(runner.data?.runner?.grant, now)
+  // Right after setup the runner is still starting and has no live grant yet: say so calmly for up to a minute.
+  const preparing = line.kind === 'missing' && !live && !!runner.data?.runner?.enabled && runner.data.runner.connected === false && now - mountedAt < PREPARING_MS
+  useEffect(() => { setPreparingNow(preparing) }, [preparing])
+  useEffect(() => {
+    if (!preparing) return
+    const timer = setInterval(() => setNow(nowMs()), 5_000)
+    return () => clearInterval(timer)
+  }, [preparing])
   const refresh = () => { void runner.refetch(); void qc.invalidateQueries({ queryKey: ['settings-grants', ws] }); void qc.invalidateQueries({ queryKey: ['runs', ws] }) }
   // The API exposes deposit status, but no deposit retry. Start again opens a fresh signing flow.
   const outcome = () => { setAttempted(true); refresh() }
@@ -75,6 +87,9 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
       <time className="sr-only" dateTime={line.until} title={fmtExact(line.until)}>{fmtSlot(line.until)}</time>
       <Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Allow agents</Button>
       <Button size="xs" variant="ghost" className="text-text-muted" disabled={!hasFeature('do:grant.revoke', ws)} onClick={() => setAskStop(true)}>Stop</Button>
+    </div> : preparing ? <div className={`${pill} whitespace-nowrap text-text-muted`} role="group" aria-label="Agent access">
+      <span aria-hidden className="size-3 shrink-0 animate-spin rounded-full border-2 border-border border-t-text-muted" />
+      <span role="status">Getting agents ready…</span>
     </div> : line.kind === 'missing' ? <div className={`${pill}${live || idle || stopped ? ' whitespace-nowrap' : ''}`} role="group" aria-label="Agent access">
       {live || idle || stopped ? <><span role="status">Agents can't start yet</span><span>·</span><Button size="xs" variant="ghost" onClick={() => setExtend(true)}>Allow agents</Button>{live && <Button size="xs" variant="ghost" className="text-text-muted" disabled={!hasFeature('do:grant.revoke', ws)} onClick={() => setAskStop(true)}>Stop</Button>}</> : <span>Checking agent access…</span>}
     </div> : null}

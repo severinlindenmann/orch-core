@@ -2,10 +2,10 @@
 // enabling: a workspace's owner sees the exact address and turns a server on at their own host, and agents reach it only
 // through the host's own proxy. There is no way to offer a program to run, only an https address.
 import { emptyState, loading } from "../feel.js";
-import { h, text } from "../ui.js";
+import { h, text, withNames } from "../ui.js";
 
 const info = (label, body) => h("details", { class: "info" }, h("summary", { "aria-label": label, text: "i" }), h("p", { class: "small muted", text: body }));
-const wsName = (w) => text(w?.name || (w?.workspace_id ? "Workspace " + w.workspace_id.slice(0, 8) : "A workspace"));
+const wsName = (w) => text(w?.name || "A workspace");
 const NAME = /^[a-z][a-z0-9-]{1,39}$/;
 
 // Mirrors the hub's own check so a typo is caught before sending; the hub decides in the end.
@@ -81,7 +81,7 @@ export async function mcpPage(d) {
     const save = async (name, body) => { say("Saved", await d.api("PUT", "/admin/mcp-servers/" + name, body)); await mcpPage(d); };
     const remove = async (s) => { say("Removed", await d.api("DELETE", "/admin/mcp-servers/" + s.name)); await mcpPage(d); };
     const offer = async (name, workspaces) => { say("Saved", await d.api("PUT", "/admin/mcp-servers/" + name + "/offers", { workspaces })); await mcpPage(d); };
-    d.shell("mcp", d.state.notice, mcpView(r.body, { save, remove, offer }));
+    d.shell("mcp", d.state.notice, mcpView({ ...r.body, workspaces: withNames(r.body.workspaces, d.state.rail?.rows ?? []) }, { save, remove, offer }));
     d.state.notice = null;
   } finally { finish(); }
 }

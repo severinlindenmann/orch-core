@@ -38,11 +38,11 @@ __all__ = [
 
 SIG_ORG_SKILLS = b"orch/v2/hub-org-skills|"
 SIG_MCP_SERVERS = b"orch/v2/hub-mcp-servers|"
-SIG_ORG_SECRETS = b"orch/v2/hub-org-secrets|"
+SIG_ORG_SECRETS = b"orch/v2/hub-org-secrets|"  # the hub's label name is sig_hub_org_secrets
 SKILLS_MAX = 20
 MCP_MAX = 20
 SECRETS_MAX = 50
-_SEALED_MIN = 65 + 1 + 16  # eph_pub || one byte || tag (the value rule is checked after unsealing)
+_SEALED_MIN = 65 + 8 + 16  # eph_pub || shortest value || tag
 _SEALED_MAX = 65 + 4096 + 16
 _DIGEST_PREFIX = "sha256:"
 
@@ -99,6 +99,7 @@ def valid_org_secrets(x: Any) -> bool:
     id makes the WHOLE bundle invalid (the host never guesses which one the hub meant). ``sealed`` is only shape
     checked here: the host cannot open it without the workspace key."""
     from orch import crypto
+    from orch.crypto import suite
 
     from .orgsecrets import NAME
 
@@ -112,15 +113,18 @@ def valid_org_secrets(x: Any) -> bool:
             return False
         if not wire._int_min(1)(s["version"]) or s["version"] >= 2**32:  # noqa: SLF001
             return False
-        if not wire._int_min(1)(s["expires_ms"]) or s["expires_ms"] >= 2**64:  # noqa: SLF001
+        if not wire._int_min(0)(s["expires_ms"]) or s["expires_ms"] >= 2**64:  # noqa: SLF001
             return False
-        if not wire._int_min(0)(s["wxk_version"]) or s["wxk_version"] >= 2**32:  # noqa: SLF001
+        if not wire._int_min(1)(s["wxk_version"]) or s["wxk_version"] >= 2**32:  # noqa: SLF001
             return False
         try:
             raw = crypto.unb64u(s["sealed"])
+            if not _SEALED_MIN <= len(raw) <= _SEALED_MAX:
+                return False
+            suite.validate_public_key(raw[:65])  # it must start with a real ephemeral point
         except Exception:  # noqa: BLE001
             return False
-        if not _SEALED_MIN <= len(raw) <= _SEALED_MAX or s["id"] in ids:
+        if s["id"] in ids:
             return False
         ids.add(s["id"])
         names.append(s["name"])
@@ -222,14 +226,15 @@ def verify_org_secrets(
     pinned: Mapping[str, Any] | None,
     revoked_op_certs: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
-    """The same rules for ``hub.org_secrets`` (own label and kind). ``pinned`` is ``{"version", "digest"}`` of the
+    """The same rules for ``hub.org_secrets`` (own label and kind). ``pinned`` is the held ``o`` (as for the other bundles) or ``{"version", "digest"}`` of the
     bundle the host last verified (see :func:`secrets_digest`; the bundle itself is not kept, only the wraps a served
     server uses). A lower version is ``stale_bundle``; the same version with other bytes is ``bundle_conflict``. A
     repeated secret name or id is ``malformed`` for the whole bundle."""
     o = _verify("hub.org_secrets", signed, held, workspace_id, dev_mode, None, revoked_op_certs)
     if pinned is not None:
+        same = wire.cj(o) == wire.cj(dict(pinned)) if "secrets" in pinned else secrets_digest(o) == pinned["digest"]
         if o["version"] < pinned["version"]:
             raise HubRefused("stale_bundle")
-        if o["version"] == pinned["version"] and secrets_digest(o) != pinned["digest"]:
+        if o["version"] == pinned["version"] and not same:
             raise HubRefused("bundle_conflict")
     return o

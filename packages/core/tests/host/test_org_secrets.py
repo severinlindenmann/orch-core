@@ -44,6 +44,7 @@ from tests.test_mcp_proxy import FakeUp
 
 VALUE = "tok-AbCdEf123456-xyz"
 SID = "11" * 16
+GOOD_SEALED = crypto.b64u(crypto.public_bytes(crypto.generate_private_key()) + b"\0" * 40)  # a real point, any tail
 SID2 = "22" * 16
 DAY = 24 * 3600 * 1000
 URL = "https://vault.example.com/mcp"
@@ -266,7 +267,7 @@ def test_duplicate_names_or_ids_refuse_the_whole_bundle(w):
 )
 def test_an_entry_of_the_wrong_shape_refuses_the_bundle(mutate):
     e = {"id": SID, "name": "vault-key", "version": 1, "expires_ms": 5, "wxk_version": 1,
-         "sealed": crypto.b64u(b"\0" * 100)}  # fmt: skip
+         "sealed": GOOD_SEALED}  # fmt: skip
     assert OB.valid_org_secrets([e])
     mutate(e)
     assert not OB.valid_org_secrets([e])
@@ -460,7 +461,7 @@ def _bad_cases(w):
         "other_expiry": w.entry(seal_with={"expires_ms": w.now() + 5 * DAY}),
         "old_key_version": w.entry(seal_with={"wxk_version": w.wxk_version + 1}),
         "other_key": w.entry(seal_with={"wxk_pub": crypto.public_bytes(crypto.generate_private_key())}),
-        "bad_value_short": w.entry(value="short", check_value=False),
+        "bad_value_del": w.entry(value="\x7fnot-valid", check_value=False),
         "bad_value_newline": w.entry(value="line-one\nline-two-xx", check_value=False),
         "bad_value_edge_space": w.entry(value=" padded-value ", check_value=False),
         "beyond_horizon": w.entry(expires=w.now() + 400 * DAY),
@@ -470,7 +471,7 @@ def _bad_cases(w):
 @pytest.mark.parametrize(
     "case",
     ["other_workspace", "other_hub", "name_swapped", "other_secret_id", "other_version", "other_expiry",
-     "old_key_version", "other_key", "bad_value_short", "bad_value_newline", "bad_value_edge_space",
+     "old_key_version", "other_key", "bad_value_del", "bad_value_newline", "bad_value_edge_space",
      "beyond_horizon"],
 )  # fmt: skip
 def test_a_wrong_wrap_gives_none_and_leaves_nothing_behind(w, caplog, case):

@@ -42,6 +42,7 @@ def test_a_ref_that_names_no_object_is_reported_not_signed(ws, cli):
 
 def test_malformed_notes_never_crash_and_are_reported(ws, cli):
     claimed(cli)
+    cli("ask", "Which?")  # something open for a person: the wait waits (else wait.incomplete)
     p = next((ws.store_dir / ".state" / "sessions").glob("*.notes.json"))
     doc = json.loads(p.read_text())
     uid = next(iter(doc["tickets"]))

@@ -82,8 +82,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from jsonschema import Draft202012Validator
 
+from . import agentwaits, phonehints, readerops, reads, sessions, terms
 from . import diff as git_diff
-from . import phonehints, readerops, reads, sessions, terms
 from . import quick as quick_list
 from . import records as records_ops
 from .agents import AGENT_OPS
@@ -636,12 +636,15 @@ class RegistryBackend:
         deadline = loop.time() + timeout
         step = Step()
         watch = bus.watch(service.workspace_id)  # before the first look: nothing committed after it is missed
+        waiting: int | None = None  # run-10 J04: "the agent waits in orch wait" while parked (agentwaits)
         try:
             while True:
                 try:
                     return await asyncio.wrap_future(service.submit(self.serve, call, step))
                 except Parked:
-                    pass
+                    # only the claim holder's wait (a sibling run of the same grant never reads as waiting)
+                    if waiting is None and step.mine and call.column.name == "G" and call.verified.grant is not None:
+                        waiting = agentwaits.enter(service, call.verified.grant.id, step.key, timeout)
                 watch.uid = step.log
                 # look again only for an entry that can answer (or refuse) this wait, a rebuild, or the timeout
                 while not watch.relevant():
@@ -655,6 +658,7 @@ class RegistryBackend:
                 watch.clear()
         finally:
             bus.unwatch(watch)
+            agentwaits.leave(service, waiting)  # also on cancel: a killed CLI closes its connection (fail closed)
 
     # -- on the worker thread
     def serve(self, call: Call, step: Any = None) -> dict[str, Any]:

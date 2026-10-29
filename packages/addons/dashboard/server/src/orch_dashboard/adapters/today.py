@@ -75,6 +75,9 @@ def item(n: dict, titles: dict[str, str]) -> dict:
 
 
 TERMINAL_WAIT = "Agent may need you: check its terminal"
+#: run-10 J04: the host saw the agent inside `orch wait` (source "wait"): it waits for a decision, not at its prompt
+AGENT_WAITS = "Agent is waiting for the next step"
+SOURCES = ("wait", "hook", "quiet")
 
 
 def _at(value) -> float | None:
@@ -89,7 +92,8 @@ def terminal_waits(runs: list[dict], rows: list[dict], mine: dict[str, list[dict
     where nothing is open for the person. Local and display only; it is not a need (never counted). `ref` is the run id:
     "Open terminal" attaches to it. This is the dashboard's one "agent idle" signal (run-9 J04): a ticket event after
     the marker does NOT hide it (the person's own approval is such an event, and the idle agent stays idle); the host
-    clears `waiting` itself as soon as the agent prints again."""
+    clears `waiting` itself as soon as the agent prints again. `source` says how the host knows: "wait" (the agent is
+    inside `orch wait`, whatever its terminal prints: run-10 J04), "hook" or "quiet" (fallbacks outside orch wait)."""
     by_key = {r["key"]: r for r in rows if "key" in r}
     out = []
     for r in runs:
@@ -99,16 +103,18 @@ def terminal_waits(runs: list[dict], rows: list[dict], mine: dict[str, list[dict
             continue
         if _at(w.get("since")) is None:
             continue
+        source = w.get("source") if w.get("source") in SOURCES else None
         out.append(
             {
                 "kind": "terminal_wait",
                 "ticket": row["key"],
                 "uid": row["uid"],
                 "title": row["title"],
-                "text": TERMINAL_WAIT,
+                "text": AGENT_WAITS if source == "wait" else TERMINAL_WAIT,
                 "ref": r["run"],
                 "since": w["since"],
                 "blocking": False,
+                **({"source": source} if source else {}),
             }
         )
     return out

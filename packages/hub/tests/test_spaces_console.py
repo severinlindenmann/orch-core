@@ -313,24 +313,19 @@ def test_history_lists_versions_newest_first_with_a_fixed_by_table(con):
 
     con.put(con.ha, sid, G.fake16("v1"), {**t("one"), "by": "person:u1"}, 1_000)
     con.put(con.hb, sid, G.fake16("v2"), {**t("two"), "by": "agent:s_9"}, 3_000)
-    con.put(con.ha, sid, G.fake16("v3"), {**t("three"), "by": "root:admin", "restored_from": G.fake16("v1")}, 2_000)
-    con.put(con.ha, sid, G.fake16("v4"), t("no by"), 4_000)  # a body without `by` (older host)
-    con.put(con.ha, sid, G.fake16("v5"), {**t("hi"), "name": "other.md", "by": ["agent:x"]}, 500)
+    con.put(con.ha, sid, G.fake16("v3"), {**t("three"), "by": "person:u2", "restored_from": G.fake16("v1")}, 2_000)
+    con.put(con.ha, sid, G.fake16("v4"), {**t("four"), "by": "agent:s_1"}, 4_000)
+    con.put(con.ha, sid, G.fake16("v5"), {**t("hi"), "name": "other.md", "by": "person:u3"}, 500)
     s, o = con.call("GET", f"/admin/spaces/{sid}/history")
     assert s == 200
     names = {n["name"]: n["versions"] for n in o["names"]}
     plan = names["plan.md"]
-    assert [v["content"]["text"] for v in plan] == ["no by", "two", "three", "one"]  # newest first by the SIGNED time
-    assert [v["by"] for v in plan] == [
-        "unknown",
-        "agent",
-        "unknown",
-        "person",
-    ]  # a fixed table; "root:admin" is unknown
+    assert [v["content"]["text"] for v in plan] == ["four", "two", "three", "one"]  # newest first by the SIGNED time
+    assert [v["by"] for v in plan] == ["agent", "agent", "person", "person"]
     assert [v["restored"] for v in plan] == [False, False, True, False]
     assert all(set(v) == {"item_id", "created_ms", "author", "by", "restored", "revoked", "content"} for v in plan)
-    assert names["other.md"][0]["by"] == "unknown"  # a list is not an actor
-    assert "u1" not in str(o) and "s_9" not in str(o)  # the actor id is never passed on
+    assert names["other.md"][0]["by"] == "person"
+    assert "u1" not in str(o) and "s_9" not in str(o) and "u2" not in str(o)  # the actor id is never passed on
     one = con.call("GET", f"/admin/spaces/{sid}/history?name=other.md")[1]
     assert [n["name"] for n in one["names"]] == ["other.md"]
     assert con.call("GET", f"/admin/spaces/{G.fake16('zz')}/history")[0] == 404
@@ -339,13 +334,25 @@ def test_history_lists_versions_newest_first_with_a_fixed_by_table(con):
 def test_history_caps_text_marks_binary_and_shows_removed_and_hostile_text_as_plain_text(con):
     sid = con.space()
     big = ("é" * 3000).encode()  # 6000 bytes of UTF-8
-    con.put(con.ha, sid, G.fake16("t1"), {"name": "big.txt", "data": _b64(big), "size": len(big)}, 1)
-    con.put(con.ha, sid, G.fake16("t2"), {"name": "bin.dat", "data": _b64(b"\xff\xfe\x00\x01" * 100), "size": 400}, 2)
+    con.put(con.ha, sid, G.fake16("t1"), {"name": "big.txt", "data": _b64(big), "size": len(big), "by": "person:u1"}, 1)
+    con.put(
+        con.ha,
+        sid,
+        G.fake16("t2"),
+        {"name": "bin.dat", "data": _b64(b"\xff\xfe\x00\x01" * 100), "size": 400, "by": "person:u1"},
+        2,
+    )
     hostile = "<img src=x onerror=alert(1)>\u202e http://evil.example"
-    con.put(con.ha, sid, G.fake16("t3"), {"name": "h.txt", "data": _b64(hostile.encode()), "size": 1}, 3)
-    con.put(con.ha, sid, G.fake16("t6"), {"name": "esc.txt", "data": _b64(b"\x1b[31mhi"), "size": 7}, 6)
-    con.put(con.ha, sid, G.fake16("t4"), {"name": "bad.txt", "data": "***not base64***", "size": 1}, 4)
-    con.put(con.ha, sid, G.fake16("t5"), {"name": "gone.txt", "data": _b64(b"x"), "size": 1}, 5)
+    con.put(
+        con.ha, sid, G.fake16("t3"), {"name": "h.txt", "data": _b64(hostile.encode()), "size": 1, "by": "person:u1"}, 3
+    )
+    con.put(
+        con.ha, sid, G.fake16("t6"), {"name": "esc.txt", "data": _b64(b"\x1b[31mhi"), "size": 7, "by": "person:u1"}, 6
+    )
+    con.put(
+        con.ha, sid, G.fake16("t4"), {"name": "bad.txt", "data": "***not base64***", "size": 1, "by": "person:u1"}, 4
+    )
+    con.put(con.ha, sid, G.fake16("t5"), {"name": "gone.txt", "data": _b64(b"x"), "size": 1, "by": "person:u1"}, 5)
     con.a.request("space_revoke", {"space_id": sid, "item_id": G.fake16("t5")})
     o = con.call("GET", f"/admin/spaces/{sid}/history")[1]
     by = {n["name"]: n["versions"][0] for n in o["names"]}
@@ -361,7 +368,7 @@ def test_history_caps_text_marks_binary_and_shows_removed_and_hostile_text_as_pl
 
 def test_history_shows_nothing_for_an_item_that_does_not_verify(con):
     sid = con.space()
-    con.put(con.ha, sid, G.fake16("ok"), {"name": "a.txt", "data": _b64(b"fine"), "size": 4}, 1)
+    con.put(con.ha, sid, G.fake16("ok"), {"name": "a.txt", "data": _b64(b"fine"), "size": 4, "by": "person:u1"}, 1)
     row = con.sh.store.items(sid)[G.fake16("ok")]
     import sqlite3  # noqa: F401
 
@@ -391,3 +398,53 @@ def test_the_console_has_no_route_that_signs_puts_restores_or_revokes(con):
     code = "\n".join(line for line in src.splitlines() if not line.lstrip().startswith(("#", '"""')))
     for call in (".put(", ".revoke(", "restore(", "sign_object", "Signer"):
         assert call not in code.replace('"""', "").split("def space_routes")[0].replace("Never a route", "")
+
+
+def test_by_kind_is_a_fixed_table_and_never_trusts_odd_values():
+    from orch_hub.webapi.spaces_api import by_kind
+
+    assert by_kind("person:u1") == "person" and by_kind("agent:s_9-x") == "agent"
+    for odd in (
+        "root:admin",
+        "person:",
+        "person:a b",
+        "person:" + "a" * 65,
+        "agent:x\n",
+        ["agent:x"],
+        None,
+        5,
+        "",
+        "Person:u1",
+    ):
+        assert by_kind(odd) == "unknown"
+
+
+def test_by_kind_agrees_with_the_contract_vectors_for_by():
+    import json
+    from pathlib import Path
+
+    from orch_hub.contract import spaces as SP
+    from orch_hub.webapi.spaces_api import by_kind
+
+    root = next(p for p in Path(__file__).resolve().parents if (p / "contracts/hub/vectors_hub.json").exists())
+    doc = json.loads((root / "contracts/hub/vectors_hub.json").read_text())
+
+    def cases(x):
+        if isinstance(x, dict):
+            if str(x.get("name", "")).startswith("space_item_by_"):
+                yield x
+            for y in x.values():
+                yield from cases(y)
+        elif isinstance(x, list):
+            for y in x:
+                yield from cases(y)
+
+    found = list(cases(doc))
+    assert len(found) >= 6
+    for c in found:
+        a = c["args"]
+        body = SP.open_item(bytes.fromhex(a["sk_hex"]), a["space_id"], a["epoch"], a["item_id"], a["sealed"])["o"][
+            "body"
+        ]
+        want = "agent" if "ok" in c["expect"] else "unknown"  # the contract refuses every other `by`
+        assert by_kind(body.get("by")) == want, c["name"]

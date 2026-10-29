@@ -88,7 +88,7 @@ describe('P10: a short join dialog', () => {
     const view = await open()
     fireEvent.change(await screen.findByTestId('hub-link-text', {}, T), { target: { value: LINK } })
     const box = await screen.findByTestId('hub-mode-box', {}, T)
-    expect(box.textContent).toContain('Recommended. The hub sees only what you share. You can change this later.')
+    expect(box.textContent).toContain('Recommended. The hub sees only what you share, plus this workspace\'s name. You can change this later.')
     expect(screen.queryByTestId('hub-mode-full')).toBeNull()
     expect(screen.queryByText('What the hub has already read cannot be taken back.')).toBeNull()
     expect(screen.queryByText('You choose what to share.')).toBeNull()

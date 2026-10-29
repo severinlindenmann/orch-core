@@ -38,18 +38,27 @@ export function cleanOrigin(value) {
   return u.origin;
 }
 
+/** Only a workspace dashboard on THIS computer is ever a target: the connect code must not leave it (a workspace host
+ *  reports its own address to the hub, so a remembered non-loopback address is not trusted). */
+export function loopbackOrigin(value) {
+  const o = cleanOrigin(value);
+  if (!o) return null;
+  const host = new URL(o).hostname;
+  return host === "127.0.0.1" || host === "localhost" || host === "[::1]" ? o : null;
+}
+
 /** The address of Settings > Hub in the workspace dashboard, with the link in the fragment (it stays on that computer). */
 export const deepLink = (dashboardOrigin, link) => {
-  const o = cleanOrigin(dashboardOrigin);
+  const o = loopbackOrigin(dashboardOrigin);
   return o ? o + "/settings/hub#connect=" + encodeURIComponent(link) : null;
 };
 
 /** Remembered by the hub's own Open button, read here; a failing store is the same as nothing remembered. */
 export function rememberDashboard(url) {
-  try { const o = cleanOrigin(url); if (o) globalThis.localStorage.setItem(KEY, o); } catch { /* private window */ }
+  try { const o = loopbackOrigin(url); if (o) globalThis.localStorage.setItem(KEY, o); } catch { /* private window */ }
 }
 export function knownDashboard() {
-  try { return cleanOrigin(globalThis.localStorage.getItem(KEY)) ?? DEFAULT_DASHBOARD; } catch { return DEFAULT_DASHBOARD; }
+  try { return loopbackOrigin(globalThis.localStorage.getItem(KEY)) ?? DEFAULT_DASHBOARD; } catch { return DEFAULT_DASHBOARD; }
 }
 
 function render(root, hash) {
@@ -72,7 +81,7 @@ function render(root, hash) {
   root.replaceChildren(
     el("h1", { text: "Connect your workspace to " + location.host }),
     el("p", { text: "One button opens your workspace on this computer with the Connect a hub dialog already filled in. You only press Connect." }),
-    open ? el("p", {}, el("a", { class: "pri", id: "open-workspace", href: open, text: "Open my workspace" })) : null,
+    open ? el("p", {}, el("a", { class: "pri", id: "open-workspace", href: open, text: "Open my workspace" }), el("span", { class: "small muted", text: " Opens " + new URL(open).host })) : null,
     el("p", {}, copy), copyHint, note);
 }
 

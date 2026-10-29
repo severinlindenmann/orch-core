@@ -37,6 +37,8 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   const [text, setText] = useState(initialLink ?? '')
   const [info, setInfo] = useState<HubLinkInfo | null>(null)
   const [looking, setLooking] = useState(false)
+  // A link that arrived in the address is looked up only after a click (opening a page must not make the workspace call out).
+  const [armed, setArmed] = useState(!initialLink)
   const [problem, setProblem] = useState('')
   const [signed, setSigned] = useState(false)
   const [mode, setMode] = useState<'selective' | 'full'>('selective')
@@ -47,7 +49,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
   // The hub is looked up as soon as the pasted text is a link: nothing to click before the hub is shown.
   useEffect(() => {
     setInfo(null); setProblem('')
-    if (!valid) return
+    if (!valid || !armed) return
     let alive = true
     setLooking(true)
     api.getHubLink(ws, link).then(
@@ -55,7 +57,7 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
       e => { if (alive) setProblem(e instanceof ApiError && e.message ? e.code + ': ' + e.message : 'Could not reach the hub named by this link.') },
     ).finally(() => { if (alive) setLooking(false) })
     return () => { alive = false }
-  }, [ws, link, valid])
+  }, [ws, link, valid, armed])
 
   if (signed && info) return <Flow title="Connect a hub" onClose={leave} finish="here"><ConnectStage ws={ws} info={info} mode={mode} onClose={leave} /></Flow>
 
@@ -63,15 +65,17 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     {!failed && <div className="space-y-1">
       <label htmlFor="hub-link-text" className="sr-only">Connect link</label>
       <p id="hub-link-hint" className="text-sm text-text-muted">Paste the connect link from your hub admin.</p>
-      <input id="hub-link-text" data-testid="hub-link-text" autoFocus value={text} onChange={e => setText(e.target.value)} autoComplete="off" spellCheck={false} aria-describedby="hub-link-hint"
+      <input id="hub-link-text" data-testid="hub-link-text" autoFocus value={text} onChange={e => { setText(e.target.value); setArmed(true) }} autoComplete="off" spellCheck={false} aria-describedby="hub-link-hint"
         placeholder="https://hub.example/c#h1...." className="min-h-11 w-full rounded-md border border-border bg-bg px-3 font-mono text-xs" />
     </div>}
     {link && !valid && <p role="alert" data-testid="hub-link-bad" className="text-danger">This does not look like a connect link. Paste all of it, from https:// to the end.</p>}
+    {valid && !armed && <div className="space-y-1"><p data-testid="hub-link-from">This link points to <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p><Action id="hub-link-lookup" onClick={() => setArmed(true)}>Look up this hub</Action></div>}
     {looking && <p role="status" data-testid="hub-link-looking">Looking up the hub…</p>}
     {problem && <p role="alert" data-testid="hub-link-problem" className="text-danger">{problem}</p>}
     {info && <>
       {!failed && <><div className="rounded-md border border-border p-3" data-testid="hub-link-hub">
         <p className="font-bold">Hub <Raw>{info.name}</Raw></p>
+        {initialLink && <p className="text-sm text-text-muted" data-testid="hub-link-origin">at <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p>}
       </div>
       <InfoDrawer><p>Hub id: <Raw>{info.hub_id}</Raw></p></InfoDrawer>
       {choosing && !signed

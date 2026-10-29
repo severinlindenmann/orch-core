@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-const { parseFragment, canonicalLink, deepLink, cleanOrigin, DEFAULT_DASHBOARD, knownDashboard, rememberDashboard } =
+const { parseFragment, canonicalLink, deepLink, cleanOrigin, loopbackOrigin, DEFAULT_DASHBOARD, knownDashboard, rememberDashboard } =
   await import("../../src/orch_hub/web/connect.js");
 
 const HUB = "9f3c1ab277de40c8aa11bb22cc33dd44", OWNER = "0123456789abcdef0123456789abcdef";
@@ -50,5 +50,20 @@ test("the remembered dashboard address falls back to the local default and ignor
   globalThis.localStorage = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
   assert.equal(knownDashboard(), DEFAULT_DASHBOARD);
   rememberDashboard("http://127.0.0.1:1");
+  delete globalThis.localStorage;
+});
+
+test("a non-loopback origin (e.g. reported by a workspace host) is never remembered or used", () => {
+  const store = new Map();
+  globalThis.localStorage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
+  for (const bad of ["https://evil.example", "http://10.0.0.5:47821", "http://127.0.0.1.evil.example", "http://localhost.evil.example"]) {
+    rememberDashboard(bad);
+    assert.equal(store.size, 0, bad);
+    assert.equal(deepLink(bad, "x"), null, bad);
+    store.set("orch.dashboard_origin", bad);
+    assert.equal(knownDashboard(), DEFAULT_DASHBOARD, bad);
+    store.clear();
+  }
+  for (const ok of ["http://127.0.0.1:5", "http://localhost:3000", "http://[::1]:47821"]) assert.ok(loopbackOrigin(ok), ok);
   delete globalThis.localStorage;
 });

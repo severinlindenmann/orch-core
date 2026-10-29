@@ -227,6 +227,46 @@ def _listen_address(address: str) -> str:
 # ------------------------------------------------------------------------------------------------------------ install
 
 
+def hub_address_kind(address: str) -> str:
+    """The hub settings kind of an address: private (VPN), office (local network), server (this computer), public."""
+    if address in ("localhost", P.ADDRESS_LOOPBACK):
+        return "server"
+    label = P.classify(address)
+    return {"private network": "private", "local network": "office"}.get(label, "public")
+
+
+def write_hub_settings(data: Path, *, address: str, domain: str | None, port: int) -> None:
+    """Seed ``hub-settings.json`` (the hub's own words and the addresses it advertises) with the address chosen now.
+
+    The hub validates the same shape when it reads it (``orch_hub.settings``). A re-run keeps the name and company an
+    admin already set and replaces only the addresses; nothing secret goes in. The file is 0600, written atomically."""
+    f = data / "hub-settings.json"
+    name, company = "Hub", ""
+    try:
+        old = json.loads(f.read_text())
+        if isinstance(old.get("name"), str) and isinstance(old.get("company"), str):
+            name, company = old["name"], old["company"]
+    except (OSError, ValueError, AttributeError):
+        pass
+    link = P.HUB_LINK_PORT
+    loop = address in ("localhost", P.ADDRESS_LOOPBACK)
+    host = P.ADDRESS_LOOPBACK if loop else address
+    addrs = [{"kind": hub_address_kind(address), "web": f"http://{host}:{port}", "link": f"{host}:{link}"}]
+    if not loop:  # a network install also answers on the computer itself
+        addrs.append(
+            {"kind": "server", "web": f"http://{P.ADDRESS_LOOPBACK}:{port}", "link": f"{P.ADDRESS_LOOPBACK}:{link}"}
+        )
+    if domain:
+        addrs.append({"kind": "public", "web": f"http://{domain}:{port}", "link": None})
+    body = {"v": 1, "name": name, "company": company, "addresses": addrs}
+    tmp = f.with_name(f".{f.name}.tmp")
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as out:
+        out.write(json.dumps(body, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, f)
+
+
 def install_part(
     ctx: Ctx,
     part: str,
@@ -296,6 +336,8 @@ def install_part(
             tf = data / "setup-token"
             tf.write_text(token + "\n")
             tf.chmod(0o600)
+    if part == "hub":
+        write_hub_settings(data, address=address, domain=domain, port=port)
     argv = P.command_for(
         part,
         binary=binary,

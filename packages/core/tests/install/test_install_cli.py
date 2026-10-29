@@ -329,3 +329,27 @@ def test_mac_is_told_it_cannot_open_its_own_netbird_address(home, monkeypatch):
     ctx.detect = lambda: [("127.0.0.1", "this computer only")]
     cli.choose_address(ctx, None, {})
     assert "127.0.0.1 (a Mac" not in out.getvalue()
+
+
+def test_hub_install_seeds_hub_settings_with_the_chosen_address_and_keeps_edits_on_a_rerun(home):
+    ctx, out, err, _ = make(home)
+    f = ctx.layout.data("hub") / "hub-settings.json"
+    assert cli.main(["hub", "--address", "100.64.1.2"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    assert (f.stat().st_mode & 0o777) == 0o600
+    assert json.loads(f.read_text()) == {
+        "v": 1,
+        "name": "Hub",
+        "company": "",
+        "addresses": [
+            {"kind": "private", "web": "http://100.64.1.2:8100", "link": "100.64.1.2:8105"},
+            {"kind": "server", "web": "http://127.0.0.1:8100", "link": "127.0.0.1:8105"},
+        ],
+    }
+    # an admin's name and company survive a re-run; only the addresses follow the new choice
+    body = json.loads(f.read_text())
+    f.write_text(json.dumps({**body, "name": "Acme", "company": "Acme AG"}))
+    assert cli.main(["hub", "--address", "127.0.0.1"], env=ctx.env, out=out, err=err, ctx=ctx) == 0
+    again = json.loads(f.read_text())
+    assert (again["name"], again["company"]) == ("Acme", "Acme AG")
+    assert again["addresses"] == [{"kind": "server", "web": "http://127.0.0.1:8100", "link": "127.0.0.1:8105"}]
+    assert cli.hub_address_kind("192.168.1.5") == "office" and cli.hub_address_kind("8.8.8.8") == "public"

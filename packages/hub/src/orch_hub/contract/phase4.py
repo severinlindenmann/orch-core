@@ -816,6 +816,25 @@ SHARE_CONTENT: dict[str, dict[str, Any]] = {
 }
 
 
+#: content keys a kind MAY carry besides the exact set (§10.2b): a ticket's description
+SHARE_OPTIONAL_CONTENT: dict[str, dict[str, Any]] = {"ticket": {"description": _text(4000, multiline=True)}}
+_GROUP_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+
+
+def check_audience(a: Any, item_kind: str) -> None:
+    """The optional ``audience`` of a ``share.item`` (§10.2b): exactly ``{users, groups}``, sorted unique hub user ids and
+    group names, at least one entry, only on a ticket item. It names who besides the owner alias may READ the item."""
+    if (
+        item_kind != "ticket" or type(a) is not dict or set(a) != {"users", "groups"}
+        or type(a["users"]) is not list or type(a["groups"]) is not list
+        or len(a["users"]) > 32 or len(a["groups"]) > 16 or not (a["users"] or a["groups"])
+        or not all(_hex16(u) for u in a["users"])
+        or not all(type(g) is str and _GROUP_NAME.fullmatch(g) is not None for g in a["groups"])
+        or a["users"] != sorted(set(a["users"])) or a["groups"] != sorted(set(a["groups"]))
+    ):  # fmt: skip
+        raise Refused("malformed")
+
+
 def _chain_head(x: Any) -> bool:
     return (
         type(x) is dict
@@ -915,7 +934,7 @@ def open_share_item(
         raise Refused("malformed") from None
     o = _envelope(signed, "share.item")
     _signature(signed, L["sig_share_item"], wsk_pub)
-    _fields({k: v for k, v in o.items() if k != "f1"}, "share.item")  # f1 is the one optional key (C3b addendum)
+    _fields({k: v for k, v in o.items() if k not in ("f1", "audience")}, "share.item")  # the optional keys
     if o["hub_id"] != hub_id:
         raise Refused("other_hub")
     if o["workspace_id"] != workspace_id:
@@ -924,8 +943,13 @@ def open_share_item(
         raise Refused("malformed")
     spec = SHARE_CONTENT[o["item_kind"]]
     c = o["content"]
-    if set(c) != set(spec) or not all(ok(c[k]) for k, ok in spec.items()):
+    optional = SHARE_OPTIONAL_CONTENT.get(o["item_kind"], {})
+    if not set(spec) <= set(c) <= set(spec) | set(optional) or not all(
+        ok(c[k]) for k, ok in {**spec, **{k: v for k, v in optional.items() if k in c}}.items()
+    ):
         raise Refused("malformed")
+    if "audience" in o:
+        check_audience(o["audience"], o["item_kind"])
     if "f1" in o:
         check_f1(o["f1"], o["chain"])
     _dev(o, dev_mode)

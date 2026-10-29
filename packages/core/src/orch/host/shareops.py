@@ -72,10 +72,14 @@ LEAVES = {
 }
 LATER_EDITS = "Later edits to these tickets are shared too, until you stop sharing them."
 _MU = threading.Lock()
+_NAMES = {"type": "array", "items": {"type": "string"}, "maxItems": 64}
 _RULE = {
     "type": "object",
     "properties": {"kind": {"enum": ["needs_you", "questions", "type", "ticket", "tag"]}, "type": {"type": "string"},
-                   "ticket": {"type": "string"}, "tag": {"type": "string"}},
+                   "ticket": {"type": "string"}, "tag": {"type": "string"},
+                   "audience": {"type": "object", "required": ["users", "groups"], "additionalProperties": False,
+                                "properties": {"users": _NAMES, "groups": _NAMES}},
+                   "description": {"type": "boolean"}},
     "required": ["kind"],
     "additionalProperties": False,
 }  # fmt: skip
@@ -276,8 +280,21 @@ def ticket_fact(store: Any, state: Any, uid: str, t: Any) -> Any:
     return TicketFact(
         uid, t.key, t.type, t.title, t.status, tuple(t.fields.get("labels", ())),
         due if isinstance(due, str) else None, qs, needs, gates, state.workspace.roster_v,
-        (seq, head) if seq and head else None,
+        (seq, head) if seq and head else None, _description_of(store, uid),
     )  # fmt: skip
+
+
+def _description_of(store: Any, uid: str) -> str:
+    """The ticket's Summary and Context text from ``body.md`` (checked against the log by the store), or ``""``: a body
+    that does not match its log, or cannot be read, is no description at all (fail closed). Only the rules that say
+    "include the description" ever use it."""
+    from orch.store.errors import StoreError
+
+    try:
+        texts = store.body_sections(uid)
+    except (StoreError, OSError):
+        return ""
+    return "\n\n".join(x.strip() for x in (texts.get("summary", ""), texts.get("context", "")) if x.strip())
 
 
 def _plan(items: list[Any]) -> str:

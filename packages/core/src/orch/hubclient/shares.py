@@ -65,15 +65,36 @@ TEXT_BYTES = 2000
 # a need of the model -> the contract's closed needs_you type; the others (no_eligible, acknowledge, addon) have none
 NEED_TYPES = {"question": "question", "approve": "gate"}
 _RULE_KEYS = {"needs_you": set(), "questions": set(), "type": {"type"}, "ticket": {"ticket"}, "tag": {"tag"}}
-DEFAULT_RULES: tuple[dict[str, str], ...] = ({"kind": "needs_you"},)
+#: the rules that select tickets: only these may carry an ``audience`` (who besides the owner may read the ticket at the
+#: hub, P02) and ``description`` (the ticket's text leaves too). Both are absent in the stored form when empty / false.
+TICKET_KINDS = frozenset({"type", "ticket", "tag"})
+DEFAULT_RULES: tuple[dict[str, Any], ...] = ({"kind": "needs_you"},)
 
 
-def normalize_rule(rule: Any) -> dict[str, str]:
+def normalize_audience(audience: Any) -> dict[str, list[str]] | None:
+    """``{"users", "groups"}`` sorted and unique, or ``None`` for "owner only" (nothing named); else ``malformed``."""
+    if type(audience) is not dict or set(audience) != {"users", "groups"}:
+        raise HubRefused("malformed")
+    users, groups = audience["users"], audience["groups"]
+    if type(users) is not list or type(groups) is not list:
+        raise HubRefused("malformed")
+    if not users and not groups:
+        return None
+    try:
+        out = {"users": sorted(set(users)), "groups": sorted(set(groups))}
+    except TypeError:
+        raise HubRefused("malformed") from None
+    sharefmt.check_audience(out, "ticket")
+    return out
+
+
+def normalize_rule(rule: Any) -> dict[str, Any]:
     """The rule in its one stored form, or ``malformed``. Values are short single-line text."""
     if type(rule) is not dict or rule.get("kind") not in _RULE_KEYS:
         raise HubRefused("malformed")
     kind = rule["kind"]
-    if set(rule) != {"kind", *_RULE_KEYS[kind]}:
+    optional = {"audience", "description"} if kind in TICKET_KINDS else set()
+    if not {"kind", *_RULE_KEYS[kind]} <= set(rule) <= {"kind", *_RULE_KEYS[kind], *optional}:
         raise HubRefused("malformed")
     for k in _RULE_KEYS[kind]:
         v = rule[k]
@@ -84,10 +105,18 @@ def normalize_rule(rule: Any) -> dict[str, str]:
             or any(ord(c) < 0x20 or ord(c) == 0x7F for c in v)
         ):
             raise HubRefused("malformed")
-    return {k: rule[k] for k in ("kind", *sorted(_RULE_KEYS[kind]))}
+    out: dict[str, Any] = {k: rule[k] for k in ("kind", *sorted(_RULE_KEYS[kind]))}
+    if "audience" in rule and (aud := normalize_audience(rule["audience"])) is not None:
+        out["audience"] = aud
+    if "description" in rule:
+        if type(rule["description"]) is not bool:
+            raise HubRefused("malformed")
+        if rule["description"]:
+            out["description"] = True
+    return out
 
 
-def describe(rule: Mapping[str, str]) -> str:
+def describe(rule: Mapping[str, Any]) -> str:
     """What the rule shares, in words (WYSIWYS: the owner types a confirmation after reading this)."""
     k = rule["kind"]
     if k == "needs_you":
@@ -97,11 +126,18 @@ def describe(rule: Mapping[str, str]) -> str:
         )
     if k == "questions":
         return "every open question addressed to you (the full question)"
+    what = "title, status, labels, deadline" + (" and description" if rule.get("description") else "")
+    aud = rule.get("audience")
+    who = (
+        ""
+        if not aud
+        else f"; readable by {len(aud['users'])} named people and {len(aud['groups'])} teams on the hub besides you"
+    )
     if k == "type":
-        return f"every ticket of type {clean_line(rule['type'])!r} (title, status, labels, deadline)"
+        return f"every ticket of type {clean_line(rule['type'])!r} ({what}){who}"
     if k == "ticket":
-        return f"the ticket {clean_line(rule['ticket'])!r} (title, status, labels, deadline)"
-    return f"every ticket labelled {clean_line(rule['tag'])!r} (title, status, labels, deadline)"
+        return f"the ticket {clean_line(rule['ticket'])!r} ({what}){who}"
+    return f"every ticket labelled {clean_line(rule['tag'])!r} ({what}){who}"
 
 
 # --- facts (the host builds these from its replayed state; this module never imports the model) ---------------------
@@ -150,6 +186,7 @@ class TicketFact:
     #: ``(seq, head)`` of the ticket's log, read in the same locked snapshot as the fields above (C6r3-2): the chain
     #: claim of an item then always describes the content it carries. ``None``: not known (the builder refuses).
     chain: tuple[int, str] | None = None
+    description: str = ""  # the ticket's Summary and Context text (shared only when the rule says so)
 
 
 @dataclass(frozen=True)
@@ -164,6 +201,9 @@ class ShareItem:
     shown: str = field(default="", compare=False)  # b64u SHA-256 of what the owner is shown (payload + decision data)
     data: tuple[str, ...] = field(default=(), compare=False)  # decision data lines (repos and refs of f1), C6b-3
     chain: tuple[int, str] | None = field(default=None, compare=False)  # the snapshot's (seq, head); not in the digest
+    #: who besides the owner may read this ticket at the hub (contract 10.2b ``audience``): in the digest and in the
+    #: plan the owner confirms, so a change of audience is a new, shown, confirmed version
+    audience: dict[str, list[str]] | None = field(default=None, compare=False)
 
     def line(self) -> str:
         """One line for the owner's review."""
@@ -246,7 +286,12 @@ def decision_raw(f1: Mapping[str, Any] | None) -> list[list[str]]:
 
 
 def _item(
-    logical: str, kind: str, t: TicketFact, payload: dict[str, Any], f1: dict[str, Any] | None = None
+    logical: str,
+    kind: str,
+    t: TicketFact,
+    payload: dict[str, Any],
+    f1: dict[str, Any] | None = None,
+    audience: dict[str, list[str]] | None = None,
 ) -> ShareItem | None:
     """The item, or ``None`` when the contract cannot express it (a key, label or text outside its rules, a question
     over 2000 bytes): it is then not offered and nothing of it is sent. ``f1`` is part of the digest, so a change of
@@ -261,9 +306,14 @@ def _item(
     # the plan covers the RAW repo and ref of each source_sha entry, not the cleaned preview lines: repo strings that
     # differ only in whitespace look alike once cleaned (C6bd-1, core#1040)
     raw = decision_raw(f1)
-    shown = b64u(suite.sha256(wire.cj(payload if not raw else {"payload": payload, "decision_data": raw})))
-    digest = shown if f1 is None else b64u(suite.sha256(wire.cj({"payload": payload, "f1": f1})))
-    return ShareItem(logical, kind, t.uid, t.key, payload, digest, f1, shown, tuple(data), t.chain)
+    extra: dict[str, Any] = ({"decision_data": raw} if raw else {}) | ({"audience": audience} if audience else {})
+    shown = b64u(suite.sha256(wire.cj({"payload": payload, **extra} if extra else payload)))
+    digest = (
+        shown
+        if f1 is None
+        else b64u(suite.sha256(wire.cj({"payload": payload, "f1": f1} | ({"audience": audience} if audience else {}))))
+    )
+    return ShareItem(logical, kind, t.uid, t.key, payload, digest, f1, shown, tuple(data), t.chain, audience)
 
 
 def _valid_labels(labels: Iterable[str]) -> list[str]:
@@ -271,7 +321,30 @@ def _valid_labels(labels: Iterable[str]) -> list[str]:
     return ok[: sharefmt.MAX_LABELS]
 
 
-def select(rules: Iterable[Mapping[str, str]], tickets: Iterable[TicketFact]) -> list[ShareItem]:
+def _description(text: str) -> str:
+    """A ticket's description as the contract's text (LF line ends, invisible characters made visible), cut to its
+    limit; ``""`` when there is none."""
+    out = _cut(_multiline(text), sharefmt.DESCRIPTION_BYTES).strip()
+    return out
+
+
+def _union_audience(rules: Iterable[Mapping[str, Any]]) -> dict[str, list[str]] | None:
+    users: set[str] = set()
+    groups: set[str] = set()
+    for r in rules:
+        a = r.get("audience")
+        if a:
+            users |= set(a["users"])
+            groups |= set(a["groups"])
+    if not users and not groups:
+        return None
+    return {
+        "users": sorted(users)[: sharefmt.MAX_AUDIENCE_USERS],
+        "groups": sorted(groups)[: sharefmt.MAX_AUDIENCE_GROUPS],
+    }
+
+
+def select(rules: Iterable[Mapping[str, Any]], tickets: Iterable[TicketFact]) -> list[ShareItem]:
     """The items the rules select from ``tickets`` (the owner's visible tickets), sorted by logical id."""
     rs = [normalize_rule(dict(r)) for r in rules]
     kinds = {r["kind"] for r in rs}
@@ -282,27 +355,27 @@ def select(rules: Iterable[Mapping[str, str]], tickets: Iterable[TicketFact]) ->
             out[item.logical] = item
 
     for t in tickets:
-        hit = (
-            any(r["kind"] == "type" and r["type"] == t.type for r in rs)
-            or any(r["kind"] == "ticket" and r["ticket"] in (t.key, t.uid) for r in rs)
-            or any(r["kind"] == "tag" and r["tag"] in t.labels for r in rs)
-        )
-        if hit:
-            put(
-                _item(
-                    f"ticket:{t.uid}",
-                    "ticket",
-                    t,
-                    {
-                        "key": t.key,
-                        "type": t.type,
-                        "title": _line(t.title),
-                        "status": t.status,
-                        "labels": _valid_labels(t.labels),
-                        "deadline": t.due,
-                    },
-                )
-            )  # fmt: skip  (no f1: a decision is only built from an item that names that decision, C6b-1/2)
+        matching = [
+            r for r in rs
+            if (r["kind"] == "type" and r["type"] == t.type)
+            or (r["kind"] == "ticket" and r["ticket"] in (t.key, t.uid))
+            or (r["kind"] == "tag" and r["tag"] in t.labels)
+        ]  # fmt: skip
+        if matching:
+            content: dict[str, Any] = {
+                "key": t.key,
+                "type": t.type,
+                "title": _line(t.title),
+                "status": t.status,
+                "labels": _valid_labels(t.labels),
+                "deadline": t.due,
+            }
+            # the text leaves only when EVERY rule that selects the ticket says so (fail closed: a rule from before
+            # this option, or one that unticks it, keeps the text home); the readers are the rules' audiences joined
+            if all(r.get("description") for r in matching) and (text := _description(t.description)):
+                content["description"] = text
+            put(_item(f"ticket:{t.uid}", "ticket", t, content, None, _union_audience(matching)))
+            # (no f1: a decision is only built from an item that names that decision, C6b-1/2)
         if "questions" in kinds:
             for q in t.questions:
                 if q.to_owner:
@@ -374,7 +447,7 @@ def make_builder(
         signed = sharefmt.build_signed_item(
             hub_id=hub_id, workspace_id=workspace_id, item_id=item_id, item_kind=ITEM_KIND[item.kind],
             item_version=version, issued_ms=now_ms(), chain={"log": item.ticket_uid, "seq": head[0], "head": head[1]},
-            content=item.payload, dev=dev, sign=sign, f1=item.f1,
+            content=item.payload, dev=dev, sign=sign, f1=item.f1, audience=item.audience,
         )  # fmt: skip
         try:
             return sharefmt.seal_share_item(signed, hxk_pub=hxk_pub), sharefmt.item_hash(signed)
@@ -386,7 +459,7 @@ def make_builder(
         signed = sharefmt.build_signed_item(
             hub_id=hub_id, workspace_id=workspace_id, item_id=item_id, item_kind=ITEM_KIND[item.kind],
             item_version=version, issued_ms=now_ms(), chain={"log": item.ticket_uid, "seq": head[0], "head": head[1]},
-            content=item.payload, dev=dev, sign=sign,
+            content=item.payload, dev=dev, sign=sign, audience=item.audience,
         )  # fmt: skip
         return sharefmt.seal_share_item(signed, hxk_pub=hxk_pub), sharefmt.item_hash(signed)
 
@@ -420,7 +493,7 @@ class ShareState:
     sent, or stops matching. An item that is in ``sent`` with a ``digest`` AND refused is **stale**: the hub still
     serves its older version."""
 
-    rules: list[dict[str, str]] = field(default_factory=lambda: [dict(r) for r in DEFAULT_RULES])
+    rules: list[dict[str, Any]] = field(default_factory=lambda: [dict(r) for r in DEFAULT_RULES])
     sent: dict[str, dict[str, Any]] = field(default_factory=dict)
     withdrawn: list[str] = field(default_factory=list)
     refused: dict[str, dict[str, str]] = field(default_factory=dict)
@@ -511,14 +584,14 @@ class ShareState:
             raise HubRefused("malformed")
         return cls(rules=rules, sent=sent, withdrawn=list(d["withdrawn"]), refused=refused, confirmed=confirmed)
 
-    def add_rule(self, rule: Mapping[str, str]) -> bool:
+    def add_rule(self, rule: Mapping[str, Any]) -> bool:
         r = normalize_rule(dict(rule))
         if r in self.rules:
             return False
         self.rules.append(r)
         return True
 
-    def remove_rule(self, rule: Mapping[str, str]) -> bool:
+    def remove_rule(self, rule: Mapping[str, Any]) -> bool:
         r = normalize_rule(dict(rule))
         if r not in self.rules:
             return False

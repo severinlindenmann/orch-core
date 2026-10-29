@@ -185,7 +185,7 @@ def open_share_item(
     signed = H.parse(pt)
     o = H._envelope(signed, "share.item")  # noqa: SLF001
     H._signature(signed, LABEL_SIG, wsk_pub)  # noqa: SLF001
-    if set(o) - {"f1"} != {"v", "suite", "kind", "hv", *ITEM_FIELDS} or not all(
+    if set(o) - {"f1", "audience"} != {"v", "suite", "kind", "hv", *ITEM_FIELDS} or not all(
         ok(o[k]) for k, ok in ITEM_FIELDS.items()
     ):
         raise Refused("malformed")
@@ -196,8 +196,22 @@ def open_share_item(
     if o["item_id"] != body["item_id"] or o["item_version"] != version:
         raise Refused("malformed")
     spec, c = CONTENT[o["item_kind"]], o["content"]
-    if set(c) != set(spec) or not all(ok(c[k]) for k, ok in spec.items()):
+    optional = {"description": text(4000, True)} if o["item_kind"] == "ticket" else {}
+    if not set(spec) <= set(c) <= set(spec) | set(optional) or not all(
+        ok(c[k]) for k, ok in {**spec, **{k: v for k, v in optional.items() if k in c}}.items()
+    ):
         raise Refused("malformed")
+    if "audience" in o:
+        a = o["audience"]
+        if (
+            o["item_kind"] != "ticket" or type(a) is not dict or set(a) != {"users", "groups"}
+            or type(a["users"]) is not list or type(a["groups"]) is not list
+            or len(a["users"]) > 32 or len(a["groups"]) > 16 or not (a["users"] or a["groups"])
+            or not all(rx(_HEX16)(u) for u in a["users"])
+            or not all(rx(re.compile(r"[a-z0-9][a-z0-9-]{0,39}"))(g) for g in a["groups"])
+            or a["users"] != sorted(set(a["users"])) or a["groups"] != sorted(set(a["groups"]))
+        ):  # fmt: skip
+            raise Refused("malformed")
     if "f1" in o:
         check_f1(o["f1"], o["chain"])
     H._dev(o, dev_mode)  # noqa: SLF001

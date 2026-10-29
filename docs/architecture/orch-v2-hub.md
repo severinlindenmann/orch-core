@@ -266,6 +266,11 @@ charter. Public access still needs a custodial human signature, carried in the r
 - **Who decides.** Only the workspace owner, with the local key at the host terminal. Hub groups and the hub-admin
   group (D71) get no role in a selective workspace. It accepts `UK` signatures only from users it grants explicitly;
   by default that is only the aliased owner.
+- **Who may read (amended, P02).** The owner may name an audience per shared ticket: hub people and groups, signed by
+  `WSK` inside the item (contract 10.2b `audience`). Those readers can see that ticket on the hub (workspace page, the
+  receiving workspace's ticket list) and nothing else; they cannot sign anything. The hub checks the signed audience
+  against current group membership at every read, so removing a person from a group ends their access at once. The
+  rule that hub roles give nothing is unchanged: no admin or role can add a reader.
 - **What is shared.** The owner picks share rules: whole ticket types, single tickets, or tagged items, plus
   "questions to me" and "needs-you" summaries. Nothing else leaves the host. The default for a selective join is
   nothing but needs-you summaries.

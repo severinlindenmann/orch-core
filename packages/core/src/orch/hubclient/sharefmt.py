@@ -42,6 +42,7 @@ __all__ = [
     "STATUSES",
     "F1_GATES",
     "build_signed_item",
+    "check_audience",
     "check_content",
     "check_f1",
     "f1_gate_ok",
@@ -66,6 +67,15 @@ _ULID = re.compile(r"[0-9A-HJKMNP-TV-Z]{26}")
 _HASH = re.compile(r"sha256:[0-9a-f]{64}")
 HASH_RE = _HASH
 MAX_LABELS = 32
+DESCRIPTION_BYTES = 4000  # the optional ``description`` of a ticket item (contract 10.2b)
+MAX_AUDIENCE_USERS = 32
+MAX_AUDIENCE_GROUPS = 16
+_GROUP = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
+_HEX16 = re.compile(r"[0-9a-f]{32}")
+#: content keys a kind MAY carry on top of the exact set above (contract 10.2b): only the ticket's description
+_OPTIONAL: dict[str, dict[str, Callable[[Any], bool]]] = {
+    "ticket": {"description": lambda x: text_ok(x, DESCRIPTION_BYTES, multiline=True)},
+}
 
 
 _WHITE_SPACE = frozenset(
@@ -145,9 +155,28 @@ _CONTENT: dict[str, dict[str, Callable[[Any], bool]]] = {
 def check_content(item_kind: str, content: Any) -> None:
     """The exact key set and value rules of one ``item_kind`` (``malformed`` otherwise)."""
     spec = _CONTENT.get(item_kind) if type(item_kind) is str else None
-    if spec is None or type(content) is not dict or set(content) != set(spec):
+    if spec is None or type(content) is not dict:
         raise HubRefused("malformed")
-    if not all(ok(content[k]) for k, ok in spec.items()):
+    optional = _OPTIONAL.get(item_kind, {})
+    if not set(spec) <= set(content) <= set(spec) | set(optional):
+        raise HubRefused("malformed")
+    if not all(ok(content[k]) for k, ok in {**spec, **{k: v for k, v in optional.items() if k in content}}.items()):
+        raise HubRefused("malformed")
+
+
+def check_audience(audience: Any, item_kind: str) -> None:
+    """The optional ``audience`` of a ``share.item`` (contract 10.2b): exactly ``{"users", "groups"}``, hub user ids
+    (32 hex) and hub group names, each sorted and unique, at least one entry, and only on a ticket item (``malformed``
+    otherwise). It names who besides the owner alias may READ the item at the hub; it never lets anyone sign."""
+    if (
+        item_kind != "ticket" or type(audience) is not dict or set(audience) != {"users", "groups"}
+        or type(audience["users"]) is not list or type(audience["groups"]) is not list
+        or len(audience["users"]) > MAX_AUDIENCE_USERS or len(audience["groups"]) > MAX_AUDIENCE_GROUPS
+        or not (audience["users"] or audience["groups"])
+        or not all(type(u) is str and _HEX16.fullmatch(u) for u in audience["users"])
+        or not all(type(g) is str and _GROUP.fullmatch(g) for g in audience["groups"])
+        or audience["users"] != sorted(set(audience["users"])) or audience["groups"] != sorted(set(audience["groups"]))
+    ):  # fmt: skip
         raise HubRefused("malformed")
 
 
@@ -238,6 +267,7 @@ def build_signed_item(
     dev: bool,
     sign: Callable[[bytes], bytes],
     f1: Mapping[str, Any] | None = None,
+    audience: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The ``WSK``-signed ``share.item``. Everything is checked first (never sign what the hub would refuse)."""
     if not (wire.hex16(hub_id) and wire.hex16(workspace_id) and wire.hex16(item_id)):
@@ -249,6 +279,8 @@ def build_signed_item(
     check_content(item_kind, dict(content))
     if f1 is not None:
         check_f1(f1, chain)
+    if audience is not None:
+        check_audience(dict(audience), item_kind)
     o = {
         "v": 2, "suite": suite.SUITE_ID, "kind": "share.item", "hv": wire.HV, "hub_id": hub_id,
         "workspace_id": workspace_id, "item_id": item_id, "item_kind": item_kind, "item_version": item_version,
@@ -256,6 +288,8 @@ def build_signed_item(
     }  # fmt: skip
     if f1 is not None:
         o["f1"] = dict(f1)
+    if audience is not None:
+        o["audience"] = {"users": list(audience["users"]), "groups": list(audience["groups"])}
     return {"o": o, "sig": b64u(sign(L["sig_share_item"] + wire.cj(o)))}
 
 

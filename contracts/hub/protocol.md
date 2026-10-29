@@ -1413,7 +1413,7 @@ The `share_put {item_id, sealed}` body of H0 left `sealed` opaque. Its content, 
 
 ```
 share.item {v, suite, kind: "share.item", hv, hub_id, workspace_id, item_id, item_kind: "needs_you" | "ticket" | "question",
-            item_version ≥ 1, issued_ms, chain: {log, seq, head}, content: <exact per item_kind>, f1?, dev}
+            item_version ≥ 1, issued_ms, chain: {log, seq, head}, content: <exact per item_kind>, f1?, audience?, dev}
             signed by the workspace's WSK, label sig_share_item
 IK        = 32 fresh random bytes per put
 wrap      = seal_to(HXK, purpose "hub-share", recipient id hub_id, object_id item_id, epoch item_version,
@@ -1459,10 +1459,22 @@ item_hash = "sha256:" + hex(H("orch/v2/hub-share-item|" || cj(signed share.item)
   raises `roster_v`, a new generation, a changed policy or source list, a re-asked question); until then events built
   on the old values are refused at admission (§8.6). Reference `check_f1`, vectors `share_item_with_f1`,
   `share_item_f1_*`.
+- **The `audience` block (P02, optional, additive).** Who besides the owner alias may READ this item at the hub. Exactly
+  `{"users": [<hub user id, 32 hex>…], "groups": [<hub group name>…]}`: each list sorted and unique (at most 32 users,
+  16 groups), at least one entry in total, and **only on a `ticket` item** (`malformed` on any other kind, or with an
+  extra key). It is signed by the workspace's `WSK` with the rest of the item, so only the workspace owner's host decides
+  it; the hub cannot add a reader and hub roles, groups and the hub-admin group still grant nothing (spec §8a). An item
+  without one is readable by the owner alias only, as before. The hub admits a reader at read time (`list_shared`) only
+  if the viewer is an active hub user who is named in `users` or is a member of a group named in `groups` **now**, on a
+  live item whose signature still verifies; anything else, an unknown group included, reads nothing (fail closed). An
+  audience reader may read, never sign: `shared_item` and every custodial build (§8.6) stay owner-only. Reference
+  `check_audience`, vectors `share_item_with_audience_and_description`, `share_item_audience_*`.
 - **Content per kind (C6 4, D9).** Exact keys, no free objects, the text rule of §8.5:
   - `needs_you` `{type: question | gate | verdict | review | handoff, title, deadline}`;
   - `ticket` `{key, type (ticket type), title, status (status list), labels (sorted unique label tokens ≤ 32),
-    deadline}`;
+    deadline, description?}` (`description` optional, ticket only: 1 to 4000 bytes, multi-line text rule; the host puts
+    the ticket's Summary and Context there only when the owner's rule says "include the description"; vectors
+    `share_item_description_*`);
   - `question` `{key, type (the ticket's type), id (Q<n>), title (the ticket's title), text (≤ 2000 bytes, multi-line),
     deadline}`;
   - `title` one line ≤ 200 bytes; `deadline` `YYYY-MM-DD` or null (C6's date; D9's `deadline_ms` is replaced: the

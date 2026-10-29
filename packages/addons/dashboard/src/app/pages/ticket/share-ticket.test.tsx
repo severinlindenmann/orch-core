@@ -123,4 +123,17 @@ describe('the ticket Actions menu and sharing', () => {
     expect(await screen.findByTestId('hub-add-new')).toBeTruthy()
     expect(screen.getByTestId('hub-add-leaves')).toBeTruthy()
   })
+
+  it('says "Nobody new will see it." when the preview adds nothing and names no readers (P05 review)', async () => {
+    const real = api.getHubPreview.bind(api)
+    vi.spyOn(api, 'getHubPreview').mockImplementation(async (ws, change) => {
+      const p = await real(ws, change)
+      return p.review ? { ...p, review: { ...p.review, new_count: 0, new_items: [], leaves: [], widened: [], readers: { ...p.review.readers, people: [], teams: [] } } } : p
+    })
+    const view = await openMenu('selective')
+    await view.user.click(await screen.findByRole('menuitem', { name: 'Share with the hub' }, T))
+    const dialog = await screen.findByRole('dialog', { name: 'Share this ticket' }, T)
+    await waitFor(() => expect(within(dialog).getByTestId('hub-add-sentence')).toHaveTextContent('Nobody new will see it.'), T)
+    expect(dialog.textContent).not.toContain('Only you')
+  })
 })

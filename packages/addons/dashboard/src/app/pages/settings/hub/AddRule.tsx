@@ -38,16 +38,18 @@ function readerNames(r: { people: string[]; teams: string[] }): string[] {
   return [...r.people, ...r.teams.map(t => 'team ' + t)]
 }
 
-/** "Who will see it: Ben Test, team finance" / "Only you can see it.": names from the hub, not signed (the host words the list). */
-function who(r: { people: string[]; teams: string[] }): string {
+/** True when the review adds nothing: no item newly leaves and nobody is reached more (the host lists readers only for those). */
+const nothingNew = (r: { new_count: number; widened: unknown[] }) => r.new_count === 0 && r.widened.length === 0
+
+/** "Who will see it: Ben Test, team finance" / "Only you can see it." / "Nobody new will see it.": names from the hub, not signed (the host words the list). */
+function who(r: { people: string[]; teams: string[] }, none: boolean): string {
   const names = readerNames(r)
-  return names.length ? 'Who will see it: ' + firstNames(names) : 'Only you can see it.'
+  return names.length ? 'Who will see it: ' + firstNames(names) : none ? 'Nobody new will see it.' : 'Only you can see it.'
 }
 
-/** The compact sentence's subject: the host's readers and nobody else, so it can never name someone who is not ticked. */
+/** The compact sentence's subject: the host's readers (they may include people from other matching rules, which is right). */
 function whoWill(r: { people: string[]; teams: string[] }): string {
-  const names = readerNames(r)
-  return names.length ? firstNames(names) : ''
+  return firstNames(readerNames(r))
 }
 
 /** The widened row without its "ticket KEY:" prefix, then who is added (first names, "and N more"). */
@@ -100,7 +102,7 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, title, compa
   if (compact) return <div className="space-y-2" data-testid="hub-add-review">
     <p data-testid="hub-add-sentence">{names
       ? <><span data-testid="hub-add-readers"><bdi>{names}</bdi></span> will see {review.leaves.join('; ') || 'this ticket'}.</>
-      : <span data-testid="hub-add-readers">Only you will see it.</span>}{review.later_edits && names ? <> <span data-testid="hub-add-later">{review.later_edits}</span></> : null}</p>
+      : <span data-testid="hub-add-readers">{nothingNew(review) ? 'Nobody new will see it.' : 'Only you will see it.'}</span>}{review.later_edits && names ? <> <span data-testid="hub-add-later">{review.later_edits}</span></> : null}</p>
     {widened}
     <p className="text-text-muted text-[13px]">{caveat}</p>
     <div className="flex items-center justify-between gap-2">
@@ -112,7 +114,7 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone, title, compa
   return <div className="space-y-2" data-testid="hub-add-review">
     <p data-testid="hub-add-sentence">Share {rule.kind === 'ticket' ? null : <>{review.new_count} </>}{ruleWords(rule, review.new_count, title)} from <Raw>{workspace.name}</Raw> with the hub{rule.value !== null && rule.description ? ', with their descriptions' : ''}.</p>
     <div className="flex items-center gap-1" data-testid="hub-add-readers">
-      <p><Raw>{who(review.readers)}</Raw></p>
+      <p><Raw>{who(review.readers, nothingNew(review))}</Raw></p>
       {(readerNames(review.readers).length > 0 || !!review.readers.info) && <InfoDrawer testId="hub-add-readers-info"><p>{review.readers.note ?? 'From the hub, not signed.'}</p>{review.readers.info && <p>{review.readers.info}</p>}{readerNames(review.readers).length > SHOWN_NAMES && <p data-testid="hub-add-readers-all">Everyone who will see it: <Raw>{readerNames(review.readers).join(', ')}</Raw></p>}</InfoDrawer>}
     </div>
     {widened}

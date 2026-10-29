@@ -131,6 +131,16 @@ def _require_pin(c: OpContext) -> dict[str, str]:
     return pin
 
 
+def _require_not_pending(c: OpContext) -> None:
+    """Company content is served only when no cleanup of this workspace is pending (a drop that failed is retried)."""
+    access = getattr(c, "access", None)
+    if access is not None:
+        from ..access.orgcleanup import org_cleanup
+
+        if org_cleanup(access).is_pending(c.workspace_id):
+            raise Refused("unavailable")
+
+
 def _require_bound(c: OpContext) -> None:
     st = c.registry.binding_state(c.workspace_id)
     if st is None:
@@ -298,6 +308,11 @@ def binding_put(c: OpContext) -> dict[str, Any]:
             state = H.apply_unbound(held, u)
         else:
             raise Refused("malformed")
+        owes_drop = c.access is not None and (kind == "hub.unbound" or held is None or held.get("status") != "bound")
+        if owes_drop:  # marked before the commit: a crash right after it still leaves the mark, and nothing is served
+            from ..access.orgcleanup import org_cleanup
+
+            org_cleanup(c.access).mark(c.workspace_id)
         c.registry.set_binding_state(c.workspace_id, state, obj)
 
     def locked(step: Callable[[], None]) -> Callable[[], None]:
@@ -313,12 +328,21 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         ):
             c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
 
+    def drop_org_content() -> None:
+        # a workspace that left (or is joining afresh) keeps no company secret, skill or tool server; a failed drop stays
+        # pending and is retried, and nothing is served to that workspace meanwhile
+        if owes_drop:
+            from ..access.orgcleanup import org_cleanup
+
+            org_cleanup(c.access).drop(c.workspace_id)
+
     steps: list[tuple[str, Callable[[], None]]] = [
         ("wk_seal retire", locked(lambda: _sync_wk_seals(c, state))),
         ("share sync", locked(lambda: _sync_shares(c, state))),
         ("view drop", locked(lambda: _drop_view(c, state))),
         ("downstream binding", lambda: c.downstream.binding(c.workspace_id, obj)),
         ("spaces on_unbind", leave_spaces),
+        ("org content drop", drop_org_content),
     ]
     for name, step in steps:
         try:
@@ -348,17 +372,26 @@ def hub_where(c: OpContext) -> dict[str, Any]:
     return c.where()
 
 
+def _fetched(c: OpContext, bundle: dict[str, Any]) -> dict[str, Any]:
+    """The gates were checked before the fetch; a leave or a drop that began meanwhile must not hand out the bundle."""
+    with c.registry.lock:
+        _require_bound(c)
+        _require_not_pending(c)
+    return bundle
+
+
 def org_skills_get(c: OpContext) -> dict[str, Any]:
     """M3 (#1430): the signed company-skills bundle of the LINK's workspace (never a caller-named one). Only a bound
     workspace gets one; what is in it is offered, not enabled: the owner's accept at the host decides."""
     with c.registry.lock:
         _require_pin(c)
         _require_bound(c)
+        _require_not_pending(c)
         mode = c.registry.mode(c.workspace_id)
     fn = getattr(c.snapshots, "org_skills", None)
     if fn is None:
         raise Refused("unavailable")
-    return {"bundle": fn(c.workspace_id, mode)}
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
 
 
 def mcp_servers_get(c: OpContext) -> dict[str, Any]:
@@ -367,11 +400,43 @@ def mcp_servers_get(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:
         _require_pin(c)
         _require_bound(c)
+        _require_not_pending(c)
         mode = c.registry.mode(c.workspace_id)
     fn = getattr(c.snapshots, "mcp_servers", None)
     if fn is None:
         raise Refused("unavailable")
-    return {"bundle": fn(c.workspace_id, mode)}
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
+
+
+def org_secrets_get(c: OpContext) -> dict[str, Any]:
+    """M3 (#1431): the signed bundle of sealed company secrets of the LINK's workspace (never a caller-named one). The hub
+    cannot open the wraps; the host asks for them only in tier B (host side)."""
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        _require_not_pending(c)
+        mode = c.registry.mode(c.workspace_id)
+    fn = getattr(c.snapshots, "org_secrets", None)
+    if fn is None:
+        raise Refused("unavailable")
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
+
+
+def secret_use(c: OpContext) -> dict[str, Any]:
+    """M3 (#1433): counts only. How often a secret was used on one UTC day, for the admin's "used N times this week". Bounded,
+    rate limited per workspace, only for a secret shared with the link's workspace; display data, never an authority."""
+    if c.access is None:
+        raise Refused("unavailable")
+    _require_pin(c)
+    _require_bound(c)
+    _require_not_pending(c)
+    from ..access.orgsecrets import org_secrets
+
+    try:
+        org_secrets(c.access).record_use(c.workspace_id, c.body["secret_id"], c.body["day"], c.body["n"], c.now_ms)
+    except AccessError:
+        raise Refused("malformed") from None
+    return {}
 
 
 def publish_out(c: OpContext) -> dict[str, Any]:
@@ -733,6 +798,8 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "status_put": status_put,
     "org_skills_get": org_skills_get,
     "mcp_servers_get": mcp_servers_get,
+    "org_secrets_get": org_secrets_get,
+    "secret_use": secret_use,
     "profile_put": profile_put,
     "directory_get": directory_get,
     "audience_get": audience_get,

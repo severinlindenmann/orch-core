@@ -22,6 +22,7 @@ from typing import TextIO
 from . import colocation as CO
 from .access import Access, AccessSnapshots
 from .access.cli import ACCESS_FILE
+from .access.orgcleanup import org_cleanup
 from .activity import ActivityLog
 from .audit import open_log
 from .changes import Changes
@@ -403,6 +404,7 @@ def serve(
         dev_mode=cfg.dev,
     )
     try:
+        org_cleanup(access).retry()  # a drop that a crash or a failure left undone
         shares.reconcile()  # items of a workspace that is no longer a bound selective one are deleted
         spaces.reconcile()  # a workspace that is no longer bound leaves its spaces (also after a crash)
         reconcile_full_only(registry, wk_seals, views.store)  # wraps and synced view of a non-full workspace go
@@ -413,6 +415,7 @@ def serve(
         def _retry() -> None:  # D9-1 share purge, D9/D15 wrap retire and view drop: retried while the hub runs
             while not stop.wait(30):
                 shares.retry_pending()
+                org_cleanup(access).retry()  # company content of a workspace that left, if a drop failed
                 reconcile_full_only(registry, wk_seals, views.store)
                 reconcile_relay_purge(notifier)  # a CLI revoke (another process) reaches the relay within a tick
                 try:

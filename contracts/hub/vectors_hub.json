@@ -68898,6 +68898,7 @@
   "sig_hub_mcp_servers": "orch/v2/hub-mcp-servers|",
   "sig_hub_op_cert": "orch/v2/hub-op-cert|",
   "sig_hub_op_revoked": "orch/v2/hub-op-revoked|",
+  "sig_hub_org_secrets": "orch/v2/hub-org-secrets|",
   "sig_hub_org_skills": "orch/v2/hub-org-skills|",
   "sig_hub_owner_proof": "orch/v2/sig/hub-owner-proof|",
   "sig_hub_publish": "orch/v2/hub-publish|",

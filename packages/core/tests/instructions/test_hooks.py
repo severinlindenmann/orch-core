@@ -151,12 +151,13 @@ def test_outside_a_workspace_a_hook_says_nothing_and_succeeds(tmp_path, monkeypa
 
 def test_the_plugin_runs_exactly_these_hooks():
     hooks = json.loads(plugin_files()["hooks/hooks.json"])["hooks"]
-    assert set(hooks) == {"SessionStart", "PreCompact", "Notification"}
+    assert set(hooks) == {"SessionStart", "PreCompact", "Notification", "Stop"}
     cmds = [h["command"] for g in hooks.values() for e in g for h in e["hooks"]]
     assert cmds == [
         "orch instructions hook session-start",
         "orch instructions hook pre-compact",
         "orch instructions hook waiting",
+        "orch instructions hook stop --input -",
     ]
     assert hooks["SessionStart"][0]["matcher"] == "startup|resume|clear|compact"  # re-injected after compaction
 
@@ -216,3 +217,103 @@ def test_marker_reading_ignores_damaged_and_old_files():
     assert read_marker(marker_doc("s_1", 1000.0), 1000.0 + WAITING_TTL_SECONDS + 1) is None
     assert read_marker(b"not json", 1.0) is None
     assert read_marker(b'{"session": 3, "at": 1}', 2.0) is None
+
+
+# ------------------------------------------------------------------------------------------ the Stop hook (P01 B)
+
+
+def _stop(ws, active=False, payload=None, **env):
+    out, err = io.StringIO(), io.StringIO()
+    import sys
+
+    old = sys.stdin
+    text = payload if payload is not None else json.dumps({"stop_hook_active": active, "session_id": "x"})
+    sys.stdin = io.TextIOWrapper(io.BytesIO(text.encode()))
+    try:
+        code = main(
+            ["instructions", "hook", "stop", "--input", "-"],
+            env={**ws.env(), **env},
+            stdout=out,
+            stderr=err,
+            now=lambda: ws.clock[0],
+        )
+    finally:
+        sys.stdin = old
+    return code, out.getvalue(), err.getvalue()
+
+
+def _claimed(ws):
+    cli = Cli(ws)
+    cli("new", "A ticket")
+    cli("claim", "1")
+    return cli
+
+
+def _lacking(ws) -> str:
+    from orch.ops import views
+
+    v = ws.view("1")
+    g = views.open_gate(v)
+    assert g is not None and views.gap_commands(v, g), "the fixture ticket must lack something"
+    return g
+
+
+def test_stop_blocks_once_naming_the_first_gap_and_its_command(ws):
+    _claimed(ws)
+    gate = _lacking(ws)
+    code, out, err = _stop(ws)
+    assert code == 0 and err == "", err
+    doc = json.loads(out)
+    assert doc["decision"] == "block" and set(doc) == {"decision", "reason"}
+    assert f"The {gate} gate of DEMO-0001 still lacks" in doc["reason"] and "orch " in doc["reason"]
+    assert "approve" not in doc["reason"] and "close" not in doc["reason"]
+
+
+def test_stop_is_silent_when_the_harness_says_it_already_blocked_once(ws):
+    _claimed(ws)
+    _lacking(ws)
+    assert _stop(ws, active=True) == (0, "", "")
+
+
+@pytest.mark.parametrize("payload", ["", "not json", "[]", "{}", '{"stop_hook_active": "no"}'])
+def test_stop_is_silent_when_it_cannot_prove_the_loop_guard(ws, payload):
+    _claimed(ws)
+    _lacking(ws)
+    assert _stop(ws, payload=payload) == (0, "", "")
+
+
+def test_stop_is_silent_without_a_claim_and_without_a_session(ws):
+    Cli(ws)("new", "A ticket")
+    assert _stop(ws) == (0, "", "")
+    _claimed(ws)
+    _lacking(ws)
+    assert _stop(ws, ORCH_SESSION="") == (0, "", "")
+
+
+def test_stop_is_silent_while_a_blocking_question_is_open(ws):
+    cli = _claimed(ws)
+    _lacking(ws)
+    assert cli("ask", "Which?", "--options", "a,b").code == 0
+    assert _stop(ws) == (0, "", "")
+
+
+def test_stop_is_read_only(ws):
+    _claimed(ws)
+    _lacking(ws)
+    log = ws.store_dir / "events" / "workspace.jsonl"
+    before = sorted((p, p.stat().st_mtime_ns) for p in ws.root.rglob("*") if p.is_file())
+    assert json.loads(_stop(ws)[1])["decision"] == "block"
+    assert sorted((p, p.stat().st_mtime_ns) for p in ws.root.rglob("*") if p.is_file()) == before
+    assert log.exists() and _markers(ws) == []
+
+
+def test_stop_never_pins_a_genesis_and_is_silent_outside_a_workspace(ws, tmp_path, monkeypatch):
+    _claimed(ws)
+    (ws.host_state / "hosts" / WS / "genesis").unlink()
+    assert _stop(ws) == (0, "", "")
+    other = tmp_path / "elsewhere"
+    other.mkdir()
+    monkeypatch.chdir(other)
+    out, err = io.StringIO(), io.StringIO()
+    code = main(["instructions", "hook", "stop", "--input", "-"], env={"HOME": str(other)}, stdout=out, stderr=err)
+    assert (code, out.getvalue(), err.getvalue()) == (0, "", "")

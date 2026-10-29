@@ -15,6 +15,7 @@ from typing import Any
 
 __all__ = [
     "WAITING_TTL_SECONDS",
+    "STOP_HOOK_COMMAND",
     "marker_doc",
     "marker_path",
     "read_marker",
@@ -29,6 +30,8 @@ SESSION_START_MAX_LINES = 6
 PRE_COMPACT_MAX_LINES = 4
 STALE_LINE = "instructions stale: run orch instructions sync"
 _UNREAD_SHOWN = 2
+#: the Stop hook reads the harness's JSON from standard input (``stop_hook_active`` is in it)
+STOP_HOOK_COMMAND = "orch instructions hook stop --input -"
 
 
 def session_start_lines(

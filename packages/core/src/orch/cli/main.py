@@ -478,7 +478,9 @@ def main(
             else:
                 res = run(parsed, ctx, records, hooks)
             # a hook outside a workspace is silent
-            if not (isinstance(res.data, dict) and res.data.get("silent") is True):
+            if isinstance(res.data, dict) and isinstance(res.data.get("raw"), str):
+                emit(res.data["raw"], out)  # the Stop hook answers the harness in its own JSON
+            elif not (isinstance(res.data, dict) and res.data.get("silent") is True):
                 emit(render.dumps(render.result_envelope(res)) if as_json else render.result_text(op, res), out)
             if session and op.is_write and not parsed.dry_run and not hosted:
                 records.succeeded_write(session)

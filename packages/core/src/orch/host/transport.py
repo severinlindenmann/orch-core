@@ -512,7 +512,6 @@ class Server:
                 LOG.warning("Transient Unix accept failure: %s", exc)
                 await asyncio.sleep(0.1)
                 continue
-            accepted_at = self.clock()
             sock.setblocking(False)
             acquired = None
             handed_off = False
@@ -528,6 +527,10 @@ class Server:
                         runner_ok = False
                     finally:
                         close_pidfd(credentials)
+                # the peer's hello deadline starts once the host is ready to read it: the identity check above is the
+                # host's own time (systemctl may take up to 3 s), never the peer's (CI flake 29 Oct: a slow check made
+                # every runner hello "late" and the runner never connected)
+                accepted_at = self.clock()
                 peer = self.classify(credentials, runner_ok=runner_ok)
                 self.limits.acquire(peer, count_attempt=False)
                 acquired = peer

@@ -61,6 +61,10 @@ __all__ = ["ENV_FIXED_NAMES", "ENV_FROM_RUNNER", "HostLink", "build_env", "new_g
 LOG = logging.getLogger(__name__)
 #: ``peer.denied`` answers in a row after which the runner exits to be started afresh (its unit restarts it)
 DENIED_LIMIT = 3
+#: how long the runner waits for the host's welcome. The host asks who the peer is off its event loop (the service
+#: manager, a thread pool that is busy under load) before it answers; the CLI's 2 s deadline made a runner whose check
+#: took longer time out at every attempt and never connect (CI flake, 29 Oct). The runner is a long-lived connection.
+WELCOME_TIMEOUT = 30.0
 
 #: §2.4: what a run may get from the runner's own environment (values never reach the host)
 ENV_FROM_RUNNER = frozenset(
@@ -379,7 +383,9 @@ class HostLink:
 
     def _session(self) -> None:
         hello = {"t": "hello", "proto": [1], "client": "orch-runner", "caps": ["runner/1"], "ops": {}}
-        sock, welcome = handshake_pinned(Pin(self.host_uid, None, self.socket_path), hello)  # peer UID first
+        sock, welcome = handshake_pinned(  # peer UID first
+            Pin(self.host_uid, None, self.socket_path), hello, timeout=WELCOME_TIMEOUT
+        )
         if (welcome.get("peer") or {}).get("class") != "runner":
             sock.close()
             raise ConnectionError("the host did not accept this process as the runner")

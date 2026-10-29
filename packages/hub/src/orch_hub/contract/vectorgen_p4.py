@@ -2141,6 +2141,29 @@ def build_p4(
     sync(
         "log_sync_proj_extra_key", [ws_p, page(TICKET, TK_LINES, proj={**pj, "questions": {}})], {"error": "malformed"}
     )
+    waiting = ["plan", "verify"]
+    sync(
+        "log_sync_proj_waiting",
+        [ws_p, page(TICKET, TK_LINES, proj={**pj, "waiting": waiting})],
+        {
+            "ok": {
+                "workspace": {"seq": 2, "head": hw},
+                TICKET: {"seq": 2, "head": ht},
+                "proj": {TICKET: {**pj, "waiting": waiting}},
+            }
+        },
+        "R14b: optional `waiting`: the gates the host's needs rule says wait now (sorted, distinct, known gates)",
+    )
+    for name, bad in (
+        ("unsorted", ["verify", "plan"]),
+        ("duplicate", ["plan", "plan"]),
+        ("unknown_gate", ["weird"]),
+    ):
+        sync(
+            f"log_sync_proj_waiting_{name}",
+            [ws_p, page(TICKET, TK_LINES, proj={**pj, "waiting": bad})],
+            {"error": "malformed"},
+        )
     sync(
         "log_sync_proj_bad_status",
         [ws_p, page(TICKET, TK_LINES, proj={**pj, "status": "waiting"})],

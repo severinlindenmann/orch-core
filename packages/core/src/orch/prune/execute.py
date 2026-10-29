@@ -12,6 +12,7 @@ and no pattern anywhere.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import os
 import shutil
@@ -108,13 +109,36 @@ def build_steps(inv: Inventory, delete_folders: set[Path], skip_workspaces: set[
             steps.append(Item("workspace", "folder", "the whole workspace folder", str(ws.root), ws.files, ws.size))
         else:
             steps += [i for i in ws.items if i.kind not in ("worktree", "note")]
-    steps += [i for i in inv.items if i.kind in ("claude-trust", "plugin", "keychain")]
+    for i in inv.items:
+        if i.kind == "claude-trust":
+            i = _trust_without(i, skip_workspaces)  # noqa: PLW2901 - a kept workspace keeps its trust entries
+            if i is None:
+                continue
+        if i.kind in ("claude-trust", "plugin", "keychain"):
+            steps.append(i)
     steps += [i for i in inv.items if i.kind == "tree"]
     steps += [Item("", "rmdirs", "empty folders orch made")]
     if any(i.kind == "os" for i in inv.items):
         steps.append(Item("", "os-batch", "accounts and system files"))
     steps += [i for i in inv.items if i.kind == "tool"]
     return steps
+
+
+def _trust_without(item: Item, kept: set[Path] | frozenset[Path]) -> Item | None:
+    """The trust step for the workspaces actually pruned: entries of a workspace the person chose to keep (its root and
+    its ticket work folders, in either spelling) stay in ``~/.claude.json``. None when nothing is left to remove."""
+    if not kept:
+        return item
+    spellings = {s for r in kept for s in (os.fspath(r), os.path.realpath(r))}
+
+    def mine(key: str) -> bool:
+        return key in spellings or any(key.startswith(f"{s}/") for s in spellings)
+
+    keys = [k for k in item.data["keys"] if not mine(k)]
+    roots = [k for k in item.data.get("roots", ()) if not mine(k)]
+    if not keys and not roots:
+        return None
+    return dataclasses.replace(item, data={**item.data, "keys": keys, "roots": roots})
 
 
 #: steps whose failure stops the run: everything after them (deleting files a running service holds, deleting state
@@ -344,7 +368,10 @@ def _claude(res: Result, fence: Fence, it: Item) -> None:
         return
     with _locked(cfg) as got:
         if not got:
-            raise PruneError(f"{cfg} is in use by Claude Code: close it and run `orch host prune` again")
+            raise PruneError(
+                f"Claude Code (or a stale lock) holds {cfg}: close Claude Code and run `orch host prune` again. "
+                f"If Claude Code is not running, remove the folder {cfg}.lock"
+            )
         _claude_locked(res, cfg, it)
 
 

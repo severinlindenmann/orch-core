@@ -14,7 +14,11 @@ import ipaddress
 import urllib.parse
 from typing import Any
 
-from ..backup.service import CLI_LINE, KEEP, MANUAL_GAP_MS, BackupError, BackupService
+from ..backup import guard as GD
+from ..backup import restore as RS
+from ..backup.hubop import FENCE
+from ..backup.service import CLI_LINE, KEEP, MANUAL_GAP_MS, NAME, BackupError, BackupService
+from ..contract import backup as B
 from ..contract.canon import b64u
 from ..settings import SettingsError, load
 
@@ -25,6 +29,12 @@ STATUS = {
     "no_backup_key": 409,
     "backup_failed": 500,
     "backup_not_found": 404,
+    "wrong_backup_key": 403,
+    "backup_invalid": 400,
+    "restore_busy": 409,
+    "no_admin": 409,
+    "restore_failed": 500,
+    "words": 400,
 }
 _MAP = {"not_found": "backup_not_found", "audit_failed": "backup_failed"}
 
@@ -53,6 +63,34 @@ def backup_routes(r: Any) -> tuple[Any, ...]:
             "admin",
             "a_backup_download",
             "Download a kept backup (sealed file): password + code in the request (audited)",
+        ),
+        r(
+            "POST",
+            "/admin/backup/restore",
+            "admin",
+            "a_backup_restore",
+            "Restore the hub from a kept backup: password + code + the 24 words in the request (audited; the hub restarts)",
+        ),
+        r(
+            "GET",
+            "/admin/backup/restore/pending",
+            "admin",
+            "a_backup_pending",
+            "Shares and offers a restore on a new server switched off, waiting for an admin to turn them on again",
+        ),
+        r(
+            "POST",
+            "/admin/backup/restore/pending/confirm",
+            "admin",
+            "a_backup_pending_confirm",
+            "Turn one switched-off share or offer back on (plain click)",
+        ),
+        r(
+            "POST",
+            "/admin/backup/restored/dismiss",
+            "admin",
+            "a_backup_restored_dismiss",
+            "Hide the 'restored from a backup' notice",
         ),
     )
 
@@ -132,6 +170,9 @@ class BackupHandlers:
             "keep": KEEP,
             "schedule": "daily",
             "cli_line": CLI_LINE,
+            "restore_cli_line": RS.CLI_LINE,
+            "restored": RS.notice(self.d.keys.state),
+            "pending": GD.pending(self.d.access),
         }
 
     def _h_a_backup_key(self, c: Any, p: dict, q: dict, b: dict | None):
@@ -173,3 +214,70 @@ class BackupHandlers:
         except BackupError as e:
             raise _err(e.code) from None
         return 200, {"name": b["name"], "data": b64u(data)}
+
+    def _h_a_backup_restore(self, c: Any, p: dict, q: dict, b: dict | None):
+        """Cond 7 + 17 + 20: the words are typed only where they are safe to type (like the 24 words shown), password + code
+        are checked in THIS request, the file is one of the kept backups (the body limit rules out an upload; copy the file
+        into the backups folder or use the server command), and every restore check runs before a byte is written."""
+        if not safe_to_show_words(c.origin, self._private_webs()):
+            raise _err("insecure_origin")
+        b = self._stepup(c, b, "name", "words")
+        name, words = b["name"], b["words"]
+        if NAME.fullmatch(name) is None:
+            raise _err("backup_not_found")
+        keys = self.d.keys
+        path = keys.state / "backups" / name
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > B.MAX_TOTAL + (8 << 20):
+                raise _err("backup_not_found")
+            data = path.read_bytes()
+        except OSError:
+            raise _err("backup_not_found") from None
+        ctl = self.d.settings_ctl
+        restarting = bool(ctl is not None and ctl.restart is not None)
+        FENCE.set()  # from here no other write may land (the pipeline and the link server refuse)
+        try:
+            got = RS.restore(
+                keys.state,
+                data,
+                words,
+                dev_mode=keys.dev,
+                keys=keys,
+                actor=c.user_id,
+                audit=self.d.audit,
+                activity=self.d.activity,
+                now_ms=self.d.now_ms,
+            )
+        except RS.RestoreError as e:
+            raise _err(e.code) from None
+        finally:
+            words = b = None  # the words go nowhere else
+            if not (restarting and "got" in locals()):
+                FENCE.clear()  # failed, or nothing restarts: the hub goes on as it is
+        if restarting:
+            ctl.restart()
+        out = {k: got[k] for k in ("made_ms", "gap_ms", "suspended")}
+        return (202 if restarting else 200), {"ok": True, "restarting": restarting, **out}
+
+    def _h_a_backup_restored_dismiss(self, c: Any, p: dict, q: dict, b: dict | None):
+        if b not in (None, {}):
+            raise _err("malformed")
+        RS.dismiss_notice(self.d.keys.state)
+        return 200, {"ok": True}
+
+    def _h_a_backup_pending(self, c: Any, p: dict, q: dict, b: dict | None):
+        return 200, {"pending": GD.pending(self.d.access)}
+
+    def _h_a_backup_pending_confirm(self, c: Any, p: dict, q: dict, b: dict | None):
+        if b is None or set(b) != {"id"} or type(b["id"]) is not int:
+            raise _err("malformed")
+        try:
+            got = GD.confirm(self.d.access, b["id"])
+        except KeyError:
+            raise _err("backup_not_found") from None
+        if self.d.activity is not None:
+            try:
+                self.d.activity.record("hub.restore.confirmed", actor_kind="person", actor_id=c.user_id)
+            except Exception:  # noqa: BLE001, S110  # done; a failed history line is not an error
+                pass
+        return 200, {"ok": True, "kind": got["kind"]}

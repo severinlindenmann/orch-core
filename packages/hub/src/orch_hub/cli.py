@@ -130,8 +130,10 @@ def _parser() -> argparse.ArgumentParser:
     rgs = rg.add_subparsers(dest="cmd", required=True)
     rgs.add_parser("register", help="register or rotate the account by hub card (POST /v2/hubs, unsigned)")
     from .backup.cli import add_parser as add_backup_parser
+    from .backup.cli import add_restore_parser
 
     add_backup_parser(sub)
+    add_restore_parser(sub)
     from .access.cli import add_parsers
 
     add_parsers(sub)
@@ -190,6 +192,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .backup.cli import run as run_backup_key
 
         return run_backup_key(args)
+    if args.group == "restore":
+        from .backup.cli import run_restore
+
+        return run_restore(args)
     if args.group == "relay":
         return _relay_register(args)
     if args.group == "releases":

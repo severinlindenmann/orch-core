@@ -15,7 +15,7 @@ from typing import Any
 from ..contract.hub import Refused
 from ..contract.phase4 import render_text
 from ..contract.published import check_published_rows
-from ..publish import AdminReadClient, AdminReadError
+from ..publish import AdminReadClient, AdminReadError, NarrowClient, NarrowError
 from ..switch import owner_fallback_names
 
 
@@ -27,6 +27,20 @@ def published_routes(r: Any) -> tuple[Any, ...]:
             "admin",
             "a_published",
             "Published: the company's shared links and apps (full-mode workspaces; admin read at publish)",
+        ),
+        r(
+            "POST",
+            "/admin/published/links/{share_id}/revoke",
+            "admin",
+            "a_published_revoke",
+            "Revoke a shared link of a full-mode workspace (narrowing only; signed with HK_op, sent to publish)",
+        ),
+        r(
+            "POST",
+            "/admin/published/apps/{app_id}/stop",
+            "admin",
+            "a_published_stop",
+            "Stop an app of a full-mode workspace (narrowing only; signed with HK_op, sent to publish)",
         ),
     )
 
@@ -56,6 +70,58 @@ class PublishedHandlers:
             return AdminReadClient(url, self.d.keys.op_signer, self.d.keys.hub_id)
         except ValueError, OSError:
             raise _err("unavailable") from None
+
+    def _narrower(self) -> Any:
+        """Anything with ``narrow(workspace_id, target, id) -> result``: injected (tests), else built from the publish
+        address the hub is configured with. The browser never supplies an address."""
+        injected = getattr(self.d, "narrower", None)
+        if injected is not None:
+            return injected
+        url = getattr(self.d.services, "publish_url", None) if self.d.services is not None else None
+        if not url:
+            raise _err("unavailable")
+        try:
+            return NarrowClient(url, self.d.keys.op_signer, self.d.keys.hub_id)
+        except ValueError, OSError:
+            raise _err("unavailable") from None
+
+    def _narrow(self, c: Any, item_id: Any, kind: str, target: str, activity: str, field: str):
+        """Revoke a link / stop an app. The row is found in publish's own admin read (never from the browser), and its
+        workspace must be a bound FULL-mode workspace of this hub right now. Nothing here can widen anything."""
+        if type(item_id) is not str or len(item_id) != 32 or any(ch not in "0123456789abcdef" for ch in item_id):
+            raise _err("unknown_item")
+        reg = self.d.registry
+        try:
+            raw = self._published_reader().published()
+        except AdminReadError:
+            raise _err("unavailable") from None
+        full = [ws for ws in sorted(reg.pins()) if reg.mode(ws) == "full"]
+        try:
+            rows = check_published_rows([r for r in raw if type(r) is dict and r.get("workspace_id") in full], full)
+        except Refused:
+            raise _err("unavailable") from None
+        row = next((r for r in rows if r["id"] == item_id and r["type"] == kind), None)
+        if row is None:
+            raise _err("unknown_item")
+        try:
+            result = self._narrower().narrow(row["workspace_id"], target, item_id)
+        except NarrowError as e:
+            raise _err(e.code) from None
+        self.d.__dict__.pop("_published_cache", None)  # the next list is read again
+        if result != "unchanged":
+            self._record(
+                activity,
+                actor_id=c.user_id,
+                workspace_id=row["workspace_id"],
+                detail={field: item_id},
+            )
+        return 200, {"id": item_id, "state": "revoked" if result == "revoked" else "stopped", "result": result}
+
+    def _h_a_published_revoke(self, c: Any, p: dict, q: dict, b: dict | None):
+        return self._narrow(c, p.get("share_id"), "link", "share", "link.revoked", "link")
+
+    def _h_a_published_stop(self, c: Any, p: dict, q: dict, b: dict | None):
+        return self._narrow(c, p.get("app_id"), "app", "app", "app.stopped", "app")
 
     def _h_a_published(self, c: Any, p: dict, q: dict, b: dict | None):
         reg = self.d.registry

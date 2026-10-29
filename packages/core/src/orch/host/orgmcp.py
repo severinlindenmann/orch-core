@@ -6,8 +6,8 @@ set) and hands ``{port, capability, servers}`` to the runner; a run end, an unbi
 Capabilities live in memory only, so a host restart drops them all (Opus host condition 4).
 
 Condition 3: in tier A the host never fetches or unseals an org secret. :func:`org_secret` is the only secret lookup
-and it answers ``None`` until the secrets slice (#1431-#1433) exists; the proxy also refuses a ``hub_secret`` server
-before it asks while the workspace is not isolated.
+(it answers ``None`` unless the host is isolated and holds a valid wrap, :mod:`orgsecrets`); the proxy also refuses a
+``hub_secret`` server before it asks while the workspace is not isolated.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from . import mcpshared, orgstate
+from . import mcpshared, orgsecrets, orgstate
 
 if TYPE_CHECKING:
     from .mcpproxy import Proxy
@@ -33,9 +33,11 @@ _CLOSING: set[asyncio.Task] = set()
 
 
 def org_secret(service: Any, name: str) -> str | None:
-    """The org secret ``name`` for this workspace. Not built (decision D-d): always None, so a ``hub_secret`` server
-    answers "unavailable" at call time. Tier A never gets here (condition 3)."""
-    return None
+    """The company secret ``name`` for this workspace, or None for any reason (:func:`orgsecrets.value`): the proxy then
+    answers "unavailable". Tier A never gets a value (condition 3): not isolated is None, and nothing was requested."""
+    from . import orgsecrets
+
+    return orgsecrets.value(service, name)
 
 
 def proxy_for(hub: RunnerHub, *, _upstream: Callable[[dict, str | None], Any] | None = None) -> Proxy:
@@ -61,7 +63,12 @@ def proxy_for(hub: RunnerHub, *, _upstream: Callable[[dict, str | None], Any] | 
 
     def isolated(ws: str) -> bool:
         s = svc(ws)
-        return False if s is None else orgstate.isolated(s)
+        if s is None:
+            return False
+        if orgstate.isolated(s):
+            return True
+        orgsecrets.drop_cache(s)  # isolation lost: no opened value stays around (condition 10)
+        return False
 
     def secret(ws: str, name: str) -> str | None:
         s = svc(ws)

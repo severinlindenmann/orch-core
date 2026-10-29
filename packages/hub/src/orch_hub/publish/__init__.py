@@ -3,6 +3,7 @@
 from .admin_read import AdminReadClient, AdminReadError
 from .forwarder import HubPublish, PublishConfig
 from .http_sync import HttpPublishSync
+from .narrow import NarrowClient, NarrowError
 from .sync import PublishSync, PublishSyncError
 
 __all__ = [
@@ -10,6 +11,8 @@ __all__ = [
     "AdminReadError",
     "HttpPublishSync",
     "HubPublish",
+    "NarrowClient",
+    "NarrowError",
     "PublishConfig",
     "PublishSync",
     "PublishSyncError",

@@ -436,10 +436,22 @@ class HubKeys:
         }
         return signer.sign_card(o, op_cert)
 
-    def _rotate(self, *, first: bool = False) -> None:
+    def _rotate(
+        self,
+        *,
+        first: bool = False,
+        op_seq: int | None = None,
+        card_seq: int | None = None,
+        only_users: frozenset[str] | None = None,
+        channels: bool = True,
+    ) -> None:
+        """One rotation. The keyword arguments are for a restore only (:meth:`rotate_for_restore`): a chosen ``op_seq`` and
+        ``card_seq`` (both above the current ones), certificates reissued only for ``only_users`` and for no channel."""
         assert self._root is not None
         now = self._now()
-        seq = self._meta["op_seq"] + 1
+        seq = self._meta["op_seq"] + 1 if op_seq is None else op_seq
+        if seq <= self._meta["op_seq"] or (card_seq is not None and card_seq <= self._meta["card_seq"]):
+            raise KeysError("bad_state", "a rotation must raise op_seq and card_seq")
         gen = self._gen_dir(seq)
         if gen.exists():  # leftover of a crashed rotation: never committed (meta still names the old one)
             shutil.rmtree(gen)
@@ -449,10 +461,12 @@ class HubKeys:
         op_key = self._keygen("hk_op")
         new_op = self._sc["op"](op_key)
         cert = self._sign_op_cert(new_op.public, seq, now)
-        card_seq = self._meta["card_seq"] + 1
+        card_seq = self._meta["card_seq"] + 1 if card_seq is None else card_seq
         card = self._sign_card(new_op, cert, card_seq, now, self._meta["relay_url"], self._meta["tls_spki_sha256"])
         users: list[str] = [] if first else self.users()
-        old_ch = [] if first else self.channel_certs()
+        if only_users is not None:
+            users = [u for u in users if u in only_users]
+        old_ch = [] if first or not channels else self.channel_certs()
         write_atomic(gen / "key", _key_bytes(op_key))
         write_atomic(gen / "cert.json", _json_bytes(cert))
         write_atomic(gen / "card.json", _json_bytes(card))
@@ -487,6 +501,15 @@ class HubKeys:
         certificate reissued. Returns the new card."""
         try:
             self._rotate()
+        except StateError as e:
+            raise KeysError(e.code, str(e)) from None
+        return self.card()
+
+    def rotate_for_restore(self, *, op_seq: int, card_seq: int, only_users: frozenset[str]) -> dict[str, Any]:
+        """The rotation of a restore (protocol §17.8): the given ``op_seq`` and ``card_seq`` (above the current ones), a UK
+        certificate only for ``only_users`` (the admins) and no channel certificate at all. Returns the new card."""
+        try:
+            self._rotate(op_seq=op_seq, card_seq=card_seq, only_users=only_users, channels=False)
         except StateError as e:
             raise KeysError(e.code, str(e)) from None
         return self.card()

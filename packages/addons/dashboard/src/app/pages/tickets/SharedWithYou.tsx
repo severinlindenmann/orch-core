@@ -27,7 +27,7 @@ function save(key: string, value: unknown) {
 export function SharedWithYou({ ws, limit }: { ws: string; limit?: number }) {
   const shared = useQuery(hubQueries.shared(ws))
   const [all, setAll] = useState(false)
-  const last = useRef<HubSharedTicket[] | null>(null)
+  const last = useRef<NameRow[] | null>(null)
   const person = useMe().data?.person
   const who = person ? `${ws}:${person}` : '' // per workspace AND person: another sign-in on this tab never sees these
   const [ended, setEnded] = useState<Ended[]>([])

@@ -32,6 +32,14 @@ describe('Today: "Agent is waiting for you" (plain words, run-13 A10)', () => {
     window.removeEventListener('orch:dock-open', on)
   })
 
+  it('an agent inside orch wait with nothing missing: a decision is due, the row opens the ticket (run-10 J04)', async () => {
+    renderApp('/', { viewer: 'p_sev', setup: (s) => { s.terminalWaits = [{ ...wait, source: 'wait' }] } })
+    const row = await screen.findByTestId('card-terminal_wait:DEMO-0043', {}, T)
+    await waitFor(() => expect(within(row).getByText('Agent is waiting for a decision')).toBeInTheDocument(), T)
+    expect(within(row).getByText('Open ticket')).toBeInTheDocument()
+    expect(within(row).queryByRole('button', { name: 'Open agent' })).toBeNull()
+  })
+
   it('has no chip and no row when the host sends none', async () => {
     renderApp('/', { viewer: 'p_sev' })
     await screen.findByText(/need you/, {}, T)

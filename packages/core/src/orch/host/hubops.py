@@ -1079,11 +1079,12 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
         if plan["op"] == "hub.refresh":
             return ok_result(_refresh(call, plan, state, wsk_pub, sign, now, save))
         out = _unbind(call, plan, state, sign, wsk_pub, now, save, leave, flush_outbox)
-        from . import orgmcp, orgstate
+        from . import orgmcp, orgsecrets, orgstate
 
         # order matters (condition 5, #1575): capabilities first, then the purge; a run must not reach a server
         # through a capability after the org folder is gone, nor in between
-        orgmcp.revoke_workspace(service, service.workspace_id)
+        orgmcp.revoke_workspace(service, service.workspace_id)  # also drops the values the proxy held
+        orgsecrets.drop_cache(service)  # then the opened values (condition 14), then the files
         orgstate.purge(service)  # M3: the company skills and servers of that binding go with it (nothing stays served)
         _stop_peers(service)  # unbound: the ws->ws link and receive thread end here
         return ok_result(out)

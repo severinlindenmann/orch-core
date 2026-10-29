@@ -1,0 +1,16 @@
+{
+  "ok": false,
+  "error": {
+    "code": "wait.build",
+    "message": "the plan is approved: build now, nothing waits for a person",
+    "hint": "orch task next",
+    "fix": {
+      "argv": [
+        "orch",
+        "task",
+        "next"
+      ]
+    },
+    "retryable": false
+  }
+}

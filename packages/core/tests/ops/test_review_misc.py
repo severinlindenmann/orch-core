@@ -123,7 +123,16 @@ def test_commands_without_a_ref_load_only_the_claimed_tickets(ws, cli, monkeypat
         raise AssertionError("a REF-less command must not load every ticket")
 
     monkeypatch.setattr(Store, "load_all", boom)
-    for argv in (["show"], ["status"], ["task", "list"], ["log", "x"], ["ac", "add", "a"], ["wait", "--timeout", "1"]):
+    cmds = (
+        ["show"],
+        ["status"],
+        ["task", "list"],
+        ["log", "x"],
+        ["ac", "add", "a"],
+        ["ask", "q?"],
+        ["wait", "--timeout", "1"],
+    )
+    for argv in cmds:  # the question keeps the wait waiting (else wait.incomplete)
         assert cli.j(*argv).code == 0, argv
     sub = Cli(ws, session=cli.ws.env()["ORCH_SESSION"] + ".1")
     assert sub.j("show").code == 0  # a subagent finds its parent's claim in the parent's notes

@@ -306,3 +306,4 @@ button[aria-busy="true"]::before { content:""; display:inline-block; width:12px;
 .qr { width:176px; height:176px; border-radius:8px; overflow:hidden; background:#fff; }
 .qr svg { display:block; width:100%; height:100%; }
 .totp-key { margin-top:8px; }
+.prewrap{white-space:pre-line}

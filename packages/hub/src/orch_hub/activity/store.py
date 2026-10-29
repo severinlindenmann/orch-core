@@ -37,6 +37,10 @@ ACTIVITY_TYPES = (
     "mcp.saved",
     "mcp.removed",
     "mcp.offered",
+    "secret.created",
+    "secret.shared",
+    "secret.rotated",
+    "secret.removed",
     "space.mode_set",
     "space.archived",
     "space.unarchived",
@@ -63,6 +67,7 @@ DETAIL_FIELDS = frozenset(
         "direct",
         "skill",
         "server",
+        "secret",
     }
 )
 REASON_MAX_BYTES = 800  # 200 characters of UTF-8

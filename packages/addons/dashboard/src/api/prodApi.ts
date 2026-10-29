@@ -345,6 +345,17 @@ const click = {
     call<import('./hub').HubAdded>(`${w(ws)}/hub/share/rule-add`, 'POST', { rule, expect }),
   syncHubShare: (ws: string, expect: string) => call<import('./hub').HubAdded>(`${w(ws)}/hub/share/sync`, 'POST', { expect }),
   getHubLink: (ws: string, link: string) => call<import('./hub').HubLinkInfo>(`${w(ws)}/hub/link`, 'POST', { link }),
+  /** M3 H-5: company skills and tools offered by the hub (the owner's Company tab). */
+  getOrgOffers: (ws: string) => call<import('./org').OrgOffers>(`${w(ws)}/org`),
+  getOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
+    call<import('./org').OrgShown>(`${w(ws)}/org/item?kind=${kind}&name=${encodeURIComponent(name)}`),
+  acceptOrgItem: (ws: string, kind: import('./org').OrgKind, name: string, digest: string) =>
+    call<{ kind: import('./org').OrgKind; name: string; status: import('./org').OrgStatus }>(`${w(ws)}/org/accept`, 'POST', { kind, name, digest }),
+  declineOrgItem: (ws: string, kind: import('./org').OrgKind, name: string) =>
+    call<{ kind: import('./org').OrgKind; name: string; status: 'off' }>(`${w(ws)}/org/decline`, 'POST', { kind, name }),
+  syncOrg: (ws: string) => call<{ result: Record<string, string> }>(`${w(ws)}/org/sync`, 'POST', {}),
+  setOrgTool: (ws: string, server: string, tool: string, on: boolean, pin?: string) =>
+    call<{ server: string; tool: string; on: boolean }>(`${w(ws)}/org/tool`, 'POST', { server, tool, on, ...(on ? { pin } : {}) }),
   refreshHub: (ws: string) => call<import('./hub').HubRefreshed>(`${w(ws)}/hub/refresh`, 'POST', {}),
   connectHub: (ws: string, body: import('./hub').HubConnectRequest) => call<import('./hub').HubConnected>(`${w(ws)}/hub/connect`, 'POST', body),
   cancelClick: (ws: string, requestId: string) => call<{ id: string; state: string }>(`${w(ws)}/click/cancel`, 'POST', { request_id: requestId }),

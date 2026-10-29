@@ -29,6 +29,7 @@ from pathlib import Path
 
 import uvicorn
 
+from .adapters.setup import connect_setup
 from .app import create_app
 from .auth import CODE_TTL, SETUP_CODE_TTL, Auth
 from .front import Front, PeerChecked
@@ -41,6 +42,9 @@ from .policy import REMOTE, remote_policy
 GRACE = 3
 #: seconds `restart` waits for the old server to free its control socket
 RESTART_WAIT = 10.0
+# A stop while a setup page is bound keeps the loopback page up until the setup ends (r11-P01), at most this long.
+SETUP_HOLD = 180.0
+SETUP_POLL = 0.5
 AGENT_ENV = ("ORCH_GRANT", "ORCH_SESSION")
 # Seconds before the code's expiry after which the launcher writes no redirect file (and removes one it just wrote):
 # covers the gap between the server's monotonic timer and the wall clock both sides read.
@@ -570,17 +574,45 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
                         conn.sendall(encode({"release": release}))
                     elif req == {"command": "stop"}:
                         conn.sendall(encode({"ok": True}))
-                        server.should_exit = True
-                        if net_server is not None:
-                            net_server.should_exit = True
-                        if front_server is not None:
-                            front_server.should_exit = True
                         # Free the control socket now, not after the shutdown: until then a launcher would connect
                         # to a server that no longer answers (and time out) instead of starting a new one.
                         retire()
+                        if setup_bound():
+                            # r11-P01: setup's Finish starts the dashboard service, which stops this server while it
+                            # still serves the setup page (and that very request): only the loopback server keeps
+                            # serving, until setup ends; the network and front listeners stop now (r11-P01b).
+                            exit_remote()
+                            threading.Thread(target=exit_after_setup, daemon=True).start()
+                        else:
+                            exit_now()
                         break
                 except Exception:
                     pass  # never log the launch payload
+
+    setup_sock = state_dir() / "setup" / "setup.sock"
+
+    def setup_bound():
+        """A setup page is bound here and its setup process still answers on its socket (a real connect: a stale
+        file, a socket nobody listens on or a slow one count as gone). Fail closed: any doubt ends the hold."""
+        return auth.has_setup() and setup_alive(setup_sock)
+
+    def exit_remote():
+        if net_server is not None:
+            net_server.should_exit = True
+        if front_server is not None:
+            front_server.should_exit = True
+
+    def exit_now():
+        server.should_exit = True
+        exit_remote()
+
+    def exit_after_setup():
+        deadline = time.monotonic() + SETUP_HOLD
+        try:
+            while not server.should_exit and setup_bound() and time.monotonic() < deadline:
+                time.sleep(SETUP_POLL)
+        finally:  # whatever goes wrong in the check, the hold ends
+            exit_now()
 
     def retire():
         """Close the control socket and remove its path if it is still ours (a new server may have bound it). Once."""
@@ -633,6 +665,16 @@ def _serve(directory, lock_fd=None, port=None, listen=None):
             net_thread.join(timeout=GRACE + 2)
         if net_listener is not None:
             net_listener.close()
+
+
+def setup_alive(path, timeout=0.5):
+    """The setup process listens on ``path``, with the same checks as the setup proxy (``connect_setup``: a 0600 socket
+    of this user in a private folder, peer is this user), closed at once. Anything else or any error -> False."""
+    try:
+        connect_setup(path, timeout).close()
+        return True
+    except Exception:
+        return False
 
 
 def safe_path(value):

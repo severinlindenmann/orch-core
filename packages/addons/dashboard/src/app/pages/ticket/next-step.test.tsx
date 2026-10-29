@@ -277,3 +277,39 @@ it('while the agent works: one calm line, no buttons', async () => {
   expect(within(line).queryAllByRole('button')).toHaveLength(0)
   expect(line).not.toHaveTextContent('The agent stopped early')
 })
+
+// run-9 J04: after "Approve plan" the agent's turn had ended; the ticket showed "Agent is working on it" for minutes.
+const approvedIdle = async () => {
+  const doc = await demo()
+  doc.status = 'in_progress' as never
+  doc.claim = { agent: 'claude-code', session: 's_1', for: 'p_sev', since: '2026-10-29T08:00:00Z', live: true } as never
+  doc.gates.requirements = { ...doc.gates.requirements, state: 'approved', missing: [] }
+  doc.gates.plan = { ...doc.gates.plan, state: 'approved', missing: [] }
+  doc.tasks_state = doc.tasks_state.map((t) => ({ ...t, state: 'todo' as const, lease: null, receipt: null, done_at: null }))
+  return doc
+}
+
+it('an idle agent after the plan approval: no spinner, one Start building button', async () => {
+  const onFinish = vi.fn()
+  render(<TicketProgress ticket={await approvedIdle()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait="r_1" onFinish={onFinish} />)
+  const card = screen.getByTestId('next-step')
+  expect(card).toHaveTextContent('Plan approved')
+  expect(card).not.toHaveTextContent('working')
+  expect(within(card).getAllByRole('button')).toHaveLength(1)
+  await userEvent.setup().click(within(card).getByRole('button', { name: 'Start building' }))
+  expect(onFinish).toHaveBeenCalledOnce()
+})
+
+it('the same ticket while the agent prints (no wait): the working note, no button', async () => {
+  render(<TicketProgress ticket={await approvedIdle()} viewer={viewer as never} sign={vi.fn()} jump={() => {}} run={run('running')} wait={null} onFinish={vi.fn()} />)
+  expect(screen.getByTestId('next-step')).toHaveTextContent('Agent is working on it')
+  expect(screen.queryByRole('button', { name: 'Start building' })).toBeNull()
+})
+
+it('agentWorking: a live claim is working only while the agent is not idle', async () => {
+  const { agentWorking } = await import('./progress')
+  const t = await approvedIdle()
+  expect(agentWorking(t)).toBe(true)
+  expect(agentWorking(t, 'r_1')).toBe(false)
+  expect(agentWorking({ claim: null })).toBe(false)
+})

@@ -86,8 +86,10 @@ def _at(value) -> float | None:
 
 def terminal_waits(runs: list[dict], rows: list[dict], mine: dict[str, list[dict]]) -> list[dict]:
     """Run-9 feedback 3.6: an agent run the host marks `waiting` (Notification hook, else a quiet terminal) on a ticket
-    where nothing is open for the person and no event came after the marker. Local and display only; it is not a need
-    (never counted). `ref` is the run id: "Open terminal" attaches to it."""
+    where nothing is open for the person. Local and display only; it is not a need (never counted). `ref` is the run id:
+    "Open terminal" attaches to it. This is the dashboard's one "agent idle" signal (run-9 J04): a ticket event after
+    the marker does NOT hide it (the person's own approval is such an event, and the idle agent stays idle); the host
+    clears `waiting` itself as soon as the agent prints again."""
     by_key = {r["key"]: r for r in rows if "key" in r}
     out = []
     for r in runs:
@@ -95,9 +97,8 @@ def terminal_waits(runs: list[dict], rows: list[dict], mine: dict[str, list[dict
         row = by_key.get(r.get("ticket") or "")
         if not isinstance(w, dict) or row is None or mine.get(row.get("uid")):
             continue
-        since, updated = _at(w.get("since")), _at(row.get("updated_at"))
-        if since is None or (updated is not None and updated > since):
-            continue  # a new event: the agent has moved on
+        if _at(w.get("since")) is None:
+            continue
         out.append(
             {
                 "kind": "terminal_wait",
@@ -145,6 +146,7 @@ def today(
             mine.setdefault(n["uid"], []).append(n)
     items = [item(n, titles) for n in needs["items"]]
     waits = terminal_waits(runs or [], rows, mine)
+    idle = {w["uid"] for w in waits}
     counts: dict[str, int] = {}
     for r in rows:
         status = r["status"].replace("_", "-")
@@ -157,7 +159,8 @@ def today(
         "needs_you": [] if viewer_role else [*items, *waits],
         "read_only_open": items if viewer_role else [],
         "waiting_on_others": {"count": len(waiting), "people": []},
-        "working": [summary(r, viewer, mine) for r in rows if r["status"] == "in_progress"],
+        # an agent that is idle at its prompt is not working (run-9 J04): its ticket is in needs_you as terminal_wait
+        "working": [summary(r, viewer, mine) for r in rows if r["status"] == "in_progress" and r["uid"] not in idle],
         "recent": [recent_row(a) for a in recent or []],
         "counts": counts,
         "sub_cursor": needs.get("sub_cursor"),

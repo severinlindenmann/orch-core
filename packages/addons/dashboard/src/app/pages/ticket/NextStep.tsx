@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { openDockOn } from '@/app/terminal/dock/request'
-import type { ProgressRun } from './progress'
+import { agentWorking, type ProgressRun } from './progress'
 import { availableActions, gapOf, GATE_LABEL, policyText } from './actions'
 import { fmtDay, fmtExact, type HumanAction, type Jump, Mono, presenceLabel, type Viewer } from './shared'
 
@@ -192,7 +192,7 @@ const APPROVE = {
 function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, onFinish, onEdit, openTerminal = openDockOn }: Props) {
   const av = availableActions(ticket, viewer)
   const status = ticket.status as string
-  const working = !!ticket.claim && ticket.claim.live !== false
+  const working = agentWorking(ticket, wait)
   const gate = APPROVE_ORDER.find((g) => av.approve.includes(g))
   if (gate) {
     const c = APPROVE[gate]
@@ -245,6 +245,17 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
             Add it myself
           </Button>
         )}
+      </Card>
+    )
+  }
+  // Run-9 J04: the plan is approved and the agent is idle (its turn ended) or its run ended: one button, the build.
+  if (open && !gap && idle && ticket.gates.plan?.state === 'approved' && onFinish) {
+    const begun = (ticket.tasks_state ?? []).some((t) => t.state !== 'todo')
+    return (
+      <Card title={begun ? 'The agent stopped' : 'Plan approved'} text={begun ? 'The build is not finished. Continue it.' : 'The agent stopped before building. Start the build.'}>
+        <Button size="sm" onClick={onFinish}>
+          {begun ? 'Continue building' : 'Start building'}
+        </Button>
       </Card>
     )
   }

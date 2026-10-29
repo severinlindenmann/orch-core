@@ -27,7 +27,7 @@ import { BlockedByConnection } from './Needs'
 import { availableActions, gapOf, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
 import { useTicketEdit } from './EditTicket'
 import type { AgentMode } from '@/api/agents'
-import { clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
+import { agentWorking, clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
 import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
 
 export function CopyButton({ text, label }: { text: string; label: string }) {
@@ -49,7 +49,7 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 /** Who is working on the ticket, in one line. Claiming is the agents' job, so people get no Claim/Release here. */
-export function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer: Viewer }) {
+export function AgentStatus({ ticket, viewer, wait }: { ticket: TicketDocument; viewer: Viewer; /** the agent is idle at its prompt (run-9 J04) */ wait?: string }) {
   // A claim the host marks not live (ended by Done or Close, lapsed, grant over) is history: nobody is working (run 8, 8).
   const c = ticket.claim?.live === false ? null : ticket.claim
   const subagents = new Set(ticket.tasks_state.flatMap((t) => (t.lease && t.lease.session !== c?.session ? [t.lease.session] : []))).size
@@ -59,7 +59,7 @@ export function AgentStatus({ ticket, viewer }: { ticket: TicketDocument; viewer
       <span className="min-w-0 truncate">
         {c ? (
           <>
-            <span className="text-text">{agentName(c.agent)}</span> is working for <span className="text-text">{viewer.name(c.for)}</span>
+            <span className="text-text">{agentName(c.agent)}</span> {agentWorking(ticket, wait) ? 'is working' : 'is waiting for the next step'} for <span className="text-text">{viewer.name(c.for)}</span>
             {' · '}since {fmtClock(c.since)}
             {subagents > 0 && ` · ${subagents} ${subagents === 1 ? 'subagent' : 'subagents'}`}
           </>
@@ -75,7 +75,6 @@ const START_AGENT = 'start-agent'
 
 /** The person-visible reason no agent can start now (an agent works on it already), or null. A lapsed claim is history. */
 export const WORKING_REASON = 'An agent is already working on this ticket'
-const agentWorks = (t: TicketDocument) => !!t.claim && t.claim.live !== false
 
 export interface StartAgent {
   /** "Start agent" is part of this ticket's actions (the addon or core's agent.start is available here). */
@@ -100,7 +99,7 @@ export interface StartAgent {
  * "Start agent" for this ticket, on a real host through core's dialog (hasFeature agent.start), in the mock through the
  * start-agent addon. The header's primary button and the Actions menu share it, so there is one dialog and one rule.
  */
-function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
+function useStartAgent(ticket: TicketDocument, viewer: Viewer, wait?: string): StartAgent {
   const { workspace } = useWorkspace()
   const { data: addons } = useAddons()
   const r = useRunAddonAction(ticket.key)
@@ -114,7 +113,7 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
     ? !!workspace && hasFeature('agent_start', workspace.id) && !finished
     : !!workspace && addonActive(workspace, START_AGENT) && canSpawnAgent(pkg, workspace.addons[START_AGENT]) && !finished
   const roleBlocked = real ? !can(viewer.role, 'ticket.act') : !r.allowed(START_AGENT, 'start')
-  const reason = roleBlocked ? VIEWER_REASON : agentWorks(ticket) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
+  const reason = roleBlocked ? VIEWER_REASON : agentWorking(ticket, wait) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
   const run = () => {
     setMode(undefined)
     setStopFirst(undefined)
@@ -253,7 +252,7 @@ function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = fal
     )
   // The next-step card under the header owns Approve and Give verdict (B6): one place for the one next thing.
   if (p && (p.kind === 'approve' || p.kind === 'verdict')) return null
-  if (!p) return !busy && !idle && agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
+  if (!p) return !busy && !idle && agentWorking(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
   const run = () => {
     if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
     else start.run()
@@ -325,7 +324,7 @@ export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; 
   // "Start agent again" asks the header's one start flow (its dialog); this card holds no second dialog and reads
   // `startable` only, so a viewer who cannot start sees no button.
   const edit = useTicketEdit()
-  const { canStart } = useStartAgent(p.ticket, p.viewer)
+  const { canStart } = useStartAgent(p.ticket, p.viewer, wait)
   // "Ask the agent to finish": the header's start flow in `continue` mode; the idle run is stopped only when Start is pressed.
   const onFinish = canStart
     ? () => window.dispatchEvent(new CustomEvent(START_EVENT, { detail: { ticket: p.ticket.key, mode: 'continue', ...(wait ? { stop: wait } : {}) } }))
@@ -413,7 +412,8 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     queryFn: () => (home ? api.listTickets(home, { parent: ticket.key }) : []),
     enabled: ticket.type === 'epic' && !!home,
   })
-  const start = useStartAgent(ticket, viewer)
+  const { run, wait } = useTicketAgent(ticket, home)
+  const start = useStartAgent(ticket, viewer, wait)
   const { startable, canStart, run: startPlain, runWith } = start
   // The listener reads the latest start through a ref, so it subscribes once per ticket, not on every render.
   const latest = useRef({ startable, canStart, startPlain, runWith })
@@ -430,7 +430,6 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     return () => window.removeEventListener(START_EVENT, on)
   }, [ticket.key])
   const av = availableActions(ticket, viewer)
-  const { run, wait } = useTicketAgent(ticket, home)
   const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict || !!wait
   const mark = useMark(home ?? '', ticket.key)
   const tracking = !!mark || run?.state === 'starting' || run?.state === 'running'
@@ -441,7 +440,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     const t = setInterval(() => setTick(Date.now()), 1000)
     return () => clearInterval(t)
   }, [tracking])
-  const phase = phaseOf(ticket, { needsYou, mark, run, now: tracking ? tick : Date.now() })
+  const phase = phaseOf(ticket, { needsYou, mark, run, wait, now: tracking ? tick : Date.now() })
   useEffect(() => {
     if (phase.kind === 'working' && home) clearMark(home, ticket.key)
   }, [phase.kind, home, ticket.key])
@@ -520,7 +519,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
       )}
 
       <BlockedByConnection ticket={ticket} />
-      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} />}
+      {phase.kind !== 'starting' && phase.kind !== 'failed' && <AgentStatus ticket={ticket} viewer={viewer} wait={wait} />}
     </header>
   )
 }

@@ -68,10 +68,10 @@ async function signed(beforeSign?: (dialog: HTMLElement) => void) {
   await r.user.click(await within(sheet).findByRole('button', { name: 'Create and start' }, T))
   const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
   expect(await within(dialog).findByTestId('not-signed-start')).toBeInTheDocument() // the real dialog carries the unsigned block
-  expect(api.prepareClick).not.toHaveBeenCalled() // opening the dialog prepares nothing
-  // the trusted press of the outcome button prepares; the review then shows and its armed Sign signs
-  fireEvent.click(await within(dialog).findByRole('button', { name: 'Sign and start agent' }, T))
+  // run-9 J04: the dialog opens straight on the host's review (prepared without a press, so never armed); the one
+  // press on its Sign signs exactly that review
   await within(dialog).findByTestId('click-panel', {}, T)
+  expect(api.prepareClick).toHaveBeenCalledTimes(1)
   expect(s.sign).not.toHaveBeenCalled()
   const go = within(dialog).getByRole('button', { name: 'Sign and start agent' })
   await waitFor(() => expect(go).toBeEnabled(), { timeout: ARM_MS + 3000 })

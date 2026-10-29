@@ -39,7 +39,7 @@ export interface ClickRun {
   fresh: boolean
   problem: ClickProblem | null
   signed: ClickSigned | null
-  start: (action: ClickAction, retryFloor?: number) => Promise<void>
+  start: (action: ClickAction, retryFloor?: number, pressed?: boolean) => Promise<void>
   /** Read the View again (it changed). The same request. */
   review: () => Promise<void>
   /** `revealKey`: a shown-secret grant only (the page key its review was made for). */
@@ -136,7 +136,9 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   )
 
   const start = useCallback(
-    async (action: ClickAction, retryFloor = 0) => {
+    /** `pressed`: a real press started this (default). An auto-prepare without one (run-9 J04: the start review
+     * opens on the host's View) passes `false`, so the one-press arm (`fresh`) is never set without a press. */
+    async (action: ClickAction, retryFloor = 0, pressed = true) => {
       sequenceStart.current = action.action === 'new_sequence' && !!action.launch
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
       busy.current = true
@@ -161,7 +163,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         live.current.prepared = got
         live.current.ws = ws
         setPrepared(got)
-        await read(ws, got.request_id, true)
+        await read(ws, got.request_id, pressed)
       } catch (e) {
         if (!mounted.current) return
         // The answer may have been lost: only then does "Try again" repeat the same intent. A definite answer (the

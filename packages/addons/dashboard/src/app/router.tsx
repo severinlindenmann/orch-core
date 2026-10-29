@@ -159,7 +159,7 @@ const guideRoute = createRoute({
   loader: pageLoader(() => [], [GuidePage.preload, addonNodes]),
   component: GuidePage,
 })
-/** Worktrees of a real host (H11d): the mock keeps its own addon page; a host without `worktree/1` shows a plain note. */
+/** Work copies of a real host (H11d): the mock keeps its own addon page; a host without `worktree/1` shows a plain note. */
 const worktreesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: 'worktrees',

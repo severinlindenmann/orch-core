@@ -1,7 +1,7 @@
 [
   {
     "name": "worktrees",
-    "title": "Worktrees",
+    "title": "Work copies",
     "version": "0.1.0",
     "description": "Give each ticket its own git worktree, created and cleaned up for you.",
     "capabilities": [],
@@ -12,7 +12,7 @@
       {
         "slot": "nav",
         "id": "worktrees",
-        "title": "Worktrees",
+        "title": "Work copies",
         "icon": "GitBranch",
         "node": {
           "type": "stack",
@@ -70,7 +70,7 @@
       {
         "slot": "ticket.panel",
         "id": "ticket",
-        "title": "Worktrees",
+        "title": "Work copies",
         "icon": "GitBranch",
         "node": {
           "type": "stack",

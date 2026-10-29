@@ -265,9 +265,9 @@ export function adminView(d) {
     const workspace = select(data.workspaces.filter((w) => w.mode === "full").map((w) => [w.workspace_id, w.name ?? w.workspace_id]));
     const group = select(data.groups.filter((g) => g.name !== "hub-admin").map((g) => [g.name, g.name]));
     const role = select(["read", "edit", "admin"].map((r) => [r, roleName(r)]));
-    return [h("h2", { text: "Access" }), personReachView(d, data.users), p("Groups grant access to full workspaces. Selective workspaces accept only their owner. Hub administrators manage every full workspace."),
+    return [h("h2", { text: "Access" }), personReachView(d, data.users), p("Groups give access to workspaces that share everything. Workspaces that share only what their owner chooses stay with their owner. Hub administrators manage every workspace that shares everything."),
       table(["Group", ...data.workspaces.map((w) => workspaceName(w.workspace_id)), "Members"], data.groups.map((g) => [txt(g.name),
-        ...data.workspaces.map((w) => w.mode === "selective" ? "Personal · owner only" : g.name === "hub-admin" ? "Admin" : roleName(data.grants.find((x) => x.workspace_id === w.workspace_id && x.group === g.name)?.role ?? "No access")),
+        ...data.workspaces.map((w) => w.mode === "selective" ? (w.owner_alias === d.self ? "Personal · only you" : "Personal · only the owner") : g.name === "hub-admin" ? "Admin" : roleName(data.grants.find((x) => x.workspace_id === w.workspace_id && x.group === g.name)?.role ?? "No access")),
         String(g.members.length)]), "Grants overview"),
       h("section", { class: "card" }, h("h3", { text: "Grant access" }),
         form("Grant access", [field("Workspace", workspace), field("Group", group), field("Permission", role)], "PUT", "/admin/grants",
@@ -281,7 +281,7 @@ export function adminView(d) {
   }
   function byWorkspace() {
     return data.workspaces.map((w) => h("section", { class: "workspace-detail" }, h("h3", { text: workspaceName(w.workspace_id) }),
-        w.mode === "selective" ? p("Personal · owner only") : table(["Group", "Permission", "Members", "Action"],
+        w.mode === "selective" ? p("Personal · only the owner") : table(["Group", "Permission", "Members", "Action"],
           [...data.groups.filter((g) => g.name === "hub-admin").map((g) => [txt(g.name), "Admin", groupMembers(g.name), "Built in"]),
             ...data.grants.filter((g) => g.workspace_id === w.workspace_id).map((g) => [txt(g.group), roleName(g.role), groupMembers(g.group),
               remove("Revoke", "POST", "/admin/grants/revoke", { workspace_id: w.workspace_id, group: g.group })])], "Workspace permissions")));
@@ -353,10 +353,10 @@ export function adminView(d) {
           p(w.left_ms == null ? "Left on an unknown date" : "Left on " + new Date(w.left_ms).toLocaleDateString()),
           remove("Remove", "DELETE", "/admin/workspaces/" + w.workspace_id))
         : h("article", { class: "card" },
-      h("div", { class: "row" }, h("h3", { class: "grow", text: workspaceName(w.workspace_id) }), chip(w.mode === "full" ? "Full" : "Selective", w.mode === "full" ? "full" : "sel")),
+      h("div", { class: "row" }, h("h3", { class: "grow", text: workspaceName(w.workspace_id) }), chip(w.mode === "full" ? "Shares everything" : "Shares only what you choose", w.mode === "full" ? "full" : "sel")),
       p(w.mode === "full" ? "Hub can read everything" : "Hub can read shared items and summaries"),
-      chip((w.online ?? (w.status === "bound" || w.status === "online")) ? "Connection online" : "Connection offline", (w.online ?? (w.status === "bound" || w.status === "online")) ? "ok" : "warn"),
-      p("Binding: " + txt(w.status ?? "unknown")), w.mode === "selective" ? p("Personal · owner only · " + personName(w.owner_alias)) : null)),
+      chip((w.online ?? (w.status === "bound" || w.status === "online")) ? "Connected · online" : "Connected · offline", (w.online ?? (w.status === "bound" || w.status === "online")) ? "ok" : "warn"),
+      w.mode === "selective" ? p("Personal · only " + (w.owner_alias === d.self ? "you" : "the owner") + " · " + personName(w.owner_alias)) : null)),
       !data.workspaces.length ? p("No workspaces yet.") : null];
   }
   const CAPS = [["choose_model", "Choose the AI model"], ["credential", "Use stored credentials"], ["git_push", "Push code to git"], ["network", "Use the network"], ["pty", "Run terminal sessions"], ["serve_http", "Serve web pages"], ["spawn_agent", "Start other agents"]];

@@ -470,7 +470,7 @@ describe('the story around the review', () => {
   it('#1070 the Create ticket button says in its first step that pressing it signs', () => {
     const story = storyOf({ action: 'new_sequence', title: 'T', type: 'feature', sections: {} })!
     mount(answer(), { story })
-    expect(screen.getByRole('button', { name: 'Sign and create ticket' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
     expect(within(screen.getByTestId('what-next')).getAllByRole('listitem')[0]).toHaveTextContent('You sign.')
   })
 

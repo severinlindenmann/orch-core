@@ -413,7 +413,14 @@ class Ports(Protocol):
     def trust_why(self, root: Path, *, allow_parent: bool = False) -> str: ...
     def background_blocked(self) -> list[str]: ...  # io.orch labels macOS turned off (Login Items & Extensions)
     def workspace(self, wid: str) -> Any: ...  # a connection: .call(op, args, **kw) -> result dict; .close()
-    def unlock(self, wid: str, passphrase: str | None, digest: str, fields: tuple[tuple[str, str], ...]) -> Any: ...
+    def unlock(
+        self,
+        wid: str,
+        passphrase: str | None,
+        digest: str,
+        fields: tuple[tuple[str, str], ...],
+        one_click: bool = False,
+    ) -> Any: ...
     def convenience_on(self, wid: str) -> None: ...
     def stage(self, wid: str, prefix: str, passphrase: str) -> Any: ...
     def finish_conversion(self, wid: str, staged: Any) -> None: ...
@@ -854,7 +861,9 @@ class Creator:
                 raise
             fields = (("workspace", wid), ("requests", str(len(self.items))), ("review", self.plan.digest[:23]))
             done: list[str] = []
-            with self.ports.unlock(wid, self._passphrase, self.plan.digest, fields) as backend:
+            with self.ports.unlock(
+                wid, self._passphrase, self.plan.digest, fields, one_click=self.profile["method"] == "click"
+            ) as backend:
                 for it in self.items:
                     try:
                         if it.id in deferred:
@@ -1029,6 +1038,13 @@ def _as_setup_error(e: Exception) -> SetupError:
     return SetupError(
         code if isinstance(code, str) else "internal", str(message), 500
     )  # no cut here: `_fail` redacts first, then cuts
+
+
+def sign_line(requests: str, one_click: bool) -> str:
+    """The terminal's line before the signature: "with one passphrase" only when the person chose a passphrase (a
+    one-click setup is converted to the one-click key right after, so it names none)."""
+    tail = "" if one_click else ", with one passphrase"
+    return f"\norch setup will sign {requests or 'the'} item(s) you read on the setup page{tail}.\n"
 
 
 class RealPorts:
@@ -1212,7 +1228,12 @@ class RealPorts:
 
     @contextlib.contextmanager
     def unlock(
-        self, wid: str, passphrase: str | None, digest: str, fields: tuple[tuple[str, str], ...]
+        self,
+        wid: str,
+        passphrase: str | None,
+        digest: str,
+        fields: tuple[tuple[str, str], ...],
+        one_click: bool = False,
     ) -> Iterator[Any]:
         from orch.custody import select
 
@@ -1229,9 +1250,7 @@ class RealPorts:
         # B11 finding 24: the plan was read on the setup page; the terminal says so in a line and keeps the technical
         # block behind `d` (shared with the CLI signer, see custody.passphrase.note_plain_review).
         requests = dict(fields).get("requests", "")
-        self.terminal.show(
-            f"\norch setup will sign {requests or 'the'} item(s) you read on the setup page, with one passphrase.\n"
-        )
+        self.terminal.show(sign_line(requests, one_click))
         from orch.custody import passphrase as _pp
 
         _pp.note_plain_review()

@@ -59,7 +59,7 @@ export function useStartPlan(workspace: Workspace, person: string) {
   // The "runs as you" notice (the Start agent dialog's cache): until it has been read once, the review shows it in full
   // and signing with it on screen counts as reading it. A failed read counts as not read.
   const notices = useQuery({ queryKey: ['risk-notices', ws], queryFn: () => agentsApi.riskNotices(ws), retry: false, enabled: feature })
-  const noticeUnread = notices.data?.acknowledged.start_agent !== true
+  const noticeUnread = notices.data?.acknowledged?.start_agent !== true
   const [pref, setPrefState] = useState<AgentPref>(() => readPref(prefKey))
   const setPref = useCallback((p: Partial<AgentPref>) => setPrefState((old) => { const next = { ...old, ...p, ...(p.mode !== undefined ? { modeChosen: true } : {}) }; writePref(prefKey, next); return next }), [prefKey])
 

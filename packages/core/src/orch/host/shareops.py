@@ -339,6 +339,9 @@ def _names_for(service: WorkspaceService, ids: set[str]) -> dict[str, str]:
 #: full list behind the small "i") and the owner's confirmation (the plan digest over the items, audiences included)
 #: binds all of it; above them there is no review: the host refuses in plain words, nothing is cut silently.
 MAX_REVIEW_PEOPLE, MAX_REVIEW_WIDENED = 500, 200
+#: Distinct teams in one review, and every name the review lists (readers, plus the people and teams added per widened
+#: item). The names bound keeps the answer far below ``frames.MAX_FRAME`` (1.5 MB), so a review never fails as a frame.
+MAX_REVIEW_TEAMS, MAX_REVIEW_NAMES = 200, 5000
 TOO_MANY = "This rule reaches too many people. Narrow it to share."
 
 
@@ -395,13 +398,22 @@ def _review(service: WorkspaceService, want: list[Any], had: set[str], st: Any =
     wide = st.widened(want) if st is not None else []
     leaving = new + wide
     people = {u for i in leaving if i.audience for u in i.audience["users"]}
-    if len(people) > MAX_REVIEW_PEOPLE or len(wide) > MAX_REVIEW_WIDENED:
+    teams = {g for i in leaving if i.audience for g in i.audience["groups"]}
+    if len(people) > MAX_REVIEW_PEOPLE or len(teams) > MAX_REVIEW_TEAMS or len(wide) > MAX_REVIEW_WIDENED:
         raise HostError("invalid.input", TOO_MANY)
     widened = _widened(service, st, wide) if wide else []
+    readers = _readers(service, leaving)
+    names = (
+        len(readers["people"])
+        + len(readers["teams"])
+        + sum(len(w["people_added"]) + len(w["teams_added"]) for w in widened)
+    )
+    if names > MAX_REVIEW_NAMES:
+        raise HostError("invalid.input", TOO_MANY)
     kinds = sorted({i.kind for i in leaving})
     return {
         "hub_id": getattr(state, "hub_id", None),
-        "readers": _readers(service, leaving),
+        "readers": readers,
         "widened": widened,
         "new": _rows(new),
         "leaves": [{"kind": k, "text": _leaves(k, leaving)} for k in kinds if k in LEAVES],
@@ -691,6 +703,8 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
                     raise HostError(
                         "invalid.input", "share: what would be shared is not what you were shown; nothing changed"
                     )
+                if op == "share.rule_add":  # over the hard limits: refused before anything is saved
+                    _review(service, shown, set(st.sent), st)
                 if changed:
                     st.rules, st.withdrawn = after, withdrawn
                     _save(service, st)

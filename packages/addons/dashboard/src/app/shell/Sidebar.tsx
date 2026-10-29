@@ -471,8 +471,8 @@ const CORE_NAV = [
   { to: '/quick', label: 'Quick tasks', icon: Zap, feature: 'quick_on', real: true },
   /** Drop (proposed `drop/1`): listed where the host serves it; the page itself says when it is not available. */
   { to: '/drop', label: 'Drop', icon: PackageOpen, feature: 'drop', real: true },
-  /** Worktrees (H11d): one folder per ticket; the mock has it as an addon page. */
-  { to: '/worktrees', label: 'Worktrees', icon: FolderGit2, feature: 'worktrees', real: true },
+  /** Work copies (H11d): one folder per ticket; the mock has it as an addon page. */
+  { to: '/worktrees', label: 'Work copies', icon: FolderGit2, feature: 'worktrees', real: true },
   /** Terminals (add-on): every terminal and agent session; listed only while the add-on is ON (the server adds `terminals_page` then). */
   { to: '/terminals', label: 'Terminals', icon: SquareTerminal, feature: 'terminals_page', real: true },
   /** Files (File Explorer add-on): owners only, listed only while the add-on is ON (the server adds `explorer` then). */

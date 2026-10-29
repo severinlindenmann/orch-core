@@ -169,6 +169,23 @@ export function defaultWorkspaceName(name: string): string {
   const n = name.trim()
   return n ? `${n}'s workspace` : 'My workspace'
 }
+/** r11-P16: the approval step's defaults in one plain line, from the profile itself (the single source). */
+export function approvalSummary(
+  profile: { agent_hours: number; agent_grant?: boolean; records?: boolean },
+  access: 'none' | number,
+  opts: { records: boolean; trust?: boolean },
+): string {
+  const out = [
+    access === 'none'
+      ? 'No agent works here until you give access.'
+      : profile.agent_grant === false
+        ? `Agents may work for ${duration(profile.agent_hours)}; none start on this computer yet.`
+        : `Agents can work on their own for ${duration(profile.agent_hours)}.`,
+  ]
+  if (opts.records) out.push(profile.records !== false ? 'Your history stays on this computer.' : 'No history is kept.')
+  if (opts.trust !== undefined) out.push(opts.trust ? 'Claude Code opens this folder without asking.' : 'Claude Code asks before it opens this folder.')
+  return out.join(' ')
+}
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
 /** Roll up display rows only; setup still uses the original server steps. */
@@ -697,6 +714,34 @@ export function Setup({ api }: { api: SetupAPI }) {
     api.forget()
     location.assign(elsewhere ? url.href : url.pathname + url.search + url.hash)
   }
+  // r11-P16: One click first (when this computer offers it); the protocol order of state.methods is unchanged
+  const orderedMethods = state ? [...state.methods].sort((a, b) => (b === 'click' && state.click_available ? 1 : 0) - (a === 'click' && state.click_available ? 1 : 0)) : []
+  const methodCard = (method: Profile['method']) =>
+    state && (
+      <label className="toggle" key={method}>
+      <input
+        type="radio"
+        name="method"
+        checked={profile.method === method}
+        disabled={method === 'click' && !state.click_available}
+        onChange={() => update({ method, ...(method === 'click' ? { relay: false } : {}) })}
+      />
+      <span>
+        <strong>
+          {method === 'click' ? 'One click on this computer' : 'Passphrase'}
+          {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
+        </strong>
+        <small>
+          {method === 'terminal'
+            ? 'Type your passphrase each time. Safest if others use this computer.'
+            : state.click_available
+              ? 'No typing. Best on your own computer.'
+              : clickOffText(state.click_reason)}
+        </small>
+        {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
+      </span>
+    </label>
+    )
   const terminalReviewMissing =
     !!review &&
     ((profile.method !== 'click' && (state?.mode === 'finish' || !!review.runner_grant) && !review.tty_confirm) ||
@@ -996,32 +1041,8 @@ export function Setup({ api }: { api: SetupAPI }) {
           )}
           {step === 3 && (
             <>
-              <p>Choose what works for you on this device.</p>
-              {state.methods.map((method) => (
-                <label className="toggle" key={method}>
-                  <input
-                    type="radio"
-                    name="method"
-                    checked={profile.method === method}
-                    disabled={method === 'click' && !state.click_available}
-                    onChange={() => update({ method, ...(method === 'click' ? { relay: false } : {}) })}
-                  />
-                  <span>
-                    <strong>
-                      {method === 'click' ? 'One click on this computer' : 'Passphrase'}
-                      {method === 'click' && state.click_available && <span className="badge">Recommended</span>}
-                    </strong>
-                    <small>
-                      {method === 'terminal'
-                        ? 'Type your passphrase each time. Safest if others use this computer.'
-                        : state.click_available
-                          ? 'No typing. Best on your own computer.'
-                          : clickOffText(state.click_reason)}
-                    </small>
-                    {method === 'terminal' && profile.method === 'terminal' && <small>{terminalStepCopy}</small>}
-                  </span>
-                </label>
-              ))}
+              <p>{state.click_available ? 'We picked what works best on your own computer.' : 'Choose what works for you on this device.'}</p>
+              {methodCard(profile.method)}
               {profile.method === 'click' && state.click_available && (
                 <details className="click-risk" data-testid="click-risk">
                   <summary>What does this mean?</summary>
@@ -1030,6 +1051,14 @@ export function Setup({ api }: { api: SetupAPI }) {
                   </p>
                 </details>
               )}
+              {/* r11-P16: the safe defaults in one line; every other choice behind one click (forced open when a choice
+                  must be seen: no One click here, or a parent Claude Code setting asks for "Trust anyway") */}
+              <p className="approval-summary" data-testid="approval-summary">
+                {approvalSummary(profile, access, { records: state.mode !== 'finish', trust: offersTrust ? (parentConfig ? profile.trust_parent === true : profile.trust_folder !== false) : undefined })}
+              </p>
+              <details className="approval-more" data-testid="approval-more" open={!state.click_available || !!parentConfig || undefined}>
+                <summary>Change these settings</summary>
+                {orderedMethods.filter((m) => m !== profile.method).map(methodCard)}
               <h2>How long can agents work on their own?</h2>
               <div className="segments">
                 <button aria-pressed={access === 'none'} onClick={() => chooseAccess('none')}>
@@ -1123,6 +1152,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   />
                 </label>
               )}
+              </details>
               <SetupFooter cancel={cancel}>
                 <button onClick={() => setStep(2)}>Back</button>
                 <button className="primary" onClick={() => void act(approveProfile)}>

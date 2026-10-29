@@ -290,6 +290,9 @@ test('run 8: One click is the default where core suggests it, with the risk sent
   expect(screen.getByLabelText(/One click on this computer/)).toBeChecked()
   expect(screen.getByText('Recommended')).toBeVisible()
   expect(screen.getByText('No typing. Best on your own computer.')).toBeVisible()
+  // r11-P16: Passphrase is behind "Change these settings"
+  expect(screen.getByText(/Safest if others use this computer/)).not.toBeVisible()
+  fireEvent.click(screen.getByText('Change these settings'))
   expect(screen.getByText(/Safest if others use this computer/)).toBeVisible()
   const risk = screen.getByTestId('click-risk') as HTMLDetailsElement
   expect(risk.open).toBe(false) // the longer meaning is one click away, not in the main view
@@ -1396,4 +1399,53 @@ test('r11-P15: the Mac notice shows while the steps run, never on the ready or t
     expect(page(container).includes('Your Mac may say')).toBe(shown)
     unmount()
   }
+})
+
+
+test('r11-P16: the approval step shows the recommendation, a one-line summary and Continue; the rest is one click away', async () => {
+  const f = fake({ suggested: { method: 'click' } })
+  const { container } = render(<Setup api={f.api} />)
+  await approval()
+  const more = screen.getByTestId('approval-more') as HTMLDetailsElement
+  expect(more.open).toBe(false)
+  const radios = [...container.querySelectorAll('input[type=radio]')] as HTMLElement[]
+  expect(radios.filter((r) => !r.closest('details:not([open])'))).toHaveLength(1)
+  expect(screen.getByLabelText(/One click on this computer/)).toBeVisible()
+  expect(screen.getByRole('button', { name: '1 day' })).not.toBeVisible()
+  expect(screen.getByRole('switch', { name: /Keep a history/ })).not.toBeVisible()
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('No agent works here until you give access. Your history stays on this computer.')
+  // the summary follows the hidden choices
+  fireEvent.click(screen.getByText('Change these settings'))
+  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Agents may work for 3 days; none start on this computer yet.')
+  fireEvent.click(screen.getByRole('switch', { name: /Let agents start on this computer now/ }))
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Agents can work on their own for 3 days. Your history stays on this computer.')
+  fireEvent.click(screen.getByRole('button', { name: '1 day' }))
+  fireEvent.click(screen.getByRole('switch', { name: /Keep a history/ }))
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Agents can work on their own for 1 day. No history is kept.')
+  fireEvent.click(screen.getByRole('button', { name: 'No agent access' }))
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('No agent works here until you give access.')
+})
+
+test('r11-P16: the posted profile is the same whether or not the settings were opened', async () => {
+  const bodies: unknown[] = []
+  for (const open of [false, true]) {
+    const f = fake({ suggested: { method: 'click' } })
+    render(<Setup api={f.api} />)
+    await approval()
+    if (open) fireEvent.click(screen.getByText('Change these settings'))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+    await screen.findByRole('heading', { name: 'Your recovery words' })
+    bodies.push(f.calls.find((c) => c.path === 'profile')?.body)
+    cleanup()
+  }
+  expect(bodies[0]).toEqual(bodies[1])
+  expect(bodies[0]).toMatchObject({ method: 'click' })
+})
+
+test('r11-P16: without One click the settings are open, so the passphrase choice is never hidden', async () => {
+  render(<Setup api={fake({ clickOff: 'not on this computer' }).api} />)
+  await approval()
+  expect((screen.getByTestId('approval-more') as HTMLDetailsElement).open).toBe(true)
+  expect(screen.getByLabelText(/Passphrase/)).toBeVisible()
 })

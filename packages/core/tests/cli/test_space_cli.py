@@ -29,7 +29,7 @@ def host(monkeypatch):
         log.called.append((op, args))
         return log.reply.get(op, {})
 
-    def confirm(prompt):
+    def confirm(prompt, verb="sign"):
         log.asked.append(prompt)
         return log.yes
 
@@ -147,7 +147,7 @@ def test_an_agent_may_put_restore_and_ask_for_history_the_host_decides(host, tmp
     assert host.asked == []  # nobody is asked: the owner's switch is what lets an agent in
 
 
-def test_agents_switch_asks_nothing_and_sends_on_off(host):
+def test_agents_switch_sends_on_off(host):
     host.reply["space.agents"] = {"space_id": SID, "agents": True, "warning": "Agents can copy workspace content here"}
     code, out = run(["agents", SID, "on"], as_json=False)
     assert code == 0 and host.called[-1] == ("space.agents", {"space_id": SID, "on": True}) and "Agents can copy" in out
@@ -183,3 +183,21 @@ def test_history_strips_control_characters_from_what_another_workspace_wrote(hos
         assert len(shown) < 700
     text = run(["history", SID, "n"], as_json=False)[1]
     assert "restored from " + "a" * 32 in text and text.count("\n") <= 4
+
+
+def test_agents_on_shows_the_warning_and_needs_a_terminal_off_does_not(host, monkeypatch):
+    from orch.ops.human import review_prompt as real
+
+    host.reply["space.agents"] = {"space_id": SID, "agents": True, "warning": "w"}
+    run(["agents", SID, "on"])
+    assert "Agents can copy workspace content here" in host.asked[-1]
+    host.yes = False
+    n = len(host.called)
+    assert run(["agents", SID, "on"])[0] == 3 and len(host.called) == n  # declined: nothing sent
+    asked = len(host.asked)
+    assert run(["agents", SID, "off"])[0] == 0 and len(host.asked) == asked  # off asks nothing
+    n = len(host.called)
+    monkeypatch.setattr(space, "review_prompt", real)
+    code, out = run(["agents", SID, "on"])
+    assert code != 0 and json.loads(out)["code"] == "tty.required"
+    assert not [c for c in host.called[n:] if c[0] == "space.agents"]

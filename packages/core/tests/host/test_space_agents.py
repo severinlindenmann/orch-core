@@ -240,10 +240,11 @@ def test_an_agent_cannot_copy_a_secret_the_host_holds(served, full):
         "a github token shape": b"ghp_" + b"a" * 36,
         "a private key block": b"-----BEGIN EC PRIVATE KEY-----\nAAAA",
     }
-    for why, data in leaks.items():
+    for n, (why, data) in enumerate(leaks.items(), 1):
         res = agent(served, "space.put", put(full.space_id, data=crypto.b64u(data)))
-        assert err(res) in ("invalid.input", "grant.secret_in_request", "secret_in_request"), why
+        assert "secret_in_content" in res["error"]["message"], why
         assert full.puts == [], why
+        assert refused_count(served) == n, why  # exactly one audit line per refusal
     res = agent(served, "space.put", put(full.space_id, name=pat, data=crypto.b64u(b"x")))
     assert full.puts == []
     refused = [e for e in security_log(served) if e["event"] == "space.secret_refused"]
@@ -374,3 +375,86 @@ def test_an_agent_restore_is_behind_the_switch_and_the_content_check(served, ful
     svc = service_of(served)
     credential.person_store(svc.state_dir, svc.workspace_id, svc.host_uid, "github", "hello", 1.0)  # too short: ignored
     ok(agent(served, "space.restore", args))
+
+
+# --- review fixes ----------------------------------------------------------------------------------------------------
+
+
+def hold(served, name, doc):
+    svc = service_of(served)
+    d = Path(svc.state_dir) / "hosts" / svc.workspace_id / "membership" / "keys"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / name
+    path.write_text(json.dumps(doc))
+    path.chmod(0o600)
+
+
+def refused_count(served):
+    return sum(1 for e in security_log(served) if e["event"] == "space.secret_refused")
+
+
+def test_the_relay_epoch_keys_of_the_membership_store_are_held_secrets(served, full):
+    import base64
+
+    wk = crypto.b64u(bytes(range(40, 72)))
+    hold(served, "wk-1.json", {"wk": wk})
+    share(served, full, agents=True)
+    for data in (wk.encode(), crypto.unb64u(wk), base64.b64encode(wk.encode())):
+        res = agent(served, "space.put", put(full.space_id, data=crypto.b64u(data)))
+        assert "secret_in_content" in res["error"]["message"]
+    assert full.puts == [] and refused_count(served) == 3
+
+
+def test_a_secret_is_found_at_every_base64_alignment_in_hex_and_inside_an_encoded_run(served, full):
+    import base64
+
+    from orch.host import heldsecrets
+
+    secret = b"s3cr3t-value-NOT-shaped-0123456789"
+    hold(served, "ck-1.json", {"ck": secret.decode()})
+    share(served, full, agents=True)
+    seen = []
+    for k in (0, 1, 2):
+        for enc in (base64.b64encode, base64.urlsafe_b64encode):
+            seen.append(b"x" + enc(b"Q" * k + secret + b"zz") + b" tail")
+    seen += [b"key=" + secret.hex().encode(), secret.hex().upper().encode()]
+    seen.append(base64.b64encode(b"export A=" + secret + b"\n"))  # an encoded run that CONTAINS it
+    seen.append(secret.hex().encode().join((b"abc ", b" def")))
+    for n, data in enumerate(seen, 1):
+        res = agent(served, "space.put", put(full.space_id, data=crypto.b64u(data)))
+        assert "secret_in_content" in res["error"]["message"], data
+        assert refused_count(served) == n
+    assert full.puts == []
+    # forms under 8 characters are never derived: a short secret matches nothing it should not
+    assert heldsecrets.find(b"abc", [b"abcdefgh"]) is False
+    assert heldsecrets.find(b"hello world, nothing here", [secret]) is False
+    # a proxy capability is a secret whatever its value
+    assert heldsecrets.find(b"x ocap_" + b"A" * 43, [])
+
+
+def test_turning_agents_off_needs_no_hub_and_no_member_check(served, full):
+    share(served, full, agents=True)
+    full.members, full.epoch = sorted([*full.members, "cc" * 16]), 2  # a member was added behind the owner's back
+    ok(req(served, "space.agents", {"space_id": full.space_id, "on": False}))
+    assert "members_changed" in req(served, "space.agents", {"space_id": full.space_id, "on": True})["error"]["message"]
+    from orch.host import spaceops
+
+    assert spaceops._load_state(service_of(served)).rules[full.space_id]["agents"] is False  # noqa: SLF001
+    share2 = {"space_id": full.space_id, "members": full.members, "understood": True}
+    ok(req(served, "space.share", share2))
+    ok(req(served, "space.agents", {"space_id": full.space_id, "on": True}))
+    full.hub.close()  # the hub is gone
+    assert ok(req(served, "space.agents", {"space_id": full.space_id, "on": False}))["data"]["agents"] is False
+    assert req(served, "space.agents", {"space_id": full.space_id, "on": True}).get("error")
+
+
+def test_an_agent_restore_is_audited_like_a_put(served, full):
+    import hashlib
+
+    share(served, full, agents=True)
+    ok(req(served, "space.put", put(full.space_id, name="plan.md")))
+    old = stored(served, full)
+    ok(agent(served, "space.restore", {"space_id": full.space_id, "item_id": old}))
+    (rec,) = [e for e in security_log(served) if e["event"] == "space.agent_restore"]
+    assert (rec["name"], rec["size"], rec["session"], rec["agent"]) == ("plan.md", 5, SESSION, agent_id(served))
+    assert rec["sha256"] == hashlib.sha256(b"hello").hexdigest() and rec["restored_from"] == old

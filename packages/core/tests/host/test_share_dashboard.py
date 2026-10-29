@@ -361,7 +361,7 @@ def test_a_review_never_opens_a_hub_link_for_names(monkeypatch):
     assert shareops._names_for(SimpleNamespace(_share_names={"a" * 32: "Ben"}), {"a" * 32}) == {"a" * 32: "Ben"}
 
 
-# --- a long review is capped, with the totals beside it (the dashboard refuses an over-long list) ------------------------
+# --- a long review is capped, with the totals beside it (the dashboard refuses an over-long list) ----------------
 
 
 def _item(logical, users=(), groups=(), description=False):

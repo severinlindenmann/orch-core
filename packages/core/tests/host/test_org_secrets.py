@@ -163,7 +163,12 @@ class World:
         if check_value:
             sealed = S.seal_org_secret(**seal)
         else:
-            sealed = S._seal_with_ephemeral(crypto.generate_private_key(), **seal, check_value=False)  # noqa: SLF001
+            from orch.crypto import sealing
+
+            pub = seal.pop("wxk_pub")
+            sealed = sealing._seal_with_ephemeral(  # noqa: SLF001 - tests may build a sealed bad value
+                crypto.generate_private_key(), pub, *S.wrap_inputs(**seal, check_value=False)
+            )
         return {"id": sid, "name": name, "version": version, "expires_ms": exp, "wxk_version": wv,
                 "sealed": crypto.b64u(sealed)}  # fmt: skip
 

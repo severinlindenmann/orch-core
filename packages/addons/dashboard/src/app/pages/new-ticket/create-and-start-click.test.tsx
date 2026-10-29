@@ -228,7 +228,7 @@ it.each([null, 14, 15, 16])('one review with %s minutes access: never armed by C
   expect(action).toMatchObject({ action: 'new_sequence', launch: { harness: expect.any(String), mode: expect.any(String) } })
   if (needsGrant) {
     expect(action).toHaveProperty('agent.hours', 168) // the workspace's access setting (#1555), here 168 h; the mocked signer's line below is its own
-    expect(panel).toHaveTextContent('standing authority')
+    expect(panel).toHaveTextContent('could use this access while it lasts')
     const button = screen.getByRole('button', { name: 'Sign and start agent' })
     expect(screen.queryByTestId('sign-arm-status')).not.toBeInTheDocument()
     expect(button).toBeDisabled()

@@ -316,12 +316,14 @@ def _widened_view(raw) -> list[dict]:
     for w in (raw if isinstance(raw, list) else [])[:MAX_READERS]:
         line = display(w.get("line")) if isinstance(w, dict) and isinstance(w.get("line"), str) else None
         if line:
-            out.append({
-                "line": line[:300],
-                "people_added": _names(w.get("people_added")),
-                "teams_added": _names(w.get("teams_added")),
-                "description_added": w.get("description_added") is True,
-            })
+            out.append(
+                {
+                    "line": line[:300],
+                    "people_added": _names(w.get("people_added")),
+                    "teams_added": _names(w.get("teams_added")),
+                    "description_added": w.get("description_added") is True,
+                }
+            )
     return out
 
 

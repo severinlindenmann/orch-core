@@ -91,7 +91,7 @@ export function ClickProblemBox({ problem, ws }: { problem: { title: string; bod
       <p className="font-medium text-text">{problem.title}</p>
       {body && (
         <p title={problem.signedAt ?? undefined} className="text-text-muted">
-          <Raw>{body}</Raw>
+          <Inline>{body}</Inline>
         </p>
       )}
       {problem.details && <TechnicalDetails text={problem.details} />}

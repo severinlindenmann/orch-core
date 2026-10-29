@@ -19,11 +19,13 @@ __all__ = ["WHERE_KINDS", "check_hub_where"]
 WHERE_KINDS = ("private", "office", "server", "public")
 MAX_ADDRESSES = 4
 MAX_NAME = 60
-_STRIPPED = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")  # control, format (bidi, zero-width), surrogate, private-use, unassigned, line and paragraph separators
+# control, format (bidi, zero-width), surrogate, private-use, unassigned, line and paragraph separators
+_STRIPPED = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")
 
 
 def clean_name(raw: object) -> str:
-    """1-60 code points as sent; control, format, surrogate, private-use, unassigned and separator characters removed, outer spaces trimmed; not empty."""
+    """1-60 code points as sent; control, format, surrogate, private-use, unassigned and separator characters removed,
+    outer spaces trimmed; not empty."""
     if type(raw) is not str or not 1 <= len(raw) <= MAX_NAME:
         raise HubRefused("malformed")
     name = "".join(ch for ch in raw if unicodedata.category(ch) not in _STRIPPED).strip()

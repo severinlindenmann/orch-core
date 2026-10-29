@@ -420,7 +420,9 @@ def list_cases() -> list[dict[str, Any]]:
         sorted(fl + [{"path": "meta.json/x", "size": 1, "sha256": "0" * 64}], key=lambda f: f["path"]),
         err("backup_invalid", "files_order"),
     )
-    extra = lambda *paths: sorted(fl + [{"path": x, "size": 1, "sha256": "0" * 64} for x in paths], key=lambda f: f["path"])
+    extra = lambda *paths: sorted(
+        fl + [{"path": x, "size": 1, "sha256": "0" * 64} for x in paths], key=lambda f: f["path"]
+    )
     lc("files_dir_of_another_with_sibling", extra("keys", "keys-x", "keys/a"), err("backup_invalid", "files_order"))
     lc("files_case_fold_duplicate", extra("HK_ROOT.key"), err("backup_invalid", "files_order"))
     lc(

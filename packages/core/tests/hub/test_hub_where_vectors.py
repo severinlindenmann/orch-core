@@ -40,7 +40,7 @@ def test_where_case(case) -> None:
 
 
 def _core_labels() -> set[str]:
-    """Every ``orch/v2/...`` string literal in core's source (kdf labels have no ``|``, signature/AAD/hash labels end in it)."""
+    """Every ``orch/v2/...`` string literal in core's source (kdf labels have no ``|``, the rest end in it)."""
     found: set[str] = set()
     for f in Path(orch.__file__).parent.rglob("*.py"):
         found |= set(re.findall(r"""["'](orch/v2/[A-Za-z0-9/_.-]+\|?)["']""", f.read_text()))

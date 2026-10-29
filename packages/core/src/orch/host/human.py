@@ -654,6 +654,12 @@ class HumanOps:
                 err=lambda code, why: HostError(code, why),
                 service=call.service,
             )
+        if checked["step"] == 0 and checked["intent"]["kind"] == sequence.GATES:
+            from . import seqgates
+
+            # the person may decide both gates and their one approval completes the requirements: refused here, before
+            # anything is signed (also under the submit lock below)
+            seqgates.host_check_first(store, person, checked["intent"], err=lambda code, why: HostError(code, why))
         if checked["step"] > 0 and checked.get("log") == "workspace":
             # the add-on sequence's grant: the next step on the workspace log, only on the tail its settings left (AE6)
             if not dry_run and _tail_id(store, "workspace") != checked["prev"]:
@@ -666,7 +672,7 @@ class HumanOps:
             view = store.ticket(checked["intent"]["ticket"]["key"])
             if view is None or not claims.may_manage(core.ws, core.tickets[view.uid], person):
                 raise HostError("role.denied", "people are for the ticket owner, owners and maintainers")
-        if checked["step"] == 0 and checked["intent"]["kind"] == sequence.EDIT and not dry_run:
+        if checked["step"] == 0 and checked["intent"]["kind"] in (sequence.EDIT, sequence.GATES) and not dry_run:
             # an edit starts on the ticket and at the head the person reviewed (also checked by the signer)
             want = checked["intent"]["ticket"]
             view = store.ticket(want["key"])
@@ -805,6 +811,11 @@ class HumanOps:
                     and a.ac in criteria
                     and parse_label(a.label) == (a.ac, criterion_hash(a.ac, criteria[a.ac]))
                 ]
+            seq = getattr(capture, "sequence", None)
+            if seq is not None and seq["step"] == 0:  # the approval of both gates starts on a gate request
+                material["sequence"] = {
+                    "digest": seq["digest"], "of": seq["of"], "intent": copy.deepcopy(seq["intent"]),
+                }  # fmt: skip
             return material
         if len(events) == 1 and types[0] == "question.answered":
             qid = events[0]["question"]
@@ -1089,7 +1100,13 @@ class HumanOps:
             from . import sequence
 
             meta = record.get("sequence")
-            if meta is not None and meta["step"] == 0 and meta["intent"]["kind"] == sequence.EDIT:
+            if meta is not None and meta["step"] == 0 and meta["intent"]["kind"] == sequence.GATES:
+                from . import seqgates
+
+                seqgates.host_check_first(
+                    store, record["person"], meta["intent"], err=lambda code, why: HostError(code, why)
+                )
+            if meta is not None and meta["step"] == 0 and meta["intent"]["kind"] in (sequence.EDIT, sequence.GATES):
                 # B12D: an edit's first step lands only on the head the person reviewed, re-checked here under the lock
                 if store.log_head(record["prepared"]["log"]) != events[0].get("based_on"):
                     raise HostError("human.request_mismatch", sequence.CHANGED)

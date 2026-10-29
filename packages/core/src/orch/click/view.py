@@ -271,6 +271,8 @@ def build(
             sequence.expected_payload(intent, k, prepared["events"][0]["actor"]["id"])
             for k in range(len(sequence.steps(intent)))
         ]
+        if intent["kind"] == sequence.GATES:
+            view["headline"] = headline("approve_gates", ticket.get("key"))  # the signer's words and the key only
         if sequence.has_grant(intent):
             view["op"] = "grant"
             view["confirm"]["mode"] = "press"

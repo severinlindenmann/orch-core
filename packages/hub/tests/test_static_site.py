@@ -59,6 +59,8 @@ def test_every_allow_listed_file_is_served_with_the_hard_headers(w):
         "/phones.js",
         "/handoffs.js",
         "/invite.js",
+        "/qr.js",
+        "/totp.js",
     }
     for path, (name, ctype) in FILES.items():
         s, h, body = get(w, path)

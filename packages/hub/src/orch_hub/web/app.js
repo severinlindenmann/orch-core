@@ -12,6 +12,7 @@ import { activityView } from "./activity.js";
 import { accountFromWorkspaceView, accountView } from "./account.js";
 import { adminView } from "./admin.js";
 import { changesView, checkChange, sentence as changeSentence } from "./changes.js";
+import { totpPanel } from "./totp.js";
 import { inviteView } from "./invite.js";
 import { servicesView } from "./services.js";
 import { handoffsView } from "./handoffs.js";
@@ -113,11 +114,11 @@ function loginView(err) {
       if (r.status !== 200) return loginView(say(r.body.error === "malformed" ? "bad_credentials" : r.body.error)); // run-11 #11: a sign-in failure is never "could not be read safely"
       await afterLogin();
     },
-  }, field("Name or user id", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
+  }, field("Your name", id), field("Password", pw), field("6-digit code", code), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Sign in" })));
   show(h("h1", { text: "Sign in to your hub" }), err ? banner("bad", "Not signed in", err) : null, form);
 }
 
-// First admin (prototype): the installer's one-time link opens this page; the hub shows the authenticator secret once.
+// First admin (prototype): the installer's one-time link opens this page; the hub shows the authenticator QR once and signs the new admin in.
 function setupView(token, err) {
   const name = h("input", { id: "name", autocomplete: "name", required: true, value: "Admin" });
   const pw = h("input", { id: "pw", type: "password", autocomplete: "new-password", required: true, minlength: 10 });
@@ -130,9 +131,11 @@ function setupView(token, err) {
       history.replaceState(null, "", location.pathname);
       show(
         h("h1", { text: "Admin created" }),
-        banner("ok", "Write these down", "They are shown once."),
-        h("dl", { class: "facts" }, h("dt", { text: "User id" }), h("dd", { class: "fp", id: "new-user-id", text: r.body.user_id }), h("dt", { text: "Authenticator secret (add it to your authenticator app)" }), h("dd", { class: "fp", id: "new-totp", text: r.body.totp_secret })),
-        h("div", { class: "row top" }, h("button", { class: "pri", text: "Continue to sign in", onclick: () => loginView() })),
+        banner("ok", "You are signed in"),
+        h("h2", { text: "Add your sign-in code to your phone" }),
+        h("p", { class: "muted", text: "Scan this with your authenticator app. You will need the app's 6-digit code each time you sign in." }),
+        totpPanel(r.body.totp_uri, r.body.totp_secret, { userId: r.body.user_id }),
+        h("div", { class: "row top" }, h("button", { class: "pri", id: "open-hub", text: "Open the hub", onclick: () => afterLogin() })),
       );
     },
   }, field("Your name", name), field("Choose a password (10 or more characters)", pw), h("div", { class: "row top" }, h("button", { class: "pri", type: "submit", text: "Create the admin" })));

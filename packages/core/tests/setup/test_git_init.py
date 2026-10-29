@@ -19,7 +19,7 @@ from .test_create import (
     run_ok,
     setup_flow,
 )
-from .test_secrets import reveal, words_for
+from .test_secrets import reveal
 
 WITH_GIT = {**AGENT, "git_init": True}
 
@@ -52,8 +52,8 @@ def test_git_init_must_be_a_boolean(flow):
 def test_the_review_names_git_init_and_the_repo_it_declares(tmp):
     f = setup_flow(tmp, FakePorts())
     post(f, "profile", WITH_GIT)
-    r = reveal(f)
-    post(f, "secrets/confirm", {"words": words_for(r)})
+    reveal(f)
+    post(f, "secrets/confirm", {"acknowledged": True})
     rv = post(f, "review")[1]
     git = next(x for x in rv["flags"] if x["id"] == "git")
     assert "git init" not in git["text"] and ".orch" not in git["text"] and "Your files stay as they are" in git["text"]

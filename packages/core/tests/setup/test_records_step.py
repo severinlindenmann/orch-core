@@ -12,7 +12,7 @@ from tests.host.test_records_sync import home, w  # noqa: F401 - fixtures
 from .conftest import post
 from .fakes import FakePorts, names
 from .test_create import AGENT, fake_signer, run_ok, setup_flow  # noqa: F401 - fake_signer: the signing stand-ins
-from .test_secrets import reveal, words_for
+from .test_secrets import reveal
 
 WITH_RECORDS = {**AGENT, "records": True}
 
@@ -27,16 +27,16 @@ def test_records_must_be_a_boolean_and_absent_means_no(flow):
 def test_the_review_names_the_records_consent_and_binds_it_to_the_digest(tmp):
     f = setup_flow(tmp, FakePorts())
     post(f, "profile", WITH_RECORDS)
-    r = reveal(f)
-    post(f, "secrets/confirm", {"words": words_for(r)})
+    reveal(f)
+    post(f, "secrets/confirm", {"acknowledged": True})
     rv = post(f, "review")[1]
     flag = next(x for x in rv["flags"] if x["id"] == "records")
     assert flag["text"] == RECORDS_TEXT
     assert "orch records" not in flag["text"] and "git" not in flag["text"].lower() and "never uploaded" in flag["text"]
     g = setup_flow(tmp, FakePorts())
     post(g, "profile", AGENT)
-    r2 = reveal(g)
-    post(g, "secrets/confirm", {"words": words_for(r2)})
+    reveal(g)
+    post(g, "secrets/confirm", {"acknowledged": True})
     assert post(g, "review")[1]["digest"] != rv["digest"]
 
 

@@ -35,7 +35,7 @@ const fetcher = async (url: RequestInfo | URL, init?: RequestInit) => {
   const body = init?.body ? JSON.parse(String(init.body)) : undefined
   let r: unknown = { ok: true }
   if (path === 'state') r = state
-  if (path === 'secrets/reveal') r = { passphrase: null, recovery_words: Array.from({ length: 24 }, (_, i) => `word-${i + 1}`), check_positions: [17] }
+  if (path === 'secrets/reveal') r = { passphrase: null, recovery_words: Array.from({ length: 24 }, (_, i) => `word-${i + 1}`) }
   if (path === 'secrets/confirm') r = { ok: true }
   if (path === 'review') r = review
   if (path === 'create') r = { run_id: 'x' }

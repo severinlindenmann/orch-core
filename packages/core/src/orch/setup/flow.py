@@ -447,14 +447,9 @@ class SetupFlow:
         if self.secrets is None:
             raise SetupError("secrets.not_shown", "show the secrets first", 409)
         if not isinstance(body, dict):
-            raise SetupError("invalid.input", "words", 400, field="words")
-        out = self.secrets.confirm(body.get("words"))
-        if out.get("ok"):
-            self.phase = "review"
-        elif out["attempts_left"] <= 0:
-            # the session dies; a new `orch setup` draws NEW secrets
-            self.error = {"code": "secrets.exhausted", "message": "too many wrong words; start the setup again"}
-            self.phase = "cancelled"
+            raise SetupError("invalid.input", "acknowledged", 400, field="acknowledged")
+        out = self.secrets.confirm(body.get("acknowledged"))
+        self.phase = "review"
         return out
 
     def _drop_secrets(self) -> None:

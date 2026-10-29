@@ -13,7 +13,7 @@ from orch.setup.protocol import SetupError
 
 from .conftest import PROFILE, make_env
 from .fakes import FakePorts, FakeTerminal, names
-from .test_secrets import reveal, words_for
+from .test_secrets import reveal
 
 GRANT_SECRET = "gr_01ARZ3NDEKTSV4RRFFQ69G5FAV.SECRETSECRETSECRETSECRETSECRETSECRETSEC"
 
@@ -64,8 +64,8 @@ def run_ok(tmp, profile, ports=None, **envkw):
     f = setup_flow(tmp, ports, **envkw)
     # first pass only to learn the fingerprint
     f.dispatch("POST", "profile", {}, profile)
-    r = reveal(f)
-    f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
+    reveal(f)
+    f.dispatch("POST", "secrets/confirm", {}, {"acknowledged": True})
     _, rv = f.dispatch("POST", "review", {}, {})
     if rv["fingerprint"]:
         ports.terminal.answers[:] = ["yes"]
@@ -138,8 +138,8 @@ def test_r3_the_tty_fingerprint_must_match(tmp, monkeypatch):
     ports = FakePorts(FakeTerminal(["not the words"]))
     f = setup_flow(tmp, ports)
     f.dispatch("POST", "profile", {}, AGENT)
-    r = reveal(f)
-    f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
+    reveal(f)
+    f.dispatch("POST", "secrets/confirm", {}, {"acknowledged": True})
     _, rv = f.dispatch("POST", "review", {}, {})
     ports.expect(f.review.plan)
     out = f.dispatch("POST", "create", {}, {"review_id": rv["review_id"], "digest": rv["digest"]})[1]
@@ -154,8 +154,8 @@ def test_r2_create_needs_the_bound_digest_and_no_typed_word(tmp):
     ports = FakePorts()
     f = setup_flow(tmp, ports)
     f.dispatch("POST", "profile", {}, AGENT)
-    r = reveal(f)
-    f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
+    reveal(f)
+    f.dispatch("POST", "secrets/confirm", {}, {"acknowledged": True})
     _, rv = f.dispatch("POST", "review", {}, {})
     base = {"review_id": rv["review_id"], "digest": rv["digest"]}
     with pytest.raises(SetupError) as e:
@@ -171,8 +171,8 @@ def test_create_after_a_profile_change_needs_a_new_review(tmp):
     ports = FakePorts()
     f = setup_flow(tmp, ports)
     f.dispatch("POST", "profile", {}, PROFILE)
-    r = reveal(f)
-    f.dispatch("POST", "secrets/confirm", {}, {"words": words_for(r)})
+    reveal(f)
+    f.dispatch("POST", "secrets/confirm", {}, {"acknowledged": True})
     _, rv = f.dispatch("POST", "review", {}, {})
     f.dispatch("POST", "profile", {}, {**PROFILE, "agent_hours": 24})
     with pytest.raises(SetupError) as e:

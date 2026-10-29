@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
-import { choicesFor, groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
+import { groupProgress, plainReason, Setup, reviewFacts, summarize } from './Setup'
 import { SetupAPI, SetupError, bootstrapSetup, isSetupPage, type SetupState, type Review } from '../api/setup'
 
 const state: SetupState = {
@@ -81,7 +81,6 @@ const review: Review = {
 function fake(
   options: {
     finish?: boolean
-    attempts?: number
     typed?: boolean
     noTty?: boolean
     waiting?: string
@@ -129,10 +128,9 @@ function fake(
       result = {
         passphrase: options.click ? null : 'demo-not-a-real-passphrase',
         recovery_words: Array.from({ length: 24 }, (_, i) => `demo-word-${i + 1}`),
-        check_positions: [17],
       }
     if (path === 'secrets/confirm')
-      result = options.attempts !== undefined ? { ok: false, attempts_left: options.attempts } : { ok: true }
+      result = { ok: true }
     if (path === 'review')
       result = {
         ...review,
@@ -187,9 +185,7 @@ async function reveal() {
   await screen.findByRole('heading', { name: 'Your recovery words' })
 }
 async function check() {
-  fireEvent.click(screen.getByLabelText('I saved my recovery words'))
-  for (const n of [17]) fireEvent.click(within(screen.getByRole('group', { name: `Word ${n}` })).getByRole('button', { name: `demo-word-${n}` }))
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm saved words →' }))
+  fireEvent.click(screen.getByRole('button', { name: 'I saved my words — continue →' }))
 }
 afterEach(() => {
   cleanup()
@@ -215,7 +211,7 @@ test('presents the one-time nonce from the fragment (stripped first) and stores 
   expect(localStorage.length).toBe(0)
 })
 
-test('shows secrets only as text, asks for one word, drops secrets after confirm', async () => {
+test('shows secrets only as text, asks for no typing, drops secrets after confirm', async () => {
   const f = fake()
   const { container } = render(<Setup api={f.api} />)
   await reveal()
@@ -230,22 +226,11 @@ test('shows secrets only as text, asks for one word, drops secrets after confirm
   await screen.findByRole('heading', { name: 'Review your setup' })
   expect(container.textContent).not.toContain('demo-word-')
   expect(container.textContent).not.toContain('demo-not-a-real-passphrase')
-  expect(f.calls.find((c) => c.path === 'secrets/confirm')?.body).toEqual({ words: { 17: 'demo-word-17' } })
+  expect(f.calls.find((c) => c.path === 'secrets/confirm')?.body).toEqual({ acknowledged: true })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
   await waitFor(() =>
     expect(f.calls.find((c) => c.path === 'create')?.body).toEqual({ review_id: 'demo-review', digest: 'demo-digest' }),
   )
-})
-
-test('fifth failed check removes secrets and requires a new session and new secrets', async () => {
-  const f = fake({ attempts: 0 })
-  render(<Setup api={f.api} />)
-  await reveal()
-  await check()
-  await screen.findByRole('heading', { name: 'Setup paused' })
-  expect(screen.getByRole('alert')).toHaveTextContent('new session with new recovery words')
-  expect(screen.queryByText('demo-not-a-real-passphrase')).not.toBeInTheDocument()
-  expect(f.calls.some((c) => c.path === 'review')).toBe(false)
 })
 
 test('one click disables relay with its named reason and never shows a passphrase', async () => {
@@ -381,13 +366,13 @@ test('copy is recovery-only, best effort clears after 60 seconds; print uses bro
   render(<Setup api={f.api} />)
   await reveal()
   vi.useFakeTimers()
-  fireEvent.click(screen.getByRole('button', { name: 'Copy recovery words' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
   await Promise.resolve()
   expect(writeText.mock.calls[0][0]).toContain('demo-word-24')
   expect(writeText.mock.calls[0][0]).not.toContain('passphrase')
   await vi.advanceTimersByTimeAsync(60_000)
   expect(writeText).toHaveBeenLastCalledWith('')
-  fireEvent.click(screen.getByRole('button', { name: 'Print recovery words' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Print' }))
   expect(print).toHaveBeenCalledOnce()
 })
 
@@ -636,7 +621,7 @@ test('the steps have visible names next to the dots', async () => {
   render(<Setup api={fake().api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   const nav = screen.getByRole('navigation', { name: 'Setup progress' })
-  expect(nav).toHaveTextContent('WelcomeYouWhat agents can doApprovalCheck wordsReview')
+  expect(nav).toHaveTextContent('WelcomeYouWhat agents can doApprovalRecovery wordsReview')
   expect(nav.querySelector('[aria-current="step"]')).toHaveTextContent('Welcome')
 })
 
@@ -738,23 +723,27 @@ test('the "If setup fails" warning shows once, after the words, and not again on
   expect(page(container)).not.toContain('If setup fails')
 })
 
-test('a wrong attempt clears the wrong word and shows the attempts left', async () => {
-  const f = fake({ attempts: 3 })
-  render(<Setup api={f.api} />)
+test('P11: step 4 has no text input, no checkbox and no word check; Save as file downloads the words in the browser', async () => {
+  const f = fake()
+  const created: Blob[] = []
+  const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+  Object.assign(URL, {
+    createObjectURL: (b: Blob) => (created.push(b), 'blob:demo'),
+    revokeObjectURL: () => {},
+  })
+  const { container } = render(<Setup api={f.api} />)
   await reveal()
-  fireEvent.click(screen.getByLabelText('I saved my recovery words'))
-  const group = within(screen.getByRole('group', { name: 'Word 17' }))
-  expect(group.getAllByRole('button')).toHaveLength(4)
-  expect(group.getByRole('button', { name: 'demo-word-17' })).toBeInTheDocument()
-  expect(document.querySelectorAll('.recovery li.check')).toHaveLength(1)
-  expect(document.querySelector('.recovery li.check')).toHaveTextContent('17')
-  expect(screen.getByRole('heading', { name: 'Tap word 17 to confirm' })).toBeInTheDocument()
-  const decoy = group.getAllByRole('button').find((b) => b.textContent !== 'demo-word-17')!
-  fireEvent.click(decoy)
-  expect(decoy).toHaveAttribute('aria-pressed', 'true')
-  fireEvent.click(screen.getByRole('button', { name: 'Confirm saved words →' }))
-  await screen.findByText(/not the right word.*highlighted number.*3 tries left/)
-  expect(group.getByRole('button', { name: decoy.textContent! })).toHaveAttribute('aria-pressed', 'false')
+  expect(container.querySelectorAll('input,textarea')).toHaveLength(0)
+  expect(screen.queryByRole('checkbox')).toBeNull()
+  expect(screen.queryByText(/Tap word|One quick check|tries|attempts/i)).toBeNull()
+  const before = f.calls.length
+  fireEvent.click(screen.getByRole('button', { name: 'Save as file' }))
+  expect(click).toHaveBeenCalledOnce()
+  expect(created).toHaveLength(1)
+  expect(await created[0].text()).toContain('24. demo-word-24')
+  expect(f.calls.length).toBe(before) // the words never go back to the server
+  expect(JSON.stringify(f.calls)).not.toContain('demo-word-')
+  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
 })
 
 test('the progress words are shown, and the unfinished items are named in words', async () => {
@@ -1101,8 +1090,6 @@ test('a folder without git offers to make one when Work copies is on, and never 
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
   expect(f.calls.find((c) => c.path === 'profile')?.body).toMatchObject({ git_init: true })
-  expect(screen.getAllByLabelText(/^Word \d+$/)).toHaveLength(1)
-  expect(screen.getByRole('heading', { name: 'Tap word 17 to confirm' })).toBeInTheDocument()
 })
 
 test('choosing to continue without worktrees drops them and asks no git question', async () => {
@@ -1217,10 +1204,10 @@ test('the recovery page uses one name, recovery words, and names no terminal com
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
-  expect(screen.getByLabelText('I saved my recovery words')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'I saved my words — continue →' })).toBeEnabled()
   const text = document.body.textContent ?? ''
   expect(text).not.toMatch(/secret words|recovery code/i)
-  expect(screen.getByText(/these words will no longer work/)).not.toHaveTextContent('orch setup')
+  expect(screen.getByText(/you get new words next time/)).not.toHaveTextContent('orch setup')
 })
 
 test.each([
@@ -1263,16 +1250,4 @@ test('N2: a repos setting for the setup folder is quiet, any other project path 
     expect(summary.textContent?.includes(`Project folder: ${path}`) ?? false).toBe(shown)
     cleanup()
   }
-})
-
-test('a word check with fewer than four distinct words offers fewer buttons and still holds the right word once', () => {
-  for (const words of [['red', 'blue', 'red', 'red'], ['red', 'red', 'red'], ['red', 'blue', 'green', 'blue', 'red']]) {
-    for (let n = 1; n <= words.length; n++) {
-      const c = choicesFor(n, words)
-      expect(c).toContain(words[n - 1])
-      expect(new Set(c).size).toBe(c.length)
-      expect(c.length).toBe(Math.min(4, new Set(words).size))
-    }
-  }
-  expect(choicesFor(1, ['red', 'red'])).toEqual(['red'])
 })

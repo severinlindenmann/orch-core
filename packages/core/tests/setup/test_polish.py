@@ -48,7 +48,7 @@ def test_finish_state_has_current_values_and_words_and_never_custody(tmp):
     assert st["missing"] == ["addon:terminals", "addon:worktrees", "addon:quick", "runner_grant"]
     assert st["missing_words"] == [
         "Terminals add-on",
-        "Separate copies add-on",
+        "Work copies add-on",
         "Quick tasks add-on",
         "Agent access for this computer's runner",
     ]
@@ -192,7 +192,7 @@ def test_r9_p10_the_setup_words_are_plain(tmp):
     f = SetupFlow(make_env(tmp))
     f.launch(str(tmp.work))
     addons = {a["id"]: a for a in f.dispatch("GET", "state", {}, None)[1]["addons"]}
-    assert addons["worktrees"]["title"] == "Separate copies"
+    assert addons["worktrees"]["title"] == "Work copies"
     assert "worktree" not in (addons["worktrees"]["title"] + addons["worktrees"]["desc"]).lower()
     assert "CLI" not in addons["quick"]["desc"] and "Off: nobody" in addons["quick"]["desc"]
-    assert STEP_LABELS["git"] == "Preparing separate copies"
+    assert STEP_LABELS["git"] == "Preparing work copies"

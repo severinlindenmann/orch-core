@@ -1081,7 +1081,7 @@ test('a folder without git offers to make one when Work copies is on, and never 
   render(<Setup api={f.api} />)
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
-  expect(screen.getByText(/not set up for separate copies yet/)).toBeInTheDocument()
+  expect(screen.getByText(/not set up for work copies yet/)).toBeInTheDocument()
   expect(screen.getByText(/None of your files are changed, except .gitignore/)).toBeInTheDocument()
   expect(screen.queryByText(/git init/i)).not.toBeInTheDocument()
   expect(screen.getByLabelText(/Set it up for me/)).toBeChecked()
@@ -1098,7 +1098,7 @@ test('choosing to continue without worktrees drops them and asks no git question
   await screen.findByRole('heading', { name: 'Set up your workspace' })
   for (let i = 0; i < 2; i++) fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByLabelText(/Skip this/))
-  expect(screen.queryByText(/not set up for separate copies yet/)).not.toBeInTheDocument()
+  expect(screen.queryByText(/not set up for work copies yet/)).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
   await screen.findByRole('heading', { name: 'Your recovery words' })
@@ -1183,7 +1183,7 @@ test('P10: the review has no approval-count sentence, the fold is Details, and t
   expect(page(container)).not.toContain('Background services')
 })
 
-test('P10: the permissions page says Separate copies, not Worktrees or the CLI', async () => {
+test('P10: the permissions page says Work copies, not Worktrees or the CLI', async () => {
   render(<Setup api={fake().api} />)
   await approval()
   expect(page(document.body as HTMLElement)).not.toMatch(/worktree|the CLI/i)

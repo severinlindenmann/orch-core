@@ -469,7 +469,7 @@ STEP_LABELS = {
     "keys": "Creating your key",
     "genesis": "Saving your approval",
     "register": "Starting orch in the background",
-    "git": "Preparing separate copies",
+    "git": "Preparing work copies",
     "runner": "Letting the dashboard run agents",
     "settings": "Saving the workspace settings",
     "flags": "Turning on one-click approval",

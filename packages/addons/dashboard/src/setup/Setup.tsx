@@ -901,7 +901,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                           addons: e.target.checked
                             ? [...profile.addons, a.id]
                             : profile.addons.filter((id) => id !== a.id),
-                          // ticking Separate copies again asks the git question again
+                          // ticking Work copies again asks the git question again
                           ...(a.id === 'worktrees' ? { git_init: undefined } : {}),
                         })
                       }
@@ -910,9 +910,9 @@ export function Setup({ api }: { api: SetupAPI }) {
                   ),
                 )}
               {offersGit && (
-                <div className="note" role="group" aria-label="Separate copies">
+                <div className="note" role="group" aria-label="Work copies">
                   <p>
-                    <strong>Your project folder is not set up for separate copies yet.</strong> Agents work best when
+                    <strong>Your project folder is not set up for work copies yet.</strong> Agents work best when
                     each ticket gets its own copy. We can do it for you; your files stay as they are.
                   </p>
                   <label className="toggle">

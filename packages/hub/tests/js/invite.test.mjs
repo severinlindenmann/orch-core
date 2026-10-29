@@ -37,9 +37,9 @@ const submit = (root) => find(root, (n) => n.tag === "form").listeners.submit({ 
 function deps(answers, extra = {}) {
   const calls = [];
   const d = {
-    calls, signedIn: 0, finishedCount: 0,
+    calls, signedIn: 0, opened: 0, finishedCount: 0,
     api: async (method, path, body) => { calls.push([method, path, JSON.parse(JSON.stringify(body ?? null))]); const a = answers[path]; return typeof a === "function" ? a(body, calls) : a; },
-    say: (c) => "say:" + c, signIn() { d.signedIn++; }, finished() { d.finishedCount++; }, ...extra,
+    say: (c) => "say:" + c, signIn() { d.signedIn++; }, openHub() { d.opened++; }, finished() { d.finishedCount++; }, ...extra,
   };
   return d;
 }
@@ -84,8 +84,26 @@ test("join: two passwords, one request, the secret on the person's own screen, t
   assert.match(box.textContent, /shown only once/);
   assert.match(box.textContent, /groups afterwards/);
   assert.equal(pw.value, "", "the typed password is wiped");
+  assert.match(box.textContent, /already signed in/);
+  assert.ok(!button(box, "Continue to sign in"), "a new person is not asked to sign in again (r10-P09)");
+  await button(box, "Open the hub").listeners.click();
+  assert.equal(d.opened, 1);
+  assert.equal(d.signedIn, 0);
+});
+
+test("a reset or recovery still ends on the sign-in step", async () => {
+  const d = deps({
+    "/invite/peek": { status: 200, body: { kind: "reset", name: "Dora", needs_proof: false } },
+    "/invite/redeem": { status: 200, body: { kind: "reset", recovery: true, user_id: ME, name: "Dora", totp_secret: "SECRET234", totp_uri: "" } },
+  });
+  const [box] = inviteView(TOKEN, d);
+  await flush();
+  byId(box, "invite-pw").value = byId(box, "invite-pw2").value = "a long enough password";
+  await submit(box);
+  await flush();
   await button(box, "Continue to sign in").listeners.click();
   assert.equal(d.signedIn, 1);
+  assert.equal(d.opened, 0);
 });
 
 test("copy button copies the secret and says so", async (t) => {
@@ -334,5 +352,5 @@ test("no notice when nothing was recovered, and a removed admin is named plainly
 });
 
 test("app.js dispatches #invite= with one line and keeps the link out of the address bar after use", () => {
-  assert.match(appSource, /route\.kind === "invite"\) show\(inviteView\(route\.token, \{ api, say, signIn: \(\) => loginView\(\), finished: \(\) => history\.replaceState\(null, "", location\.pathname\) \}\)\)/);
+  assert.match(appSource, /route\.kind === "invite"\) show\(inviteView\(route\.token, \{ api, say, signIn: \(\) => loginView\(\), openHub: \(\) => afterLogin\(\), finished: \(\) => history\.replaceState\(null, "", location\.pathname\) \}\)\)/);
 });

@@ -1278,7 +1278,7 @@ async function renderRoute() {
       const route = parseRoute(location.hash);
       if (route.kind === "ticket") await landFromTicket(route.token);
       else if (route.kind === "setup") setupView(route.token);
-      else if (route.kind === "invite") show(inviteView(route.token, { api, say, signIn: () => loginView(), finished: () => history.replaceState(null, "", location.pathname) }));
+      else if (route.kind === "invite") show(inviteView(route.token, { api, say, signIn: () => loginView(), openHub: () => afterLogin(), finished: () => history.replaceState(null, "", location.pathname) }));
       else if (route.kind === "access") await accessView(route.workspace, route.key);
       else if (route.kind === "addon") await addonView(route.workspace, route.key);
       else if (route.kind === "settings") await settingsView(route.workspace, route.key);

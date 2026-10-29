@@ -1874,7 +1874,13 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
         out = self._guarded_credentials(  # the sign-in caps: per source, concurrency of the hashing, network aggregate
             c, list, lambda: inv.redeem(b["token"], lambda row: self._apply_invite(row, b["password"], proof))
         )
-        return 200, out, []
+        if out.get("kind") != "join" or out.get("recovery"):
+            return 200, out, []  # a reset or recovery signs in with the new password and code
+        # A new person: the link proved them and they chose the password in this request, so they are signed in (once).
+        s = self.d.channels.open_invite_session(out["user_id"])
+        ttl = max(0, (s["expires_ms"] - self.d.now_ms()) // 1000)
+        attrs = f"{self._cookie_name}={s['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={ttl}"
+        return 200, out, [("Set-Cookie", attrs + ("; Secure" if self.d.secure_cookies else ""))]
 
     def _apply_invite(self, row: Invite, password: str, proof: Any) -> dict[str, Any]:
         """The account change, run by ``Invites.redeem`` inside the claim's transaction: whatever raises here leaves the

@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { api } from '@/api/client'
-import type { HubAdded, HubPreview, HubRule } from '@/api/hub'
+import { hubQueries, type HubAdded, type HubPreview, type HubRule, type HubStatus } from '@/api/hub'
 import { ApiError } from '@/api/types'
 import { trustedPress } from '@/components/sign/trustedPress'
 import { WorkspaceLine } from '@/components/sign/WorkspaceLine'
@@ -12,7 +13,7 @@ import { caveat } from './shared'
 import type { HubWorkspace } from './StopSharing'
 
 // Sharing MORE is a plain click, no signature and no typed word: a click-only host op (owner, full local session, the
-// plan of the preview this session was shown). Every sentence of the review comes from the host's preview
+// plan of the preview this session was shown). The review's facts come from the host's preview (readers, widened items, counts, what leaves); the page adds only labels (the ticket title, the hub name from the cached status, the workspace name)
 // (`review`): which hub, who can read there, only the NEW items, what leaves per item, and that later edits follow.
 // The list of items stays behind one small click. A changed plan shows the review again; nothing is auto-confirmed.
 
@@ -50,15 +51,15 @@ function widenedText(w: { line: string; people_added: string[]; teams_added: str
 }
 
 /** "feature tickets", "tickets labelled x", "ticket DEMO-1": the rule in words (the value is drawn verbatim, never reworded). */
-function ruleWords(rule: HubRule, n: number): React.ReactNode {
+function ruleWords(rule: HubRule, n: number, title?: string): React.ReactNode {
   const tickets = n === 1 ? 'ticket' : 'tickets'
   if (rule.kind === 'type') return <><Raw>{rule.value}</Raw> {tickets}</>
   if (rule.kind === 'tag') return <>{tickets} labelled <Raw>{rule.value}</Raw></>
-  if (rule.kind === 'ticket') return <>ticket <Raw>{rule.value}</Raw></>
+  if (rule.kind === 'ticket') return <>ticket <Raw>{rule.value}</Raw>{title ? <> · <bdi><Raw>{title}</Raw></bdi></> : null}</>
   return <Raw>{rule.kind}</Raw>
 }
 
-export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; onDone?: () => void }) {
+export function AddRuleReview({ ws, workspace, rule, after, onDone, title }: { ws: string; workspace: HubWorkspace; rule: HubRule; after: HubPreview | undefined; /** The share went through (the message was shown): the caller closes the dialog. */ onDone?: () => void; /** The ticket's title when the rule names one ticket. */ title?: string }) {
   const qc = useQueryClient()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -73,12 +74,19 @@ export function AddRuleReview({ ws, workspace, rule, after, onDone }: { ws: stri
     setBusy(true)
     setError('')
     api.addHubRule(ws, rule, after.plan).then(
-      got => { setDone(got); onDone?.(); void qc.invalidateQueries({ queryKey: ['hub', ws] }) },
+      got => {
+        // Read the cached status (no request): older hosts give no hub name, and then the message names no hub.
+        const st = qc.getQueryData<HubStatus & { name?: string; hub_name?: string }>(hubQueries.status(ws).queryKey)
+        const hub = st?.hub_name ?? st?.name
+        const what = rule.kind === 'ticket' && title ? `“${title}”` : `${review.new_count} ${review.new_count === 1 ? 'item' : 'items'}`
+        toast.success(`Shared ${what}${hub ? ` with ${hub}` : ' with the hub'}.`, { description: got.synced ? undefined : 'Saved here. It is sent when the hub is back.' })
+        setDone(got); onDone?.(); void qc.invalidateQueries({ queryKey: ['hub', ws] })
+      },
       err => setError(refusal(err)),
     ).finally(() => setBusy(false))
   }
   return <div className="space-y-2" data-testid="hub-add-review">
-    <p data-testid="hub-add-sentence">Share {rule.kind === 'ticket' ? null : <>{review.new_count} </>}{ruleWords(rule, review.new_count)} from <Raw>{workspace.name}</Raw> with the hub{rule.value !== null && rule.description ? ', with their descriptions' : ''}.</p>
+    <p data-testid="hub-add-sentence">Share {rule.kind === 'ticket' ? null : <>{review.new_count} </>}{ruleWords(rule, review.new_count, title)} from <Raw>{workspace.name}</Raw> with the hub{rule.value !== null && rule.description ? ', with their descriptions' : ''}.</p>
     <div className="flex items-center gap-1" data-testid="hub-add-readers">
       <p><Raw>{who(review.readers)}</Raw></p>
       {(readerNames(review.readers).length > 0 || !!review.readers.info) && <InfoDrawer testId="hub-add-readers-info"><p>{review.readers.note ?? 'From the hub, not signed.'}</p>{review.readers.info && <p>{review.readers.info}</p>}{readerNames(review.readers).length > SHOWN_NAMES && <p data-testid="hub-add-readers-all">Everyone who will see it: <Raw>{readerNames(review.readers).join(', ')}</Raw></p>}</InfoDrawer>}

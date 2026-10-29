@@ -221,7 +221,8 @@ export interface TabProps {
 }
 
 export type HumanAction =
-  | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code' }
+  /** `pressed`: the opening click/keydown was a real press (read in the caller's handler): the review opens at once and signs after the 1 s arm. */
+  | { kind: 'approve'; gate: 'requirements' | 'plan' | 'code'; pressed?: boolean }
   | { kind: 'request_changes'; gate: 'requirements' | 'plan' | 'verify' | 'code' }
   | { kind: 'verdict' }
   | { kind: 'answer'; question: string; option?: string; text?: string }

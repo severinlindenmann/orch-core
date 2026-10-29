@@ -2,6 +2,7 @@ import { Check, Info, Loader2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { GateName, GateStatus, TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
+import { trustedPress } from '@/components/sign/trustedPress'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
 import { openDockOn } from '@/app/terminal/dock/request'
@@ -198,7 +199,7 @@ function NextStepCard({ ticket, viewer, sign, jump, signing = false, run, wait, 
     const c = APPROVE[gate]
     return (
       <Card title={c.title} text={c.text} gate={{ name: gate, status: ticket.gates[gate], viewer }}>
-        <Button size="sm" disabled={signing} onClick={() => sign({ kind: 'approve', gate })}>
+        <Button size="sm" disabled={signing} onClick={(e) => sign({ kind: 'approve', gate, pressed: trustedPress(e.nativeEvent) })}>
           {c.button}
         </Button>
         <Button size="sm" variant="outline" disabled={signing} onClick={() => sign({ kind: 'request_changes', gate })}>

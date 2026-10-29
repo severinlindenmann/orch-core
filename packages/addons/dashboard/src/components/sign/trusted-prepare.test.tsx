@@ -42,3 +42,57 @@ it('only trusted non-repeat gestures qualify', () => {
   expect(gesture.trustedPress({ isTrusted: true, repeat: true })).toBe(false)
   expect(gesture.trustedPress({ isTrusted: true, repeat: false })).toBe(true)
 })
+function showWith(props: Record<string, unknown>, children?: unknown) {
+  return <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SignPopover ws="w" title="Close task" action={{ action: 'close', key: 'TEST-0001' }} inline onClose={() => {}} {...props}>{children as never}</SignPopover></QueryClientProvider>
+}
+it('P06: autoStart with array-of-false children (approve) prepares without a second press and shows the review', async () => {
+  const { prepare } = mount()
+  cleanup()
+  render(showWith({ autoStart: true }, [false, false]))
+  await waitFor(() => expect(prepare).toHaveBeenCalledTimes(1))
+  expect(await screen.findByTestId('click-panel')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Close task' })).toBeNull()
+})
+it('P06: without autoStart (or with false) nothing prepares; the idle box stays', async () => {
+  const { prepare } = mount()
+  cleanup()
+  const first = render(showWith({}, [false]))
+  await Promise.resolve()
+  first.unmount()
+  render(showWith({ autoStart: false }, [false]))
+  await Promise.resolve()
+  expect(prepare).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: 'Close task' })).toBeInTheDocument()
+})
+it('P06: a real form (children) never auto-starts, even with autoStart', async () => {
+  const { prepare } = mount()
+  cleanup()
+  render(showWith({ autoStart: true }, <input aria-label="note" />))
+  await Promise.resolve()
+  expect(prepare).not.toHaveBeenCalled()
+})
+it('P06: autoStart alone never arms the countdown; with armOnStart the review arms, and nothing signs while it loads', async () => {
+  const { prepare, sign } = mount()
+  cleanup()
+  const plain = render(showWith({ autoStart: true }))
+  await screen.findByTestId('click-panel')
+  expect(screen.queryByTestId('sign-arm-status')).toBeNull()
+  expect(sign).not.toHaveBeenCalled()
+  plain.unmount()
+  vi.spyOn(api, 'viewClick').mockResolvedValue({ view_digest: 'sha256:abc', view: { headline: 'Close TEST-0001', risk_lines: [], risk: CLICK_RISK, op: 'close', workspace: { id: 'w', prefix: 'TEST', name: 'Test' }, fingerprint: '0123456789ab', lines: ['Close task'], checks: [], confirm: { kind: 'click' }, expires_at: '2099-01-01T00:00:00Z', auth: 'convenience', device: 'd_test', artifacts: null } as never })
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  sign.mockResolvedValue({ state: 'submitted', duplicate: false, key: 'k' } as never)
+  render(showWith({ autoStart: true, armOnStart: true }))
+  expect(sign).not.toHaveBeenCalled() // still loading
+  await screen.findByTestId('click-panel')
+  await waitFor(() => expect(screen.queryByTestId('sign-arm-status')).not.toBeNull())
+  expect(prepare).toHaveBeenCalledTimes(2)
+  expect(sign).not.toHaveBeenCalled() // the countdown has not run out
+  await waitFor(() => expect(sign).toHaveBeenCalledTimes(1), { timeout: 2500 }) // and it signs by itself after ~1 s
+})
+it('P06: a remount without autoStart (reload) never prepares', async () => {
+  const { prepare, rerender } = mount()
+  rerender(showWith({}))
+  await Promise.resolve()
+  expect(prepare).not.toHaveBeenCalled()
+})

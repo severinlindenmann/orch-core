@@ -2,6 +2,7 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { TicketDocument } from '@/api/types'
+import * as gesture from '@/components/sign/trustedPress'
 import { TicketProgress } from './NextStep'
 
 afterEach(cleanup)
@@ -30,7 +31,11 @@ it('a plan the viewer may approve: one card with Approve plan and Change somethi
   expect(card).toHaveTextContent('Plan ready')
   const user = userEvent.setup()
   await user.click(within(card).getByRole('button', { name: 'Approve plan' }))
-  expect(sign).toHaveBeenLastCalledWith({ kind: 'approve', gate: 'plan' })
+  expect(sign).toHaveBeenLastCalledWith({ kind: 'approve', gate: 'plan', pressed: false }) // a synthetic click is no press (P06)
+  vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
+  await user.click(within(card).getByRole('button', { name: 'Approve plan' }))
+  expect(sign).toHaveBeenLastCalledWith({ kind: 'approve', gate: 'plan', pressed: true })
+  vi.restoreAllMocks()
   await user.click(within(card).getByRole('button', { name: 'Change something' }))
   expect(sign).toHaveBeenLastCalledWith({ kind: 'request_changes', gate: 'plan' })
   expect(screen.getByTestId('step-understand')).toHaveAttribute('data-state', 'current')

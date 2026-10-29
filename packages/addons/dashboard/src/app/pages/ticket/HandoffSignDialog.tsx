@@ -132,6 +132,8 @@ export function HandoffSignDialog({
       action={request}
       doneToast={doneToastOf(action)}
       confirmLabel={confirmLabel}
+      autoStart={action.kind === 'approve' ? action.pressed : undefined}
+      armOnStart
       hint={preview ? 'Go back to the verdict to sign' : hint}
       warning={warning}
       onPending={onPending}

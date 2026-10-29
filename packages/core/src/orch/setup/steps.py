@@ -1169,7 +1169,7 @@ class RealPorts:
         )
 
     def trust_code(self, root: Path, *, allow_parent: bool = False) -> str:
-        """Why it was skipped as a fixed code: only not_installed / not_started mean "Claude Code asks once, say yes"."""
+        """Why it was skipped, as a fixed code: only not_installed / not_started mean "Claude Code asks once"."""
         from .claude_folder import refusal_code
 
         return refusal_code(self.env, root, allow_parent=allow_parent)

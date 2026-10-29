@@ -57,11 +57,11 @@ __all__ = [
 
 HUB_OPS: dict[str, int] = {
     "hub.connect": 1, "hub.link": 1, "hub.unbind": 1, "hub.status": 1, "hub.refresh": 1, "hub.handoff": 1,
-    "hub.profile": 1, "hub.directory": 1,
+    "hub.profile": 1, "hub.directory": 1, "hub.shared": 1,
     "hub.history": 1, "keys.rotate": 1, "hub.switch": 1,
 }  # fmt: skip
 NETWORK_OPS = frozenset(
-    {"hub.connect", "hub.link", "hub.unbind", "hub.refresh", "hub.switch", "hub.directory", "hub.profile"}
+    {"hub.connect", "hub.link", "hub.unbind", "hub.refresh", "hub.switch", "hub.directory", "hub.profile", "hub.shared"}
 )
 HUB_CAPS = ["hub/1"]
 _MU = threading.Lock()
@@ -107,6 +107,7 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"query": {"type": "string", "maxLength": 80}},
         "additionalProperties": False,
     },
+    "hub.shared": {"type": "object", "properties": {}, "additionalProperties": False},
     "hub.link": {  # run-9 feedback 6: a read; fetch the hub card named by a connect link and check it against the link
         "type": "object",
         "properties": {"link": {"type": "string", "minLength": 8, "maxLength": 1024}},
@@ -815,7 +816,7 @@ def serve(call: Call) -> dict[str, Any]:
         if state is None or state.status != "bound":
             return ok_result({"profile": args["profile"], "pushed": False})
         return {"plan": {"op": op, "args": args, "state": state, "dev": workspace_dev(service)}}
-    if op == "hub.directory":
+    if op in ("hub.directory", "hub.shared"):
         if state is None or state.status != "bound":
             raise HostError("hub.not_joined", "this workspace is not connected to a hub")
         return {"plan": {"op": op, "args": args, "state": state, "dev": workspace_dev(service)}}
@@ -975,6 +976,15 @@ def _run(call: Call, plan: dict[str, Any]) -> dict[str, Any]:
             pass
         return ok_result({"profile": plan["args"]["profile"], "pushed": pushed})
     wsk_pub, sign = _wsk_sign(service)
+    if plan["op"] == "hub.shared":
+        try:
+            link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"])
+            try:
+                return ok_result({**link.call("shared_get", {}), "untrusted": True})
+            finally:
+                getattr(transport, "close", lambda: None)()
+        except HubRefused as exc:
+            raise _refused(exc.code) from None
     if plan["op"] == "hub.directory":
         try:
             link, transport = _snapshot_link(service, plan["state"], wsk_pub, sign, plan["dev"])

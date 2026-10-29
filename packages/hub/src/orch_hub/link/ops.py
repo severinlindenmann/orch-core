@@ -130,6 +130,16 @@ def _require_pin(c: OpContext) -> dict[str, str]:
     return pin
 
 
+def _require_not_pending(c: OpContext) -> None:
+    """Company content is served only when no cleanup of this workspace is pending (a drop that failed is retried)."""
+    access = getattr(c, "access", None)
+    if access is not None:
+        from ..access.orgcleanup import org_cleanup
+
+        if org_cleanup(access).is_pending(c.workspace_id):
+            raise Refused("unavailable")
+
+
 def _require_bound(c: OpContext) -> None:
     st = c.registry.binding_state(c.workspace_id)
     if st is None:
@@ -297,6 +307,11 @@ def binding_put(c: OpContext) -> dict[str, Any]:
             state = H.apply_unbound(held, u)
         else:
             raise Refused("malformed")
+        owes_drop = c.access is not None and (kind == "hub.unbound" or held is None or held.get("status") != "bound")
+        if owes_drop:  # marked before the commit: a crash right after it still leaves the mark, and nothing is served
+            from ..access.orgcleanup import org_cleanup
+
+            org_cleanup(c.access).mark(c.workspace_id)
         c.registry.set_binding_state(c.workspace_id, state, obj)
 
     def locked(step: Callable[[], None]) -> Callable[[], None]:
@@ -312,12 +327,13 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         ):
             c.spaces.on_unbind(c.workspace_id)  # leaves every space in the same step (protocol.md §10.4)
 
-    def drop_secrets() -> None:
-        # a workspace that left (or is joining afresh) keeps no share and no wrap: one transaction in the store
-        if c.access is not None and (kind == "hub.unbound" or held is None or held.get("status") != "bound"):
-            from ..access.orgsecrets import org_secrets
+    def drop_org_content() -> None:
+        # a workspace that left (or is joining afresh) keeps no company secret, skill or tool server; a failed drop stays
+        # pending and is retried, and nothing is served to that workspace meanwhile
+        if owes_drop:
+            from ..access.orgcleanup import org_cleanup
 
-            org_secrets(c.access).drop_workspace(c.workspace_id)
+            org_cleanup(c.access).drop(c.workspace_id)
 
     steps: list[tuple[str, Callable[[], None]]] = [
         ("wk_seal retire", locked(lambda: _sync_wk_seals(c, state))),
@@ -325,7 +341,7 @@ def binding_put(c: OpContext) -> dict[str, Any]:
         ("view drop", locked(lambda: _drop_view(c, state))),
         ("downstream binding", lambda: c.downstream.binding(c.workspace_id, obj)),
         ("spaces on_unbind", leave_spaces),
-        ("org secrets drop", drop_secrets),
+        ("org content drop", drop_org_content),
     ]
     for name, step in steps:
         try:
@@ -343,17 +359,26 @@ def snapshot_get(c: OpContext) -> dict[str, Any]:
     return {"snapshot": c.snapshots.snapshot(c.workspace_id, mode)}
 
 
+def _fetched(c: OpContext, bundle: dict[str, Any]) -> dict[str, Any]:
+    """The gates were checked before the fetch; a leave or a drop that began meanwhile must not hand out the bundle."""
+    with c.registry.lock:
+        _require_bound(c)
+        _require_not_pending(c)
+    return bundle
+
+
 def org_skills_get(c: OpContext) -> dict[str, Any]:
     """M3 (#1430): the signed company-skills bundle of the LINK's workspace (never a caller-named one). Only a bound
     workspace gets one; what is in it is offered, not enabled: the owner's accept at the host decides."""
     with c.registry.lock:
         _require_pin(c)
         _require_bound(c)
+        _require_not_pending(c)
         mode = c.registry.mode(c.workspace_id)
     fn = getattr(c.snapshots, "org_skills", None)
     if fn is None:
         raise Refused("unavailable")
-    return {"bundle": fn(c.workspace_id, mode)}
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
 
 
 def mcp_servers_get(c: OpContext) -> dict[str, Any]:
@@ -362,11 +387,12 @@ def mcp_servers_get(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:
         _require_pin(c)
         _require_bound(c)
+        _require_not_pending(c)
         mode = c.registry.mode(c.workspace_id)
     fn = getattr(c.snapshots, "mcp_servers", None)
     if fn is None:
         raise Refused("unavailable")
-    return {"bundle": fn(c.workspace_id, mode)}
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
 
 
 def org_secrets_get(c: OpContext) -> dict[str, Any]:
@@ -375,11 +401,12 @@ def org_secrets_get(c: OpContext) -> dict[str, Any]:
     with c.registry.lock:
         _require_pin(c)
         _require_bound(c)
+        _require_not_pending(c)
         mode = c.registry.mode(c.workspace_id)
     fn = getattr(c.snapshots, "org_secrets", None)
     if fn is None:
         raise Refused("unavailable")
-    return {"bundle": fn(c.workspace_id, mode)}
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
 
 
 def secret_use(c: OpContext) -> dict[str, Any]:
@@ -389,6 +416,7 @@ def secret_use(c: OpContext) -> dict[str, Any]:
         raise Refused("unavailable")
     _require_pin(c)
     _require_bound(c)
+    _require_not_pending(c)
     from ..access.orgsecrets import org_secrets
 
     try:
@@ -608,6 +636,80 @@ def directory_get(c: OpContext) -> dict[str, Any]:
     return {"entries": entries}
 
 
+def audience_get(c: OpContext) -> dict[str, Any]:
+    """P02: the people and teams of this hub that the owner of the calling workspace may name as readers of a shared
+    ticket (contract 10.2b ``audience``). Display data for the host's form: names are cleaned text and are never
+    signed; only the ids go into the signed audience. The owner alias itself and the hub-admin group are not offered
+    (a hub role grants nothing in a selective workspace); disabled people are not offered. No argument."""
+    from ..access.store import ADMIN_GROUP
+    from ..contract.phase4 import strip_text
+
+    if c.access is None:
+        raise Refused("unavailable")
+    with c.registry.lock:  # pin, binding, mode and owner are judged together, on the state as it is now
+        _require_pin(c)
+        _require_bound(c)
+        if c.registry.mode(c.workspace_id) != "selective":
+            raise Refused("wrong_mode")  # sharing readers exist only in selective mode
+        owner = _owner_user(c)
+        users = c.access.users()
+        groups = c.access.groups()
+    people = [
+        {"user_id": u["user_id"], "name": strip_text(u["name"])[:80]}
+        for u in users
+        if not u["disabled"] and u["user_id"] != owner
+    ][:200]
+    teams = [{"group": g["name"], "members": len(g["members"])} for g in groups if g["name"] != ADMIN_GROUP][:50]
+    return {"people": people, "teams": teams}
+
+
+def shared_get(c: OpContext) -> dict[str, Any]:
+    """P02: the shared TICKETS other workspaces of this hub have shared with the owner of the calling workspace (through
+    their owner-signed audience, never as a role). The viewer is always the calling workspace's owner alias; the answer
+    is built by ``ShareService.list_shared`` (the one read rule), skips the viewer's own workspace and names who shared
+    it. Display data for the host's Tickets list; it grants nothing. No argument."""
+    from ..contract.phase4 import strip_text
+
+    if c.shares is None or c.access is None:
+        raise Refused("unavailable")
+    with c.registry.lock:
+        _require_pin(c)
+        _require_bound(c)
+        viewer = _owner_user(c)
+        names = {u["user_id"]: u["name"] for u in c.access.users()}
+        sources = [
+            (ws, c.registry.owner_alias(ws))
+            for ws in sorted(c.registry.pins())
+            if ws != c.workspace_id and c.registry.mode(ws) == "selective"
+        ]
+    out: list[dict[str, Any]] = []
+    for ws, owner in sources:
+        if owner is None or owner == viewer:
+            continue
+        for it in c.shares.list_shared(viewer, ws):
+            o = it["item"]
+            if o["item_kind"] != "ticket":
+                continue
+            content = o["content"]
+            out.append(
+                {
+                    "workspace_id": ws,
+                    "item_id": o["item_id"],
+                    "shared_by": strip_text(names.get(owner, "someone on the hub"))[:80],
+                    "key": content["key"],
+                    "type": content["type"],
+                    "title": content["title"],
+                    "status": content["status"],
+                    "labels": content["labels"],
+                    "deadline": content["deadline"],
+                    "description": content.get("description"),
+                }
+            )
+            if len(out) >= 100:
+                return {"items": out}
+    return {"items": out}
+
+
 def status_put(c: OpContext) -> dict[str, Any]:
     if c.registry.pin(c.workspace_id) is None:
         raise Refused("unknown_workspace")
@@ -686,6 +788,8 @@ HANDLERS: dict[str, Callable[[OpContext], dict[str, Any]]] = {
     "secret_use": secret_use,
     "profile_put": profile_put,
     "directory_get": directory_get,
+    "audience_get": audience_get,
+    "shared_get": shared_get,
 }
 
 __all__ = ["HANDLERS", "OpContext"]

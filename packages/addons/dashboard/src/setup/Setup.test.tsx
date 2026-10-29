@@ -796,6 +796,24 @@ test('the summary comes from the review core returned, not from the choices on t
   expect(summary).toHaveTextContent('In a terminal, with your passphrase')
 })
 
+test('the history flag is one plain line; the git words only show once Everything you approve is open', async () => {
+  const { api } = withReview({
+    flags: [{ id: 'git', text: 'Keep a history of changes in this folder. Your files stay as they are.', detail: 'This runs git init, keeps .orch/ and .orch-work/ out of the repository, and makes one empty first commit.' }],
+  })
+  render(<Setup api={api} />)
+  await approval()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Your secret words' })
+  await check()
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  const summary = document.querySelector('.review-summary')!
+  expect(summary).toHaveTextContent('Keep a history of changes in this folder. Your files stay as they are.')
+  expect(summary).not.toHaveTextContent(/git init|\.orch/)
+  const fold = document.querySelector('.review-technical') as HTMLDetailsElement
+  expect(fold.open).toBe(false)
+  expect(fold).toHaveTextContent('git init')
+})
+
 test('nothing about agents or approval is claimed when the review has none of it', async () => {
   const { api } = withReview({ items: [], flags: [] })
   render(<Setup api={api} />)
@@ -1101,10 +1119,10 @@ test('reviewFacts builds the short card in plain words from the review', () => {
     ],
   } as unknown as Review
   const facts = reviewFacts(review)
-  expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Owner', 'Folder', 'How you approve', 'Agents', 'History'])
+  expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Owner', 'Project folder', 'How you approve', 'Agents', 'History'])
   expect(facts.find((f) => f.label === 'Agents')!.value).toBe('may work for 3 days')
   expect(facts.find((f) => f.label === 'Add-ons')).toBeUndefined()
-  expect(facts.find((f) => f.label === 'Folder')!.value).toBe('p')
+  expect(facts.find((f) => f.label === 'Project folder')!.value).toBe('p')
 })
 
 

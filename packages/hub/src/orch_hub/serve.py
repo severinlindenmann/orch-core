@@ -22,6 +22,7 @@ from typing import TextIO
 from . import colocation as CO
 from .access import Access, AccessSnapshots
 from .access.cli import ACCESS_FILE
+from .access.orgcleanup import org_cleanup
 from .activity import ActivityLog
 from .audit import open_log
 from .changes import Changes
@@ -43,6 +44,7 @@ from .relay import PushNotifier, RelayClient, RelayError
 from .relay.client import Transport
 from .router import AccessAuthz, RouteQueue, Router
 from .services import Services
+from .settings import SETTINGS_FILE
 from .shares import ShareService, ShareStore, hxk_handle
 from .spaces import SpaceService, SpaceStore
 from .switch import SwitchService
@@ -223,6 +225,7 @@ def serve(
         hxk=hxk_handle(keys.hxk_pub, keys.hxk_exchange),
         dev_mode=cfg.dev,
         on_change=audit.share_change,
+        access=access,  # a signed audience (P02) is resolved against current group membership
     )
     views = build_view_services(state, wk_seals=wk_seals, registry=registry, access=access)
     channels = Channels(keys, access, state / CHANNELS_FILE, audit=audit, dev_mode=cfg.dev)
@@ -293,6 +296,7 @@ def serve(
                 link_endpoint=lambda: f"{host}:{server.address[1]}",
                 push=notifier,
                 setup_token_file=state / SETUP_TOKEN_FILE,
+                settings_file=state / SETTINGS_FILE,
                 switch=switch,
                 services=Services(
                     relay_url=cfg.relay_url,
@@ -345,6 +349,7 @@ def serve(
         dev_mode=cfg.dev,
     )
     try:
+        org_cleanup(access).retry()  # a drop that a crash or a failure left undone
         shares.reconcile()  # items of a workspace that is no longer a bound selective one are deleted
         spaces.reconcile()  # a workspace that is no longer bound leaves its spaces (also after a crash)
         reconcile_full_only(registry, wk_seals, views.store)  # wraps and synced view of a non-full workspace go
@@ -355,6 +360,7 @@ def serve(
         def _retry() -> None:  # D9-1 share purge, D9/D15 wrap retire and view drop: retried while the hub runs
             while not stop.wait(30):
                 shares.retry_pending()
+                org_cleanup(access).retry()  # company content of a workspace that left, if a drop failed
                 reconcile_full_only(registry, wk_seals, views.store)
                 reconcile_relay_purge(notifier)  # a CLI revoke (another process) reaches the relay within a tick
                 try:

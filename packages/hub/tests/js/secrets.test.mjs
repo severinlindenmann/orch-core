@@ -192,3 +192,14 @@ test("the page source never logs, stores, navigates or schedules, and never read
   const mut = code.match(/^(let|var)\s+\w+/gm);
   assert.equal(mut, null, "no module-level mutable state");
 });
+
+test("review fix 1: a long pasted value is refused with a length message, never cut by the box", async () => {
+  const calls = [];
+  const view = secretsView({ ...data, secrets: [] }, { save: async (f) => { calls.push(f); return { ok: true }; } });
+  for (const b of find(view, (n) => n.tag === "input" && n.attrs.type === "password")) assert.equal(b.attrs.maxlength, undefined, "no maxlength: it would cut a paste silently");
+  const input = fill(view, "crm-key", "x".repeat(5000));
+  await button(view, "Save secret").listeners.click();
+  assert.equal(calls.length, 0);
+  assert.match(find(view, (n) => n.attrs.role === "alert")[0].textContent, /between 8 and 4096/);
+  assert.equal(input.value.length, 5000);
+});

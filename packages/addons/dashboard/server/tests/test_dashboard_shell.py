@@ -50,11 +50,19 @@ def test_closed_route_allowlist():
         "/api/w/{ws}/hub",
         "/api/w/{ws}/hub/link",
         "/api/w/{ws}/hub/share",
+        "/api/w/{ws}/hub/share/audience",
+        "/api/w/{ws}/hub/shared",
         "/api/w/{ws}/hub/share/preview",
         "/api/w/{ws}/hub/share/revoke",  # one click: stop sharing a ticket (owner, full session)
         "/api/w/{ws}/hub/share/rule-remove",  # one click: stop sharing by a rule (owner, full session)
         "/api/w/{ws}/hub/share/rule-add",  # one click: share more (owner, full LOCAL session, a plan shown here)
         "/api/w/{ws}/hub/share/sync",  # one click: confirm the shown selection (same rules)
+        "/api/w/{ws}/org",  # M3 H-5: company offers (a read)
+        "/api/w/{ws}/org/item",  # a read of one item
+        "/api/w/{ws}/org/accept",  # one click: turn a company item on (owner, full LOCAL session, the digest shown)
+        "/api/w/{ws}/org/decline",  # one click: turn it off (owner, full session)
+        "/api/w/{ws}/org/sync",  # one click: get the latest from the hub
+        "/api/w/{ws}/org/tool",  # one click: a tool On (local) or Off (owner, full session)
         "/api/w/{ws}/hub/switch",
         "/api/w/{ws}/hub/rail",
         "/auth/switch",

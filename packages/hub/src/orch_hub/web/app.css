@@ -299,3 +299,7 @@ button[aria-busy="true"]::before { content:""; display:inline-block; width:12px;
 .connection-matrix { overflow-x:auto; }
 .connection-matrix th, .connection-matrix td { padding:12px; text-align:left; }
 @media (max-width:639px) { .connections-map { display:none; } }
+
+.qr { width:176px; height:176px; border-radius:8px; overflow:hidden; background:#fff; }
+.qr svg { display:block; width:100%; height:100%; }
+.totp-key { margin-top:8px; }

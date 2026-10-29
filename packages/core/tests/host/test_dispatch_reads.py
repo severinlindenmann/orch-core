@@ -135,8 +135,10 @@ def args_for(op: str, ref: str) -> dict:
         "host.status",
         "hub.status",
         "hub.directory",
+        "hub.shared",
         "share.rules",
         "share.preview",
+        "share.audience",
     }:  # share.*: owner-only (C6)
         return {}
     if op == "org.show":  # M3 H-2: owner-only; names an offered item, never a ticket (standalone here: hub.not_joined)

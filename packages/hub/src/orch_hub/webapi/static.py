@@ -20,6 +20,7 @@ _JS = "text/javascript; charset=utf-8"
 FILES: dict[str, tuple[str, str]] = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/c": ("connect.html", "text/html; charset=utf-8"),
+    "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", _JS),
     "/channel.js": ("channel.js", _JS),
@@ -41,6 +42,8 @@ FILES: dict[str, tuple[str, str]] = {
     "/workspaces.js": ("workspaces.js", _JS),
     "/phones.js": ("phones.js", _JS),
     "/invite.js": ("invite.js", _JS),
+    "/qr.js": ("qr.js", _JS),
+    "/totp.js": ("totp.js", _JS),
     "/seal.js": ("seal.js", _JS),
 }
 

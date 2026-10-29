@@ -46,12 +46,12 @@ test("hash changes and sign-in continuation dispatch the wanted view", async () 
   const visits = [], handlers = {};
   const location = { hash: "#/admin" };
   const context = vm.createContext({ location, parseRoute, PAGES: [], registerPages() {}, window: { addEventListener: (event, fn) => { handlers[event] = fn; } },
-    phones: async () => visits.push("phones"), handoffs: async () => visits.push("handoffs"), account: async () => visits.push("account"), home: async () => visits.push("home"), approvals: async () => visits.push("approvals"), workspaces: async () => visits.push("workspaces"), services: async () => visits.push("services"), admin: async () => visits.push("admin"), activity: async () => visits.push("activity"),
+    phones: async () => visits.push("phones"), handoffs: async () => visits.push("handoffs"), account: async () => visits.push("account"), home: async () => visits.push("home"), approvals: async () => visits.push("approvals"), workspaces: async () => visits.push("workspaces"), services: async () => visits.push("services"), admin: async () => visits.push("admin"), registerRoute: async () => visits.push("register"), activity: async () => visits.push("activity"),
     loginView: () => visits.push("login"), addonView: async (w, k) => visits.push("addon:" + k), settingsView: async (w, k) => visits.push("settings:" + k), setupView: () => visits.push("setup"), landFromTicket: async () => visits.push("ticket") });
   vm.runInContext(source.slice(source.indexOf("// Serialize renders")), context);
   await context.renderRoute();
   assert.equal(visits.at(-1), "admin");
-  for (const page of ["home", "approvals", "services", "activity", "account", "handoffs", "phones", "home"]) { location.hash = "#/" + page; await handlers.hashchange(); assert.equal(visits.at(-1), page); }
+  for (const page of ["home", "approvals", "services", "activity", "account", "handoffs", "phones", "register", "home"]) { location.hash = "#/" + page; await handlers.hashchange(); assert.equal(visits.at(-1), page); }
   location.hash = "#/w/" + "ab".repeat(16) + "/addon/terms";
   vm.runInContext(source.slice(source.indexOf("async function afterLogin()"), source.indexOf("// FB15")), context);
   await context.afterLogin();
@@ -63,7 +63,7 @@ test("offline workspace stays inside the shell and never requests a switch ticke
   let output;
   const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, skeleton: () => ({}), show() {}, state: { rail: { rows: [{ id: ws, name: "Legal", online: false, badge: 3 }] } },
     refresh: async () => true, loadRail: async () => {}, renderText: String,
-    workspaceStatus: () => "offline since yesterday", h: (tag, props) => ({ tag, ...props }),
+    workspaceStatus: () => "offline since yesterday", h: (tag, props, ...kids) => ({ tag, ...props, kids }),
     shell: (active, ...nodes) => { output = { active, nodes }; },
     api: async (method, path) => { calls.push(path); return { status: 200, body: { items: [] } }; } });
   vm.runInContext(source.slice(source.indexOf("async function workspacePage("), source.indexOf("// Serialize renders")), context);
@@ -71,7 +71,7 @@ test("offline workspace stays inside the shell and never requests a switch ticke
   assert.equal(output.active, "workspaces");
   assert.equal(output.nodes[0].text, "Legal is offline since yesterday");
   assert.match(output.nodes[2].text, /3 things need you/);
-  assert.deepEqual(calls, ["/me/needs-you"]);
+  assert.deepEqual(calls, ["/me/needs-you", "/me/shared?workspace_id=" + ws]);
 });
 
 test("sign out clears all person data before the login screen", async () => {
@@ -117,4 +117,39 @@ test("a page module is gated by the shell, not by itself: nobody signed in goes 
   state.user = { is_admin: true };
   await context.pageRender("secret")();
   assert.deepEqual(visits.splice(0), ["refresh", "render:secret", "refresh"]);
+});
+
+test("the workspace page lists shared tickets under the waiting count, for the owner with whom and for others by whom", async () => {
+  const ws = "ab".repeat(16);
+  let output;
+  const shared = [{ workspace_id: ws, title: "Invoice export for Ben", shared_with: ["Ben Test"] }, { workspace_id: ws, title: "Other", shared_by: "Anna Test" }, { workspace_id: "cd".repeat(16), title: "Elsewhere" }];
+  const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, skeleton: () => ({}), show() {}, state: { rail: { rows: [{ id: ws, name: "Anna Test's workspace", online: true, canOpen: true }] } },
+    refresh: async () => true, loadRail: async () => {}, renderText: String, workspaceStatus: () => "", OPEN_FIRST: "", openWorkspace() {},
+    h: (tag, props, ...kids) => ({ tag, ...props, kids: kids.flat() }),
+    shell: (active, ...nodes) => { output = nodes; },
+    api: async (method, path) => ({ status: 200, body: path.startsWith("/me/shared") ? { items: shared } : { items: [] } }) });
+  vm.runInContext(source.slice(source.indexOf("async function workspacePage("), source.indexOf("// Serialize renders")), context);
+  await context.workspacePage({ kind: "workspace", workspace: ws });
+  const section = output.find((n) => n?.tag === "section");
+  assert.equal(section.kids[0].text, "Shared tickets (2)"); // another workspace's ticket is not listed
+  const lines = JSON.stringify(section.kids.slice(1));
+  assert.match(lines, /Shared with Ben Test/); assert.match(lines, /Shared by Anna Test/);
+});
+
+test("a failed first read of the workspaces never turns the existing ones into joins", async () => {
+  const timers = [], renders = [];
+  const one = { status: 200, body: { workspaces: [{ workspace_id: "a".repeat(32) }] } };
+  const reads = [{ status: 500, body: {} }, one, one, { status: 200, body: { workspaces: [{ workspace_id: "a".repeat(32) }, { workspace_id: "b".repeat(32) }] } }];
+  let n = 0;
+  const context = vm.createContext({ pageLoading() {}, loading: () => () => {}, refresh: async () => true, loadRail: async () => {}, state: { user: { user_id: "u" }, menu: false },
+    api: async (m, path) => path === "/me/workspaces" ? reads[Math.min(n++, 3)] : { status: 200, body: {} },
+    workspacesView: (data) => { renders.push(data); return []; }, shell() {}, closeDialog() {}, openWorkspace() {}, dialog() {}, workspaceDetailsView() {}, h() {}, copyText() {}, pollLive() {},
+    newWorkspaces: (known, rows) => (rows ?? []).filter((w) => !known.has(w.workspace_id)), clearInterval() {}, document: { hidden: false },
+    setInterval: (fn) => { timers.push(fn); return timers.length; }, viewRevision: 0, workspacesTimer: 0, canAdmin: () => false });
+  vm.runInContext(source.slice(source.indexOf("async function workspaces("), source.indexOf("async function copyText")), context);
+  await context.workspaces();                 // first read fails: nothing known yet
+  await timers.at(-1)();                       // first good poll: drawn, not announced as a join
+  assert.equal(renders.at(-1).joined.length, 0);
+  await timers.at(-1)();
+  assert.equal(JSON.stringify(renders.at(-1).joined.map((w) => w.workspace_id)), JSON.stringify(["b".repeat(32)]));
 });

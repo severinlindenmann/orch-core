@@ -1399,8 +1399,36 @@ def test_p06_a_new_ticket_with_the_text_of_an_earlier_one_shows_its_own_review(
     rid = again.json()["request_id"]
     assert rid != first.json()["request_id"] and script.prepared == 2
     assert script.states[rid] == "bound"  # prepared, not signed
+    assert again.json()["repeat"] is True  # the page says: this makes another ticket like one already signed
     idems = [a["idem"] for c, a in script.clients[0].calls if c == "prepare"]
     assert len(set(idems)) == 2  # a new intent id: no earlier signature is reused
+
+
+def test_p06_a_lost_response_repress_of_a_new_ticket_is_already_done_with_its_sequence_replayed(
+    client, token, stub, script, host_check, rich
+):
+    script.features = ["custody", "sequence"]
+    body = {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}}
+    first = prepare(client, token, stub, body)
+    script.states[first.json()["request_id"]] = "submitted"
+    again = prepare(client, token, stub, body)
+    assert again.status_code == 409 and again.json()["error"]["code"] == "intent.done"
+    assert script.prepared == 1 and "sequence" not in again.json()  # no second ticket
+    replay = [a for a in host_check.reads if "sequence" in a]
+    assert replay and replay[0]["sequence"]["intent"]  # the host binds the sequence: it is sent along
+
+
+def test_p06_when_the_stepped_retry_is_also_signed_it_steps_once_more(client, token, stub, script, host_check, rich):
+    script.features = ["custody", "sequence"]
+    body = {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}}
+    a = prepare(client, token, stub, body).json()["request_id"]
+    script.states[a] = "submitted"
+    host_check.replay_error = "idem.conflict"
+    b = prepare(client, token, stub, body).json()["request_id"]
+    script.states[b] = "submitted"
+    c = prepare(client, token, stub, body)
+    assert c.status_code == 200, c.text
+    assert c.json()["request_id"] not in (a, b) and c.json()["repeat"] is True and script.prepared == 3
 
 
 def test_p06_a_comment_with_an_unreadable_signed_record_still_blocks(client, token, stub, script, host_check, rich):

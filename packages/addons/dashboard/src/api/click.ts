@@ -61,6 +61,8 @@ export interface ClickPrepared {
   expires_at: string
   op: string
   confirm: 'click'
+  /** P06: a new ticket like one already signed: this is a fresh review, not the earlier one. Shown beside it, never signed. */
+  repeat?: boolean
 }
 
 /** The click contract this page speaks (C3): the View carries `headline` and `risk_lines`. Announced on every click call. */

@@ -147,10 +147,30 @@ test("connect link is copied unchanged, shows expiry, and Copy says what to do n
   assert.equal(copied, "/join#one-time");
   assert.match(text(out), /Copied ✓/);
   let opened;
-  const withOpen = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { openLink: (l) => { opened = l; } })];
+  const withOpen = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { openLink: (l) => { opened = l; } }, { selected: "u1", self: "u1" })];
   clickButton(withOpen, "Open link");
   assert.equal(opened, "/join#one-time");
   assert.match(text(out), /Send this link to the workspace owner, or open it on their computer\./);
+});
+
+test("r11 P03: Open link is offered only for the signed-in person's own workspace, Copy for everyone", async () => {
+  const openBtn = (out) => find(out, (n) => n.tag === "button" && n.textContent === "Open link")[0];
+  const L = { link: "/c#x", expires_ms: NOW + 1800000 };
+  assert.equal(openBtn([connectWorkspaceView(L, {}, { selected: "u1", self: "u1" })]).hidden, false);
+  assert.equal(openBtn([connectWorkspaceView(L, {}, { selected: "u2", self: "u1" })]).hidden, true);
+  assert.equal(openBtn([connectWorkspaceView(L, {}, { selected: "u1" })]).hidden, true, "unknown signed-in person: Copy only");
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [], self: "u1", actions: {
+    people: async () => [{ user_id: "u1", name: "Anna" }, { user_id: "u2", name: "Ben" }],
+    connect: async (owner) => ({ link: "/c#" + owner, expires_ms: NOW + 1800000 }) } }, NOW);
+  await clickButton(out, "Connect a workspace");
+  const select = find(out, (n) => n.tag === "select")[0];
+  select.value = "u2";
+  await select.listeners.change({ target: select });
+  assert.equal(openBtn(out).hidden, true, "Ben's link is not opened in Anna's browser");
+  assert.ok(find(out, (n) => n.tag === "button" && n.textContent === "Copy")[0]);
+  select.value = "u1";
+  await select.listeners.change({ target: select });
+  assert.equal(openBtn(out).hidden, false, "Anna's own link can be opened here");
 });
 
 test("admin empty state connects; left disclosure includes only unbound rows and removes the selected row", async () => {
@@ -419,6 +439,117 @@ test("P04: Someone new shows a name field, calls invite (not connect), and shows
   assert.equal(find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Sign-in link")[0].getAttribute("value"), "http://hub.test/#invite=tok");
   assert.match(text(out), /come back here to connect their workspace/);
   assert.ok(refreshed >= 2, "the people list is refreshed after the invite");
+  find(out, (n) => n.tag === "section")[0].stopWaiting();
+});
+
+// r11 P12/P12b: after a sign-in link the panel waits for THAT link and turns into its person's workspace link by itself.
+const ANNA_ID = "a".repeat(32), BEN_ID = "c".repeat(32), STRANGER_ID = "d".repeat(32);
+const waitingPanel = (t, { peopleSeq, statusSeq, alive = () => true, expires = NOW + 1800000, inviteId = "0123456789abcdef" } = {}) => {
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: NOW });
+  const connected = [], asked = [];
+  let calls = 0, people = 0;
+  const out = workspacesView({ workspaces: [], handoffs: [], admin: [], self: ANNA_ID, actions: {
+    alive,
+    people: async () => peopleSeq(++people),
+    inviteStatus: async (id) => { asked.push(id); calls++; return statusSeq(calls); },
+    connect: async (who) => { connected.push(who); return { link: "/c#" + who, expires_ms: NOW + 1800000 }; },
+    invite: async () => ({ link: "http://hub.test/#invite=tok", expires_ms: expires, invite_id: inviteId }),
+    copy: async () => true,
+  } }, NOW);
+  return { out, connected, asked, calls: () => calls };
+};
+const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+const startInvite = async (out, name = "Ben") => {
+  await clickButton(out, "Connect a workspace");
+  const select = find(out, (n) => n.tag === "select")[0];
+  select.value = "__new__";
+  await select.listeners.change({ target: select });
+  find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Their name")[0].value = name;
+  await clickButton(out, "Create sign-in link");
+  return select;
+};
+const anna = { user_id: ANNA_ID, name: "Anna" }, ben = { user_id: BEN_ID, name: "Ben" }, stranger = { user_id: STRANGER_ID, name: "Ben" };
+const old = { user_id: "e".repeat(32), name: "Old" };
+
+test("r11 P12b: a stranger joining first is ignored; the person who used THIS link is the one connected", async (t) => {
+  const { out, connected, asked, calls } = waitingPanel(t, {
+    peopleSeq: (n) => n <= 2 ? [anna, old] : [anna, old, stranger, ben], // the stranger (also "Ben") is listed before ours
+    statusSeq: (n) => n <= 2 ? { state: "waiting" } : { state: "joined", user_id: BEN_ID, name: "Ben" } });
+  const select = await startInvite(out);
+  assert.match(text(out), /Waiting for Ben to sign in…/);
+  assert.doesNotMatch(text(out), /appears here once/);
+  t.mock.timers.tick(3000); await settle();
+  t.mock.timers.tick(3000); await settle();
+  assert.deepEqual(connected, [], "still waiting: the stranger in the people list is not our person");
+  t.mock.timers.tick(3000); await settle();
+  assert.deepEqual(asked, ["0123456789abcdef", "0123456789abcdef", "0123456789abcdef"]);
+  assert.deepEqual(connected, [BEN_ID], "exactly the user id the link status names");
+  assert.equal(select.value, BEN_ID);
+  assert.match(text(out), /✓ Ben has signed in/);
+  assert.equal(find(out, (n) => n.className === "ws-link")[0].hidden, false);
+  assert.equal(find(out, (n) => n.tag === "input" && n.getAttribute("aria-label") === "Connect link")[0].value, "/c#" + BEN_ID);
+  assert.equal(find(out, (n) => n.tag === "button" && n.textContent === "Open link")[0].hidden, true, "Ben's link is copied, not opened here");
+  const before = calls();
+  t.mock.timers.tick(9000); await settle();
+  assert.equal(calls(), before, "the poll stopped");
+});
+
+test("r11 P12b: on link expiry, an ended link or a status without a user, the page asks to pick, with nothing selected", async (t) => {
+  for (const [label, opts, ticks] of [
+    ["expiry", { statusSeq: () => ({ state: "waiting" }), expires: NOW + 4000 }, 2],
+    ["ended", { statusSeq: () => ({ state: "ended" }) }, 1],
+    ["joined without user", { statusSeq: () => ({ state: "joined", user_id: 7 }) }, 1],
+  ]) {
+    const p = waitingPanel(t, { peopleSeq: () => [anna, stranger], ...opts });
+    const select = await startInvite(p.out);
+    for (let i = 0; i < ticks; i++) { t.mock.timers.tick(3000); await settle(); }
+    assert.match(text(p.out), /Pick the person/, label);
+    assert.match(text(p.out), /Choose who signed in with your link/, label);
+    assert.equal(select.value, "", label + ": nobody preselected");
+    assert.deepEqual(p.connected, [], label + ": never guesses");
+    assert.doesNotMatch(text(p.out), /Waiting for Ben/, label);
+    const n = p.calls();
+    t.mock.timers.tick(9000); await settle();
+    assert.equal(p.calls(), n, label + ": stopped");
+    t.mock.timers.reset();
+  }
+});
+
+test("r11 P12b: a hand pick while the people list is loading wins; the invited person is not chosen", async (t) => {
+  let release;
+  const p = waitingPanel(t, {
+    peopleSeq: (n) => n <= 2 ? [anna, old] : new Promise((r) => { release = () => r([anna, old, ben]); }),
+    statusSeq: () => ({ state: "joined", user_id: BEN_ID, name: "Ben" }) });
+  const select = await startInvite(p.out);
+  t.mock.timers.tick(3000); await settle();
+  assert.ok(release, "the people list is loading");
+  select.value = old.user_id;
+  await select.listeners.change({ target: select });
+  release(); await settle();
+  assert.deepEqual(p.connected, [old.user_id], "only the hand pick is connected");
+  assert.equal(select.value, old.user_id);
+  assert.doesNotMatch(text(p.out), /Ben has signed in/);
+});
+
+test("r11 P12: the poll stops when the admin picks someone by hand or leaves the page", async (t) => {
+  const a = waitingPanel(t, { peopleSeq: () => [anna, old], statusSeq: () => ({ state: "waiting" }) });
+  const select = await startInvite(a.out);
+  select.value = ANNA_ID;
+  await select.listeners.change({ target: select });
+  const n1 = a.calls();
+  t.mock.timers.tick(9000); await settle();
+  assert.equal(a.calls(), n1, "a hand pick stops the watch");
+  t.mock.timers.reset();
+
+  let here = true;
+  const b = waitingPanel(t, { peopleSeq: () => [anna, old], statusSeq: () => ({ state: "waiting" }), alive: () => here });
+  await startInvite(b.out);
+  t.mock.timers.tick(3000); await settle();
+  const n2 = b.calls();
+  assert.ok(n2 >= 1);
+  here = false;
+  t.mock.timers.tick(9000); await settle();
+  assert.equal(b.calls(), n2, "leaving the page stops the watch");
 });
 
 test("P04: an invite that fails shows a plain error", async () => {

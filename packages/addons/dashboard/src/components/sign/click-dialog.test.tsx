@@ -238,6 +238,50 @@ describe('C3: the outcome press, with a contract-4 View', () => {
     expect(dialog).not.toHaveTextContent('contract 3 != 4')
     expect(within(dialog).queryByRole('button', { name: 'Try again' })).toBeNull()
   })
+
+  const expired = () => new ApiError(409, { code: 'human.click_refused', message: 'x', retryable: false, reason: 'expired' })
+  const armedView = (digest = DIGEST) => viewAnswer({ headline: HEADLINE, risk_lines: [], content: { title: 'Unsigned lure', headline: HEADLINE, ticket: { key: 'DEMO-0044', uid_tail: 'abcd1234' } } } as never, digest)
+
+  it('an existing same-text ticket offers Open it and Create another; Create another never arms, and one real Sign press signs the new review', async () => {
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.done', message: 'x', retryable: false, ticket: { key: 'DEMO-0044', title: 'Plan the launch' } }))
+    c.view.mockResolvedValue(armedView())
+    const { dialog } = await open()
+    expect(await within(dialog).findByText('You already have this ticket', {}, T)).toBeInTheDocument()
+    expect(within(dialog).getByTestId('open-existing-ticket')).toHaveTextContent('Open it')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create another' }))
+    // the real flow: the server sets no repeat for the fresh intent, the client says so itself
+    expect(await within(dialog).findByTestId('click-repeat-note', {}, T)).toHaveTextContent('another ticket like one already signed')
+    expect(c.prepare).toHaveBeenCalledTimes(2)
+    await new Promise((r) => setTimeout(r, ARM_MS + 1500)) // long enough for any arm to have signed
+    expect(c.sign).not.toHaveBeenCalled() // the new review needs its own Sign press
+    press(await armed(dialog)) // not armed: the plain Sign button, enabled after the review has been seen
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(1), T)
+  })
+
+  it('Try again arms only for a byte-identical review; a changed review waits for a fresh press', async () => {
+    c.view.mockResolvedValue(armedView())
+    c.sign.mockRejectedValueOnce(expired())
+    const { dialog } = await open()
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(1), { timeout: ARM_MS + 3000 }) // armed, then refused
+    // (a) the same review again: arms and signs as before
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Try again' }, T))
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(2), { timeout: ARM_MS + 3000 })
+  })
+
+  it('Try again with a changed review (other digest) does not sign by itself, then signs on a real press', async () => {
+    c.view.mockResolvedValueOnce(armedView())
+    c.sign.mockRejectedValueOnce(expired())
+    const { dialog } = await open()
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(1), { timeout: ARM_MS + 3000 })
+    c.view.mockResolvedValue(armedView('sha256:' + 'd'.repeat(64)))
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Try again' }, T))
+    await within(dialog).findByTestId('click-panel', {}, T)
+    await new Promise((r) => setTimeout(r, ARM_MS + 1500))
+    expect(c.sign).toHaveBeenCalledTimes(1)
+    press(await armed(dialog))
+    await waitFor(() => expect(c.sign).toHaveBeenCalledTimes(2), T)
+    expect(c.sign.mock.calls[1][2]).toBe('sha256:' + 'd'.repeat(64))
+  })
 })
 
 describe('[rev818] adversarial: the switch moving never re-binds or signs an open request', () => {

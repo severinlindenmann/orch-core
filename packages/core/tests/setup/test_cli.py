@@ -423,9 +423,50 @@ def test_open_workspace_goes_to_the_dashboard_service_with_a_login(tmp, tmp_path
     ictx.layout.ensure()
     save(ictx.layout, st)
     seen = []
+    ictx.health = lambda host, port, wait=0: True
     ictx.dashboard_entry = lambda: ["orch-dashboard"]
     ictx.mint_login = lambda argv, env: seen.append(argv) or "http://127.0.0.1:8151/#launch=abc&to=%2F"
     assert icli.workspace_login_url(ictx, "/w") == "http://127.0.0.1:8151/#launch=abc&to=%2F"
     assert seen == [["orch-dashboard"]]
     ictx.dashboard_entry = lambda: None
     assert icli.workspace_login_url(ictx, "/w") is None
+
+
+def test_open_workspace_waits_for_the_service_and_restarts_a_dead_one(tmp, tmp_path):
+    """r11-P01: the login link is minted only once the service answers; a service that never answers is started once
+    more; still nothing -> LoginUnavailable (setup's Finish turns it into a retryable 503), never a raw exception."""
+    from orch.install import cli as icli
+    from orch.install.state import load, save
+
+    ictx = icli.Ctx(env={"HOME": str(tmp_path)}, out=io.StringIO(), err=io.StringIO())
+    st = load(ictx.layout)
+    st["dashboard"] = {"port": 8151, "bind": "127.0.0.1", "url": "http://127.0.0.1:8151/", "service": "x"}
+    st["workspaces"] = [{"dir": "/w", "port": 8151}]
+    ictx.layout.ensure()
+    save(ictx.layout, st)
+    ictx.dashboard_entry = lambda: ["orch-dashboard"]
+    minted: list = []
+    ictx.mint_login = lambda argv, env: minted.append(1) or "http://127.0.0.1:8151/#launch=abc&to=%2F"
+    up = {"n": 0}
+    ictx.health = lambda host, port, wait=0: up["n"] >= 1
+    started: list = []
+    real_start = icli.start_dashboard
+    icli_start = lambda ctx, bind, port: (started.append(port), up.__setitem__("n", 1))[0]  # noqa: E731
+    try:
+        icli.start_dashboard = icli_start
+        assert icli.workspace_login_url(ictx, "/w", wait=0.05) == "http://127.0.0.1:8151/#launch=abc&to=%2F"
+        assert started == [8151] and minted == [1]
+        ictx.health = lambda host, port, wait=0: False
+        started.clear()
+        with pytest.raises(icli.LoginUnavailable):
+            icli.workspace_login_url(ictx, "/w", wait=0.05)
+        assert started == [8151] and minted == [1]  # no link minted on a service that does not answer
+        ictx.health = lambda host, port, wait=0: True
+        ictx.mint_login = lambda argv, env: None
+        with pytest.raises(icli.LoginUnavailable):
+            icli.workspace_login_url(ictx, "/w", wait=0.05)
+        ictx.mint_login = lambda argv, env: (_ for _ in ()).throw(OSError("boom"))
+        with pytest.raises(icli.LoginUnavailable):
+            icli.workspace_login_url(ictx, "/w", wait=0.05)
+    finally:
+        icli.start_dashboard = real_start

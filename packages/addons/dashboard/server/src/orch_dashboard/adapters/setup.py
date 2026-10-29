@@ -43,31 +43,43 @@ def refusal(code, status):
     )
 
 
+#: Finish starts the dashboard service and mints its login (core bounds that well below this): a longer read timeout
+FINISH_TIMEOUT = 45
+
+
+def connect_setup(path, timeout):
+    """A connected socket to the setup process at ``path``: a 0600 socket of this user in a private folder of this
+    user, and the peer is this user. Anything else raises (OSError or check_uid's error); the socket is then closed."""
+    path = Path(path)
+    info = path.lstat()
+    parent = path.parent.lstat()
+    if (
+        not stat.S_ISSOCK(info.st_mode)
+        or stat.S_IMODE(info.st_mode) != 0o600
+        or info.st_uid != os.getuid()
+        or not stat.S_ISDIR(parent.st_mode)
+        or parent.st_uid != os.getuid()
+        or parent.st_mode & 0o077
+    ):
+        raise OSError("unsafe setup socket")
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(timeout)
+    try:
+        sock.connect(str(path))
+        check_uid(sock, os.getuid())
+    except Exception:
+        sock.close()
+        raise
+    return sock
+
+
 class SetupConnection(http.client.HTTPConnection):
-    def __init__(self, path):
-        super().__init__("localhost", timeout=15)
+    def __init__(self, path, timeout=15):
+        super().__init__("localhost", timeout=timeout)
         self.path = Path(path)
 
     def connect(self):
-        info = self.path.lstat()
-        parent = self.path.parent.lstat()
-        if (
-            not stat.S_ISSOCK(info.st_mode)
-            or stat.S_IMODE(info.st_mode) != 0o600
-            or info.st_uid != os.getuid()
-            or not stat.S_ISDIR(parent.st_mode)
-            or parent.st_uid != os.getuid()
-            or parent.st_mode & 0o077
-        ):
-            raise OSError("unsafe setup socket")
-        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(self.timeout)
-        try:
-            self.sock.connect(str(self.path))
-            check_uid(self.sock, os.getuid())
-        except Exception:
-            self.close()
-            raise
+        self.sock = connect_setup(self.path, self.timeout)
 
 
 class SetupProxy:
@@ -119,8 +131,8 @@ class SetupProxy:
             finally:
                 os.close(fd)
 
-    def open(self, method, target, headers, body):
-        conn = SetupConnection(self.path)
+    def open(self, method, target, headers, body, timeout=15):
+        conn = SetupConnection(self.path, timeout=timeout)
         try:
             conn.request(method, target, body=body, headers=headers)
             reply = conn.getresponse()
@@ -198,7 +210,12 @@ def register(app, auth, proxy, port):
                 if key in request.headers
             }
             conn, reply = await asyncio.to_thread(
-                proxy.open, request.method, "/api/setup/" + route + ("?" + query if query else ""), headers, body
+                proxy.open,
+                request.method,
+                "/api/setup/" + route + ("?" + query if query else ""),
+                headers,
+                body,
+                FINISH_TIMEOUT if route == "finish" else 15,
             )
         except Exception:
             if conn:

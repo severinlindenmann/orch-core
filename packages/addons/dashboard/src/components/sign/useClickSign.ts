@@ -50,7 +50,9 @@ export interface ClickRun {
    * the retry counter advances (an explicit new attempt); with none prepared yet, the same intent is repeated so a lost
    * prepare answer returns the same request.
    */
-  again: (action: ClickAction) => Promise<void>
+  again: (action: ClickAction, opts?: { pressed?: boolean; repeatOf?: boolean }) => Promise<void>
+  /** Shown in the review after an explicit "Create another": it makes another thing like one already signed (display only). */
+  repeatNote: boolean
   /** Back to the start (the request must already be settled or cancelled). */
   reset: (keepKey?: boolean) => void
   /** The person switched workspace with a request open: it was cancelled. */
@@ -93,9 +95,14 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   const [settleNote, setSettleNote] = useState<string | null>(null)
   const [error, setError] = useState<unknown>(null)
   const [fresh, setFresh] = useState(false)
+  const [repeatNote, setRepeatNote] = useState(false)
   const live = useRef({ phase: 'idle' as ClickPhase, prepared: null as ClickPrepared | null, ws: undefined as string | undefined })
   const attempt = useRef<{ sig: string; retry: number; lost: boolean } | null>(null)
   const sequenceStart = useRef(false)
+  // The digest of the review the person last pressed Sign for, and the one-shot arming gate of `again`: a new review may
+  // arm itself only when a press was asked for AND its digest is byte-identical to the pressed one.
+  const pressedDigest = useRef<string | null>(null)
+  const armGate = useRef<{ digest: string | null } | null>(null)
   const busy = useRef(false)
   const mounted = useRef(true)
   const settled = useRef(onSettled)
@@ -127,14 +134,14 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   )
 
   const read = useCallback(
-    async (where: string, id: string, first = false) => {
+    async (where: string, id: string, first = false, gate: { digest: string | null } | null = null) => {
       setPhase('viewing')
       const got = await api.viewClick(where, id)
       if (!mounted.current || live.current.phase === 'cancelled' || live.current.prepared?.request_id !== id) return
       // Fail closed: the owner-mandated risk line must be exactly what the card says, or nothing is shown.
       if (got.view.risk !== CLICK_RISK) throw new ApiError(409, { code: 'human.click_refused', message: 'The review lacks the risk line.', retryable: false, reason: 'check_failed' })
       // C3: only a contract-4 View (headline and risk lines) of a request prepared here may run the one-press arm.
-      setFresh(first && contractViewOk(got.view))
+      setFresh(first && contractViewOk(got.view) && (!gate || (gate.digest !== null && gate.digest === got.view_digest)))
       setView(got)
       setProblem(null)
       setPhase('ready')
@@ -147,6 +154,8 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
      * opens on the host's View) passes `false`, so the one-press arm (`fresh`) is never set without a press. */
     async (action: ClickAction, retryFloor = 0, pressed = true) => {
       sequenceStart.current = action.action === 'new_sequence' && !!action.launch
+      const gate = armGate.current
+      armGate.current = null
       if (!ws || busy.current || live.current.phase !== 'idle') return // a double click is one prepare
       busy.current = true
       setProblem(null)
@@ -170,7 +179,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
         live.current.prepared = got
         live.current.ws = ws
         setPrepared(got)
-        await read(ws, got.request_id, pressed)
+        await read(ws, got.request_id, pressed, gate)
       } catch (e) {
         if (!mounted.current) return
         // The answer may have been lost: only then does "Try again" repeat the same intent. A definite answer (the
@@ -203,6 +212,7 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       const { prepared: open, ws: where } = live.current
       if (!open || !where || !view || busy.current || live.current.phase !== 'ready') return
       busy.current = true
+      pressedDigest.current = view.view_digest
       setPhase('signing')
       try {
         const delay = view.view.hold_allowed ? 10 : undefined // only a held action carries the delay; every other call keeps its old shape
@@ -337,12 +347,15 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     // Not keeping the attempt is an explicit "Do it again" / "Start again": the next prepare is another intent.
     if (!keepKey && attempt.current) attempt.current = { ...attempt.current, retry: attempt.current.retry + 1 }
     live.current.prepared = null
+    pressedDigest.current = null
+    armGate.current = null
     setSwitched(false)
     setLeftUnsettled(false)
     setSettleNote(null)
     setPrepared(null)
     setView(null)
     setFresh(false)
+    setRepeatNote(false)
     setProblem(null)
     setError(null)
     setSigned(null)
@@ -350,7 +363,8 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
   }, [setPhase])
 
   const again = useCallback(
-    async (action: ClickAction) => {
+    async (action: ClickAction, opts: { pressed?: boolean; repeatOf?: boolean } = {}) => {
+      const pressedBefore = pressedDigest.current
       const open = live.current.prepared
       if (open && error instanceof ApiError && error.reason === 'resumable') {
         setProblem(null)
@@ -365,7 +379,9 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
       } else {
         reset()
       }
-      await start(action)
+      if (opts.repeatOf) setRepeatNote(true)
+      armGate.current = { digest: (opts.pressed ?? true) ? pressedBefore : null } // the one place that decides arming for every caller
+      await start(action, 0, opts.pressed ?? true)
     },
     [cancel, reset, start, error, review],
   )
@@ -384,5 +400,5 @@ export function useClickSign(ws: string | undefined, onSettled?: (phase: 'done',
     }
   }, [])
 
-  return { retry: attempt.current?.retry ?? 0, phase, prepared, view, fresh, problem, signed, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, error }
+  return { retry: attempt.current?.retry ?? 0, phase, prepared, view, fresh, problem, signed, repeatNote, start, review, sign, cancel, again, reset, switched, leftUnsettled, settleNote, error }
 }

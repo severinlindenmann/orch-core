@@ -290,6 +290,9 @@ test('run 8: One click is the default where core suggests it, with the risk sent
   expect(screen.getByLabelText(/One click on this computer/)).toBeChecked()
   expect(screen.getByText('Recommended')).toBeVisible()
   expect(screen.getByText('No typing. Best on your own computer.')).toBeVisible()
+  // r11-P16: Passphrase is behind "Change these settings"
+  expect(screen.getByText(/Safest if others use this computer/)).not.toBeVisible()
+  fireEvent.click(screen.getByText('Change these settings'))
   expect(screen.getByText(/Safest if others use this computer/)).toBeVisible()
   const risk = screen.getByTestId('click-risk') as HTMLDetailsElement
   expect(risk.open).toBe(false) // the longer meaning is one click away, not in the main view
@@ -1020,7 +1023,7 @@ test('N7: the review names the workspace from what core returned, not from the t
   await screen.findByRole('heading', { name: 'Review your setup' })
   const box = container.querySelector('.review-facts')!
   expect(box).toHaveTextContent('Marketing')
-  expect(box).toHaveTextContent('RA-0001')
+  expect(box).not.toHaveTextContent('RA-0001') // r11-P15: the ticket prefix is in Details, not on the card
   expect(box).toHaveTextContent('orch-run2-a')
   expect(box).not.toHaveTextContent('/demo/')
   expect(box.textContent).not.toContain('Demo')
@@ -1179,10 +1182,11 @@ test('reviewFacts builds the short card in plain words from the review', () => {
     ],
   } as unknown as Review
   const facts = reviewFacts(review)
-  expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Owner', 'Project folder', 'How you approve', 'Agents', 'History'])
+  expect(facts.map((f) => f.label)).toEqual(['Workspace', 'Owner', 'Your project', 'How you approve', 'Agents', 'History'])
+  expect(facts.find((f) => f.label === 'Workspace')!.value).toBe('Marketing') // r11-P15: no ticket prefix on the card
   expect(facts.find((f) => f.label === 'Agents')!.value).toBe('may work for 3 days')
   expect(facts.find((f) => f.label === 'Add-ons')).toBeUndefined()
-  expect(facts.find((f) => f.label === 'Project folder')!.value).toBe('p')
+  expect(facts.find((f) => f.label === 'Your project')!.value).toBe('p')
 })
 
 
@@ -1308,13 +1312,13 @@ test.each([
   ['linux', false],
   [undefined, false],
 ])('the Background Items note shows only on a Mac (os %s)', async (os, shown) => {
-  const f = fake({ done: true, os })
-  render(<Setup api={f.api} />)
+  const f = fake({ running: true, os })
+  const { container } = render(<Setup api={f.api} />)
   await reveal()
   await check()
   await screen.findByRole('heading', { name: 'Review your setup' })
   fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
-  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+  await waitFor(() => expect(container.querySelector('ol.progress li')).not.toBeNull())
   expect(Boolean(screen.queryByText(/orch added items that run in the background/))).toBe(shown)
 })
 
@@ -1343,4 +1347,105 @@ test('N2: a repos setting for the setup folder is quiet, any other project path 
     expect(summary.textContent?.includes(`Project folder: ${path}`) ?? false).toBe(shown)
     cleanup()
   }
+})
+
+test('r11-P01: a Finish that cannot open the dashboard says so in plain words and Try again opens it', async () => {
+  const f = fake({ finish: true, done: true })
+  const orig = f.fetcher.getMockImplementation()!
+  let finishes = 0
+  f.fetcher.mockImplementation(async (u, i) => {
+    if (String(u).endsWith('/finish')) {
+      finishes += 1
+      if (finishes === 1)
+        return new Response(JSON.stringify({ error: { code: 'setup.dashboard_unavailable', message: 'x', retry: true } }), { status: 503 })
+      if (finishes === 2) return new Response('Internal Server Error', { status: 500 })
+    }
+    return orig(u, i)
+  })
+  const { container } = render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Finish setting up your workspace' })
+  fireEvent.click(screen.getByLabelText(/Work copies/))
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  await screen.findByRole('heading', { name: 'Review your setup' })
+  fireEvent.click(screen.getByRole('button', { name: 'Finish setup' }))
+  await screen.findByRole('heading', { name: 'Your workspace is ready' })
+  const assign = vi.fn()
+  vi.stubGlobal('location', { origin: location.origin, assign })
+  vi.spyOn(console, 'error').mockImplementation(() => {})
+  for (let n = 0; n < 2; n++) {
+    fireEvent.click(screen.getByRole('button', { name: n === 0 ? 'Open your workspace →' : 'Try again' }))
+    await screen.findByText('The dashboard did not open yet. Your workspace is safe. Press “Try again” to open it.')
+    const text = page(container)
+    expect(text).not.toMatch(/terminal/i)
+    expect(screen.getByRole('alert').textContent).not.toMatch(/http|500/)
+    expect(text).toContain('The page could not start the dashboard on this computer. Nothing was lost.')
+    expect(text).toContain('If this keeps failing, run orch setup again in your project folder.')
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+  await waitFor(() => expect(assign).toHaveBeenCalledWith('/'))
+  expect(finishes).toBe(3)
+})
+
+test('r11-P15: the Mac notice shows while the steps run, never on the ready or the error screen', async () => {
+  for (const [opts, shown] of [[{ running: true }, true], [{ done: true }, false], [{ failure: true }, false]] as const) {
+    const f = fake({ ...opts, os: 'darwin' })
+    const { container, unmount } = render(<Setup api={f.api} />)
+    await reveal()
+    await check()
+    await screen.findByRole('heading', { name: 'Review your setup' })
+    fireEvent.click(screen.getByRole('button', { name: 'Create workspace' }))
+    await waitFor(() => expect(container.querySelector('ol.progress li')).not.toBeNull())
+    if (!shown) await waitFor(() => expect(page(container)).toMatch(/ready|attention|Failed/))
+    expect(page(container).includes('Your Mac may say')).toBe(shown)
+    unmount()
+  }
+})
+
+
+test('r11-P16: the approval step shows the recommendation, a one-line summary and Continue; the rest is one click away', async () => {
+  const f = fake({ suggested: { method: 'click' } })
+  const { container } = render(<Setup api={f.api} />)
+  await approval()
+  const more = screen.getByTestId('approval-more') as HTMLDetailsElement
+  expect(more.open).toBe(false)
+  const radios = [...container.querySelectorAll('input[type=radio]')] as HTMLElement[]
+  expect(radios.filter((r) => !r.closest('details:not([open])'))).toHaveLength(1)
+  expect(screen.getByLabelText(/One click on this computer/)).toBeVisible()
+  expect(screen.getByRole('button', { name: '1 day' })).not.toBeVisible()
+  expect(screen.getByRole('switch', { name: /Keep a history/ })).not.toBeVisible()
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('No agent works here until you give access. Your history stays on this computer.')
+  // the summary follows the hidden choices
+  fireEvent.click(screen.getByText('Change these settings'))
+  fireEvent.click(screen.getByRole('button', { name: '3 days' }))
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Agents may work for 3 days; none start on this computer yet.')
+  fireEvent.click(screen.getByRole('switch', { name: /Let agents start on this computer now/ }))
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Agents can work on their own for 3 days. Your history stays on this computer.')
+  fireEvent.click(screen.getByRole('button', { name: '1 day' }))
+  fireEvent.click(screen.getByRole('switch', { name: /Keep a history/ }))
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('Agents can work on their own for 1 day. No history is kept.')
+  fireEvent.click(screen.getByRole('button', { name: 'No agent access' }))
+  expect(screen.getByTestId('approval-summary')).toHaveTextContent('No agent works here until you give access.')
+})
+
+test('r11-P16: the posted profile is the same whether or not the settings were opened', async () => {
+  const bodies: unknown[] = []
+  for (const open of [false, true]) {
+    const f = fake({ suggested: { method: 'click' } })
+    render(<Setup api={f.api} />)
+    await approval()
+    if (open) fireEvent.click(screen.getByText('Change these settings'))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+    await screen.findByRole('heading', { name: 'Your recovery words' })
+    bodies.push(f.calls.find((c) => c.path === 'profile')?.body)
+    cleanup()
+  }
+  expect(bodies[0]).toEqual(bodies[1])
+  expect(bodies[0]).toMatchObject({ method: 'click' })
+})
+
+test('r11-P16: without One click the settings are open, so the passphrase choice is never hidden', async () => {
+  render(<Setup api={fake({ clickOff: 'not on this computer' }).api} />)
+  await approval()
+  expect((screen.getByTestId('approval-more') as HTMLDetailsElement).open).toBe(true)
+  expect(screen.getByLabelText(/Passphrase/)).toBeVisible()
 })

@@ -361,7 +361,7 @@ def test_a_review_never_opens_a_hub_link_for_names(monkeypatch):
     assert shareops._names_for(SimpleNamespace(_share_names={"a" * 32: "Ben"}), {"a" * 32}) == {"a" * 32: "Ben"}
 
 
-# --- a long review is capped, with the totals beside it (the dashboard refuses an over-long list) ----------------
+# --- a long review is shown whole and bound whole; above the hard limit there is none -----------------
 
 
 def _item(logical, users=(), groups=(), description=False):
@@ -373,28 +373,50 @@ def _item(logical, users=(), groups=(), description=False):
     )  # fmt: skip
 
 
-def test_a_long_reader_list_is_capped_and_carries_its_total():
+def test_a_long_reader_list_is_listed_whole_not_cut():
     from types import SimpleNamespace
 
     service = SimpleNamespace(_share_names={})
-    users = [f"{n:032x}" for n in range(shareops.READERS_PEOPLE_CAP + 36)]
-    groups = [f"team-{n:03d}" for n in range(shareops.READERS_TEAMS_CAP + 8)]
-    got = shareops._readers(service, [_item("a", users, groups)])
-    assert len(got["people"]) == shareops.READERS_PEOPLE_CAP and got["people_total"] == len(users)
-    assert len(got["teams"]) == shareops.READERS_TEAMS_CAP and got["teams_total"] == len(groups)
-    short = shareops._readers(service, [_item("a", users[:2], ["team-x"])])
-    assert (short["people_total"], short["teams_total"]) == (2, 1) and len(short["people"]) == 2
+    users = [f"{n:032x}" for n in range(shareops.MAX_REVIEW_PEOPLE)]
+    got = shareops._readers(service, [_item("a", users)])
+    assert len(got["people"]) == shareops.MAX_REVIEW_PEOPLE and "people_total" not in got
 
 
-def test_a_widened_list_is_capped_and_each_row_carries_its_added_totals():
+def test_a_widened_list_names_every_person_added():
     from types import SimpleNamespace
 
     service = SimpleNamespace(_share_names={})
-    n = shareops.WIDENED_CAP + 5
-    users = [f"{k:032x}" for k in range(shareops.ADDED_PEOPLE_CAP + 3)]
-    items = [_item(f"ticket:{k}", users, ["t-a"], True) for k in range(n)]
+    users = [f"{k:032x}" for k in range(90)]
+    items = [_item(f"ticket:{k}", users, ["t-a"], True) for k in range(30)]
     st = SimpleNamespace(sent=[i.logical for i in items], confirmed=None)
     out = shareops._widened(service, st, items)
-    assert len(out) == shareops.WIDENED_CAP
-    assert len(out[0]["people_added"]) == shareops.ADDED_PEOPLE_CAP and out[0]["people_added_total"] == len(users)
-    assert out[0]["teams_added_total"] == 1
+    assert len(out) == 30 and len(out[0]["people_added"]) == 90
+
+
+def test_a_review_over_the_hard_limits_is_refused_in_plain_words(monkeypatch):
+    from types import SimpleNamespace
+
+    from orch.host.errors import HostError
+
+    service = SimpleNamespace(_share_names={})
+    monkeypatch.setattr(shareops, "_selective", lambda s: (_ for _ in ()).throw(HostError("hub.not_joined", "x")))
+    many = [f"{n:032x}" for n in range(shareops.MAX_REVIEW_PEOPLE + 1)]
+    with pytest.raises(HostError, match="reaches too many people") as e:
+        shareops._review(service, [_item("a", many)], set())
+    assert str(e.value).endswith(shareops.TOO_MANY) or shareops.TOO_MANY in str(e.value)
+    st = SimpleNamespace(sent=[], confirmed=None, widened=lambda want: want)
+    wide = [_item(f"ticket:{k}", ["1" * 32]) for k in range(shareops.MAX_REVIEW_WIDENED + 1)]
+    with pytest.raises(HostError, match="reaches too many people"):
+        shareops._review(service, wide, {i.logical for i in wide}, st)
+
+
+def test_the_plan_binds_the_readers_beyond_what_a_page_would_show():
+    from orch.hubclient import shares as S
+
+    first = [f"{n:032x}" for n in range(70)]
+    fact = S.TicketFact("u1", "DEMO-1", "feature", "T", "open", (), None)
+    payload = {"key": "DEMO-1", "type": "feature", "title": "T", "status": "open", "labels": [], "deadline": None}
+    a = S._item("ticket:u1", "ticket", fact, payload, None, {"users": first, "groups": []})  # noqa: SLF001
+    b = S._item("ticket:u1", "ticket", fact, payload, None, {"users": [*first[:-1], "f" * 32], "groups": []})  # noqa: SLF001
+    assert a is not None and b is not None
+    assert S.plan_of([a]) != S.plan_of([b])  # a confirm over a view that hides the 70th reader cannot match

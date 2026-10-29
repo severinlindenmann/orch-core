@@ -7,6 +7,26 @@ import * as served from "../../src/orch_hub/web/seal.js";
 import { internals, sealFixed, openFixed } from "./seal_seam.mjs";
 
 const DOC = JSON.parse(readFileSync(new URL("../../../../contracts/hub/vectors_org_secrets.json", import.meta.url), "utf8"));
+const REQUIRED_CASES = [
+  "open fails with changed hub_id",
+  "open fails with changed workspace_id",
+  "open fails with changed secret_id",
+  "open fails with changed version",
+  "open fails with changed wxk_version",
+  "open fails with changed expires_ms",
+  "open fails with changed name",
+  "open fails with a shorter name",
+  "open fails for a wrap sealed under purpose hub-share",
+  "open refuses a sealed short value",
+  "open refuses a sealed control character value",
+  "open refuses a sealed non-ASCII value",
+  "open refuses a sealed leading space value",
+  "open refuses a sealed trailing space value",
+  "open refuses a sealed long value",
+  "open refuses more than 366 days after issue",
+  "open ok exactly 366 days after issue",
+  "open refuses one ms past 366 days",
+];
 const toHex = (u) => Buffer.from(u).toString("hex");
 const fields = (a) => ({
   wxkPub: Uint8Array.from(Buffer.from(DOC.keys.wxk_pub, "hex")), hubId: a.hub_id, workspaceId: a.workspace_id, secretId: a.secret_id,
@@ -19,6 +39,11 @@ test("the served module exports exactly sealOrgSecret", () => {
   const src = readFileSync(new URL("../../src/orch_hub/web/seal.js", import.meta.url), "utf8");
   assert.ok(!/exportKey\s*\(\s*["'](pkcs8|jwk)|importKey\s*\(\s*["']jwk/.test(src), "no private-key export");
   assert.ok(/generateKey\([^)]*,\s*false\s*,/.test(src), "the ephemeral key is generated non-extractable");
+});
+
+test("the required security cases are in the vector file", () => {
+  const names = new Set(DOC.cases.map((c) => c.name));
+  assert.deepEqual(REQUIRED_CASES.filter((n) => !names.has(n)), []);
 });
 
 test("every case of the vector file is replayed", async () => {

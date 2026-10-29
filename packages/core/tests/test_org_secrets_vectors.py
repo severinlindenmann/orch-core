@@ -22,6 +22,28 @@ EPH = suite.private_key_from_scalar(int(DOC["keys"]["eph_scalar"], 16))
 FIELDS = ("hub_id", "workspace_id", "secret_id", "version", "wxk_version", "expires_ms", "name")
 
 
+REQUIRED_CASES = {
+    "open fails with changed hub_id",
+    "open fails with changed workspace_id",
+    "open fails with changed secret_id",
+    "open fails with changed version",
+    "open fails with changed wxk_version",
+    "open fails with changed expires_ms",
+    "open fails with changed name",
+    "open fails with a shorter name",
+    "open fails for a wrap sealed under purpose hub-share",
+    "open refuses a sealed short value",
+    "open refuses a sealed control character value",
+    "open refuses a sealed non-ASCII value",
+    "open refuses a sealed leading space value",
+    "open refuses a sealed trailing space value",
+    "open refuses a sealed long value",
+    "open refuses more than 366 days after issue",
+    "open ok exactly 366 days after issue",
+    "open refuses one ms past 366 days",
+}
+
+
 def _run(c: dict) -> dict:
     a = c["args"]
     try:
@@ -46,6 +68,12 @@ def _run(c: dict) -> dict:
     except O.OrgSecretRefused as e:
         return {"error": e.code}
     raise AssertionError(f"unhandled kind {c['kind']!r}")
+
+
+def test_required_cases_are_in_the_file() -> None:
+    """Deleting a security-relevant case from the vector file must turn this replay red."""
+    missing = REQUIRED_CASES - {c["name"] for c in DOC["cases"]}
+    assert not missing, sorted(missing)
 
 
 def test_every_case_is_replayed() -> None:

@@ -714,9 +714,7 @@ def steps(intent: Mapping[str, Any]) -> list[dict[str, Any]]:
         return out
     # EDIT: the title, pasted screenshots, sections, acceptance, tasks, links, then people (owner last)
     if "title" in intent:
-        out.append(
-            {"op": "set", "args": {"pairs": [f"title={intent['title']['text']}"]}, "kind": "title", "ref": True}
-        )
+        out.append({"op": "set", "args": {"pairs": [f"title={intent['title']['text']}"]}, "kind": "title", "ref": True})
     out.extend(_image_steps(intent))
     for sid in sorted(intent["sections"], key=SECTION_ORDER.index):
         out.append(
@@ -1284,7 +1282,9 @@ def build_content(prepared: Mapping[str, Any], *, verified: bool) -> dict[str, A
         content["subline"] = "its title, text, acceptance checks, tasks, repositories and people, as shown below"
         notes = content.setdefault("notes", [])
         if "title" in intent:
-            notes.append(f"Title: {signcontent.one(intent['title']['was'])} -> {signcontent.one(intent['title']['text'])}")
+            notes.append(
+                f"Title: {signcontent.one(intent['title']['was'])} -> {signcontent.one(intent['title']['text'])}"
+            )
         if intent["sections"]:
             names = ", ".join(signcontent.one(sid.replace("_", " ").capitalize()) for sid in intent["sections"])
             notes.append(f"Replaces the whole current text of: {names}.")

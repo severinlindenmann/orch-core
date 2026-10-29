@@ -25,7 +25,8 @@ import { Section } from '../new-ticket/SectionsEditor'
 import { PeoplePicker, type PeopleValue } from '../new-ticket/PeoplePicker'
 import type { Viewer } from './shared'
 
-export type EditFocus = { kind: 'ac' | 'task'; id: string }
+export type EditFocus = { kind: 'ac' | 'task'; id: string } | { kind: 'title' }
+export const MAX_TITLE = 200
 type TaskDraft = { text: string; verify: string; proves: string[] }
 type TaskDrafts = { edit: Record<string, TaskDraft>; add: TaskDraft[] }
 
@@ -33,10 +34,21 @@ type Edit = NonNullable<Extract<HandoffAction, { action: 'edit_sequence' }>>
 
 /** What the person changed, as the typed action; or what is wrong with it. Pure: tested without the dialog. */
 export function buildEdit(
-  ticket: Pick<TicketDocument, 'key' | 'type' | 'body' | 'acceptance_state' | 'people' | 'head'> & { artifacts?: { name: string }[] } & { links?: Pick<TicketLinks, 'repos' | 'branches'>; tasks_state?: TicketDocument['tasks_state'] },
-  want: { tasks?: TaskDrafts; sections: Partial<Record<SectionName, string>>; criteria: Record<string, string>; added: string[]; people: PeopleValue; links?: { repos: string[]; branches: Record<string, string> } },
+  ticket: { title?: string } & Pick<TicketDocument, 'key' | 'type' | 'body' | 'acceptance_state' | 'people' | 'head'> & { artifacts?: { name: string }[] } & { links?: Pick<TicketLinks, 'repos' | 'branches'>; tasks_state?: TicketDocument['tasks_state'] },
+  want: { title?: string; tasks?: TaskDrafts; sections: Partial<Record<SectionName, string>>; criteria: Record<string, string>; added: string[]; people: PeopleValue; links?: { repos: string[]; branches: Record<string, string> } },
   mayEditPeople: boolean,
 ): { action: Edit; steps: number } | { problem: string } | { nothing: true } {
+  // r7-P07: a new title is one line of 1-200 characters; the same as before is no change
+  let title: string | undefined
+  if (want.title !== undefined && ticket.title !== undefined) {
+    const text = want.title.trim()
+    if (text !== ticket.title.trim()) {
+      if (!text) return { problem: 'The title cannot be empty. Write the new title, or leave it as it is.' }
+      if (/[\r\n]/.test(text)) return { problem: 'The title is one line. Take the line break out.' }
+      if ([...text].length > MAX_TITLE) return { problem: `The title is longer than ${MAX_TITLE} characters. Shorten it.` }
+      title = text
+    }
+  }
   const sections: Record<string, string> = {}
   for (const name of SECTION_ORDER) {
     if (SECTIONS_BY_TYPE[ticket.type][name] === 'absent') continue
@@ -118,7 +130,7 @@ export function buildEdit(
   const images = pastedIn(texts).filter((i) => !(ticket.artifacts ?? []).some((a) => a.name === i.name))
   if (images.length > MAX_IMAGES) return { problem: `At most ${MAX_IMAGES} pictures fit in one signing run.` }
   const taskSteps = Object.keys(tasks.edit).length + tasks.add.length
-  const steps = images.length + taskSteps + Object.keys(sections).length + Object.keys(edit).length + add.length + (links ? 1 : 0) + Object.keys(people).length
+  const steps = (title ? 1 : 0) + images.length + taskSteps + Object.keys(sections).length + Object.keys(edit).length + add.length + (links ? 1 : 0) + Object.keys(people).length
   if (steps === 0) return { nothing: true }
   if (steps > MAX_SEQUENCE_STEPS) return { problem: `That is ${steps} separate changes and one signing run carries at most ${MAX_SEQUENCE_STEPS}. Sign some now and the rest after.` }
   return {
@@ -127,6 +139,7 @@ export function buildEdit(
       action: 'edit_sequence',
       key: ticket.key,
       head_seq: ticket.head.seq,
+      ...(title ? { title } : {}),
       ...(Object.keys(sections).length ? { sections } : {}),
       ...(Object.keys(edit).length || add.length ? { acceptance: { edit, add } } : {}),
       ...(taskSteps ? { tasks } : {}),
@@ -168,6 +181,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
   const workspaces = useQuery(queries.workspaces())
   const ws = workspaceOfTicket(ticket.key, workspaces.data ?? [])
   const mayEditPeople = viewer.role === 'owner' || viewer.role === 'maintainer' || ticket.people.owner === viewer.person
+  const [title, setTitle] = useState(ticket.title ?? '')
   const [sections, setSections] = useState<Partial<Record<SectionName, string>>>(() => ({ ...ticket.body }))
   const [criteria, setCriteria] = useState<Record<string, string>>(() => Object.fromEntries(ticket.acceptance_state.map((a) => [a.id, a.text])))
   const [added, setAdded] = useState<string[]>([])
@@ -180,7 +194,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
   const [problem, setProblem] = useState<string | null>(null)
   useEffect(() => { onBusy(signing !== null) }, [signing, onBusy])
   const acId = useId()
-  const built = useMemo(() => buildEdit(ticket, { sections, criteria, added, people, links, tasks }, mayEditPeople), [ticket, sections, criteria, added, people, links, tasks, mayEditPeople])
+  const built = useMemo(() => buildEdit(ticket, { title, sections, criteria, added, people, links, tasks }, mayEditPeople), [ticket, title, sections, criteria, added, people, links, tasks, mayEditPeople])
   const shown = SECTION_ORDER.filter((n) => SECTIONS_BY_TYPE[ticket.type][n] !== 'absent' && n !== 'current_state')
   // K10: anything changed (even something not signable yet) is asked about before it is thrown away.
   const [asking, setAsking] = useState(false)
@@ -200,14 +214,18 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
   }
   return (
     <Dialog open onOpenChange={(o) => !o && !signing && !asking && requestClose()}>
-      <DialogContent onOpenAutoFocus={(event) => { if (focusInput.current) { event.preventDefault(); focusInput.current.focus(); focusInput.current.scrollIntoView?.({ block: 'center' }) } }} className="max-h-[90vh] overflow-y-auto sm:max-w-3xl" aria-label={`Edit ${ticket.key}`}>
+      <DialogContent onOpenAutoFocus={(event) => { if (focusInput.current) { event.preventDefault(); focusInput.current.focus(); if (focus?.kind === 'title') focusInput.current.select(); focusInput.current.scrollIntoView?.({ block: 'center' }) } }} className="max-h-[90vh] overflow-y-auto sm:max-w-3xl" aria-label={`Edit ${ticket.key}`}>
         <DialogHeader>
           <DialogTitle>Edit {ticket.key}</DialogTitle>
           <DialogDescription>
-            Change the text, acceptance criteria, tasks, repositories and people, then sign once. All changes are shown together in one review; if anyone else changes the ticket meanwhile, signing stops.
+            Change the title, text, acceptance criteria, tasks, repositories and people, then sign once. All changes are shown together in one review; if anyone else changes the ticket meanwhile, signing stops.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">
+          <div className="space-y-1.5">
+            <label htmlFor={`${acId}-title`} className="text-[13px] font-medium">Title</label>
+            <Input id={`${acId}-title`} ref={focus?.kind === 'title' ? focusInput : undefined} value={title} maxLength={MAX_TITLE + 50} onChange={(e) => setTitle(e.target.value)} />
+          </div>
           {shown.map((n) => (
             <Section key={n} type={ticket.type} name={n} value={sections[n] ?? ''} onChange={(v) => setSections((s) => ({ ...s, [n]: v }))} />
           ))}
@@ -301,7 +319,7 @@ export function EditDialog({ ticket, viewer, focus, onClose, onBusy }: { ticket:
             <DialogContent aria-label="Discard unsaved changes?">
               <DialogHeader>
                 <DialogTitle>Discard unsaved changes?</DialogTitle>
-                <DialogDescription>You changed this ticket's text, checks, repositories or people. Closing now throws those changes away.</DialogDescription>
+                <DialogDescription>You changed this ticket's title, text, checks, repositories or people. Closing now throws those changes away.</DialogDescription>
               </DialogHeader>
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setAsking(false)}>Keep editing</Button>

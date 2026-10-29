@@ -1,0 +1,47 @@
+"""The one list of web API features. A feature is a ``*_api.py`` module with a handler mixin (methods of
+:class:`~orch_hub.webapi.api.WebApi`) and, usually, a ``routes(r)`` function that builds its routes with ``api._r``.
+
+To add a feature: write ``webapi/xxx_api.py``, then add ONE ``Feature(...)`` line to :data:`FEATURES` below. ``api.py``
+builds the ``WebApi`` bases, the ROUTES table and the STATUS table from this list; it needs no edit. (This module never
+imports ``api``, so no import cycle appears.) The order is the order of the mixin bases and of the routes."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from .changes_api import ChangeHandlers
+from .org_api import OrgHandlers
+from .secrets_api import SecretHandlers, secret_routes
+from .settings_api import SettingsHandlers, settings_routes
+
+
+@dataclass(frozen=True)
+class Feature:
+    mixin: type  # the handler methods, a base class of WebApi
+    routes: Callable[[Any], tuple[Any, ...]] | None = None  # ``routes(api._r)`` -> the feature's Route tuple
+    status: dict[str, int] = field(default_factory=dict)  # wire code -> HTTP status this feature adds to STATUS
+
+
+FEATURES: tuple[Feature, ...] = (
+    Feature(mixin=ChangeHandlers),  # its routes are listed in api.py (inside the admin block)
+    Feature(mixin=OrgHandlers),  # its routes are listed in api.py (inside the admin block)
+    Feature(mixin=SecretHandlers, routes=secret_routes),
+    Feature(mixin=SettingsHandlers, routes=settings_routes),
+)
+
+FEATURE_MIXINS: tuple[type, ...] = tuple(f.mixin for f in FEATURES)
+
+
+def feature_routes(r: Any) -> tuple[Any, ...]:
+    """Every feature's routes, in list order."""
+    return tuple(route for f in FEATURES if f.routes is not None for route in f.routes(r))
+
+
+def feature_status() -> dict[str, int]:
+    """The wire code -> HTTP status entries the features add."""
+    out: dict[str, int] = {}
+    for f in FEATURES:
+        out.update(f.status)
+    return out

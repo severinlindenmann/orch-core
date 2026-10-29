@@ -455,9 +455,9 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
         return _NoLink()
     from orch.hubclient.tlsadapter import FailoverTransport, TlsTransport
 
-    def to(addr: str) -> TlsTransport:
+    def to(addr: str, resolve: Any = None) -> TlsTransport:
         return TlsTransport(
-            addr=addr, tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
+            addr=addr, resolve=resolve, tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
             hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
             now_ms=lambda: int(service.clock() * 1000), timeout=float(link.get("timeout", 10.0)),
         )  # fmt: skip
@@ -465,7 +465,10 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
     extra = [a for a in link.get("addrs") or [] if a != link["addr"]]
     if not extra:
         return to(link["addr"])
-    return FailoverTransport([to(a) for a in (link["addr"], *extra)])  # the current address first, then verified ones
+    from . import hubaddr
+
+    check = hubaddr.dial_resolver(link["addr"])  # hub-learned addresses are policy-checked again at every dial
+    return FailoverTransport([to(link["addr"]), *(to(a, check) for a in extra)])  # current first, then verified ones
 
 
 def _addr(args: dict[str, Any], state: Any, dev: bool) -> str | None:

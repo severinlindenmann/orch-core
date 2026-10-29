@@ -46,8 +46,10 @@ class TlsTransport:
         mode: str = "selective",
         timeout: float = 10.0,
         now_ms: Callable[[], int] | None = None,
+        resolve: Callable[[str], str] | None = None,
     ) -> None:
         self._host, self._port = parse_addr(addr)
+        self._resolve = resolve  # host -> the checked IP to dial (raises OSError); None: dial the host as is
         self._kw: dict[str, Any] = dict(
             tls_spki_sha256=tls_spki_sha256, hub_id=hub_id, workspace_id=workspace_id, sign=sign,
             hk_op_pub=hk_op_pub, mode=mode, timeout=timeout,
@@ -82,8 +84,9 @@ class TlsTransport:
 
     def _open(self, op: object) -> LinkClient:
         if self._client is None:
+            host = self._host if self._resolve is None else self._resolve(self._host)  # resolved and checked per dial
             self._client = LinkClient.open(
-                self._host, self._port, wsk_pub=self._wsk_pub if op == "join" else None, **self._kw
+                host, self._port, wsk_pub=self._wsk_pub if op == "join" else None, **self._kw
             )
         return self._client
 

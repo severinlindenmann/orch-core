@@ -89,23 +89,46 @@ def ip_allowed(ip: str, *, allow_loopback: bool) -> bool:
 
 
 def is_loopback(addr: str | None) -> bool:
-    """Whether every IP the address resolves to is loopback (the address in use decides what a hub may point at)."""
+    """Whether the stored address is loopback by its own text: a loopback IP literal or exactly ``localhost``. Never
+    from a DNS answer (a name that resolves to 127.0.0.1 grants nothing)."""
     from orch.hubclient.errors import HubRefused
     from orch.hubclient.tlsadapter import parse_addr
 
     if not addr:
         return False
     try:
-        ips = _ips(parse_addr(addr)[0])
+        host = parse_addr(addr)[0]
     except HubRefused:
         return False
-    return bool(ips) and all(ipaddress.ip_address(i).is_loopback for i in ips)
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def checked_ip(host: str, *, allow_loopback: bool) -> str:
+    """THE address policy, used by the probe and by every dial of a hub-learned address: resolve ``host`` once, check
+    every answer with :func:`ip_allowed` (one forbidden answer refuses the name) and return the IP to connect to. The
+    caller connects to that exact IP; the name is for display only. Raises ``OSError`` when refused."""
+    ips = _ips(host)
+    if not ips or not all(ip_allowed(i, allow_loopback=allow_loopback) for i in ips):
+        raise OSError("address refused by policy")
+    return ips[0]
+
+
+def dial_resolver(current_addr: str | None) -> Callable[[str], str]:
+    """The ``resolve`` hook for dialling hub-learned addresses: policy-checked IP, loopback only next to a loopback
+    current address (decided by the stored text)."""
+    allow = is_loopback(current_addr)
+    return lambda host: checked_ip(host, allow_loopback=allow)
 
 
 def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False) -> bool:
     """True when a TLS handshake AT ``addr`` presents the held pin ``spki``. The name is resolved once, the IP checked
-    against :func:`ip_allowed`, and that exact IP is dialled. Nothing is sent over the connection and it is closed at
-    once. No pin, no handshake. Nothing about the outcome is ever reported to the hub."""
+    (:func:`checked_ip`), and that exact IP is dialled. Nothing is sent over the connection and it is closed at once.
+    No pin, no handshake. Nothing about the outcome is ever reported to the hub."""
     from orch.hubclient.errors import HubRefused
     from orch.hubclient.tlsadapter import parse_addr
     from orch.hubclient.tlslink import tls
@@ -114,12 +137,9 @@ def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False) -
         return False
     try:
         host, port = parse_addr(addr)
-    except HubRefused:
+        ip = checked_ip(host, allow_loopback=allow_loopback)
+    except (HubRefused, OSError):
         return False
-    ips = _ips(host)
-    if not ips or not all(ip_allowed(i, allow_loopback=allow_loopback) for i in ips):
-        return False  # one forbidden answer refuses the name: the lookup is not trusted to pick
-    ip = ips[0]
     try:
         if PROBE is not None:
             PROBE(ip, port, spki)

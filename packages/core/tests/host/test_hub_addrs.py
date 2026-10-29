@@ -413,3 +413,36 @@ def test_a_failed_address_is_not_tried_again_within_an_hour_and_the_hub_learns_n
     monkeypatch.setattr(hubaddr.time, "monotonic", lambda: real() + 3601)
     refresh(served)
     assert len(probe.calls) == 2  # the hour is over
+
+
+# --- the same policy at the dial (DNS rebinding) and loopback decided by the stored text --------------------------
+
+
+def test_a_name_that_turns_into_the_metadata_address_after_the_probe_is_refused_at_dial(monkeypatch):
+    wsk = suite.generate_private_key()
+    hub = TlsHub(wsk_pub=suite.public_bytes(wsk)).start()
+    try:
+        answers = {"ip": "10.0.0.7"}
+        monkeypatch.setattr(hubaddr.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", (answers["ip"], 0))])
+        check = hubaddr.dial_resolver("10.0.0.1:8105")
+        assert check("hub.example") == "10.0.0.7"  # at probe time the name is fine
+        answers["ip"] = "169.254.169.254"  # ... and later it is not
+        kw = dict(
+            tls_spki_sha256=hub.spki, hub_id=hub.hub_id, workspace_id=hub.workspace_id, hk_op_pub=hub.hk_op_pub,
+            wsk_pub=suite.public_bytes(wsk), sign=lambda m: suite.sign(wsk, m), timeout=3.0,
+        )  # fmt: skip
+        t = TlsTransport(addr="hub.example:8105", resolve=check, **kw)
+        with pytest.raises(OSError):
+            t.ensure_open("status_put")  # refused before any connection
+        assert hub.auth_frames == []
+    finally:
+        hub.close()
+
+
+def test_a_name_resolving_to_loopback_does_not_grant_loopback(monkeypatch):
+    monkeypatch.setattr(hubaddr.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", ("127.0.0.1", 0))])
+    assert hubaddr.is_loopback("hub.example:8105") is False  # the stored text decides, not DNS
+    assert hubaddr.is_loopback("127.0.0.1:8105") is True and hubaddr.is_loopback("localhost:8105") is True
+    assert hubaddr.is_loopback("[::1]:8105") is True and hubaddr.is_loopback("10.0.0.1:8105") is False
+    with pytest.raises(OSError):
+        hubaddr.checked_ip("hub.example", allow_loopback=hubaddr.is_loopback("hub.example:8105"))

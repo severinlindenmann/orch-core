@@ -25,8 +25,12 @@ export function timeLeft(ms: number): string {
 export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** Dev layout preview only: start in the stopped state. */ previewStopped?: boolean }) {
   const me = useMe(ws)
   const [mountedAt] = useState(nowMs)
-  const [preparingNow, setPreparingNow] = useState(false)
-  const runner = useQuery({ ...runnerQuery(ws), refetchInterval: preparingNow ? 3_000 : 15_000 })
+  const runner = useQuery({ ...runnerQuery(ws), refetchInterval: (q) => {
+      // Poll faster while the runner is still starting (the same "preparing" window as below), computed from its data.
+      const r = q.state.data?.runner
+      const liveGrant = !!r?.grant && Date.parse(r.grant.until) > nowMs()
+      return !liveGrant && !!r?.enabled && r.connected === false && nowMs() - mountedAt < PREPARING_MS ? 3_000 : 15_000
+    } })
   const grants = useQuery(queries.hostGrants(ws, true))
   const qc = useQueryClient()
   const [now, setNow] = useState(nowMs)
@@ -45,7 +49,6 @@ export function AgentAccess({ ws, previewStopped = false }: { ws: string; /** De
   const line = accessLine(runner.data?.runner?.grant, now)
   // Right after setup the runner is still starting and has no live grant yet: say so calmly for up to a minute.
   const preparing = line.kind === 'missing' && !live && !!runner.data?.runner?.enabled && runner.data.runner.connected === false && now - mountedAt < PREPARING_MS
-  useEffect(() => { setPreparingNow(preparing) }, [preparing])
   useEffect(() => {
     if (!preparing) return
     const timer = setInterval(() => setNow(nowMs()), 5_000)

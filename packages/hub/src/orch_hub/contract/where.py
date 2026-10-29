@@ -19,8 +19,8 @@ MAX_ADDRESSES = 4
 MAX_NAME = 60
 MAX_LINK = 300
 _ADDR = re.compile(r"(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?):([1-9][0-9]{0,4})")
-#: categories removed from the name: controls, format characters (bidi marks and embeddings, zero-width), line/paragraph separators
-_STRIPPED = ("Cc", "Cf", "Zl", "Zp")
+#: categories removed from the name: controls, format characters (bidi marks and embeddings, zero-width), surrogates, private-use, unassigned, line/paragraph separators
+_STRIPPED = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")
 
 
 def parse_link_addr(text: object) -> tuple[str, int]:

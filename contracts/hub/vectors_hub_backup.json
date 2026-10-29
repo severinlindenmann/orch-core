@@ -2898,6 +2898,51 @@
        "link": "100.64.1.2:8105"
       }
      ],
+     "name": "De\ud800m\ue000o\uffff hub"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "ok": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      }
+     ],
+     "name": "Demo hub"
+    }
+   },
+   "name": "where_name_surrogate_private_use_unassigned_stripped",
+   "note": "Cs (lone surrogate), Co (private use) and Cn (U+FFFF, a permanent noncharacter) removed"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      }
+     ],
+     "name": "\ud800\ue000"
+    }
+   },
+   "check": "hub_where",
+   "expect": {
+    "error": "malformed"
+   },
+   "name": "where_name_only_surrogate_private_use"
+  },
+  {
+   "args": {
+    "answer": {
+     "addresses": [
+      {
+       "kind": "private",
+       "link": "100.64.1.2:8105"
+      }
+     ],
      "name": "\u202e\u200b"
     }
    },

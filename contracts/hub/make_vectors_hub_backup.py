@@ -597,6 +597,13 @@ def where_cases() -> list[dict[str, Any]]:
         {"ok": {"addresses": [a()], "name": "Demo hub"}},
         "Cc, Cf (bidi, zero-width), Zl, Zp removed; outer spaces trimmed",
     )
+    wc(
+        "where_name_surrogate_private_use_unassigned_stripped",
+        {"addresses": [a()], "name": "De\ud800m\ue000o\uffff hub"},
+        {"ok": {"addresses": [a()], "name": "Demo hub"}},
+        "Cs (lone surrogate), Co (private use) and Cn (U+FFFF, a permanent noncharacter) removed",
+    )
+    wc("where_name_only_surrogate_private_use", {"addresses": [a()], "name": "\ud800\ue000"}, err("malformed"))
     wc("where_name_only_controls", {"addresses": [a()], "name": "\u202e\u200b"}, err("malformed"))
     wc("where_name_60_ok", {"addresses": [a()], "name": "n" * 60}, {"ok": {"addresses": [a()], "name": "n" * 60}})
     wc("where_name_61_long", {"addresses": [a()], "name": "n" * 61}, err("malformed"))

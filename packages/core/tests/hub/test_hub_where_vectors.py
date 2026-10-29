@@ -22,7 +22,8 @@ def test_no_unknown_check_kind() -> None:
     assert {c["check"] for c in DOC["cases"]} == HUB_ONLY | {"hub_where"}
     assert len(WHERE) >= 35
     assert {"where_ok", "where_five_entries", "where_bad_addr_no_port", "where_unknown_kind", "where_name_61_long",
-            "where_name_control_and_bidi_stripped"} <= {c["name"] for c in WHERE}  # fmt: skip
+            "where_name_control_and_bidi_stripped",
+            "where_name_surrogate_private_use_unassigned_stripped"} <= {c["name"] for c in WHERE}  # fmt: skip
 
 
 @pytest.mark.parametrize("case", WHERE, ids=[c["name"] for c in WHERE])

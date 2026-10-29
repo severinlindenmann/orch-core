@@ -31,7 +31,7 @@ REQUIRED = {
     "files_excluded_route_queue_db", "files_excluded_event_deliver_db", "files_dir_of_another_with_sibling", "files_case_fold_duplicate", "files_missing_required_root_key", "floor_in_place_live_ahead",
     "floor_fresh_server_unix_seconds_win", "floor_double_restore_same_backup", "floor_boundary_exact_max", "floor_now_s_bool", "floor_now_s_float", "floor_now_s_over_max",
     "floor_boundary_one_over_in_place", "where_ok", "where_five_entries", "where_bad_addr_no_port",
-    "where_unknown_kind", "where_name_61_long", "where_name_control_and_bidi_stripped",
+    "where_unknown_kind", "where_name_61_long", "where_name_control_and_bidi_stripped", "where_name_surrogate_private_use_unassigned_stripped",
 }  # fmt: skip
 CHECKS = {"bk_key", "open_backup", "tar", "file_list", "restore_floor", "hub_where"}
 

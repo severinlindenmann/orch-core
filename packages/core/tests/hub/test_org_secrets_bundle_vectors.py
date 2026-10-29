@@ -1,5 +1,6 @@
-"""M3 secrets S-3: the WHOLE ``contracts/hub/vectors_org_secrets_bundle.json`` replayed with the host verifier. Every case
-must give its expected answer; a required case name that is missing, or a file with fewer cases, fails."""
+"""M3 secrets S-3: the WHOLE ``contracts/hub/vectors_org_secrets_bundle.json`` replayed with the host verifier.
+
+Every case must give its expected answer; a required case name that is missing, or a file with fewer cases, fails."""
 
 from __future__ import annotations
 

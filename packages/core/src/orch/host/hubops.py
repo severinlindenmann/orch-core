@@ -455,9 +455,13 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
         return _NoLink()
     from orch.hubclient.tlsadapter import FailoverTransport, TlsTransport
 
-    def to(addr: str, resolve: Any = None) -> TlsTransport:
+    from . import hubaddr
+
+    check = hubaddr.dial_resolver(link["addr"])  # every dial: resolve once, policy, connect to that IP
+
+    def to(addr: str) -> TlsTransport:
         return TlsTransport(
-            addr=addr, resolve=resolve, tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
+            addr=addr, resolve=check, tls_spki_sha256=link["spki"], hub_id=hub_id, workspace_id=service.workspace_id,
             hk_op_pub=link["hk_op"], wsk_pub=link["wsk_pub"], sign=link["sign"], mode=link.get("mode", "selective"),
             now_ms=lambda: int(service.clock() * 1000), timeout=float(link.get("timeout", 10.0)),
         )  # fmt: skip
@@ -465,10 +469,7 @@ def _transport(service: WorkspaceService, hub_id: str, link: dict[str, Any] | No
     extra = [a for a in link.get("addrs") or [] if a != link["addr"]]
     if not extra:
         return to(link["addr"])
-    from . import hubaddr
-
-    check = hubaddr.dial_resolver(link["addr"])  # hub-learned addresses are policy-checked again at every dial
-    return FailoverTransport([to(link["addr"]), *(to(a, check) for a in extra)])  # current first, then verified ones
+    return FailoverTransport([to(a) for a in (link["addr"], *extra)])  # current first, then verified ones
 
 
 def _addr(args: dict[str, Any], state: Any, dev: bool) -> str | None:
@@ -1271,16 +1272,19 @@ def _refresh(
     if plan.get("hub_card") is not None:  # a rotated card first: the link below dials its pin and trusts its op key
         adopted = snapshot.adopt_card(state, plan["hub_card"], now_ms=now(), dev_mode=plan["dev"])
     hub_link, transport = _snapshot_link(service, state, wsk_pub, sign, plan["dev"])
+    from . import hubaddr
+
+    where = None
     try:
         changed = snapshot.refresh(
             state=state, link=hub_link, workspace_id=service.workspace_id, dev_mode=plan["dev"], now_ms=now,
             save=lambda fetched: _save_snapshot(service, fetched), card_adopted=adopted,
         )  # fmt: skip
-        from . import hubaddr
-
-        hubaddr.learn(service, state, hub_link)  # M4: the hub's own address list; each one is verified first
+        where = hubaddr.fetch_where(hub_link)  # M4: only the question is asked inside the session
     finally:
         getattr(transport, "close", lambda: None)()
+    if where is not None:  # probes run after the link is closed and off this thread: no timing for the hub to read
+        hubaddr.apply_in_background(service, state, where)
     view = snapshot.pinned_view(_load_state(service))  # what is on disk now, not the copy this call started from
     _audit(call, "hub.snapshot", hub_id=state.hub_id, version=(view or {}).get("version"), changed=changed)
     return {"hub_id": state.hub_id, "changed": changed, "snapshot": view}

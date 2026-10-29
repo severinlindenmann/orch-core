@@ -154,8 +154,7 @@ def _open_link(service: WorkspaceService) -> Any:
     for one in dict.fromkeys([addr, *hubops._more_addrs(state, dev)]):  # noqa: SLF001 - current first, then verified
         host, port = parse_addr(one)
         try:
-            if one != addr:  # a hub-learned address: resolve once, check the policy, dial that IP
-                host = hubaddr.checked_ip(host, allow_loopback=hubaddr.is_loopback(addr))
+            host = hubaddr.checked_ip(host, allow_loopback=hubaddr.is_loopback(addr))  # resolve once, policy, that IP
             return LinkClient.open(
                 host, port, tls_spki_sha256=state.tls_spki, hub_id=state.hub_id, workspace_id=service.workspace_id,
                 sign=sign, hk_op_pub=unb64u(state.hk_op_pub, 65), mode=state.mode, timeout=10.0,

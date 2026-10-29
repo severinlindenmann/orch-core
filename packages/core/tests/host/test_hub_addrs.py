@@ -77,7 +77,9 @@ def where(*links, name="Acme hub"):
 
 
 def refresh(served):
-    return ok(served.client().req("hub.refresh", {}, idem=True))["data"]
+    got = ok(served.client().req("hub.refresh", {}, idem=True))["data"]
+    hubaddr.wait_idle()  # the probes run after the link is closed, off the refresh
+    return got
 
 
 def status(served):
@@ -348,7 +350,10 @@ def test_moving_without_a_hub_is_refused(human, served, probe, card_served):
 @pytest.mark.parametrize(
     "ip",
     ["169.254.169.254", "169.254.1.1", "fe80::1", "fd00:ec2::254", "224.0.0.1", "ff02::1", "0.0.0.0", "::",
-     "255.255.255.255", "::ffff:169.254.169.254", "127.0.0.1", "::1"],
+     "255.255.255.255", "::ffff:169.254.169.254", "127.0.0.1", "::1",
+     "2002:a9fe:a9fe::1", "2002:7f00:1::1",  # 6to4 around 169.254.169.254 and 127.0.0.1
+     "64:ff9b::a9fe:a9fe", "64:ff9b::7f00:1",  # NAT64
+     "::a9fe:a9fe", "::7f00:1"],  # IPv4-compatible
 )  # fmt: skip
 def test_the_policy_refuses_internal_targets(ip):
     assert hubaddr.ip_allowed(ip, allow_loopback=False) is False
@@ -446,3 +451,61 @@ def test_a_name_resolving_to_loopback_does_not_grant_loopback(monkeypatch):
     assert hubaddr.is_loopback("[::1]:8105") is True and hubaddr.is_loopback("10.0.0.1:8105") is False
     with pytest.raises(OSError):
         hubaddr.checked_ip("hub.example", allow_loopback=hubaddr.is_loopback("hub.example:8105"))
+
+
+# --- review fixes: no probe timing for the hub, the policy on the current address, pruning -------------------------
+
+
+def test_probes_run_after_the_link_is_closed_and_the_refresh_never_waits_for_them(human, served, monkeypatch):
+    import threading
+
+    hub = bound(served, human, monkeypatch)
+    state = {"closed": False}
+
+    class Wrapped:
+        send = staticmethod(hub.send)
+
+        def close(self):
+            state["closed"] = True
+
+    monkeypatch.setattr(hubops, "TRANSPORT", lambda service, hub_id: Wrapped())
+    hub.where_answer = where("10.0.0.5:8105")
+    started, release, seen = threading.Event(), threading.Event(), []
+
+    def slow_probe(host, port, pin):
+        seen.append(state["closed"])  # the hub's link is already shut when the first probe starts
+        started.set()
+        release.wait(10)
+
+    monkeypatch.setattr(hubaddr, "PROBE", slow_probe)
+    hubaddr.clear()
+    got = ok(served.client().req("hub.refresh", {}, idem=True))["data"]  # returns while the probe is still blocked
+    assert got["hub_id"] == HUB_ID and not release.is_set()
+    assert started.wait(10) and seen == [True]
+    release.set()
+    hubaddr.wait_idle()
+    assert _state(served).addrs == ["10.0.0.5:8105"]
+
+
+def test_the_policy_applies_to_the_current_address_at_every_dial(monkeypatch):
+    from types import SimpleNamespace
+
+    service = SimpleNamespace(workspace_id="w" * 32, clock=lambda: 0.0)
+    monkeypatch.setattr(hubaddr.socket, "getaddrinfo", lambda *a, **k: [(0, 0, 0, "", ("169.254.169.254", 0))])
+    link = {"addr": "hub.example:8105", "spki": PIN, "hk_op": b"", "wsk_pub": b"", "sign": lambda m: b""}
+    t = hubops._transport(service, HUB_ID, link)  # noqa: SLF001
+    with pytest.raises(OSError):
+        t.ensure_open("status_put")  # refused before any connection
+
+
+def test_old_failures_are_forgotten(probe):
+    st = SimpleNamespace_state()
+    hubaddr._FAILED[("s", "10.9.9.9:1")] = hubaddr.time.monotonic() - hubaddr.FAIL_BACKOFF_S - 1  # noqa: SLF001
+    hubaddr._probe_new("s", st, [])  # noqa: SLF001
+    assert ("s", "10.9.9.9:1") not in hubaddr._FAILED  # noqa: SLF001
+
+
+def SimpleNamespace_state():
+    from types import SimpleNamespace
+
+    return SimpleNamespace(addr="10.0.0.1:8105", tls_spki=PIN)

@@ -40,6 +40,8 @@ FAIL_BACKOFF_S = 3600.0  # an address that failed is not tried again for an hour
 _FAILED: dict[tuple[str, str], float] = {}
 _MU = threading.Lock()
 _METADATA = (ipaddress.ip_address("fd00:ec2::254"),)
+_NAT64 = ipaddress.ip_network("64:ff9b::/96")
+_V4_COMPAT = ipaddress.ip_network("::/96")
 
 
 def clear() -> None:
@@ -79,8 +81,25 @@ def ip_allowed(ip: str, *, allow_loopback: bool) -> bool:
         a = ipaddress.ip_address(ip)
     except ValueError:
         return False
-    if isinstance(a, ipaddress.IPv6Address) and a.ipv4_mapped is not None:
-        a = a.ipv4_mapped
+    return all(_base_ok(c, allow_loopback) for c in _forms(a))
+
+
+def _forms(a: ipaddress.IPv4Address | ipaddress.IPv6Address) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """The address and every IPv4 address an IPv6 form embeds: mapped, 6to4 (2002::/16), Teredo, NAT64 (64:ff9b::/96)
+    and IPv4-compatible (::/96), so a wrapped 169.254.169.254 or 127.0.0.1 is judged as what it reaches."""
+    out: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = [a]
+    if isinstance(a, ipaddress.IPv6Address):
+        for v4 in (a.ipv4_mapped, a.sixtofour):
+            if v4 is not None:
+                out.append(v4)
+        if a.teredo is not None:
+            out.extend(a.teredo)
+        if a in _NAT64 or a in _V4_COMPAT:
+            out.append(ipaddress.IPv4Address(int(a) & 0xFFFFFFFF))
+    return out
+
+
+def _base_ok(a: ipaddress.IPv4Address | ipaddress.IPv6Address, allow_loopback: bool) -> bool:
     if a.is_unspecified or a.is_multicast or a.is_link_local or a in _METADATA:
         return False
     if isinstance(a, ipaddress.IPv4Address) and a == ipaddress.IPv4Address("255.255.255.255"):
@@ -151,10 +170,13 @@ def handshake_ok(addr: str, spki: str | None, *, allow_loopback: bool = False) -
 
 
 def _probe_new(scope: str, state: Any, links: list[str]) -> list[str]:
-    """Probe ``links`` (at most :data:`MAX_PROBES` real attempts) and return the ones that passed. A link the policy
-    refuses is not an attempt; one that failed within the backoff is skipped without a dial."""
+    """Probe ``links`` (at most :data:`MAX_PROBES` attempts) and return the ones that passed. A link the policy
+    refuses still counts as an attempt (no dial happens); one that failed within the backoff is skipped."""
     allow_lo = is_loopback(state.addr)
     now = time.monotonic()
+    with _MU:  # forget the failures whose hour is over
+        for k in [k for k, at in _FAILED.items() if now - at >= FAIL_BACKOFF_S]:
+            del _FAILED[k]
     passed: list[str] = []
     tried = 0
     for link in links:
@@ -177,22 +199,63 @@ def known(state: Any) -> list[str]:
     return [a for a in [state.addr, *state.addrs] if a]
 
 
-def learn(service: WorkspaceService, state: Any, hub_link: Any) -> bool:
-    """After a good link session: ask ``hub_where``, validate it, probe the entries not held yet (at most
-    :data:`MAX_PROBES`) and store the ones whose handshake passed the held pin. Best effort: any failure keeps exactly
-    what the host holds. True when ``hub.json`` changed."""
+def fetch_where(hub_link: Any) -> dict[str, Any] | None:
+    """Inside the link session: ask ``hub_where`` and validate the answer; nothing else. ``None`` on any failure (the
+    host keeps what it holds). No probe happens here: the hub must not be able to time them."""
     from orch.hubclient.errors import HubRefused
     from orch.hubclient.where import check_hub_where
 
     try:
-        answer = check_hub_where(hub_link.call("hub_where", {}))
+        return check_hub_where(hub_link.call("hub_where", {}))  # type: ignore[no-any-return]
     except (HubRefused, OSError) as exc:
         _LOG.info("hub_where not used (%s)", getattr(exc, "code", type(exc).__name__))
-        return False
+        return None
+
+
+def apply_where(service: WorkspaceService, state: Any, answer: dict[str, Any]) -> bool:
+    """After the link is closed: probe the entries not held yet (at most :data:`MAX_PROBES`) and store the ones whose
+    handshake passed the held pin. True when ``hub.json`` changed."""
     have = set(known(state))
     fresh = [e["link"] for e in answer["addresses"] if e["link"] not in have]
     passed = _probe_new(f"{service.workspace_id}:{state.hub_id}", state, fresh)
     return _store(service, state, passed, [e["link"] for e in answer["addresses"]], answer["name"])
+
+
+_RUNNING: set[str] = set()
+
+
+def apply_in_background(service: WorkspaceService, state: Any, answer: dict[str, Any]) -> threading.Thread | None:
+    """Run :func:`apply_where` in a daemon thread, so a refresh (and the gated action waiting on it) never waits for a
+    probe, and the hub cannot read probe timing off its own link. One run per workspace and hub at a time."""
+    scope = f"{service.workspace_id}:{state.hub_id}"
+    with _MU:
+        if scope in _RUNNING:
+            return None
+        _RUNNING.add(scope)
+
+    def work() -> None:
+        try:
+            apply_where(service, state, answer)
+        except Exception:  # noqa: BLE001 - best effort, never loud
+            _LOG.info("hub addresses not updated", exc_info=True)
+        finally:
+            with _MU:
+                _RUNNING.discard(scope)
+
+    t = threading.Thread(target=work, name="hub-addrs", daemon=True)
+    t.start()
+    _THREADS.append(t)
+    return t
+
+
+_THREADS: list[threading.Thread] = []
+
+
+def wait_idle(timeout: float = 30.0) -> None:
+    """Wait for background address work (tests)."""
+    for t in list(_THREADS):
+        t.join(timeout)
+    _THREADS[:] = [t for t in _THREADS if t.is_alive()]
 
 
 def _store(service: Any, started: Any, passed: list[str], advertised: list[str], name: str | None) -> bool:

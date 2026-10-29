@@ -6,11 +6,10 @@ import logging
 
 import pytest
 
-from orch.setup.flow import SetupFlow
 from orch.setup.protocol import SetupError
 from orch.setup.steps import Secrets
 
-from .conftest import PROFILE, make_env, post
+from .conftest import PROFILE, post
 
 
 def err(fn, *a, **k) -> SetupError:
@@ -23,10 +22,6 @@ def reveal(f):
     return post(f, "secrets/reveal")[1]
 
 
-def words_for(r, wrong=False):
-    return {str(p): ("zzzz" if wrong else r["recovery_words"][p - 1]) for p in r["check_positions"]}
-
-
 def test_reveal_needs_the_approval_step_first(flow):
     assert err(post, flow, "secrets/reveal").code == "setup.phase"
 
@@ -34,8 +29,7 @@ def test_reveal_needs_the_approval_step_first(flow):
 def test_reveal_once_then_410(flow):
     post(flow, "profile", PROFILE)
     r = reveal(flow)
-    assert len(r["recovery_words"]) == 24 and len(r["check_positions"]) == 1
-    assert r["check_positions"] == sorted(set(r["check_positions"]))
+    assert len(r["recovery_words"]) == 24 and "check_positions" not in r
     assert isinstance(r["passphrase"], str) and len(r["passphrase"].split()) == 6
     e = err(post, flow, "secrets/reveal")
     assert e.status == 410 and e.code == "secrets.shown"
@@ -48,40 +42,44 @@ def test_one_click_path_shows_the_recovery_code_only(flow):
 
 def test_confirm_in_core_moves_to_review(flow):
     post(flow, "profile", PROFILE)
-    r = reveal(flow)
-    assert post(flow, "secrets/confirm", {"words": words_for(r)})[1] == {"ok": True}
+    reveal(flow)
+    assert post(flow, "secrets/confirm", {"acknowledged": True})[1] == {"ok": True}
     assert flow.phase == "review" and flow.secrets.confirmed
 
 
 def test_confirm_before_reveal_refused(flow):
     post(flow, "profile", PROFILE)
-    assert err(post, flow, "secrets/confirm", {"words": {}}).code == "secrets.not_shown"
+    assert err(post, flow, "secrets/confirm", {"acknowledged": True}).code == "secrets.not_shown"
 
 
-def test_confirm_must_name_exactly_the_asked_positions(flow):
+def test_confirm_needs_acknowledged_true_and_nothing_else_counts(flow):
     post(flow, "profile", PROFILE)
     r = reveal(flow)
-    w = words_for(r)
-    w.pop(next(iter(w)))
-    assert err(post, flow, "secrets/confirm", {"words": w}).code == "invalid.input"
+    for bad in ({}, {"acknowledged": False}, {"acknowledged": "yes"}, {"words": {"1": r["recovery_words"][0]}}):
+        assert err(post, flow, "secrets/confirm", bad).code == "invalid.input"
+    assert not flow.secrets.confirmed and flow.phase != "review"
+    assert post(flow, "secrets/confirm", {"acknowledged": True})[1] == {"ok": True}
+    assert flow.secrets.confirmed and flow.phase == "review"
 
 
-def test_five_wrong_tries_end_the_session_and_new_secrets_come_next(tmp):
-    f = SetupFlow(make_env(tmp))
-    f.launch(str(tmp.work))
-    post(f, "profile", PROFILE)
-    r = reveal(f)
-    left = []
-    for _ in range(5):
-        out = post(f, "secrets/confirm", {"words": words_for(r, wrong=True)})[1]
-        left.append(out.get("attempts_left"))
-    assert left == [4, 3, 2, 1, 0] and f.phase == "cancelled" and f.error["code"] == "secrets.exhausted"
-    assert f.secrets.dead  # wiped
-    # a new session (a new `orch setup`) draws different secrets
-    f2 = SetupFlow(make_env(tmp))
-    f2.launch(str(tmp.work))
-    post(f2, "profile", PROFILE)
-    assert reveal(f2)["recovery_words"] != r["recovery_words"]
+def test_there_is_no_attempts_counter_or_check_position(flow):
+    post(flow, "profile", PROFILE)
+    r = reveal(flow)
+    assert "check_positions" not in r and not hasattr(flow.secrets, "attempts_left")
+    for _ in range(8):  # wrong bodies never wipe the session
+        err(post, flow, "secrets/confirm", {"acknowledged": False})
+    assert not flow.secrets.dead and post(flow, "secrets/confirm", {"acknowledged": True})[1] == {"ok": True}
+
+
+def test_create_and_review_still_need_the_acknowledgement(flow):
+    post(flow, "profile", PROFILE)
+    reveal(flow)
+    assert err(post, flow, "review").code in ("setup.phase", "secrets.not_confirmed")
+    assert err(post, flow, "create", {"review_id": "x", "digest": "y"}).code in (
+        "review.changed",
+        "secrets.not_confirmed",
+        "setup.phase",
+    )
 
 
 def test_create_side_accessors_refuse_before_confirm():
@@ -116,7 +114,7 @@ def test_the_state_and_errors_never_carry_secrets(flow, caplog):
     post(flow, "profile", PROFILE)
     r = reveal(flow)
     secrets_text = [r["passphrase"], *r["recovery_words"]]
-    post(flow, "secrets/confirm", {"words": words_for(r, wrong=True)})
+    post(flow, "secrets/confirm", {"acknowledged": True})
     blob = repr(flow.dispatch("GET", "state", {}, None)) + caplog.text + repr(flow.error)
     assert not any(w in blob for w in (r["passphrase"], " ".join(r["recovery_words"])))
     assert secrets_text
@@ -128,3 +126,12 @@ def test_cancel_wipes_the_secrets(flow):
     s = flow.secrets
     post(flow, "cancel")
     assert s.dead and flow.secrets is None
+
+
+def test_confirm_only_in_the_secrets_phase(flow):
+    post(flow, "profile", PROFILE)
+    reveal(flow)
+    post(flow, "secrets/confirm", {"acknowledged": True})
+    assert flow.phase == "review"
+    e = err(post, flow, "secrets/confirm", {"acknowledged": True})
+    assert e.code == "setup.phase" and e.status == 409 and flow.phase == "review"

@@ -129,6 +129,9 @@ class FakePorts:
     def git_init(self, root: Path) -> None:
         self.log.append(("git_init", str(root)))
 
+    def privatize(self, root: Path) -> None:
+        self.log.append(("privatize", str(root)))
+
     def trust_folder(self, root: Path, *, allow_parent: bool = False) -> bool:
         self.log.append(("trust_folder", str(root)))
         return True

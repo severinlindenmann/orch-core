@@ -1226,7 +1226,7 @@ The browser opens plain `/setup` and bypasses dashboard shared sessions. `POST /
 | POST /auth/setup {} | POST /claim {code,port} | Server consumes setup.code; no workspace needed |
 | GET /api/setup/state | unchanged | Initial facts and mode |
 | POST /api/setup/profile | unchanged | Exact closed profile |
-| POST /api/setup/secrets/reveal, secrets/confirm | unchanged | One-shot text reveal and three-word check |
+| POST /api/setup/secrets/reveal, secrets/confirm | unchanged | One-shot text reveal and one acknowledgement |
 | POST /api/setup/review, create | unchanged | Core rows, digest and terminal confirmation |
 | GET /api/setup/progress?run_id | unchanged | Step statuses / failure / retry facts |
 | POST /api/setup/finish, cancel | unchanged | Complete or defer; drop setup scope |

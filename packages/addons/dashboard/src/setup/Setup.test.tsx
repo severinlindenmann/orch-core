@@ -1158,3 +1158,18 @@ test.each([
 ] as const)('progress status precedence for %s', (statuses, expected) => {
   expect(groupProgress(statuses.map((status, i) => ({ id: ['keys', 'genesis'][i], label: '', status })))[0].status).toBe(expected)
 })
+
+test('the workspace name and prefix follow "Your name" until edited by hand', async () => {
+  const f = fake({ suggested: { name: '', workspace_name: 'My workspace', prefix: 'MW' } })
+  render(<Setup api={f.api} />)
+  await screen.findByRole('heading', { name: 'Set up your workspace' })
+  fireEvent.click(screen.getByRole('button', { name: 'Continue →' }))
+  expect(screen.getByLabelText(/^Workspace name/)).toHaveValue('My workspace')
+  fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Anna Test' } })
+  expect(screen.getByLabelText(/^Workspace name/)).toHaveValue("Anna Test's workspace")
+  expect(screen.getByLabelText(/^Ticket prefix/)).toHaveValue('AT')
+  expect(screen.getByLabelText('Ticket number preview')).toHaveTextContent('AT-0001')
+  fireEvent.change(screen.getByLabelText(/^Workspace name/), { target: { value: 'Sales' } })
+  fireEvent.change(screen.getByLabelText('Your name'), { target: { value: 'Ben Test' } })
+  expect(screen.getByLabelText(/^Workspace name/)).toHaveValue('Sales')
+})

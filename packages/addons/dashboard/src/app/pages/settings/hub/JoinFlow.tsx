@@ -64,7 +64,7 @@ export function JoinFlow({ ws, onClose }: { ws: string; onClose: () => void }) {
         : <div className="space-y-1" data-testid="hub-mode-box">
           <div className={'rounded-md border p-3 ' + violet}>
             <p className="font-semibold">{mode === 'full' ? 'Everything' : 'Only what I choose'}</p>
-            <p className="text-sm text-text-muted">{mode === 'full' ? 'The hub can read every ticket, file and note, now and later.' : 'Recommended. The hub sees only what you share. You can change this later.'}</p>
+            <p className="text-sm text-text-muted">{mode === 'full' ? 'The hub can read every ticket, file and note, now and later.' : 'Recommended. The hub sees only what you share, plus this workspace\'s name. You can change this later.'}</p>
           </div>
           {!signed && <button type="button" data-testid="hub-mode-other" className="text-sm underline" onClick={() => setChoosing(true)}>Choose another option</button>}
         </div>}

@@ -143,6 +143,11 @@ export function suggestPrefix(name: string): string {
   const p = (words.length >= 2 ? words.map((w) => w[0]).join('') : (words[0] ?? '').slice(0, 4)).slice(0, 8)
   return prefixOk(p) ? p : 'PW'
 }
+/** The default workspace name for a person: "<name>'s workspace", or "My workspace" while no name is typed. */
+export function defaultWorkspaceName(name: string): string {
+  const n = name.trim()
+  return n ? `${n}'s workspace` : 'My workspace'
+}
 const statusWord = { todo: 'Waiting', doing: 'Running', done: 'Done', failed: 'Failed', skipped: 'Skipped' }
 const statusIcon = { todo: '•', doing: '◔', done: '✓', failed: '✕', skipped: '–' }
 /** Roll up display rows only; setup still uses the original server steps. */
@@ -371,8 +376,8 @@ export function Setup({ api }: { api: SetupAPI }) {
   const [state, setState] = useState<SetupState>()
   const [profile, setProfile] = useState<Profile>({
     name: '',
-    workspace_name: 'Personal Workspace',
-    prefix: 'PW',
+    workspace_name: 'My workspace',
+    prefix: 'MW',
     addons: [],
     method: 'terminal',
     agent_hours: 8,
@@ -382,6 +387,7 @@ export function Setup({ api }: { api: SetupAPI }) {
   })
   const [step, setStep] = useState(0)
   const [prefixEdited, setPrefixEdited] = useState(false)
+  const [workspaceEdited, setWorkspaceEdited] = useState(false)
   const [secrets, setSecrets] = useState<Secrets | null>(null)
   const [words, setWords] = useState<Record<string, string>>({})
   const [review, setReview] = useState<Review>()
@@ -793,7 +799,15 @@ export function Setup({ api }: { api: SetupAPI }) {
             <>
               <label>
                 Your name
-                <input autoComplete="name" value={profile.name} onChange={(e) => update({ name: e.target.value })} />
+                <input autoComplete="name" value={profile.name} onChange={(e) => {
+                    const name = e.target.value
+                    // Until the person edits them, the workspace name and prefix follow "Your name" (Anna Test: "Anna Test's workspace", AT).
+                    const patch: Partial<Profile> = { name }
+                    if (!workspaceEdited) patch.workspace_name = defaultWorkspaceName(name)
+                    if (!prefixEdited) patch.prefix = name.trim() ? suggestPrefix(name) : 'MW'
+                    update(patch)
+                  }}
+                />
               </label>
               <label>
                 Workspace name
@@ -801,6 +815,7 @@ export function Setup({ api }: { api: SetupAPI }) {
                   value={profile.workspace_name}
                   onChange={(e) => {
                     const workspace_name = e.target.value
+                    setWorkspaceEdited(true)
                     update(prefixEdited ? { workspace_name } : { workspace_name, prefix: suggestPrefix(workspace_name) })
                   }}
                 />
@@ -821,7 +836,7 @@ export function Setup({ api }: { api: SetupAPI }) {
               <div className="ticket-preview" aria-label="Ticket number preview">
                 {[1, 2, 3].map((n) => (
                   <span className="chip" key={n}>
-                    {profile.prefix.trim() || 'PW'}-{String(n).padStart(4, '0')}
+                    {profile.prefix.trim() || 'MW'}-{String(n).padStart(4, '0')}
                   </span>
                 ))}
               </div>

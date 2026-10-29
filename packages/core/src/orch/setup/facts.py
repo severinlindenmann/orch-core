@@ -163,9 +163,10 @@ def catalog(manifest: Callable[[str], bytes] | None = None, *, optional: bool = 
 
 
 def suggest(env: dict[str, str], directory: Path) -> dict[str, str]:
-    """Defaults to start from (the user changes them): a workspace named "Personal Workspace", prefix PW. The person's
+    """Defaults to start from (the user changes them): a workspace named "My workspace", prefix MW, until a person name is known (the
+    dashboard then offers "<name>'s workspace"). The person's
     name is left empty: a login name is rarely how a person wants to be called (B11 finding 19)."""
-    return {"name": "", "workspace_name": "Personal Workspace", "prefix": "PW"}
+    return {"name": "", "workspace_name": "My workspace", "prefix": "MW"}
 
 
 def _inside(child: Path, parent: Path) -> bool:

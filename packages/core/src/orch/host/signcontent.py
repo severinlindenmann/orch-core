@@ -1333,7 +1333,7 @@ def _event(
             )
             return f"Join hub {hub} in full mode: the hub will be able to read everything in this workspace"
         out.setdefault("notes", []).append(
-            "Selective: the hub sees only what you choose to share. It never gets the workspace key and is not a "
+            "Selective: the hub sees only what you choose to share, plus this workspace's name. It never gets the workspace key and is not a "
             "member of the workspace. You can leave at any time (orch hub leave), also while the hub is down."
         )
         return f"Join hub {hub} in selective mode: the hub sees only what you share"

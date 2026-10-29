@@ -149,7 +149,7 @@ describe('leaving (A3.5 / A3.6)', () => {
 })
 
 describe('stopping sharing one ticket', () => {
-  it('reviews what stops and offers one inline press-again button: no terminal command, no typed word, no backup key', async () => {
+  it('reviews what stops and offers one Stop sharing button: no terminal command, no typed word, no backup key', async () => {
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
     await view.user.click(within(await screen.findByTestId('hub-ticket-list', {}, T)).getByTestId('hub-ticket-revoke-0'))
@@ -157,6 +157,7 @@ describe('stopping sharing one ticket', () => {
     expect(within(dialog).getByText(/asked to delete its copy/)).toBeTruthy()
     expect(within(dialog).getByText(/cannot be taken back/)).toBeTruthy()
     expect(within(dialog).getByTestId('hub-revoke-ticket')).toHaveTextContent('DEMO-0043 · Export report as PDF')
+    await view.user.click(within(dialog).getByTestId('hub-revoke-details'))
     expect(within(dialog).getByTestId('hub-review-workspace')).toHaveTextContent(/^Workspace DEMO · [0-9a-z]{1,8}/)
     expect(await within(dialog).findByTestId('hub-revoke-stop', {}, T)).toHaveTextContent('Stop sharing')
     expect(within(dialog).queryByTestId('hub-revoke-unavailable')).toBeNull()
@@ -169,7 +170,7 @@ describe('stopping sharing one ticket', () => {
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Stop sharing this ticket' })).toBeNull(), T)
   })
 
-  it('a second press stops sharing and the ticket leaves the list', async () => {
+  it('one press stops sharing, the dialog closes and the ticket leaves the list', async () => {
     vi.spyOn(gesture, 'trustedPress').mockReturnValue(true)
     const revoke = vi.spyOn(api, 'revokeHubShare')
     const view = hubPage('selective')
@@ -180,7 +181,7 @@ describe('stopping sharing one ticket', () => {
     await waitFor(() => expect(stop).toBeEnabled(), T)
     fireEvent.click(stop)
     fireEvent.click(stop)
-    expect(await within(dialog).findByTestId('hub-revoke-stop-done', {}, T)).toBeTruthy()
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Stop sharing this ticket' })).toBeNull(), T)
     expect(revoke).toHaveBeenCalledTimes(1)
     expect(revoke.mock.calls[0][1]).toBe('DEMO-0043')
     // the page behind the open dialog is aria-hidden: count the rows directly

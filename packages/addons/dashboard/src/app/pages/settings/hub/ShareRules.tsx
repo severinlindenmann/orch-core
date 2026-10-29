@@ -126,9 +126,10 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
         <Action id="hub-share-review" disabled={!change || !current || !!error} onClick={() => { setReview(change); setFinished(false) }}>Review change</Action>
       </Panel>}
     </>}
-    {review && <Flow title="Review sharing change" done={finished} cancel={review.remove ? 'Keep sharing' : 'Cancel'} onClose={() => { setReview(undefined); setFinished(false); if (review.remove) setRemove(undefined); else if (finished) { setAdding(false); setValue('') } }}>{review.add
-      ? <AddRuleReview ws={ws} workspace={workspace} rule={review.add} after={current} onDone={() => setFinished(true)} />
-      : <StopRule ws={ws} workspace={workspace} rule={review.remove} after={current} error={error} onRetry={() => setRetry(n => n + 1)} onDone={() => setFinished(true)} />}</Flow>}
+    {review?.add && <Flow title="Review sharing change" done={finished} cancel="Cancel" onClose={() => { setReview(undefined); setFinished(false); if (finished) { setAdding(false); setValue('') } }}>
+      <AddRuleReview ws={ws} workspace={workspace} rule={review.add} after={current} onDone={() => setFinished(true)} /></Flow>}
+    {review?.remove && <StopRule ws={ws} workspace={workspace} rule={review.remove} after={current} error={error} onRetry={() => setRetry(n => n + 1)}
+      onClose={() => { setReview(undefined); setRemove(undefined) }} onDone={() => { setReview(undefined); setRemove(undefined) }} />}
     {revoke && <StopSharing ws={ws} workspace={workspace} ticket={revoke} onClose={() => setRevoke(undefined)} />}
   </div>
 }

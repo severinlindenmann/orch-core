@@ -71,3 +71,22 @@ test("Connect a workspace mints one link and shows it", async (t) => {
   t.mock.timers.tick(1);
   assert.equal(copy.textContent, "Copy link");
 });
+
+test("Workspaces cards use plain words (no Binding, Selective, bound)", async () => {
+  const b = { ...bodies,
+    users: { users: [{ user_id: "u1", name: "Anna Test" }] },
+    workspaces: { workspaces: [
+      { workspace_id: "w1", name: "Alpha", mode: "selective", status: "bound", online: true, owner_alias: "u1" },
+      { workspace_id: "w2", name: "Beta", mode: "full", status: "bound", online: false },
+    ] } };
+  const d = { self: "u1", say: (c) => c, api: async (m, path) => ({ status: 200, body: b[path.replace("/admin/", "").split("?")[0]] }) };
+  const [, , , panels] = adminView(d);
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  const t = panels.children[2].textContent;
+  assert.doesNotMatch(t, /Binding|Selective|bound|Mission Control|owner only/);
+  assert.match(t, /Shares only what you choose/);
+  assert.match(t, /Shares everything/);
+  assert.match(t, /Connected · online/);
+  assert.match(t, /Connected · offline/);
+  assert.match(t, /Personal · only you · Anna Test/);
+});

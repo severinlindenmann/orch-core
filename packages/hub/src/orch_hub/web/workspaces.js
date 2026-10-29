@@ -4,7 +4,7 @@ import { ago, chip, h, text } from "./ui.js";
 
 const nameOf = (end) => (end && end.name ? text(end.name) : end && end.owner_name ? text(end.owner_name + "'s workspace") : "Another workspace");
 
-const modeName = (w) => w.mode === "full" ? "Everything" : "Only what I choose";
+const modeName = (w) => w.mode === "full" ? "Shares everything" : "Shares only what you choose";
 const personName = (p) => text(typeof p === "string" ? p : p?.name ?? p?.alias ?? p?.user_id ?? "unknown");
 const button = (label, onclick, props = {}) => h("button", { type: "button", text: label, onclick, ...props });
 const small = (value) => h("div", { class: "small muted", text: value });
@@ -36,7 +36,7 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
       h("dl", {}, Object.entries(roles.profile).flatMap(([key, value]) => [
         h("dt", { text: key }), h("dd", { text: JSON.stringify(value) })]))) : null,
     h("h3", { text: "Change mode" }),
-    h("p", { text: "To change what this workspace shares, open it and use Settings > Hub. The owner confirms there." }),
+    h("p", { text: "To change what this workspace shares, open it and use Settings > Hub. The workspace owner confirms with one click on their dashboard." }),
     button("Open " + nameOf(w), () => actions.open?.(w), { class: "pri" })].filter(Boolean);
 }
 

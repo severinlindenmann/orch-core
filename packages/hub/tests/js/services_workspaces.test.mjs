@@ -93,8 +93,8 @@ test("workspace table shows modes, status, versions, hosts, warnings without a h
   assert.match(t, /2 workspaces run an older orch/);
   assert.match(t, /Legal, Archive/);
   assert.match(t, /The hub still works with 0.1.0 and newer\./);
-  assert.match(t, /Everything/);
-  assert.match(t, /Only what I choose/);
+  assert.match(t, /Shares everything/);
+  assert.match(t, /Shares only what you choose/);
   assert.match(t, /Personal: only its owner/);
   assert.match(t, /Offline.*since 2 min ago/);
   assert.match(t, /0.2.0 · abcdef1/);
@@ -123,8 +123,8 @@ test("details show access only when allowed and send mode changes to the workspa
   const hidden = workspaceDetailsView(w, { roles: null, owner: "Anna" }, NOW);
   assert.doesNotMatch(text(hidden), /Who has access/);
   assert.match(text(hidden), /OwnerAnna/);
-  assert.match(text(hidden), /Only what I choose/);
-  assert.match(text(hidden), /To change what this workspace shares, open it and use Settings > Hub. The owner confirms there./);
+  assert.match(text(hidden), /Shares only what you choose/);
+  assert.match(text(hidden), /To change what this workspace shares, open it and use Settings > Hub. The workspace owner confirms with one click on their dashboard./);
   const out = workspaceDetailsView(w, { roles: { owner: "Anna", groups: [{ group: "Design", role: "edit", members: ["Lee", "Sam"] }] },
     actions: { open: (row) => { opened = row; } } }, NOW);
   assert.match(text(out), /Who has accessOwner: AnnaDesign · editLee, Sam/);

@@ -40,18 +40,15 @@ export function workspaceDetailsView(w, { roles = null, owner = null, hub, actio
     button("Open " + nameOf(w), () => actions.open?.(w), { class: "pri" })].filter(Boolean);
 }
 
-/** The suggestion is text only: the link is copied unchanged. */
+/** The link is copied unchanged; after Copy the page says what to do next. */
 export function connectWorkspaceView(link, actions = {}, { people = [], selected = null } = {}) {
-  const suggestion = h("p", { class: "small muted", "aria-live": "polite" });
-  const choices = ["Only what I choose", "Everything"].map((mode) => button(mode, () => select(mode)));
-  function select(mode) {
-    suggestion.textContent = "Suggested: " + mode + ". The owner confirms it in Mission Control.";
-    choices.forEach((b) => b.setAttribute("aria-pressed", String(b.textContent === mode)));
-  }
-  select("Only what I choose");
+  const next = h("p", { class: "small muted", "aria-live": "polite" });
+  const NEXT = "Now open your workspace, go to Settings › Hub › Connect a hub, and paste.";
   const copy = button("Copy", async () => {
-    try { copy.textContent = await actions.copy?.(link.link) ? "Copied" : "Could not copy. Select the link to copy it."; }
-    catch { copy.textContent = "Could not copy. Select the link to copy it."; }
+    let ok = false;
+    try { ok = !!(await actions.copy?.(link.link)); } catch { ok = false; }
+    copy.textContent = ok ? "Copied ✓" : "Could not copy. Select the link to copy it.";
+    next.textContent = ok ? NEXT : "";
   });
   const clock = (ms) => { const d = new Date(ms); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); };
   const input = h("input", { class: "grow", readonly: true, value: link.link, "aria-label": "Connect link" });
@@ -75,10 +72,8 @@ export function connectWorkspaceView(link, actions = {}, { people = [], selected
   return h("section", { class: "card ws-connect", "aria-label": "Connect a workspace" },
     h("h2", { text: "Connect a workspace" }),
     who,
-    h("p", { text: "Open this link in the workspace under Settings > Hub > Connect." }),
     h("div", { class: "row" }, input, copy),
-    until, problem,
-    h("div", { class: "ws-segment", role: "group", "aria-label": "Suggested mode" }, small("Suggested mode"), ...choices), suggestion);
+    next, until, problem);
 }
 
 /** Workspaces in `rows` whose id is not in `known` (a Set of ids). */

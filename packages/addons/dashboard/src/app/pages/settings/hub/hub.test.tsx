@@ -322,10 +322,10 @@ describe('by click (#1198 C11)', () => {
     await view.user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByTestId('info-drawer-content')).toBeNull(), T)
     expect(screen.getByTestId('hub-link-hub').textContent).not.toContain('Only what I choose')
-    expect(screen.getAllByText(/Notes that need your attention and full questions are always shared/)).toHaveLength(1)
+    expect(screen.queryByText(/Notes that need your attention and full questions are always shared/)).toBeNull() // the long mode text is behind the i of the mode choice
     expect(screen.queryByText(/Review it here/)).toBeNull()
     expect(screen.queryByTestId('hub-card-text')).toBeNull() // no card file, no separate invite, no mode step
-    await sign('Sign and join the hub')
+    await sign('Connect')
     expect(await screen.findByText('Connected · Hub sees only what you share', {}, T)).toBeTruthy() // the page behind says it
     expect(screen.queryByRole('dialog')).toBeNull() // and the dialog closed by itself: nothing left to press
     expect(seal).toHaveBeenCalledTimes(1)
@@ -340,8 +340,9 @@ describe('by click (#1198 C11)', () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
     await pasteLink()
+    await view.user.click(await screen.findByTestId('hub-mode-other', {}, T))
     await view.user.click(await screen.findByTestId('hub-mode-full', {}, T))
-    const btn = await screen.findByRole('button', { name: 'Sign and join the hub' }, T)
+    const btn = await screen.findByRole('button', { name: 'Connect' }, T)
     expect(screen.queryByTestId('hub-backup-input')).toBeNull()
     await waitFor(() => expect(btn).toBeEnabled(), { timeout: 5000 })
     trustedPresses() // the armed Sign signs only on a trusted press (fireEvent is untrusted)
@@ -369,7 +370,7 @@ describe('by click (#1198 C11)', () => {
     const view = hubPage('standalone')
     await view.user.click(await screen.findByTestId('hub-connect', {}, T))
     await pasteLink()
-    await sign('Sign and join the hub')
+    await sign('Connect')
     const failed = await screen.findByTestId('hub-connect-failed', {}, T)
     expect(failed.textContent).toContain("Couldn't connect. Try again.")
     // The reason is behind the i of the failure: hidden by default, there on press.

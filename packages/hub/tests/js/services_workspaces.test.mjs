@@ -133,20 +133,19 @@ test("details show access only when allowed and send mode changes to the workspa
   assert.equal(find(out, (n) => n.tag === "button").length, 1);
 });
 
-test("connect link keeps the suggestion out of the copied link and shows expiry", async () => {
+test("connect link is copied unchanged, shows expiry, and Copy says what to do next", async () => {
   let copied;
   const out = [connectWorkspaceView({ link: "/join#one-time", expires_ms: NOW + 1800000 }, { copy: async (s) => { copied = s; return true; } })];
   assert.match(text(out), /Works once, for 30 minutes \(until 12:30\)/);
-  assert.match(text(out), /Suggested: Only what I choose\./);
+  assert.doesNotMatch(text(out), /Suggested|Everything|Mission Control/);
+  assert.doesNotMatch(text(out), /Now open your workspace/, "the next step shows after Copy");
   const input = find(out, (n) => n.tag === "input")[0];
   assert.equal(input.getAttribute("readonly"), "");
   assert.equal(input.getAttribute("value"), "/join#one-time");
-  clickButton(out, "Everything");
-  assert.match(text(out), /Suggested: Everything. The owner confirms it in Mission Control./);
-  assert.deepEqual(find(out, (n) => n.getAttribute("aria-pressed") !== null).map((n) => n.getAttribute("aria-pressed")), ["false", "true"]);
   await clickButton(out, "Copy");
   assert.equal(copied, "/join#one-time");
-  assert.match(text(out), /Copied/);
+  assert.match(text(out), /Copied ✓/);
+  assert.match(text(out), /Now open your workspace, go to Settings › Hub › Connect a hub, and paste\./);
 });
 
 test("admin empty state connects; left disclosure includes only unbound rows and removes the selected row", async () => {

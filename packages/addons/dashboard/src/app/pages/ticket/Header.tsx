@@ -1,7 +1,8 @@
 import { FocusButton } from '../focus/FocusButton'
 import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Tag, Timer } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { api } from '@/api/client'
@@ -24,7 +25,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { VIEWER_REASON } from '@/components/DisabledReason'
 import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
-import { availableActions, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
+import { availableActions, gapOf, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
+import { useTicketEdit } from './EditTicket'
+import { runsApi } from '@/api/runs'
+import type { AgentMode } from '@/api/agents'
 import { clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
 import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
 
@@ -82,7 +86,11 @@ export interface StartAgent {
   reason: string | null
   /** The primary button may offer it: nothing blocks it and the ticket is in a state an agent works on. */
   startable: boolean
+  /** The viewer may start an agent on this ticket whatever is running now ("Ask the agent to finish" stops the idle one first). */
+  canStart: boolean
   run: () => void
+  /** Open the start flow in another mode (the not-finished card asks for `continue`). */
+  runWith: (mode: AgentMode) => void
   /** A real host: the same dialog in choose mode ("Change agent or model"). Absent in the mock, where the add-on has its own flow. */
   choose?: () => void
   /** The start-agent addon's own title, for its badge in the mock (none on a real host). */
@@ -99,6 +107,7 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
   const { data: addons } = useAddons()
   const r = useRunAddonAction(ticket.key)
   const [open, setOpen] = useState<'start' | 'choose' | null>(null)
+  const [mode, setMode] = useState<AgentMode | undefined>(undefined)
   const real = isRealHost()
   const pkg = addons?.find((a) => a.name === START_AGENT)
   const finished = ticket.status === 'done' || ticket.status === 'closed'
@@ -107,16 +116,25 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
     : !!workspace && addonActive(workspace, START_AGENT) && canSpawnAgent(pkg, workspace.addons[START_AGENT]) && !finished
   const roleBlocked = real ? !can(viewer.role, 'ticket.act') : !r.allowed(START_AGENT, 'start')
   const reason = roleBlocked ? VIEWER_REASON : agentWorks(ticket) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
-  const run = () => (real ? setOpen('start') : r.run(START_AGENT, 'start'))
-  const choose = real ? () => setOpen('choose') : undefined
+  const run = () => {
+    setMode(undefined)
+    if (real) setOpen('start')
+    else r.run(START_AGENT, 'start')
+  }
+  const runWith = (m: AgentMode) => {
+    setMode(m)
+    setOpen('start')
+  }
+  const choose = real ? () => { setMode(undefined); setOpen('choose') } : undefined
   const startable = shown && !reason && ticket.status !== 'testing'
+  const canStart = real && shown && !roleBlocked && ticket.status !== 'testing'
   const node = (
     <>
       {r.dialog}
-      {open && workspace && <StartAgentDialog key={open} ws={workspace.id} ticket={ticket.key} open choose={open === 'choose'} onClose={() => setOpen(null)} />}
+      {open && workspace && <StartAgentDialog key={`${open}:${mode ?? ''}`} ws={workspace.id} ticket={ticket.key} open choose={open === 'choose'} initial={mode ? { mode } : undefined} onClose={() => setOpen(null)} />}
     </>
   )
-  return { shown, reason, startable, run, choose, node, addon: real ? undefined : { name: START_AGENT, title: pkg?.title } }
+  return { shown, reason, startable, canStart, run, runWith, choose, node, addon: real ? undefined : { name: START_AGENT, title: pkg?.title } }
 }
 
 /** " · why it is their turn", or nothing when the host gave no reason (no dangling separator). */
@@ -205,7 +223,7 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false
 }
 
 /** The header's one primary button: what the viewer should do next (a quiet status when an agent works and nothing waits). */
-function PrimaryButton({ ticket, viewer, jump, start, signing, phase }: { ticket: TicketDocument; viewer: Viewer; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase }) {
+function PrimaryButton({ ticket, viewer, jump, start, signing, phase, idle = false }: { ticket: TicketDocument; viewer: Viewer; jump: (j: Jump) => void; start: StartAgent; signing: boolean; phase: Phase; /** The agent waits or the plan is unfinished: the card says so, so no "Agent is working" next to it. */ idle?: boolean }) {
   const { workspace } = useWorkspace()
   const av = availableActions(ticket, viewer)
   const blocked = blockedApproval(ticket, viewer)
@@ -234,7 +252,7 @@ function PrimaryButton({ ticket, viewer, jump, start, signing, phase }: { ticket
     )
   // The next-step card under the header owns Approve and Give verdict (B6): one place for the one next thing.
   if (p && (p.kind === 'approve' || p.kind === 'verdict')) return null
-  if (!p) return !busy && agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
+  if (!p) return !busy && !idle && agentWorks(ticket) && ticket.status !== 'done' ? <span className="inline-flex items-center gap-1.5 text-[13px] text-text-muted" data-testid="agent-working-note"><Loader2 className="size-3.5 animate-spin" aria-hidden />Agent is working…</span> : null
   const run = () => {
     if (p.kind === 'answer') jump({ tab: 'questions', id: `question-${p.question}` })
     else start.run()
@@ -305,9 +323,26 @@ export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; 
   const { run, wait } = useTicketAgent(p.ticket, home)
   // "Start agent again" asks the header's one start flow (its dialog); this card holds no second dialog and reads
   // `startable` only, so a viewer who cannot start sees no button.
-  const { startable } = useStartAgent(p.ticket, p.viewer)
-  const onStart = startable ? () => window.dispatchEvent(new CustomEvent(START_EVENT, { detail: p.ticket.key })) : undefined
-  return <TicketProgress {...p} run={run} wait={wait} onStart={onStart} />
+  const edit = useTicketEdit()
+  const qc = useQueryClient()
+  const { canStart } = useStartAgent(p.ticket, p.viewer)
+  // "Ask the agent to finish": stop the idle run (the existing run stop), then the header's start flow in `continue` mode.
+  const onFinish = canStart
+    ? async () => {
+        if (wait && home) {
+          try {
+            await runsApi.stop(home, wait)
+            void qc.invalidateQueries({ queryKey: ['runs', home] })
+          } catch {
+            toast.error('Could not stop the agent. Open it to see why.')
+            return
+          }
+        }
+        window.dispatchEvent(new CustomEvent(START_EVENT, { detail: { ticket: p.ticket.key, mode: 'continue' } }))
+      }
+    : undefined
+  const onEdit = edit ? () => edit() : undefined
+  return <TicketProgress {...p} run={run} wait={wait} onFinish={onFinish} onEdit={onEdit} />
 }
 
 /** The one status pill for the agent's progress, in plain words, in a live region so changes are announced. */
@@ -390,13 +425,19 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     enabled: ticket.type === 'epic' && !!home,
   })
   const start = useStartAgent(ticket, viewer)
-  const startRun = start.startable ? start.run : undefined
+  const { startable, canStart, run: startPlain, runWith } = start
   useEffect(() => {
-    if (!startRun) return
-    const on = (e: Event) => (e as CustomEvent<string>).detail === ticket.key && startRun()
+    if (!startable && !canStart) return
+    // A plain key starts as before (only when nothing blocks); {ticket, mode} comes from "Ask the agent to finish", after its idle run was stopped.
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<string | { ticket: string; mode: AgentMode }>).detail
+      if (typeof d === 'string') {
+        if (d === ticket.key && startable) startPlain()
+      } else if (d?.ticket === ticket.key && canStart) runWith(d.mode)
+    }
     window.addEventListener(START_EVENT, on)
     return () => window.removeEventListener(START_EVENT, on)
-  }, [startRun, ticket.key])
+  }, [startable, canStart, startPlain, runWith, ticket.key])
   const av = availableActions(ticket, viewer)
   const { run, wait } = useTicketAgent(ticket, home)
   const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict || !!wait
@@ -440,7 +481,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
-          <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} />
+          <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} idle={!!wait || !!gapOf(ticket)} />
           <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} />
           {start.node}
         </div>

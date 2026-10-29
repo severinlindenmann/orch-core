@@ -20,7 +20,7 @@ export function TerminalWaitChip({ ws }: { ws?: string }) {
           </Badge>
         </button>
       </TooltipTrigger>
-      <TooltipContent className="max-w-xs">The agent may be asking you something. Click to open it.</TooltipContent>
+      <TooltipContent className="max-w-xs">The agent has stopped and may need something. Click to see what.</TooltipContent>
     </Tooltip>
   )
 }

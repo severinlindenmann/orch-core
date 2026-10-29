@@ -19,6 +19,8 @@ from typing import Any
 from .backup_api import STATUS as BACKUP_STATUS
 from .backup_api import BackupHandlers, backup_routes
 from .changes_api import ChangeHandlers
+from .invite_status_api import STATUS as INVITE_STATUS
+from .invite_status_api import InviteStatusHandlers, invite_status_routes
 from .org_api import OrgHandlers
 from .published_api import PublishedHandlers, published_routes
 from .secrets_api import SecretHandlers, secret_routes
@@ -41,6 +43,7 @@ FEATURES: tuple[Feature, ...] = (
     Feature(mixin=PublishedHandlers, routes=published_routes),
     Feature(mixin=BackupHandlers, routes=backup_routes, status=BACKUP_STATUS),
     Feature(mixin=SpaceHandlers, routes=space_routes),
+    Feature(mixin=InviteStatusHandlers, routes=invite_status_routes, status=INVITE_STATUS),
 )
 
 FEATURE_MIXINS: tuple[type, ...] = tuple(f.mixin for f in FEATURES)

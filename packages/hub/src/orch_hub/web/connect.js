@@ -6,9 +6,10 @@
 const HEX32 = /^[0-9a-f]{32}$/;
 const CODE = /^[A-Za-z0-9_-]{1,64}$/;
 const ENDPOINT = /^(local|(\[[0-9a-fA-F:.]{2,45}\]|[A-Za-z0-9.-]{1,253}):[0-9]{1,5})$/;
-/** Where a workspace dashboard runs on this computer when the hub has not seen one open (the headless dashboard port). */
-export const DEFAULT_DASHBOARD = "http:" + "//127.0.0.1:47821";
-const KEY = "orch.dashboard_origin";
+// r11 P03: remembered PER PERSON (hub user id -> {o: loopback origin, n: display name}). A link is only ever offered to the
+// dashboard remembered for the person it was minted for; there is no default port and no "last opened" origin.
+const KEY = "orch.connect_people";
+const MAX_PEOPLE = 50;
 
 /** `#h1.<hub32>.<code>[.<endpoint>][~<owner32>]` -> {hubId, code, endpoint, ownerUser} or null. */
 export function parseFragment(hash) {
@@ -53,36 +54,81 @@ export const deepLink = (dashboardOrigin, link) => {
   return o ? o + "/settings/hub#connect=" + encodeURIComponent(link) : null;
 };
 
-/** Remembered by the hub's own Open button, read here; a failing store is the same as nothing remembered. */
-export function rememberDashboard(url) {
-  try { const o = loopbackOrigin(url); if (o) globalThis.localStorage.setItem(KEY, o); } catch { /* private window */ }
+function readPeople() {
+  try {
+    const v = JSON.parse(globalThis.localStorage.getItem(KEY) ?? "{}");
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  } catch { return {}; }
 }
-export function knownDashboard() {
-  try { return loopbackOrigin(globalThis.localStorage.getItem(KEY)) ?? DEFAULT_DASHBOARD; } catch { return DEFAULT_DASHBOARD; }
+function writePerson(owner, patch) {
+  if (typeof owner !== "string" || !HEX32.test(owner)) return;
+  try {
+    const all = readPeople();
+    const entry = { ...(all[owner] && typeof all[owner] === "object" ? all[owner] : {}), ...patch };
+    delete all[owner];
+    all[owner] = entry; // newest last; the oldest fall out
+    const keys = Object.keys(all);
+    for (const k of keys.slice(0, Math.max(0, keys.length - MAX_PEOPLE))) delete all[k];
+    globalThis.localStorage.setItem(KEY, JSON.stringify(all));
+  } catch { /* private window */ }
+}
+/** Written by the hub's Open button for a workspace the signed-in person OWNS (app.js), keyed by that person's hub user id. */
+export function rememberDashboard(url, ownerUser) {
+  const o = loopbackOrigin(url);
+  if (o) writePerson(ownerUser, { o });
+}
+/** The person's name, written by the hub when it makes a connect link for them; display text only. */
+export function rememberName(ownerUser, name) {
+  if (typeof name === "string" && name.trim() && name.length <= 80) writePerson(ownerUser, { n: name.trim() });
+}
+/** The dashboard remembered for exactly this person, or null (no owner, nothing remembered, or a bad stored value). */
+export function knownDashboard(ownerUser) {
+  if (typeof ownerUser !== "string" || !HEX32.test(ownerUser)) return null;
+  const e = readPeople()[ownerUser];
+  return e && typeof e === "object" ? loopbackOrigin(e.o) : null;
+}
+export function knownName(ownerUser) {
+  if (typeof ownerUser !== "string" || !HEX32.test(ownerUser)) return null;
+  const n = readPeople()[ownerUser]?.n;
+  return typeof n === "string" && n && n.length <= 80 ? n : null;
+}
+
+/** What the /c page shows for a fragment, or null for anything that does not parse (the static text stays). */
+export function pageModel(hash, origin, host) {
+  const parsed = parseFragment(hash);
+  if (!parsed) return null;
+  const link = canonicalLink(origin, parsed);
+  const name = knownName(parsed.ownerUser);
+  const open = deepLink(knownDashboard(parsed.ownerUser), link);
+  return {
+    link, open,
+    title: name ? "Connect " + name + "'s workspace" : "Connect your workspace to " + host,
+    lead: open ? "One button opens your workspace on this computer with the Connect a hub dialog already filled in. You only press Connect."
+      : name ? "Open this page on " + name + "'s computer, then press the button." : "Open this page on the computer of the workspace, then press the button.",
+  };
 }
 
 function render(root, hash) {
-  const parsed = parseFragment(hash);
-  if (!parsed) return; // keep the static text
-  const link = canonicalLink(location.origin, parsed);
-  const open = deepLink(knownDashboard(), link);
+  const m = pageModel(hash, location.origin, location.host);
+  if (!m) return; // keep the static text
   const el = (tag, props = {}, ...kids) => {
     const n = document.createElement(tag);
     for (const [k, v] of Object.entries(props)) { if (k === "text") n.textContent = v; else if (k === "class") n.className = v; else n[k] = v; }
     for (const kid of kids) n.append(kid);
     return n;
   };
-  const note = el("p", { class: "small muted", text: "Nothing is sent from this page. The link works once and expires after 30 minutes." });
-  const copyHint = el("p", { class: "small muted" });
-  const copy = el("button", { type: "button", text: "Copy the link instead", onclick: async () => {
-    try { await navigator.clipboard.writeText(link); copyHint.textContent = "Copied. In your workspace go to Settings, then Hub, then Connect a hub, and paste."; }
+  const PASTE = "Then open your workspace, go to Settings, then Hub, and paste it there. Nothing else to type.";
+  const copyHint = el("p", { class: "small muted", text: m.open ? "" : PASTE });
+  const copy = el("button", { type: "button", class: m.open ? "" : "pri", text: m.open ? "Copy the link instead" : "Copy the link", onclick: async () => {
+    try { await navigator.clipboard.writeText(m.link); copyHint.textContent = "Copied. " + PASTE; }
     catch { copyHint.textContent = "Could not copy. Select the address of this page and copy it."; }
   } });
   root.replaceChildren(
-    el("h1", { text: "Connect your workspace to " + location.host }),
-    el("p", { text: "One button opens your workspace on this computer with the Connect a hub dialog already filled in. You only press Connect." }),
-    open ? el("p", {}, el("a", { class: "pri", id: "open-workspace", href: open, text: "Open my workspace" }), el("span", { class: "small muted", text: " Opens " + new URL(open).host })) : null,
-    el("p", {}, copy), copyHint, note);
+    el("h1", { text: m.title }),
+    el("p", { text: m.lead }),
+    m.open ? el("p", {}, el("a", { class: "pri", id: "open-workspace", href: m.open, text: "Open my workspace" })) : "",
+    el("p", {}, copy), copyHint,
+    el("p", { class: "small muted", text: "The link works once and expires after 30 minutes." }));
 }
 
 if (typeof document !== "undefined" && typeof location !== "undefined" && document.getElementById?.("connect-page")) {

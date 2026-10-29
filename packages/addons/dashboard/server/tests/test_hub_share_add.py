@@ -18,7 +18,7 @@ REVIEW = {
     "widened": [],
     "new": {"count": 1, "more": 0, "items": [{"logical": "t", "kind": "ticket", "line": "ticket K-2: Second"}]},
     "leaves": [{"kind": "ticket", "text": "the ticket's title, status, labels and deadline"}],
-    "later_edits": "Later edits to these tickets are shared too, until you stop sharing them.",
+    "later_edits": "Later edits are shared too, until you stop sharing.",
 }
 PREVIEW = {"count": 2, "new": 1, "revoked": 0, "more": 0, "items": [], "rules": [], "plan": SHOWN, "review": REVIEW}
 RULE = {"kind": "tag", "value": "public"}

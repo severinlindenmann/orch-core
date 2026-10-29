@@ -94,7 +94,7 @@ export function StopSharing({ ws, workspace, ticket, onClose }: { ws: string; wo
   const stop = <StopButton ws={ws} testId="hub-revoke-stop" disabled={!now.data} act={() => api.revokeHubShare(ws, ticket)} onDone={got => { stoppedToast(`“${title ?? ticket}”`, got); onClose() }} />
   return <Flow title="Stop sharing this ticket" onClose={onClose} cancel="Keep sharing" action={stop}>
     <p data-testid="hub-revoke-ticket">The hub stops showing the ticket “<bdi><Raw>{title ?? ticket}</Raw></bdi>”.{now.data && <> {others(now.data.count - n)}</>}</p>
-    <p>Rules that match it will not share it again.</p>
+    <p>It stays private, even if a sharing setting would match it.</p>
     <p className="text-text-muted">{caveat}</p>
     <Details testId="hub-revoke-details">
       <ReviewWorkspace workspace={workspace} />

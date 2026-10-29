@@ -114,7 +114,7 @@ describe('stop sharing one ticket', () => {
 
   it('says the ticket stays unshared even if a rule matches; never "may share it again"', async () => {
     const { dialog } = await ticketReview()
-    expect(dialog.textContent).toContain('Rules that match it will not share it again.')
+    expect(dialog.textContent).toContain('It stays private, even if a sharing setting would match it.')
     expect(dialog.textContent).not.toMatch(/may share it again/)
   })
 
@@ -273,7 +273,7 @@ describe('stop sharing by a rule', () => {
       ...NOW, new: 1, plan: 'N'.repeat(43),
       review: { hub_id: 'ab12cd34ef56ab12', readers: { people: ['Ben Test'], teams: [], note: 'from the hub, not signed', info: 'Team membership is managed by the hub admin.' }, widened: [{ line: 'ticket DEMO-0001: Old', people_added: ['Ana'], teams_added: [], description_added: false }], new_count: 1, new_more: 0,
         new_items: ['ticket DEMO-0050: Later public note'], leaves: ['the ticket title, status, labels and deadline'],
-        later_edits: 'Later edits to these tickets are shared too, until you stop sharing them.' },
+        later_edits: 'Later edits are shared too, until you stop sharing.' },
     }))
     mount(<ShareRules ws={WS.id} workspace={WS} onBack={() => {}} />)
     await user.click(await screen.findByTestId('hub-rule-add'))
@@ -291,7 +291,7 @@ describe('stop sharing by a rule', () => {
     await user.click(within(dialog).getByTestId('hub-add-readers-info'))
     expect(await screen.findByText('Team membership is managed by the hub admin.')).toBeTruthy()
     await user.keyboard('{Escape}')
-    expect(within(dialog).getByTestId('hub-add-later')).toHaveTextContent('Later edits to these tickets are shared too')
+    expect(within(dialog).getByTestId('hub-add-later')).toHaveTextContent('Later edits are shared too')
     expect(within(dialog).queryByTestId('hub-add-new')).toBeNull() // what leaves is behind the i (r10-P08)
     await user.click(within(dialog).getByTestId('hub-add-details'))
     expect(await screen.findByTestId('hub-add-new')).toHaveTextContent('1 new item leaves')

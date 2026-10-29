@@ -70,13 +70,13 @@ REDUCE_RATE = 10  # per minute and workspace, as for the cosmetic settings
 ADD_RATE = 5
 #: What leaves per kind of item, in the review's words (the page builds none of them; it shows this text).
 LEAVES = {
-    "ticket": "the ticket's title, status, labels and deadline; no description, comments or files",
+    "ticket": "the ticket's title, status, labels and deadline, but never its description, comments or files",
     "summary": "the type, a one-line title and the deadline",
     "question": "the full question (up to 2000 bytes)",
 }
 #: The body sections that make up a ticket's shared description (only under a rule that says "include the description").
 DESCRIPTION_SECTIONS = ("summary", "context", "requirements")
-LATER_EDITS = "Later edits to these tickets are shared too, until you stop sharing them."
+LATER_EDITS = "Later edits are shared too, until you stop sharing."
 _MU = threading.Lock()
 _NAMES = {"type": "array", "items": {"type": "string"}, "maxItems": 64}
 _RULE = {
@@ -321,8 +321,7 @@ def _rows(items: list[Any], limit: int = 100) -> dict[str, Any]:
 def _leaves(kind: str, items: list[Any]) -> str:
     if kind == "ticket" and any("description" in i.payload for i in items if i.kind == "ticket"):
         return (
-            "the ticket's title, status, labels, deadline and description (summary, context and requirements); "
-            "no plan, comments or files"
+            "the ticket's title, status, labels, deadline and description, but never its plan, comments or files"
         )
     return LEAVES[kind]
 

@@ -335,6 +335,7 @@ def test_a_fresh_workspace_register_then_the_cli_and_the_dashboard_work(world):
     code, doc = cli(agent, "new", "From host mode")
     assert code == 0 and doc["key"] == "DEMO-0001", doc
     assert cli(agent, "claim", "1")[0] == 0
+    assert cli(agent, "ask", "Which?")[0] == 0  # something open for a person: the wait waits (else wait.incomplete)
     code, doc = cli(agent, "wait", "--timeout", "1")
     assert code == 0 and doc["ok"] is True and doc["data"]["kind"] == "timeout", doc
     code, doc = cli(agent, "show", "1")

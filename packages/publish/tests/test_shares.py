@@ -166,6 +166,41 @@ def test_bad_meta(two, change, code):
     assert (r.status_code, err(r)) == (400, code)
 
 
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"label": ""},
+        {"label": "x" * 81},
+        {"label": "a\u202eb"},
+        {"label": "a\x00b"},
+        {"label": " padded"},
+        {"label": 5},
+        {"by_name": ""},
+        {"by_name": "x" * 61},
+        {"by_name": "a\u2066b"},
+        {"by_kind": "robot"},
+    ],
+)
+def test_bad_display_members_are_refused(two, change):
+    r = _bad(two, **change)
+    assert r.status_code == 400 and err(r) in ("bad_label", "bad_by")
+
+
+def test_display_members_are_stored_and_default_to_the_ticket(two):
+    m = two.meta({"a.txt": b"one"})
+    m.update(label="Q3 report", by_kind="agent", by_name="Ana")
+    sid = os.urandom(16).hex()
+    assert two.put_meta("a", sid, m).status_code == 200
+    r = two.row(sid)
+    assert (r["label"], r["by_kind"], r["by_name"]) == ("Q3 report", "agent", "Ana")
+    sid2 = os.urandom(16).hex()
+    assert (
+        two.put_meta("a", sid2, two.meta({"a.txt": b"one"}, ticket="TST-0002")).status_code == 200
+    )
+    r = two.row(sid2)
+    assert (r["label"], r["by_kind"], r["by_name"]) == ("TST-0002", "person", None)
+
+
 def test_expiry_is_capped_at_30_days(two):
     assert _bad(two, expires_ms=two.now + 30 * DAY).status_code == 200
     r = _bad(two, expires_ms=two.now + 31 * DAY)

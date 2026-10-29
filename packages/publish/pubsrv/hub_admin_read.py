@@ -1,69 +1,24 @@
-"""Hub admin read at orch-publish (contracts/hub/protocol.md 10.6, orch-core #900): release metadata of the
-workspaces bound to the calling hub, for the hub console.
+"""Hub admin read at orch-publish (contracts/hub/protocol.md 10.6 and 11.5, orch-core #900, #1452): the company list
+of links (and apps) of the workspaces bound to the calling hub, for the hub console.
 
 `check_admin_read` is the contract's check in order (syntax, window, held hub card, signature, scope). The scope is
 workspaces with a CURRENT binding to this hub in `full` mode whose wsk_pub equals the workspace card's current WSK;
-it applies to the workspace the target names and to every row returned (`check_admin_rows`). Only metadata leaves
-here: never content, paths, the ticket, the token hash or any link that grants access. `public_url` is always null
-(hv 0: orch-publish has no public kind). No nonce store, by design (idempotent metadata, +-120 s window).
+it applies to the workspace the target names and to every row returned (`published.check_published_rows`: a selective
+workspace's row is never emitted). Only display metadata leaves here: never a token or its hash, a password record, a
+path, content or a URL. No nonce store, by design (idempotent metadata, +-120 s window).
 """
 
 import re
 import struct
 
 from . import hub_path as H
+from . import published as P
 from . import relay_proto as proto
 
 WINDOW_MS = 120_000
 TARGET_MAX = 2048
 _HEX32 = re.compile(r"[0-9a-f]{32}")
 _TS = re.compile(r"0|[1-9][0-9]{0,15}")
-
-FIELDS = (
-    "workspace_id", "release_id", "kind", "state", "created_ms", "expires_ms", "revoked", "bytes", "public_url",
-)  # fmt: skip
-
-
-def _text(n):
-    return lambda x: type(x) is str and 0 < len(x) <= n
-
-
-def _nat(x):
-    return type(x) is int and x >= 0
-
-
-_ROW = {
-    "workspace_id": lambda x: type(x) is str and _HEX32.fullmatch(x) is not None,
-    "release_id": _text(64),
-    "kind": _text(32),
-    "state": _text(32),
-    "created_ms": _nat,
-    "expires_ms": lambda x: x is None or _nat(x),
-    "revoked": lambda x: type(x) is bool,
-    "bytes": _nat,
-    "public_url": lambda x: x is None,
-}
-
-
-def check_row(row):
-    """The only shape of a release row an admin read returns."""
-    if (
-        type(row) is not dict
-        or set(row) != set(_ROW)
-        or not all(ok(row[k]) for k, ok in _ROW.items())
-    ):
-        raise H.Refused("malformed")
-    return row
-
-
-def check_rows(rows, scope):
-    """Every row is shape-checked and must belong to the scope; one outside it is never emitted."""
-    for r in rows:
-        check_row(r)
-        if r["workspace_id"] not in scope:
-            raise H.Refused("not_bound")
-    return rows
-
 
 ROUTE = "/v2/hub/releases"
 
@@ -166,33 +121,40 @@ def load_state(conn, hub_hex, now_ms, dev_mode):
     }
 
 
-def _row(r, now_ms):
+def _link_row(r, now_ms):
     state = r["state"]
     if state == "live" and r["expires_ms"] <= now_ms:
         state = "expired"
     return {
         "workspace_id": r["owner_ws"],
-        "release_id": r["id"],
+        "id": r["id"],
+        "type": "link",
         "kind": r["kind"],
         "state": state,
         "created_ms": r["created_ms"],
         "expires_ms": r["expires_ms"],
-        "revoked": state == "revoked",
         "bytes": r["bytes"],
-        "public_url": None,
+        "label": r["label"] or "Shared files",
+        "ticket": r["ticket"]
+        if P._TICKET.fullmatch(r["ticket"])
+        else None,  # the list shows a ULID or nothing
+        "by_kind": r["by_kind"],
+        "by_name": r["by_name"],
+        "views": r["views"],
+        "has_password": False,  # links have no password yet (S2)
     }
 
 
-def list_releases(conn, scope, now_ms, workspace=None):
-    """Release metadata (never staged shares) of `workspace` or of every workspace in `scope`, oldest first. The
-    rows are re-checked against `scope` before they are returned."""
+def list_published(conn, scope, now_ms, workspace=None):
+    """The links (never staged ones) of `workspace` or of every workspace in `scope`, oldest first. Each row is
+    checked against the C1 shape and the scope before it is returned."""
     wss = scope if workspace is None else [workspace]
     rows = []
     for ws in wss:
         for r in conn.execute(
-            "SELECT id, owner_ws, kind, state, created_ms, expires_ms, bytes FROM shares"
-            " WHERE owner_ws=? AND state!='staged' ORDER BY created_ms, id",
+            "SELECT id, owner_ws, ticket, kind, state, created_ms, expires_ms, bytes, views, label, by_kind, by_name"
+            " FROM shares WHERE owner_ws=? AND state!='staged' ORDER BY created_ms, id",
             (ws,),
         ):
-            rows.append(_row(r, now_ms))
-    return {"releases": check_rows(rows, scope)}
+            rows.append(_link_row(r, now_ms))
+    return {"rows": P.check_published_rows(rows, scope)}

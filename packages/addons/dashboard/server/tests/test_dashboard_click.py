@@ -1376,6 +1376,42 @@ def test_1087_an_ended_attempt_is_never_signed_later_and_pressing_again_is_a_fre
     assert script.states[rid] == "bound"  # prepared, not signed: signing it is the person's own next click
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"action": "new_sequence", "title": "Plan the launch", "priority": "high", "sections": {"summary": "Why."}},
+        {"action": "quick_start", "title": "Plan the launch", "description": "Why."},
+    ],
+)
+def test_p06_a_new_ticket_with_the_text_of_an_earlier_one_shows_its_own_review(
+    client, token, stub, script, host_check, rich, body
+):
+    """Run-10 J04c-01: an earlier ticket with the same title and text left an unreadable signed record. The first
+    press must show a fresh review (a new request, its own idem), never the dead end;
+    only the person's Sign signs it."""
+    script.features = ["custody", "sequence"]
+    first = prepare(client, token, stub, body)
+    assert first.status_code == 200, first.text
+    script.states[first.json()["request_id"]] = "submitted"  # the earlier ticket was signed
+    host_check.replay_error = "idem.conflict"  # and its record cannot be read here
+    again = prepare(client, token, stub, body)
+    assert again.status_code == 200, again.text
+    rid = again.json()["request_id"]
+    assert rid != first.json()["request_id"] and script.prepared == 2
+    assert script.states[rid] == "bound"  # prepared, not signed
+    idems = [a["idem"] for c, a in script.clients[0].calls if c == "prepare"]
+    assert len(set(idems)) == 2  # a new intent id: no earlier signature is reused
+
+
+def test_p06_a_comment_with_an_unreadable_signed_record_still_blocks(client, token, stub, script, host_check, rich):
+    prepare(client, token, stub, comment(1))
+    assert sign_lost(client, token, stub).status_code == 200
+    host_check.replay_error = "idem.conflict"
+    again = client.post(url(stub, "prepare"), json=comment(1), headers=hdr(token))
+    assert again.status_code == 409 and again.json()["error"]["code"] == "intent.blocked"
+    assert script.prepared == 1
+
+
 def test_794_a_signed_attempt_is_already_done_even_after_earlier_cancels(client, token, stub, script, rich):
     prepare(client, token, stub, comment(1))
     assert client.post(url(stub, "cancel"), json={"request_id": REQ}, headers=hdr(token)).status_code == 200

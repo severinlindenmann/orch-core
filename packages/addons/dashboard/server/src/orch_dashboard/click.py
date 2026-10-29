@@ -902,6 +902,7 @@ def register(app: FastAPI, gateway: Gateway):
             device = signer.status().get(ws, {}).get("device")
             if not device:
                 raise fail("host.unavailable", "Cannot read the earlier signing record.") from None
+            stepped = None
             try:
                 prepared = app.state.human(
                     ws,
@@ -920,20 +921,30 @@ def register(app: FastAPI, gateway: Gateway):
                         "another attempt; an earlier one may have been signed.",
                         exit=5,
                     ) from None
-                if code == "idem.conflict":
+                if code == "idem.conflict" and isinstance(body, NewTicketSequence | QuickStart):
+                    # P06: a new ticket whose earlier twin (same title and text) was signed but is unreadable here.
+                    # Step to the next retry: a NEW idem, so a fresh request and review; nothing signed is reused,
+                    # and nothing is signed until the person presses Sign on that review.
+                    failed_bumps[idem_key] = signed_retry + 1
+                    stepped = send_prepare(planned, ws, signed_retry + 1, call, lambda: human(ws, "human.pending", {}))
+                elif code == "idem.conflict":
                     raise fail(
                         "intent.blocked",
                         "The earlier attempt was signed, but its record can't be read here. Start again only if "
                         "you intend another attempt; an earlier one may have been signed.",
                         exit=5,
                     ) from None
-                raise
-            if prepared.get("request", {}).get("state") != "submitted":
-                raise fail("internal", "The host did not return the submitted intent.")
-            error = read_done(human, ws, prepared["request"]["id"])
-            if error.error["code"] == "intent.failed":
-                failed_bumps[idem_key] = signed_retry + 1
-            raise error from None
+                else:
+                    raise
+            if stepped is not None:
+                got = stepped
+            else:
+                if prepared.get("request", {}).get("state") != "submitted":
+                    raise fail("internal", "The host did not return the submitted intent.")
+                error = read_done(human, ws, prepared["request"]["id"])
+                if error.error["code"] == "intent.failed":
+                    failed_bumps[idem_key] = signed_retry + 1
+                raise error from None
         rid = got["request_id"]
         clicks.forget(rid)  # adopted by the new signer; it is no longer an orphan
         sweep()

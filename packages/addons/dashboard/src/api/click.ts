@@ -363,7 +363,7 @@ export function clickProblem(e: unknown, minLeadS?: number): ClickProblem {
     case 'intent.expired':
       return { title: 'This attempt is too old; start again', body: e.message, next: 'prepare' }
     case 'intent.blocked':
-      return { title: 'The earlier attempt ended', body: e.message, next: 'prepare' }
+      return { title: 'This was already tried before. Start again?', body: e.message, next: 'prepare' }
     case 'intent.open':
       return { title: 'An attempt for this is already open', body: e.message || 'The host holds an open request for this action. Wait until it ends or expires.', next: 'open' }
     case 'sign.convenience_readers': {

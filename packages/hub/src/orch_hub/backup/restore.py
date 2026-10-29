@@ -285,7 +285,7 @@ def _revoke_channels(new: Path, live: Path | None, removed: set[str], actor: str
         if live is not None:
             ids |= {c for (c,) in _live_rows(live, "channels.db", "SELECT channel_id FROM channels")}
         db.execute("UPDATE channels SET revoked_ms=?, revoked_by=? WHERE revoked_ms IS NULL", (now, actor or "restore"))
-        for t in ("sessions", "pairing", "challenges", "pending_totp", "failures", "push_keys", "known_sources"):
+        for t in ("sessions", "pairing", "challenges", "pending_totp", "push_keys", "known_sources"):
             with contextlib.suppress(sqlite3.OperationalError):
                 db.execute(f"DELETE FROM {t}")
         for u in sorted(removed):

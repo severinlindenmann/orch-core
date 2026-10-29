@@ -776,3 +776,51 @@ def test_the_pending_routes_list_and_confirm_for_admins_only(w):
         assert w.call("POST", "/admin/backup/restore/pending/confirm", {"id": pid}, token=tok)[0] == 404
     finally:
         acc.close()
+
+
+# --- the stricter value always wins (per-user security fields) --------------------------------------------------------------------------
+
+
+def _set(w, sql, *args):
+    w.env.acc._db.execute(sql, args)
+
+
+def test_must_recover_set_live_after_the_backup_is_still_set_and_its_credentials_are_gone(w):
+    words, data = _backup(w)
+    _set(w, "UPDATE users SET must_recover=1 WHERE user_id=?", w.carol)  # forced to recover after the backup
+    _restore(w, data, words)
+    q = lambda sql: _rows(w.state, "access.db", sql)
+    assert q(f"SELECT must_recover FROM users WHERE user_id='{w.carol}'") == [(1,)]
+    assert q(f"SELECT must_recover FROM users WHERE user_id='{w.admin}'") == [(0,)]
+    assert _rows(w.state, "channels.db", f"SELECT * FROM credentials WHERE user_id='{w.carol}'") == []
+    assert _rows(w.state, "channels.db", f"SELECT COUNT(*) FROM credentials WHERE user_id='{w.admin}'") == [(1,)]
+
+
+def test_a_lockout_and_a_used_code_counter_of_the_live_hub_survive(w):
+    words, data = _backup(w)
+    for i in range(5):
+        w.env.svc.db.w("INSERT INTO failures(kind, subject, ts_ms) VALUES ('pw', ?, ?)", (w.admin, w.clock() - i))
+    w.env.svc.db.w("UPDATE credentials SET totp_last=? WHERE user_id=?", (999_999_999, w.admin))
+    _restore(w, data, words)
+    assert _rows(w.state, "channels.db", f"SELECT COUNT(*) FROM failures WHERE subject='{w.admin}'") == [(5,)]
+    assert _rows(w.state, "channels.db", f"SELECT totp_last FROM credentials WHERE user_id='{w.admin}'") == [
+        (999_999_999,)
+    ]
+
+
+def test_disabled_live_wins_over_enabled_in_the_backup_and_never_the_reverse(w):
+    erin = w.env.user("erin")
+    words, data = _backup(w)
+    w.env.acc.set_disabled(erin, True, actor=w.admin)
+    _restore(w, data, words)
+    assert _rows(w.state, "access.db", f"SELECT disabled_ms IS NOT NULL FROM users WHERE user_id='{erin}'") == [(1,)]
+
+
+def test_a_fresh_server_deletes_the_credentials_of_everyone_who_must_recover(w, tmp_path):
+    _set(w, "UPDATE users SET must_recover=1 WHERE user_id=?", w.ann)
+    words, data = _backup(w)
+    fresh = tmp_path / "srv" / "d"
+    RS.restore(fresh, data, words, now_ms=lambda: 1_900_000_000_000)
+    left = {u for (u,) in _rows(fresh, "channels.db", "SELECT user_id FROM credentials")}
+    assert w.ann not in left and w.admin not in left and w.carol not in left  # admins recover too (fresh server)
+    assert _rows(fresh, "access.db", f"SELECT must_recover FROM users WHERE user_id='{w.ann}'") == [(1,)]

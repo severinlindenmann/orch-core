@@ -49,7 +49,9 @@ POLICY = {
     "access.org_*, workspace_addon_allow, addon_request, market_policy": "in place: the live rows; fresh: shares and "
     "offers pending",
     "access.snapshots/bundles": "versions lifted above the floor (version_floor)",
-    "channels.credentials": "in place: the live row of every surviving person; fresh: admins must recover",
+    "channels.credentials": "in place: the live row (totp_last too); nobody who must recover keeps a row; fresh: admins must recover",
+    "channels.failures (lockouts)": "in place: the live rows",
+    "users.must_recover/disabled_ms": "the stricter value (max / live)",
     "channels.channels/sessions/pairing/...": "all revoked / emptied",
     "invites.db": "unused invites are never in a backup (S5); fresh: one recovery link per admin",
     "registry.db, connections.db, shares.db, spaces.db, changes.db, wk-seal.db, workspace-view.db": "in place: the live "
@@ -105,6 +107,14 @@ def _in_place_access(new: Path, live: Path) -> None:
             "UPDATE main.grants SET role=(SELECT l.role FROM live.grants l WHERE l.workspace_id=main.grants.workspace_id "
             "AND l.grp=main.grants.grp)"
         )
+        # per-user security fields: the stricter value always wins (must_recover = max, disabled = the live one if set)
+        c.execute(
+            "UPDATE main.users SET must_recover=1 WHERE user_id IN (SELECT user_id FROM live.users WHERE must_recover<>0)"
+        )
+        c.execute(
+            "UPDATE main.users SET disabled_ms=(SELECT l.disabled_ms FROM live.users l WHERE l.user_id=main.users.user_id) "
+            "WHERE disabled_ms IS NULL AND user_id IN (SELECT user_id FROM live.users WHERE disabled_ms IS NOT NULL)"
+        )
         c.execute(
             "DELETE FROM main.groups WHERE name<>? AND name NOT IN (SELECT name FROM live.groups)", (ADMIN_GROUP,)
         )
@@ -124,11 +134,30 @@ def _in_place_credentials(new: Path, live: Path, survivors: set[str]) -> None:
         c.execute("DELETE FROM main.credentials")
         for u in sorted(survivors):
             c.execute("INSERT INTO main.credentials SELECT * FROM live.credentials WHERE user_id=?", (u,))
+        # a lockout of the live hub (failed sign-ins) is still a lockout
+        c.execute("DELETE FROM main.failures")
+        if _has(c, "live", "failures"):
+            c.execute("INSERT INTO main.failures(kind, subject, ts_ms) SELECT kind, subject, ts_ms FROM live.failures")
         c.execute("COMMIT")
     except BaseException:
         with contextlib.suppress(sqlite3.Error):
             c.execute("ROLLBACK")
         raise
+    finally:
+        c.close()
+
+
+def _drop_recovering(new: Path) -> None:
+    """Whoever must recover has NO password and TOTP row at all (not just the flag): the backup's or the live one."""
+    a = sqlite3.connect(new / "access.db")
+    try:
+        users = [u for (u,) in a.execute("SELECT user_id FROM users WHERE must_recover<>0")]
+    finally:
+        a.close()
+    c = sqlite3.connect(new / "channels.db", isolation_level=None)
+    try:
+        for u in users:
+            c.execute("DELETE FROM credentials WHERE user_id=?", (u,))
     finally:
         c.close()
 
@@ -202,9 +231,11 @@ def never_widen(new: Path, live: Path | None) -> None:
 
 
 def credentials(new: Path, live: Path | None) -> None:
-    """In place: the LIVE password / TOTP row of every surviving person (an old password stays dead)."""
+    """In place: the LIVE password / TOTP row of every surviving person (an old password stays dead) and the live lockouts.
+    Both modes: no credentials row for anybody who must recover. Run after :func:`never_widen`."""
     if live is not None:
         _in_place_credentials(new, live, _survivors(new))
+    _drop_recovering(new)
 
 
 # --- the confirm path (console) ------------------------------------------------------------------------------------------------

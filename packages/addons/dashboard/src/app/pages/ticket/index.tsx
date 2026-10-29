@@ -237,11 +237,10 @@ export function TicketPage({ ticketKey }: { ticketKey: string }) {
               {openQuestions > 0 && <span className="rounded-full bg-warning-soft px-1.5 font-mono text-[11px] text-warning">{openQuestions}</span>}
             </TabsTrigger>
             <TabsTrigger value="artifacts">
-              Artifacts
+              Results
               <span className="font-mono text-[11px] text-text-faint">{ticket.artifacts.length}</span>
             </TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
-            <TabsTrigger value="raw">Raw</TabsTrigger>
           </TabsList>
           <TabsContent value="overview">
             <Overview {...props} />

@@ -31,11 +31,6 @@ const hubPage = (scenario: HubScenario, path = '/w/DEMO/settings/hub') => {
   setHubScenario(scenario)
   return renderApp(path)
 }
-const type = async (view: ReturnType<typeof renderApp>, id: string, text: string) => {
-  const el = await screen.findByTestId(id, {}, T)
-  await view.user.clear(el)
-  await view.user.type(el, text)
-}
 
 describe('the Hub tab has a different page for each mode', () => {
   it('standalone: not connected, nothing to fear, a way to connect', async () => {
@@ -201,11 +196,14 @@ describe('share rules (A3.3)', () => {
     expect(await screen.findByText('Choose what to share', {}, T)).toBeTruthy()
     expect(await screen.findAllByText('Always shared', {}, T)).toHaveLength(2)
     await view.user.click(screen.getByTestId('hub-rule-add'))
-    await type(view, 'hub-rule-value', 'team')
+    await view.user.click((await screen.findByTestId('hub-rule-chips', {}, T)).querySelector('button')!)
     await waitFor(() => expect(screen.getByText(/1 now visible/)).toBeTruthy(), T)
     await view.user.click(screen.getByTestId('hub-share-review'))
     expect(await screen.findByTestId('hub-add-review', {}, T)).toBeTruthy()
     expect(screen.getByTestId('hub-add-later')).toHaveTextContent('Later edits')
+    expect(screen.getByTestId('hub-add-sentence')).toHaveTextContent(/^Share \d+ \S+ tickets? from .+ with the hub/)
+    expect(screen.getByTestId('hub-add-review').textContent).not.toMatch(/[0-9a-f]{32}/) // ids and the plan are behind Details
+    expect(screen.queryByTestId('hub-add-hub')).toBeNull()
     expect(screen.getByTestId('hub-add-go')).toBeTruthy()
     expect(screen.queryByTestId('hub-command')).toBeNull()
     expect(screen.getAllByText(/cannot be taken back/).length).toBeGreaterThan(0)
@@ -221,10 +219,10 @@ describe('share rules (A3.3)', () => {
     expect(screen.getByTestId('hub-rule-only-me')).toHaveTextContent('Only me')
     expect(screen.getByTestId('hub-rule-description')).toBeChecked()
     const preview = vi.spyOn(api, 'getHubPreview')
-    await type(view, 'hub-rule-value', 'team')
+    await view.user.click((await screen.findByTestId('hub-rule-chips', {}, T)).querySelector('button')!)
     await view.user.click(screen.getByTestId('hub-rule-description')) // untick: the text stays home
     await view.user.click(await screen.findByTestId('hub-rule-team-finance', {}, T))
-    await waitFor(() => expect(preview).toHaveBeenLastCalledWith(expect.anything(), { add: { kind: 'type', value: 'team', audience: { users: [], groups: ['finance'] }, description: false } }), T)
+    await waitFor(() => expect(preview).toHaveBeenLastCalledWith(expect.anything(), { add: { kind: 'type', value: expect.any(String), audience: { users: [], groups: ['finance'] }, description: false } }), T)
     expect(screen.getByTestId('hub-rule-only-me')).toHaveTextContent('not signed')
     vi.restoreAllMocks()
   })
@@ -233,7 +231,7 @@ describe('share rules (A3.3)', () => {
     const view = hubPage('selective')
     await view.user.click(await screen.findByTestId('hub-choose-share', {}, T))
     await view.user.click(await screen.findByTestId('hub-rule-add', {}, T))
-    await type(view, 'hub-rule-value', 'a; rm -rf ~')
+    await view.user.click((await screen.findByTestId('hub-rule-chips', {}, T)).querySelector('button')!)
     await view.user.click(await screen.findByTestId('hub-share-review', {}, T).then((b) => { return b }))
     await waitFor(() => expect((screen.getByTestId('hub-share-review') as HTMLButtonElement).disabled).toBe(false), T)
     await view.user.click(screen.getByTestId('hub-share-review'))

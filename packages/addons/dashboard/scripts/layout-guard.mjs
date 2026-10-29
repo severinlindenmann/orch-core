@@ -39,8 +39,8 @@ const PREFIX = opt('prefix', 'page')
 const QUICK = flag('quick')
 /** Self-test only: break one step on purpose ('tabs', 'overlay' or 'loading') to prove the guard then fails. */
 const BREAK = opt('break')
-/** DEMO-0043's tabs: Overview, Acceptance & tasks, Questions, Artifacts, History, Raw. */
-const TICKET_TABS = 6
+/** DEMO-0043's tabs: Overview, Acceptance & tasks, Questions, Results, History. */
+const TICKET_TABS = 5
 
 const VIEWPORTS = QUICK ? [[1440, 900]] : [[1440, 900], [1470, 956]]
 const DOCKS = opt('docks') ? opt('docks').split(',') : QUICK ? ['default'] : ['min', 'default', 'max']

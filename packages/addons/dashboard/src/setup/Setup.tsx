@@ -111,7 +111,7 @@ export function reviewFacts(review: Review): Fact[] {
   if (ws) {
     facts.push({ icon: '▦', label: 'Workspace', value: `${ws.workspace_name ?? ws.name} (tickets ${ws.prefix}-0001…)` })
     facts.push({ icon: '☺', label: 'Owner', value: ws.name })
-    facts.push({ icon: '▤', label: 'Folder', value: ws.dir.split(/[\\/]/).filter(Boolean).at(-1) ?? ws.dir })
+    facts.push({ icon: '▤', label: 'Project folder', value: ws.dir.split(/[\\/]/).filter(Boolean).at(-1) ?? ws.dir })
   }
   const has = (id: string) => review.flags.some((f) => f.id === id)
   if (has('custody')) facts.push({ icon: '◈', label: 'How you approve', value: 'One click on this computer' })
@@ -1209,6 +1209,14 @@ export function Setup({ api }: { api: SetupAPI }) {
                         <Raw>{line}</Raw>
                       </p>
                     ))}
+                  </section>
+                ))}
+                {review.flags.filter((f) => f.detail).map((f) => (
+                  <section className="review-item" key={`detail-${f.id}`}>
+                    <h3>Change history</h3>
+                    <p>
+                      <Raw>{f.detail ?? ""}</Raw>
+                    </p>
                   </section>
                 ))}
                 {review.runner_grant && (

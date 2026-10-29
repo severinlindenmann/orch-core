@@ -3,11 +3,22 @@ import { useQuery } from '@tanstack/react-query'
 import { InfoDrawer } from '@/components/InfoDrawer'
 import { api } from '@/api/client'
 import { hubQueries, type HubAudience, type HubRule, type HubPreview, type HubShare } from '@/api/hub'
+import { queries } from '@/api/queries'
 import { Raw } from '@/components/sign/visible'
 import { Badge } from '@/components/ui/badge'
 import { Action, Field, Flow, Panel } from './shared'
 import { AddRuleReview } from './AddRule'
 import { StopRule, StopSharing, useSharedNow, type HubWorkspace } from './StopSharing'
+
+const CHIPS_SHOWN = 8
+type Chip = { value: string; label: string }
+/** The values a rule can take, from the tickets the dashboard already has: kinds and labels with counts, or tickets by title. */
+function chipsFor(kind: 'type' | 'tag' | 'ticket', tickets: { key: string; title: string; type: string; labels: string[] }[]): Chip[] {
+  if (kind === 'ticket') return tickets.map(t => ({ value: t.key, label: `${t.key} · ${t.title}` }))
+  const counts = new Map<string, number>()
+  for (const t of tickets) for (const v of kind === 'type' ? [t.type] : t.labels) counts.set(v, (counts.get(v) ?? 0) + 1)
+  return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([value, n]) => ({ value, label: `${value} (${n})` }))
+}
 
 type Change = { add: HubRule; remove?: never } | { remove: HubRule; add?: never }
 export function AlwaysShared({ share }: { share: HubShare }) {
@@ -29,6 +40,9 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
   const [adding, setAdding] = useState(false)
   const [kind, setKind] = useState<'type' | 'tag' | 'ticket'>('type')
   const [value, setValue] = useState('')
+  const [moreChips, setMoreChips] = useState(false)
+  const tickets = useQuery(queries.ticketsAll(ws))
+  const chips = chipsFor(kind, tickets.data ?? [])
   // who should see it (hub ids; nothing ticked = only me) and whether the description goes along (ticked by default)
   const [users, setUsers] = useState<string[]>([])
   const [groups, setGroups] = useState<string[]>([])
@@ -79,8 +93,12 @@ export function ShareRules({ ws, workspace, onBack }: { ws: string; workspace: H
 
         <Action id="hub-rule-add" onClick={() => { setAdding(true); setRemove(undefined); setReview(undefined) }}>+ Share tickets</Action>
         {adding && <div className="space-y-3 border-t border-border pt-3">
-          <label className="block space-y-1">Which tickets<select data-testid="hub-rule-kind" className="block w-full rounded border border-border bg-bg p-2" value={kind} onChange={e => setKind(e.target.value as typeof kind)}><option value="type">All of a type</option><option value="tag">All with a tag</option><option value="ticket">One ticket</option></select></label>
-          <Field label={kind === 'ticket' ? 'Ticket key' : kind === 'tag' ? 'Tag' : 'Ticket type'} testId="hub-rule-value" value={value} onChange={setValue} hint="Enter the exact value. This also shares future matches." />
+          <label className="block space-y-1">Which tickets<select data-testid="hub-rule-kind" className="block w-full rounded border border-border bg-bg p-2" value={kind} onChange={e => { setKind(e.target.value as typeof kind); setValue(''); setMoreChips(false) }}><option value="type">All of one kind</option><option value="tag">All with a label</option><option value="ticket">One ticket</option></select></label>
+          {chips.length > 0 ? <div className="space-y-2" role="group" aria-label={kind === 'ticket' ? 'Ticket' : kind === 'tag' ? 'Label' : 'Kind of ticket'} data-testid="hub-rule-chips">
+            <div className="flex flex-wrap gap-2">{(moreChips ? chips : chips.slice(0, CHIPS_SHOWN)).map(c => <button key={c.value} type="button" data-testid={'hub-rule-chip-' + c.value} aria-pressed={value === c.value} onClick={() => setValue(c.value)} className={'rounded-full border px-3 py-1 text-[13px] ' + (value === c.value ? 'border-brand bg-brand-soft' : 'border-border')}><bdi><Raw>{c.label}</Raw></bdi></button>)}</div>
+            {chips.length > CHIPS_SHOWN && <Action id="hub-rule-chips-more" onClick={() => setMoreChips(v => !v)}>{moreChips ? 'Fewer' : `${chips.length - CHIPS_SHOWN} more`}</Action>}
+            <p className="text-xs text-text-muted">Tickets that match later are shared too.</p>
+          </div> : <Field label={kind === 'ticket' ? 'Ticket' : kind === 'tag' ? 'Label' : 'Kind of ticket'} testId="hub-rule-value" value={value} onChange={setValue} hint="Tickets that match later are shared too." />}
           <fieldset className="space-y-1" data-testid="hub-rule-audience"><legend>Who should see it?</legend>
             {audience.isPending ? <p role="status">Loading people and teams…</p> : audience.isError ? <p role="alert">Could not load people and teams. You can still share with only yourself.</p> : <>
               {audience.data.people.map(p => <label key={p.user_id} className="flex items-center gap-2"><input type="checkbox" data-testid={'hub-rule-person-' + p.user_id} checked={users.includes(p.user_id)} onChange={e => setUsers(u => e.target.checked ? [...u, p.user_id] : u.filter(x => x !== p.user_id))} /><Raw>{p.name}</Raw></label>)}

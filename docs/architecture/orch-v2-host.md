@@ -13272,9 +13272,9 @@ enable`, `orch records remote private`, `orch records auto on`/`--push`, `orch r
 
 **Rules and strings for the dashboard.**
 
-- **Constants in the bundle** (client text, never host text): the D-P2-31 line "Dashboard execution: agents and
-  terminals started here run as you. Anything that takes over this dashboard, or any agent it starts, can run
-  commands and read your files and keys." (card, Start dialog, terminal header, whenever `runner.enabled`, whatever
+- **Constants in the bundle** (client text, never host text): the D-P2-31 line "Agents and terminals you start
+  here work as you on this computer. They can run programs and open your files, including secret keys, and so can
+  anything that takes over this dashboard. Only continue on a computer you trust." (card, Start dialog, terminal header, whenever `runner.enabled`, whatever
   `terminals` says); the deposit line "The secret goes to your orch runner on this machine and is never shown"; the
   export warning "Push publishes every ticket in this workspace to <url>, restricted ones included."; the private
   remote line "orch trusts your word that only you read <url>."; "Output no longer kept"; "Some processes may still be

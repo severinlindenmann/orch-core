@@ -548,3 +548,20 @@ body:has(> #root > .setup) {
   font-size: 13px;
   text-decoration: underline;
 }
+/* r11-P16: the approval step's defaults in one line, the other choices behind "Change these settings" */
+.setup .approval-summary {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 13px;
+}
+.setup details.approval-more {
+  margin-top: 4px;
+}
+.setup details.approval-more summary {
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  text-decoration: underline;
+}

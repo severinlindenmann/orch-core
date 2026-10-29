@@ -19,7 +19,7 @@ export function emptyWords(kind) {
     handoffs: ["No hand-offs yet", "Send a hand-off from a workspace to see its progress here."],
     mcp: ["No tool servers yet", "Add one below to offer it to your workspaces."],
     skills: ["No company skills yet", "Write one below to offer it to your workspaces."],
-    spaces: ["No shared spaces yet", "A shared space is a place where several workspaces keep documents together. Press “New shared space” to make one."],
+    spaces: ["No shared spaces yet", "A shared space is a folder of documents that several of your workspaces can read, and edit if you allow it. Press “New shared space” to make the first one."],
     "published-links": ["No shared files yet", "When someone in a workspace shares a file by link, it shows up here."],
     "published-apps": ["No apps yet", "Apps and pages that people publish from a workspace show up here."],
     "addon-requests": ["No requests", "When a workspace is refused an add-on, the request shows up here."],

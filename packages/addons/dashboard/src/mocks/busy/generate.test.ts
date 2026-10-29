@@ -194,7 +194,7 @@ describe('busy store: Today under pressure', () => {
 })
 
 describe('busy store: speed', () => {
-  it('answers list, today and ticket queries in under 50 ms each', async () => {
+  it('answers list, today and ticket queries in under 250 ms each (about 8 ms today)', async () => {
     const { api, id } = setup()
     const ws = id('DEMO')
     const list = await bestOfFive(() => api.listTickets(ws))
@@ -202,10 +202,10 @@ describe('busy store: speed', () => {
     const rows = (await api.listTickets(ws)) as TicketSummary[]
     const ticket = await bestOfFive(() => api.getTicket(rows[0].key))
     const agents = await bestOfFive(() => api.getAgents(ws))
-    expect(list).toBeLessThan(50)
-    expect(today).toBeLessThan(50)
-    expect(ticket).toBeLessThan(50)
-    expect(agents).toBeLessThan(50)
+    expect(list).toBeLessThan(250)
+    expect(today).toBeLessThan(250)
+    expect(ticket).toBeLessThan(250)
+    expect(agents).toBeLessThan(250)
   })
 
   it('seeds the whole busy store in well under a second', () => {

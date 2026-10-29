@@ -81,6 +81,8 @@ class SetupFlow:
         self._creator: Creator | None = None
         self._closed = False
         self.cancel_event = threading.Event()
+        #: a line for the person's terminal (the setup server sets it); the page never sees these words
+        self.on_note: Callable[[str], None] = lambda line: None
         self.thread: threading.Thread | None = None
 
     # ---------------------------------------------------------------------------------------------- server protocol
@@ -442,8 +444,18 @@ class SetupFlow:
         wid = ((self.run.workspace if self.run is not None else None) or {}).get("id") or (self.entry or {}).get(
             "workspace_id", ""
         )
+        # The link first, the end of the session after it: a dashboard that did not open leaves this page working, so
+        # "Try again" reaches this setup once more (r11-P01). The cause goes to the terminal, never to the page.
+        try:
+            url = self.e.workspace_url(wid)
+        except Exception as e:  # noqa: BLE001 - any failure here is the same retryable answer
+            why = e.message if isinstance(e, SetupError) else (str(e) or type(e).__name__)
+            self.on_note(f"the dashboard did not open yet: {why[:200]}; the page offers Try again")
+            raise SetupError(
+                "setup.dashboard_unavailable", "the dashboard did not open yet; try again", 503, retry=True
+            ) from None
         self._closed = True
-        return {"url": self.e.workspace_url(wid), "workspace_id": str(wid)}
+        return {"url": url, "workspace_id": str(wid)}
 
     def cancel_run(self) -> None:
         """Ctrl-C on the setup terminal: the run stops between steps (a conversion in flight is undone)."""
@@ -702,7 +714,8 @@ def main(
 
         folder = cwd if cwd is not None else os.path.realpath(os.getcwd())
         # the page's own origin (the setup server) stops with this command: send "Open your workspace" to the running
-        # dashboard service instead, with a fresh login; the page's relative "/" stays the fallback
+        # dashboard service instead, with a fresh login (LoginUnavailable: Finish answers "try again"); a machine
+        # without a dashboard service keeps the page's own dashboard (relative "/")
         denv.workspace_url = lambda wid: icli.workspace_login_url(ictx, folder) or "/"
     try:
         (ensure_host or _ensure_host)(env, err)
@@ -713,6 +726,7 @@ def main(
     # launch-code file need a directory only this user can enter.
     sock_dir = run_dir if run_dir is not None else denv.state_dir / "setup"
     flow = SetupFlow(denv)
+    flow.on_note = lambda line: err.write(f"orch setup: {line}\n")
     server = SetupServer(
         Path(sock_dir) / "setup.sock",
         flow,

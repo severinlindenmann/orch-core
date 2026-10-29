@@ -1737,7 +1737,7 @@ class WebApi(*FEATURE_MIXINS):  # the handler mixins listed in features.py
             raise ApiError("unavailable")
         token, iid, expires = inv.create("join", created_by=c.user_id, name=name)
         self._record("invite.created", actor_id=c.user_id, detail={"invite_id": iid})
-        return 200, {"link": self._invite_link(c, token), "expires_ms": expires}
+        return 200, {"link": self._invite_link(c, token), "expires_ms": expires, "invite_id": iid}
 
     def _h_a_user_reset(self, c: Ctx, p: dict, q: dict, b: dict | None):
         recovery = (b or {}).get("recovery", False)

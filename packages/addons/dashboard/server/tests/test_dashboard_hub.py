@@ -488,6 +488,19 @@ def test_shared_with_you_is_a_closed_read_only_shape():
     assert link.calls == [("hub.shared", None)]
 
 
+@pytest.mark.parametrize("code", ["hub.not_joined", "hub.state_mismatch"])
+def test_shared_with_you_is_empty_not_an_error_without_a_hub(code):
+    err = HostError({"code": code, "message": "x", "retryable": False}, 3)
+    res = client(Link({"hub.shared": err})).get(f"/api/w/{WS}/hub/shared")
+    assert res.status_code == 200 and res.json() == {"items": []}
+
+
+def test_shared_with_you_still_surfaces_other_errors():
+    err = HostError({"code": "hub.unreachable", "message": "x", "retryable": True}, 4)
+    res = client(Link({"hub.shared": err})).get(f"/api/w/{WS}/hub/shared")
+    assert res.status_code != 200 and res.json()["error"]["code"] == "hub.unreachable"
+
+
 def _review_of(**over):
     review = {"hub_id": "ab12cd34ef56ab12", "new": {"count": 0, "items": []}, "leaves": [],
               "readers": {"people": ["Ben"], "teams": [], "note": "n", "info": "i"}, "widened": [], **over}  # fmt: skip

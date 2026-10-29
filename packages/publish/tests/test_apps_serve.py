@@ -608,7 +608,7 @@ def test_visits_are_a_daily_count_and_nothing_else(w):
     assert cols == {"view_id", "app_id", "until_ms"}  # no IP, user agent or referrer anywhere
 
 
-def test_unconfigured_apps_dir_migrates_from_schema_3(tmp_path):
+def test_a_schema_3_data_dir_is_refused_not_migrated(tmp_path):
     path = db.prepare_dir(str(tmp_path / "d"))
     import sqlite3
 
@@ -618,8 +618,8 @@ def test_unconfigured_apps_dir_migrates_from_schema_3(tmp_path):
     c.execute("PRAGMA user_version=3")
     c.commit()
     c.close()
-    db.init(path)
-    assert db.connect(path).execute("SELECT COUNT(*) FROM app_visits").fetchone()[0] == 0
+    with pytest.raises(db.SchemaError, match="delete the data dir"):
+        db.init(path)
 
 
 def test_kdf_semaphore_is_threadsafe_type():

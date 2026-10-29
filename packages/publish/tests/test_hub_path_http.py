@@ -577,74 +577,31 @@ def test_op_cert_revocation_stops_the_hub_at_once(env):
     assert (r.status_code, err(r)) == (403, "revoked")
 
 
-def test_migration_from_schema_2_keeps_data_and_adds_the_hub_tables(tmp_path):
+@pytest.mark.parametrize("version", [1, 2, 3, 4, 5, 99])
+def test_any_other_schema_version_is_refused_with_a_reset_message(tmp_path, version):
+    """Nothing is in production: there is no upgrade path, an older or unknown data dir says to delete it."""
     path = db.prepare_dir(str(tmp_path / "d"))
     conn = sqlite3.connect(path)
     conn.executescript(db.SCHEMA)
-    for t in ("hub_bindings", "hub_cards", "hub_op_revoked", "hub_revoked_devices"):
-        conn.execute(f"DROP TABLE {t}")
-    conn.execute("INSERT INTO owners VALUES ('p', 1)")
-    conn.execute("PRAGMA user_version=2")
+    conn.execute(f"PRAGMA user_version={version}")
     conn.commit()
     conn.close()
+    with pytest.raises(
+        db.SchemaError, match="different orch-publish version: stop the server, delete the data dir"
+    ):
+        db.init(path)
+    conn = sqlite3.connect(path)  # and nothing was touched
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == version
+    conn.close()
+
+
+def test_the_current_schema_opens_again_unchanged(tmp_path):
+    path = db.prepare_dir(str(tmp_path / "d"))
+    db.init(path)
     db.init(path)
     conn = db.connect(path)
     assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 6
-    assert conn.execute("SELECT person_id FROM owners").fetchone()[0] == "p"
-    assert conn.execute("SELECT count(*) FROM hub_bindings").fetchone()[0] == 0
     conn.close()
-    db.init(path)  # idempotent
-
-
-def test_migration_from_schema_3_adds_the_display_columns_of_the_company_list(tmp_path):
-    path = db.prepare_dir(str(tmp_path / "d"))
-    conn = sqlite3.connect(path)
-    conn.executescript(db.SCHEMA)
-    conn.execute("DROP TABLE views")
-    conn.execute("DROP TABLE share_files")
-    conn.execute("DROP TABLE shares")
-    conn.execute(
-        "CREATE TABLE shares(id TEXT PRIMARY KEY, owner_ws TEXT NOT NULL, ticket TEXT NOT NULL, kind TEXT NOT NULL,"
-        " token_hash TEXT NOT NULL, expires_ms INTEGER NOT NULL, view_limit INTEGER NOT NULL DEFAULT 0,"
-        " views INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT 'staged', manifest_hash TEXT,"
-        " bytes INTEGER NOT NULL DEFAULT 0, created_ms INTEGER NOT NULL, ended_ms INTEGER)"
-    )
-    conn.execute(
-        "INSERT INTO shares(id, owner_ws, ticket, kind, token_hash, expires_ms, state, created_ms)"
-        " VALUES ('" + "ab" * 16 + "','" + WS_A + "','T-1','secret','h',1,'live',1)"
-    )
-    conn.execute("PRAGMA user_version=3")
-    conn.commit()
-    conn.close()
-    db.init(path)
-    conn = db.connect(path)
-    r = conn.execute("SELECT label, by_kind, by_name FROM shares").fetchone()
-    assert tuple(r) == ("", "person", None)  # an old row reads with the plain defaults
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
-    # the company list reads the old row as "Shared files" by a person
-    from pubsrv import hub_admin_read as R
-
-    (row,) = R.list_published(conn, [WS_A], 10**12)["rows"]
-    assert (row["label"], row["by_kind"], row["by_name"]) == ("Shared files", "person", None)
-    cols = [tuple(c) for c in conn.execute("PRAGMA table_info(shares)")]
-    conn.close()
-    db.init(path)  # a second init changes nothing
-    conn = db.connect(path)
-    assert [tuple(c) for c in conn.execute("PRAGMA table_info(shares)")] == cols
-    assert conn.execute("SELECT count(*) FROM shares").fetchone()[0] == 1
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION
-    conn.close()
-
-
-def test_schema_1_is_still_refused(tmp_path):
-    path = db.prepare_dir(str(tmp_path / "d"))
-    conn = sqlite3.connect(path)
-    conn.executescript(db.SCHEMA)
-    conn.execute("PRAGMA user_version=1")
-    conn.commit()
-    conn.close()
-    with pytest.raises(db.SchemaError):
-        db.init(path)
 
 
 def test_a_bound_workspace_has_no_direct_path_either(env):

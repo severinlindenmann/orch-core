@@ -87,6 +87,9 @@ def _at(value) -> float | None:
         return None
 
 
+FINISHED = ("done", "closed", "cancelled")
+
+
 def terminal_waits(runs: list[dict], rows: list[dict], mine: dict[str, list[dict]]) -> list[dict]:
     """Run-9 feedback 3.6: an agent run the host marks `waiting` (Notification hook, else a quiet terminal) on a ticket
     where nothing is open for the person. Local and display only; it is not a need (never counted). `ref` is the run id:
@@ -100,6 +103,8 @@ def terminal_waits(runs: list[dict], rows: list[dict], mine: dict[str, list[dict
         w = r.get("waiting")
         row = by_key.get(r.get("ticket") or "")
         if not isinstance(w, dict) or row is None or mine.get(row.get("uid")):
+            continue
+        if row.get("status") in FINISHED:  # nothing is waiting on a finished ticket (run-11 P06)
             continue
         if _at(w.get("since")) is None:
             continue

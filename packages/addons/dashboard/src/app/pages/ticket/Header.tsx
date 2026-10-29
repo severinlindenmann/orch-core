@@ -303,8 +303,11 @@ export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; 
   const { workspaces } = useWorkspace()
   const home = workspaceOfTicket(p.ticket.key, workspaces)?.id
   const { run, wait } = useTicketAgent(p.ticket, home)
-  // "Start agent again" asks the header's one start flow (its dialog); this card holds no second dialog.
-  return <TicketProgress {...p} run={run} wait={wait} onStart={() => window.dispatchEvent(new CustomEvent(START_EVENT, { detail: p.ticket.key }))} />
+  // "Start agent again" asks the header's one start flow (its dialog); this card holds no second dialog and reads
+  // `startable` only, so a viewer who cannot start sees no button.
+  const { startable } = useStartAgent(p.ticket, p.viewer)
+  const onStart = startable ? () => window.dispatchEvent(new CustomEvent(START_EVENT, { detail: p.ticket.key })) : undefined
+  return <TicketProgress {...p} run={run} wait={wait} onStart={onStart} />
 }
 
 /** The one status pill for the agent's progress, in plain words, in a live region so changes are announced. */

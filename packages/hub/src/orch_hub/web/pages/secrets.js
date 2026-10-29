@@ -61,7 +61,7 @@ const SAY = {
 };
 
 function valueBox(label) {
-  return h("input", { type: "password", autocomplete: "off", spellcheck: "false", "aria-label": label, maxlength: "4096" });
+  return h("input", { type: "password", autocomplete: "off", spellcheck: "false", "aria-label": label });
 }
 function expiryBox() {
   const sel = h("select", { "aria-label": "Valid for" },

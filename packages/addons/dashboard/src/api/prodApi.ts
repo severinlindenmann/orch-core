@@ -207,6 +207,11 @@ export async function logout() {
 /** The first read of every page load. It ends by itself after `SESSION_READ_MS` (an error the person can retry), and when the
  * query is cancelled (Try again): a request that can wait for good is how a reload ended on the boot skeleton. */
 export const SESSION_READ_MS = 20_000
+/** Right after setup the host can need a while to come up: a refused or unanswered first read is "still starting", not a failure.
+ * The Shell asks again (1 s, 2 s ... 5 s apart) for this long before it shows a plain failure screen. */
+export const SESSION_RETRY_WINDOW_MS = 60_000
+export const sessionRetryDelay = (attempt: number) => Math.min(5_000, 1_000 * (attempt + 1))
+export const isStarting = (e: unknown) => e instanceof ApiError && (e.status === 503 || e.code === 'host.unavailable')
 export const session = async (cancel?: AbortSignal) => {
   const stop = cancel ? AbortSignal.any([cancel, AbortSignal.timeout(SESSION_READ_MS)]) : AbortSignal.timeout(SESSION_READ_MS)
   try {

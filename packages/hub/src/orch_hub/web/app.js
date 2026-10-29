@@ -16,7 +16,7 @@ import { inviteView } from "./invite.js";
 import { servicesView } from "./services.js";
 import { handoffsView } from "./handoffs.js";
 import { phonesView } from "./phones.js";
-import { workspacesView, workspaceDetailsView } from "./workspaces.js";
+import { workspacesView, workspaceDetailsView, newWorkspaces } from "./workspaces.js";
 import { OPEN_FIRST, colour, initials, landing, landingPlan, railRows, safeUrl } from "./switch.js";
 import { Refusal, grantTermsOk, grantSentence, grantFacts, addonFacts, addonTermsOk, settingsFacts, settingsTermsOk, checkBindings, checkPrepared, describe, renderMulti, renderText, shortHash, verifyQuestion, DECISIONS } from "./render.js";
 
@@ -42,11 +42,11 @@ function h(tag, props = {}, ...kids) {
   if (props["data-sign"] !== undefined) { e.arm = () => arm(e); e.arm(); }
   return e;
 }
-let servicesTimer, viewRevision = 0;
+let servicesTimer, workspacesTimer, viewRevision = 0;
 let frame = null;
 let railSnapshot = "";
 let paintedRoute = null;
-const show = (...nodes) => { clearInterval(servicesTimer); viewRevision++; frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
+const show = (...nodes) => { clearInterval(servicesTimer); clearInterval(workspacesTimer); viewRevision++; frame = null; paintedRoute = null; root.classList.remove("shelled"); root.replaceChildren(...nodes.flat().filter(Boolean)); };
 const field = (label, input) => h("div", {}, h("label", { text: label }), input);
 const banner = (kind, title, text) => h("div", { class: "banner " + kind, role: kind === "bad" ? "alert" : "status" }, h("b", { text: title }), text ? h("div", { class: "small", text }) : null);
 
@@ -158,6 +158,7 @@ function pageLoading(active, kind = active) {
 
 function shell(active, ...nodes) {
   nodes = [recoveryBanner(), ...nodes];
+  if (active !== "workspaces") clearInterval(workspacesTimer);
   if (active !== "services") { clearInterval(servicesTimer); viewRevision++; } // leave the Services page: stop its refresh
   const sameRoute = paintedRoute === location.hash;
   const tab = (id, label, cls) => h("a", { href: "#/" + id, "data-tab": id, class: cls + (active === id ? " on" : ""), "aria-current": active === id ? "page" : null, text: label, onclick: (e) => { e.preventDefault(); navigate("#/" + id); } });
@@ -398,7 +399,7 @@ async function handoffs() {
   } finally { finishLoading(); }
 }
 
-async function workspaces() {
+async function workspaces(joined = [], known = null) {
   const finishLoading = loading();
   pageLoading("workspaces");
   try {
@@ -428,8 +429,26 @@ async function workspaces() {
             h("div", { class: "row" }, h("button", { text: "Close", onclick: closeDialog })));
         },
       };
-      shell("workspaces", workspacesView({ workspaces: ws.status === 200 ? ws.body.workspaces ?? [] : [],
-        handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions }));
+      const rows = ws.status === 200 ? ws.body.workspaces ?? [] : [];
+      shell("workspaces", workspacesView({ workspaces: rows, handoffs: ho.status === 200 ? ho.body.handoffs ?? [] : [], admin: adminRows, hub, actions, joined }));
+      // Watch for joins while this page is open (3 s, paused while the tab is hidden, stopped by leaving the route).
+      clearInterval(workspacesTimer);
+      const seen = known ?? new Set(rows.map((w) => w.workspace_id));
+      const mine = ++viewRevision;
+      let checking = false;
+      workspacesTimer = setInterval(async () => {
+        if (document.hidden || checking || mine !== viewRevision) return;
+        checking = true;
+        try {
+          const r = await api("GET", "/me/workspaces");
+          if (mine !== viewRevision || r.status !== 200) return;
+          const fresh = newWorkspaces(seen, r.body.workspaces);
+          if (!fresh.length) return;
+          for (const w of fresh) seen.add(w.workspace_id);
+          void pollLive();
+          await workspaces([...joined, ...fresh], seen);
+        } finally { checking = false; }
+      }, 3000);
   } finally { finishLoading(); }
 }
 

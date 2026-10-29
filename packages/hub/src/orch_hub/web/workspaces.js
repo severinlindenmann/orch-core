@@ -63,10 +63,23 @@ export function connectWorkspaceView(link, actions = {}) {
     h("div", { class: "ws-segment", role: "group", "aria-label": "Suggested mode" }, small("Suggested mode"), ...choices), suggestion);
 }
 
-/** data: {workspaces, handoffs, admin: rows|null, hub, actions}. */
+/** Workspaces in `rows` whose id is not in `known` (a Set of ids). */
+export const newWorkspaces = (known, rows) => (rows ?? []).filter((w) => w.workspace_id && !known.has(w.workspace_id));
+
+/** The green message that replaces the used link box once a workspace has joined. */
+export function joinedBannerView(row, actions = {}) {
+  return h("div", { class: "banner ok ws-joined", role: "status", "data-joined": row.workspace_id },
+    h("div", { class: "row" },
+      h("div", { class: "grow" }, h("b", { text: "✓ " + nameOf(row) + " joined" }), small("It is online now. You can open it from here.")),
+      button("Open " + nameOf(row), () => actions.open?.(row), { class: "pri" })));
+}
+
+/** data: {workspaces, handoffs, admin: rows|null, hub, actions, joined?: rows that joined while the page was open}. */
 export function workspacesView(data, now = Date.now()) {
   const actions = data.actions ?? {};
   const connectBox = h("div");
+  const joined = data.joined ?? [];
+  for (const row of joined) connectBox.append(joinedBannerView(row, actions));
   const connect = button("Connect a workspace", async () => {
     connect.disabled = true;
     connectBox.textContent = "";
@@ -80,13 +93,13 @@ export function workspacesView(data, now = Date.now()) {
     h("thead", {}, h("tr", {}, ["Workspace", "Status", "orch version", "Runs on", "Actions"].map((label) => h("th", { scope: "col", text: label })))),
     h("tbody", {}, data.workspaces.map((w) => {
       const n = waitingFor.get(w.workspace_id) ?? 0;
-      return h("tr", { "data-workspace": w.workspace_id },
+      return h("tr", { "data-workspace": w.workspace_id, class: joined.some((j) => j.workspace_id === w.workspace_id) ? "row-new" : "" },
         h("td", {}, h("b", { text: nameOf(w) }), h("div", {}, chip(modeName(w), w.mode === "full" ? "full" : "sel")),
           w.mode === "selective" ? small("Personal: only its owner") : null,
           n ? small(n + (n === 1 ? " hand-off is" : " hand-offs are") + " waiting for this workspace") : null),
         h("td", {}, statusView(w, now)), h("td", {}, versionView(w, data.hub)), h("td", {}, hostView(w)),
         h("td", {}, h("div", { class: "ws-actions" }, button("Details", () => actions.details?.(w)), button("Open", () => actions.open?.(w)))));
-    })))) : emptyState("workspaces");
+    })))) : emptyState(data.admin != null ? "workspaces" : "workspaces-member");
   const older = data.workspaces.filter((w) => ["older", "unsupported"].includes(w.version_state));
   const left = (data.admin ?? []).filter((w) => w.status === "unbound");
   const leftView = data.admin != null ? h("details", {}, h("summary", { text: "Show left workspaces (" + left.length + ")" }),

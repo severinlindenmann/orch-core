@@ -12,7 +12,8 @@ export function skeletonPlan(kind) {
 export function emptyWords(kind) {
   return ({
     home: ["Nothing needs you", "All approvals are done. New ones show up here by themselves."],
-    workspaces: ["No workspaces yet", "Connect the first one with a one-time link. Ask your hub admin for a link, then open it in the workspace’s Mission Control (Settings › Hub › Connect)."],
+    workspaces: ["No workspaces yet", "Press “Connect a workspace” for a one-time link, then open it in the workspace’s Mission Control (Settings › Hub › Connect)."],
+    "workspaces-member": ["No workspaces yet", "Ask your hub admin for a link, then open it in the workspace’s Mission Control (Settings › Hub › Connect)."],
     account: ["No phones or browsers yet", "To add a phone, open the phone app and choose Pair a phone."],
     services: ["No services yet", "Ask your IT person to set up services on this hub, then check again."],
     handoffs: ["No hand-offs yet", "Send a hand-off from a workspace to see its progress here."],

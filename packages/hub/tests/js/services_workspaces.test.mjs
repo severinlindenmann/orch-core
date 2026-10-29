@@ -14,7 +14,7 @@ class Node_ {
 }
 globalThis.document = { createElement: (t) => new Node_(t), createTextNode: (t) => new Node_("#text", t), getElementById: () => null };
 const { servicesView, summary, stateOf } = await import("../../src/orch_hub/web/services.js");
-const { workspacesView, workspaceDetailsView, connectWorkspaceView } = await import("../../src/orch_hub/web/workspaces.js");
+const { workspacesView, workspaceDetailsView, connectWorkspaceView, newWorkspaces } = await import("../../src/orch_hub/web/workspaces.js");
 const { when, ago } = await import("../../src/orch_hub/web/ui.js");
 
 const NOW = new Date(2026, 9, 27, 12, 0).getTime();
@@ -286,4 +286,28 @@ test("services refresh every 15 seconds, pause while hidden, and stop after navi
   release();
   await pending;
   assert.equal(timers.size, 0);
+});
+
+test("a workspace that joined replaces the empty state and the used link with a green message", async () => {
+  const w = workspace({ name: "Anna's workspace" });
+  const opened = [];
+  const out = workspacesView({ workspaces: [w], handoffs: [], admin: [w], joined: [w], actions: { open: (x) => opened.push(x.workspace_id) } }, NOW);
+  const t = text(out);
+  assert.doesNotMatch(t, /No workspaces yet/);
+  const banner = find(out, (n) => n.attrs?.role === "status" || n.getAttribute?.("role") === "status")[0];
+  assert.match(banner.textContent, /Anna's workspace joined/);
+  assert.match(banner.textContent, /It is online now/);
+  clickButton(out, "Open Anna's workspace");
+  assert.deepEqual(opened, [w.workspace_id]);
+});
+
+test("only workspaces that were not on screen count as joined", () => {
+  const known = new Set(["a", "b"]);
+  assert.deepEqual(newWorkspaces(known, [{ workspace_id: "a" }, { workspace_id: "c" }, {}]).map((x) => x.workspace_id), ["c"]);
+  assert.deepEqual(newWorkspaces(known, undefined), []);
+});
+
+test("the admin empty state points to the Connect button; a member is told to ask the admin", () => {
+  assert.match(text(workspacesView({ handoffs: [], workspaces: [], admin: [] })), /Press .Connect a workspace./);
+  assert.match(text(workspacesView({ handoffs: [], workspaces: [], admin: null })), /Ask your hub admin/);
 });

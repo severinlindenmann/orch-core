@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import pytest
 
+from orch_hub import settings as SETT
 from orch_hub.contract import hub as H
 from orch_hub.contract import vectorgen as G
 from orch_hub.contract.canon import b64u
+from orch_hub.contract.where import check_hub_where
 from orch_hub.link import LinkError
 
 WSK_B64 = G.K.b("wsk_a")
@@ -101,3 +103,86 @@ def test_publish_out_without_forwarder_is_unavailable(hub):
     with pytest.raises(LinkError) as e:
         c.request("publish_out", {"request": req})
     assert e.value.code == "unavailable"
+
+
+# --- M4 S2 (#1461): hub_where (protocol 10.9) --------------------------------------------------------------------------
+
+
+WHERE_FILE = {
+    "v": 1,
+    "name": "Acme Hub",
+    "company": "Acme AG",
+    "addresses": [
+        {"kind": "private", "web": "http://100.64.1.2:8100", "link": "100.64.1.2:8105"},
+        {"kind": "server", "web": "http://127.0.0.1:8100", "link": "127.0.0.1:8105"},
+        {"kind": "office", "web": "http://10.0.0.7:8100", "link": "10.0.0.7:8105"},
+        {"kind": "public", "web": "https://hub.example.com:8100", "link": None},
+    ],
+}
+
+
+def _where_hub(make_hub, tmp_path, settings=WHERE_FILE):
+    if settings is not None:
+        SETT.save(tmp_path, settings)
+    return make_hub(where=lambda: SETT.where_answer(tmp_path))
+
+
+def test_hub_where_answers_the_validated_shape_to_a_bound_workspace(make_hub, tmp_path):
+    h = _where_hub(make_hub, tmp_path)
+    c = h.open(first=True)
+    c.request("join", h.join_body())
+    got = c.request("hub_where", {})
+    assert set(got) == {"addresses", "name"} and got["name"] == "Acme Hub"
+    assert got["addresses"] == [  # only entries that have a link address, file order, kind + link and nothing else
+        {"kind": "private", "link": "100.64.1.2:8105"},
+        {"kind": "server", "link": "127.0.0.1:8105"},
+        {"kind": "office", "link": "10.0.0.7:8105"},
+    ]
+    assert check_hub_where(got) == got and len(got["addresses"]) <= 4
+    c.request("binding_put", {"object": G.binding(seq=2, mode="full")})  # both modes are answered
+    assert c.request("hub_where", {}) == got
+
+
+def test_hub_where_reads_the_file_each_time_and_takes_no_request_member(make_hub, tmp_path):
+    h = _where_hub(make_hub, tmp_path)
+    c = h.open(first=True)
+    c.request("join", h.join_body())
+    SETT.save(tmp_path, {**WHERE_FILE, "name": "Beta", "addresses": WHERE_FILE["addresses"][:1]})
+    assert c.request("hub_where", {}) == {"addresses": [{"kind": "private", "link": "100.64.1.2:8105"}], "name": "Beta"}
+    with pytest.raises(LinkError) as e:  # the request is exactly `{}`: nothing a peer sends reaches the answer
+        c.request("hub_where", {"addresses": ["6.6.6.6:1"]})
+    assert e.value.code == "malformed"
+
+
+def test_hub_where_is_for_bound_workspaces_only(make_hub, tmp_path):
+    h = _where_hub(make_hub, tmp_path)
+    c = h.open(first=True)
+    with pytest.raises(LinkError) as e:  # a link that has not joined may only join
+        c.request("hub_where", {})
+    assert e.value.code == "unknown_workspace"
+    h2 = _where_hub(make_hub, tmp_path)
+    c2 = h2.open(first=True)
+    c2.request("join", h2.join_body())
+    c2.request("binding_put", {"object": G.unbound(seq=1)})  # left the hub
+    with pytest.raises(LinkError) as e:
+        c2.request("hub_where", {})
+    assert e.value.code == "not_bound"
+
+
+def test_hub_where_is_unavailable_without_a_settings_file_or_a_provider(make_hub, tmp_path):
+    for hub in (_where_hub(make_hub, tmp_path, None), make_hub()):
+        c = hub.open(first=True)
+        c.request("join", hub.join_body())
+        with pytest.raises(LinkError) as e:
+            c.request("hub_where", {})
+        assert e.value.code == "unavailable"
+
+
+def test_hub_where_is_a_cheap_read_under_the_link_caps(make_hub, tmp_path):
+    # like the other read ops there is no per-op budget: the hub-wide caps (64 links, 16 unauthenticated, frame size and
+    # idle timeouts) bound it, and one answer is a file read plus a check of at most 4 entries
+    h = _where_hub(make_hub, tmp_path)
+    c = h.open(first=True)
+    c.request("join", h.join_body())
+    assert all(c.request("hub_where", {})["name"] == "Acme Hub" for _ in range(50))
+    assert len(c.request("hub_where", {})["addresses"]) <= 4

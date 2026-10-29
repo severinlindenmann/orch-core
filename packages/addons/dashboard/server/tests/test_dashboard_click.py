@@ -1716,7 +1716,7 @@ def grant_view(**over):
         "fingerprint": "0123456789ab",
         "lines": ["grant for Demo Owner", "", DEPOSIT_RISK, DEPOSIT_LINE],
         "headline": "Give your orch runner agent access for 8 hours",
-        "risk_lines": [DEPOSIT_RISK, "Agents get this authority for 8 hours, until it ends or you stop it."],
+        "risk_lines": [DEPOSIT_RISK],
         "deposit": True,
         "deposit_line": DEPOSIT_LINE,
         "confirm": {"kind": "click"},

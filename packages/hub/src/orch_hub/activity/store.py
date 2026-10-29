@@ -47,6 +47,7 @@ ACTIVITY_TYPES = (
     "addon.allowed",
     "addon.request_approved",
     "addon.request_refused",
+    "hub.settings.changed",
 )
 # Only structured references, never request bodies, credentials, or free-form notes.
 DETAIL_FIELDS = frozenset(
@@ -67,6 +68,7 @@ DETAIL_FIELDS = frozenset(
         "direct",
         "skill",
         "server",
+        "setting",  # which hub setting changed ("general" or "addresses"), never its value
         "secret",
     }
 )

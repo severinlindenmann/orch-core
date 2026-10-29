@@ -2,7 +2,7 @@ import { FocusButton } from '../focus/FocusButton'
 import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Tag, Timer } from 'lucide-react'
+import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Pencil, Share2, Tag, Timer } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { runQueries } from '@/api/runs'
@@ -18,6 +18,9 @@ import { StartAgentSplit } from '@/app/terminal/real/StartAgentSplit'
 import { precheckReason } from '@/addon-ui/SpawnConfirm'
 import { useWorkspace } from '@/app/workspace'
 import { workspaceOfTicket } from '@/api/workspaces'
+import { hubQueries, hubServed } from '@/api/hub'
+import { ShareTicketDialog } from './ShareTicketDialog'
+import { StopSharing } from '../settings/hub/StopSharing'
 import type { ClosedInfo, TicketDocument } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -138,6 +141,39 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
   return { shown, reason, startable, canStart, run, runWith, choose, node, addon: real ? undefined : { name: START_AGENT, title: pkg?.title } }
 }
 
+export interface ShareTicket {
+  /** "Share with the hub…" / "Stop sharing this ticket" is part of this ticket's actions (owner, hub joined in share-some mode). */
+  shown: boolean
+  /** The hub already has this ticket: the item stops sharing instead. */
+  shared: boolean
+  run: () => void
+  node: React.ReactNode
+}
+
+/**
+ * Sharing this one ticket with the hub, from the ticket itself. Only the owner of the ticket's workspace, only in
+ * "share only what I choose" mode (full shares everything, standalone has no hub). It opens the same review as
+ * Settings (`ShareTicketDialog`, `StopSharing`); the Actions menu holds the item, so there is one dialog and one rule.
+ */
+function useShareTicket(ticket: TicketDocument, viewer: Viewer): ShareTicket {
+  const { workspaces } = useWorkspace()
+  const home = workspaceOfTicket(ticket.key, workspaces)
+  const ws = home?.id
+  const served = !!ws && viewer.role === 'owner' && hubServed(ws)
+  const status = useQuery({ ...hubQueries.status(ws ?? ''), enabled: served })
+  const selective = served && status.data?.mode === 'selective' && status.data.joined
+  const share = useQuery({ ...hubQueries.share(ws ?? ''), enabled: selective })
+  const [open, setOpen] = useState<'share' | 'stop' | null>(null)
+  const shown = selective && !!share.data?.available && ticket.status !== 'closed'
+  const shared = !!share.data?.tickets.includes(ticket.key)
+  const node = open && home ? (
+    open === 'share'
+      ? <ShareTicketDialog key="share" ws={home.id} workspace={home} ticket={ticket.key} title={ticket.title} onClose={() => setOpen(null)} />
+      : <StopSharing key="stop" ws={home.id} workspace={home} ticket={ticket.key} onClose={() => setOpen(null)} />
+  ) : null
+  return { shown, shared, run: () => setOpen(shared ? 'stop' : 'share'), node }
+}
+
 /** " · why it is their turn", or nothing when the host gave no reason (no dangling separator). */
 export function turnReason(why: string): string {
   const text = why.trim()
@@ -153,12 +189,12 @@ function Next() {
 }
 
 /** The header's Actions menu lists EVERY action the viewer has, the primary one included (tagged "next"). */
-export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; signing?: boolean }) {
+export function ActionsMenu({ ticket, viewer, sign, jump, start, share, signing = false }: { ticket: TicketDocument; viewer: Viewer; sign: (a: HumanAction) => void; jump: (j: Jump) => void; start: StartAgent; /** Absent: no sharing item (the mock page tests). */ share?: ShareTicket; signing?: boolean }) {
   const av = availableActions(ticket, viewer)
   const primary = primaryAction(av, { start: start.startable })
   const isNext = (k: string) => (primary?.kind === 'approve' ? `approve:${primary.gate}` : primary?.kind === 'answer' ? `answer:${primary.question}` : primary?.kind) === k
   const needs = av.approve.length > 0 || av.verdict || av.answer.length > 0
-  const other = av.requestChanges.length > 0 || start.shown
+  const other = av.requestChanges.length > 0 || start.shown || !!share?.shown
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -216,6 +252,12 @@ export function ActionsMenu({ ticket, viewer, sign, jump, start, signing = false
           <DropdownMenuItem disabled={!!start.reason} onSelect={start.choose} data-testid="real-start-agent-choose-item">
             <Bot />
             Change agent or model…
+          </DropdownMenuItem>
+        )}
+        {share?.shown && (
+          <DropdownMenuItem onSelect={share.run} data-testid="share-ticket-item">
+            <Share2 />
+            {share.shared ? 'Stop sharing this ticket' : 'Share with the hub…'}
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>
@@ -414,6 +456,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     enabled: ticket.type === 'epic' && !!home,
   })
   const start = useStartAgent(ticket, viewer)
+  const share = useShareTicket(ticket, viewer)
   const { startable, canStart, run: startPlain, runWith } = start
   // The listener reads the latest start through a ref, so it subscribes once per ticket, not on every render.
   const latest = useRef({ startable, canStart, startPlain, runWith })
@@ -430,6 +473,7 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
     return () => window.removeEventListener(START_EVENT, on)
   }, [ticket.key])
   const av = availableActions(ticket, viewer)
+  const edit = useTicketEdit()
   const { run, wait } = useTicketAgent(ticket, home)
   const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict || !!wait
   const mark = useMark(home ?? '', ticket.key)
@@ -469,12 +513,20 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
         )}
       </div>
       <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start">
-        <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">{ticket.title}</h1>
+        <h1 className="min-w-0 flex-1 text-xl font-semibold leading-tight tracking-tight text-text">
+          {edit ? (
+            <button type="button" onClick={() => edit({ kind: 'title' })} aria-label={`Change the title: ${ticket.title}`} title="Change the title" className="group inline-flex max-w-full items-baseline gap-2 rounded-sm text-left outline-none hover:text-brand focus-visible:ring-2 focus-visible:ring-ring">
+              <span className="min-w-0">{ticket.title}</span>
+              <Pencil aria-hidden className="size-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-70 group-focus-visible:opacity-70" />
+            </button>
+          ) : ticket.title}
+        </h1>
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
           <FocusButton ticket={ticket.key} />
           <PrimaryButton ticket={ticket} viewer={viewer} jump={jump} start={start} signing={signing} phase={phase} idle={!!wait || !!gapOf(ticket)} />
-          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} signing={signing} />
+          <ActionsMenu ticket={ticket} viewer={viewer} sign={sign} jump={jump} start={start} share={share} signing={signing} />
           {start.node}
+          {share.node}
         </div>
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">

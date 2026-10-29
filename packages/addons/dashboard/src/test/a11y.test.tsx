@@ -16,7 +16,7 @@ const ADDON_PAGES: [string, RegExp, RegExp][] = [
   ['usage/overview', /Usage/, /Cost · this month/],
   ['wiki/pages', /Wiki/, /Tariff data conventions/],
   ['terminals/sessions', /Terminals/, /view-only mirrors/],
-  ['worktrees/worktrees', /Worktrees/, /With changes/],
+  ['worktrees/worktrees', /Work copies/, /With changes/],
   ['quick/quick', /Quick tasks/, /Quick task \(one line\)/],
   ['records/records', /Records/, /Record changes/],
   ['activity/activity', /Activity/, /events today/],

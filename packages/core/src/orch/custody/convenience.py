@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from orch import canon, crypto
+from orch.privdir import others_can_write
 
 from .base import (
     DEVICE_KEY_LABELS,
@@ -112,7 +113,7 @@ def _check_ancestors(path: Path) -> None:
             raise CustodyError(f"{current} is not a directory")
         if st.st_uid not in (0, uid):
             raise CustodyError(f"{current} belongs to another user")
-        if st.st_mode & 0o022 and not st.st_mode & stat.S_ISVTX:
+        if others_can_write(st, uid) and not st.st_mode & stat.S_ISVTX:
             raise CustodyError(f"{current} is writable by others")
 
 

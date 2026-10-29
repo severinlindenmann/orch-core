@@ -38,7 +38,7 @@ from orch.host.review import HOST_PERSON_OPS
 from orch.host.runnergrants import GRANT_OPS
 from orch.host.runners import RUN_OPS
 from orch.host.shareops import SHARE_OPS, SHARE_READS
-from orch.host.spaceops import SPACE_OPS, SPACE_READS
+from orch.host.spaceops import SPACE_AGENT_WRITES, SPACE_OPS, SPACE_READS
 from orch.host.terms import TERM_OPS
 from orch.host.transcripts import LINK_OPS, TRANSCRIPT_OPS
 from orch.host.worktrees import WORKTREE_OPS
@@ -265,7 +265,8 @@ def test_every_served_op_in_every_row_of_the_effective_column_table():
             }.get(op, ("person_write", "write"))
             assert op in ORG_READS or kind[1] == "write" or op == "org.show"
         elif op in SPACE_OPS:  # V3 C13: list and get for P and G, the rest P only (owner role)
-            assert kind == (("pg_read", "read") if op in SPACE_READS else ("person_write", "write"))
+            want = ("pg_read", "read") if op in SPACE_READS else ("person_write", "write")
+            assert kind == (("pg_write", "write") if op in SPACE_AGENT_WRITES else want)
         elif op in PEER_OPS:  # V3 C12: reads for P and G, writes P only (owner role)
             assert kind == (("pg_read", "read") if op in PEER_READS else ("person_write", "write"))
         elif op in AGENT_OPS:  # H11c: P only

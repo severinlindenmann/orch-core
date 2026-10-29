@@ -43,7 +43,7 @@ export interface TerminalDockProps {
   focus: MutableRefObject<'dock' | 'bar' | null>
   memory: DockMemory
   collapse: () => void
-  /** A session an action opened (Worktrees' "Open terminal here"): select it and put the keyboard in it. */
+  /** A session an action opened (Work copies' "Open terminal here"): select it and put the keyboard in it. */
   request?: string | null
   requestDone?: () => void
 }

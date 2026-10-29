@@ -429,11 +429,12 @@ def test_the_review_says_the_settings_and_the_grant_in_words(human, tmp_path):
         assert all(x in flat for x in expect), (name, flat[:1500])
         assert "it says it will" in flat or "capabilities" in flat  # the grant is in the same review
         assert any("the settings stay and the add-on stays off" in n for n in content["notes"])
-        assert any("2 steps" in n for n in content["notes"])
+        assert not any("steps" in n for n in content["notes"])  # r7-P10: the step count is in the technical review
         from orch.host import signer
 
         text = signer.render(first, lambda w: ("ws", "ORCH"))
         assert "2 signatures, ONE confirmation" in text
+        assert "One confirmation signs all 2 steps" in text
         assert text.count("--- event ") == 2
 
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useRouter, useSearch } from '@tanstack/react-router'
-import { ChevronDown, Tag, Terminal, X } from 'lucide-react'
+import { ChevronDown, Tag, X } from 'lucide-react'
 import { addonActive } from '@/api/addons'
 import { api } from '@/api/client'
 import { can } from '@/api/permissions'
@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { useWorkspace } from '@/app/workspace'
 import { useRole } from '@/app/useRole'
+import { useShellActions } from '@/app/shell/ShellUi'
 import { usePageHeader } from '@/app/shell/ShellUi'
 import type { BoardPeople } from '../board/TicketCard'
 import { STATUS_LABEL } from '../board/lib'
@@ -33,7 +34,6 @@ import { plural } from '@/lib/time'
 import { queries } from '@/api/queries'
 import { useMe } from '@/app/useMe'
 
-const CLI_HINT = 'orch list --status open'
 
 /** Keys typed into a text field, or while a menu/dialog is open, must not trigger list shortcuts. */
 function typingTarget(el: EventTarget | null): boolean {
@@ -126,6 +126,7 @@ export function TicketsPage() {
   const meQ = useMe()
   const me = meQ.data
   const role = useRole()
+  const { openNewTicket } = useShellActions()
   // A real host moves one ticket at a time, each signed in the terminal: no bulk move there.
   const canBulk = can(role, 'ticket.move') && !handoffMode(wsId)
 
@@ -334,13 +335,23 @@ export function TicketsPage() {
         <TicketRowsSkeleton />
       ) : shown.length === 0 ? (
         <div className="rounded-lg border border-border bg-surface p-8 text-center" role="status">
-          <p className="text-[13px] text-text">No tickets match.</p>
-          <Button variant="link" size="sm" className="text-[13px]" onClick={clear}>
-            Clear filters
-          </Button>
-          <p className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-text-faint">
-            <Terminal className="size-3.5" aria-hidden /> From the terminal: <code className="font-mono text-text-muted">{CLI_HINT}</code>
-          </p>
+          {dirty || qInput !== '' ? (
+            <>
+              <p className="text-[13px] text-text">No tickets match.</p>
+              <Button variant="link" size="sm" className="text-[13px]" onClick={clear}>
+                Clear filters
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-[13px] text-text">No tickets yet.</p>
+              {can(role, 'ticket.create') && (
+                <Button size="sm" className="mt-2" onClick={openNewTicket}>
+                  New ticket
+                </Button>
+              )}
+            </>
+          )}
         </div>
       ) : (
         <>
@@ -369,7 +380,6 @@ export function TicketsPage() {
                 · <kbd className="font-mono">x</kbd> select
               </>
             )}{' '}
-            · CLI: <code className="font-mono">{CLI_HINT}</code>
           </p>
         </>
       )}

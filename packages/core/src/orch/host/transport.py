@@ -7,8 +7,10 @@ import contextlib
 import errno
 import logging
 import socket
+import traceback
 from collections import deque
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from time import monotonic
 from typing import Any, Protocol
 
@@ -42,6 +44,14 @@ WRITE_QUEUE_FRAMES = 64
 BYTES_PER_MINUTE = 64 * 1024 * 1024
 TRANSIENT_ACCEPT_ERRORS = {errno.EMFILE, errno.ENFILE, errno.ECONNABORTED, errno.EINTR, errno.ENOBUFS, errno.ENOMEM}
 LOG = logging.getLogger(__name__)
+
+
+def _log_internal(exc: BaseException) -> None:
+    """An ``internal`` answer says nothing to the client; the host log says where it came from: the exception's type
+    and the frames it passed (file:line function), never its message or any value, which may hold a secret (#1475: a
+    CI "Request handler failed" left no trace of its cause)."""
+    where = [f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in traceback.extract_tb(exc.__traceback__)[-6:]]
+    LOG.error("request handler failed: %s at %s", type(exc).__name__, " < ".join(reversed(where)))
 
 
 class PeerRegistry(Protocol):
@@ -271,7 +281,8 @@ class Session:
                 self.respond(request, exc.response())
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            _log_internal(exc)
             self._internal(request)
 
     def _internal(self, request: frames.Request) -> None:
@@ -318,7 +329,8 @@ class Session:
                     raise
                 self.respond(result, exc.response())
                 return
-            except Exception:
+            except Exception as exc:
+                _log_internal(exc)
                 self._internal(result)
                 return
             if work is not None:
@@ -512,7 +524,6 @@ class Server:
                 LOG.warning("Transient Unix accept failure: %s", exc)
                 await asyncio.sleep(0.1)
                 continue
-            accepted_at = self.clock()
             sock.setblocking(False)
             acquired = None
             handed_off = False
@@ -528,6 +539,10 @@ class Server:
                         runner_ok = False
                     finally:
                         close_pidfd(credentials)
+                # the peer's hello deadline starts once the host is ready to read it: the identity check above is the
+                # host's own time (systemctl may take up to 3 s), never the peer's (CI flake 29 Oct: a slow check made
+                # every runner hello "late" and the runner never connected)
+                accepted_at = self.clock()
                 peer = self.classify(credentials, runner_ok=runner_ok)
                 self.limits.acquire(peer, count_attempt=False)
                 acquired = peer

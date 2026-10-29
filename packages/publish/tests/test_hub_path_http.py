@@ -589,7 +589,7 @@ def test_migration_from_schema_2_keeps_data_and_adds_the_hub_tables(tmp_path):
     conn.close()
     db.init(path)
     conn = db.connect(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == db.SCHEMA_VERSION == 6
     assert conn.execute("SELECT person_id FROM owners").fetchone()[0] == "p"
     assert conn.execute("SELECT count(*) FROM hub_bindings").fetchone()[0] == 0
     conn.close()

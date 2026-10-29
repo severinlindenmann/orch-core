@@ -35,6 +35,7 @@ __all__ = [
     "check_name",
     "human_size",
     "manifest_hash",
+    "password_record",
 ]
 
 #: the first words of every approval note; the signer's plain view keys on them
@@ -155,3 +156,28 @@ def approval_text(
         f"Manifest: {manifest}",
     ]
     return "\n".join(lines)
+
+
+#: the password record (contracts/hub/protocol.md 11.4.1, C5): exactly these scrypt parameters, 16-byte salt, 32-byte
+#: key
+PW_N, PW_R, PW_P, PW_SALT, PW_DK = 32768, 8, 1, 16, 32
+PW_INPUT_MAX = 256
+
+
+def password_record(password: str, salt: bytes) -> dict[str, Any]:
+    """The C5 record of ``password`` (the host draws ``salt``: 16 random bytes). Pure; orch-publish never sees the
+    password, only this record, and it refuses any other parameters."""
+    import base64
+
+    if type(password) is not str or not password or len(password.encode("utf-8")) > PW_INPUT_MAX:
+        raise ValueError("password")
+    if type(salt) is not bytes or len(salt) != PW_SALT:
+        raise ValueError("salt")
+    dk = hashlib.scrypt(
+        password.encode("utf-8"), salt=salt, n=PW_N, r=PW_R, p=PW_P, dklen=PW_DK, maxmem=128 * PW_N * PW_R * 2
+    )
+
+    def enc(b: bytes) -> str:
+        return base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
+
+    return {"alg": "scrypt", "n": PW_N, "r": PW_R, "p": PW_P, "salt": enc(salt), "dk": enc(dk)}

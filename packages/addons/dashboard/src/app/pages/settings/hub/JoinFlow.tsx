@@ -74,18 +74,17 @@ export function JoinFlow({ ws, onClose, initialLink }: { ws: string; onClose: ()
     {problem && <p role="alert" data-testid="hub-link-problem" className="text-danger">{problem}</p>}
     {info && <>
       {!failed && <><div className="rounded-md border border-border p-3" data-testid="hub-link-hub">
-        <p className="font-bold">Hub <Raw>{info.name}</Raw></p>
+        <div className="flex items-center gap-1"><p className="font-bold">Hub <Raw>{info.name}</Raw></p><InfoDrawer><p>Hub id: <Raw>{info.hub_id}</Raw></p></InfoDrawer></div>
         {initialLink && <p className="text-sm text-text-muted" data-testid="hub-link-origin">at <Raw>{link.replace(/^(https?:\/\/[^/]+).*$/, '$1')}</Raw></p>}
       </div>
-      <InfoDrawer><p>Hub id: <Raw>{info.hub_id}</Raw></p></InfoDrawer>
       {choosing && !signed
         ? <ModeChoice mode={mode} onChange={setMode} />
         : <div className="space-y-1" data-testid="hub-mode-box">
           <div className={'rounded-md border p-3 ' + violet}>
             <p className="font-semibold">{mode === 'full' ? 'Everything' : 'Only what I choose'}{mode !== 'full' && <span className="font-normal text-text-muted"> · recommended</span>}</p>
             <p className="text-sm text-text-muted">{mode === 'full' ? 'The hub can read every ticket and file.' : 'You pick the tickets. The hub also sees this workspace\'s name; everything else stays on this computer.'}</p>
+            {!signed && <button type="button" data-testid="hub-mode-other" className="text-sm underline" onClick={() => setChoosing(true)}>Change</button>}
           </div>
-          {!signed && <button type="button" data-testid="hub-mode-other" className="text-sm underline" onClick={() => setChoosing(true)}>Choose another option</button>}
         </div>}
       {mode === 'full' && !info.owner_user && <p role="alert" data-testid="hub-link-old" className="text-warning">This link does not name you on the hub, so your agents could not work in this mode. Make a new connect link in the hub and paste that one.</p>}
       {mode === 'full' && <p className="text-warning">{caveat}</p>}</>}

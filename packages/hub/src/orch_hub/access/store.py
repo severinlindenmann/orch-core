@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS revoked_channels (channel_id TEXT PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS snapshots (
   workspace_id TEXT PRIMARY KEY, version INTEGER NOT NULL, fingerprint TEXT NOT NULL, signed TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS version_floor (id INTEGER PRIMARY KEY CHECK (id = 1), floor INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS market_policy (
   id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL CHECK (version >= 1),
   policy TEXT NOT NULL, hash TEXT NOT NULL
@@ -704,6 +705,12 @@ class Access:
             self._w("DELETE FROM addon_request WHERE workspace_id=? AND name=?", (workspace_id, name))
 
     # --- snapshot persistence (used by AccessSnapshots) -----------------------------------------------------------
+
+    def version_floor(self) -> int:
+        """The lowest version a signed per-workspace object may be issued after: a restore raises it above everything the
+        hub ever issued (protocol §17.8), so a workspace whose row is new or was rolled back still gets a newer version."""
+        rows = self._q("SELECT floor FROM version_floor WHERE id=1")
+        return int(rows[0][0]) if rows else 0
 
     def snapshot_row(self, workspace_id: str) -> tuple[int, str, str] | None:
         rows = self._q("SELECT version, fingerprint, signed FROM snapshots WHERE workspace_id=?", (workspace_id,))

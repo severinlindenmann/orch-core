@@ -90,6 +90,11 @@ describe('the ticket Actions menu and sharing', () => {
     expect(add).not.toHaveBeenCalled()
   })
 
+  it('shows a Shared chip on the ticket once the hub has it (r10-P08)', async () => {
+    await openMenu('selective', { ticket: 'DEMO-0043' })
+    expect(await screen.findByTestId('shared-chip', {}, T)).toHaveTextContent('Shared with the hub')
+  })
+
   it('says "Stop sharing" when the hub already has it, and opens the stop review', async () => {
     const view = await openMenu('selective', { ticket: 'DEMO-0043' }) // the mock hub already has DEMO-0043
     await view.user.click(await screen.findByRole('menuitem', { name: 'Stop sharing' }, T))

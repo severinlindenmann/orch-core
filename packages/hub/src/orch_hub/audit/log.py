@@ -163,6 +163,21 @@ class AuditLog:
         which one and who (None = the schedule or the hub terminal), never a key, a word or a file (M4 S5, cond 23)."""
         return self.append("hub_backup", {"change": change, "actor_user_id": actor_user_id})
 
+    def hub_restore(
+        self, *, backup_made_ms: int, gap_ms: int, op_seq: int, actor_user_id: str | None
+    ) -> dict[str, Any]:
+        """The hub is being restored from a backup (M4 S6, cond 23): the backup's date, the gap since then and the op_seq
+        the restore issues. Written BEFORE the swap; a chain that cannot be written refuses the restore."""
+        return self.append(
+            "hub_restore",
+            {
+                "backup_made_ms": backup_made_ms,
+                "gap_ms": gap_ms,
+                "op_seq": op_seq,
+                "actor_user_id": actor_user_id,
+            },
+        )
+
     # --- the link ops --------------------------------------------------------------------------------------------
 
     def get(self, ws: str, body: dict[str, Any]) -> dict[str, Any]:

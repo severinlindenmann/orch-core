@@ -1,10 +1,9 @@
 import { FocusButton } from '../focus/FocusButton'
 import { can } from '@/api/permissions'
 import { Link } from '@tanstack/react-router'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
+import { useQuery } from '@tanstack/react-query'
 import { Bot, Check, ChevronDown, CircleHelp, Copy, Loader2, Lock, Tag, Timer } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '@/api/client'
 import { runQueries } from '@/api/runs'
 import { queries } from '@/api/queries'
@@ -27,7 +26,6 @@ import { CopyLinkButton } from '@/app/shell/CopyLinkButton'
 import { BlockedByConnection } from './Needs'
 import { availableActions, gapOf, gateActionName, blockedApproval, primaryAction, primaryLabel } from './actions'
 import { useTicketEdit } from './EditTicket'
-import { runsApi } from '@/api/runs'
 import type { AgentMode } from '@/api/agents'
 import { clearMark, phaseOf, startMark, useMark, type Phase, type ProgressRun } from './progress'
 import { agentName, ago, fmtClock, KeyRef, Mono, Pill, StatusChip, useIsVisibleKey, type HumanAction, type Jump, type Viewer } from './shared'
@@ -90,7 +88,7 @@ export interface StartAgent {
   canStart: boolean
   run: () => void
   /** Open the start flow in another mode (the not-finished card asks for `continue`). */
-  runWith: (mode: AgentMode) => void
+  runWith: (mode: AgentMode, stopFirst?: string) => void
   /** A real host: the same dialog in choose mode ("Change agent or model"). Absent in the mock, where the add-on has its own flow. */
   choose?: () => void
   /** The start-agent addon's own title, for its badge in the mock (none on a real host). */
@@ -108,6 +106,7 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
   const r = useRunAddonAction(ticket.key)
   const [open, setOpen] = useState<'start' | 'choose' | null>(null)
   const [mode, setMode] = useState<AgentMode | undefined>(undefined)
+  const [stopFirst, setStopFirst] = useState<string | undefined>(undefined)
   const real = isRealHost()
   const pkg = addons?.find((a) => a.name === START_AGENT)
   const finished = ticket.status === 'done' || ticket.status === 'closed'
@@ -118,20 +117,22 @@ function useStartAgent(ticket: TicketDocument, viewer: Viewer): StartAgent {
   const reason = roleBlocked ? VIEWER_REASON : agentWorks(ticket) ? WORKING_REASON : real ? null : precheckReason(ticket, viewer.name)
   const run = () => {
     setMode(undefined)
+    setStopFirst(undefined)
     if (real) setOpen('start')
     else r.run(START_AGENT, 'start')
   }
-  const runWith = (m: AgentMode) => {
+  const runWith = useCallback((m: AgentMode, stop?: string) => {
     setMode(m)
+    setStopFirst(stop)
     setOpen('start')
-  }
+  }, [])
   const choose = real ? () => { setMode(undefined); setOpen('choose') } : undefined
   const startable = shown && !reason && ticket.status !== 'testing'
   const canStart = real && shown && !roleBlocked && ticket.status !== 'testing'
   const node = (
     <>
       {r.dialog}
-      {open && workspace && <StartAgentDialog key={`${open}:${mode ?? ''}`} ws={workspace.id} ticket={ticket.key} open choose={open === 'choose'} initial={mode ? { mode } : undefined} onClose={() => setOpen(null)} />}
+      {open && workspace && <StartAgentDialog key={`${open}:${mode ?? ''}:${stopFirst ?? ''}`} ws={workspace.id} ticket={ticket.key} open choose={open === 'choose'} initial={mode ? { mode, ...(stopFirst ? { stopFirst } : {}) } : undefined} onClose={() => setOpen(null)} />}
     </>
   )
   return { shown, reason, startable, canStart, run, runWith, choose, node, addon: real ? undefined : { name: START_AGENT, title: pkg?.title } }
@@ -324,22 +325,10 @@ export function TicketProgressLive(p: { ticket: TicketDocument; viewer: Viewer; 
   // "Start agent again" asks the header's one start flow (its dialog); this card holds no second dialog and reads
   // `startable` only, so a viewer who cannot start sees no button.
   const edit = useTicketEdit()
-  const qc = useQueryClient()
   const { canStart } = useStartAgent(p.ticket, p.viewer)
-  // "Ask the agent to finish": stop the idle run (the existing run stop), then the header's start flow in `continue` mode.
+  // "Ask the agent to finish": the header's start flow in `continue` mode; the idle run is stopped only when Start is pressed.
   const onFinish = canStart
-    ? async () => {
-        if (wait && home) {
-          try {
-            await runsApi.stop(home, wait)
-            void qc.invalidateQueries({ queryKey: ['runs', home] })
-          } catch {
-            toast.error('Could not stop the agent. Open it to see why.')
-            return
-          }
-        }
-        window.dispatchEvent(new CustomEvent(START_EVENT, { detail: { ticket: p.ticket.key, mode: 'continue' } }))
-      }
+    ? () => window.dispatchEvent(new CustomEvent(START_EVENT, { detail: { ticket: p.ticket.key, mode: 'continue', ...(wait ? { stop: wait } : {}) } }))
     : undefined
   const onEdit = edit ? () => edit() : undefined
   return <TicketProgress {...p} run={run} wait={wait} onFinish={onFinish} onEdit={onEdit} />
@@ -426,18 +415,20 @@ export function TicketHeader({ ticket, viewer, sign, jump, signing = false }: { 
   })
   const start = useStartAgent(ticket, viewer)
   const { startable, canStart, run: startPlain, runWith } = start
+  // The listener reads the latest start through a ref, so it subscribes once per ticket, not on every render.
+  const latest = useRef({ startable, canStart, startPlain, runWith })
+  latest.current = { startable, canStart, startPlain, runWith }
   useEffect(() => {
-    if (!startable && !canStart) return
     // A plain key starts as before (only when nothing blocks); {ticket, mode} comes from "Ask the agent to finish", after its idle run was stopped.
     const on = (e: Event) => {
-      const d = (e as CustomEvent<string | { ticket: string; mode: AgentMode }>).detail
+      const d = (e as CustomEvent<string | { ticket: string; mode: AgentMode; stop?: string }>).detail
       if (typeof d === 'string') {
-        if (d === ticket.key && startable) startPlain()
-      } else if (d?.ticket === ticket.key && canStart) runWith(d.mode)
+        if (d === ticket.key && latest.current.startable) latest.current.startPlain()
+      } else if (d?.ticket === ticket.key && latest.current.canStart) latest.current.runWith(d.mode, d.stop)
     }
     window.addEventListener(START_EVENT, on)
     return () => window.removeEventListener(START_EVENT, on)
-  }, [startable, canStart, startPlain, runWith, ticket.key])
+  }, [ticket.key])
   const av = availableActions(ticket, viewer)
   const { run, wait } = useTicketAgent(ticket, home)
   const needsYou = av.answer.length > 0 || av.approve.length > 0 || !!av.verdict || !!wait

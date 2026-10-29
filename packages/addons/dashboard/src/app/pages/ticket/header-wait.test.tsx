@@ -11,7 +11,7 @@ import { act } from '@testing-library/react'
 
 vi.mock('@/api/features', async (orig) => ({ ...(await orig<typeof import('@/api/features')>()), isRealHost: () => true, hasFeature: () => true }))
 vi.mock('@tanstack/react-router', async (orig) => ({ ...(await orig<typeof import('@tanstack/react-router')>()), Link: ({ children }: { children?: unknown }) => <a href="#">{children as never}</a> }))
-vi.mock('@/app/terminal/real/StartAgentDialog', async (orig) => ({ ...(await orig<typeof import('@/app/terminal/real/StartAgentDialog')>()), StartAgentDialog: () => <div data-testid="start-dialog" /> }))
+vi.mock('@/app/terminal/real/StartAgentDialog', async (orig) => ({ ...(await orig<typeof import('@/app/terminal/real/StartAgentDialog')>()), StartAgentDialog: ({ initial }: { initial?: { mode?: string; stopFirst?: string } }) => <div data-testid="start-dialog" data-mode={initial?.mode} data-stop-first={initial?.stopFirst} /> }))
 vi.mock('@/app/workspace', () => ({ useWorkspace: () => ({ workspace: { id: 'w1', addons: {}, members: [] }, workspaces: [{ id: 'w1', prefix: 'PW' }] }) }))
 
 // P04: a terminal wait of the ticket's agent turns the pill from "Getting started" into "Needs you".
@@ -107,6 +107,9 @@ it('no "Agent is working…" next to the not-finished card, even with a live cla
   // Ask the agent to finish: the idle run is stopped first (the existing run stop), then the start flow opens.
   const stop = vi.spyOn(runsApi, 'stop').mockResolvedValue({ state: 'exited', cleanup: 'complete' } as never)
   await userEvent.setup().click(screen.getByRole('button', { name: 'Ask the agent to finish' }))
-  expect(stop).toHaveBeenCalledWith('w1', 'run_b')
-  expect(await screen.findByTestId('start-dialog')).toBeInTheDocument()
+  // The dialog is open with the stop still pending: cancelling leaves the run untouched.
+  const dialog = await screen.findByTestId('start-dialog')
+  expect(dialog).toHaveAttribute('data-stop-first', 'run_b')
+  expect(dialog).toHaveAttribute('data-mode', 'continue')
+  expect(stop).not.toHaveBeenCalled()
 })

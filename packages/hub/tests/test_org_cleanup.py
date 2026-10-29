@@ -17,6 +17,7 @@ from orch_hub.access.orgskills import OrgSkillStore, org_skills
 from orch_hub.contract import vectorgen as G
 from orch_hub.contract.canon import b64u
 from orch_hub.contract.hub import Refused
+from orch_hub.link import Registry
 from orch_hub.link.ops import mcp_servers_get, org_secrets_get, org_skills_get
 
 ADMIN = "aa" * 16
@@ -152,4 +153,137 @@ def test_skills_and_servers_drops_are_called_by_the_cleanup(monkeypatch):
         assert org_cleanup(a).drop(WS_A) is True
         assert calls == [("skills", WS_A), ("mcp", WS_A)]
     finally:
+        a.close()
+
+
+# --- Opus delta on the fixes: M, L1, L2 ---------------------------------------------------------------------------------------
+
+
+def _joined(h, a):
+    c = h.open(G.WS_A, "wsk_a", first=True)
+    c.request(
+        "join", {"invite": "inv1", "card": G.v2_card(), "pk_pub": b64u(G.K.pub["pk_alice"]), "binding": G.binding()}
+    )
+    seed(a, G.WS_A)
+    return c
+
+
+def _ctx(h, a, **snap):
+    reg = SimpleNamespace(
+        lock=h.registry.lock, pin=h.registry.pin, binding_state=h.registry.binding_state, mode=h.registry.mode
+    )
+    return SimpleNamespace(
+        registry=reg, workspace_id=G.WS_A, snapshots=SimpleNamespace(**snap), body={}, access=a, now_ms=G.NOW
+    )
+
+
+def test_M_the_pending_mark_is_written_before_the_registry_commit_and_survives_a_crash_after_it(tmp_path, monkeypatch):
+    path = str(tmp_path / "a.db")
+    a = Access(path)
+    h = Hub(access=a)
+    try:
+        c = _joined(h, a)
+        real = Registry.set_binding_state
+
+        def commit_then_crash(self, ws, state, obj=None):
+            real(self, ws, state, obj)
+            raise RuntimeError("crash right after the commit")
+
+        monkeypatch.setattr(Registry, "set_binding_state", commit_then_crash)
+        with pytest.raises(Exception):  # noqa: B017 - the link reports the failed op
+            c.request("binding_put", {"object": G.unbound(seq=2)})
+        monkeypatch.undo()
+        assert h.registry.binding_state(G.WS_A)["status"] == "unbound"  # committed, but the drop never ran
+        assert left(a, G.WS_A)["wraps"] and org_cleanup(a).is_pending(G.WS_A)
+    finally:
+        h.close()
+        a.close()
+    a = Access(path)  # restart: the mark is on disk
+    try:
+        assert org_cleanup(a).is_pending(G.WS_A)
+        org_cleanup(a).retry()
+        assert not org_cleanup(a).is_pending(G.WS_A) and not any(left(a, G.WS_A).values())
+    finally:
+        a.close()
+
+
+def test_M_between_the_commit_and_the_drop_nothing_is_served(monkeypatch):
+    """On a rejoin the old wraps must not be served in the gap before the drop runs: the mark is already set when it starts."""
+    from orch_hub.access.orgcleanup import OrgCleanup
+
+    a = Access(":memory:")
+    h = Hub(access=a)
+    seen = []
+    try:
+        c = _joined(h, a)
+        c.request("binding_put", {"object": G.unbound(seq=2)})
+        seed_again = lambda: None
+        seed_again()
+        real = OrgCleanup.drop
+
+        def spy(self, ws):
+            seen.append(self.is_pending(ws))
+            return real(self, ws)
+
+        monkeypatch.setattr(OrgCleanup, "drop", spy)
+        c.request("binding_put", {"object": G.binding(seq=3)})  # a fresh join: held status was unbound
+        assert seen == [True]
+    finally:
+        h.close()
+        a.close()
+
+
+def test_L1_the_gate_is_checked_again_after_the_fetch():
+    a = Access(":memory:")
+    h = Hub(access=a)
+    try:
+        _joined(h, a)
+
+        def fetch_while_it_leaves(*_):
+            org_cleanup(a).mark(G.WS_A)  # a concurrent unbind marks it while the bundle is being built
+            return {"o": {}}
+
+        ctx = _ctx(
+            h, a, org_secrets=fetch_while_it_leaves, org_skills=fetch_while_it_leaves, mcp_servers=fetch_while_it_leaves
+        )
+        for op in (org_secrets_get, org_skills_get, mcp_servers_get):
+            org_cleanup(a).drop(G.WS_A)
+            with pytest.raises(Refused) as e:
+                op(ctx)
+            assert e.value.code == "unavailable"
+        # and a workspace that became unbound during the fetch gets nothing either
+        org_cleanup(a).drop(G.WS_A)
+        h.registry.set_binding_state(G.WS_A, {"status": "unbound", "binding": {"mode": "full"}})
+        ctx2 = _ctx(h, a, org_secrets=lambda *_: {"o": {}})
+        h.registry.set_binding_state(G.WS_A, {"status": "bound", "binding": {"mode": "full"}})
+
+        def unbind_during(*_):
+            h.registry.set_binding_state(G.WS_A, {"status": "unbound", "binding": {"mode": "full"}})
+            return {"o": {}}
+
+        ctx2.snapshots.org_secrets = unbind_during
+        with pytest.raises(Refused):
+            org_secrets_get(ctx2)
+    finally:
+        h.close()
+        a.close()
+
+
+def test_L2_secret_use_is_not_accepted_while_a_drop_is_pending():
+    from orch_hub.link.ops import secret_use
+
+    a = Access(":memory:")
+    h = Hub(access=a)
+    try:
+        _joined(h, a)
+        ctx = _ctx(h, a)
+        ctx.body = {"secret_id": "11" * 16, "day": "2026-10-29", "n": 1}
+        ctx.now_ms = G.NOW
+        ctx.registry = h.registry
+        org_cleanup(a).mark(G.WS_A)
+        with pytest.raises(Refused) as e:
+            secret_use(ctx)
+        assert e.value.code == "unavailable"
+    finally:
+        h.close()
         a.close()

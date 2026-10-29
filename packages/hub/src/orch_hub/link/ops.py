@@ -307,6 +307,11 @@ def binding_put(c: OpContext) -> dict[str, Any]:
             state = H.apply_unbound(held, u)
         else:
             raise Refused("malformed")
+        owes_drop = c.access is not None and (kind == "hub.unbound" or held is None or held.get("status") != "bound")
+        if owes_drop:  # marked before the commit: a crash right after it still leaves the mark, and nothing is served
+            from ..access.orgcleanup import org_cleanup
+
+            org_cleanup(c.access).mark(c.workspace_id)
         c.registry.set_binding_state(c.workspace_id, state, obj)
 
     def locked(step: Callable[[], None]) -> Callable[[], None]:
@@ -325,7 +330,7 @@ def binding_put(c: OpContext) -> dict[str, Any]:
     def drop_org_content() -> None:
         # a workspace that left (or is joining afresh) keeps no company secret, skill or tool server; a failed drop stays
         # pending and is retried, and nothing is served to that workspace meanwhile
-        if c.access is not None and (kind == "hub.unbound" or held is None or held.get("status") != "bound"):
+        if owes_drop:
             from ..access.orgcleanup import org_cleanup
 
             org_cleanup(c.access).drop(c.workspace_id)
@@ -354,6 +359,14 @@ def snapshot_get(c: OpContext) -> dict[str, Any]:
     return {"snapshot": c.snapshots.snapshot(c.workspace_id, mode)}
 
 
+def _fetched(c: OpContext, bundle: dict[str, Any]) -> dict[str, Any]:
+    """The gates were checked before the fetch; a leave or a drop that began meanwhile must not hand out the bundle."""
+    with c.registry.lock:
+        _require_bound(c)
+        _require_not_pending(c)
+    return bundle
+
+
 def org_skills_get(c: OpContext) -> dict[str, Any]:
     """M3 (#1430): the signed company-skills bundle of the LINK's workspace (never a caller-named one). Only a bound
     workspace gets one; what is in it is offered, not enabled: the owner's accept at the host decides."""
@@ -365,7 +378,7 @@ def org_skills_get(c: OpContext) -> dict[str, Any]:
     fn = getattr(c.snapshots, "org_skills", None)
     if fn is None:
         raise Refused("unavailable")
-    return {"bundle": fn(c.workspace_id, mode)}
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
 
 
 def mcp_servers_get(c: OpContext) -> dict[str, Any]:
@@ -379,7 +392,7 @@ def mcp_servers_get(c: OpContext) -> dict[str, Any]:
     fn = getattr(c.snapshots, "mcp_servers", None)
     if fn is None:
         raise Refused("unavailable")
-    return {"bundle": fn(c.workspace_id, mode)}
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
 
 
 def org_secrets_get(c: OpContext) -> dict[str, Any]:
@@ -393,7 +406,7 @@ def org_secrets_get(c: OpContext) -> dict[str, Any]:
     fn = getattr(c.snapshots, "org_secrets", None)
     if fn is None:
         raise Refused("unavailable")
-    return {"bundle": fn(c.workspace_id, mode)}
+    return {"bundle": _fetched(c, fn(c.workspace_id, mode))}
 
 
 def secret_use(c: OpContext) -> dict[str, Any]:
@@ -403,6 +416,7 @@ def secret_use(c: OpContext) -> dict[str, Any]:
         raise Refused("unavailable")
     _require_pin(c)
     _require_bound(c)
+    _require_not_pending(c)
     from ..access.orgsecrets import org_secrets
 
     try:

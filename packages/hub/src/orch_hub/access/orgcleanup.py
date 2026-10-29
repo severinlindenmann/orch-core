@@ -48,6 +48,16 @@ class OrgCleanup:
         except AccessError:
             return True
 
+    def mark(self, workspace_id: str) -> None:
+        """Say a drop is owed BEFORE the registry commit that makes it necessary: a crash between the commit and the drop then
+        still leaves the mark (and nothing is served meanwhile). Memory first, disk when it can be written; ``drop`` clears it."""
+        with self._lock:
+            self._mem.add(workspace_id)
+        try:
+            self._a._w("INSERT OR IGNORE INTO org_cleanup_pending VALUES (?)", (workspace_id,))
+        except AccessError:
+            pass  # the in-memory mark holds for this process
+
     def drop(self, workspace_id: str) -> bool:
         """Run all three drops (one failing never skips the others). True when everything is gone; otherwise the workspace
         stays pending and the next ``retry`` runs it again."""

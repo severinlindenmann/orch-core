@@ -960,6 +960,19 @@ def test_a_revoke_between_headers_and_body_forwards_nothing(env, how):
     assert rpc(env, cap, "ping")[0] == 401
 
 
+def test_a_server_revoked_between_headers_and_body_forwards_nothing_and_keeps_no_upstream(env):
+    env.records["w1"].append({**env.records["w1"][0], "name": "wiki", "digest": "d2"})
+    cap = mint(env, names=("crm", "wiki"))
+    assert _half_send(env, cap, lambda: env.proxy.revoke_server("w1", "crm")) == 403
+    assert all(not up.posts for up in env.ups)
+    obj = next(iter(env.proxy._caps.values()))
+    assert "crm" not in obj.upstreams
+    assert rpc(env, cap, "ping")[0] == 403 and rpc(env, cap, "ping", name="wiki")[0] == 200
+    with pytest.raises(mcpproxy._Refuse):
+        env.proxy._up(obj, "crm", env.records["w1"][0], None)
+    assert "crm" not in obj.upstreams
+
+
 def test_up_refuses_a_dropped_capability(env):
     cap = mint(env)
     obj = next(iter(env.proxy._caps.values()))

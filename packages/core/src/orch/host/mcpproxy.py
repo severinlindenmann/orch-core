@@ -465,7 +465,6 @@ class Proxy:
         if name not in cap.servers:
             raise _Refuse(403, "forbidden")
         self._count(cap)  # the request counts before anything else is asked or decided
-        record = self._check_served(cap, name)
         length = headers.get("content-length")
         if length is None:
             raise _Refuse(411, "length required")
@@ -479,10 +478,8 @@ class Proxy:
             raise _Refuse(408, "timeout") from None
         except asyncio.IncompleteReadError:
             raise _Refuse(400, "bad request") from None
-        with self._lock:
-            if not self._live(cap):
-                self._drop(key)
-                raise _Refuse(401, "unauthorized")
+        self._require_live(cap, name)
+        record = self._check_served(cap, name)
         bearer, secret_value = self._credentials(cap, record)  # after the body: nothing waits between check and use
         status, payload = await self._rpc(key, cap, name, record, bearer, body)
         if payload is not None and secret_value:
@@ -546,14 +543,22 @@ class Proxy:
 
     # -- JSON-RPC -------------------------------------------------------------------------------------------------
 
-    def _live(self, cap: _Cap) -> bool:
-        """Caller holds the lock. True while this very capability is registered and its binding is still live."""
-        return self._caps.get(cap.key) is cap and self._binding_is(cap.ws, cap.hub_id, cap.binding_seq)
+    def _require_live(self, cap: _Cap, name: str) -> None:
+        """401 (and the capability is dropped) when this very capability is no longer registered or its binding is
+        gone; 403 when this server was taken away from it."""
+        with self._lock:
+            if self._caps.get(cap.key) is not cap or not self._binding_is(cap.ws, cap.hub_id, cap.binding_seq):
+                self._drop(cap.key)
+                raise _Refuse(401, "unauthorized")
+            if name not in cap.servers:
+                raise _Refuse(403, "forbidden")
 
     def _up(self, cap: _Cap, name: str, record: dict, bearer: str | None) -> Any:
         with self._lock:
             if self._caps.get(cap.key) is not cap:
                 raise _Refuse(401, "unauthorized")
+            if name not in cap.servers:
+                raise _Refuse(403, "forbidden")
             held = cap.upstreams.get(name)
             if held is not None and held[1] == bearer:
                 return held[0]
@@ -565,20 +570,20 @@ class Proxy:
             cap.upstreams[name] = (up, bearer)
             return up
 
-    def _post(self, cap: _Cap, up: Any, message: dict) -> Any:
-        """Runs in the worker thread: the capability is checked again immediately before the post."""
-        with self._lock:
-            if not self._live(cap):
-                self._drop(cap.key)
-                raise _Refuse(401, "unauthorized")
-        return up.post(message, timeout=UPSTREAM_TIMEOUT)
+    def _post(self, cap: _Cap, name: str, up: Any, message: dict) -> Any:
+        """Runs in the worker thread: the capability is checked again immediately before the post, and once more when
+        the answer is back (a revoke meanwhile drops the answer)."""
+        self._require_live(cap, name)
+        msgs = up.post(message, timeout=UPSTREAM_TIMEOUT)
+        self._require_live(cap, name)
+        return msgs
 
     async def _forward(self, key: str, cap: _Cap, name: str, up: Any, message: dict) -> list[dict]:
         if cap.inflight.get(name, 0) >= INFLIGHT_MAX:
             raise _Refuse(429, "too many calls")
         cap.inflight[name] = cap.inflight.get(name, 0) + 1
         try:
-            msgs = await asyncio.get_running_loop().run_in_executor(self._pool, self._post, cap, up, message)
+            msgs = await asyncio.get_running_loop().run_in_executor(self._pool, self._post, cap, name, up, message)
         except _Refuse:
             raise
         except Exception:

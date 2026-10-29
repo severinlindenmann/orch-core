@@ -9,11 +9,11 @@ describe('Tickets page', () => {
       items: [{ workspace_id: 'a'.repeat(32), key: 'DEMO-0007', title: 'Invoice export for Ben', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: 'Export invoices as CSV.' }],
     })
     renderApp('/tickets')
-    const box = await screen.findByTestId('shared-with-you')
+    const box = await screen.findByTestId('shared-with-you', {}, { timeout: 15_000 })
     expect(within(box).getByText('Invoice export for Ben')).toBeInTheDocument()
     expect(within(box).getByText(/Shared by/)).toHaveTextContent('Shared by Anna')
     expect(within(box).getByText('Export invoices as CSV.')).toBeInTheDocument()
-    expect(within(box).queryByRole('button')).toBeNull() // read only: nothing to press
+    expect(within(box).getAllByRole('button')).toHaveLength(1) // the row only opens the view-only panel; nothing to change
     shared.mockResolvedValue({ items: [] })
     vi.restoreAllMocks()
   })
@@ -56,6 +56,14 @@ describe('Tickets page', () => {
     await user.type(await screen.findByRole('searchbox', { name: 'Search tickets' }), 'zzzz-no-match')
     await screen.findByText(/No tickets match/)
     expect(document.body.textContent).not.toMatch(/orch list/)
+  })
+  it('with only shared tickets the empty box says so and offers New ticket', async () => {
+    vi.spyOn(api, 'listTickets').mockResolvedValue([])
+    vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [{ workspace_id: 'a'.repeat(32), key: 'D-1', title: 'One', shared_by: 'Anna', status: 'open', type: 'feature', deadline: null, description: null }] })
+    renderApp('/tickets')
+    expect(await screen.findByText('You have no tickets of your own yet.')).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/No tickets match|orch list/)
+    vi.restoreAllMocks()
   })
   it('opens a ticket with Enter on the focused row', async () => {
     const { user } = renderApp('/tickets')

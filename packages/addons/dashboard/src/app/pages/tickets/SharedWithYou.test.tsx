@@ -56,4 +56,22 @@ describe('SharedWithYou stays current', () => {
     expect(screen.getAllByTestId('shared-ended')).toHaveLength(1) // not "stopped sharing Mine"
     void stored
   })
+
+  it('a row opens a view-only panel with the full text; Close returns; a vanished item says it stopped sharing', async () => {
+    const full = { ...t('D-7', 'Invoice export for Ben'), description: 'Ben can download all invoices as one CSV file.', deadline: '2026-11-01' }
+    const get = vi.spyOn(api, 'getHubShared').mockResolvedValue({ items: [full] })
+    const { user } = renderApp('/tickets')
+    await user.click(await screen.findByRole('button', { name: /Open D-7/ }, { timeout: 15_000 }))
+    const panel = await screen.findByTestId('shared-panel')
+    expect(panel).toHaveTextContent('Ben can download all invoices as one CSV file.')
+    expect(panel).toHaveTextContent('Shared by Anna')
+    expect(panel).toHaveTextContent('due 2026-11-01')
+    expect(panel).toHaveTextContent("only Anna can change it")
+    expect(within(panel).queryByRole('button', { name: /sign|edit|move/i })).toBeNull()
+    await user.click(within(panel).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByTestId('shared-panel')).toBeNull())
+    await user.click(screen.getByRole('button', { name: /Open D-7/ }))
+    expect(await screen.findByTestId('shared-panel')).toBeInTheDocument()
+    expect(get).toHaveBeenCalled()
+  })
 })

@@ -308,4 +308,19 @@ describe('answering a question in one-click mode', () => {
     expect(within(dialog).getByText('Which date should the report use?')).toBeVisible()
     expect(within(dialog).getByText('TIMESTAMP')).not.toBeVisible()
   })
+
+  it('an existing same-text ticket offers Open it and Create another; Create another starts a fresh review and signs nothing', async () => {
+    flag(true)
+    c.prepare.mockRejectedValueOnce(new ApiError(409, { code: 'intent.done', message: 'x', retryable: false, ticket: { key: 'DEMO-0044', title: 'Plan the launch' } }))
+    await mount(PLAN)
+    const dialog = await screen.findByRole('dialog', {}, T)
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Approve plan' }, T))
+    expect(await within(dialog).findByText('You already have this ticket', {}, T)).toBeInTheDocument()
+    expect(within(dialog).getByTestId('open-existing-ticket')).toHaveTextContent('Open it')
+    c.prepare.mockResolvedValueOnce({ request_id: REQ, expires_at: new Date(Date.now() + 600_000).toISOString(), op: 'approve', confirm: 'click', repeat: true } as never)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create another' }))
+    expect(await within(dialog).findByTestId('click-repeat-note', {}, T)).toHaveTextContent('another ticket like one already signed')
+    expect(c.prepare).toHaveBeenCalledTimes(2)
+    expect(c.sign).not.toHaveBeenCalled() // the new review needs its own Sign press
+  })
 })

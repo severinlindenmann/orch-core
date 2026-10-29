@@ -52,6 +52,12 @@ def _key(w, tok, **kw):
     return w.call("POST", "/admin/backup/key", {**w.creds(w.admin), **kw}, token=tok)
 
 
+def _later(w):
+    """Past the 'Back up now' pause (10 minutes); a fresh session, as the old one may have run out."""
+    w.clock.advance(11 * 60_000)
+    return w.login(w.admin)
+
+
 def _first(w, tok=None):
     tok = tok or w.login(w.admin)
     s, o, _ = _key(w, tok)
@@ -177,6 +183,7 @@ def test_the_words_are_shown_once_with_no_store_and_are_nowhere_else(w, caplog):
     assert info["k_auth"] == b64u(keys.k_auth)
     s, st, _ = w.call("GET", "/admin/backup", token=tok)  # the status route never repeats them
     assert s == 200 and st["key_set"] is True and words not in json.dumps(st)
+    tok = _later(w)
     s, mk, _ = w.call("POST", "/admin/backups", {}, token=tok)
     assert s == 200 and words not in json.dumps(mk)
     audit_blob = json.dumps([(r, e) for _, r, e in w.api.d.audit.store.after(0, 1000)]).encode()
@@ -463,7 +470,7 @@ def test_make_needs_a_key_and_keeps_only_the_newest_seven(w):
     assert w.call("POST", "/admin/backups", {"x": 1}, token=tok)[0] == 400
     _first(w, tok)
     for _ in range(9):
-        w.clock.advance(1000)
+        tok = _later(w)
         assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 200
     kept = w.call("GET", "/admin/backup", token=tok)[1]["backups"]
     assert len(kept) == KEEP == 7
@@ -472,11 +479,23 @@ def test_make_needs_a_key_and_keeps_only_the_newest_seven(w):
 
 
 def test_two_backups_in_one_second_do_not_overwrite_each_other(w):
-    tok = w.login(w.admin)
-    _first(w, tok)
-    a = w.call("POST", "/admin/backups", {}, token=tok)[1]["backup"]["name"]
-    b = w.call("POST", "/admin/backups", {}, token=tok)[1]["backup"]["name"]  # the clock did not move
+    _first(w)
+    svc = BackupService(w.env.keys, now_ms=w.clock)
+    a, b = svc.make(None)["name"], svc.make(None)["name"]  # the clock did not move
     assert a != b and (w.state / "backups" / a).exists() and (w.state / "backups" / b).exists()
+
+
+def test_back_up_now_waits_ten_minutes_after_the_last_backup(w):
+    tok, _words, _n = _first(w)
+    assert w.call("POST", "/admin/backups", {}, token=tok)[:2] == (429, {"error": "rate_limited"})
+    assert len(BackupService(w.env.keys).list()) == 1 and _events(w, "hub_backup")[-1]["change"] == "key_set"
+    w.clock.advance(9 * 60_000)
+    assert w.call("POST", "/admin/backups", {}, token=w.login(w.admin))[0] == 429
+    tok = _later(w)  # now past 10 minutes since the first backup
+    assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 200
+    assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 429  # and again right after
+    # the schedule and the server command are not held back by it
+    assert BackupService(w.env.keys, now_ms=w.clock).make(None)["name"]
 
 
 def test_the_daily_schedule_runs_on_the_tick_without_a_secret(w):
@@ -546,7 +565,7 @@ def test_download_hands_out_the_sealed_file_and_names_are_checked(w):
 
 def test_the_audit_chain_and_history_record_key_made_downloaded_without_secrets(w):
     tok, words, name = _first(w)
-    w.clock.advance(1000)
+    tok = _later(w)
     w.call("POST", "/admin/backups", {}, token=tok)
     w.call("POST", "/admin/backups/download", {"name": name, **w.creds(w.admin)}, token=tok)
     evs = _events(w, "hub_backup")
@@ -573,7 +592,7 @@ def test_a_chain_that_cannot_be_written_refuses_make_and_download_and_leaves_no_
         raise RuntimeError("chain broken")
 
     monkeypatch.setattr(w.api.d.audit, "hub_backup", boom)
-    w.clock.advance(1000)
+    tok = _later(w)
     assert w.call("POST", "/admin/backups", {}, token=tok)[0] == 500
     assert {r["name"] for r in BackupService(w.env.keys).list()} == before
     assert w.call("POST", "/admin/backups/download", {"name": name, **w.creds(w.admin)}, token=tok)[0] == 500
@@ -699,7 +718,7 @@ def test_the_server_command_refuses_when_its_output_is_not_a_terminal(w, monkeyp
     assert BCLI.run(args, out=lines.append, now_ms=w.clock, tty=lambda: True) == 0  # the same call at a terminal works
 
 
-def test_a_plain_http_private_range_address_is_trusted_only_when_it_is_the_settings_private_address(w, state_file=None):
+def test_a_plain_http_private_range_address_is_trusted_only_when_it_is_the_settings_private_address(w):
     from orch_hub import settings as ST
 
     mine, other = "http://100.64.1.2:9000", "http://100.64.9.9:9000"

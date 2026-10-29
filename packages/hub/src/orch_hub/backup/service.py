@@ -32,6 +32,7 @@ from .words import check_words, generate_words
 DIR = "backups"
 KEEP = 7
 DAY_MS = 86_400_000
+MANUAL_GAP_MS = 600_000  # "Back up now" at most once in 10 minutes
 RETRY_MS = 3_600_000  # a failed scheduled backup is tried again after an hour, not at every tick
 NAME = re.compile(r"hub-([0-9a-f]{8})-(\d{8}T\d{6}Z)\.orchbak")
 _LOCK = threading.RLock()  # one backup action at a time in this process (the web routes and the schedule)
@@ -247,10 +248,13 @@ class BackupService:
             except Exception:  # noqa: BLE001, S110  # the backup has happened: a failed history line is not an error
                 pass
 
-    def make(self, actor: str | None = None) -> dict[str, Any]:
+    def make(self, actor: str | None = None, min_gap_ms: int = 0) -> dict[str, Any]:
         """A backup now under the current key; kept files beyond :attr:`keep` are deleted (oldest first). Audited: if the
         chain cannot be written the file is removed again and the call refuses (no unaudited backup)."""
         with locked(self.state):
+            kept = self.list()
+            if min_gap_ms and kept and self._now() - kept[0]["made_ms"] < min_gap_ms:
+                raise BackupError("rate_limited")  # "Back up now" is a click, not a loop
             bk_pub, k_auth, set_ms = self._material()
             got = self._write(bk_pub, k_auth, set_ms)
             try:

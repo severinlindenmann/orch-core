@@ -14,7 +14,7 @@ import ipaddress
 import urllib.parse
 from typing import Any
 
-from ..backup.service import CLI_LINE, KEEP, BackupError, BackupService
+from ..backup.service import CLI_LINE, KEEP, MANUAL_GAP_MS, BackupError, BackupService
 from ..contract.canon import b64u
 from ..settings import SettingsError, load
 
@@ -162,7 +162,7 @@ class BackupHandlers:
         if b not in (None, {}):
             raise _err("malformed")
         try:
-            return 200, {"ok": True, "backup": self._backups().make(c.user_id)}
+            return 200, {"ok": True, "backup": self._backups().make(c.user_id, MANUAL_GAP_MS)}
         except BackupError as e:
             raise _err(e.code) from None
 

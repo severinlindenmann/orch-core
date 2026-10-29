@@ -93,8 +93,11 @@ describe('the real click path', () => {
     await r.user.click(await within(sheet).findByRole('button', { name: 'More ways to create' }, T))
     await r.user.click(await screen.findByRole('menuitem', { name: 'Create without starting' }, T))
     const dialog = (await screen.findAllByRole('dialog', {}, T)).find((d) => d.hasAttribute('data-handoff-dialog'))!
-    expect(await within(dialog).findByText('Creates the ticket. No agent starts.', {}, T)).toBeInTheDocument()
-    expect(within(dialog).getByRole('button', { name: 'Sign and create ticket' })).toBeInTheDocument()
+    expect(await within(dialog).findByText('No agent starts. You can start one later.', {}, T)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Create ticket' })).toBeInTheDocument()
+    // P09: the signing step is a centred dialog, not a small popover in the corner
+    expect(dialog.hasAttribute('data-sign-popover')).toBe(false)
+    expect(dialog.hasAttribute('data-sign-sheet')).toBe(true)
   })
 
   it('stopped at the agent access: the ticket exists, no second ticket can be made, nothing starts, the failure is marked', async () => {

@@ -24,7 +24,10 @@ _cache: dict[tuple[int, int], tuple[float, bool]] = {}
 
 def _private_group_lookup(uid: int, gid: int) -> bool:
     """Is ``gid`` a group only ``uid`` belongs to: their primary group, no other account has it as primary group, and
-    the group lists no member but them. Any failure to read the account databases (NSS, LDAP, no pwd/grp module) is
+    the group lists no member but them, and it is named after them (a user-private group; a shared primary group such as
+    ``users`` looks empty when enumeration is off). Group passwords/``newgrp`` via gshadow are not consulted: a
+    private group has no password. The rule applies to files too where a caller uses it (discovery ``config.json``,
+    gitsafe ``.git/config``). Any failure to read the account databases (NSS, LDAP, no pwd/grp module) is
     "not private": the caller then refuses."""
     try:
         me = pwd.getpwuid(uid)
@@ -32,7 +35,8 @@ def _private_group_lookup(uid: int, gid: int) -> bool:
             return False
         if any(p.pw_gid == gid and p.pw_uid != uid for p in pwd.getpwall()):
             return False
-        return all(m == me.pw_name for m in grp.getgrgid(gid).gr_mem)
+        group = grp.getgrgid(gid)
+        return group.gr_name == me.pw_name and all(m == me.pw_name for m in group.gr_mem)
     except Exception:  # noqa: BLE001 - fail closed on anything
         return False
 

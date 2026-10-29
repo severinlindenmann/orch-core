@@ -39,7 +39,7 @@ def pw(name, uid, gid):
 def db(monkeypatch):
     privdir._cache.clear()
     monkeypatch.setattr(privdir, "pwd", Pwd([pw("me", UID, GID), pw("other", 1001, 1001)]))
-    monkeypatch.setattr(privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_mem=[])))
+    monkeypatch.setattr(privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="me", gr_mem=[])))
     yield
     privdir._cache.clear()
 
@@ -54,17 +54,33 @@ def test_own_private_group_write_is_allowed():
 
 
 def test_private_group_listing_only_the_user_is_allowed(monkeypatch):
-    monkeypatch.setattr(privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_mem=["me"])))
+    monkeypatch.setattr(
+        privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="me", gr_mem=["me"]))
+    )
     assert not privdir.others_can_write(st(0o775), UID)
 
 
 def test_group_with_another_member_is_refused(monkeypatch):
-    monkeypatch.setattr(privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_mem=["me", "agent"])))
+    monkeypatch.setattr(
+        privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="me", gr_mem=["me", "agent"]))
+    )
     assert privdir.others_can_write(st(0o775), UID)
 
 
 def test_group_shared_as_primary_group_by_another_account_is_refused(monkeypatch):
     monkeypatch.setattr(privdir, "pwd", Pwd([pw("me", UID, GID), pw("other", 1001, GID)]))
+    assert privdir.others_can_write(st(0o775), UID)
+
+
+def test_shared_group_with_empty_member_list_is_refused(monkeypatch):
+    monkeypatch.setattr(privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="users", gr_mem=[])))
+    assert privdir.others_can_write(st(0o775), UID)
+
+
+def test_group_named_differently_from_the_user_is_refused(monkeypatch):
+    monkeypatch.setattr(
+        privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="staff", gr_mem=["me"]))
+    )
     assert privdir.others_can_write(st(0o775), UID)
 
 
@@ -96,7 +112,7 @@ def test_missing_account_database_is_refused(monkeypatch):
 
 def test_answer_is_cached_briefly(monkeypatch):
     assert not privdir.others_can_write(st(0o775), UID)
-    monkeypatch.setattr(privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_mem=["x"])))
+    monkeypatch.setattr(privdir, "grp", SimpleNamespace(getgrgid=lambda g: SimpleNamespace(gr_name="me", gr_mem=["x"])))
     assert not privdir.others_can_write(st(0o775), UID)
     privdir._cache.clear()
     assert privdir.others_can_write(st(0o775), UID)
